@@ -1,5 +1,5 @@
 --------------------------- MODULE MessagePassing ---------------------------
-EXTENDS FiniteSets, FiniteSetsExt, Sequences, SequencesExt, Integers, TLC
+EXTENDS FiniteSets, Sequences, Integers, TLC
 
 \* message types
 CONSTANTS NEW_TERM_REQUEST,
@@ -61,8 +61,8 @@ ReceivableMessageOfType(msgs, msg, message_type) ==
     /\ msgs[msg] >= 1
     
 IsLower(log_entry1, log_entry2) ==
-    \/ log_entry1.epoch < log_entry2.epoch
-    \/ /\ log_entry1.epoch = log_entry2.epoch 
+    \/ log_entry1.term < log_entry2.term
+    \/ /\ log_entry1.term = log_entry2.term
        /\ log_entry1.offset < log_entry2.offset
 
 IsEarliestReceivableEntryMessage(msgs, msg, type) ==
