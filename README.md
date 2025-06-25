@@ -5,7 +5,7 @@
 <h2 align="center">Oxia</h1>
 a robust, scalable metadata store and coordination system designed for large-scale distributed systems, with built-in support for stream index storage to optimize real-time data management.
 <p align="center">
-  <a href="https://github.com/oxia-db/oxia/blob/main/docs/getting-started.md">Getting Started </a> | <a href="https://github.com/oxia-db/oxia/tree/main/docs">Documentation</a>
+  <a href="https://github.com/oxia-db/oxia/blob/main/docs/getting-started.md">Getting Started </a> | <a href="https://oxia-db.github.io/">Documentation</a>
 </p>
 
 <p align="center">
