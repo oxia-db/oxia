@@ -15,6 +15,8 @@
 package model
 
 import (
+	"time"
+
 	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/coordinator/policies"
 )
@@ -24,6 +26,12 @@ type ClusterConfig struct {
 	Servers    []Server          `json:"servers" yaml:"servers"`
 	// ServerMetadata is a map associating server names with their corresponding metadata.
 	ServerMetadata map[string]ServerMetadata `json:"serverMetadata" yaml:"serverMetadata"`
+	LoadBalancer   *LoadBalancer             `json:"loadBalancer" yaml:"loadBalancer"`
+}
+
+type LoadBalancer struct {
+	ScheduleInterval time.Duration `json:"scheduleInterval" yaml:"scheduleInterval"`
+	QuarantineTime   time.Duration `json:"quarantineTime" yaml:"quarantineTime"`
 }
 
 type NamespaceConfig struct {

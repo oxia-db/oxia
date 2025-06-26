@@ -31,10 +31,22 @@ import (
 	"github.com/oxia-db/oxia/coordinator/model"
 )
 
+const (
+	defaultLoadBalancerScheduleInterval = time.Second * 30
+	defaultQuarantineTime               = time.Minute * 5
+)
+
+var DefaultLoadBalancerConfig = &model.LoadBalancer{
+	ScheduleInterval: defaultLoadBalancerScheduleInterval,
+	QuarantineTime:   defaultQuarantineTime,
+}
+
 type ClusterConfigResource interface {
 	io.Closer
 
 	Load() *model.ClusterConfig
+
+	LoadLoadBalancer() *model.LoadBalancer
 
 	Nodes() *linkedhashset.Set[string]
 
@@ -111,6 +123,21 @@ func (ccf *clusterConfig) Load() *model.ClusterConfig {
 		ccf.clusterConfigLock.RLock()
 	}
 	return ccf.currentClusterConfig
+}
+
+func (ccf *clusterConfig) LoadLoadBalancer() *model.LoadBalancer {
+	conf := ccf.Load()
+	var balancer *model.LoadBalancer
+	if balancer = conf.LoadBalancer; balancer == nil {
+		balancer = DefaultLoadBalancerConfig
+	}
+	if balancer.QuarantineTime == 0 {
+		balancer.QuarantineTime = defaultQuarantineTime
+	}
+	if balancer.ScheduleInterval == 0 {
+		balancer.ScheduleInterval = defaultLoadBalancerScheduleInterval
+	}
+	return balancer
 }
 
 func (ccf *clusterConfig) Nodes() *linkedhashset.Set[string] {

@@ -40,11 +40,9 @@ var namespaceConfig = &model.NamespaceConfig{
 
 func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
 	tests := []struct {
-		name                   string
-		candidates             map[model.Server]*proto.EntryId
-		expectedLeader         model.Server
-		expectedFollowersCount int
-		expectedFollowers      map[model.Server]*proto.EntryId
+		name           string
+		candidates     map[model.Server]*proto.EntryId
+		expectedLeader model.Server
 	}{
 		{
 			name: "Choose highest term",
@@ -53,12 +51,7 @@ func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
 				{Public: "2", Internal: "2"}: {Term: 200, Offset: 2500},
 				{Public: "3", Internal: "3"}: {Term: 198, Offset: 3000},
 			},
-			expectedLeader:         model.Server{Public: "2", Internal: "2"},
-			expectedFollowersCount: 2,
-			expectedFollowers: map[model.Server]*proto.EntryId{
-				{Public: "1", Internal: "1"}: {Term: 200, Offset: 2480},
-				{Public: "3", Internal: "3"}: {Term: 198, Offset: 3000},
-			},
+			expectedLeader: model.Server{Public: "2", Internal: "2"},
 		},
 		{
 			name: "Same term, different offsets",
@@ -67,12 +60,7 @@ func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
 				{Public: "2", Internal: "2"}: {Term: 200, Offset: 2000},
 				{Public: "3", Internal: "3"}: {Term: 200, Offset: 1500},
 			},
-			expectedLeader:         model.Server{Public: "2", Internal: "2"},
-			expectedFollowersCount: 2,
-			expectedFollowers: map[model.Server]*proto.EntryId{
-				{Public: "1", Internal: "1"}: {Term: 200, Offset: 1000},
-				{Public: "3", Internal: "3"}: {Term: 200, Offset: 1500},
-			},
+			expectedLeader: model.Server{Public: "2", Internal: "2"},
 		},
 		{
 			name: "Different terms, same offsets",
@@ -81,39 +69,26 @@ func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
 				{Public: "2", Internal: "2"}: {Term: 198, Offset: 1500},
 				{Public: "3", Internal: "3"}: {Term: 199, Offset: 1500},
 			},
-			expectedLeader:         model.Server{Public: "1", Internal: "1"},
-			expectedFollowersCount: 2,
-			expectedFollowers: map[model.Server]*proto.EntryId{
-				{Public: "2", Internal: "2"}: {Term: 198, Offset: 1500},
-				{Public: "3", Internal: "3"}: {Term: 199, Offset: 1500},
-			},
+			expectedLeader: model.Server{Public: "1", Internal: "1"},
 		},
 		{
 			name: "Single candidate",
 			candidates: map[model.Server]*proto.EntryId{
 				{Public: "1", Internal: "1"}: {Term: 200, Offset: 1500},
 			},
-			expectedLeader:         model.Server{Public: "1", Internal: "1"},
-			expectedFollowersCount: 0,
-			expectedFollowers:      map[model.Server]*proto.EntryId{},
+			expectedLeader: model.Server{Public: "1", Internal: "1"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			leader, followers := selectNewLeader(tt.candidates)
+			candidates := chooseCandidates(tt.candidates)
 
-			// Check leader
-			assert.Equal(t, tt.expectedLeader, leader)
-
-			// Check followers
-			assert.Equal(t, tt.expectedFollowersCount, len(followers))
-			for addr, expectedEntry := range tt.expectedFollowers {
-				assert.Equal(t, expectedEntry, followers[addr])
+			// Check candidates
+			assert.Equal(t, 1, len(candidates))
+			for _, candidate := range candidates {
+				assert.Equal(t, tt.expectedLeader, candidate)
 			}
-			// Ensure the leader is not in the followers
-			_, exists := followers[leader]
-			assert.False(t, exists)
 		})
 	}
 }

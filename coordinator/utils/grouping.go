@@ -15,10 +15,54 @@
 package utils
 
 import (
+	"cmp"
+
+	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
 	"github.com/oxia-db/oxia/coordinator/model"
 )
+
+type NamespaceAndShard struct {
+	Namespace string
+	ShardID   int64
+}
+
+func NodeShardLeaders(candidates *linkedhashset.Set[string], status *model.ClusterStatus) (totalShards int, electedShards int, result map[string]*arraylist.List[NamespaceAndShard]) {
+	result = make(map[string]*arraylist.List[NamespaceAndShard])
+	totalShards = 0
+	electedShards = 0
+	for na, ns := range status.Namespaces {
+		for shardID, shardStatus := range ns.Shards {
+			totalShards++
+			if leader := shardStatus.Leader; leader != nil {
+				electedShards++
+				leaderNodeID := leader.GetIdentifier()
+				var exist bool
+				if _, exist = result[leaderNodeID]; !exist {
+					result[leaderNodeID] = arraylist.New[NamespaceAndShard]()
+				}
+				result[leaderNodeID].Add(NamespaceAndShard{
+					Namespace: na,
+					ShardID:   shardID,
+				})
+			}
+		}
+	}
+	for _, shards := range result {
+		shards.Sort(func(x, y NamespaceAndShard) int {
+			return cmp.Compare(x.ShardID, y.ShardID)
+		})
+	}
+	for iter := candidates.Iterator(); iter.Next(); {
+		nodeID := iter.Value()
+		_, exist := result[nodeID]
+		if !exist {
+			result[nodeID] = arraylist.New[NamespaceAndShard]()
+		}
+	}
+	return totalShards, electedShards, result
+}
 
 func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *model.ClusterStatus) (map[string][]model.ShardInfo, map[string]model.Server) {
 	groupingShardByNode := make(map[string][]model.ShardInfo)

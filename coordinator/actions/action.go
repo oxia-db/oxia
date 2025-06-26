@@ -12,29 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package actions
 
-import (
-	"sync"
-	"testing"
+type Type string
 
-	"github.com/oxia-db/oxia/coordinator/actions"
-	"github.com/oxia-db/oxia/coordinator/model"
+const (
+	SwapNode Type = "swap-node"
+	Election Type = "election"
 )
 
-func TestActionSwapDone(t *testing.T) {
-	group := &sync.WaitGroup{}
-	group.Add(1)
-	swapAction := actions.SwapNodeAction{
-		Shard: int64(1),
-		From: model.Server{
-			Internal: "sv-1",
-		},
-		To: model.Server{
-			Internal: "sv-2",
-		},
-		Waiter: group,
-	}
-	swapAction.Done(nil)
-	group.Wait()
+type Action interface {
+	Type() Type
+
+	Done(t any)
 }

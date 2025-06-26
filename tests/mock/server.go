@@ -49,3 +49,28 @@ func NewServer(t *testing.T, name string) (s *server.Server, addr model.Server) 
 
 	return s, addr
 }
+
+func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *server.Server, addr model.Server) {
+	t.Helper()
+
+	var err error
+	s, err = server.New(server.Config{
+		PublicServiceAddr:          publicAddress,
+		InternalServiceAddr:        internalAddress,
+		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
+		DataDir:                    t.TempDir(),
+		WalDir:                     t.TempDir(),
+		NotificationsRetentionTime: 1 * time.Minute,
+	})
+
+	assert.NoError(t, err)
+
+	tmp := &name
+	addr = model.Server{
+		Name:     tmp,
+		Public:   publicAddress,
+		Internal: internalAddress,
+	}
+
+	return s, addr
+}
