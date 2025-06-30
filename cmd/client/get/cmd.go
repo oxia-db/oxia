@@ -35,6 +35,7 @@ type flags struct {
 	includeVersion bool
 	partitionKey   string
 	comparisonType string
+	secondaryIndex string
 }
 
 func (flags *flags) Reset() {
@@ -43,12 +44,14 @@ func (flags *flags) Reset() {
 	flags.includeVersion = false
 	flags.partitionKey = ""
 	flags.comparisonType = "equal"
+	flags.secondaryIndex = ""
 }
 
 func init() {
 	Cmd.Flags().BoolVarP(&Config.includeVersion, "include-version", "v", false, "Include the record version object")
 	Cmd.Flags().BoolVar(&Config.hexDump, "hex", false, "Print the value in HexDump format")
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
+	Cmd.Flags().StringVar(&Config.secondaryIndex, "index", "", "Secondary Index")
 
 	Cmd.Flags().StringVarP(&Config.comparisonType, "comparison-type", "t", "equal",
 		"The type of get comparison. Allowed value: equal, floor, ceiling, lower, higher")
@@ -71,6 +74,9 @@ func exec(cmd *cobra.Command, args []string) error {
 	var options []oxia.GetOption
 	if Config.partitionKey != "" {
 		options = append(options, oxia.PartitionKey(Config.partitionKey))
+	}
+	if Config.secondaryIndex != "" {
+		options = append(options, oxia.UseIndex(Config.secondaryIndex))
 	}
 
 	switch Config.comparisonType {

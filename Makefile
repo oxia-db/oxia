@@ -16,6 +16,30 @@
 build:
 	go build -ldflags "-X main.version=$(shell git describe --tags --always | cut -c2-)" -v -o bin/oxia ./cmd
 
+# Build target: iterate through PLATFORMS and perform cross-compilation for each combination.
+
+PLATFORMS := \
+	linux/amd64 \
+	windows/amd64 \
+	darwin/amd64
+
+.PHONY: distribution
+distribution:
+	@echo "Starting Go multi-platform executable build..."
+
+	@for platform in $(PLATFORMS); do \
+		GOOS=$$(echo $$platform | cut -d'/' -f1); \
+		GOARCH=$$(echo $$platform | cut -d'/' -f2); \
+		OUTPUT_NAME=bin/oxia_$${GOOS}_$${GOARCH}; \
+		if [ "$$GOOS" = "windows" ]; then OUTPUT_NAME=$${OUTPUT_NAME}.exe; fi; \
+		echo "Building $$GOOS/$${GOARCH} to $${OUTPUT_NAME}"; \
+		GOOS=$${GOOS} GOARCH=$${GOARCH} go build \
+			-ldflags "-X main.version=$$(git describe --tags --always | cut -c2-)" \
+			-v \
+			-o $${OUTPUT_NAME} ./cmd; \
+	done
+	@echo "All platforms built successfully! Executables are located in the bin/ directory."
+
 .PHONY: maelstrom
 maelstrom:
 	go build -v -o bin/oxia-maelstrom ./maelstrom

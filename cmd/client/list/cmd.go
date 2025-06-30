@@ -28,21 +28,24 @@ var (
 )
 
 type flags struct {
-	keyMin       string
-	keyMax       string
-	partitionKey string
+	keyMin         string
+	keyMax         string
+	partitionKey   string
+	secondaryIndex string
 }
 
 func (flags *flags) Reset() {
 	flags.keyMin = ""
 	flags.keyMax = ""
 	flags.partitionKey = ""
+	flags.secondaryIndex = ""
 }
 
 func init() {
 	Cmd.Flags().StringVarP(&Config.keyMin, "key-min", "s", "", "Key range minimum (inclusive)")
 	Cmd.Flags().StringVarP(&Config.keyMax, "key-max", "e", "", "Key range maximum (exclusive)")
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
+	Cmd.Flags().StringVar(&Config.secondaryIndex, "index", "", "Secondary Index")
 }
 
 var Cmd = &cobra.Command{
@@ -63,6 +66,10 @@ func exec(cmd *cobra.Command, _ []string) error {
 	if Config.keyMax == "" {
 		// By default, do not list internal keys
 		Config.keyMax = "__oxia/"
+	}
+
+	if Config.secondaryIndex != "" {
+		options = append(options, oxia.UseIndex(Config.secondaryIndex))
 	}
 
 	if Config.partitionKey != "" {
