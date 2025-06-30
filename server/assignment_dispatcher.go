@@ -223,12 +223,12 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	// considered "ready" and it will be able to respond to service discovery requests
 	s.healthServer.SetServingStatus(rpc.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
 
+	s.Lock()
+	defer s.Unlock()
+
 	s.log.Info("Update shares assignments.",
 		slog.Any("previous", s.assignments),
 		slog.Any("current", assignments))
-
-	s.Lock()
-	defer s.Unlock()
 
 	s.assignments = assignments
 
