@@ -29,12 +29,12 @@ var (
 )
 
 type flags struct {
-	keyMin             string
-	keyMax             string
-	hexDump            bool
-	includeVersion     bool
-	partitionKey       string
-	secondaryIndexName string
+	keyMin         string
+	keyMax         string
+	hexDump        bool
+	includeVersion bool
+	partitionKey   string
+	secondaryIndex string
 }
 
 func (flags *flags) Reset() {
@@ -43,6 +43,7 @@ func (flags *flags) Reset() {
 	flags.hexDump = false
 	flags.includeVersion = false
 	flags.partitionKey = ""
+	flags.secondaryIndex = ""
 }
 
 func init() {
@@ -51,7 +52,7 @@ func init() {
 	Cmd.Flags().BoolVarP(&Config.includeVersion, "include-version", "v", false, "Include the record version object")
 	Cmd.Flags().BoolVar(&Config.hexDump, "hex", false, "Print the value in HexDump format")
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
-	Cmd.Flags().StringVarP(&Config.secondaryIndexName, "secondary-index", "s", "", "secondary index name")
+	Cmd.Flags().StringVar(&Config.secondaryIndex, "index", "", "Secondary Index")
 }
 
 var Cmd = &cobra.Command{
@@ -74,8 +75,8 @@ func exec(cmd *cobra.Command, _ []string) error {
 	if Config.partitionKey != "" {
 		options = append(options, oxia.PartitionKey(Config.partitionKey))
 	}
-	if Config.secondaryIndexName != "" {
-		options = append(options, oxia.UseIndex(Config.secondaryIndexName))
+	if Config.secondaryIndex != "" {
+		options = append(options, oxia.UseIndex(Config.secondaryIndex))
 	}
 
 	if Config.keyMax == "" {
