@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"reflect"
 	"sync"
 	"time"
@@ -29,6 +28,10 @@ import (
 	"go.uber.org/multierr"
 	"golang.org/x/exp/maps"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/coordinator/actions"
+	"github.com/oxia-db/oxia/coordinator/selectors"
+	leaderselector "github.com/oxia-db/oxia/coordinator/selectors/leader"
 
 	"github.com/oxia-db/oxia/coordinator/resources"
 
@@ -79,6 +82,8 @@ type ShardController interface {
 	SwapNode(from model.Server, to model.Server) error
 	DeleteShard()
 
+	Election(action *actions.ElectionAction) string
+
 	Term() int64
 	Leader() *model.Server
 	Status() model.ShardStatus
@@ -92,11 +97,13 @@ type shardController struct {
 	shardMetadataMutex sync.RWMutex
 	rpc                rpc.Provider
 
+	leaderSelector selectors.Selector[*leaderselector.Context, model.Server]
+
 	eventListener  ShardEventListener
 	configResource resources.ClusterConfigResource
 	statusResource resources.StatusResource
 
-	electionOp              chan any
+	electionOp              chan *actions.ElectionAction
 	deleteOp                chan any
 	nodeFailureOp           chan model.Server
 	swapNodeOp              chan swapNodeRequest
@@ -140,7 +147,8 @@ func NewShardController(
 		configResource:          configResource,
 		statusResource:          statusResource,
 		eventListener:           eventListener,
-		electionOp:              make(chan any, chanBufferSize),
+		leaderSelector:          leaderselector.NewSelector(),
+		electionOp:              make(chan *actions.ElectionAction, chanBufferSize),
 		deleteOp:                make(chan any, chanBufferSize),
 		nodeFailureOp:           make(chan model.Server, chanBufferSize),
 		swapNodeOp:              make(chan swapNodeRequest, chanBufferSize),
@@ -187,6 +195,14 @@ func NewShardController(
 	return s
 }
 
+func (s *shardController) Election(action *actions.ElectionAction) string {
+	clonedAction := action.Clone()
+	clonedAction.Waiter.Add(1)
+	s.electionOp <- clonedAction
+	clonedAction.Waiter.Wait()
+	return clonedAction.NewLeader
+}
+
 func (s *shardController) run() {
 	defer s.wg.Done()
 	// Do initial check or leader election
@@ -194,7 +210,7 @@ func (s *shardController) run() {
 	case s.shardMetadata.Status == model.ShardStatusDeleting:
 		s.DeleteShard()
 	case s.shardMetadata.Leader == nil || s.shardMetadata.Status != model.ShardStatusSteadyState:
-		s.electLeaderWithRetries()
+		s.electLeaderWithRetries(nil)
 	default:
 		s.log.Info(
 			"There is already a node marked as leader on the shard, verifying",
@@ -202,7 +218,7 @@ func (s *shardController) run() {
 		)
 
 		if !s.verifyCurrentEnsemble() {
-			s.electLeaderWithRetries()
+			s.electLeaderWithRetries(nil)
 		} else {
 			s.SyncServerAddress()
 		}
@@ -230,8 +246,8 @@ func (s *shardController) run() {
 		case a := <-s.newTermAndAddFollowerOp:
 			s.internalNewTermAndAddFollower(a.ctx, a.node, a.res)
 
-		case <-s.electionOp:
-			s.electLeaderWithRetries()
+		case eo := <-s.electionOp:
+			s.electLeaderWithRetries(eo)
 		}
 	}
 }
@@ -249,7 +265,7 @@ func (s *shardController) handleNodeFailure(failedNode model.Server) {
 			"Detected failure on shard leader",
 			slog.Any("leader", failedNode),
 		)
-		s.electLeaderWithRetries()
+		s.electLeaderWithRetries(nil)
 	}
 }
 
@@ -304,8 +320,10 @@ func (s *shardController) verifyCurrentEnsemble() bool {
 	return true
 }
 
-func (s *shardController) electLeaderWithRetries() {
-	_ = backoff.RetryNotify(s.electLeader, time2.NewBackOff(s.ctx),
+func (s *shardController) electLeaderWithRetries(ea *actions.ElectionAction) {
+	newLeader, _ := backoff.RetryNotifyWithData[string](func() (string, error) {
+		return s.electLeader()
+	}, time2.NewBackOff(s.ctx),
 		func(err error, duration time.Duration) {
 			s.leaderElectionsFailed.Inc()
 			s.log.Warn(
@@ -314,9 +332,12 @@ func (s *shardController) electLeaderWithRetries() {
 				slog.Duration("retry-after", duration),
 			)
 		})
+	if ea != nil {
+		ea.Done(newLeader)
+	}
 }
 
-func (s *shardController) electLeader() error {
+func (s *shardController) electLeader() (string, error) {
 	timer := s.leaderElectionLatency.Timer()
 
 	if s.currentElectionCancel != nil {
@@ -344,10 +365,10 @@ func (s *shardController) electLeader() error {
 	// Send NewTerm to all the ensemble members
 	fr, err := s.newTermQuorum()
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	newLeader, followers := selectNewLeader(fr)
+	newLeader, followers := s.selectNewLeader(fr)
 
 	if s.log.Enabled(context.Background(), slog.LevelInfo) {
 		f := make([]struct {
@@ -369,7 +390,7 @@ func (s *shardController) electLeader() error {
 	}
 
 	if err = s.becomeLeader(newLeader, followers); err != nil {
-		return err
+		return "", err
 	}
 
 	metadata := s.shardMetadata.Clone()
@@ -378,7 +399,7 @@ func (s *shardController) electLeader() error {
 
 	if len(metadata.RemovedNodes) > 0 {
 		if err = s.deletingRemovedNodes(); err != nil {
-			return err
+			return "", err
 		}
 
 		metadata.RemovedNodes = nil
@@ -402,7 +423,7 @@ func (s *shardController) electLeader() error {
 	}
 
 	s.keepFencingFailedFollowers(followers)
-	return nil
+	return newLeader.GetIdentifier(), nil
 }
 
 func (s *shardController) getRefreshedEnsemble() []model.Server {
@@ -679,8 +700,7 @@ func (s *shardController) deleteShardRpc(ctx context.Context, node model.Server)
 	return err
 }
 
-func selectNewLeader(newTermResponses map[model.Server]*proto.EntryId) (
-	leader model.Server, followers map[model.Server]*proto.EntryId) {
+func chooseCandidates(newTermResponses map[model.Server]*proto.EntryId) []model.Server {
 	// Select all the nodes that have the highest term first
 	var currentMaxTerm int64 = -1
 	// Select all the nodes that have the highest entry in the wal
@@ -703,9 +723,18 @@ func selectNewLeader(newTermResponses map[model.Server]*proto.EntryId) (
 			}
 		}
 	}
+	return candidates
+}
 
-	// Select a random leader among the nodes with the highest entry in the wal
-	leader = candidates[rand.Intn(len(candidates))] //nolint:gosec
+func (s *shardController) selectNewLeader(newTermResponses map[model.Server]*proto.EntryId) (
+	leader model.Server, followers map[model.Server]*proto.EntryId) {
+	candidates := chooseCandidates(newTermResponses)
+
+	server, _ := s.leaderSelector.Select(&leaderselector.Context{
+		Candidates: candidates,
+		Status:     s.statusResource.Load(),
+	})
+	leader = server
 	followers = make(map[model.Server]*proto.EntryId)
 	for a, e := range newTermResponses {
 		if a != leader {
@@ -853,7 +882,7 @@ func (s *shardController) swapNode(from model.Server, to model.Server, res chan 
 		slog.Any("from", from),
 		slog.Any("to", to),
 	)
-	if err := s.electLeader(); err != nil {
+	if _, err := s.electLeader(); err != nil {
 		res <- err
 		return
 	}

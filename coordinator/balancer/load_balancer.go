@@ -16,9 +16,10 @@ package balancer
 
 import (
 	"io"
-	"time"
 
 	"golang.org/x/net/context"
+
+	"github.com/oxia-db/oxia/coordinator/actions"
 
 	"github.com/oxia-db/oxia/coordinator/resources"
 
@@ -28,11 +29,10 @@ import (
 type Options struct {
 	context.Context
 
-	ScheduleInterval time.Duration
-	QuarantineTime   time.Duration
-
 	StatusResource        resources.StatusResource
 	ClusterConfigResource resources.ClusterConfigResource
+
+	NodeAvailableJudger func(nodeID string) bool
 }
 
 type LoadBalancer interface {
@@ -40,7 +40,7 @@ type LoadBalancer interface {
 
 	Trigger()
 
-	Action() <-chan Action
+	Action() <-chan actions.Action
 
 	IsBalanced() bool
 

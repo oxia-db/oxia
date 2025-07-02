@@ -12,29 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package actions
 
-import (
-	"sync"
-	"testing"
+import "sync"
 
-	"github.com/oxia-db/oxia/coordinator/actions"
-	"github.com/oxia-db/oxia/coordinator/model"
-)
+type ElectionAction struct {
+	Shard int64
 
-func TestActionSwapDone(t *testing.T) {
-	group := &sync.WaitGroup{}
-	group.Add(1)
-	swapAction := actions.SwapNodeAction{
-		Shard: int64(1),
-		From: model.Server{
-			Internal: "sv-1",
-		},
-		To: model.Server{
-			Internal: "sv-2",
-		},
-		Waiter: group,
+	NewLeader string
+	Waiter    *sync.WaitGroup
+}
+
+func (e *ElectionAction) Done(leader any) {
+	e.NewLeader = leader.(string) //nolint:revive
+	e.Waiter.Done()
+}
+
+func (*ElectionAction) Type() Type {
+	return Election
+}
+
+func (e *ElectionAction) Clone() *ElectionAction {
+	return &ElectionAction{
+		Shard:  e.Shard,
+		Waiter: &sync.WaitGroup{},
 	}
-	swapAction.Done(nil)
-	group.Wait()
 }

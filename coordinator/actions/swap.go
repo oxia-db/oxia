@@ -12,13 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package actions
 
-import "time"
+import (
+	"sync"
 
-const (
-	defaultLoadBalancerScheduleInterval = time.Second * 30
-	defaultQuarantineTime               = time.Minute * 5
+	"github.com/oxia-db/oxia/coordinator/model"
 )
 
-var triggerEvent = struct{}{}
+var _ Action = &SwapNodeAction{}
+
+type SwapNodeAction struct {
+	Shard int64
+	From  model.Server
+	To    model.Server
+
+	Waiter *sync.WaitGroup
+}
+
+func (s *SwapNodeAction) Done(_ any) {
+	s.Waiter.Done()
+}
+
+func (*SwapNodeAction) Type() Type {
+	return SwapNode
+}
