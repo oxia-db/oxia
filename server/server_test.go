@@ -21,6 +21,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/oxia-db/oxia/common/rpc"
 )
 
 func TestNewServer(t *testing.T) {
@@ -47,4 +50,28 @@ func TestNewServer(t *testing.T) {
 
 	// Looks like exposition format
 	assert.Equal(t, "# HELP ", string(body[0:7]))
+}
+
+func TestNewServerClosableWithHealthWatch(t *testing.T) {
+	config := Config{
+		InternalServiceAddr: "localhost:0",
+		PublicServiceAddr:   "localhost:0",
+		MetricsServiceAddr:  "localhost:0",
+	}
+
+	server, err := New(config)
+	assert.NoError(t, err)
+
+	clientPool := rpc.NewClientPool(nil, nil)
+
+	client, closer, err := clientPool.GetHealthRpc(fmt.Sprintf("127.0.0.1:%v", server.InternalPort()))
+	assert.NoError(t, err)
+	defer closer.Close()
+	watchStream, err := client.Watch(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: ""})
+	assert.NoError(t, err)
+
+	err = server.Close()
+	assert.NoError(t, err)
+
+	assert.NoError(t, watchStream.CloseSend())
 }

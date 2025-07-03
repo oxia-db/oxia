@@ -15,12 +15,12 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"log/slog"
 	"time"
 
 	"go.uber.org/multierr"
-	"google.golang.org/grpc/health"
 
 	"github.com/oxia-db/oxia/common/rpc"
 
@@ -61,7 +61,7 @@ type Server struct {
 	walFactory                wal.Factory
 	kvFactory                 kv.Factory
 
-	healthServer *health.Server
+	healthServer rpc.HealthServer
 }
 
 func New(config Config) (*Server, error) {
@@ -91,7 +91,7 @@ func NewWithGrpcProvider(config Config, provider rpc.GrpcProvider, replicationRp
 			SyncData:    true,
 		}),
 		kvFactory:    kvFactory,
-		healthServer: health.NewServer(),
+		healthServer: rpc.NewCancelableHeathServer(context.Background()),
 	}
 
 	s.shardsDirector = NewShardsDirector(config, s.walFactory, s.kvFactory, replicationRpcProvider)
@@ -127,9 +127,8 @@ func (s *Server) InternalPort() int {
 }
 
 func (s *Server) Close() error {
-	s.healthServer.Shutdown()
-
 	err := multierr.Combine(
+		s.healthServer.Close(),
 		s.shardAssignmentDispatcher.Close(),
 		s.shardsDirector.Close(),
 		s.publicRpcServer.Close(),
