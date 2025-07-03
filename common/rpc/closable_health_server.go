@@ -35,9 +35,9 @@ type HealthServer interface {
 	Resume()
 }
 
-var _ HealthServer = &ClosableHeathServer{}
+var _ HealthServer = &ClosableHealthServer{}
 
-type ClosableHeathServer struct {
+type ClosableHealthServer struct {
 	sync.WaitGroup
 	*health.Server
 
