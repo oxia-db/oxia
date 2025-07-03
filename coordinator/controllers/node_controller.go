@@ -19,9 +19,11 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	commonio "github.com/oxia-db/oxia/common/io"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
@@ -71,6 +73,7 @@ type nodeController struct {
 	cancel context.CancelFunc
 	node   model.Server
 	rpc    rpc.Provider
+	closed atomic.Bool
 
 	statusLock sync.RWMutex
 	status     NodeStatus
@@ -121,9 +124,13 @@ func (n *nodeController) maybeInitHealthClient() {
 }
 
 func (n *nodeController) Close() error {
+	if !n.closed.CompareAndSwap(false, true) {
+		return nil
+	}
 	n.nodeIsRunningGauge.Unregister()
 	n.cancel()
 	n.Wait()
+
 	err := n.healthClientCloser.Close()
 	n.Info("Closed node controller")
 	return err
@@ -302,6 +309,9 @@ func newNodeController(parentCtx context.Context, node model.Server,
 			slog.String("component", "node-controller"),
 			slog.Any("node", nodeID),
 		),
+		healthClientOnce:           sync.Once{},
+		healthClient:               nil,
+		healthClientCloser:         commonio.NopCloser{},
 		healthCheckBackoff:         commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
 		dispatchAssignmentsBackoff: commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
 		failedHealthChecks: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
