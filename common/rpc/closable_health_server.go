@@ -59,7 +59,7 @@ func (c *ClosableHeathServer) Watch(request *grpc_health_v1.HealthCheckRequest, 
 		case err := <-finishCh:
 			return err
 		case <-c.ctx.Done():
-			return c.ctx.Err()
+			return nil
 		}
 	}
 }
