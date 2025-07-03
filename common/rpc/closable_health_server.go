@@ -46,7 +46,7 @@ type ClosableHealthServer struct {
 }
 
 // Watch support to monitor the context of server to allow close health server manually.
-func (c *ClosableHeathServer) Watch(request *grpc_health_v1.HealthCheckRequest, g grpc.ServerStreamingServer[grpc_health_v1.HealthCheckResponse]) error {
+func (c *ClosableHealthServer) Watch(request *grpc_health_v1.HealthCheckRequest, g grpc.ServerStreamingServer[grpc_health_v1.HealthCheckResponse]) error {
 	finishCh := make(chan error, 1)
 	c.Add(1)
 	go func() {
@@ -64,7 +64,7 @@ func (c *ClosableHeathServer) Watch(request *grpc_health_v1.HealthCheckRequest, 
 	}
 }
 
-func (c *ClosableHeathServer) Close() error {
+func (c *ClosableHealthServer) Close() error {
 	c.Shutdown()
 
 	c.cancel()
@@ -72,7 +72,7 @@ func (c *ClosableHeathServer) Close() error {
 	return nil
 }
 
-func NewCancelableHealthServer(ctx context.Context) HealthServer {
+func NewClosableHealthServer(ctx context.Context) HealthServer {
 	ctx, cancelFunc := context.WithCancel(ctx)
 	return &ClosableHealthServer{
 		ctx:    ctx,

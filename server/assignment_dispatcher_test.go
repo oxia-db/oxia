@@ -34,7 +34,7 @@ import (
 )
 
 func TestUninitializedAssignmentDispatcher(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc.NewCancelableHeathServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
 	mockClient := newMockShardAssignmentClientStream()
 	assert.False(t, dispatcher.Initialized())
 	req := &proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace}
@@ -44,7 +44,7 @@ func TestUninitializedAssignmentDispatcher(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc.NewCancelableHeathServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
 	coordinatorStream := newMockShardAssignmentControllerStream()
 	go func() {
 		err := dispatcher.PushShardAssignments(coordinatorStream)
@@ -85,7 +85,7 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
-	healthServer := rpc.NewCancelableHeathServer(t.Context())
+	healthServer := rpc.NewClosableHealthServer(t.Context())
 	dispatcher := NewShardAssignmentDispatcher(healthServer)
 	coordinatorStream := newMockShardAssignmentControllerStream()
 	go func() {
@@ -132,7 +132,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	shard1InitialAssignment := newShardAssignment(1, "server2", 100, math.MaxUint32)
 	shard1UpdatedAssignment := newShardAssignment(1, "server3", 100, math.MaxUint32)
 
-	dispatcher := NewShardAssignmentDispatcher(rpc.NewCancelableHeathServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
 
 	coordinatorStream := newMockShardAssignmentControllerStream()
 	go func() {
@@ -214,7 +214,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc.NewCancelableHeathServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
 
 	coordinatorStream := newMockShardAssignmentControllerStream()
 	go func() {

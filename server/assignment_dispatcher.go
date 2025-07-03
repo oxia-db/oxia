@@ -272,7 +272,7 @@ func NewShardAssignmentDispatcher(healthServer rpc.HealthServer) ShardAssignment
 }
 
 func NewStandaloneShardAssignmentDispatcher(numShards uint32) ShardAssignmentsDispatcher {
-	assignmentDispatcher := NewShardAssignmentDispatcher(rpc.NewCancelableHeathServer(context.Background())).(*shardAssignmentDispatcher) //nolint:revive
+	assignmentDispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(context.Background())).(*shardAssignmentDispatcher) //nolint:revive
 	assignmentDispatcher.standalone = true
 	res := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{

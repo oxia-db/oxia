@@ -91,7 +91,7 @@ func NewWithGrpcProvider(config Config, provider rpc.GrpcProvider, replicationRp
 			SyncData:    true,
 		}),
 		kvFactory:    kvFactory,
-		healthServer: rpc.NewCancelableHeathServer(context.Background()),
+		healthServer: rpc.NewClosableHealthServer(context.Background()),
 	}
 
 	s.shardsDirector = NewShardsDirector(config, s.walFactory, s.kvFactory, replicationRpcProvider)

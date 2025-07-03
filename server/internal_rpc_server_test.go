@@ -28,7 +28,7 @@ import (
 )
 
 func TestInternalHealthCheck(t *testing.T) {
-	healthServer := rpc.NewCancelableHeathServer(t.Context())
+	healthServer := rpc.NewClosableHealthServer(t.Context())
 	server, err := newInternalRpcServer(rpc.Default, "localhost:0", nil,
 		NewShardAssignmentDispatcher(healthServer), healthServer, nil)
 	assert.NoError(t, err)
