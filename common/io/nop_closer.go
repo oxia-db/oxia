@@ -19,9 +19,8 @@ import "io"
 var _ io.Closer = &NopCloser{}
 
 type NopCloser struct {
-	io.Closer
 }
 
-func (n *NopCloser) Close() error {
+func (*NopCloser) Close() error {
 	return nil
 }
