@@ -65,6 +65,8 @@ func (c *ClosableHeathServer) Watch(request *grpc_health_v1.HealthCheckRequest, 
 }
 
 func (c *ClosableHeathServer) Close() error {
+	c.Shutdown()
+
 	c.cancel()
 	c.Wait()
 
