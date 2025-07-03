@@ -138,7 +138,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 			_ = nc.Close()
 			delete(c.drainingNodes, sa.GetIdentifier())
 		}
-		c.nodeControllers[sa.GetIdentifier()] = controllers.NewNodeController(sa, c, c, c.rpc)
+		c.nodeControllers[sa.GetIdentifier()] = controllers.NewNodeController(c.ctx, sa, c, c, c.rpc)
 	}
 
 	// Check for nodes to remove
@@ -272,7 +272,11 @@ func (c *coordinator) NodeBecameUnavailable(node model.Server) {
 	if nc, ok := c.drainingNodes[node.GetIdentifier()]; ok {
 		// The draining node became unavailable. Let's remove it
 		delete(c.drainingNodes, node.GetIdentifier())
-		_ = nc.Close()
+		go func() {
+			// the callback will come form the node controller internal health check goroutine,
+			// we should close it in the background goroutines to avoid any unexpected deadlock here
+			_ = nc.Close()
+		}()
 	}
 
 	ctrls := make(map[int64]controllers.ShardController)
@@ -438,7 +442,7 @@ func NewCoordinator(meta metadata.Provider,
 
 	// init node controllers
 	for _, node := range clusterConfig.Servers {
-		c.nodeControllers[node.GetIdentifier()] = controllers.NewNodeController(node, c, c, c.rpc)
+		c.nodeControllers[node.GetIdentifier()] = controllers.NewNodeController(c.ctx, node, c, c, c.rpc)
 	}
 
 	// init status

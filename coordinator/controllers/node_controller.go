@@ -27,24 +27,10 @@ import (
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
-	time2 "github.com/oxia-db/oxia/common/time"
+	commontime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/coordinator/model"
 	"github.com/oxia-db/oxia/coordinator/rpc"
 	"github.com/oxia-db/oxia/proto"
-)
-
-type NodeStatus uint32
-
-const (
-	Running NodeStatus = iota
-	NotRunning
-	Draining //
-)
-
-const (
-	healthCheckProbeInterval   = 2 * time.Second
-	healthCheckProbeTimeout    = 2 * time.Second
-	defaultInitialRetryBackoff = 10 * time.Second
 )
 
 type ShardAssignmentsProvider interface {
@@ -62,238 +48,115 @@ type NodeController interface {
 }
 
 type nodeController struct {
-	sync.Mutex
-	server                   model.Server
-	status                   NodeStatus
-	shardAssignmentsProvider ShardAssignmentsProvider
-	nodeAvailabilityListener NodeEventListener
-	rpc                      rpc.Provider
-	log                      *slog.Logger
+	*slog.Logger
+	sync.WaitGroup
+	ShardAssignmentsProvider
+	NodeEventListener
 
-	// This is the overall context for the node controller
-	// it gets created once and canceled when the controller is closed
 	ctx    context.Context
 	cancel context.CancelFunc
+	node   model.Server
+	rpc    rpc.Provider
 
-	// This context is re-created each time we have a health-check failure
-	healthCheckCtx    context.Context
-	healthCheckCancel context.CancelFunc
+	statusLock sync.RWMutex
+	status     NodeStatus
 
-	initialRetryBackoff time.Duration
+	healthClientOnce   sync.Once
+	healthClient       grpc_health_v1.HealthClient
+	healthClientCloser io.Closer
+
+	healthCheckBackoff         backoff.BackOff
+	dispatchAssignmentsBackoff backoff.BackOff
 
 	nodeIsRunningGauge metric.Gauge
 	failedHealthChecks metric.Counter
 }
 
-func NewNodeController(addr model.Server,
-	shardAssignmentsProvider ShardAssignmentsProvider,
-	nodeAvailabilityListener NodeEventListener,
-	rpcProvider rpc.Provider) NodeController {
-	return newNodeController(addr, shardAssignmentsProvider, nodeAvailabilityListener, rpcProvider, defaultInitialRetryBackoff)
-}
-
-func newNodeController(server model.Server,
-	shardAssignmentsProvider ShardAssignmentsProvider,
-	nodeAvailabilityListener NodeEventListener,
-	rpcProvider rpc.Provider,
-	initialRetryBackoff time.Duration) NodeController {
-	labels := map[string]any{"node": server.GetIdentifier()}
-	nc := &nodeController{
-		server:                   server,
-		shardAssignmentsProvider: shardAssignmentsProvider,
-		nodeAvailabilityListener: nodeAvailabilityListener,
-		rpc:                      rpcProvider,
-		status:                   Running,
-		log: slog.With(
-			slog.String("component", "node-controller"),
-			slog.Any("server", server),
-		),
-		initialRetryBackoff: initialRetryBackoff,
-
-		failedHealthChecks: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
-			"The number of failed health checks to a node", "count", labels),
-	}
-
-	nc.ctx, nc.cancel = context.WithCancel(context.Background())
-	nc.healthCheckCtx, nc.healthCheckCancel = context.WithCancel(nc.ctx)
-
-	nc.nodeIsRunningGauge = metric.NewGauge("oxia_coordinator_node_running",
-		"Whether the node is considered to be running by the coordinator", "count", labels, func() int64 {
-			if nc.status == Running {
-				return 1
-			}
-			return 0
-		})
-
-	go process.DoWithLabels(
-		nc.ctx,
-		map[string]string{
-			"oxia":   "node-controller",
-			"server": nc.server.GetIdentifier(),
-		},
-		nc.healthCheckWithRetries,
-	)
-
-	go process.DoWithLabels(
-		nc.ctx,
-		map[string]string{
-			"oxia":   "node-controller-send-updates",
-			"server": nc.server.GetIdentifier(),
-		},
-		nc.sendAssignmentsUpdatesWithRetries,
-	)
-
-	nc.log.Info("Started node controller")
-	return nc
-}
-
 func (n *nodeController) Status() NodeStatus {
-	n.Lock()
-	defer n.Unlock()
+	n.statusLock.RLock()
+	defer n.statusLock.RUnlock()
 	return n.status
 }
 
 func (n *nodeController) SetStatus(status NodeStatus) {
-	n.Lock()
-	defer n.Unlock()
+	n.statusLock.Lock()
+	defer n.statusLock.Unlock()
+	previous := n.status
 	n.status = status
-	n.log.Info("Changed status", slog.Any("status", status))
+	n.Info("Changed status", slog.Any("from", previous), slog.Any("to", status))
 }
 
-func (n *nodeController) healthCheckWithRetries() {
-	backOff := time2.NewBackOffWithInitialInterval(n.ctx, n.initialRetryBackoff)
-	_ = backoff.RetryNotify(func() error {
-		return n.healthCheck(backOff)
-	}, backOff, func(err error, duration time.Duration) {
-		if n.Status() == Draining {
-			// Stop the health check and close
-			_ = n.Close()
-			n.nodeAvailabilityListener.NodeBecameUnavailable(n.server)
-			return
-		}
-
-		n.log.Warn(
-			"Storage node health check failed",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-
-		n.Lock()
-		defer n.Unlock()
-		if n.status == Running {
-			n.status = NotRunning
-			n.failedHealthChecks.Inc()
-			n.nodeAvailabilityListener.NodeBecameUnavailable(n.server)
-		}
+func (n *nodeController) maybeInitHealthClient() {
+	n.healthClientOnce.Do(func() {
+		_ = backoff.RetryNotify(func() error {
+			health, closer, err := n.rpc.GetHealthClient(n.node)
+			if err != nil {
+				return err
+			}
+			n.healthClient = health
+			n.healthClientCloser = closer
+			return nil
+		}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+			n.Warn(
+				"Failed to create health client to storage node",
+				slog.Duration("retry-after", duration),
+				slog.Any("error", err),
+			)
+		})
 	})
 }
 
-func (n *nodeController) healthCheckLoop(ctx context.Context, health grpc_health_v1.HealthClient) {
-	ticker := time.NewTicker(healthCheckProbeInterval)
-
-	for {
-		select {
-		case <-ticker.C:
-			pingCtx, pingCancel := context.WithTimeout(ctx, healthCheckProbeTimeout)
-
-			res, err := health.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
-			pingCancel()
-			if err2 := n.processHealthCheckResponse(res, err); err2 != nil {
-				n.log.Warn("Node stopped responding to ping")
-				return
-			}
-
-		case <-ctx.Done():
-			return
-		}
-	}
+func (n *nodeController) Close() error {
+	n.nodeIsRunningGauge.Unregister()
+	n.cancel()
+	n.Wait()
+	err := n.healthClientCloser.Close()
+	n.Info("Closed node controller")
+	return err
 }
 
-func (n *nodeController) healthCheck(backoff backoff.BackOff) error {
-	n.log.Debug("Start new health check cycle")
-	health, closer, err := n.rpc.GetHealthClient(n.server)
-	if err != nil {
-		n.log.Debug("Failed to get health check client", slog.Any("error", err))
-		return err
-	}
-
-	defer closer.Close()
-
-	ctx, cancel := context.WithCancel(n.ctx)
-	defer cancel()
-
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":   "node-controller-health-check-ping",
-			"server": n.server.GetIdentifier(),
-		},
-		func() {
-			defer cancel()
-			n.healthCheckLoop(ctx, health)
-		},
-	)
-
-	watch, err := health.Watch(ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
-	if err != nil {
-		return err
-	}
-
-	for ctx.Err() == nil {
-		res, err := watch.Recv()
-
-		if err2 := n.processHealthCheckResponse(res, err); err2 != nil {
-			n.log.Warn("Node watcher check failed", slog.Any("error", err2))
-			return err2
-		}
-
-		backoff.Reset()
-	}
-
-	return ctx.Err()
-}
-
-func (n *nodeController) processHealthCheckResponse(res *grpc_health_v1.HealthCheckResponse, err error) error {
-	if err != nil {
-		return err
-	}
-
-	if res.Status != grpc_health_v1.HealthCheckResponse_SERVING {
-		return errors.New("node is not actively serving")
-	}
-
-	n.Lock()
-	if n.status == NotRunning {
-		n.log.Info("Storage node is back online")
-
-		// To avoid the send assignments stream to miss the notification about the current
-		// node went down, we interrupt the current stream when the ping on the node fails
-		n.rpc.ClearPooledConnections(n.server)
-		n.healthCheckCancel()
-		n.log.Debug("Cancelled the send assignments stream")
-		n.healthCheckCtx, n.healthCheckCancel = context.WithCancel(n.ctx)
-	}
-
-	n.status = Running
-	n.Unlock()
-
-	return nil
-}
-
-func (n *nodeController) sendAssignmentsUpdatesWithRetries() {
-	backOff := time2.NewBackOffWithInitialInterval(n.ctx, n.initialRetryBackoff)
-
+func (n *nodeController) sendAssignmentsDispatchWithRetries() {
+	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
-		return n.sendAssignmentsUpdates(backOff)
-	}, backOff, func(err error, duration time.Duration) {
-		if n.Status() == Draining {
-			// Stop the health check and close
-			_ = n.Close()
-			n.nodeAvailabilityListener.NodeBecameUnavailable(n.server)
-			return
-		}
+		n.Debug("Ready to send assignments")
 
-		n.log.Warn(
+		stream, err := n.rpc.PushShardAssignments(n.ctx, n.node)
+		if err != nil {
+			n.Debug("Failed to create shard assignments stream", slog.Any("error", err))
+			return err
+		}
+		streamCtx := stream.Context()
+		var assignments *proto.ShardAssignments
+		for {
+			select {
+			case <-n.ctx.Done():
+				return nil
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			default:
+				n.Debug(
+					"Waiting for next assignments update",
+					slog.Any("current-assignments", assignments),
+				)
+				if assignments, err = n.WaitForNextUpdate(streamCtx, assignments); err != nil {
+					n.Debug("Failed to send assignments", slog.Any("error", err))
+					return err
+				}
+				if assignments == nil {
+					continue
+				}
+
+				n.Debug("Sending assignments", slog.Any("assignments", assignments))
+				if err := stream.Send(assignments); err != nil {
+					n.Debug("Failed to send assignments", slog.Any("error", err))
+					return err
+				}
+				n.Debug("Send assignments completed successfully")
+				n.dispatchAssignmentsBackoff.Reset()
+			}
+		}
+	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {
+		n.Warn(
 			"Failed to send assignments updates to storage node",
 			slog.Duration("retry-after", duration),
 			slog.Any("error", err),
@@ -301,77 +164,173 @@ func (n *nodeController) sendAssignmentsUpdatesWithRetries() {
 	})
 }
 
-func (n *nodeController) sendAssignmentsUpdateOnce(
-	stream proto.OxiaCoordination_PushShardAssignmentsClient,
-	assignments *proto.ShardAssignments,
-) (*proto.ShardAssignments, error) {
-	n.log.Debug(
-		"Waiting for next assignments update",
-		slog.Any("current-assignments", assignments),
-	)
-	assignments, err := n.shardAssignmentsProvider.WaitForNextUpdate(stream.Context(), assignments)
-	if err != nil {
-		return nil, err
-	}
-
-	if assignments == nil {
-		n.log.Debug("Assignments are nil")
-		return assignments, nil
-	}
-
-	n.log.Debug(
-		"Sending assignments",
-		slog.Any("assignments", assignments),
-	)
-
-	if err := stream.Send(assignments); err != nil {
-		n.log.Debug(
-			"Failed to send assignments",
+func (n *nodeController) healthPingWithRetries() {
+	defer n.Done()
+	_ = backoff.RetryNotify(func() error {
+		n.maybeInitHealthClient()
+		ticker := time.NewTicker(healthCheckProbeInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-n.ctx.Done():
+				return nil
+			case <-ticker.C:
+				pingCtx, pingCancel := context.WithTimeout(n.ctx, healthCheckProbeTimeout)
+				response, err := n.healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
+				pingCancel()
+				if err := n.healthCheckHandler(response, err); err != nil {
+					n.Warn("Node stopped responding to ping")
+					return err
+				}
+			}
+		}
+	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {
+		n.Warn(
+			"Failed to send ping to storage node",
+			slog.Duration("retry-after", duration),
 			slog.Any("error", err),
 		)
-		return nil, err
-	}
-
-	n.log.Debug("Send assignments completed successfully")
-	return assignments, nil
+		n.becomeUnavailable()
+	})
 }
 
-func (n *nodeController) sendAssignmentsUpdates(backoff backoff.BackOff) error {
-	n.log.Debug("Ready to send assignments")
-	n.Lock()
-	ctx := n.healthCheckCtx
-	n.Unlock()
+func (n *nodeController) healthWatchWithRetries() {
+	defer n.Done()
+	_ = backoff.RetryNotify(func() error {
+		n.Debug("Start new health check cycle")
+		n.maybeInitHealthClient()
 
-	stream, err := n.rpc.PushShardAssignments(ctx, n.server)
+		watchStream, err := n.healthClient.Watch(n.ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
+		if err != nil {
+			return err
+		}
+		for {
+			select {
+			case <-n.ctx.Done():
+				return nil
+			default:
+				if err := n.healthCheckHandler(watchStream.Recv()); err != nil {
+					return err
+				}
+			}
+		}
+	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
+		n.Warn("Storage node health check failed",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+		n.becomeUnavailable()
+	})
+}
+
+func (n *nodeController) becomeUnavailable() {
+	n.statusLock.Lock()
+	if n.status != Running && n.status != Draining { // double check with write lock
+		return
+	}
+	if n.status == Running {
+		n.status = NotRunning
+	}
+	n.statusLock.Unlock()
+
+	n.failedHealthChecks.Inc()
+	n.NodeBecameUnavailable(n.node)
+}
+
+func (n *nodeController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
-		n.log.Debug("Failed to create shard assignments stream", slog.Any("error", err))
+		n.Warn("Node watcher check failed", slog.Any("error", err))
 		return err
 	}
-
-	var assignments *proto.ShardAssignments
-
-	for {
-		select {
-		case <-n.ctx.Done():
-			return nil
-
-		default:
-			assignments, err = n.sendAssignmentsUpdateOnce(stream, assignments)
-			if err != nil {
-				n.log.Debug("Failed to send assignments", slog.Any("error", err))
-				return err
-			}
-
-			n.log.Info("Sent new shareds assignments.", slog.Any("assignments", assignments))
-			backoff.Reset()
-		}
+	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
+		return errors.New("node is not actively serving")
 	}
+
+	n.statusLock.Lock()
+	if n.status == NotRunning {
+		n.Info("Storage node is back online")
+
+		// To avoid the send assignments stream to miss the notification about the current
+		// node went down, we interrupt the current stream when the ping on the node fails
+		n.rpc.ClearPooledConnections(n.node)
+		n.healthCheckBackoff.Reset()
+	}
+	n.status = Running
+	n.statusLock.Unlock()
+	return nil
 }
 
-func (n *nodeController) Close() error {
-	n.nodeIsRunningGauge.Unregister()
-	n.cancel()
+func NewNodeController(ctx context.Context, node model.Server,
+	shardAssignmentsProvider ShardAssignmentsProvider,
+	nodeEventListener NodeEventListener,
+	rpcProvider rpc.Provider) NodeController {
+	return newNodeController(ctx, node, shardAssignmentsProvider, nodeEventListener, rpcProvider, defaultInitialRetryBackoff)
+}
 
-	n.log.Info("Closed node controller")
-	return nil
+func newNodeController(parentCtx context.Context, node model.Server,
+	shardAssignmentsProvider ShardAssignmentsProvider,
+	nodeEventListener NodeEventListener,
+	rpcProvider rpc.Provider,
+	initialRetryBackoff time.Duration) NodeController {
+	nodeCtx, cancel := context.WithCancel(parentCtx)
+	nodeID := node.GetIdentifier()
+	labels := map[string]any{"node": nodeID}
+	nc := &nodeController{
+		ctx:                      nodeCtx,
+		cancel:                   cancel,
+		node:                     node,
+		ShardAssignmentsProvider: shardAssignmentsProvider,
+		NodeEventListener:        nodeEventListener,
+		rpc:                      rpcProvider,
+		statusLock:               sync.RWMutex{},
+		status:                   Running,
+		Logger: slog.With(
+			slog.String("component", "node-controller"),
+			slog.Any("node", nodeID),
+		),
+		healthCheckBackoff:         commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
+		dispatchAssignmentsBackoff: commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
+		failedHealthChecks: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
+			"The number of failed health checks to a node", "count", labels),
+	}
+	nc.nodeIsRunningGauge = metric.NewGauge("oxia_coordinator_node_running",
+		"Whether the node is considered to be running by the coordinator", "count", labels, func() int64 {
+			if nc.Status() == Running {
+				return 1
+			}
+			return 0
+		})
+
+	nc.Add(1)
+	go process.DoWithLabels(
+		nc.ctx,
+		map[string]string{
+			"component": "node-controller-health-watch",
+			"node":      nodeID,
+		},
+		nc.healthWatchWithRetries,
+	)
+
+	nc.Add(1)
+	go process.DoWithLabels(
+		nc.ctx,
+		map[string]string{
+			"component": "node-controller-health-ping",
+			"node":      nodeID,
+		},
+		nc.healthPingWithRetries,
+	)
+
+	nc.Add(1)
+	go process.DoWithLabels(
+		nc.ctx,
+		map[string]string{
+			"component": "node-controller-assignment-dispatcher",
+			"node":      nodeID,
+		},
+		nc.sendAssignmentsDispatchWithRetries,
+	)
+
+	nc.Info("Started node controller")
+	return nc
 }
