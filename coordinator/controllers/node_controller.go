@@ -23,9 +23,10 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	commonio "github.com/oxia-db/oxia/common/io"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	commonio "github.com/oxia-db/oxia/common/io"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
