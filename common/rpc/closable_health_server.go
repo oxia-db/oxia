@@ -72,9 +72,9 @@ func (c *ClosableHeathServer) Close() error {
 	return nil
 }
 
-func NewCancelableHeathServer(ctx context.Context) HealthServer {
+func NewCancelableHealthServer(ctx context.Context) HealthServer {
 	ctx, cancelFunc := context.WithCancel(ctx)
-	return &ClosableHeathServer{
+	return &ClosableHealthServer{
 		ctx:    ctx,
 		cancel: cancelFunc,
 		Server: health.NewServer(),
