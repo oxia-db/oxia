@@ -23,7 +23,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
@@ -86,8 +85,8 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
-	healthServer := health.NewServer()
-	dispatcher := NewShardAssignmentDispatcher(rpc.NewCancelableHeathServer(t.Context()))
+	healthServer := rpc.NewCancelableHeathServer(t.Context())
+	dispatcher := NewShardAssignmentDispatcher(healthServer)
 	coordinatorStream := newMockShardAssignmentControllerStream()
 	go func() {
 		err := dispatcher.PushShardAssignments(coordinatorStream)
