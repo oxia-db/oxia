@@ -33,6 +33,20 @@ import (
 	"github.com/oxia-db/oxia/proto"
 )
 
+type NodeStatus uint32
+
+const (
+	Running NodeStatus = iota
+	NotRunning
+	Draining //
+)
+
+const (
+	healthCheckProbeInterval   = 2 * time.Second
+	healthCheckProbeTimeout    = 2 * time.Second
+	defaultInitialRetryBackoff = 10 * time.Second
+)
+
 type ShardAssignmentsProvider interface {
 	WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error)
 }
@@ -197,7 +211,7 @@ func (n *nodeController) healthPingWithRetries() {
 func (n *nodeController) healthWatchWithRetries() {
 	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
-		n.Debug("Start new health check cycle")
+		n.Debug("Start new health watch cycle")
 		n.maybeInitHealthClient()
 
 		watchStream, err := n.healthClient.Watch(n.ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
@@ -215,7 +229,7 @@ func (n *nodeController) healthWatchWithRetries() {
 			}
 		}
 	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
-		n.Warn("Storage node health check failed",
+		n.Warn("Storage node health watch failed",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
@@ -225,7 +239,7 @@ func (n *nodeController) healthWatchWithRetries() {
 
 func (n *nodeController) becomeUnavailable() {
 	n.statusLock.Lock()
-	if n.status != Running && n.status != Draining { // double check with write lock
+	if n.status != Running && n.status != Draining {
 		return
 	}
 	if n.status == Running {
