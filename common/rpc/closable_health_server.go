@@ -35,9 +35,9 @@ type HealthServer interface {
 	Resume()
 }
 
-var _ HealthServer = &CloseableHeathServer{}
+var _ HealthServer = &ClosableHeathServer{}
 
-type CloseableHeathServer struct {
+type ClosableHeathServer struct {
 	sync.WaitGroup
 	*health.Server
 
@@ -46,7 +46,7 @@ type CloseableHeathServer struct {
 }
 
 // Watch support to monitor the context of server to allow close health server manually.
-func (c *CloseableHeathServer) Watch(request *grpc_health_v1.HealthCheckRequest, g grpc.ServerStreamingServer[grpc_health_v1.HealthCheckResponse]) error {
+func (c *ClosableHeathServer) Watch(request *grpc_health_v1.HealthCheckRequest, g grpc.ServerStreamingServer[grpc_health_v1.HealthCheckResponse]) error {
 	finishCh := make(chan error, 1)
 	c.Add(1)
 	go func() {
@@ -64,7 +64,7 @@ func (c *CloseableHeathServer) Watch(request *grpc_health_v1.HealthCheckRequest,
 	}
 }
 
-func (c *CloseableHeathServer) Close() error {
+func (c *ClosableHeathServer) Close() error {
 	c.cancel()
 	c.Wait()
 
@@ -73,7 +73,7 @@ func (c *CloseableHeathServer) Close() error {
 
 func NewCancelableHeathServer(ctx context.Context) HealthServer {
 	ctx, cancelFunc := context.WithCancel(ctx)
-	return &CloseableHeathServer{
+	return &ClosableHeathServer{
 		ctx:    ctx,
 		cancel: cancelFunc,
 		Server: health.NewServer(),
