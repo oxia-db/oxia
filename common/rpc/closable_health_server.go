@@ -69,7 +69,6 @@ func (c *ClosableHeathServer) Close() error {
 
 	c.cancel()
 	c.Wait()
-
 	return nil
 }
 
