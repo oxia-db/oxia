@@ -208,7 +208,7 @@ func (n *nodeController) healthPingWithRetries() {
 		}
 	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {
 		n.Warn(
-			"Failed to send ping to storage node",
+			"Failed to check storage node heath by ping-pong",
 			slog.Duration("retry-after", duration),
 			slog.Any("error", err),
 		)
@@ -237,7 +237,7 @@ func (n *nodeController) healthWatchWithRetries() {
 			}
 		}
 	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
-		n.Warn("Storage node health watch failed",
+		n.Warn("Failed to check storage node heath by watch",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
@@ -246,8 +246,12 @@ func (n *nodeController) healthWatchWithRetries() {
 }
 
 func (n *nodeController) becomeUnavailable() {
+	currentStatus := n.Status()
+	if currentStatus != Running && currentStatus != Draining {
+		return
+	}
 	n.statusLock.Lock()
-	if n.status != Running && n.status != Draining {
+	if n.status != Running && n.status != Draining { // double check
 		return
 	}
 	if n.status == Running {
