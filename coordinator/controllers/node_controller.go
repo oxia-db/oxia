@@ -132,7 +132,10 @@ func (n *nodeController) Close() error {
 	n.cancel()
 	n.Wait()
 
-	err := n.healthClientCloser.Close()
+	var err error
+	if err = n.healthClientCloser.Close(); err != nil {
+		n.Warn("close node controller health client failed", slog.Any("error", err))
+	}
 	n.Info("Closed node controller")
 	return err
 }
