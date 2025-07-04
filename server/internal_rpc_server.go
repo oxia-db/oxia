@@ -24,7 +24,6 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -43,12 +42,12 @@ type internalRpcServer struct {
 	shardsDirector       ShardsDirector
 	assignmentDispatcher ShardAssignmentsDispatcher
 	grpcServer           rpc.GrpcServer
-	healthServer         *health.Server
+	healthServer         rpc.HealthServer
 	log                  *slog.Logger
 }
 
 func newInternalRpcServer(grpcProvider rpc.GrpcProvider, bindAddress string, shardsDirector ShardsDirector,
-	assignmentDispatcher ShardAssignmentsDispatcher, healthServer *health.Server, tlsConf *tls.Config) (*internalRpcServer, error) {
+	assignmentDispatcher ShardAssignmentsDispatcher, healthServer rpc.HealthServer, tlsConf *tls.Config) (*internalRpcServer, error) {
 	server := &internalRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,

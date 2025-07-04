@@ -21,7 +21,6 @@ import (
 	"sync"
 
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
@@ -56,7 +55,7 @@ type shardAssignmentDispatcher struct {
 	clients      map[int64]chan *proto.ShardAssignments
 	nextClientId int64
 	standalone   bool
-	healthServer *health.Server
+	healthServer rpc.HealthServer
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -248,7 +247,7 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	return nil
 }
 
-func NewShardAssignmentDispatcher(healthServer *health.Server) ShardAssignmentsDispatcher {
+func NewShardAssignmentDispatcher(healthServer rpc.HealthServer) ShardAssignmentsDispatcher {
 	s := &shardAssignmentDispatcher{
 		assignments:  nil,
 		healthServer: healthServer,
@@ -273,7 +272,7 @@ func NewShardAssignmentDispatcher(healthServer *health.Server) ShardAssignmentsD
 }
 
 func NewStandaloneShardAssignmentDispatcher(numShards uint32) ShardAssignmentsDispatcher {
-	assignmentDispatcher := NewShardAssignmentDispatcher(health.NewServer()).(*shardAssignmentDispatcher) //nolint:revive
+	assignmentDispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(context.Background())).(*shardAssignmentDispatcher) //nolint:revive
 	assignmentDispatcher.standalone = true
 	res := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
