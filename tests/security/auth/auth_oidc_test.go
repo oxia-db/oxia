@@ -23,7 +23,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/oauth2-proxy/mockoidc"
-	"github.com/oxia-db/oxia/common/process"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
@@ -117,26 +116,13 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	assert.NoError(t, err)
 
 	return s1Addr.Public, func() {
-
-		process.DoWithLabels(context.Background(), map[string]string{
-			"component": "s1-closer",
-			"id":        s1Addr.GetIdentifier(),
-		}, func() {
-			s1.Close()
-		})
-
+		s1.Close()
 		s2.Close()
 		s3.Close()
 
 		clientPool.Close()
 		coordinatorInstance.Close()
 	}
-}
-
-func init() {
-	process.PprofEnable = true
-	process.PprofBindAddress = "127.0.0.1:6060"
-	process.RunProfiling()
 }
 
 func TestOIDCWithStaticToken(t *testing.T) {
@@ -152,7 +138,7 @@ func TestOIDCWithStaticToken(t *testing.T) {
 	subject := generateRandomStr(t)
 	registeredClaims := &jwt.RegisteredClaims{
 		Audience:  jwt.ClaimStrings{audience, audience2},
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(1) * time.Hour)),
 		ID:        id,
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		Issuer:    mockOIDC.Issuer(),
