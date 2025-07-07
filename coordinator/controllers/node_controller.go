@@ -83,6 +83,7 @@ type nodeController struct {
 	healthClient       grpc_health_v1.HealthClient
 	healthClientCloser io.Closer
 
+	healthWatchBackoff         backoff.BackOff
 	healthCheckBackoff         backoff.BackOff
 	dispatchAssignmentsBackoff backoff.BackOff
 
@@ -239,7 +240,7 @@ func (n *nodeController) healthWatchWithRetries() {
 				}
 			}
 		}
-	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
+	}, n.healthWatchBackoff, func(err error, duration time.Duration) {
 		n.Warn("Failed to check storage node heath by watch",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
@@ -283,6 +284,7 @@ func (n *nodeController) healthCheckHandler(response *grpc_health_v1.HealthCheck
 		// node went down, we interrupt the current stream when the ping on the node fails
 		n.rpc.ClearPooledConnections(n.node)
 		n.healthCheckBackoff.Reset()
+		n.healthWatchBackoff.Reset()
 	}
 	n.status = Running
 	n.statusLock.Unlock()
@@ -321,6 +323,7 @@ func newNodeController(parentCtx context.Context, node model.Server,
 		healthClient:               nil,
 		healthClientCloser:         &commonio.NopCloser{},
 		healthCheckBackoff:         commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
+		healthWatchBackoff:         commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
 		dispatchAssignmentsBackoff: commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
 		failedHealthChecks: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
 			"The number of failed health checks to a node", "count", labels),
