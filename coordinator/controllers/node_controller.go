@@ -210,7 +210,7 @@ func (n *nodeController) healthPingWithRetries() {
 				}
 			}
 		}
-	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {
+	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
 		n.Warn(
 			"Failed to check storage node heath by ping-pong",
 			slog.Duration("retry-after", duration),
