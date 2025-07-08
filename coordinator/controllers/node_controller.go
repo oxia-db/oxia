@@ -269,7 +269,7 @@ func (n *nodeController) becomeUnavailable() {
 
 func (n *nodeController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
-		n.Warn("Node watcher check failed", slog.Any("error", err))
+		n.Warn("Node health check failed", slog.Any("error", err))
 		return err
 	}
 	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
@@ -298,12 +298,12 @@ func NewNodeController(ctx context.Context, node model.Server,
 	return newNodeController(ctx, node, shardAssignmentsProvider, nodeEventListener, rpcProvider, defaultInitialRetryBackoff)
 }
 
-func newNodeController(parentCtx context.Context, node model.Server,
+func newNodeController(ctx context.Context, node model.Server,
 	shardAssignmentsProvider ShardAssignmentsProvider,
 	nodeEventListener NodeEventListener,
 	rpcProvider rpc.Provider,
 	initialRetryBackoff time.Duration) NodeController {
-	nodeCtx, cancel := context.WithCancel(parentCtx)
+	nodeCtx, cancel := context.WithCancel(ctx)
 	nodeID := node.GetIdentifier()
 	labels := map[string]any{"node": nodeID}
 	nc := &nodeController{
