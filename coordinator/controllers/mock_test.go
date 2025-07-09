@@ -184,7 +184,7 @@ func (m *mockPerNodeChannels) AddFollowerResponse(err error) {
 	}{&proto.AddFollowerResponse{}, err}
 }
 
-func newMockPerNodeChannels(ctx context.Context) *mockPerNodeChannels {
+func newMockPerNodeChannels() *mockPerNodeChannels {
 	return &mockPerNodeChannels{
 		newTermRequests: make(chan *proto.NewTermRequest, 100),
 		newTermResponses: make(chan struct {
@@ -206,7 +206,7 @@ func newMockPerNodeChannels(ctx context.Context) *mockPerNodeChannels {
 			*proto.AddFollowerResponse
 			error
 		}, 100),
-		shardAssignmentsStream: newMockShardAssignmentClient(ctx),
+		shardAssignmentsStream: newMockShardAssignmentClient(),
 		healthClient:           newMockHealthClient(),
 	}
 }
@@ -254,13 +254,21 @@ func (r *mockRpcProvider) getNode(node model.Server) *mockPerNodeChannels {
 		return res
 	}
 
-	res = newMockPerNodeChannels(context.Background())
+	res = newMockPerNodeChannels()
 	r.channels[node.Internal] = res
 	return res
 }
 
-func (r *mockRpcProvider) PushShardAssignments(ctx context.Context, _ model.Server) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
-	return newMockPerNodeChannels(ctx).shardAssignmentsStream, nil
+func (r *mockRpcProvider) PushShardAssignments(ctx context.Context, node model.Server) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
+	r.Lock()
+	defer r.Unlock()
+
+	n := r.getNode(node)
+	if n.err != nil {
+		return nil, n.err
+	}
+	n.shardAssignmentsStream.ctx = ctx
+	return n.shardAssignmentsStream, nil
 }
 
 func (r *mockRpcProvider) NewTerm(ctx context.Context, node model.Server, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
@@ -391,9 +399,8 @@ type mockShardAssignmentClient struct {
 	updates chan *proto.ShardAssignments
 }
 
-func newMockShardAssignmentClient(ctx context.Context) *mockShardAssignmentClient {
+func newMockShardAssignmentClient() *mockShardAssignmentClient {
 	return &mockShardAssignmentClient{
-		ctx:     ctx,
 		updates: make(chan *proto.ShardAssignments, 100),
 	}
 }
