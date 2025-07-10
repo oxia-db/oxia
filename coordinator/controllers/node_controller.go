@@ -108,18 +108,13 @@ func (n *nodeController) SetStatus(status NodeStatus) {
 func (n *nodeController) maybeInitHealthClient() {
 	n.healthClientOnce.Do(func() {
 		_ = backoff.RetryNotify(func() error {
-			select {
-			case <-n.ctx.Done():
-				return nil
-			default:
-				health, closer, err := n.rpc.GetHealthClient(n.node)
-				if err != nil {
-					return err
-				}
-				n.healthClient = health
-				n.healthClientCloser = closer
-				return nil
+			health, closer, err := n.rpc.GetHealthClient(n.node)
+			if err != nil {
+				return err
 			}
+			n.healthClient = health
+			n.healthClientCloser = closer
+			return nil
 		}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
 			n.Warn(
 				"Failed to create health client to storage node",
