@@ -273,7 +273,7 @@ func (c *coordinator) NodeBecameUnavailable(node model.Server) {
 		// The draining node became unavailable. Let's remove it
 		delete(c.drainingNodes, node.GetIdentifier())
 		go func() {
-			// the callback will come form the node controller internal health check goroutine,
+			// the callback will come from the node controller internal health check goroutine,
 			// we should close it in the background goroutines to avoid any unexpected deadlock here
 			_ = nc.Close()
 		}()
