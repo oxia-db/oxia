@@ -256,6 +256,7 @@ func (n *nodeController) becomeUnavailable() {
 	}
 	n.statusLock.Lock()
 	if n.status != Running && n.status != Draining { // double check
+		n.statusLock.Unlock()
 		return
 	}
 	if n.status == Running {
