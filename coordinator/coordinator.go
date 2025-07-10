@@ -276,7 +276,7 @@ func (c *coordinator) NodeBecameUnavailable(node model.Server) {
 			// the callback will come from the node controller internal health check goroutine,
 			// we should close it in the background goroutines to avoid any unexpected deadlock here
 			if err := nc.Close(); err != nil {
-				slog.Error("Failed to close node controller", "node", node.GetIdentifier(), "error", err)
+				c.Error("Failed to close node controller", "node", node.GetIdentifier(), "error", err)
 			}
 		}()
 	}
