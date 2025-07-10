@@ -267,6 +267,7 @@ func (r *mockRpcProvider) PushShardAssignments(ctx context.Context, node model.S
 	if n.err != nil {
 		return nil, n.err
 	}
+	n.shardAssignmentsStream.ctx = ctx
 	return n.shardAssignmentsStream, nil
 }
 
@@ -391,6 +392,7 @@ func (r *mockRpcProvider) GetHealthClient(node model.Server) (grpc_health_v1.Hea
 }
 
 type mockShardAssignmentClient struct {
+	ctx context.Context
 	sync.Mutex
 
 	err     error
@@ -441,7 +443,7 @@ func (m *mockShardAssignmentClient) CloseSend() error {
 }
 
 func (m *mockShardAssignmentClient) Context() context.Context {
-	return context.Background()
+	return m.ctx
 }
 
 func (m *mockShardAssignmentClient) SendMsg(any) error {
