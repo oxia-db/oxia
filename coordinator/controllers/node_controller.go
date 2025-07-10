@@ -241,7 +241,7 @@ func (n *nodeController) healthWatchWithRetries() {
 			}
 		}
 	}, n.healthWatchBackoff, func(err error, duration time.Duration) {
-		n.Warn("Failed to check storage node heath by watch",
+		n.Warn("Failed to check storage node health by watch",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
