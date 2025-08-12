@@ -1453,3 +1453,37 @@ func TestLeaderController_GetSequenceUpdates(t *testing.T) {
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
+
+func TestLeaderController_ConcurrentWrite(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kv.NewPebbleKVFactory(testKVOptions)
+	walFactory := newTestWalFactory(t)
+
+	lc, _ := NewLeaderController(Config{}, constant.DefaultNamespace, shard, newMockRpcClient(), walFactory, kvFactory)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+
+	errors := make(chan error, 10)
+
+	for i := 0; i < 10; i++ {
+		go func() {
+			_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+				Shard: &shard,
+				Puts: []*proto.PutRequest{
+					{Key: fmt.Sprintf("%d", i), Value: []byte{0}},
+				},
+			})
+			errors <- err
+		}()
+	}
+
+	for i := 0; i < 10; i++ {
+		assert.NoError(t, <-errors)
+	}
+}

@@ -802,7 +802,6 @@ func (lc *leaderController) write(ctx context.Context, requestSupplier func(offs
 	walLog := lc.wal
 	tracker := lc.quorumAckTracker
 	term := lc.term
-	lc.Unlock()
 	request := requestSupplier(newOffset)
 
 	lc.log.Debug("Append operation", slog.Any("req", request))
@@ -814,16 +813,12 @@ func (lc *leaderController) write(ctx context.Context, requestSupplier func(offs
 	logEntryValue.Value = &proto.LogEntryValue_Requests{Requests: &proto.WriteRequests{Writes: []*proto.WriteRequest{request}}}
 	value, err := logEntryValue.MarshalVT()
 	if err != nil {
+		lc.Unlock()
 		cb.OnCompleteError(err)
 		return
 	}
 
-	walLog.AppendAndSync(&proto.LogEntry{
-		Term:      term,
-		Offset:    newOffset,
-		Value:     value,
-		Timestamp: timestamp,
-	}, func(err error) {
+	deferDbWrite := func(err error) {
 		if err != nil {
 			timer.Done() //nolint:contextcheck
 			cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
@@ -843,7 +838,9 @@ func (lc *leaderController) write(ctx context.Context, requestSupplier func(offs
 				timer.Done()
 				cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
 			}))
-	})
+	}
+	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: timestamp}, deferDbWrite)
+	lc.Unlock()
 }
 
 //nolint:revive
