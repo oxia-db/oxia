@@ -1475,11 +1475,12 @@ func TestLeaderController_ConcurrentWrite(t *testing.T) {
 	errors := make(chan error, 10)
 
 	for i := 0; i < 10; i++ {
+		finalIndex := i
 		go func() {
 			_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
 				Shard: &shard,
 				Puts: []*proto.PutRequest{
-					{Key: fmt.Sprintf("%d", i), Value: []byte{0}},
+					{Key: fmt.Sprintf("%d", finalIndex), Value: []byte{0}},
 				},
 			})
 			errors <- err
