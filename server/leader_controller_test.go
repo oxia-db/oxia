@@ -1458,9 +1458,12 @@ func TestLeaderController_ConcurrentWrite(t *testing.T) {
 	var shard int64 = 1
 
 	kvFactory, _ := kv.NewPebbleKVFactory(testKVOptions)
+	defer kvFactory.Close()
 	walFactory := newTestWalFactory(t)
+	defer walFactory.Close()
 
 	lc, _ := NewLeaderController(Config{}, constant.DefaultNamespace, shard, newMockRpcClient(), walFactory, kvFactory)
+	defer lc.Close()
 	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
 	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
