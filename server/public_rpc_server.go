@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	sdkerrors "errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -465,12 +466,15 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 
 func (s *publicRpcServer) getReadable(shardId *int64, consistency *proto.ConsistencyLevel) (ReadableController, error) {
 	if consistency != nil && *consistency == proto.ConsistencyLevel_EVENTUAL {
-		var follower FollowerController
-		var err error
-		if follower, err = s.shardsDirector.GetFollower(*shardId); err != nil {
-			return nil, err
+		var readable ReadableController
+		var getLeaderErr error
+		var getFollowerErr error
+		if readable, getLeaderErr = s.shardsDirector.GetLeader(*shardId); getLeaderErr != nil {
+			if readable, getFollowerErr = s.shardsDirector.GetFollower(*shardId); getFollowerErr != nil {
+				return nil, sdkerrors.Join(getLeaderErr, getFollowerErr)
+			}
 		}
-		return follower, nil
+		return readable, nil
 	}
 	return s.getLeader(shardId)
 }
