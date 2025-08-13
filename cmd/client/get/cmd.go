@@ -131,7 +131,7 @@ func exec(cmd *cobra.Command, args []string) error {
 func praseConsistencyLevel(options []oxia.GetOption) ([]oxia.GetOption, error) {
 	switch Config.consistencyLevel {
 	case "linearizable":
-		options = append(options, oxia.ConsistencyLinearizable())
+		// Nothing to do, this is default
 	case "eventually":
 		options = append(options, oxia.ConsistencyEventually())
 	default:
