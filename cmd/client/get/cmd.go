@@ -30,12 +30,13 @@ var (
 )
 
 type flags struct {
-	key            string
-	hexDump        bool
-	includeVersion bool
-	partitionKey   string
-	comparisonType string
-	secondaryIndex string
+	key              string
+	hexDump          bool
+	includeVersion   bool
+	partitionKey     string
+	comparisonType   string
+	secondaryIndex   string
+	consistencyLevel string
 }
 
 func (flags *flags) Reset() {
@@ -53,6 +54,7 @@ func init() {
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
 	Cmd.Flags().StringVar(&Config.secondaryIndex, "index", "", "Secondary Index")
 
+	Cmd.Flags().StringVar(&Config.consistencyLevel, "consistency-level", "linearizable", "Consistency Level")
 	Cmd.Flags().StringVarP(&Config.comparisonType, "comparison-type", "t", "equal",
 		"The type of get comparison. Allowed value: equal, floor, ceiling, lower, higher")
 }
@@ -92,6 +94,15 @@ func exec(cmd *cobra.Command, args []string) error {
 		options = append(options, oxia.ComparisonHigher())
 	default:
 		return errors.Errorf("invalid comparison type: %s", Config.comparisonType)
+	}
+
+	switch Config.consistencyLevel {
+	case "linearizable":
+		options = append(options, oxia.ConsistencyLinearizable())
+	case "eventually":
+		options = append(options, oxia.ConsistencyEventually())
+	default:
+		return errors.Errorf("invalid consistency level: %s", Config.consistencyLevel)
 	}
 
 	queryKey := args[0]

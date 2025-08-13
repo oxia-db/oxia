@@ -29,6 +29,7 @@ import (
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
 
 	"github.com/oxia-db/oxia/common/compare"
+	batchapi "github.com/oxia-db/oxia/oxia/batch"
 	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/batch"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
@@ -87,11 +88,13 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		options:      options,
 		clientPool:   clientPool,
 		shardManager: shardManager,
-		writeBatchManager: batch.NewManager(ctx, func(ctx context.Context, shard *int64) commonbatch.Batcher {
-			return batcherFactory.NewWriteBatcher(ctx, shard, options.maxBatchSize)
+		writeBatchManager: batch.NewManager(ctx, func(ctx context.Context, key *batchapi.Key) commonbatch.Batcher {
+			return batcherFactory.NewWriteBatcher(ctx, &key.ShardID, options.maxBatchSize)
 		}),
-		readBatchManager: batch.NewManager(ctx, batcherFactory.NewReadBatcher),
-		executor:         executor,
+		readBatchManager: batch.NewManager(ctx, func(ctx context.Context, key *batchapi.Key) batchapi.Batcher {
+			return batcherFactory.NewReadBatcher(ctx, &key.ShardID)
+		}),
+		executor: executor,
 	}
 
 	c.ctx, c.cancel = ctx, cancel
@@ -148,10 +151,16 @@ func (c *clientImpl) Put(key string, value []byte, options ...PutOption) <-chan 
 				return
 			}
 			putCall.SessionId = &sessionId
-			c.writeBatchManager.Get(shardId).Add(putCall)
+			c.writeBatchManager.Get(batchapi.Key{
+				ShardID:          shardId,
+				ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
+			}).Add(putCall)
 		})
 	} else {
-		c.writeBatchManager.Get(shardId).Add(putCall)
+		c.writeBatchManager.Get(batchapi.Key{
+			ShardID:          shardId,
+			ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
+		}).Add(putCall)
 	}
 	return ch
 }
@@ -168,7 +177,10 @@ func (c *clientImpl) Delete(key string, options ...DeleteOption) <-chan error {
 	}
 	opts := newDeleteOptions(options)
 	shardId := c.getShardForKey(key, opts)
-	c.writeBatchManager.Get(shardId).Add(model.DeleteCall{
+	c.writeBatchManager.Get(batchapi.Key{
+		ShardID:          shardId,
+		ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
+	}).Add(model.DeleteCall{
 		Key:               key,
 		ExpectedVersionId: opts.expectedVersion,
 		Callback:          callback,
@@ -191,7 +203,10 @@ func (c *clientImpl) DeleteRange(minKeyInclusive string, maxKeyExclusive string,
 
 	for _, shardId := range shardIDs {
 		// chInner := make(chan error, 1)
-		c.writeBatchManager.Get(shardId).Add(model.DeleteRangeCall{
+		c.writeBatchManager.Get(batchapi.Key{
+			ShardID:          shardId,
+			ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
+		}).Add(model.DeleteRangeCall{
 			MinKeyInclusive: minKeyInclusive,
 			MaxKeyExclusive: maxKeyExclusive,
 			Callback: func(response *proto.DeleteRangeResponse, err error) {
@@ -217,7 +232,10 @@ func (c *clientImpl) DeleteRange(minKeyInclusive string, maxKeyExclusive string,
 }
 
 func (c *clientImpl) doSingleShardDeleteRange(shardId int64, minKeyInclusive string, maxKeyExclusive string, ch chan error) {
-	c.writeBatchManager.Get(shardId).Add(model.DeleteRangeCall{
+	c.writeBatchManager.Get(batchapi.Key{
+		ShardID:          shardId,
+		ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
+	}).Add(model.DeleteRangeCall{
 		MinKeyInclusive: minKeyInclusive,
 		MaxKeyExclusive: maxKeyExclusive,
 		Callback: func(response *proto.DeleteRangeResponse, err error) {
@@ -249,7 +267,10 @@ func (c *clientImpl) Get(key string, options ...GetOption) <-chan GetResult {
 
 func (c *clientImpl) doSingleShardGet(key string, opts *getOptions, ch chan GetResult) {
 	shardId := c.getShardForKey(key, opts)
-	c.readBatchManager.Get(shardId).Add(model.GetCall{
+	c.readBatchManager.Get(batchapi.Key{
+		ShardID:          shardId,
+		ConsistencyLevel: opts.consistencyLevel,
+	}).Add(model.GetCall{
 		Key:                key,
 		ComparisonType:     opts.comparisonType,
 		IncludeValue:       opts.includeValue,
@@ -324,7 +345,10 @@ func (c *clientImpl) doMultiShardGet(key string, options *getOptions, ch chan Ge
 	selected := keyNotFound
 
 	for _, shardId := range shards {
-		c.readBatchManager.Get(shardId).Add(model.GetCall{
+		c.readBatchManager.Get(batchapi.Key{
+			ShardID:          shardId,
+			ConsistencyLevel: options.consistencyLevel,
+		}).Add(model.GetCall{
 			Key:                key,
 			ComparisonType:     options.comparisonType,
 			IncludeValue:       options.includeValue,
@@ -356,13 +380,13 @@ func (c *clientImpl) doMultiShardGet(key string, options *getOptions, ch chan Ge
 	}
 }
 
-func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, shardId int64, secondaryIndexName *string,
-	ch chan<- ListResult) {
+func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, shardId int64, secondaryIndexName *string, level proto.ConsistencyLevel, ch chan<- ListResult) {
 	request := &proto.ListRequest{
 		Shard:              &shardId,
 		StartInclusive:     minKeyInclusive,
 		EndExclusive:       maxKeyExclusive,
 		SecondaryIndexName: secondaryIndexName,
+		ConsistencyLevel:   &level,
 	}
 
 	client, err := c.executor.ExecuteList(ctx, request)
@@ -394,7 +418,7 @@ func (c *clientImpl) List(ctx context.Context, minKeyInclusive string, maxKeyExc
 		// If the partition key is specified, we only need to make the request to one shard
 		shardId := c.getShardForKey("", opts)
 		go func() {
-			c.listFromShard(ctx, minKeyInclusive, maxKeyExclusive, shardId, opts.secondaryIndexName, ch)
+			c.listFromShard(ctx, minKeyInclusive, maxKeyExclusive, shardId, opts.secondaryIndexName, opts.consistencyLevel, ch)
 			close(ch)
 		}()
 	} else {
@@ -407,7 +431,7 @@ func (c *clientImpl) List(ctx context.Context, minKeyInclusive string, maxKeyExc
 			go func() {
 				defer wg.Done()
 
-				c.listFromShard(ctx, minKeyInclusive, maxKeyExclusive, shardIdPtr, opts.secondaryIndexName, ch)
+				c.listFromShard(ctx, minKeyInclusive, maxKeyExclusive, shardIdPtr, opts.secondaryIndexName, opts.consistencyLevel, ch)
 			}()
 		}
 
@@ -420,13 +444,14 @@ func (c *clientImpl) List(ctx context.Context, minKeyInclusive string, maxKeyExc
 	return ch
 }
 
-func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, shardId int64, secondaryIndexName *string,
-	ch chan<- GetResult) {
+func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, shardId int64,
+	secondaryIndexName *string, consistencyLevel proto.ConsistencyLevel, ch chan<- GetResult) {
 	request := &proto.RangeScanRequest{
 		Shard:              &shardId,
 		StartInclusive:     minKeyInclusive,
 		EndExclusive:       maxKeyExclusive,
 		SecondaryIndexName: secondaryIndexName,
+		ConsistencyLevel:   &consistencyLevel,
 	}
 
 	client, err := c.executor.ExecuteRangeScan(ctx, request)
@@ -462,7 +487,7 @@ func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxK
 		// If the partition key is specified, we only need to make the request to one shard
 		shardId := c.getShardForKey("", opts)
 		go func() {
-			c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, shardId, opts.secondaryIndexName, outCh)
+			c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, shardId, opts.secondaryIndexName, opts.consistencyLevel, outCh)
 		}()
 	} else {
 		// Do the list on all shards and aggregate the responses
@@ -474,7 +499,7 @@ func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxK
 			ch := make(chan GetResult)
 			channels[i] = ch
 			go func() {
-				c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, shardIdPtr, opts.secondaryIndexName, ch)
+				c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, shardIdPtr, opts.secondaryIndexName, opts.consistencyLevel, ch)
 			}()
 		}
 

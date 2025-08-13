@@ -14,6 +14,13 @@
 
 package batch
 
+import "github.com/oxia-db/oxia/proto"
+
+type Key struct {
+	ShardID          int64
+	ConsistencyLevel proto.ConsistencyLevel
+}
+
 type Batch interface {
 	CanAdd(any) bool
 	Add(any)

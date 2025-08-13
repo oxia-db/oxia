@@ -218,6 +218,8 @@ message ReadRequest {
   optional int64 shard = 1;
   // The get requests
   repeated GetRequest gets = 2;
+  // Specifies the desired consistency level for this read.
+  optional ConsistencyLevel consistency_level = 3;
 }
 
 /**
@@ -316,6 +318,16 @@ enum KeyComparisonType {
   HIGHER = 4;
 }
 
+// Defines the consistency level for a read request.
+enum ConsistencyLevel {
+  // The read must be linearizable, returning the most recent committed value.
+  // This requires the request to be served by the leader.
+  LINEARIZABLE = 0;
+  // The read can be served from any replica, which may return stale data.
+  // This enables follower reads to improve latency and throughput.
+  EVENTUAL = 1;
+}
+
 /**
  * A get request. Gets the stat and optionally the value for the specified
  * key.
@@ -377,6 +389,9 @@ message ListRequest {
   string end_exclusive = 3;
 
   optional string secondary_index_name = 4;
+
+  // Specifies the desired consistency level for this read.
+  optional ConsistencyLevel consistency_level = 5;
 }
 
 /**
@@ -400,6 +415,9 @@ message RangeScanRequest {
   string end_exclusive = 3;
 
   optional string secondary_index_name = 4;
+
+  // Specifies the desired consistency level for this read.
+  optional ConsistencyLevel consistency_level = 5;
 }
 
 /**

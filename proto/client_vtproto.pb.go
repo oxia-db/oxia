@@ -229,6 +229,10 @@ func (m *ReadRequest) CloneVT() *ReadRequest {
 		}
 		r.Gets = tmpContainer
 	}
+	if rhs := m.ConsistencyLevel; rhs != nil {
+		tmpVal := *rhs
+		r.ConsistencyLevel = &tmpVal
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -495,6 +499,10 @@ func (m *ListRequest) CloneVT() *ListRequest {
 		tmpVal := *rhs
 		r.SecondaryIndexName = &tmpVal
 	}
+	if rhs := m.ConsistencyLevel; rhs != nil {
+		tmpVal := *rhs
+		r.ConsistencyLevel = &tmpVal
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -541,6 +549,10 @@ func (m *RangeScanRequest) CloneVT() *RangeScanRequest {
 	if rhs := m.SecondaryIndexName; rhs != nil {
 		tmpVal := *rhs
 		r.SecondaryIndexName = &tmpVal
+	}
+	if rhs := m.ConsistencyLevel; rhs != nil {
+		tmpVal := *rhs
+		r.ConsistencyLevel = &tmpVal
 	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -1150,6 +1162,9 @@ func (this *ReadRequest) EqualVT(that *ReadRequest) bool {
 			}
 		}
 	}
+	if p, q := this.ConsistencyLevel, that.ConsistencyLevel; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
@@ -1459,6 +1474,9 @@ func (this *ListRequest) EqualVT(that *ListRequest) bool {
 	if p, q := this.SecondaryIndexName, that.SecondaryIndexName; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
 	}
+	if p, q := this.ConsistencyLevel, that.ConsistencyLevel; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
@@ -1510,6 +1528,9 @@ func (this *RangeScanRequest) EqualVT(that *RangeScanRequest) bool {
 		return false
 	}
 	if p, q := this.SecondaryIndexName, that.SecondaryIndexName; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
+	}
+	if p, q := this.ConsistencyLevel, that.ConsistencyLevel; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -2278,6 +2299,11 @@ func (m *ReadRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.ConsistencyLevel != nil {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.ConsistencyLevel))
+		i--
+		dAtA[i] = 0x18
+	}
 	if len(m.Gets) > 0 {
 		for iNdEx := len(m.Gets) - 1; iNdEx >= 0; iNdEx-- {
 			size, err := m.Gets[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
@@ -2877,6 +2903,11 @@ func (m *ListRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.ConsistencyLevel != nil {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.ConsistencyLevel))
+		i--
+		dAtA[i] = 0x28
+	}
 	if m.SecondaryIndexName != nil {
 		i -= len(*m.SecondaryIndexName)
 		copy(dAtA[i:], *m.SecondaryIndexName)
@@ -2977,6 +3008,11 @@ func (m *RangeScanRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.ConsistencyLevel != nil {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.ConsistencyLevel))
+		i--
+		dAtA[i] = 0x28
 	}
 	if m.SecondaryIndexName != nil {
 		i -= len(*m.SecondaryIndexName)
@@ -3786,6 +3822,9 @@ func (m *ReadRequest) SizeVT() (n int) {
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
 	}
+	if m.ConsistencyLevel != nil {
+		n += 1 + protohelpers.SizeOfVarint(uint64(*m.ConsistencyLevel))
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -4025,6 +4064,9 @@ func (m *ListRequest) SizeVT() (n int) {
 		l = len(*m.SecondaryIndexName)
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
+	if m.ConsistencyLevel != nil {
+		n += 1 + protohelpers.SizeOfVarint(uint64(*m.ConsistencyLevel))
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -4065,6 +4107,9 @@ func (m *RangeScanRequest) SizeVT() (n int) {
 	if m.SecondaryIndexName != nil {
 		l = len(*m.SecondaryIndexName)
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.ConsistencyLevel != nil {
+		n += 1 + protohelpers.SizeOfVarint(uint64(*m.ConsistencyLevel))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -5289,6 +5334,26 @@ func (m *ReadRequest) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ConsistencyLevel", wireType)
+			}
+			var v ConsistencyLevel
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= ConsistencyLevel(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.ConsistencyLevel = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -6848,6 +6913,26 @@ func (m *ListRequest) UnmarshalVT(dAtA []byte) error {
 			s := string(dAtA[iNdEx:postIndex])
 			m.SecondaryIndexName = &s
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ConsistencyLevel", wireType)
+			}
+			var v ConsistencyLevel
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= ConsistencyLevel(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.ConsistencyLevel = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -7099,6 +7184,26 @@ func (m *RangeScanRequest) UnmarshalVT(dAtA []byte) error {
 			s := string(dAtA[iNdEx:postIndex])
 			m.SecondaryIndexName = &s
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ConsistencyLevel", wireType)
+			}
+			var v ConsistencyLevel
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= ConsistencyLevel(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.ConsistencyLevel = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -9467,6 +9572,26 @@ func (m *ReadRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ConsistencyLevel", wireType)
+			}
+			var v ConsistencyLevel
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= ConsistencyLevel(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.ConsistencyLevel = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -11084,6 +11209,26 @@ func (m *ListRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 			s := stringValue
 			m.SecondaryIndexName = &s
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ConsistencyLevel", wireType)
+			}
+			var v ConsistencyLevel
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= ConsistencyLevel(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.ConsistencyLevel = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -11351,6 +11496,26 @@ func (m *RangeScanRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 			s := stringValue
 			m.SecondaryIndexName = &s
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ConsistencyLevel", wireType)
+			}
+			var v ConsistencyLevel
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= ConsistencyLevel(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.ConsistencyLevel = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

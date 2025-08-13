@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxia-db/oxia/common/logging"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
@@ -45,14 +46,12 @@ import (
 
 type LeaderController interface {
 	io.Closer
+	ReadableController
 
 	WriteBlock(ctx context.Context, write *proto.WriteRequest) (*proto.WriteResponse, error)
 	ListBlock(ctx context.Context, request *proto.ListRequest) ([]string, error)
 
 	Write(ctx context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse])
-	List(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string])
-	Read(ctx context.Context, request *proto.ReadRequest, cb concurrent.StreamCallback[*proto.GetResponse])
-	RangeScan(ctx context.Context, request *proto.RangeScanRequest, cb concurrent.StreamCallback[*proto.GetResponse])
 
 	GetSequenceUpdates(ctx context.Context, request *proto.GetSequenceUpdatesRequest) (kv.SequenceWaiter, error)
 
@@ -603,37 +602,7 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 		cb.OnComplete(err)
 		return
 	}
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "read",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
-		},
-		func() {
-			lc.log.Debug("Received read request")
-			var response *proto.GetResponse
-			var err error
-
-			for _, get := range request.Gets {
-				if get.SecondaryIndexName != nil {
-					response, err = secondaryIndexGet(get, lc.db)
-				} else {
-					response, err = lc.db.Get(get)
-				}
-				if err != nil {
-					break
-				}
-				if err = cb.OnNext(response); err != nil {
-					break
-				}
-				if err = ctx.Err(); err != nil {
-					break
-				}
-			}
-			cb.OnComplete(err)
-		},
-	)
+	read0(logging.NewContext(ctx, lc.log), request, cb, lc.db)
 }
 
 func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto.GetSequenceUpdatesRequest) (kv.SequenceWaiter, error) {
@@ -656,58 +625,13 @@ func (lc *leaderController) List(ctx context.Context, request *proto.ListRequest
 		cb.OnComplete(err)
 		return
 	}
-	lc.list(ctx, request, cb)
-}
-
-func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "list",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
-		},
-		func() {
-			lc.log.Debug("Received list request", slog.Any("request", request))
-
-			var it kv.KeyIterator
-			var err error
-
-			if request.SecondaryIndexName != nil {
-				it, err = newSecondaryIndexListIterator(request, lc.db)
-			} else {
-				it, err = lc.db.List(request)
-			}
-			if err != nil {
-				lc.log.Warn(
-					"Failed to process list request",
-					slog.Any("error", err),
-				)
-				cb.OnComplete(err)
-				return
-			}
-
-			defer func() {
-				_ = it.Close()
-			}()
-
-			for ; it.Valid(); it.Next() {
-				if err = cb.OnNext(it.Key()); err != nil {
-					break
-				}
-				if err = ctx.Err(); err != nil {
-					break
-				}
-			}
-			cb.OnComplete(err)
-		},
-	)
+	list0(logging.NewContext(ctx, lc.log), request, cb, lc.db)
 }
 
 func (lc *leaderController) ListBlock(ctx context.Context, request *proto.ListRequest) ([]string, error) {
 	// todo: support leader status check without lock
 	ch := make(chan *entity.TWithError[string])
-	go lc.list(ctx, request, concurrent.ReadFromStreamCallback(ch))
+	list0(logging.NewContext(ctx, lc.log), request, concurrent.ReadFromStreamCallback(ch), lc.db)
 	return channel.ReadAll(ctx, ch)
 }
 
@@ -719,50 +643,7 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 		cb.OnComplete(err)
 		return
 	}
-
-	go process.DoWithLabels(ctx,
-		map[string]string{
-			"oxia":  "range-scan",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
-		},
-		func() {
-			lc.log.Debug("Received list request", slog.Any("request", request))
-
-			var it kv.RangeScanIterator
-			var err error
-
-			if request.SecondaryIndexName != nil {
-				it, err = newSecondaryIndexRangeScanIterator(request, lc.db)
-			} else {
-				it, err = lc.db.RangeScan(request)
-			}
-
-			if err != nil {
-				lc.log.Warn("Failed to process range-scan request", slog.Any("error", err))
-				cb.OnComplete(err)
-				return
-			}
-
-			defer func() {
-				_ = it.Close()
-			}()
-
-			var gr *proto.GetResponse
-			for ; it.Valid(); it.Next() {
-				if gr, err = it.Value(); err != nil {
-					break
-				}
-				if err = cb.OnNext(gr); err != nil {
-					break
-				}
-				if err = ctx.Err(); err != nil {
-					break
-				}
-			}
-			cb.OnComplete(err)
-		},
-	)
+	rangeScan0(logging.NewContext(ctx, lc.log), request, cb, lc.db)
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {

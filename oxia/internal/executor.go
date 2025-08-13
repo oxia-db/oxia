@@ -70,7 +70,7 @@ func (e *executorImpl) ExecuteWrite(ctx context.Context, request *proto.WriteReq
 }
 
 func (e *executorImpl) ExecuteRead(ctx context.Context, request *proto.ReadRequest) (proto.OxiaClient_ReadClient, error) {
-	client, err := e.rpc(request.Shard)
+	client, err := e.rpc(request.Shard, request.ConsistencyLevel)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (e *executorImpl) ExecuteRead(ctx context.Context, request *proto.ReadReque
 }
 
 func (e *executorImpl) ExecuteList(ctx context.Context, request *proto.ListRequest) (proto.OxiaClient_ListClient, error) {
-	client, err := e.rpc(request.Shard)
+	client, err := e.rpc(request.Shard, request.ConsistencyLevel)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (e *executorImpl) ExecuteList(ctx context.Context, request *proto.ListReque
 }
 
 func (e *executorImpl) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest) (proto.OxiaClient_RangeScanClient, error) {
-	client, err := e.rpc(request.Shard)
+	client, err := e.rpc(request.Shard, request.ConsistencyLevel)
 	if err != nil {
 		return nil, err
 	}
@@ -96,12 +96,17 @@ func (e *executorImpl) ExecuteRangeScan(ctx context.Context, request *proto.Rang
 	return client.RangeScan(ctx, request)
 }
 
-func (e *executorImpl) rpc(shardId *int64) (proto.OxiaClientClient, error) {
+func (e *executorImpl) rpc(shardId *int64, level *proto.ConsistencyLevel) (proto.OxiaClientClient, error) {
 	var target string
-	if shardId != nil {
-		target = e.ShardManager.Leader(*shardId)
-	} else {
+	if level != nil && *level == proto.ConsistencyLevel_EVENTUAL {
+		// send request to the  local server
 		target = e.ServiceAddress
+	} else {
+		if shardId != nil {
+			target = e.ShardManager.Leader(*shardId)
+		} else {
+			target = e.ServiceAddress
+		}
 	}
 
 	client, err := e.ClientPool.GetClientRpc(target)
@@ -122,7 +127,7 @@ func (e *executorImpl) writeStream(shardId *int64) (*streamWrapper, error) {
 
 	e.RUnlock()
 
-	client, err := e.rpc(shardId)
+	client, err := e.rpc(shardId, nil)
 	if err != nil {
 		return nil, err
 	}

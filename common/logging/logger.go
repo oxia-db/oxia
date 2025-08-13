@@ -15,6 +15,7 @@
 package logging
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -90,4 +91,17 @@ func ConfigureLogger() {
 		}.NewZerologHandler(),
 	)
 	slog.SetDefault(slogLogger)
+}
+
+type LoggerKey struct{}
+
+func FromContext(ctx context.Context) *slog.Logger {
+	if l, ok := ctx.Value(LoggerKey{}).(*slog.Logger); ok {
+		return l
+	}
+	return slog.Default()
+}
+
+func NewContext(ctx context.Context, l *slog.Logger) context.Context {
+	return context.WithValue(ctx, LoggerKey{}, l)
 }

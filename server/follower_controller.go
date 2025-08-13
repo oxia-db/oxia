@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/oxia-db/oxia/common/logging"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
@@ -41,6 +42,7 @@ import (
 // FollowerController handles all the operations of a given shard's follower.
 type FollowerController interface {
 	io.Closer
+	ReadableController
 
 	// NewTerm
 	//
@@ -77,6 +79,8 @@ type FollowerController interface {
 	CommitOffset() int64
 	Status() proto.ServingStatus
 }
+
+var _ FollowerController = &followerController{}
 
 type followerController struct {
 	sync.Mutex
@@ -186,6 +190,18 @@ func (fc *followerController) setLogger() {
 		slog.Int64("shard", fc.shardId),
 		slog.Int64("term", fc.term),
 	)
+}
+
+func (fc *followerController) List(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
+	list0(logging.NewContext(ctx, fc.log), request, cb, fc.db)
+}
+
+func (fc *followerController) Read(ctx context.Context, request *proto.ReadRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
+	read0(logging.NewContext(ctx, fc.log), request, cb, fc.db)
+}
+
+func (fc *followerController) RangeScan(ctx context.Context, request *proto.RangeScanRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
+	rangeScan0(logging.NewContext(ctx, fc.log), request, cb, fc.db)
 }
 
 func (fc *followerController) isClosed() bool {

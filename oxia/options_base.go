@@ -14,6 +14,8 @@
 
 package oxia
 
+import "github.com/oxia-db/oxia/proto"
+
 // BaseOption is an option that applies to all the client operations.
 type BaseOption interface {
 	PutOption
@@ -79,4 +81,42 @@ func PartitionKey(partitionKey string) BaseOption {
 	return &partitionKeyOpt{
 		partitionKey: &partitionKey,
 	}
+}
+
+// --------------------------------------------------------------------------------------------
+
+type ConsistencyOpt struct {
+	consistency proto.ConsistencyLevel
+}
+
+func (c *ConsistencyOpt) applyGet(opts *getOptions) {
+	opts.consistencyLevel = c.consistency
+}
+
+func (c *ConsistencyOpt) applyList(opts *listOptions) {
+	opts.consistencyLevel = c.consistency
+}
+
+func (c *ConsistencyOpt) applyRangeScan(opts *rangeScanOptions) {
+	opts.consistencyLevel = c.consistency
+}
+
+func (c *ConsistencyOpt) applyGetSequenceUpdates(*getSequenceUpdatesOptions) {
+}
+
+func (c *ConsistencyOpt) applyPut(*putOptions) {
+}
+
+func (c *ConsistencyOpt) applyDelete(*deleteOptions) {
+}
+
+func (c *ConsistencyOpt) applyDeleteRange(*deleteRangeOptions) {
+}
+
+func ConsistencyEventually() BaseOption {
+	return &ConsistencyOpt{proto.ConsistencyLevel_EVENTUAL}
+}
+
+func ConsistencyLinearizable() BaseOption {
+	return &ConsistencyOpt{proto.ConsistencyLevel_LINEARIZABLE}
 }
