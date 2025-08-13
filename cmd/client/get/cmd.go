@@ -54,7 +54,7 @@ func init() {
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
 	Cmd.Flags().StringVar(&Config.secondaryIndex, "index", "", "Secondary Index")
 
-	Cmd.Flags().StringVar(&Config.consistencyLevel, "consistency-level", "linearizable", "Consistency Level")
+	Cmd.Flags().StringVar(&Config.consistencyLevel, "consistency-level", "linearizable", "Consistency Level: Allowed values: linearizable, eventually")
 	Cmd.Flags().StringVarP(&Config.comparisonType, "comparison-type", "t", "equal",
 		"The type of get comparison. Allowed value: equal, floor, ceiling, lower, higher")
 }
