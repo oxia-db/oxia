@@ -176,7 +176,7 @@ func (c *clientImpl) Delete(key string, options ...DeleteOption) <-chan error {
 	}
 	opts := newDeleteOptions(options)
 	shardId := c.getShardForKey(key, opts)
-	c.writeBatchManager.Get(batchapi.Key{
+	c.writeBatchManager.Get(commonbatch.Key{
 		ShardID:          shardId,
 		ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
 	}).Add(model.DeleteCall{
@@ -202,7 +202,7 @@ func (c *clientImpl) DeleteRange(minKeyInclusive string, maxKeyExclusive string,
 
 	for _, shardId := range shardIDs {
 		// chInner := make(chan error, 1)
-		c.writeBatchManager.Get(batchapi.Key{
+		c.writeBatchManager.Get(commonbatch.Key{
 			ShardID:          shardId,
 			ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
 		}).Add(model.DeleteRangeCall{
@@ -231,7 +231,7 @@ func (c *clientImpl) DeleteRange(minKeyInclusive string, maxKeyExclusive string,
 }
 
 func (c *clientImpl) doSingleShardDeleteRange(shardId int64, minKeyInclusive string, maxKeyExclusive string, ch chan error) {
-	c.writeBatchManager.Get(batchapi.Key{
+	c.writeBatchManager.Get(commonbatch.Key{
 		ShardID:          shardId,
 		ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
 	}).Add(model.DeleteRangeCall{
@@ -266,7 +266,7 @@ func (c *clientImpl) Get(key string, options ...GetOption) <-chan GetResult {
 
 func (c *clientImpl) doSingleShardGet(key string, opts *getOptions, ch chan GetResult) {
 	shardId := c.getShardForKey(key, opts)
-	c.readBatchManager.Get(batchapi.Key{
+	c.readBatchManager.Get(commonbatch.Key{
 		ShardID:          shardId,
 		ConsistencyLevel: opts.consistencyLevel,
 	}).Add(model.GetCall{
@@ -344,7 +344,7 @@ func (c *clientImpl) doMultiShardGet(key string, options *getOptions, ch chan Ge
 	selected := keyNotFound
 
 	for _, shardId := range shards {
-		c.readBatchManager.Get(batchapi.Key{
+		c.readBatchManager.Get(commonbatch.Key{
 			ShardID:          shardId,
 			ConsistencyLevel: options.consistencyLevel,
 		}).Add(model.GetCall{
