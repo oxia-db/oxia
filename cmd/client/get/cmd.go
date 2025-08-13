@@ -96,13 +96,8 @@ func exec(cmd *cobra.Command, args []string) error {
 		return errors.Errorf("invalid comparison type: %s", Config.comparisonType)
 	}
 
-	switch Config.consistencyLevel {
-	case "linearizable":
-		options = append(options, oxia.ConsistencyLinearizable())
-	case "eventually":
-		options = append(options, oxia.ConsistencyEventually())
-	default:
-		return errors.Errorf("invalid consistency level: %s", Config.consistencyLevel)
+	if options, err = praseConsistencyLevel(options); err != nil {
+		return err
 	}
 
 	queryKey := args[0]
@@ -131,4 +126,16 @@ func exec(cmd *cobra.Command, args []string) error {
 		})
 	}
 	return nil
+}
+
+func praseConsistencyLevel(options []oxia.GetOption) ([]oxia.GetOption, error) {
+	switch Config.consistencyLevel {
+	case "linearizable":
+		options = append(options, oxia.ConsistencyLinearizable())
+	case "eventually":
+		options = append(options, oxia.ConsistencyEventually())
+	default:
+		return nil, errors.Errorf("invalid consistency level: %s", Config.consistencyLevel)
+	}
+	return options, nil
 }

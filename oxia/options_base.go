@@ -101,16 +101,16 @@ func (c *ConsistencyOpt) applyRangeScan(opts *rangeScanOptions) {
 	opts.consistencyLevel = c.consistency
 }
 
-func (c *ConsistencyOpt) applyGetSequenceUpdates(*getSequenceUpdatesOptions) {
+func (*ConsistencyOpt) applyGetSequenceUpdates(*getSequenceUpdatesOptions) {
 }
 
-func (c *ConsistencyOpt) applyPut(*putOptions) {
+func (*ConsistencyOpt) applyPut(*putOptions) {
 }
 
-func (c *ConsistencyOpt) applyDelete(*deleteOptions) {
+func (*ConsistencyOpt) applyDelete(*deleteOptions) {
 }
 
-func (c *ConsistencyOpt) applyDeleteRange(*deleteRangeOptions) {
+func (*ConsistencyOpt) applyDeleteRange(*deleteRangeOptions) {
 }
 
 func ConsistencyEventually() BaseOption {

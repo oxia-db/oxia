@@ -22,11 +22,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/oxia-db/oxia/common/logging"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/common/logging"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"

@@ -29,7 +29,6 @@ import (
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
 
 	"github.com/oxia-db/oxia/common/compare"
-	batchapi "github.com/oxia-db/oxia/oxia/batch"
 	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/batch"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
@@ -88,10 +87,10 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		options:      options,
 		clientPool:   clientPool,
 		shardManager: shardManager,
-		writeBatchManager: batch.NewManager(ctx, func(ctx context.Context, key *batchapi.Key) commonbatch.Batcher {
+		writeBatchManager: batch.NewManager(ctx, func(ctx context.Context, key *commonbatch.Key) commonbatch.Batcher {
 			return batcherFactory.NewWriteBatcher(ctx, &key.ShardID, options.maxBatchSize)
 		}),
-		readBatchManager: batch.NewManager(ctx, func(ctx context.Context, key *batchapi.Key) batchapi.Batcher {
+		readBatchManager: batch.NewManager(ctx, func(ctx context.Context, key *commonbatch.Key) commonbatch.Batcher {
 			return batcherFactory.NewReadBatcher(ctx, &key.ShardID)
 		}),
 		executor: executor,
@@ -151,13 +150,13 @@ func (c *clientImpl) Put(key string, value []byte, options ...PutOption) <-chan 
 				return
 			}
 			putCall.SessionId = &sessionId
-			c.writeBatchManager.Get(batchapi.Key{
+			c.writeBatchManager.Get(commonbatch.Key{
 				ShardID:          shardId,
 				ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
 			}).Add(putCall)
 		})
 	} else {
-		c.writeBatchManager.Get(batchapi.Key{
+		c.writeBatchManager.Get(commonbatch.Key{
 			ShardID:          shardId,
 			ConsistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
 		}).Add(putCall)
