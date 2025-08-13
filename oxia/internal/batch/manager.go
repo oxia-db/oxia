@@ -23,24 +23,24 @@ import (
 	"github.com/oxia-db/oxia/oxia/batch"
 )
 
-func NewManager(ctx context.Context, batcherFactory func(context.Context, *int64) batch.Batcher) *Manager {
+func NewManager(ctx context.Context, batcherFactory func(context.Context, *batch.Key) batch.Batcher) *Manager {
 	return &Manager{
 		ctx:            ctx,
 		batcherFactory: batcherFactory,
-		batchers:       make(map[int64]batch.Batcher),
+		batchers:       make(map[batch.Key]batch.Batcher),
 	}
 }
 
 type Manager struct {
 	sync.RWMutex
 	ctx            context.Context
-	batcherFactory func(context.Context, *int64) batch.Batcher
-	batchers       map[int64]batch.Batcher
+	batcherFactory func(context.Context, *batch.Key) batch.Batcher
+	batchers       map[batch.Key]batch.Batcher
 }
 
-func (m *Manager) Get(shardId int64) batch.Batcher {
+func (m *Manager) Get(key batch.Key) batch.Batcher {
 	m.RLock()
-	batcher, ok := m.batchers[shardId]
+	batcher, ok := m.batchers[key]
 	m.RUnlock()
 
 	if ok {
@@ -51,9 +51,9 @@ func (m *Manager) Get(shardId int64) batch.Batcher {
 	m.Lock()
 	defer m.Unlock()
 
-	if batcher, ok = m.batchers[shardId]; !ok {
-		batcher = m.batcherFactory(m.ctx, &shardId)
-		m.batchers[shardId] = batcher
+	if batcher, ok = m.batchers[key]; !ok {
+		batcher = m.batcherFactory(m.ctx, &key)
+		m.batchers[key] = batcher
 	}
 	return batcher
 }

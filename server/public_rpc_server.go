@@ -211,7 +211,7 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 		slog.Any("req", request),
 	)
 
-	lc, err := s.getLeader(request.Shard)
+	rc, err := s.getReadable(request.Shard, request.ConsistencyLevel)
 	if err != nil {
 		return err
 	}
@@ -219,7 +219,7 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 	ctx := stream.Context()
 
 	finish := make(chan error, 1)
-	lc.Read(stream.Context(), request, concurrent.NewBatchStreamOnce[*proto.GetResponse](maxTotalReadCount, maxTotalReadValueSize,
+	rc.Read(stream.Context(), request, concurrent.NewBatchStreamOnce[*proto.GetResponse](maxTotalReadCount, maxTotalReadValueSize,
 		func(result *proto.GetResponse) int { return protowire.SizeBytes(len(result.Value)) },
 		func(container []*proto.GetResponse) error { return stream.Send(&proto.ReadResponse{Gets: container}) },
 		func(err error) { finish <- err },
@@ -247,13 +247,14 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 		slog.String("peer", rpc.GetPeer(stream.Context())),
 		slog.Any("req", request),
 	)
-	lc, err := s.getLeader(request.Shard)
+	rc, err := s.getReadable(request.Shard, request.ConsistencyLevel)
 	if err != nil {
 		return err
 	}
+
 	ctx := stream.Context()
 	finish := make(chan error, 1)
-	lc.List(ctx, request, concurrent.NewBatchStreamOnce[string](maxTotalListKeyCount, maxTotalListKeySize,
+	rc.List(ctx, request, concurrent.NewBatchStreamOnce[string](maxTotalListKeyCount, maxTotalListKeySize,
 		func(key string) int { return protowire.SizeBytes(len(key)) },
 		func(container []string) error { return stream.Send(&proto.ListResponse{Keys: container}) },
 		func(err error) { finish <- err },
@@ -282,14 +283,13 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 	)
 	ctx := stream.Context()
 
-	var lc LeaderController
-	var err error
-	if lc, err = s.getLeader(request.Shard); err != nil {
+	rc, err := s.getReadable(request.Shard, request.ConsistencyLevel)
+	if err != nil {
 		return err
 	}
 
 	finish := make(chan error, 1)
-	lc.RangeScan(ctx, request,
+	rc.RangeScan(ctx, request,
 		concurrent.NewBatchStreamOnce[*proto.GetResponse](maxTotalScanBatchCount, maxTotalReadValueSize,
 			func(response *proto.GetResponse) int { return len(response.Value) },
 			func(container []*proto.GetResponse) error {
@@ -461,6 +461,18 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 			return ctx.Err()
 		}
 	}
+}
+
+func (s *publicRpcServer) getReadable(shardId *int64, consistency *proto.ConsistencyLevel) (ReadableController, error) {
+	if consistency != nil && *consistency == proto.ConsistencyLevel_EVENTUAL {
+		var follower FollowerController
+		var err error
+		if follower, err = s.shardsDirector.GetFollower(*shardId); err != nil {
+			return nil, err
+		}
+		return follower, nil
+	}
+	return s.getLeader(shardId)
 }
 
 func (s *publicRpcServer) getLeader(shardId *int64) (LeaderController, error) {

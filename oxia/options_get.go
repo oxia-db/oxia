@@ -19,8 +19,9 @@ import "github.com/oxia-db/oxia/proto"
 type getOptions struct {
 	baseOptions
 	listOptions
-	comparisonType proto.KeyComparisonType
-	includeValue   bool
+	comparisonType   proto.KeyComparisonType
+	includeValue     bool
+	consistencyLevel proto.ConsistencyLevel
 }
 
 // GetOption represents an option for the [SyncClient.Get] operation.
@@ -30,7 +31,8 @@ type GetOption interface {
 
 func newGetOptions(opts []GetOption) *getOptions {
 	getOpts := &getOptions{
-		includeValue: true,
+		includeValue:     true,
+		consistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
 	}
 	for _, opt := range opts {
 		opt.applyGet(getOpts)
