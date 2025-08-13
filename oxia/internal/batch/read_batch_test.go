@@ -44,7 +44,7 @@ func TestReadBatchAdd(t *testing.T) {
 		factory := &readBatchFactory{
 			metrics: metrics.NewMetrics(noop.NewMeterProvider()),
 		}
-		batch := factory.newBatch(&shardId)
+		batch := factory.newBatch(&shardId, proto.ConsistencyLevel_LINEARIZABLE)
 
 		panicked := add(batch, item.call)
 
@@ -93,12 +93,14 @@ func TestReadBatchComplete(t *testing.T) {
 		},
 	} {
 		execute := func(ctx context.Context, request *proto.ReadRequest) (proto.OxiaClient_ReadClient, error) {
+			linearizable := proto.ConsistencyLevel_LINEARIZABLE
 			assert.Equal(t, &proto.ReadRequest{
 				Shard: &shardId,
 				Gets: []*proto.GetRequest{{
 					Key:          "/a",
 					IncludeValue: true,
 				}},
+				ConsistencyLevel: &linearizable,
 			}, request)
 			return readClient([]*proto.ReadResponse{item.response}), item.err
 		}
@@ -107,7 +109,7 @@ func TestReadBatchComplete(t *testing.T) {
 			execute: execute,
 			metrics: metrics.NewMetrics(noop.NewMeterProvider()),
 		}
-		batch := factory.newBatch(&shardId)
+		batch := factory.newBatch(&shardId, proto.ConsistencyLevel_LINEARIZABLE)
 
 		var wg sync.WaitGroup
 		wg.Add(3)

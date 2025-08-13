@@ -91,7 +91,7 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 			return batcherFactory.NewWriteBatcher(ctx, &key.ShardID, options.maxBatchSize)
 		}),
 		readBatchManager: batch.NewManager(ctx, func(ctx context.Context, key *commonbatch.Key) commonbatch.Batcher {
-			return batcherFactory.NewReadBatcher(ctx, &key.ShardID)
+			return batcherFactory.NewReadBatcher(ctx, &key.ShardID, key.ConsistencyLevel)
 		}),
 		executor: executor,
 	}

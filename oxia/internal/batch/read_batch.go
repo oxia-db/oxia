@@ -38,7 +38,7 @@ type readBatchFactory struct {
 	requestTimeout time.Duration
 }
 
-func (b readBatchFactory) newBatch(shardId *int64) batch.Batch {
+func (b readBatchFactory) newBatch(shardId *int64, consensusLevel proto.ConsistencyLevel) batch.Batch {
 	return &readBatch{
 		namespace:      b.namespace,
 		shardId:        shardId,
@@ -48,12 +48,14 @@ func (b readBatchFactory) newBatch(shardId *int64) batch.Batch {
 		metrics:        b.metrics,
 		callback:       b.metrics.ReadCallback(),
 		requestTimeout: b.requestTimeout,
+		consensusLevel: consensusLevel,
 	}
 }
 
 type readBatch struct {
 	namespace      string
 	shardId        *int64
+	consensusLevel proto.ConsistencyLevel
 	execute        func(context.Context, *proto.ReadRequest) (proto.OxiaClient_ReadClient, error)
 	gets           []model.GetCall
 	start          time.Time
@@ -150,7 +152,8 @@ func (b *readBatch) handle(response *proto.ReadResponse) {
 
 func (b *readBatch) toProto() *proto.ReadRequest {
 	return &proto.ReadRequest{
-		Shard: b.shardId,
-		Gets:  model.Convert[model.GetCall, *proto.GetRequest](b.gets, model.GetCall.ToProto),
+		Shard:            b.shardId,
+		Gets:             model.Convert[model.GetCall, *proto.GetRequest](b.gets, model.GetCall.ToProto),
+		ConsistencyLevel: &b.consensusLevel,
 	}
 }

@@ -21,6 +21,7 @@ import (
 	batch2 "github.com/oxia-db/oxia/oxia/batch"
 	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
+	"github.com/oxia-db/oxia/proto"
 )
 
 type BatcherFactory struct {
@@ -59,12 +60,14 @@ func (b *BatcherFactory) NewWriteBatcher(ctx context.Context, shardId *int64, ma
 	}.newBatch)
 }
 
-func (b *BatcherFactory) NewReadBatcher(ctx context.Context, shardId *int64) batch2.Batcher {
-	return b.newBatcher(ctx, shardId, "read", readBatchFactory{
-		execute:        b.Executor.ExecuteRead,
-		metrics:        b.Metrics,
-		requestTimeout: b.RequestTimeout,
-	}.newBatch)
+func (b *BatcherFactory) NewReadBatcher(ctx context.Context, shardId *int64, consensusLevel proto.ConsistencyLevel) batch2.Batcher {
+	return b.newBatcher(ctx, shardId, "read", func(shardId *int64) batch2.Batch {
+		return readBatchFactory{
+			execute:        b.Executor.ExecuteRead,
+			metrics:        b.Metrics,
+			requestTimeout: b.RequestTimeout,
+		}.newBatch(shardId, consensusLevel)
+	})
 }
 
 func (b *BatcherFactory) newBatcher(ctx context.Context, shardId *int64, batcherType string, batchFactory func(shardId *int64) batch2.Batch) batch2.Batcher {
