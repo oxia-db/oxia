@@ -43,18 +43,22 @@ func TestManager(t *testing.T) {
 	testBatcher := &testBatcher{}
 
 	newBatcherInvocations := 0
-	batcherFactory := func(context.Context, *int64) batch.Batcher {
+	batcherFactory := func(context.Context, *batch.Key) batch.Batcher {
 		newBatcherInvocations++
 		return testBatcher
 	}
 
 	manager := NewManager(context.Background(), batcherFactory)
 
-	batcher := manager.Get(shardId)
+	batcher := manager.Get(batch.Key{
+		ShardID: shardId,
+	})
 	assert.Equal(t, testBatcher, batcher)
 	assert.Equal(t, 1, newBatcherInvocations)
 
-	batcher = manager.Get(shardId)
+	batcher = manager.Get(batch.Key{
+		ShardID: shardId,
+	})
 	assert.Equal(t, testBatcher, batcher)
 	assert.Equal(t, 1, newBatcherInvocations)
 
@@ -63,7 +67,9 @@ func TestManager(t *testing.T) {
 
 	assert.True(t, testBatcher.closed)
 
-	_ = manager.Get(shardId)
+	_ = manager.Get(batch.Key{
+		ShardID: shardId,
+	})
 	// proves that the batcher was removed on Close
 	// as it had to recreate it on Get
 	assert.Equal(t, 2, newBatcherInvocations)
