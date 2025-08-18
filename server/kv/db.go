@@ -201,7 +201,7 @@ func now() uint64 {
 }
 
 func (d *db) applyWriteRequest(b *proto.WriteRequest, batch WriteBatch,
-	versionIDGenerator *atomic.Int64,
+	localVersionIDTracker *atomic.Int64,
 	commitOffset int64,
 	timestamp uint64,
 	updateOperationCallback UpdateOperationCallback) (*notifications, *proto.WriteResponse, error) {
@@ -213,7 +213,7 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch WriteBatch,
 
 	d.putCounter.Add(len(b.Puts))
 	for _, putReq := range b.Puts {
-		pr, err := d.applyPut(batch, versionIDGenerator, notifications, putReq, timestamp, updateOperationCallback, false)
+		pr, err := d.applyPut(batch, localVersionIDTracker, notifications, putReq, timestamp, updateOperationCallback, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -509,7 +509,7 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 	return term, options, nil
 }
 
-func (d *db) applyPut(batch WriteBatch, versionIDGenerator *atomic.Int64,
+func (d *db) applyPut(batch WriteBatch, localVersionIDTracker *atomic.Int64,
 	notifications *notifications, putReq *proto.PutRequest,
 	timestamp uint64, updateOperationCallback UpdateOperationCallback,
 	internal bool) (*proto.PutResponse, error) { //nolint:revive
@@ -546,7 +546,7 @@ func (d *db) applyPut(batch WriteBatch, versionIDGenerator *atomic.Int64,
 				Status: status,
 			}, nil
 		}
-		versionId = versionIDGenerator.Add(1)
+		versionId = localVersionIDTracker.Add(1)
 	}
 
 	if se == nil {
