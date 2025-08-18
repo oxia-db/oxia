@@ -19,12 +19,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/oxia-db/oxia/proto"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/proto"
 
 	"github.com/oxia-db/oxia/common/constant"
 
