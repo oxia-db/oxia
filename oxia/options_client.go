@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/oxia-db/oxia/proto"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -62,6 +63,7 @@ type clientOptions struct {
 	meterProvider       metric.MeterProvider
 	sessionTimeout      time.Duration
 	identity            string
+	consistencyLevel    proto.ConsistencyLevel
 	tls                 *tls.Config
 	authentication      auth.Authentication
 }
@@ -90,6 +92,7 @@ func newClientOptions(serviceAddress string, opts ...ClientOption) (clientOption
 		maxRequestsPerBatch: DefaultMaxRequestsPerBatch,
 		maxBatchSize:        DefaultMaxBatchSize,
 		requestTimeout:      DefaultRequestTimeout,
+		consistencyLevel:    proto.ConsistencyLevel_LINEARIZABLE,
 		meterProvider:       noop.NewMeterProvider(),
 		sessionTimeout:      DefaultSessionTimeout,
 		identity:            defaultIdentity(),
@@ -119,6 +122,13 @@ func WithNamespace(namespace string) ClientOption {
 			return options, ErrInvalidOptionNamespace
 		}
 		options.namespace = namespace
+		return options, nil
+	})
+}
+
+func WithEventuallyConsistency() ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		options.consistencyLevel = proto.ConsistencyLevel_EVENTUAL
 		return options, nil
 	})
 }

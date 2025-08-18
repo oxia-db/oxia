@@ -14,8 +14,6 @@
 
 package oxia
 
-import "github.com/oxia-db/oxia/proto"
-
 type rangeScanOptions struct {
 	listOptions
 }
@@ -27,7 +25,6 @@ type RangeScanOption interface {
 
 func newRangeScanOptions(opts []RangeScanOption) *rangeScanOptions {
 	rangeScanOpts := &rangeScanOptions{}
-	rangeScanOpts.consistencyLevel = proto.ConsistencyLevel_LINEARIZABLE
 	for _, opt := range opts {
 		opt.applyRangeScan(rangeScanOpts)
 	}

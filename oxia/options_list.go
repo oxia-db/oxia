@@ -14,13 +14,10 @@
 
 package oxia
 
-import "github.com/oxia-db/oxia/proto"
-
 type listOptions struct {
 	baseOptions
 
 	secondaryIndexName *string
-	consistencyLevel   proto.ConsistencyLevel
 }
 
 // ListOption represents an option for the [SyncClient.List] operation.
@@ -31,9 +28,7 @@ type ListOption interface {
 }
 
 func newListOptions(opts []ListOption) *listOptions {
-	listOpts := &listOptions{
-		consistencyLevel: proto.ConsistencyLevel_LINEARIZABLE,
-	}
+	listOpts := &listOptions{}
 	for _, opt := range opts {
 		opt.applyList(listOpts)
 	}
