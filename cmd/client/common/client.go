@@ -26,9 +26,10 @@ var (
 )
 
 type ClientConfig struct {
-	ServiceAddr    string
-	Namespace      string
-	RequestTimeout time.Duration
+	ServiceAddr         string
+	Namespace           string
+	RequestTimeout      time.Duration
+	EventualConsistency bool
 }
 
 func (ClientConfig) NewClient() (oxia.SyncClient, error) {
@@ -36,8 +37,14 @@ func (ClientConfig) NewClient() (oxia.SyncClient, error) {
 		return MockedClient, nil
 	}
 
-	return oxia.NewSyncClient(Config.ServiceAddr,
+	options := []oxia.ClientOption{
 		oxia.WithRequestTimeout(Config.RequestTimeout),
 		oxia.WithNamespace(Config.Namespace),
-	)
+	}
+
+	if Config.EventualConsistency {
+		options = append(options, oxia.WithEventualConsistency())
+	}
+
+	return oxia.NewSyncClient(Config.ServiceAddr, options...)
 }

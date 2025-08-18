@@ -126,7 +126,10 @@ func WithNamespace(namespace string) ClientOption {
 	})
 }
 
-func WithEventuallyConsistency() ClientOption {
+// WithEventualConsistency returns a ClientOption that sets the consistency level of the client to EVENTUAL.
+//
+// This is currently used for experimental cluster data validation.
+func WithEventualConsistency() ClientOption {
 	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
 		options.consistencyLevel = proto.ConsistencyLevel_EVENTUAL
 		return options, nil

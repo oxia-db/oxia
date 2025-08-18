@@ -30,13 +30,12 @@ var (
 )
 
 type flags struct {
-	key              string
-	hexDump          bool
-	includeVersion   bool
-	partitionKey     string
-	comparisonType   string
-	secondaryIndex   string
-	consistencyLevel string
+	key            string
+	hexDump        bool
+	includeVersion bool
+	partitionKey   string
+	comparisonType string
+	secondaryIndex string
 }
 
 func (flags *flags) Reset() {
@@ -54,7 +53,6 @@ func init() {
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
 	Cmd.Flags().StringVar(&Config.secondaryIndex, "index", "", "Secondary Index")
 
-	Cmd.Flags().StringVar(&Config.consistencyLevel, "consistency-level", "linearizable", "Consistency Level: Allowed values: linearizable, eventually")
 	Cmd.Flags().StringVarP(&Config.comparisonType, "comparison-type", "t", "equal",
 		"The type of get comparison. Allowed value: equal, floor, ceiling, lower, higher")
 }
@@ -96,10 +94,6 @@ func exec(cmd *cobra.Command, args []string) error {
 		return errors.Errorf("invalid comparison type: %s", Config.comparisonType)
 	}
 
-	if options, err = praseConsistencyLevel(options); err != nil {
-		return err
-	}
-
 	queryKey := args[0]
 	key, value, version, err := client.Get(context.Background(), queryKey, options...)
 	if err != nil {
@@ -126,16 +120,4 @@ func exec(cmd *cobra.Command, args []string) error {
 		})
 	}
 	return nil
-}
-
-func praseConsistencyLevel(options []oxia.GetOption) ([]oxia.GetOption, error) {
-	switch Config.consistencyLevel {
-	case "linearizable":
-		// Nothing to do, this is default
-	case "eventually":
-		options = append(options, oxia.ConsistencyEventually())
-	default:
-		return nil, errors.Errorf("invalid consistency level: %s", Config.consistencyLevel)
-	}
-	return options, nil
 }

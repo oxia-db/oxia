@@ -46,6 +46,7 @@ func init() {
 	Cmd.PersistentFlags().StringVarP(&common.Config.ServiceAddr, "service-address", "a", defaultServiceAddress, "Service address")
 	Cmd.PersistentFlags().StringVarP(&common.Config.Namespace, "namespace", "n", oxia.DefaultNamespace, "The Oxia namespace to use")
 	Cmd.PersistentFlags().DurationVar(&common.Config.RequestTimeout, "request-timeout", oxia.DefaultRequestTimeout, "Requests timeout")
+	Cmd.PersistentFlags().BoolVar(&common.Config.EventualConsistency, "eventual-consistency", false, "set the client consistency to eventual")
 
 	Cmd.AddCommand(put.Cmd)
 	Cmd.AddCommand(del.Cmd)
