@@ -144,20 +144,20 @@ func NewDB(namespace string, shardId int64, factory Factory, notificationRetenti
 	if err != nil {
 		return nil, err
 	}
-	db.versionIdTracker.Store(lastVersionId)
+	db.committedVersionIDTracker.Store(lastVersionId)
 
 	db.notificationsTracker = newNotificationsTracker(namespace, shardId, commitOffset, kv, notificationRetentionTime, clock)
 	return db, nil
 }
 
 type db struct {
-	kv                    KV
-	shardId               int64
-	versionIdTracker      atomic.Int64
-	notificationsTracker  *notificationsTracker
-	log                   *slog.Logger
-	notificationsEnabled  bool
-	sequenceWaiterTracker SequenceWaiterTracker
+	kv                        KV
+	shardId                   int64
+	committedVersionIDTracker atomic.Int64
+	notificationsTracker      *notificationsTracker
+	log                       *slog.Logger
+	notificationsEnabled      bool
+	sequenceWaiterTracker     SequenceWaiterTracker
 
 	putCounter                metric.Counter
 	deleteCounter             metric.Counter
@@ -200,7 +200,11 @@ func now() uint64 {
 	return uint64(time.Now().UnixMilli())
 }
 
-func (d *db) applyWriteRequest(b *proto.WriteRequest, batch WriteBatch, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*notifications, *proto.WriteResponse, error) {
+func (d *db) applyWriteRequest(b *proto.WriteRequest, batch WriteBatch,
+	versionIDGenerator *atomic.Int64,
+	commitOffset int64,
+	timestamp uint64,
+	updateOperationCallback UpdateOperationCallback) (*notifications, *proto.WriteResponse, error) {
 	res := &proto.WriteResponse{}
 	var notifications *notifications
 	if d.notificationsEnabled {
@@ -209,7 +213,7 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch WriteBatch, commitOf
 
 	d.putCounter.Add(len(b.Puts))
 	for _, putReq := range b.Puts {
-		pr, err := d.applyPut(batch, notifications, putReq, timestamp, updateOperationCallback, false)
+		pr, err := d.applyPut(batch, versionIDGenerator, notifications, putReq, timestamp, updateOperationCallback, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -242,9 +246,11 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch WriteBatch, commitOf
 func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error) {
 	timer := d.batchWriteLatencyHisto.Timer()
 	defer timer.Done()
+	localVersionIDTracker := &atomic.Int64{}
+	localVersionIDTracker.Store(d.committedVersionIDTracker.Load())
 
 	batch := d.kv.NewWriteBatch()
-	notifications, res, err := d.applyWriteRequest(b, batch, commitOffset, timestamp, updateOperationCallback)
+	notifications, res, err := d.applyWriteRequest(b, batch, localVersionIDTracker, commitOffset, timestamp, updateOperationCallback)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +259,7 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 		return nil, err
 	}
 
-	if err := d.addASCIILong(commitLastVersionIdKey, d.versionIdTracker.Load(), batch, timestamp); err != nil {
+	if err := d.addASCIILong(commitLastVersionIdKey, localVersionIDTracker.Load(), batch, timestamp); err != nil {
 		return nil, err
 	}
 
@@ -267,6 +273,8 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	if err := batch.Commit(); err != nil {
 		return nil, err
 	}
+	// update the db local cache of version_id after commit success
+	d.committedVersionIDTracker.Store(localVersionIDTracker.Load())
 
 	if notifications != nil {
 		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
@@ -290,7 +298,7 @@ func (*db) addNotifications(batch WriteBatch, notifications *notifications) erro
 
 func (d *db) addASCIILong(key string, value int64, batch WriteBatch, timestamp uint64) error {
 	asciiValue := []byte(fmt.Sprintf("%d", value))
-	_, err := d.applyPut(batch, nil, &proto.PutRequest{
+	_, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:               key,
 		Value:             asciiValue,
 		ExpectedVersionId: nil,
@@ -438,7 +446,7 @@ func (d *db) readASCIILong(key string) (int64, error) {
 func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	batch := d.kv.NewWriteBatch()
 
-	if _, err := d.applyPut(batch, nil, &proto.PutRequest{
+	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termKey,
 		Value: []byte(fmt.Sprintf("%d", newTerm)),
 	}, now(), NoOpCallback, true); err != nil {
@@ -449,7 +457,7 @@ func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	if err != nil {
 		return err
 	}
-	if _, err := d.applyPut(batch, nil, &proto.PutRequest{
+	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termOptionsKey,
 		Value: serOptions,
 	}, now(), NoOpCallback, true); err != nil {
@@ -501,7 +509,10 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 	return term, options, nil
 }
 
-func (d *db) applyPut(batch WriteBatch, notifications *notifications, putReq *proto.PutRequest, timestamp uint64, updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) { //nolint:revive
+func (d *db) applyPut(batch WriteBatch, versionIDGenerator *atomic.Int64,
+	notifications *notifications, putReq *proto.PutRequest,
+	timestamp uint64, updateOperationCallback UpdateOperationCallback,
+	internal bool) (*proto.PutResponse, error) { //nolint:revive
 	var se *proto.StorageEntry
 	var err error
 	var newKey string
@@ -535,7 +546,7 @@ func (d *db) applyPut(batch WriteBatch, notifications *notifications, putReq *pr
 				Status: status,
 			}, nil
 		}
-		versionId = d.versionIdTracker.Add(1)
+		versionId = versionIDGenerator.Add(1)
 	}
 
 	if se == nil {
