@@ -259,7 +259,8 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 		return nil, err
 	}
 
-	if err := d.addASCIILong(commitLastVersionIdKey, localVersionIDTracker.Load(), batch, timestamp); err != nil {
+	localVersionID := localVersionIDTracker.Load()
+	if err := d.addASCIILong(commitLastVersionIdKey, localVersionID, batch, timestamp); err != nil {
 		return nil, err
 	}
 
@@ -274,7 +275,7 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 		return nil, err
 	}
 	// update the db local cache of version_id after commit success
-	d.committedVersionIDTracker.Store(localVersionIDTracker.Load())
+	d.committedVersionIDTracker.Store(localVersionID)
 
 	if notifications != nil {
 		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
