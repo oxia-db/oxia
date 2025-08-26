@@ -20,10 +20,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/server"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/time/rate"
+
+	"github.com/oxia-db/oxia/oxia"
+	"github.com/oxia-db/oxia/server"
 )
 
 func TestSessionEphemeralKeysLeak(t *testing.T) {
