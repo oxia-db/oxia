@@ -428,7 +428,7 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kv.WriteBat
 		}
 	}()
 
-	// introduce the process here for better defer resource release
+	// introduce the processor here for better defer resource release
 	iteratorProcessor := func(batch kv.WriteBatch, it kv.KeyValueIterator) error {
 		value, err := it.Value()
 		if err != nil {
