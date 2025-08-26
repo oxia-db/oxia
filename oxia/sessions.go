@@ -264,10 +264,10 @@ func (cs *clientSession) keepAlive() error {
 	cs.Unlock()
 	cs.sessions.Unlock()
 
-	tickTime := 30 * time.Second
-	//if tickTime < 2*time.Second {
-	//	tickTime = 2 * time.Second
-	//}
+	tickTime := cs.sessions.clientOpts.sessionKeepAliveTicker
+	if tickTime < 2*time.Second {
+		tickTime = 2 * time.Second
+	}
 
 	ticker := time.NewTicker(tickTime)
 	defer ticker.Stop()

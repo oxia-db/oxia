@@ -12,16 +12,19 @@ import (
 	"golang.org/x/time/rate"
 )
 
-func TestNoLegacyKeys(t *testing.T) {
+func TestSessionEphemeralKeysLeak(t *testing.T) {
 	config := server.NewTestConfig(t.TempDir())
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	client, err := oxia.NewAsyncClient(fmt.Sprintf("localhost:%d", standaloneServer.RpcPort()))
+	client, err := oxia.NewAsyncClient(fmt.Sprintf("localhost:%d", standaloneServer.RpcPort()),
+		// force the server cleanup the session to make the race-condition
+		oxia.WithSessionKeepAliveTicker(16*time.Second),
+		oxia.WithSessionTimeout(10*time.Second))
 	assert.NoError(t, err)
 
-	after := time.After(1 * time.Minute)
+	after := time.After(40 * time.Second)
 	limiter := rate.NewLimiter(rate.Limit(1000), 1000)
 loop:
 	for i := 0; ; i++ {
@@ -31,7 +34,7 @@ loop:
 		default:
 			err := limiter.Wait(context.Background())
 			assert.NoError(t, err)
-			_ = client.Put(fmt.Sprintf("/session-legacy/%d", i), []byte{}, oxia.Ephemeral())
+			_ = client.Put(fmt.Sprintf("/session-leak/%d", i), []byte{}, oxia.Ephemeral())
 		}
 	}
 	err = client.Close()
@@ -41,8 +44,8 @@ loop:
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		keys, err := syncClient.List(context.Background(), "/session-legacy/", "/session-legacy//")
+		keys, err := syncClient.List(context.Background(), "/session-leak/", "/session-leak//")
 		return assert.NoError(t, err) && assert.Empty(t, keys)
-	}, 20*time.Second, 1*time.Second)
+	}, 10*time.Second, 1*time.Second)
 
 }

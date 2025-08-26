@@ -53,17 +53,18 @@ var (
 
 // clientOptions contains options for the Oxia client.
 type clientOptions struct {
-	serviceAddress      string
-	namespace           string
-	batchLinger         time.Duration
-	maxRequestsPerBatch int
-	maxBatchSize        int
-	requestTimeout      time.Duration
-	meterProvider       metric.MeterProvider
-	sessionTimeout      time.Duration
-	identity            string
-	tls                 *tls.Config
-	authentication      auth.Authentication
+	serviceAddress         string
+	namespace              string
+	batchLinger            time.Duration
+	maxRequestsPerBatch    int
+	maxBatchSize           int
+	requestTimeout         time.Duration
+	meterProvider          metric.MeterProvider
+	sessionTimeout         time.Duration
+	identity               string
+	tls                    *tls.Config
+	authentication         auth.Authentication
+	sessionKeepAliveTicker time.Duration
 }
 
 func defaultIdentity() string {
@@ -101,6 +102,11 @@ func newClientOptions(serviceAddress string, opts ...ClientOption) (clientOption
 		if err != nil {
 			errs = multierr.Append(errs, err)
 		}
+	}
+	// ======== computed options =========
+	defaultTicker := options.sessionTimeout / 10
+	if defaultTicker > options.sessionKeepAliveTicker {
+		options.sessionKeepAliveTicker = defaultTicker
 	}
 	return options, errs
 }
@@ -210,6 +216,15 @@ func WithAuthentication(authentication auth.Authentication) ClientOption {
 			return options, ErrInvalidOptionAuthentication
 		}
 		options.authentication = authentication
+		return options, nil
+	})
+}
+
+// WithSessionKeepAliveTicker is an internal API used to control the duration
+// of the session keep-alive ticker. This is for experimental use only.
+func WithSessionKeepAliveTicker(ticker time.Duration) ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		options.sessionKeepAliveTicker = ticker
 		return options, nil
 	})
 }
