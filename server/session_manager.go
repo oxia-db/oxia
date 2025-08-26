@@ -439,10 +439,7 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kv.WriteBat
 		if err = kv.Deserialize(value, se); err != nil {
 			return err
 		}
-		if err = s.OnDeleteWithEntry(batch, it.Key(), se); err != nil {
-			return err
-		}
-		return nil
+		return s.OnDeleteWithEntry(batch, it.Key(), se)
 	}
 
 	for ; it.Valid(); it.Next() {
