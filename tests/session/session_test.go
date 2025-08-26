@@ -62,5 +62,4 @@ loop:
 		keys, err := syncClient.List(context.Background(), "/session-leak/", "/session-leak//")
 		return assert.NoError(t, err) && assert.Empty(t, keys)
 	}, 10*time.Second, 1*time.Second)
-
 }
