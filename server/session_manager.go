@@ -312,7 +312,7 @@ type sessionManagerUpdateOperationCallbackS struct{}
 
 var sessionManagerUpdateOperationCallback kv.UpdateOperationCallback = &sessionManagerUpdateOperationCallbackS{}
 
-func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kv.WriteBatch, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kv.WriteBatch, notification *kv.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	var _, closer, err = batch.Get(SessionKey(SessionId(*request.SessionId)))
 	if err != nil {
 		if errors.Is(err, kv.ErrKeyNotFound) {
@@ -324,7 +324,7 @@ func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kv.Write
 		return proto.Status_SESSION_DOES_NOT_EXIST, err
 	}
 	// delete existing session shadow
-	if status, err := deleteShadow(batch, request.Key, existingEntry); err != nil {
+	if status, err := deleteShadow(batch, notification, request.Key, existingEntry); err != nil {
 		return status, err
 	}
 	// Create the session shadow entry
@@ -336,21 +336,21 @@ func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kv.Write
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kv.WriteBatch, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kv.WriteBatch, notification *kv.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	switch {
 	// override by normal operation
 	case request.SessionId == nil:
-		if status, err := deleteShadow(batch, request.Key, existingEntry); err != nil {
+		if status, err := deleteShadow(batch, notification, request.Key, existingEntry); err != nil {
 			return status, err
 		}
 		// override by session operation
 	case request.SessionId != nil:
-		return s.OnPutWithinSession(batch, request, existingEntry)
+		return s.OnPutWithinSession(batch, notification, request, existingEntry)
 	}
 	return proto.Status_OK, nil
 }
 
-func deleteShadow(batch kv.WriteBatch, key string, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func deleteShadow(batch kv.WriteBatch, _ *kv.Notifications, key string, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	// We are overwriting an ephemeral value, let's delete its shadow
 	if existingEntry != nil && existingEntry.SessionId != nil {
 		existingSessionId := SessionId(*existingEntry.SessionId)
@@ -362,7 +362,7 @@ func deleteShadow(batch kv.WriteBatch, key string, existingEntry *proto.StorageE
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kv.WriteBatch, key string) error {
+func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kv.WriteBatch, notification *kv.Notifications, key string) error {
 	se, err := kv.GetStorageEntry(batch, key)
 	if err != nil {
 		if errors.Is(err, kv.ErrKeyNotFound) {
@@ -370,14 +370,14 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kv.WriteBatch, k
 		}
 	}
 	defer se.ReturnToVTPool()
-	if err = s.OnDeleteWithEntry(batch, key, se); err != nil {
+	if err = s.OnDeleteWithEntry(batch, notification, key, se); err != nil {
 		return err
 	}
 	return err
 }
 
-func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, key string, entry *proto.StorageEntry) error {
-	if _, err := deleteShadow(batch, key, entry); err != nil {
+func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, notification *kv.Notifications, key string, entry *proto.StorageEntry) error {
+	if _, err := deleteShadow(batch, notification, key, entry); err != nil {
 		return err
 	}
 	if IsSessionKey(key) {
@@ -411,13 +411,15 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteB
 				if err := batch.Delete(unescapedEphemeralKey); err != nil {
 					return err
 				}
+				// add ephemeral key to notification
+				notification.Deleted(unescapedEphemeralKey)
 			}
 		}
 	}
 	return nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kv.WriteBatch, keyStartInclusive string, keyEndExclusive string) error {
+func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kv.WriteBatch, notification *kv.Notifications, keyStartInclusive string, keyEndExclusive string) error {
 	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
 	if err != nil {
 		return err
@@ -439,7 +441,7 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kv.WriteBat
 		if err = kv.Deserialize(value, se); err != nil {
 			return err
 		}
-		return s.OnDeleteWithEntry(batch, it.Key(), se)
+		return s.OnDeleteWithEntry(batch, notification, it.Key(), se)
 	}
 
 	for ; it.Valid(); it.Next() {

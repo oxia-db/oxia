@@ -46,12 +46,12 @@ var (
 	notificationsPrefixScanFormat = fmt.Sprintf("%s/%%016x", notificationsPrefix)
 )
 
-type notifications struct {
+type Notifications struct {
 	batch proto.NotificationBatch
 }
 
-func newNotifications(shardId int64, offset int64, timestamp uint64) *notifications {
-	return &notifications{
+func newNotifications(shardId int64, offset int64, timestamp uint64) *Notifications {
+	return &Notifications{
 		proto.NotificationBatch{
 			Shard:         shardId,
 			Offset:        offset,
@@ -61,7 +61,7 @@ func newNotifications(shardId int64, offset int64, timestamp uint64) *notificati
 	}
 }
 
-func (n *notifications) Modified(key string, versionId, modificationsCount int64) {
+func (n *Notifications) Modified(key string, versionId, modificationsCount int64) {
 	if strings.HasPrefix(key, constant.InternalKeyPrefix) {
 		return
 	}
@@ -75,7 +75,7 @@ func (n *notifications) Modified(key string, versionId, modificationsCount int64
 	}
 }
 
-func (n *notifications) Deleted(key string) {
+func (n *Notifications) Deleted(key string) {
 	if strings.HasPrefix(key, constant.InternalKeyPrefix) {
 		return
 	}
@@ -84,7 +84,7 @@ func (n *notifications) Deleted(key string) {
 	}
 }
 
-func (n *notifications) DeletedRange(keyStartInclusive, keyEndExclusive string) {
+func (n *Notifications) DeletedRange(keyStartInclusive, keyEndExclusive string) {
 	if strings.HasPrefix(keyStartInclusive, constant.InternalKeyPrefix) {
 		return
 	}
