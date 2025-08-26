@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -638,4 +639,75 @@ func TestSession_PutWithExpiredSession(t *testing.T) {
 	_, closer, err := writeBatch.Get(ShadowKey(SessionId(oldSessionId), "a/b/c"))
 	assert.NoError(t, err)
 	assert.NoError(t, closer.Close())
+}
+func TestIsSessionKey(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		want bool
+	}{
+		{
+			name: "ShouldReturnTrueForAValidKey",
+			key:  fmt.Sprintf("__oxia/session/%016x", 12345),
+			want: true,
+		},
+		{
+			name: "ShouldReturnFalseForMultipleSlashes",
+			key:  "__oxia/session//00000000000030d4",
+			want: false,
+		},
+		{
+			name: "ShouldReturnFalseWhenKeyHasTrailingSlash",
+			key:  "__oxia/session/00000000000030d4/",
+			want: false,
+		},
+		{
+			name: "ShouldReturnFalseWhenMultipleSlashesInPrefix",
+			key:  "__oxia//session/00000000000030d4",
+			want: false,
+		},
+		{
+			name: "ShouldReturnFalseForNestedKey",
+			key:  "__oxia/session/00000000000030d4/nested/extra",
+			want: false,
+		},
+		{
+			name: "ShouldReturnFalseForPartiallyCorrectKey",
+			key:  "__oxia/session/",
+			want: false,
+		},
+		{
+			name: "ShouldReturnFalseForExtraPrefixSegments",
+			key:  "__oxia/session/more-path/00000000000030d4",
+			want: false,
+		},
+		{
+			name: "ShouldReturnFalseForIncorrectPrefix",
+			key:  "__oxia/sessio/00000000000030d4",
+			want: false,
+		},
+		{
+			name: "ShouldReturnFalseIfKeyIsTooLong",
+			key:  "__oxia/session/0000000000000001extra",
+			want: false,
+		},
+		{
+			name: "ShouldReturnFalseIfKeyIsTooShort",
+			key:  "__oxia/session/000000000000001",
+			want: false,
+		},
+		{
+			name: "ShouldReturnFalseIfKeyIsEmpty",
+			key:  "",
+			want: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IsSessionKey(tc.key)
+			if got != tc.want {
+				t.Errorf("IsSessionKey(%q) got = %v, want %v", tc.key, got, tc.want)
+			}
+		})
+	}
 }
