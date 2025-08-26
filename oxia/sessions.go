@@ -258,17 +258,16 @@ func (cs *clientSession) Close() error {
 func (cs *clientSession) keepAlive() error {
 	cs.sessions.Lock()
 	cs.Lock()
-	timeout := cs.sessions.clientOpts.sessionTimeout
 	ctx := cs.ctx
 	shardId := cs.shardId
 	sessionId := cs.sessionId
 	cs.Unlock()
 	cs.sessions.Unlock()
 
-	tickTime := timeout / 10
-	if tickTime < 2*time.Second {
-		tickTime = 2 * time.Second
-	}
+	tickTime := 30 * time.Second
+	//if tickTime < 2*time.Second {
+	//	tickTime = 2 * time.Second
+	//}
 
 	ticker := time.NewTicker(tickTime)
 	defer ticker.Stop()
