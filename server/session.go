@@ -97,12 +97,10 @@ func (s *session) close() {
 }
 
 func (s *session) delete() error {
-	sessionKey := SessionKey(s.id)
-	// Delete the base session metadata
 	_, err := s.sm.leaderController.WriteBlock(context.Background(), &proto.WriteRequest{
 		Shard:        &s.shardId,
 		Puts:         nil,
-		Deletes:      []*proto.DeleteRequest{{Key: sessionKey}},
+		Deletes:      []*proto.DeleteRequest{{Key: SessionKey(s.id)}},
 		DeleteRanges: nil,
 	})
 	return err
