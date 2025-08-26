@@ -412,7 +412,9 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteB
 					return err
 				}
 				// add ephemeral key to notification
-				notification.Deleted(unescapedEphemeralKey)
+				if notification != nil {
+					notification.Deleted(unescapedEphemeralKey)
+				}
 			}
 		}
 	}

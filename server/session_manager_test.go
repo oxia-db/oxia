@@ -139,7 +139,7 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 
 	writeBatch := mockWriteBatch{}
 
-	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, noSessionPutRequest, nil)
+	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, noSessionPutRequest, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, status)
 	assert.Equal(t, len(writeBatch), 0)
@@ -157,7 +157,7 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 		SessionId:             &sessionId,
 	}
 
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, noSessionPutRequest, se)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, noSessionPutRequest, se)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, status)
 	_, oldKeyFound := writeBatch[SessionKey(SessionId(sessionId))+"a"]
@@ -170,7 +170,7 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 		SessionKey(SessionId(sessionId)):           []byte{},
 	}
 
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, sessionPutRequest, se)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, status)
 	_, oldKeyFound = writeBatch[SessionKey(SessionId(sessionId-1))+"a"]
@@ -179,7 +179,7 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 	assert.False(t, newKeyFound)
 
 	writeBatch = mockWriteBatch{}
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, sessionPutRequest, nil)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_SESSION_DOES_NOT_EXIST, status)
 
@@ -205,7 +205,7 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 		SessionId: &sessionId,
 	}
 
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, sessionPutRequest, se)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_SESSION_DOES_NOT_EXIST, status)
 	_, closer, err := writeBatch.Get(ShadowKey(SessionId(sessionId-1), "a/b/c"))
@@ -216,13 +216,13 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 	writeBatch = mockWriteBatch{
 		SessionKey(SessionId(sessionId)): expectedErr,
 	}
-	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, sessionPutRequest, nil)
+	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
 	assert.ErrorIs(t, err, expectedErr)
 
 	writeBatch = mockWriteBatch{
 		SessionKey(SessionId(sessionId)): []byte{},
 	}
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, sessionPutRequest, nil)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, status)
 	sessionShadowKey := ShadowKey(SessionId(sessionId), "a/b/c")
@@ -234,7 +234,7 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 		SessionKey(SessionId(sessionId)): []byte{},
 		sessionShadowKey:                 expectedErr,
 	}
-	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, sessionPutRequest, nil)
+	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
 	assert.ErrorIs(t, err, expectedErr)
 }
 
@@ -261,7 +261,7 @@ func TestSessionUpdateOperationCallback_OnDelete(t *testing.T) {
 		SessionKey(SessionId(sessionId)) + "/a%2Fb%2Fc": []byte{},
 	}
 
-	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, "a/b/c")
+	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, nil, "a/b/c")
 	assert.NoError(t, err)
 	_, found := writeBatch[SessionKey(SessionId(sessionId))+"/a%2Fb%2Fc"]
 	assert.False(t, found)
@@ -632,7 +632,7 @@ func TestSession_PutWithExpiredSession(t *testing.T) {
 		SessionId: &newSessionId,
 	}
 
-	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, sessionPutRequest, se)
+	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_SESSION_DOES_NOT_EXIST, status)
 
