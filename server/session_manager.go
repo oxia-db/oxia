@@ -376,7 +376,7 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kv.WriteBatch, n
 	return err
 }
 
-func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, notification *kv.Notifications, key string, entry *proto.StorageEntry) error { //nolint:revive
+func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, notification *kv.Notifications, key string, entry *proto.StorageEntry) error {
 	if _, err := deleteShadow(batch, notification, key, entry); err != nil {
 		return err
 	}
