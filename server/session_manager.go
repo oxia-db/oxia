@@ -380,41 +380,42 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteB
 	if _, err := deleteShadow(batch, notification, key, entry); err != nil {
 		return err
 	}
-	if IsSessionKey(key) {
-		id, err := KeyToId(key)
+	if !IsSessionKey(key) {
+		return nil
+	}
+	id, err := KeyToId(key)
+	if err != nil {
+		return err
+	}
+	sessionKey := SessionKey(id)
+	// Read "index"
+	it, err := batch.KeyRangeScan(sessionKey+"/", sessionKey+"//")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err = it.Close(); err != nil {
+			slog.Warn("Failed to close the iterator when delete session ephemeral keys.", slog.Any("error", err))
+		}
+	}()
+	for ; it.Valid(); it.Next() {
+		escapedEphemeralKey := it.Key()
+		// delete the ephemeral key index
+		if err := batch.Delete(escapedEphemeralKey); err != nil {
+			return err
+		}
+		unescapedEphemeralKey, err := url.PathUnescape(escapedEphemeralKey[len(key)+1:])
 		if err != nil {
 			return err
 		}
-		sessionKey := SessionKey(id)
-		// Read "index"
-		it, err := batch.KeyRangeScan(sessionKey+"/", sessionKey+"//")
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err = it.Close(); err != nil {
-				slog.Warn("Failed to close the iterator when delete session ephemeral keys.", slog.Any("error", err))
-			}
-		}()
-		for ; it.Valid(); it.Next() {
-			escapedEphemeralKey := it.Key()
-			// delete the ephemeral key index
-			if err := batch.Delete(escapedEphemeralKey); err != nil {
+		if unescapedEphemeralKey != "" {
+			// delete the ephemeral key
+			if err := batch.Delete(unescapedEphemeralKey); err != nil {
 				return err
 			}
-			unescapedEphemeralKey, err := url.PathUnescape(escapedEphemeralKey[len(key)+1:])
-			if err != nil {
-				return err
-			}
-			if unescapedEphemeralKey != "" {
-				// delete the ephemeral key
-				if err := batch.Delete(unescapedEphemeralKey); err != nil {
-					return err
-				}
-				// add ephemeral key to notification
-				if notification != nil {
-					notification.Deleted(unescapedEphemeralKey)
-				}
+			// add ephemeral key to notification
+			if notification != nil {
+				notification.Deleted(unescapedEphemeralKey)
 			}
 		}
 	}

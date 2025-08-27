@@ -222,7 +222,7 @@ func WithAuthentication(authentication auth.Authentication) ClientOption {
 
 // WithSessionKeepAliveTicker is an internal API used to control the duration
 // of the session keep-alive ticker. This is for experimental use only.
-func WithSessionKeepAliveTicker(ticker time.Duration) ClientOption {
+func withSessionKeepAliveTicker(ticker time.Duration) ClientOption {
 	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
 		options.sessionKeepAliveTicker = ticker
 		return options, nil
