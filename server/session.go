@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/url"
 	"sync"
 	"time"
 
@@ -98,58 +97,12 @@ func (s *session) close() {
 }
 
 func (s *session) delete() error {
-	// Delete ephemeral data associated with this session
-	sessionKey := SessionKey(s.id)
-	// Read "index"
-	keys, err := s.sm.leaderController.ListBlock(context.Background(), &proto.ListRequest{
-		Shard:          &s.shardId,
-		StartInclusive: sessionKey + "/",
-		EndExclusive:   sessionKey + "//",
+	_, err := s.sm.leaderController.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard:        &s.shardId,
+		Puts:         nil,
+		Deletes:      []*proto.DeleteRequest{{Key: SessionKey(s.id)}},
+		DeleteRanges: nil,
 	})
-	if err != nil {
-		return err
-	}
-	// Delete ephemerals
-	var deletes []*proto.DeleteRequest
-	s.log.Debug(
-		"Keys to delete",
-		slog.Any("keys", keys),
-	)
-	for _, key := range keys {
-		unescapedKey, err := url.PathUnescape(key[len(sessionKey)+1:])
-		if err != nil {
-			s.log.Error(
-				"Invalid session key",
-				slog.Any("error", err),
-				slog.String("key", sessionKey),
-			)
-			continue
-		}
-		if unescapedKey != "" {
-			deletes = append(deletes, &proto.DeleteRequest{
-				Key: unescapedKey,
-			})
-		}
-	}
-
-	// Delete the base session metadata
-	deletes = append(deletes, &proto.DeleteRequest{
-		Key: sessionKey,
-	})
-	_, err = s.sm.leaderController.WriteBlock(context.Background(), &proto.WriteRequest{
-		Shard:   &s.shardId,
-		Puts:    nil,
-		Deletes: deletes,
-		// Delete the whole index of ephemeral keys for the session
-		DeleteRanges: []*proto.DeleteRangeRequest{
-			{
-				StartInclusive: sessionKey + "/",
-				EndExclusive:   sessionKey + "//",
-			},
-		},
-	})
-	s.log.Info("Session cleanup complete",
-		slog.Int("keys-deleted", len(deletes)))
 	return err
 }
 

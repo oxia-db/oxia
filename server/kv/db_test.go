@@ -934,15 +934,17 @@ type FailureCallback struct{}
 
 const FailureCallbackKey = "failure"
 
-func (f FailureCallback) OnPut(_ WriteBatch, req *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
+func (f FailureCallback) OnPut(_ WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
 	if req.Key == FailureCallbackKey {
 		return proto.Status_SESSION_DOES_NOT_EXIST, errors.New("failure injection")
 	}
 	return proto.Status_OK, nil
 }
-func (f FailureCallback) OnDelete(WriteBatch, string) error                               { return nil }
-func (f FailureCallback) OnDeleteWithEntry(WriteBatch, string, *proto.StorageEntry) error { return nil }
-func (f FailureCallback) OnDeleteRange(WriteBatch, string, string) error                  { return nil }
+func (f FailureCallback) OnDelete(WriteBatch, *Notifications, string) error { return nil }
+func (f FailureCallback) OnDeleteWithEntry(WriteBatch, *Notifications, string, *proto.StorageEntry) error {
+	return nil
+}
+func (f FailureCallback) OnDeleteRange(WriteBatch, *Notifications, string, string) error { return nil }
 
 func TestDBVersionIDWithError(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)

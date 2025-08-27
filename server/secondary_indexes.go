@@ -33,45 +33,45 @@ const secondaryIdxKeyPrefix = constant.InternalKeyPrefix + "idx"
 
 type wrapperUpdateCallback struct{}
 
-func (wrapperUpdateCallback) OnDeleteWithEntry(batch kv.WriteBatch, key string, value *proto.StorageEntry) error {
+func (wrapperUpdateCallback) OnDeleteWithEntry(batch kv.WriteBatch, notifications *kv.Notifications, key string, value *proto.StorageEntry) error {
 	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(batch, key, value); err != nil {
+	if err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(batch, notifications, key, value); err != nil {
 		return err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDeleteWithEntry(batch, key, value)
+	return secondaryIndexesUpdateCallback.OnDeleteWithEntry(batch, notifications, key, value)
 }
 
-func (wrapperUpdateCallback) OnPut(batch kv.WriteBatch, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error) {
+func (wrapperUpdateCallback) OnPut(batch kv.WriteBatch, notifications *kv.Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error) {
 	// First update the session
-	status, err := sessionManagerUpdateOperationCallback.OnPut(batch, req, se)
+	status, err := sessionManagerUpdateOperationCallback.OnPut(batch, notifications, req, se)
 	if err != nil || status != proto.Status_OK {
 		return status, err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnPut(batch, req, se)
+	return secondaryIndexesUpdateCallback.OnPut(batch, notifications, req, se)
 }
 
-func (wrapperUpdateCallback) OnDelete(batch kv.WriteBatch, key string) error {
+func (wrapperUpdateCallback) OnDelete(batch kv.WriteBatch, notifications *kv.Notifications, key string) error {
 	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDelete(batch, key); err != nil {
+	if err := sessionManagerUpdateOperationCallback.OnDelete(batch, notifications, key); err != nil {
 		return err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDelete(batch, key)
+	return secondaryIndexesUpdateCallback.OnDelete(batch, notifications, key)
 }
 
-func (wrapperUpdateCallback) OnDeleteRange(batch kv.WriteBatch, keyStartInclusive string, keyEndExclusive string) error {
+func (wrapperUpdateCallback) OnDeleteRange(batch kv.WriteBatch, notifications *kv.Notifications, keyStartInclusive string, keyEndExclusive string) error {
 	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDeleteRange(batch, keyStartInclusive, keyEndExclusive); err != nil {
+	if err := sessionManagerUpdateOperationCallback.OnDeleteRange(batch, notifications, keyStartInclusive, keyEndExclusive); err != nil {
 		return err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDeleteRange(batch, keyStartInclusive, keyEndExclusive)
+	return secondaryIndexesUpdateCallback.OnDeleteRange(batch, notifications, keyStartInclusive, keyEndExclusive)
 }
 
 var WrapperUpdateOperationCallback kv.UpdateOperationCallback = &wrapperUpdateCallback{}
@@ -80,7 +80,7 @@ type secondaryIndexesUpdateCallbackS struct{}
 
 var secondaryIndexesUpdateCallback kv.UpdateOperationCallback = &secondaryIndexesUpdateCallbackS{}
 
-func (secondaryIndexesUpdateCallbackS) OnPut(batch kv.WriteBatch, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func (secondaryIndexesUpdateCallbackS) OnPut(batch kv.WriteBatch, _ *kv.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	if existingEntry != nil {
 		// TODO: We might want to check if there are indexes that did not change
 		// between the existing and the new record.
@@ -92,7 +92,7 @@ func (secondaryIndexesUpdateCallbackS) OnPut(batch kv.WriteBatch, request *proto
 	return proto.Status_OK, writeSecondaryIndexes(batch, request.Key, request.SecondaryIndexes)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDelete(batch kv.WriteBatch, key string) error {
+func (secondaryIndexesUpdateCallbackS) OnDelete(batch kv.WriteBatch, _ *kv.Notifications, key string) error {
 	se, err := kv.GetStorageEntry(batch, key)
 	defer se.ReturnToVTPool()
 
@@ -105,11 +105,11 @@ func (secondaryIndexesUpdateCallbackS) OnDelete(batch kv.WriteBatch, key string)
 	return err
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, key string, value *proto.StorageEntry) error {
+func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, _ *kv.Notifications, key string, value *proto.StorageEntry) error {
 	return deleteSecondaryIndexes(batch, key, value)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDeleteRange(batch kv.WriteBatch, keyStartInclusive string, keyEndExclusive string) error {
+func (secondaryIndexesUpdateCallbackS) OnDeleteRange(batch kv.WriteBatch, _ *kv.Notifications, keyStartInclusive string, keyEndExclusive string) error {
 	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
 	if err != nil {
 		return err

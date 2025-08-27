@@ -52,10 +52,10 @@ const (
 )
 
 type UpdateOperationCallback interface {
-	OnPut(batch WriteBatch, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
-	OnDelete(batch WriteBatch, key string) error
-	OnDeleteWithEntry(batch WriteBatch, key string, value *proto.StorageEntry) error
-	OnDeleteRange(batch WriteBatch, keyStartInclusive string, keyEndExclusive string) error
+	OnPut(batch WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
+	OnDelete(batch WriteBatch, notifications *Notifications, key string) error
+	OnDeleteWithEntry(batch WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry) error
+	OnDeleteRange(batch WriteBatch, notifications *Notifications, keyStartInclusive string, keyEndExclusive string) error
 }
 
 type RangeScanIterator interface {
@@ -200,9 +200,9 @@ func now() uint64 {
 	return uint64(time.Now().UnixMilli())
 }
 
-func (d *db) applyWriteRequest(b *proto.WriteRequest, batch WriteBatch, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*notifications, *proto.WriteResponse, error) {
+func (d *db) applyWriteRequest(b *proto.WriteRequest, batch WriteBatch, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*Notifications, *proto.WriteResponse, error) {
 	res := &proto.WriteResponse{}
-	var notifications *notifications
+	var notifications *Notifications
 	if d.notificationsEnabled {
 		notifications = newNotifications(d.shardId, commitOffset, timestamp)
 	}
@@ -279,7 +279,7 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	return res, nil
 }
 
-func (*db) addNotifications(batch WriteBatch, notifications *notifications) error {
+func (*db) addNotifications(batch WriteBatch, notifications *Notifications) error {
 	value, err := notifications.batch.MarshalVT()
 	if err != nil {
 		return err
@@ -501,7 +501,7 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 	return term, options, nil
 }
 
-func (d *db) applyPut(batch WriteBatch, notifications *notifications, putReq *proto.PutRequest, timestamp uint64, updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) { //nolint:revive
+func (d *db) applyPut(batch WriteBatch, notifications *Notifications, putReq *proto.PutRequest, timestamp uint64, updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) { //nolint:revive
 	var se *proto.StorageEntry
 	var err error
 	var newKey string
@@ -526,7 +526,7 @@ func (d *db) applyPut(batch WriteBatch, notifications *notifications, putReq *pr
 	// No version conflict
 	versionId := wal.InvalidOffset
 	if !internal {
-		status, err := updateOperationCallback.OnPut(batch, putReq, se)
+		status, err := updateOperationCallback.OnPut(batch, notifications, putReq, se)
 		if err != nil {
 			return nil, err
 		}
@@ -597,7 +597,7 @@ func (d *db) applyPut(batch WriteBatch, notifications *notifications, putReq *pr
 	return pr, nil
 }
 
-func (d *db) applyDelete(batch WriteBatch, notifications *notifications, delReq *proto.DeleteRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteResponse, error) {
+func (d *db) applyDelete(batch WriteBatch, notifications *Notifications, delReq *proto.DeleteRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteResponse, error) {
 	se, err := checkExpectedVersionId(batch, delReq.Key, delReq.ExpectedVersionId)
 	if se != nil {
 		defer se.ReturnToVTPool()
@@ -611,7 +611,7 @@ func (d *db) applyDelete(batch WriteBatch, notifications *notifications, delReq 
 	case se == nil:
 		return &proto.DeleteResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	default:
-		err = updateOperationCallback.OnDelete(batch, delReq.Key)
+		err = updateOperationCallback.OnDelete(batch, notifications, delReq.Key)
 		if err != nil {
 			return nil, err
 		}
@@ -634,7 +634,7 @@ func (d *db) applyDelete(batch WriteBatch, notifications *notifications, delReq 
 
 const DeleteRangeThreshold = 100
 
-func (d *db) applyDeleteRange(batch WriteBatch, notifications *notifications, delReq *proto.DeleteRangeRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteRangeResponse, error) {
+func (d *db) applyDeleteRange(batch WriteBatch, notifications *Notifications, delReq *proto.DeleteRangeRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteRangeResponse, error) {
 	if notifications != nil {
 		notifications.DeletedRange(delReq.StartInclusive, delReq.EndExclusive)
 	}
@@ -660,7 +660,7 @@ func (d *db) applyDeleteRange(batch WriteBatch, notifications *notifications, de
 			se.ReturnToVTPool()
 			return nil, err
 		}
-		if err = updateOperationCallback.OnDeleteWithEntry(batch, key, se); err != nil {
+		if err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, key, se); err != nil {
 			se.ReturnToVTPool()
 			return nil, errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to callback on delete range")
 		}
@@ -795,19 +795,19 @@ func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*p
 
 type noopCallback struct{}
 
-func (*noopCallback) OnDeleteWithEntry(WriteBatch, string, *proto.StorageEntry) error {
+func (*noopCallback) OnDeleteWithEntry(WriteBatch, *Notifications, string, *proto.StorageEntry) error {
 	return nil
 }
 
-func (*noopCallback) OnPut(_ WriteBatch, _ *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
+func (*noopCallback) OnPut(_ WriteBatch, _ *Notifications, _ *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
 	return proto.Status_OK, nil
 }
 
-func (*noopCallback) OnDelete(_ WriteBatch, _ string) error {
+func (*noopCallback) OnDelete(_ WriteBatch, _ *Notifications, _ string) error {
 	return nil
 }
 
-func (*noopCallback) OnDeleteRange(_ WriteBatch, _ string, _ string) error {
+func (*noopCallback) OnDeleteRange(_ WriteBatch, _ *Notifications, _ string, _ string) error {
 	return nil
 }
 
