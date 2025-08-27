@@ -368,6 +368,7 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kv.WriteBatch, n
 		if errors.Is(err, kv.ErrKeyNotFound) {
 			return nil
 		}
+		return err
 	}
 	defer se.ReturnToVTPool()
 	if err = s.OnDeleteWithEntry(batch, notification, key, se); err != nil {
