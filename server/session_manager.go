@@ -374,7 +374,7 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kv.WriteBatch, n
 	if err = s.OnDeleteWithEntry(batch, notification, key, se); err != nil {
 		return err
 	}
-	return err
+	return nil
 }
 
 func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, notification *kv.Notifications, key string, entry *proto.StorageEntry) error {
@@ -384,11 +384,7 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteB
 	if !IsSessionKey(key) {
 		return nil
 	}
-	id, err := KeyToId(key)
-	if err != nil {
-		return err
-	}
-	sessionKey := SessionKey(id)
+	sessionKey := key
 	// Read "index"
 	it, err := batch.KeyRangeScan(sessionKey+"/", sessionKey+"//")
 	if err != nil {
@@ -405,7 +401,7 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteB
 		if err := batch.Delete(escapedEphemeralKey); err != nil {
 			return err
 		}
-		unescapedEphemeralKey, err := url.PathUnescape(escapedEphemeralKey[len(key)+1:])
+		unescapedEphemeralKey, err := url.PathUnescape(escapedEphemeralKey[len(sessionKey)+1:])
 		if err != nil {
 			return err
 		}
