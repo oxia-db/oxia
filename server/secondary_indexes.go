@@ -94,15 +94,14 @@ func (secondaryIndexesUpdateCallbackS) OnPut(batch kv.WriteBatch, _ *kv.Notifica
 
 func (secondaryIndexesUpdateCallbackS) OnDelete(batch kv.WriteBatch, _ *kv.Notifications, key string) error {
 	se, err := kv.GetStorageEntry(batch, key)
+	if err != nil {
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			return nil
+		}
+		return err
+	}
 	defer se.ReturnToVTPool()
-
-	if errors.Is(err, kv.ErrKeyNotFound) {
-		return nil
-	}
-	if err == nil {
-		err = deleteSecondaryIndexes(batch, key, se)
-	}
-	return err
+	return deleteSecondaryIndexes(batch, key, se)
 }
 
 func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, _ *kv.Notifications, key string, value *proto.StorageEntry) error {

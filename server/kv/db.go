@@ -762,6 +762,7 @@ func GetStorageEntry(batch WriteBatch, key string) (*proto.StorageEntry, error) 
 		Deserialize(value, se),
 		closer.Close(),
 	); err != nil {
+		se.ReturnToVTPool()
 		return nil, err
 	}
 	return se, nil
