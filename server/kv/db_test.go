@@ -940,11 +940,21 @@ func (f FailureCallback) OnPut(_ WriteBatch, _ *Notifications, req *proto.PutReq
 	}
 	return proto.Status_OK, nil
 }
-func (f FailureCallback) OnDelete(WriteBatch, *Notifications, string) error { return nil }
-func (f FailureCallback) OnDeleteWithEntry(WriteBatch, *Notifications, string, *proto.StorageEntry) error {
+func (f FailureCallback) OnDelete(_ WriteBatch, _ *Notifications, key string) error {
+	if key == FailureCallbackKey {
+		return errors.New("failure injection")
+	}
 	return nil
 }
-func (f FailureCallback) OnDeleteRange(WriteBatch, *Notifications, string, string) error { return nil }
+func (f FailureCallback) OnDeleteWithEntry(_ WriteBatch, _ *Notifications, key string, _ *proto.StorageEntry) error {
+	if key == FailureCallbackKey {
+		return errors.New("failure injection")
+	}
+	return nil
+}
+func (f FailureCallback) OnDeleteRange(WriteBatch, *Notifications, string, string) error {
+	return nil
+}
 
 func TestDBVersionIDWithError(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
@@ -954,6 +964,10 @@ func TestDBVersionIDWithError(t *testing.T) {
 
 	errReq := &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
+			{
+				Key:   "/version-id/success",
+				Value: []byte("3"),
+			},
 			{
 				Key:   FailureCallbackKey,
 				Value: []byte("0"),
