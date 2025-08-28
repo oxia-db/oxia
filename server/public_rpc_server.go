@@ -421,8 +421,8 @@ func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSess
 			)
 			return nil, err
 		}
-
 		s.log.Warn("Session not found, it should already closed")
+		return &proto.CloseSessionResponse{}, nil
 	}
 	return res, nil
 }
