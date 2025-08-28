@@ -511,7 +511,7 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 
 func (d *db) applyPut(batch WriteBatch, baseVersionId *atomic.Int64, notifications *Notifications,
 	putReq *proto.PutRequest, timestamp uint64,
-	updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) { //nolint:revive
+	updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) {
 	var se *proto.StorageEntry
 	var err error
 	var newKey string
