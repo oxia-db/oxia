@@ -41,6 +41,7 @@ import (
 // FollowerController handles all the operations of a given shard's follower.
 type FollowerController interface {
 	io.Closer
+	SnapshotController
 
 	// NewTerm
 	//

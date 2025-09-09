@@ -40,6 +40,7 @@ var (
 
 func init() {
 	flag.PublicAddr(Cmd, &conf.PublicServiceAddr)
+	flag.InternalAddr(Cmd, &conf.InternalServiceAddr)
 	flag.MetricsAddr(Cmd, &conf.MetricsServiceAddr)
 	Cmd.Flags().Uint32VarP(&conf.NumShards, "shards", "s", 1, "Number of shards")
 	Cmd.Flags().StringVar(&conf.DataDir, "data-dir", "./data/db", "Directory where to store data")

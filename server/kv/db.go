@@ -89,10 +89,12 @@ type DB interface {
 	UpdateTerm(newTerm int64, options TermOptions) error
 	ReadTerm() (term int64, options TermOptions, err error)
 
-	Snapshot() (Snapshot, error)
+	Snapshot(options SnapshotOptions) (Snapshot, error)
 
 	// Delete and close the database and all its files
 	Delete() error
+
+	Checkpoint()
 }
 
 func NewDB(namespace string, shardId int64, factory Factory, notificationRetentionTime time.Duration, clock time2.Clock) (DB, error) {
@@ -172,7 +174,8 @@ type db struct {
 	listLatencyHisto       metric.LatencyHistogram
 }
 
-func (d *db) Snapshot() (Snapshot, error) {
+func (d *db) Snapshot(options SnapshotOptions) (Snapshot, error) {
+	
 	return d.kv.Snapshot()
 }
 

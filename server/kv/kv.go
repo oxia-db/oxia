@@ -75,32 +75,6 @@ type KeyValueIterator interface {
 	Value() ([]byte, error)
 }
 
-type SnapshotChunk interface {
-	Name() string
-	Index() int32
-	TotalCount() int32
-	Content() []byte
-}
-
-type Snapshot interface {
-	io.Closer
-
-	BasePath() string
-
-	Valid() bool
-	Chunk() (SnapshotChunk, error)
-	Next() bool
-}
-
-type SnapshotLoader interface {
-	io.Closer
-
-	AddChunk(fileName string, chunkIndex int32, chunkCount int32, content []byte) error
-
-	// Complete signals that the snapshot is now complete
-	Complete()
-}
-
 type ComparisonType proto.KeyComparisonType
 
 const (

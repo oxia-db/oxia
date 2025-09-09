@@ -45,6 +45,7 @@ import (
 
 type LeaderController interface {
 	io.Closer
+	SnapshotController
 
 	WriteBlock(ctx context.Context, write *proto.WriteRequest) (*proto.WriteResponse, error)
 	ListBlock(ctx context.Context, request *proto.ListRequest) ([]string, error)
@@ -788,6 +789,17 @@ func (lc *leaderController) writeBlock(ctx context.Context, requestSupplier func
 	}))
 	response := <-res
 	return response.T, response.Err
+}
+
+func (lc *leaderController) Snapshot(request *proto.SnapshotRequest, cb concurrent.StreamCallback[proto.SnapshotResponse]) {
+	lc.Lock()
+	if err := checkStatusIsLeader(lc.status); err != nil {
+		lc.Unlock()
+		cb.OnComplete(err)
+		return
+	}
+	// write
+	snapshot, err := lc.db.Snapshot()
 }
 
 func (lc *leaderController) write(ctx context.Context, requestSupplier func(offset int64) *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {

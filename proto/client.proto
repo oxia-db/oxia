@@ -109,6 +109,34 @@ service OxiaClient {
    * Closes a session and removes all ephemeral values associated with it.
    */
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+
+
+  rpc Snapshot(SnapshotRequest) returns (stream SnapshotResponse);
+
+}
+
+message SnapshotMetadata {
+  int64 term = 1;
+  int64 commit_offset = 2;
+  int64 commit_version_id = 3;
+}
+
+message SnapshotChunk {
+  int64 term = 1;
+  string name = 2;
+  bytes content = 3;
+  int32 chunk_index = 4;
+  int32 chunk_count = 5;
+}
+
+message SnapshotRequest {
+  int64 shard_id = 1;
+  bool include_db = 2;
+}
+
+message SnapshotResponse {
+  optional SnapshotMetadata checkpoint = 1;
+  optional SnapshotChunk chunk = 2;
 }
 
 /**

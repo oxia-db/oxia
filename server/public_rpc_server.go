@@ -458,6 +458,15 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 	}
 }
 
+func (s *publicRpcServer) Snapshot(request *proto.SnapshotRequest, stream grpc.ServerStreamingServer[proto.SnapshotResponse]) error {
+	s.log.Debug("take the snapshot", slog.String("peer", rpc.GetPeer(stream.Context())), slog.Any("req", request))
+
+	if leader, err := s.shardsDirector.GetLeader(request.ShardId); err != nil {
+		follower, err := s.shardsDirector.GetFollower(request.ShardId)
+	}
+
+}
+
 func (s *publicRpcServer) getLeader(shardId *int64) (LeaderController, error) {
 	if shardId == nil {
 		return nil, status.Error(codes.InvalidArgument, "shard id is required")

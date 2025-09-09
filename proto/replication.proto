@@ -37,7 +37,7 @@ service OxiaCoordination {
 service OxiaLogReplication {
   rpc Truncate(TruncateRequest) returns (TruncateResponse);
   rpc Replicate(stream Append) returns (stream Ack);
-  rpc SendSnapshot(stream SnapshotChunk) returns (SnapshotResponse);
+  rpc SendSnapshot(stream io.streamnative.oxia.proto.SnapshotChunk) returns (SnapshotResponse);
 }
 
 message CoordinationShardAssignmentsResponse {}
@@ -52,14 +52,6 @@ message LogEntry {
   int64 offset = 2;
   bytes value = 3;
   fixed64 timestamp = 4;
-}
-
-message SnapshotChunk {
-  int64 term = 1;
-  string name = 2;
-  bytes content = 3;
-  int32 chunk_index = 4;
-  int32 chunk_count = 5;
 }
 
 message NewTermOptions {

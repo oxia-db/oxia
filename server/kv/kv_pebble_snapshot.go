@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/oxia-db/oxia/proto"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 )
@@ -68,6 +69,10 @@ func newPebbleSnapshot(p *Pebble) (Snapshot, error) {
 	}
 
 	return ps, nil
+}
+
+func (psf *pebbleSnapshotChunk) Metadata() *proto.SnapshotMetadata {
+	return psf.metadata
 }
 
 func (ps *pebbleSnapshot) Close() error {
