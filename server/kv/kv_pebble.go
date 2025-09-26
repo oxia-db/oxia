@@ -225,7 +225,7 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 			),
 		},
 
-		FormatMajorVersion: pebble.FormatNewest,
+		FormatMajorVersion: pebble.FormatVirtualSSTables,
 	}
 
 	if factory.options.InMemory {
