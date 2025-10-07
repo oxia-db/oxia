@@ -38,6 +38,8 @@ type Options struct {
 type LoadBalancer interface {
 	io.Closer
 
+	Start()
+
 	Trigger()
 
 	Action() <-chan actions.Action
