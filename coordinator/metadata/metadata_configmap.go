@@ -22,10 +22,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/oxia-db/oxia/common/concurrent"
-	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/coordinator/model"
 	"golang.org/x/net/context"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
@@ -35,9 +31,20 @@ import (
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
+
+	"github.com/oxia-db/oxia/common/concurrent"
+	"github.com/oxia-db/oxia/common/metric"
+	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/coordinator/model"
 )
 
 var _ Provider = &metadataProviderConfigMap{}
+
+const (
+	leaseDuration = 15 * time.Second
+	renewDeadline = 10 * time.Second
+	retryPeriod   = 2 * time.Second
+)
 
 type metadataProviderConfigMap struct {
 	sync.Mutex
@@ -163,23 +170,23 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 	leaderElectionConfig := leaderelection.LeaderElectionConfig{
 		Lock:            lock,
 		ReleaseOnCancel: true,
-		LeaseDuration:   15 * time.Second,
-		RenewDeadline:   10 * time.Second,
-		RetryPeriod:     2 * time.Second,
+		LeaseDuration:   leaseDuration,
+		RenewDeadline:   renewDeadline,
+		RetryPeriod:     retryPeriod,
 		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx context.Context) {
+			OnStartedLeading: func(_ context.Context) {
 				log.Info("Started leading - lease acquired")
 				wg.Done()
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
 			},
-			OnNewLeader: func(identity string) {
-				if identity == identity {
+			OnNewLeader: func(newLeader string) {
+				if newLeader == myIdentity {
 					return
 				}
 
-				log.Info("New leader elected", slog.String("leader", identity))
+				log.Info("New leader elected", slog.String("leader", newLeader))
 			},
 		},
 	}

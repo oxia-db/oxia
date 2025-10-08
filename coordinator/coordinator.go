@@ -410,7 +410,6 @@ func NewCoordinator(meta metadata.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc.Provider) (Coordinator, error) {
-
 	c := &coordinator{
 		Logger: slog.With(
 			slog.String("component", "coordinator"),
@@ -426,11 +425,11 @@ func NewCoordinator(meta metadata.Provider,
 	}
 
 	// Ensure we are to become the leader coordinator
-	c.Logger.Info("Waiting to become leader")
+	c.Info("Waiting to become leader")
 	if err := meta.WaitToBecomeLeader(); err != nil {
 		return nil, errors.Wrap(err, "failed to wait in becoming leader")
 	}
-	c.Logger.Info("This coordinator is now leader")
+	c.Info("This coordinator is now leader")
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
