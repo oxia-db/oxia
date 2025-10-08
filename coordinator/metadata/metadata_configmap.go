@@ -149,6 +149,9 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 }
 
 func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
+	m.Lock()
+	defer m.Unlock()
+
 	myIdentity, _ := os.Hostname()
 
 	// Create a lease lock
@@ -197,6 +200,8 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 		panic(err)
 	}
 
+	m.closeCh = make(chan any)
+
 	go process.DoWithLabels(m.ctx, map[string]string{
 		"component":     "metadata-provider",
 		"sub-component": "k8s-leader-elector",
@@ -209,8 +214,13 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 }
 
 func (m *metadataProviderConfigMap) Close() error {
+	m.Lock()
+	defer m.Unlock()
+
 	m.cancel()
-	<-m.closeCh
+	if m.closeCh != nil {
+		<-m.closeCh
+	}
 	m.log.Info("Closed metadata provider")
 	return nil
 }
