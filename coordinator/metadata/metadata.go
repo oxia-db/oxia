@@ -43,4 +43,6 @@ type Provider interface {
 	Get() (cs *model.ClusterStatus, version Version, err error)
 
 	Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
+
+	WaitToBecomeLeader() error
 }

@@ -32,6 +32,10 @@ type metadataProviderMemory struct {
 	version Version
 }
 
+func (*metadataProviderMemory) WaitToBecomeLeader() error {
+	return nil
+}
+
 func NewMetadataProviderMemory() Provider {
 	return &metadataProviderMemory{
 		cs:      nil,

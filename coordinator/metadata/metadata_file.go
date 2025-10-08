@@ -47,7 +47,26 @@ func NewMetadataProviderFile(path string) Provider {
 	}
 }
 
-func (*metadataProviderFile) Close() error {
+func (m *metadataProviderFile) Close() error {
+	if err := m.fileLock.Unlock(); err != nil {
+		slog.Warn(
+			"Failed to release file lock on metadata",
+			slog.Any("error", err),
+		)
+	}
+
+	return nil
+}
+
+func (m *metadataProviderFile) WaitToBecomeLeader() error {
+	if err := m.ensureParentDirectoryExists(); err != nil {
+		return err
+	}
+
+	if err := m.fileLock.Lock(); err != nil {
+		return errors.Wrapf(err, "failed to acquire lock on %s", m.path)
+	}
+
 	return nil
 }
 
@@ -73,29 +92,9 @@ func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, 
 }
 
 func (m *metadataProviderFile) Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error) {
-	// Ensure directory exists
-	parentDir := filepath.Dir(m.path)
-	if _, err := os.Stat(parentDir); err != nil {
-		if !os.IsNotExist(err) {
-			return NotExists, err
-		}
-
-		if err := os.MkdirAll(parentDir, 0755); err != nil {
-			return NotExists, err
-		}
+	if err = m.ensureParentDirectoryExists(); err != nil {
+		return NotExists, err
 	}
-
-	if err := m.fileLock.Lock(); err != nil {
-		return "", errors.Wrap(err, "failed to acquire file lock")
-	}
-	defer func() {
-		if err := m.fileLock.Unlock(); err != nil {
-			slog.Warn(
-				"Failed to release file lock on metadata",
-				slog.Any("error", err),
-			)
-		}
-	}()
 
 	_, existingVersion, err := m.Get()
 	if err != nil {
@@ -120,4 +119,20 @@ func (m *metadataProviderFile) Store(cs *model.ClusterStatus, expectedVersion Ve
 	}
 
 	return newVersion, nil
+}
+
+func (m *metadataProviderFile) ensureParentDirectoryExists() error {
+	// Ensure directory exists
+	parentDir := filepath.Dir(m.path)
+	if _, err := os.Stat(parentDir); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+
+		if err := os.MkdirAll(parentDir, 0755); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
