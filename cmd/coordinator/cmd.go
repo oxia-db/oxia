@@ -54,10 +54,17 @@ var (
 func init() {
 	flag.InternalAddr(Cmd, &conf.InternalServiceAddr)
 	flag.MetricsAddr(Cmd, &conf.MetricsServiceAddr)
-	Cmd.Flags().StringVar(&conf.MetadataProviderName, "metadata", "file", "Metadata provider implementation: file, configmap or memory")
+	Cmd.Flags().StringVar(&conf.MetadataProviderName, "metadata", "file", "Metadata provider implementation: file, configmap, raft or memory")
+
 	Cmd.Flags().StringVar(&conf.K8SMetadataNamespace, "k8s-namespace", conf.K8SMetadataNamespace, "Kubernetes namespace for oxia config maps")
 	Cmd.Flags().StringVar(&conf.K8SMetadataConfigMapName, "k8s-configmap-name", conf.K8SMetadataConfigMapName, "ConfigMap name for cluster status configmap")
+
 	Cmd.Flags().StringVar(&conf.FileMetadataPath, "file-clusters-status-path", "data/cluster-status.json", "The path where the cluster status is stored when using 'file' provider")
+
+	Cmd.Flags().StringSliceVar(&conf.RaftBootstrapNodes, "raft-bootstrap-nodes", conf.RaftBootstrapNodes, "Raft bootstrap nodes")
+	Cmd.Flags().StringVar(&conf.RaftAddress, "raft-address", "", "Raft address")
+	Cmd.Flags().StringVar(&conf.RaftDataDir, "raft-data-dir", "data/raft", "Raft address")
+
 	Cmd.Flags().StringVarP(&configFile, "conf", "f", "", "Cluster config file")
 
 	// server TLS section
@@ -87,12 +94,17 @@ func validate(*cobra.Command, []string) error {
 		if conf.K8SMetadataConfigMapName == "" {
 			return errors.New("k8s-configmap-name must be set with metadata=configmap")
 		}
+	} else if conf.MetadataProviderName == metadata.ProviderNameRaft {
+		if conf.RaftAddress == "" {
+			return errors.New("raft-address must be set with metadata=raft")
+		}
 	}
+
 	switch conf.MetadataProviderName {
-	case "memory", "configmap", "file":
+	case "memory", "configmap", "raft", "file":
 		return nil
 	default:
-		return errors.New(`must be one of "memory", "configmap" or "file"`)
+		return errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
 	}
 }
 

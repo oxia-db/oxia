@@ -30,6 +30,7 @@ var (
 var (
 	ProviderNameMemory    = "memory"
 	ProviderNameConfigmap = "configmap"
+	ProviderNameRaft      = "raft"
 	ProviderNameFile      = "file"
 )
 

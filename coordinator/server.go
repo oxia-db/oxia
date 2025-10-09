@@ -37,15 +37,20 @@ import (
 )
 
 type Config struct {
-	InternalServiceAddr              string
-	InternalSecureServiceAddr        string
-	PeerTLS                          *tls.Config `json:"-"`
-	ServerTLS                        *tls.Config `json:"-"`
-	MetricsServiceAddr               string
-	MetadataProviderName             string
-	K8SMetadataNamespace             string
-	K8SMetadataConfigMapName         string
-	FileMetadataPath                 string
+	InternalServiceAddr       string
+	InternalSecureServiceAddr string
+	PeerTLS                   *tls.Config `json:"-"`
+	ServerTLS                 *tls.Config `json:"-"`
+	MetricsServiceAddr        string
+	MetadataProviderName      string
+	K8SMetadataNamespace      string
+	K8SMetadataConfigMapName  string
+	FileMetadataPath          string
+
+	RaftBootstrapNodes []string
+	RaftAddress        string
+	RaftDataDir        string
+
 	ClusterConfigProvider            func() (model.ClusterConfig, error) `json:"-"`
 	ClusterConfigChangeNotifications chan any                            `json:"-"`
 }
@@ -79,6 +84,13 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 		k8sConfig := metadata.NewK8SClientConfig()
 		metadataProvider = metadata.NewMetadataProviderConfigMap(metadata.NewK8SClientset(k8sConfig),
 			config.K8SMetadataNamespace, config.K8SMetadataConfigMapName)
+	case metadata.ProviderNameRaft:
+		var err error
+		metadataProvider, err = metadata.NewMetadataProviderRaft(
+			config.RaftAddress, config.RaftBootstrapNodes, config.RaftDataDir)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create raft metadata provider")
+		}
 	default:
 		return nil, errors.New(`must be one of "memory", "configmap" or "file"`)
 	}
