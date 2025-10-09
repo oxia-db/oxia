@@ -490,5 +490,6 @@ func NewCoordinator(meta metadata.Provider,
 		"component": "coordinator-action-worker",
 	}, c.startBackgroundActionWorker)
 
+	c.loadBalancer.Start()
 	return c, nil
 }
