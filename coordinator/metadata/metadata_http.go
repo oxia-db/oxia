@@ -68,6 +68,7 @@ func (m *metadataHttpProvider) getWithoutLock() (*model.ClusterStatus, Version, 
 	err = json.Unmarshal(bts, c)
 	if err != nil {
 		slog.Error("Unmarshall json failed", slog.Any("error", err))
+		return nil, "", err
 	}
 
 	return c.ClusterStatus, c.Version, nil
