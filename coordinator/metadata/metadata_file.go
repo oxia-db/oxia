@@ -26,7 +26,7 @@ import (
 	"github.com/oxia-db/oxia/coordinator/model"
 )
 
-type container struct {
+type Container struct {
 	ClusterStatus *model.ClusterStatus `json:"clusterStatus"`
 	Version       Version              `json:"version"`
 }
@@ -64,7 +64,7 @@ func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, 
 		return nil, NotExists, nil
 	}
 
-	mc := container{}
+	mc := Container{}
 	if err = json.Unmarshal(content, &mc); err != nil {
 		return nil, NotExists, err
 	}
@@ -107,7 +107,7 @@ func (m *metadataProviderFile) Store(cs *model.ClusterStatus, expectedVersion Ve
 	}
 
 	newVersion = incrVersion(existingVersion)
-	newContent, err := json.Marshal(container{
+	newContent, err := json.Marshal(Container{
 		ClusterStatus: cs,
 		Version:       newVersion,
 	})

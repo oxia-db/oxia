@@ -46,6 +46,7 @@ type Config struct {
 	K8SMetadataNamespace             string
 	K8SMetadataConfigMapName         string
 	FileMetadataPath                 string
+	HttpMetadataApiURL               string
 	ClusterConfigProvider            func() (model.ClusterConfig, error) `json:"-"`
 	ClusterConfigChangeNotifications chan any                            `json:"-"`
 }
@@ -79,8 +80,13 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 		k8sConfig := metadata.NewK8SClientConfig()
 		metadataProvider = metadata.NewMetadataProviderConfigMap(metadata.NewK8SClientset(k8sConfig),
 			config.K8SMetadataNamespace, config.K8SMetadataConfigMapName)
+	case metadata.ProviderNameHTTP:
+		if len(config.HttpMetadataApiURL) <= 0 {
+			return nil, errors.New("HttpMetadataApiURL is required")
+		}
+		metadataProvider = metadata.NewMetadataProviderHttp(config.HttpMetadataApiURL)
 	default:
-		return nil, errors.New(`must be one of "memory", "configmap" or "file"`)
+		return nil, errors.New(`must be one of "memory", "configmap", "http" or "file"`)
 	}
 
 	clientPool := rpc.NewClientPool(config.PeerTLS, nil)

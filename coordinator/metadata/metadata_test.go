@@ -15,6 +15,9 @@
 package metadata
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
 	"path/filepath"
 	"testing"
 
@@ -46,10 +49,62 @@ var (
 
 			return NewMetadataProviderConfigMap(_fake, "ns", "n")
 		},
+		"http": func(t *testing.T) Provider {
+			t.Helper()
+			return NewMetadataProviderHttp("http://localhost:9191/api/oxia/metadata")
+		},
 	}
 )
 
 func TestMetadataProvider(t *testing.T) {
+	inMem := NewMetadataProviderMemory()
+	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		uri := request.RequestURI
+		if len(uri) <= 0 || uri != "/api/oxia/metadata" {
+			_, _ = writer.Write([]byte("hello"))
+			return
+		}
+		method := request.Method
+		if method == http.MethodGet {
+			cs, v, _ := inMem.Get()
+			c := &Container{Version: v, ClusterStatus: cs}
+			bts, _ := json.Marshal(c)
+			_, _ = writer.Write(bts)
+		} else if method == http.MethodPost {
+			defer func(Body io.ReadCloser) {
+				_ = Body.Close()
+			}(request.Body)
+			bts, err := io.ReadAll(request.Body)
+			if err != nil {
+				writer.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			c := &Container{}
+			err = json.Unmarshal(bts, c)
+			if err != nil {
+				writer.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			v, _ := inMem.Store(c.ClusterStatus, c.Version)
+			_, _ = writer.Write([]byte(v))
+		}
+	})
+
+	httpserver := http.Server{
+		Addr:    ":9191",
+		Handler: handler,
+	}
+
+	go func() {
+		_ = httpserver.ListenAndServe()
+	}()
+
+	defer func(httpserver *http.Server) {
+		_ = httpserver.Close()
+	}(&httpserver)
+
 	for name, provider := range metadataProviders {
 		t.Run(name, func(t *testing.T) {
 			m := provider(t)

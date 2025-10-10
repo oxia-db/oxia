@@ -31,6 +31,7 @@ var (
 	ProviderNameMemory    = "memory"
 	ProviderNameConfigmap = "configmap"
 	ProviderNameFile      = "file"
+	ProviderNameHTTP      = "http"
 )
 
 type Version string
