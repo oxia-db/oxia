@@ -389,7 +389,11 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 
 	maxLeadersNodeID, maxLeaders, minLeaders := r.rankLeaders(nodeLeaders)
 
-	nsAndShards := nodeLeaders[maxLeadersNodeID]
+	nsAndShards, ok := nodeLeaders[maxLeadersNodeID]
+	if !ok {
+		// No leaders to check
+		return
+	}
 
 	for iter := nsAndShards.Iterator(); iter.Next(); {
 		nsAndShard := iter.Value()
@@ -472,12 +476,17 @@ func (r *nodeBasedBalancer) rankLeaders(nodeLeaders map[string]*arraylist.List[u
 	return maxLeadersNodeID, maxLeaders, minLeaders
 }
 
+func (r *nodeBasedBalancer) Start() {
+	r.startBackgroundScheduler()
+	r.startBackgroundNotifier()
+}
+
 func NewLoadBalancer(options Options) LoadBalancer {
 	ctx, cancelFunc := context.WithCancel(options.Context)
 	logger := slog.With(
 		slog.String("component", "load-balancer"))
 
-	nb := &nodeBasedBalancer{
+	return &nodeBasedBalancer{
 		WaitGroup:               &sync.WaitGroup{},
 		Logger:                  logger,
 		ctx:                     ctx,
@@ -493,7 +502,4 @@ func NewLoadBalancer(options Options) LoadBalancer {
 		shardQuarantineShardMap: &sync.Map{},
 		triggerCh:               make(chan any, 1),
 	}
-	nb.startBackgroundScheduler()
-	nb.startBackgroundNotifier()
-	return nb
 }
