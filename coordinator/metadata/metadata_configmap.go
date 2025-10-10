@@ -16,20 +16,35 @@ package metadata
 
 import (
 	"log/slog"
+	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/go-logr/logr"
+	"golang.org/x/net/context"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8s "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/klog/v2"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/metric"
+	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/coordinator/model"
 )
 
 var _ Provider = &metadataProviderConfigMap{}
+
+const (
+	leaseDuration = 15 * time.Second
+	renewDeadline = 10 * time.Second
+	retryPeriod   = 2 * time.Second
+)
 
 type metadataProviderConfigMap struct {
 	sync.Mutex
@@ -40,6 +55,12 @@ type metadataProviderConfigMap struct {
 	getLatencyHisto   metric.LatencyHistogram
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
+
+	ctx     context.Context
+	cancel  context.CancelFunc
+	closeCh chan any
+
+	log *slog.Logger
 }
 
 func NewMetadataProviderConfigMap(kc k8s.Interface, namespace, name string) Provider {
@@ -47,6 +68,7 @@ func NewMetadataProviderConfigMap(kc k8s.Interface, namespace, name string) Prov
 		kubernetes: kc,
 		namespace:  namespace,
 		name:       name,
+		log:        slog.With("component", "metadata-config-map"),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
 			"Latency for reading coordinator metadata", nil),
@@ -54,11 +76,15 @@ func NewMetadataProviderConfigMap(kc k8s.Interface, namespace, name string) Prov
 			"Latency for storing coordinator metadata", nil),
 	}
 
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+
 	m.metadataSizeGauge = metric.NewGauge("oxia_coordinator_metadata_size",
 		"The size of the coordinator metadata", metric.Bytes, nil, func() int64 {
 			return m.metadataSize.Load()
 		})
 
+	logger := logr.FromSlogHandler(m.log.With(slog.String("sub-component", "k8s-client")).Handler())
+	klog.SetLogger(logger)
 	return m
 }
 
@@ -122,7 +148,80 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	return version, nil
 }
 
-func (*metadataProviderConfigMap) Close() error {
+func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
+	m.Lock()
+	defer m.Unlock()
+
+	myIdentity, _ := os.Hostname()
+
+	// Create a lease lock
+	lock := &resourcelock.LeaseLock{
+		LeaseMeta: metav1.ObjectMeta{
+			Name:      m.name,
+			Namespace: m.namespace,
+		},
+		Client: m.kubernetes.CoordinationV1(),
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity: myIdentity,
+		},
+	}
+
+	log := m.log.With(slog.String("identity", myIdentity))
+	wg := concurrent.NewWaitGroup(1)
+
+	// Configure leader election
+	leaderElectionConfig := leaderelection.LeaderElectionConfig{
+		Lock:            lock,
+		ReleaseOnCancel: true,
+		LeaseDuration:   leaseDuration,
+		RenewDeadline:   renewDeadline,
+		RetryPeriod:     retryPeriod,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(_ context.Context) {
+				log.Info("Started leading - lease acquired")
+				wg.Done()
+			},
+			OnStoppedLeading: func() {
+				log.Warn("Stopped leading - lease lost!")
+			},
+			OnNewLeader: func(newLeader string) {
+				if newLeader == myIdentity {
+					return
+				}
+
+				log.Info("New leader elected", slog.String("leader", newLeader))
+			},
+		},
+	}
+
+	// Start leader election
+	leaderElector, err := leaderelection.NewLeaderElector(leaderElectionConfig)
+	if err != nil {
+		panic(err)
+	}
+
+	m.closeCh = make(chan any)
+
+	go process.DoWithLabels(m.ctx, map[string]string{
+		"component":     "metadata-provider",
+		"sub-component": "k8s-leader-elector",
+	}, func() {
+		leaderElector.Run(m.ctx)
+		close(m.closeCh)
+	})
+
+	return wg.Wait(m.ctx)
+}
+
+func (m *metadataProviderConfigMap) Close() error {
+	m.Lock()
+	defer m.Unlock()
+
+	m.cancel()
+	if m.closeCh != nil {
+		<-m.closeCh
+	}
+	m.log.Info("Closed metadata provider")
 	return nil
 }
 

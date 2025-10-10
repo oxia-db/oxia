@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
@@ -422,6 +423,13 @@ func NewCoordinator(meta metadata.Provider,
 		rpc:                   rpcProvider,
 		statusResource:        resources.NewStatusResource(meta),
 	}
+
+	// Ensure we are to become the leader coordinator
+	c.Info("Waiting to become leader")
+	if err := meta.WaitToBecomeLeader(); err != nil {
+		return nil, errors.Wrap(err, "failed to wait in becoming leader")
+	}
+	c.Info("This coordinator is now leader")
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
