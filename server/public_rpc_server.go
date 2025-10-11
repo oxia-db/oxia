@@ -50,7 +50,6 @@ const (
 
 type publicRpcServer struct {
 	proto.UnimplementedOxiaClientServer
-	//compat compat.UnimplementedOxiaClientServer
 
 	shardsDirector       ShardsDirector
 	assignmentDispatcher ShardAssignmentsDispatcher
