@@ -76,7 +76,7 @@ func (m *metadataHttpProvider) getWithoutLock() (*model.ClusterStatus, Version, 
 
 func (m *metadataHttpProvider) Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error) {
 	m.Lock()
-	m.Unlock()
+	defer m.Unlock()
 
 	_, version, err := m.getWithoutLock()
 
