@@ -21,13 +21,14 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/oxia-db/oxia/proto/compat"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
+
+	"github.com/oxia-db/oxia/proto/compat"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
@@ -481,7 +482,7 @@ func (s *publicRpcServer) Close() error {
 	return s.grpcServer.Close()
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type compatPublicRpcServer struct {
 	compat.UnimplementedOxiaClientServer
