@@ -37,6 +37,6 @@ Feel free to open an [issue](https://github.com/oxia-db/oxia/issues/new) or star
 
 ### License
 
-Copyright 2023 StreamNative, Inc.
+Copyright 2023-2025 The Oxia Authors
 
 Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
