@@ -114,6 +114,10 @@ func (m *metadataHttpProvider) Store(cs *model.ClusterStatus, expectedVersion Ve
 		_ = Body.Close()
 	}(resp.Body)
 
+	if resp.StatusCode == http.StatusConflict {
+		panic(ErrMetadataBadVersion)
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Http post response code is not OK")
 		return "", errors.New("Http post response code is not OK")
