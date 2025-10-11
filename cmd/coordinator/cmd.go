@@ -58,6 +58,7 @@ func init() {
 	Cmd.Flags().StringVar(&conf.K8SMetadataNamespace, "k8s-namespace", conf.K8SMetadataNamespace, "Kubernetes namespace for oxia config maps")
 	Cmd.Flags().StringVar(&conf.K8SMetadataConfigMapName, "k8s-configmap-name", conf.K8SMetadataConfigMapName, "ConfigMap name for cluster status configmap")
 	Cmd.Flags().StringVar(&conf.FileMetadataPath, "file-clusters-status-path", "data/cluster-status.json", "The path where the cluster status is stored when using 'file' provider")
+	Cmd.Flags().StringVar(&conf.HttpMetadataApiURL, "http-cluster-status-url", "", "The remote address where the cluster status is to request.")
 	Cmd.Flags().StringVarP(&configFile, "conf", "f", "", "Cluster config file")
 
 	// server TLS section
