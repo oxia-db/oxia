@@ -37,7 +37,7 @@ import (
 const (
 	oxiaCoordination   = "replication.OxiaCoordination"
 	oxiaLogReplication = "replication.OxiaLogReplication"
-	oxiaClient         = "io.streamnative.oxia.proto.OxiaClient"
+	oxiaClient         = "io.oxia.proto.v1.OxiaClient"
 )
 
 type maelstromGrpcProvider struct {

@@ -28,6 +28,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 
+	"github.com/oxia-db/oxia/proto/compat"
+
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
@@ -69,6 +71,7 @@ func newPublicRpcServer(provider rpc.GrpcProvider, bindAddress string, shardsDir
 	var err error
 	server.grpcServer, err = provider.StartGrpcServer("public", bindAddress, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaClientServer(registrar, server)
+		compat.RegisterOxiaClientServer(registrar, &compatPublicRpcServer{impl: server})
 	}, tlsConf, options)
 	if err != nil {
 		return nil, err
@@ -477,4 +480,55 @@ func (s *publicRpcServer) getLeader(shardId *int64) (LeaderController, error) {
 
 func (s *publicRpcServer) Close() error {
 	return s.grpcServer.Close()
+}
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type compatPublicRpcServer struct {
+	compat.UnimplementedOxiaClientServer
+	impl *publicRpcServer
+}
+
+func (c compatPublicRpcServer) GetShardAssignments(request *proto.ShardAssignmentsRequest, server compat.OxiaClient_GetShardAssignmentsServer) error {
+	return c.impl.GetShardAssignments(request, server)
+}
+
+func (c compatPublicRpcServer) Write(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
+	return c.impl.Write(ctx, request)
+}
+
+func (c compatPublicRpcServer) WriteStream(server compat.OxiaClient_WriteStreamServer) error {
+	return c.impl.WriteStream(server)
+}
+
+func (c compatPublicRpcServer) Read(request *proto.ReadRequest, server compat.OxiaClient_ReadServer) error {
+	return c.impl.Read(request, server)
+}
+
+func (c compatPublicRpcServer) List(request *proto.ListRequest, server compat.OxiaClient_ListServer) error {
+	return c.impl.List(request, server)
+}
+
+func (c compatPublicRpcServer) RangeScan(request *proto.RangeScanRequest, server compat.OxiaClient_RangeScanServer) error {
+	return c.impl.RangeScan(request, server)
+}
+
+func (c compatPublicRpcServer) GetSequenceUpdates(request *proto.GetSequenceUpdatesRequest, server compat.OxiaClient_GetSequenceUpdatesServer) error {
+	return c.impl.GetSequenceUpdates(request, server)
+}
+
+func (c compatPublicRpcServer) GetNotifications(request *proto.NotificationsRequest, server compat.OxiaClient_GetNotificationsServer) error {
+	return c.impl.GetNotifications(request, server)
+}
+
+func (c compatPublicRpcServer) CreateSession(ctx context.Context, request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
+	return c.impl.CreateSession(ctx, request)
+}
+
+func (c compatPublicRpcServer) KeepAlive(ctx context.Context, heartbeat *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
+	return c.impl.KeepAlive(ctx, heartbeat)
+}
+
+func (c compatPublicRpcServer) CloseSession(ctx context.Context, request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
+	return c.impl.CloseSession(ctx, request)
 }
