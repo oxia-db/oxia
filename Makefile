@@ -77,7 +77,7 @@ proto:
       	--go-vtproto_opt paths=source_relative \
       	--plugin protoc-gen-go-vtproto="${GOPATH}/bin/protoc-gen-go-vtproto" \
       	--go-vtproto_opt=features=marshal+unmarshal+unmarshal_unsafe+size+pool+equal+clone \
-	    *.proto
+	    *.proto compat/*.proto
 
 proto_clean:
 	rm -f */*.pb.go

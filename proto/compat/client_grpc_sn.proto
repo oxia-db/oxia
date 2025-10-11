@@ -1,0 +1,58 @@
+// Copyright 2023-2025 The Oxia Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * OxiaClient
+ */
+syntax = "proto3";
+
+package io.streamnative.oxia.proto;
+
+option go_package = "github.com/oxia-db/oxia/proto/compat";
+option java_multiple_files = true;
+
+import "client.proto";
+
+/**
+ * This service definitions serves for compatibility purpose,
+ * so that an older client, using the gRPC service definition in
+ * namespace `io.streamnative.oxia.proto` can still talk to a newer
+ * Oxia server.
+ *
+ * Once all the old clients are upgraded, this will be removed.
+ */
+service OxiaClient {
+  rpc GetShardAssignments(io.oxia.proto.v1.ShardAssignmentsRequest)
+      returns (stream io.oxia.proto.v1.ShardAssignments);
+
+  rpc Write(io.oxia.proto.v1.WriteRequest) returns (io.oxia.proto.v1.WriteResponse);
+
+  rpc WriteStream(stream io.oxia.proto.v1.WriteRequest) returns (stream io.oxia.proto.v1.WriteResponse);
+
+  rpc Read(io.oxia.proto.v1.ReadRequest) returns (stream io.oxia.proto.v1.ReadResponse);
+
+  rpc List(io.oxia.proto.v1.ListRequest) returns (stream io.oxia.proto.v1.ListResponse);
+
+  rpc RangeScan(io.oxia.proto.v1.RangeScanRequest) returns (stream io.oxia.proto.v1.RangeScanResponse);
+
+  rpc GetSequenceUpdates(io.oxia.proto.v1.GetSequenceUpdatesRequest) returns (stream io.oxia.proto.v1.GetSequenceUpdatesResponse);
+
+  rpc GetNotifications(io.oxia.proto.v1.NotificationsRequest) returns (stream io.oxia.proto.v1.NotificationBatch);
+
+  rpc CreateSession(io.oxia.proto.v1.CreateSessionRequest) returns (io.oxia.proto.v1.CreateSessionResponse);
+
+  rpc KeepAlive(io.oxia.proto.v1.SessionHeartbeat) returns (io.oxia.proto.v1.KeepAliveResponse);
+
+  rpc CloseSession(io.oxia.proto.v1.CloseSessionRequest) returns (io.oxia.proto.v1.CloseSessionResponse);
+}

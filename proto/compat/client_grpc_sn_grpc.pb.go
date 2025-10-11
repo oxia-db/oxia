@@ -2,12 +2,13 @@
 // versions:
 // - protoc-gen-go-grpc v1.2.0
 // - protoc             v5.29.3
-// source: client.proto
+// source: compat/client_grpc_sn.proto
 
-package proto
+package compat
 
 import (
 	context "context"
+	proto "github.com/oxia-db/oxia/proto"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -22,59 +23,17 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OxiaClientClient interface {
-	// *
-	// Gets all shard-to-server assignments as a stream. Each set of assignments
-	// in the response stream will contain all the assignments to bring the client
-	// up to date. For example, if a shard is split, the stream will return a
-	// single response containing all the new shard assignments as opposed to
-	// multiple stream responses, each containing a single shard assignment.
-	//
-	// Clients should connect to a single random server which will stream the
-	// assignments for all shards on all servers.
-	GetShardAssignments(ctx context.Context, in *ShardAssignmentsRequest, opts ...grpc.CallOption) (OxiaClient_GetShardAssignmentsClient, error)
-	// *
-	// Batches put, delete and delete_range requests.
-	//
-	// Clients should send this request to the shard leader. In the future,
-	// this may be handled server-side in a proxy layer.
-	//
-	// Deprecated
-	Write(ctx context.Context, in *WriteRequest, opts ...grpc.CallOption) (*WriteResponse, error)
-	// *
-	// Batches put, delete and delete_range requests.
-	//
-	// Clients should send this request to the shard leader. In the future,
-	// this may be handled server-side in a proxy layer.
+	GetShardAssignments(ctx context.Context, in *proto.ShardAssignmentsRequest, opts ...grpc.CallOption) (OxiaClient_GetShardAssignmentsClient, error)
+	Write(ctx context.Context, in *proto.WriteRequest, opts ...grpc.CallOption) (*proto.WriteResponse, error)
 	WriteStream(ctx context.Context, opts ...grpc.CallOption) (OxiaClient_WriteStreamClient, error)
-	// *
-	// Batches get requests.
-	//
-	// Clients should send this request to the shard leader. In the future,
-	// this may be handled server-side in a proxy layer.
-	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (OxiaClient_ReadClient, error)
-	// *
-	// Requests all the keys between a range of keys.
-	//
-	// Clients should send an equivalent request to all respective shards,
-	// unless a particular partition key was specified.
-	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (OxiaClient_ListClient, error)
-	// *
-	// Requests all the records between a range of keys.
-	//
-	// Clients should send an equivalent request to all respective shards,
-	// unless a particular partition key was specified.
-	RangeScan(ctx context.Context, in *RangeScanRequest, opts ...grpc.CallOption) (OxiaClient_RangeScanClient, error)
-	// *
-	// Requests all the records between a range of keys.
-	GetSequenceUpdates(ctx context.Context, in *GetSequenceUpdatesRequest, opts ...grpc.CallOption) (OxiaClient_GetSequenceUpdatesClient, error)
-	GetNotifications(ctx context.Context, in *NotificationsRequest, opts ...grpc.CallOption) (OxiaClient_GetNotificationsClient, error)
-	// Creates a new client session. Sessions are kept alive by regularly sending
-	// heartbeats via the KeepAlive rpc.
-	CreateSession(ctx context.Context, in *CreateSessionRequest, opts ...grpc.CallOption) (*CreateSessionResponse, error)
-	// Sends a heartbeat to prevent the session from timing out.
-	KeepAlive(ctx context.Context, in *SessionHeartbeat, opts ...grpc.CallOption) (*KeepAliveResponse, error)
-	// Closes a session and removes all ephemeral values associated with it.
-	CloseSession(ctx context.Context, in *CloseSessionRequest, opts ...grpc.CallOption) (*CloseSessionResponse, error)
+	Read(ctx context.Context, in *proto.ReadRequest, opts ...grpc.CallOption) (OxiaClient_ReadClient, error)
+	List(ctx context.Context, in *proto.ListRequest, opts ...grpc.CallOption) (OxiaClient_ListClient, error)
+	RangeScan(ctx context.Context, in *proto.RangeScanRequest, opts ...grpc.CallOption) (OxiaClient_RangeScanClient, error)
+	GetSequenceUpdates(ctx context.Context, in *proto.GetSequenceUpdatesRequest, opts ...grpc.CallOption) (OxiaClient_GetSequenceUpdatesClient, error)
+	GetNotifications(ctx context.Context, in *proto.NotificationsRequest, opts ...grpc.CallOption) (OxiaClient_GetNotificationsClient, error)
+	CreateSession(ctx context.Context, in *proto.CreateSessionRequest, opts ...grpc.CallOption) (*proto.CreateSessionResponse, error)
+	KeepAlive(ctx context.Context, in *proto.SessionHeartbeat, opts ...grpc.CallOption) (*proto.KeepAliveResponse, error)
+	CloseSession(ctx context.Context, in *proto.CloseSessionRequest, opts ...grpc.CallOption) (*proto.CloseSessionResponse, error)
 }
 
 type oxiaClientClient struct {
@@ -85,8 +44,8 @@ func NewOxiaClientClient(cc grpc.ClientConnInterface) OxiaClientClient {
 	return &oxiaClientClient{cc}
 }
 
-func (c *oxiaClientClient) GetShardAssignments(ctx context.Context, in *ShardAssignmentsRequest, opts ...grpc.CallOption) (OxiaClient_GetShardAssignmentsClient, error) {
-	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[0], "/io.oxia.proto.v1.OxiaClient/GetShardAssignments", opts...)
+func (c *oxiaClientClient) GetShardAssignments(ctx context.Context, in *proto.ShardAssignmentsRequest, opts ...grpc.CallOption) (OxiaClient_GetShardAssignmentsClient, error) {
+	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[0], "/io.streamnative.oxia.proto.OxiaClient/GetShardAssignments", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +60,7 @@ func (c *oxiaClientClient) GetShardAssignments(ctx context.Context, in *ShardAss
 }
 
 type OxiaClient_GetShardAssignmentsClient interface {
-	Recv() (*ShardAssignments, error)
+	Recv() (*proto.ShardAssignments, error)
 	grpc.ClientStream
 }
 
@@ -109,17 +68,17 @@ type oxiaClientGetShardAssignmentsClient struct {
 	grpc.ClientStream
 }
 
-func (x *oxiaClientGetShardAssignmentsClient) Recv() (*ShardAssignments, error) {
-	m := new(ShardAssignments)
+func (x *oxiaClientGetShardAssignmentsClient) Recv() (*proto.ShardAssignments, error) {
+	m := new(proto.ShardAssignments)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *oxiaClientClient) Write(ctx context.Context, in *WriteRequest, opts ...grpc.CallOption) (*WriteResponse, error) {
-	out := new(WriteResponse)
-	err := c.cc.Invoke(ctx, "/io.oxia.proto.v1.OxiaClient/Write", in, out, opts...)
+func (c *oxiaClientClient) Write(ctx context.Context, in *proto.WriteRequest, opts ...grpc.CallOption) (*proto.WriteResponse, error) {
+	out := new(proto.WriteResponse)
+	err := c.cc.Invoke(ctx, "/io.streamnative.oxia.proto.OxiaClient/Write", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +86,7 @@ func (c *oxiaClientClient) Write(ctx context.Context, in *WriteRequest, opts ...
 }
 
 func (c *oxiaClientClient) WriteStream(ctx context.Context, opts ...grpc.CallOption) (OxiaClient_WriteStreamClient, error) {
-	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[1], "/io.oxia.proto.v1.OxiaClient/WriteStream", opts...)
+	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[1], "/io.streamnative.oxia.proto.OxiaClient/WriteStream", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -136,8 +95,8 @@ func (c *oxiaClientClient) WriteStream(ctx context.Context, opts ...grpc.CallOpt
 }
 
 type OxiaClient_WriteStreamClient interface {
-	Send(*WriteRequest) error
-	Recv() (*WriteResponse, error)
+	Send(*proto.WriteRequest) error
+	Recv() (*proto.WriteResponse, error)
 	grpc.ClientStream
 }
 
@@ -145,20 +104,20 @@ type oxiaClientWriteStreamClient struct {
 	grpc.ClientStream
 }
 
-func (x *oxiaClientWriteStreamClient) Send(m *WriteRequest) error {
+func (x *oxiaClientWriteStreamClient) Send(m *proto.WriteRequest) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *oxiaClientWriteStreamClient) Recv() (*WriteResponse, error) {
-	m := new(WriteResponse)
+func (x *oxiaClientWriteStreamClient) Recv() (*proto.WriteResponse, error) {
+	m := new(proto.WriteResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *oxiaClientClient) Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (OxiaClient_ReadClient, error) {
-	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[2], "/io.oxia.proto.v1.OxiaClient/Read", opts...)
+func (c *oxiaClientClient) Read(ctx context.Context, in *proto.ReadRequest, opts ...grpc.CallOption) (OxiaClient_ReadClient, error) {
+	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[2], "/io.streamnative.oxia.proto.OxiaClient/Read", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +132,7 @@ func (c *oxiaClientClient) Read(ctx context.Context, in *ReadRequest, opts ...gr
 }
 
 type OxiaClient_ReadClient interface {
-	Recv() (*ReadResponse, error)
+	Recv() (*proto.ReadResponse, error)
 	grpc.ClientStream
 }
 
@@ -181,16 +140,16 @@ type oxiaClientReadClient struct {
 	grpc.ClientStream
 }
 
-func (x *oxiaClientReadClient) Recv() (*ReadResponse, error) {
-	m := new(ReadResponse)
+func (x *oxiaClientReadClient) Recv() (*proto.ReadResponse, error) {
+	m := new(proto.ReadResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *oxiaClientClient) List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (OxiaClient_ListClient, error) {
-	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[3], "/io.oxia.proto.v1.OxiaClient/List", opts...)
+func (c *oxiaClientClient) List(ctx context.Context, in *proto.ListRequest, opts ...grpc.CallOption) (OxiaClient_ListClient, error) {
+	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[3], "/io.streamnative.oxia.proto.OxiaClient/List", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +164,7 @@ func (c *oxiaClientClient) List(ctx context.Context, in *ListRequest, opts ...gr
 }
 
 type OxiaClient_ListClient interface {
-	Recv() (*ListResponse, error)
+	Recv() (*proto.ListResponse, error)
 	grpc.ClientStream
 }
 
@@ -213,16 +172,16 @@ type oxiaClientListClient struct {
 	grpc.ClientStream
 }
 
-func (x *oxiaClientListClient) Recv() (*ListResponse, error) {
-	m := new(ListResponse)
+func (x *oxiaClientListClient) Recv() (*proto.ListResponse, error) {
+	m := new(proto.ListResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *oxiaClientClient) RangeScan(ctx context.Context, in *RangeScanRequest, opts ...grpc.CallOption) (OxiaClient_RangeScanClient, error) {
-	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[4], "/io.oxia.proto.v1.OxiaClient/RangeScan", opts...)
+func (c *oxiaClientClient) RangeScan(ctx context.Context, in *proto.RangeScanRequest, opts ...grpc.CallOption) (OxiaClient_RangeScanClient, error) {
+	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[4], "/io.streamnative.oxia.proto.OxiaClient/RangeScan", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +196,7 @@ func (c *oxiaClientClient) RangeScan(ctx context.Context, in *RangeScanRequest, 
 }
 
 type OxiaClient_RangeScanClient interface {
-	Recv() (*RangeScanResponse, error)
+	Recv() (*proto.RangeScanResponse, error)
 	grpc.ClientStream
 }
 
@@ -245,16 +204,16 @@ type oxiaClientRangeScanClient struct {
 	grpc.ClientStream
 }
 
-func (x *oxiaClientRangeScanClient) Recv() (*RangeScanResponse, error) {
-	m := new(RangeScanResponse)
+func (x *oxiaClientRangeScanClient) Recv() (*proto.RangeScanResponse, error) {
+	m := new(proto.RangeScanResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *oxiaClientClient) GetSequenceUpdates(ctx context.Context, in *GetSequenceUpdatesRequest, opts ...grpc.CallOption) (OxiaClient_GetSequenceUpdatesClient, error) {
-	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[5], "/io.oxia.proto.v1.OxiaClient/GetSequenceUpdates", opts...)
+func (c *oxiaClientClient) GetSequenceUpdates(ctx context.Context, in *proto.GetSequenceUpdatesRequest, opts ...grpc.CallOption) (OxiaClient_GetSequenceUpdatesClient, error) {
+	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[5], "/io.streamnative.oxia.proto.OxiaClient/GetSequenceUpdates", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +228,7 @@ func (c *oxiaClientClient) GetSequenceUpdates(ctx context.Context, in *GetSequen
 }
 
 type OxiaClient_GetSequenceUpdatesClient interface {
-	Recv() (*GetSequenceUpdatesResponse, error)
+	Recv() (*proto.GetSequenceUpdatesResponse, error)
 	grpc.ClientStream
 }
 
@@ -277,16 +236,16 @@ type oxiaClientGetSequenceUpdatesClient struct {
 	grpc.ClientStream
 }
 
-func (x *oxiaClientGetSequenceUpdatesClient) Recv() (*GetSequenceUpdatesResponse, error) {
-	m := new(GetSequenceUpdatesResponse)
+func (x *oxiaClientGetSequenceUpdatesClient) Recv() (*proto.GetSequenceUpdatesResponse, error) {
+	m := new(proto.GetSequenceUpdatesResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *oxiaClientClient) GetNotifications(ctx context.Context, in *NotificationsRequest, opts ...grpc.CallOption) (OxiaClient_GetNotificationsClient, error) {
-	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[6], "/io.oxia.proto.v1.OxiaClient/GetNotifications", opts...)
+func (c *oxiaClientClient) GetNotifications(ctx context.Context, in *proto.NotificationsRequest, opts ...grpc.CallOption) (OxiaClient_GetNotificationsClient, error) {
+	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[6], "/io.streamnative.oxia.proto.OxiaClient/GetNotifications", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +260,7 @@ func (c *oxiaClientClient) GetNotifications(ctx context.Context, in *Notificatio
 }
 
 type OxiaClient_GetNotificationsClient interface {
-	Recv() (*NotificationBatch, error)
+	Recv() (*proto.NotificationBatch, error)
 	grpc.ClientStream
 }
 
@@ -309,35 +268,35 @@ type oxiaClientGetNotificationsClient struct {
 	grpc.ClientStream
 }
 
-func (x *oxiaClientGetNotificationsClient) Recv() (*NotificationBatch, error) {
-	m := new(NotificationBatch)
+func (x *oxiaClientGetNotificationsClient) Recv() (*proto.NotificationBatch, error) {
+	m := new(proto.NotificationBatch)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *oxiaClientClient) CreateSession(ctx context.Context, in *CreateSessionRequest, opts ...grpc.CallOption) (*CreateSessionResponse, error) {
-	out := new(CreateSessionResponse)
-	err := c.cc.Invoke(ctx, "/io.oxia.proto.v1.OxiaClient/CreateSession", in, out, opts...)
+func (c *oxiaClientClient) CreateSession(ctx context.Context, in *proto.CreateSessionRequest, opts ...grpc.CallOption) (*proto.CreateSessionResponse, error) {
+	out := new(proto.CreateSessionResponse)
+	err := c.cc.Invoke(ctx, "/io.streamnative.oxia.proto.OxiaClient/CreateSession", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *oxiaClientClient) KeepAlive(ctx context.Context, in *SessionHeartbeat, opts ...grpc.CallOption) (*KeepAliveResponse, error) {
-	out := new(KeepAliveResponse)
-	err := c.cc.Invoke(ctx, "/io.oxia.proto.v1.OxiaClient/KeepAlive", in, out, opts...)
+func (c *oxiaClientClient) KeepAlive(ctx context.Context, in *proto.SessionHeartbeat, opts ...grpc.CallOption) (*proto.KeepAliveResponse, error) {
+	out := new(proto.KeepAliveResponse)
+	err := c.cc.Invoke(ctx, "/io.streamnative.oxia.proto.OxiaClient/KeepAlive", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *oxiaClientClient) CloseSession(ctx context.Context, in *CloseSessionRequest, opts ...grpc.CallOption) (*CloseSessionResponse, error) {
-	out := new(CloseSessionResponse)
-	err := c.cc.Invoke(ctx, "/io.oxia.proto.v1.OxiaClient/CloseSession", in, out, opts...)
+func (c *oxiaClientClient) CloseSession(ctx context.Context, in *proto.CloseSessionRequest, opts ...grpc.CallOption) (*proto.CloseSessionResponse, error) {
+	out := new(proto.CloseSessionResponse)
+	err := c.cc.Invoke(ctx, "/io.streamnative.oxia.proto.OxiaClient/CloseSession", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -348,59 +307,17 @@ func (c *oxiaClientClient) CloseSession(ctx context.Context, in *CloseSessionReq
 // All implementations must embed UnimplementedOxiaClientServer
 // for forward compatibility
 type OxiaClientServer interface {
-	// *
-	// Gets all shard-to-server assignments as a stream. Each set of assignments
-	// in the response stream will contain all the assignments to bring the client
-	// up to date. For example, if a shard is split, the stream will return a
-	// single response containing all the new shard assignments as opposed to
-	// multiple stream responses, each containing a single shard assignment.
-	//
-	// Clients should connect to a single random server which will stream the
-	// assignments for all shards on all servers.
-	GetShardAssignments(*ShardAssignmentsRequest, OxiaClient_GetShardAssignmentsServer) error
-	// *
-	// Batches put, delete and delete_range requests.
-	//
-	// Clients should send this request to the shard leader. In the future,
-	// this may be handled server-side in a proxy layer.
-	//
-	// Deprecated
-	Write(context.Context, *WriteRequest) (*WriteResponse, error)
-	// *
-	// Batches put, delete and delete_range requests.
-	//
-	// Clients should send this request to the shard leader. In the future,
-	// this may be handled server-side in a proxy layer.
+	GetShardAssignments(*proto.ShardAssignmentsRequest, OxiaClient_GetShardAssignmentsServer) error
+	Write(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
 	WriteStream(OxiaClient_WriteStreamServer) error
-	// *
-	// Batches get requests.
-	//
-	// Clients should send this request to the shard leader. In the future,
-	// this may be handled server-side in a proxy layer.
-	Read(*ReadRequest, OxiaClient_ReadServer) error
-	// *
-	// Requests all the keys between a range of keys.
-	//
-	// Clients should send an equivalent request to all respective shards,
-	// unless a particular partition key was specified.
-	List(*ListRequest, OxiaClient_ListServer) error
-	// *
-	// Requests all the records between a range of keys.
-	//
-	// Clients should send an equivalent request to all respective shards,
-	// unless a particular partition key was specified.
-	RangeScan(*RangeScanRequest, OxiaClient_RangeScanServer) error
-	// *
-	// Requests all the records between a range of keys.
-	GetSequenceUpdates(*GetSequenceUpdatesRequest, OxiaClient_GetSequenceUpdatesServer) error
-	GetNotifications(*NotificationsRequest, OxiaClient_GetNotificationsServer) error
-	// Creates a new client session. Sessions are kept alive by regularly sending
-	// heartbeats via the KeepAlive rpc.
-	CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error)
-	// Sends a heartbeat to prevent the session from timing out.
-	KeepAlive(context.Context, *SessionHeartbeat) (*KeepAliveResponse, error)
-	// Closes a session and removes all ephemeral values associated with it.
-	CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error)
+	Read(*proto.ReadRequest, OxiaClient_ReadServer) error
+	List(*proto.ListRequest, OxiaClient_ListServer) error
+	RangeScan(*proto.RangeScanRequest, OxiaClient_RangeScanServer) error
+	GetSequenceUpdates(*proto.GetSequenceUpdatesRequest, OxiaClient_GetSequenceUpdatesServer) error
+	GetNotifications(*proto.NotificationsRequest, OxiaClient_GetNotificationsServer) error
+	CreateSession(context.Context, *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error)
+	KeepAlive(context.Context, *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error)
+	CloseSession(context.Context, *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
 	mustEmbedUnimplementedOxiaClientServer()
 }
 
@@ -408,37 +325,37 @@ type OxiaClientServer interface {
 type UnimplementedOxiaClientServer struct {
 }
 
-func (UnimplementedOxiaClientServer) GetShardAssignments(*ShardAssignmentsRequest, OxiaClient_GetShardAssignmentsServer) error {
+func (UnimplementedOxiaClientServer) GetShardAssignments(*proto.ShardAssignmentsRequest, OxiaClient_GetShardAssignmentsServer) error {
 	return status.Errorf(codes.Unimplemented, "method GetShardAssignments not implemented")
 }
-func (UnimplementedOxiaClientServer) Write(context.Context, *WriteRequest) (*WriteResponse, error) {
+func (UnimplementedOxiaClientServer) Write(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Write not implemented")
 }
 func (UnimplementedOxiaClientServer) WriteStream(OxiaClient_WriteStreamServer) error {
 	return status.Errorf(codes.Unimplemented, "method WriteStream not implemented")
 }
-func (UnimplementedOxiaClientServer) Read(*ReadRequest, OxiaClient_ReadServer) error {
+func (UnimplementedOxiaClientServer) Read(*proto.ReadRequest, OxiaClient_ReadServer) error {
 	return status.Errorf(codes.Unimplemented, "method Read not implemented")
 }
-func (UnimplementedOxiaClientServer) List(*ListRequest, OxiaClient_ListServer) error {
+func (UnimplementedOxiaClientServer) List(*proto.ListRequest, OxiaClient_ListServer) error {
 	return status.Errorf(codes.Unimplemented, "method List not implemented")
 }
-func (UnimplementedOxiaClientServer) RangeScan(*RangeScanRequest, OxiaClient_RangeScanServer) error {
+func (UnimplementedOxiaClientServer) RangeScan(*proto.RangeScanRequest, OxiaClient_RangeScanServer) error {
 	return status.Errorf(codes.Unimplemented, "method RangeScan not implemented")
 }
-func (UnimplementedOxiaClientServer) GetSequenceUpdates(*GetSequenceUpdatesRequest, OxiaClient_GetSequenceUpdatesServer) error {
+func (UnimplementedOxiaClientServer) GetSequenceUpdates(*proto.GetSequenceUpdatesRequest, OxiaClient_GetSequenceUpdatesServer) error {
 	return status.Errorf(codes.Unimplemented, "method GetSequenceUpdates not implemented")
 }
-func (UnimplementedOxiaClientServer) GetNotifications(*NotificationsRequest, OxiaClient_GetNotificationsServer) error {
+func (UnimplementedOxiaClientServer) GetNotifications(*proto.NotificationsRequest, OxiaClient_GetNotificationsServer) error {
 	return status.Errorf(codes.Unimplemented, "method GetNotifications not implemented")
 }
-func (UnimplementedOxiaClientServer) CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error) {
+func (UnimplementedOxiaClientServer) CreateSession(context.Context, *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateSession not implemented")
 }
-func (UnimplementedOxiaClientServer) KeepAlive(context.Context, *SessionHeartbeat) (*KeepAliveResponse, error) {
+func (UnimplementedOxiaClientServer) KeepAlive(context.Context, *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method KeepAlive not implemented")
 }
-func (UnimplementedOxiaClientServer) CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error) {
+func (UnimplementedOxiaClientServer) CloseSession(context.Context, *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CloseSession not implemented")
 }
 func (UnimplementedOxiaClientServer) mustEmbedUnimplementedOxiaClientServer() {}
@@ -455,7 +372,7 @@ func RegisterOxiaClientServer(s grpc.ServiceRegistrar, srv OxiaClientServer) {
 }
 
 func _OxiaClient_GetShardAssignments_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ShardAssignmentsRequest)
+	m := new(proto.ShardAssignmentsRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
@@ -463,7 +380,7 @@ func _OxiaClient_GetShardAssignments_Handler(srv interface{}, stream grpc.Server
 }
 
 type OxiaClient_GetShardAssignmentsServer interface {
-	Send(*ShardAssignments) error
+	Send(*proto.ShardAssignments) error
 	grpc.ServerStream
 }
 
@@ -471,12 +388,12 @@ type oxiaClientGetShardAssignmentsServer struct {
 	grpc.ServerStream
 }
 
-func (x *oxiaClientGetShardAssignmentsServer) Send(m *ShardAssignments) error {
+func (x *oxiaClientGetShardAssignmentsServer) Send(m *proto.ShardAssignments) error {
 	return x.ServerStream.SendMsg(m)
 }
 
 func _OxiaClient_Write_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(WriteRequest)
+	in := new(proto.WriteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -485,10 +402,10 @@ func _OxiaClient_Write_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/io.oxia.proto.v1.OxiaClient/Write",
+		FullMethod: "/io.streamnative.oxia.proto.OxiaClient/Write",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OxiaClientServer).Write(ctx, req.(*WriteRequest))
+		return srv.(OxiaClientServer).Write(ctx, req.(*proto.WriteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -498,8 +415,8 @@ func _OxiaClient_WriteStream_Handler(srv interface{}, stream grpc.ServerStream) 
 }
 
 type OxiaClient_WriteStreamServer interface {
-	Send(*WriteResponse) error
-	Recv() (*WriteRequest, error)
+	Send(*proto.WriteResponse) error
+	Recv() (*proto.WriteRequest, error)
 	grpc.ServerStream
 }
 
@@ -507,12 +424,12 @@ type oxiaClientWriteStreamServer struct {
 	grpc.ServerStream
 }
 
-func (x *oxiaClientWriteStreamServer) Send(m *WriteResponse) error {
+func (x *oxiaClientWriteStreamServer) Send(m *proto.WriteResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *oxiaClientWriteStreamServer) Recv() (*WriteRequest, error) {
-	m := new(WriteRequest)
+func (x *oxiaClientWriteStreamServer) Recv() (*proto.WriteRequest, error) {
+	m := new(proto.WriteRequest)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -520,7 +437,7 @@ func (x *oxiaClientWriteStreamServer) Recv() (*WriteRequest, error) {
 }
 
 func _OxiaClient_Read_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ReadRequest)
+	m := new(proto.ReadRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
@@ -528,7 +445,7 @@ func _OxiaClient_Read_Handler(srv interface{}, stream grpc.ServerStream) error {
 }
 
 type OxiaClient_ReadServer interface {
-	Send(*ReadResponse) error
+	Send(*proto.ReadResponse) error
 	grpc.ServerStream
 }
 
@@ -536,12 +453,12 @@ type oxiaClientReadServer struct {
 	grpc.ServerStream
 }
 
-func (x *oxiaClientReadServer) Send(m *ReadResponse) error {
+func (x *oxiaClientReadServer) Send(m *proto.ReadResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
 func _OxiaClient_List_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ListRequest)
+	m := new(proto.ListRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
@@ -549,7 +466,7 @@ func _OxiaClient_List_Handler(srv interface{}, stream grpc.ServerStream) error {
 }
 
 type OxiaClient_ListServer interface {
-	Send(*ListResponse) error
+	Send(*proto.ListResponse) error
 	grpc.ServerStream
 }
 
@@ -557,12 +474,12 @@ type oxiaClientListServer struct {
 	grpc.ServerStream
 }
 
-func (x *oxiaClientListServer) Send(m *ListResponse) error {
+func (x *oxiaClientListServer) Send(m *proto.ListResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
 func _OxiaClient_RangeScan_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(RangeScanRequest)
+	m := new(proto.RangeScanRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
@@ -570,7 +487,7 @@ func _OxiaClient_RangeScan_Handler(srv interface{}, stream grpc.ServerStream) er
 }
 
 type OxiaClient_RangeScanServer interface {
-	Send(*RangeScanResponse) error
+	Send(*proto.RangeScanResponse) error
 	grpc.ServerStream
 }
 
@@ -578,12 +495,12 @@ type oxiaClientRangeScanServer struct {
 	grpc.ServerStream
 }
 
-func (x *oxiaClientRangeScanServer) Send(m *RangeScanResponse) error {
+func (x *oxiaClientRangeScanServer) Send(m *proto.RangeScanResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
 func _OxiaClient_GetSequenceUpdates_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(GetSequenceUpdatesRequest)
+	m := new(proto.GetSequenceUpdatesRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
@@ -591,7 +508,7 @@ func _OxiaClient_GetSequenceUpdates_Handler(srv interface{}, stream grpc.ServerS
 }
 
 type OxiaClient_GetSequenceUpdatesServer interface {
-	Send(*GetSequenceUpdatesResponse) error
+	Send(*proto.GetSequenceUpdatesResponse) error
 	grpc.ServerStream
 }
 
@@ -599,12 +516,12 @@ type oxiaClientGetSequenceUpdatesServer struct {
 	grpc.ServerStream
 }
 
-func (x *oxiaClientGetSequenceUpdatesServer) Send(m *GetSequenceUpdatesResponse) error {
+func (x *oxiaClientGetSequenceUpdatesServer) Send(m *proto.GetSequenceUpdatesResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
 func _OxiaClient_GetNotifications_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(NotificationsRequest)
+	m := new(proto.NotificationsRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
@@ -612,7 +529,7 @@ func _OxiaClient_GetNotifications_Handler(srv interface{}, stream grpc.ServerStr
 }
 
 type OxiaClient_GetNotificationsServer interface {
-	Send(*NotificationBatch) error
+	Send(*proto.NotificationBatch) error
 	grpc.ServerStream
 }
 
@@ -620,12 +537,12 @@ type oxiaClientGetNotificationsServer struct {
 	grpc.ServerStream
 }
 
-func (x *oxiaClientGetNotificationsServer) Send(m *NotificationBatch) error {
+func (x *oxiaClientGetNotificationsServer) Send(m *proto.NotificationBatch) error {
 	return x.ServerStream.SendMsg(m)
 }
 
 func _OxiaClient_CreateSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateSessionRequest)
+	in := new(proto.CreateSessionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -634,16 +551,16 @@ func _OxiaClient_CreateSession_Handler(srv interface{}, ctx context.Context, dec
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/io.oxia.proto.v1.OxiaClient/CreateSession",
+		FullMethod: "/io.streamnative.oxia.proto.OxiaClient/CreateSession",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OxiaClientServer).CreateSession(ctx, req.(*CreateSessionRequest))
+		return srv.(OxiaClientServer).CreateSession(ctx, req.(*proto.CreateSessionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _OxiaClient_KeepAlive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SessionHeartbeat)
+	in := new(proto.SessionHeartbeat)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -652,16 +569,16 @@ func _OxiaClient_KeepAlive_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/io.oxia.proto.v1.OxiaClient/KeepAlive",
+		FullMethod: "/io.streamnative.oxia.proto.OxiaClient/KeepAlive",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OxiaClientServer).KeepAlive(ctx, req.(*SessionHeartbeat))
+		return srv.(OxiaClientServer).KeepAlive(ctx, req.(*proto.SessionHeartbeat))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _OxiaClient_CloseSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CloseSessionRequest)
+	in := new(proto.CloseSessionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -670,10 +587,10 @@ func _OxiaClient_CloseSession_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/io.oxia.proto.v1.OxiaClient/CloseSession",
+		FullMethod: "/io.streamnative.oxia.proto.OxiaClient/CloseSession",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OxiaClientServer).CloseSession(ctx, req.(*CloseSessionRequest))
+		return srv.(OxiaClientServer).CloseSession(ctx, req.(*proto.CloseSessionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -682,7 +599,7 @@ func _OxiaClient_CloseSession_Handler(srv interface{}, ctx context.Context, dec 
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var OxiaClient_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "io.oxia.proto.v1.OxiaClient",
+	ServiceName: "io.streamnative.oxia.proto.OxiaClient",
 	HandlerType: (*OxiaClientServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -740,5 +657,5 @@ var OxiaClient_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "client.proto",
+	Metadata: "compat/client_grpc_sn.proto",
 }
