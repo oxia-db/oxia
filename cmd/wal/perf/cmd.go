@@ -187,6 +187,8 @@ func printLatench(name string, datas []int64) {
 				p99 = *s.Value
 			case 999:
 				p999 = *s.Value
+			default:
+				panic("unknown summary quantile")
 			}
 		}
 	}

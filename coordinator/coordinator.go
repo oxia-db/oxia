@@ -317,6 +317,8 @@ func (c *coordinator) startBackgroundActionWorker() {
 				c.handleActionSwap(ac)
 			case actions.Election:
 				c.handleActionElection(ac)
+			default:
+				panic("unknown action type")
 			}
 
 		case <-c.ctx.Done():

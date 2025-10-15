@@ -305,6 +305,8 @@ func selectResponse(kc proto.KeyComparisonType, selected *proto.GetResponse, res
 			if selected == keyNotFound || compareGetResponse(selected, response) > 0 {
 				selected = response
 			}
+		default:
+			panic(fmt.Sprintf("unknown comparison type: %v", kc))
 		}
 	}
 	return selected

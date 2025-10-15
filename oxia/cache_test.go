@@ -49,11 +49,10 @@ func TestMain(m *testing.M) {
 	defer standalone.Close()
 	serviceAddress = fmt.Sprintf("localhost:%d", standalone.RpcPort())
 
-	code := m.Run()
+	m.Run()
 
 	_ = os.RemoveAll(config.DataDir)
 	_ = os.RemoveAll(config.WalDir)
-	os.Exit(code)
 }
 
 func newKey() string {

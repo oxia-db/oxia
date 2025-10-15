@@ -113,7 +113,8 @@ func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.Ser
 	registerFunc(c.server)
 	grpcprometheus.Register(c.server)
 
-	listener, err := net.Listen("tcp", bindAddress)
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(context.Background(), "tcp", bindAddress)
 	if err != nil {
 		return nil, err
 	}

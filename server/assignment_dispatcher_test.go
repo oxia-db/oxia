@@ -69,14 +69,11 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 	mockClient := newMockShardAssignmentClientStream()
 
 	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	go func() {
+	wg.Go(func() {
 		req := &proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace}
 		err := dispatcher.RegisterForUpdates(req, mockClient)
 		assert.NoError(t, err)
-		wg.Done()
-	}()
+	})
 
 	mockClient.cancel()
 	wg.Wait()
@@ -161,13 +158,11 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	mockClient := newMockShardAssignmentClientStream()
 
 	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		req := &proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace}
 		err := dispatcher.RegisterForUpdates(req, mockClient)
 		assert.NoError(t, err)
-		wg.Done()
-	}()
+	})
 
 	response := mockClient.GetResponse()
 	assert.True(t, pb.Equal(request, response))
@@ -257,13 +252,11 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 	mockClient := newMockShardAssignmentClientStream()
 
 	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		req := &proto.ShardAssignmentsRequest{Namespace: "test-ns-1"}
 		err := dispatcher.RegisterForUpdates(req, mockClient)
 		assert.NoError(t, err)
-		wg.Done()
-	}()
+	})
 
 	mockClient.cancel()
 	wg.Wait()
@@ -284,13 +277,11 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 	// If namespace is not passed, it will use "default"
 	mockClient = newMockShardAssignmentClientStream()
 	wg = sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		req := &proto.ShardAssignmentsRequest{Namespace: ""}
 		err := dispatcher.RegisterForUpdates(req, mockClient)
 		assert.NoError(t, err)
-		wg.Done()
-	}()
+	})
 
 	mockClient.cancel()
 	wg.Wait()
@@ -311,13 +302,11 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 	// If the namespace is not valid, we'll get an error
 	mockClient = newMockShardAssignmentClientStream()
 	wg = sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		req := &proto.ShardAssignmentsRequest{Namespace: "non-valid-namespace"}
 		err := dispatcher.RegisterForUpdates(req, mockClient)
 		assert.ErrorIs(t, err, constant.ErrNamespaceNotFound)
-		wg.Done()
-	}()
+	})
 
 	mockClient.cancel()
 	wg.Wait()

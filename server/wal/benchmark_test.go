@@ -60,13 +60,10 @@ func Benchmark_Wal_Append_with_Read(b *testing.B) {
 	assert.NoError(b, err)
 	defer wal.Close()
 
-	var wg sync.WaitGroup
+	wg := sync.WaitGroup{}
 	c := 2
-	wg.Add(c)
 	n := time.Now()
-	go func() {
-		defer wg.Done()
-
+	wg.Go(func() {
 		for i := 0; i < b.N; i++ {
 			err := wal.Append(&proto.LogEntry{
 				Term:   1,
@@ -75,11 +72,10 @@ func Benchmark_Wal_Append_with_Read(b *testing.B) {
 			})
 			assert.NoError(b, err)
 		}
-	}()
+	})
 
 	for i := 0; i < c-1; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			reader, err := wal.NewReader(InvalidOffset)
 			assert.NoError(b, err)
 
@@ -94,7 +90,7 @@ func Benchmark_Wal_Append_with_Read(b *testing.B) {
 					break
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -113,10 +109,8 @@ func Benchmark_Wal_Append_to_Read_latency(b *testing.B) {
 	defer wal.Close()
 	diffs := make([]int64, b.N)
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg := sync.WaitGroup{}
+	wg.Go(func() {
 		for i := 0; i < b.N; i++ {
 			ts := time.Now().UnixMicro()
 
@@ -128,10 +122,9 @@ func Benchmark_Wal_Append_to_Read_latency(b *testing.B) {
 			})
 			assert.NoError(b, err)
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
 
+	wg.Go(func() {
 		reader, err := wal.NewReader(InvalidOffset)
 		assert.NoError(b, err)
 		for i := 0; i < b.N; i++ {
@@ -147,7 +140,7 @@ func Benchmark_Wal_Append_to_Read_latency(b *testing.B) {
 				break
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 

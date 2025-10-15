@@ -472,6 +472,8 @@ func (p *Pebble) Get(key string, comparisonType ComparisonType) (returnedKey str
 		returnedKey, value, closer, err = p.getLower(key)
 	case ComparisonHigher:
 		returnedKey, value, closer, err = p.getHigher(key)
+	default:
+		panic(fmt.Sprintf("Unknown comparison type: %v", comparisonType))
 	}
 
 	if errors.Is(err, pebble.ErrNotFound) {
