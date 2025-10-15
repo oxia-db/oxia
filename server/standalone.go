@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 
@@ -144,6 +145,10 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 
 func (s *Standalone) RpcPort() int {
 	return s.rpc.Port()
+}
+
+func (s *Standalone) ServiceAddr() string {
+	return fmt.Sprintf("localhost:%d", s.RpcPort())
 }
 
 func (s *Standalone) Close() error {

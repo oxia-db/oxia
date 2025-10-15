@@ -722,13 +722,10 @@ func TestFollower_HandleSnapshot(t *testing.T) {
 
 	snapshotStream := newMockServerSendSnapshotStream()
 	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	go func() {
+	wg.Go(func() {
 		err := fc.SendSnapshot(snapshotStream)
 		assert.NoError(t, err)
-		wg.Done()
-	}()
+	})
 
 	for ; snapshot.Valid(); snapshot.Next() {
 		chunk, err := snapshot.Chunk()
