@@ -65,12 +65,15 @@ jobs:
         with:
           version: v2.5.0
           args: --timeout=10m -v
+
       - name: Check git status if clean
-        uses: CatChen/check-git-status-action@v1
-        with:
-          fail-if-not-clean: true
-          push-if-not-clean: false
-          request-changes-if-not-clean: false
+        run: |
+          # refresh index / status
+          git status
+          echo "## Checking for cleanliness..."
+          git diff --quiet || { echo "Repository has unstaged changes"; git --no-pager diff; exit 1; }
+          git diff --cached --quiet || { echo "Repository has staged but uncommitted changes"; git --no-pager diff --cached; exit 1; }
+          echo "Repository is clean"
 
       - name: Test
         run: make test
