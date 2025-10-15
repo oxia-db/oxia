@@ -19,7 +19,7 @@ go 1.25.2
 require (
 	github.com/bmizerany/perks v0.0.0-20230307044200-03f9df79da1e
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/cockroachdb/pebble v1.1.2
+	github.com/cockroachdb/pebble v1.1.5
 	github.com/coreos/go-oidc/v3 v3.14.1
 	github.com/dgraph-io/ristretto v0.2.0
 	github.com/dustin/go-humanize v1.0.1
@@ -31,7 +31,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/hashicorp/raft v1.7.3
+	github.com/hashicorp/raft-boltdb v0.0.0-20250926130943-f41fa5f23d89
 	github.com/juju/fslock v0.0.0-20160525022230-4d5c94c67b4b
+	github.com/magodo/slog2hclog v0.0.0-20240614031327-090ebd72a033
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
 	github.com/pkg/errors v0.9.1
@@ -97,7 +99,6 @@ require (
 	github.com/hashicorp/go-msgpack v0.5.5 // indirect
 	github.com/hashicorp/go-msgpack/v2 v2.1.2 // indirect
 	github.com/hashicorp/golang-lru v0.5.0 // indirect
-	github.com/hashicorp/raft-boltdb v0.0.0-20250926130943-f41fa5f23d89 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -105,7 +106,6 @@ require (
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/magodo/slog2hclog v0.0.0-20240614031327-090ebd72a033 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
