@@ -18,8 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,31 +34,16 @@ type testStruct struct {
 	B int    `json:"b"`
 }
 
-var standalone *server.Standalone
-var serviceAddress string
-
-func TestMain(m *testing.M) {
-	// Disable zerolog ConsoleWriter to avoid DATA RACE at os.Stdout
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})))
-
-	dir, _ := os.MkdirTemp(os.TempDir(), "oxia-test-*")
-	config := server.NewTestConfig(dir)
-	standalone, _ = server.NewStandalone(config)
-	defer standalone.Close()
-	serviceAddress = fmt.Sprintf("localhost:%d", standalone.RpcPort())
-
-	m.Run()
-
-	_ = os.RemoveAll(config.DataDir)
-	_ = os.RemoveAll(config.WalDir)
-}
-
 func newKey() string {
 	return fmt.Sprintf("/my-key-%d", time.Now().Nanosecond())
 }
 
 func TestCache_Empty(t *testing.T) {
-	client, err := NewSyncClient(serviceAddress)
+	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	cache, err := NewCache[testStruct](client, json.Marshal, json.Unmarshal)
@@ -87,7 +70,11 @@ func TestCache_Empty(t *testing.T) {
 }
 
 func TestCache_InsertionDeletion(t *testing.T) {
-	client, err := NewSyncClient(serviceAddress)
+	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	cache, err := NewCache[testStruct](client, json.Marshal, json.Unmarshal)
@@ -142,7 +129,11 @@ func TestCache_InsertionDeletion(t *testing.T) {
 }
 
 func TestCache_PutOutSideTheCache(t *testing.T) {
-	client, err := NewSyncClient(serviceAddress)
+	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	cache, err := NewCache[testStruct](client, json.Marshal, json.Unmarshal)
@@ -163,7 +154,11 @@ func TestCache_PutOutSideTheCache(t *testing.T) {
 }
 
 func TestCache_DeserializationFailure(t *testing.T) {
-	client, err := NewSyncClient(serviceAddress)
+	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	cache, err := NewCache[testStruct](client, json.Marshal, json.Unmarshal)
@@ -180,10 +175,14 @@ func TestCache_DeserializationFailure(t *testing.T) {
 }
 
 func TestCache_ConcurrentUpdate(t *testing.T) {
-	client1, err := NewSyncClient(serviceAddress)
+	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client1, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
-	client2, err := NewSyncClient(serviceAddress)
+	client2, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	cache1, err := NewCache[testStruct](client1, json.Marshal, json.Unmarshal)
