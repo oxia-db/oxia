@@ -103,6 +103,9 @@ func (d *dispatcher) onOxiaStreamRequestMessage(msgType MsgType, m any, message 
 	case MsgTypeAck:
 		streamId := m.(*Message[OxiaStreamMessage]).Body.StreamId
 		go d.replicationProvider.HandleAck(streamId, message.(*proto.Ack))
+
+	default:
+		panic(fmt.Sprintf("Unknown message type: %v", msgType))
 	}
 }
 
@@ -124,11 +127,7 @@ func (d *dispatcher) onOxiaProxiedMessage(msgType MsgType, m any, _ pb.Message) 
 		} else { //nolint:revive
 			ch <- ResponseError{msg: nil, err: nil}
 		}
-	case MsgTypeWrite:
-		fallthrough
-	case MsgTypeRead:
-		fallthrough
-	case MsgTypeCas:
+	case MsgTypeWrite, MsgTypeRead, MsgTypeCas:
 		switch d.currentLeader {
 		case "":
 			sendErrorNotInitialized(msgType, m)
@@ -140,9 +139,7 @@ func (d *dispatcher) onOxiaProxiedMessage(msgType MsgType, m any, _ pb.Message) 
 		}
 
 		// Responses for proxied requests
-	case MsgTypeWriteOk:
-		fallthrough
-	case MsgTypeCasOk:
+	case MsgTypeWriteOk, MsgTypeCasOk:
 		if pr, ok := d.proxiedRequests[inReplyTo]; ok {
 			msgId, _, origin := getOrigin(pr.msgType, pr.msg)
 			pm := &Message[BaseMessageBody]{
@@ -192,6 +189,8 @@ func (d *dispatcher) onOxiaProxiedMessage(msgType MsgType, m any, _ pb.Message) 
 			sendErrorWithCode(msgId, origin, e.Body.Code, e.Body.Text)
 			delete(d.proxiedRequests, inReplyTo)
 		}
+	default:
+		panic(fmt.Sprintf("Unknown message type: %v", msgType))
 	}
 }
 
@@ -242,9 +241,7 @@ func getOrigin(msgType MsgType, m any) (msgId int64, inReplyTo int64, origin str
 			inReplyTo = *c.Body.InReplyTo
 		}
 
-	case MsgTypeWriteOk:
-		fallthrough
-	case MsgTypeCasOk:
+	case MsgTypeWriteOk, MsgTypeCasOk:
 		w := m.(*Message[BaseMessageBody])
 		origin = w.Src
 		msgId = w.Body.MsgId
@@ -266,6 +263,8 @@ func getOrigin(msgType MsgType, m any) (msgId int64, inReplyTo int64, origin str
 		if e.Body.InReplyTo != nil {
 			inReplyTo = *e.Body.InReplyTo
 		}
+	default:
+		panic(fmt.Sprintf("Unknown message type: %v", msgType))
 	}
 
 	return msgId, inReplyTo, origin
@@ -334,6 +333,8 @@ func (d *dispatcher) proxyToLeader(msgType MsgType, m any) {
 				To:   cas.Body.To,
 			},
 		}
+	default:
+		panic(fmt.Sprintf("unknown comparison type: %v", msgType))
 	}
 
 	b, _ := json.Marshal(pm)

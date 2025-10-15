@@ -24,20 +24,14 @@ import (
 func isRetriable(err error) bool {
 	code := status.Code(err)
 	switch code {
-	case codes.Unavailable:
-		// Failure to connect is ok to re-attempt
+	case
+		codes.Unavailable,            // Failure to connect is ok to re-attempt
+		constant.CodeInvalidStatus,   // Leader has fenced the shard, though we expect a new leader to be elected
+		constant.CodeAlreadyClosed,   // Leader is closing, though we expect a new leader to be elected
+		constant.CodeNodeIsNotLeader: /* We're making a request to a node that is not leader anymore. Retry to make
+		   the request to the new leader */
 		return true
-	case constant.CodeInvalidStatus:
-		// Leader has fenced the shard, though we expect a new leader to be elected
-		return true
-	case constant.CodeAlreadyClosed:
-		// Leader is closing, though we expect a new leader to be elected
-		return true
-	case constant.CodeNodeIsNotLeader:
-		// We're making a request to a node that is not leader anymore.
-		// Retry to make the request to the new leader
-		return true
+	default:
+		return false
 	}
-
-	return false
 }

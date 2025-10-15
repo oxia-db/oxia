@@ -14,7 +14,7 @@
 
 module github.com/oxia-db/oxia
 
-go 1.24.2
+go 1.25.2
 
 require (
 	github.com/bmizerany/perks v0.0.0-20230307044200-03f9df79da1e

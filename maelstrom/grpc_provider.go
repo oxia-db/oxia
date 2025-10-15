@@ -105,6 +105,8 @@ func (m *maelstromGrpcProvider) HandleOxiaRequest(msgType MsgType, msg *Message[
 
 	case MsgTypeHealthCheck:
 		m.sendResponse(msg, MsgTypeHealthCheckOk, &proto.BecomeLeaderResponse{})
+	default:
+		panic(fmt.Sprintf("unknown msgType: %v", msgType))
 	}
 }
 

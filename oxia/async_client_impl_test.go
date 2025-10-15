@@ -261,7 +261,11 @@ func TestAsyncClientImpl_Sessions(t *testing.T) {
 }
 
 func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
-	client, err := NewSyncClient(serviceAddress,
+	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := NewSyncClient(standaloneServer.ServiceAddr(),
 		WithSessionTimeout(5*time.Second),
 	)
 	assert.NoError(t, err)
@@ -282,7 +286,7 @@ func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
 	assert.NoError(t, client.Close())
 
 	// Reopen
-	client, err = NewSyncClient(serviceAddress)
+	client, err = NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	var res []byte
@@ -296,7 +300,11 @@ func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
 }
 
 func TestAsyncClientImpl_ClientIdentity(t *testing.T) {
-	client1, err := NewSyncClient(serviceAddress,
+	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client1, err := NewSyncClient(standaloneServer.ServiceAddr(),
 		WithIdentity("client-1"),
 	)
 	assert.NoError(t, err)
@@ -308,7 +316,7 @@ func TestAsyncClientImpl_ClientIdentity(t *testing.T) {
 	assert.True(t, version.Ephemeral)
 	assert.Equal(t, "client-1", version.ClientIdentity)
 
-	client2, err := NewSyncClient(serviceAddress,
+	client2, err := NewSyncClient(standaloneServer.ServiceAddr(),
 		WithSessionTimeout(2*time.Second),
 		WithIdentity("client-2"),
 	)

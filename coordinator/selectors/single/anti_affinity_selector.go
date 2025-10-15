@@ -58,8 +58,7 @@ func (*serverAntiAffinitiesSelector) Select(ssContext *Context) (string, error) 
 				switch affinity.Mode {
 				case p.Strict:
 					return "", selectors.ErrUnsatisfiedAntiAffinity
-				case p.Relaxed:
-					fallthrough
+				// case p.Relaxed:
 				default:
 					return "", selectors.ErrUnsupportedAntiAffinityMode
 				}
