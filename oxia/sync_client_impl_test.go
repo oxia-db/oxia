@@ -111,8 +111,7 @@ func TestSyncClientImpl_SecondaryIndexes(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	// ////////////////////////////////////////////////////////////////////////
@@ -168,8 +167,7 @@ func TestSyncClientImpl_SecondaryIndexesRepeated(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	// ////////////////////////////////////////////////////////////////////////
@@ -208,8 +206,7 @@ func TestSyncClientImpl_SecondaryIndexes_Get(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	// ////////////////////////////////////////////////////////////////////////
@@ -356,8 +353,7 @@ func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress, WithBatchLinger(0))
+	client, err := NewSyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
 	assert.NoError(t, err)
 
 	ch1, err := client.GetSequenceUpdates(context.Background(), "a")
