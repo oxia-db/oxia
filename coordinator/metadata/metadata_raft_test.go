@@ -20,9 +20,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/coordinator/model"
-	"github.com/stretchr/testify/assert"
 )
 
 type testRaftClusterProvider struct {
@@ -53,6 +54,8 @@ func (t testRaftClusterProvider) WaitToBecomeLeader() error {
 }
 
 func newTestRaftClusterProvider(t *testing.T) Provider {
+	t.Helper()
+
 	// start a cluster
 	trc := &testRaftClusterProvider{}
 	baseDir := t.TempDir()

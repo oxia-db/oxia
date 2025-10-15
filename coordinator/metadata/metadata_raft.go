@@ -27,8 +27,9 @@ import (
 	"github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb"
 	"github.com/magodo/slog2hclog"
-	"github.com/oxia-db/oxia/coordinator/model"
 	"github.com/pkg/errors"
+
+	"github.com/oxia-db/oxia/coordinator/model"
 )
 
 var _ Provider = &metadataProviderRaft{}
@@ -46,7 +47,7 @@ func newStateContainer() *stateContainer {
 }
 
 // Apply applies a Raft log entry to the FSM.
-func (sc *stateContainer) Apply(logEntry *raft.Log) interface{} {
+func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 	// Each log entry contains the whole state
 	return json.Unmarshal(logEntry.Data, sc)
 }
@@ -82,15 +83,12 @@ func (s *stateSnapshot) Persist(sink raft.SnapshotSink) error {
 		_ = sink.Cancel()
 		return err
 	}
-	if err := sink.Close(); err != nil {
-		return err
-	}
-	return nil
+	return sink.Close()
 }
 
-func (s *stateSnapshot) Release() {}
+func (_ *stateSnapshot) Release() {}
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type metadataProviderRaft struct {
 	sync.Mutex
@@ -118,7 +116,7 @@ func NewMetadataProviderRaft(
 	// Ensure data dir per node
 	nodeId := raftAddress
 	dataDir := filepath.Join(raftDataDir, nodeId)
-	if err := os.MkdirAll(dataDir, 0700); err != nil {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, errors.Wrap(err, "failed to create data dir")
 	}
 
@@ -177,18 +175,18 @@ func NewMetadataProviderRaft(
 }
 
 func getRaftServers(bootstrapNodes []string) []raft.Server {
-	var servers []raft.Server
-	for _, addr := range bootstrapNodes {
-		servers = append(servers, raft.Server{
+	servers := make([]raft.Server, len(bootstrapNodes))
+	for i, addr := range bootstrapNodes {
+		servers[i] = raft.Server{
 			ID:      raft.ServerID(addr),
 			Address: raft.ServerAddress(addr),
-		})
+		}
 	}
 	return servers
 }
 
 func (mpr *metadataProviderRaft) Close() error {
-	return nil
+	return mpr.raft.Shutdown().Error()
 }
 
 func (mpr *metadataProviderRaft) Get() (cs *model.ClusterStatus, version Version, err error) {
