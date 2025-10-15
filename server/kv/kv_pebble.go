@@ -215,7 +215,6 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 			},
 			FilterPolicy: bloom.FilterPolicy(10),
 		}
-
 	}
 
 	pbOptions := &pebble.Options{
