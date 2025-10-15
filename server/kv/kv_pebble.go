@@ -23,9 +23,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cockroachdb/pebble"
-	"github.com/cockroachdb/pebble/bloom"
-	"github.com/cockroachdb/pebble/vfs"
+	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/bloom"
+	"github.com/cockroachdb/pebble/v2/sstable"
+	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/net/context"
@@ -197,27 +198,33 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 			"The number of operations in a given batch", labels),
 	}
 
+	levelOptions := [7]pebble.LevelOptions{}
+	levelOptions[0] = pebble.LevelOptions{
+		BlockSize: 64 * 1024,
+		Compression: func() *sstable.CompressionProfile {
+			return sstable.NoCompression
+		},
+		FilterPolicy: bloom.FilterPolicy(10),
+	}
+
+	for i := 1; i < len(levelOptions); i++ {
+		levelOptions[i] = pebble.LevelOptions{
+			BlockSize: 64 * 1024,
+			Compression: func() *sstable.CompressionProfile {
+				return sstable.GoodCompression
+			},
+			FilterPolicy: bloom.FilterPolicy(10),
+		}
+
+	}
+
 	pbOptions := &pebble.Options{
 		Cache:        factory.cache,
 		Comparer:     OxiaSlashSpanComparer,
 		MemTableSize: 32 * 1024 * 1024,
-		Levels: []pebble.LevelOptions{
-			{
-				BlockSize:      64 * 1024,
-				Compression:    pebble.NoCompression,
-				TargetFileSize: 32 * 1024 * 1024,
-				FilterPolicy:   bloom.FilterPolicy(10),
-				FilterType:     pebble.TableFilter,
-			}, {
-				BlockSize:      64 * 1024,
-				Compression:    pebble.ZstdCompression,
-				TargetFileSize: 64 * 1024 * 1024,
-				FilterPolicy:   bloom.FilterPolicy(10),
-				FilterType:     pebble.TableFilter,
-			},
-		},
-		FS:         vfs.Default,
-		DisableWAL: true,
+		Levels:       levelOptions,
+		FS:           vfs.Default,
+		DisableWAL:   true,
 		Logger: &pebbleLogger{
 			slog.With(
 				slog.String("component", "pebble"),
@@ -301,12 +308,12 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 		metric.NewGauge("oxia_server_kv_pebble_num_files_total",
 			"The total number of files for the db",
 			"count", labels, func() int64 {
-				return pb.dbMetrics().Total().NumFiles
+				return pb.dbMetrics().Total().TablesCount
 			}),
 		metric.NewGauge("oxia_server_kv_pebble_read",
 			"The total amount of bytes read at this db level",
 			metric.Bytes, labels, func() int64 {
-				return int64(pb.dbMetrics().Total().BytesRead)
+				return int64(pb.dbMetrics().Total().TableBytesRead)
 			}),
 		metric.NewGauge("oxia_server_kv_pebble_write_amplification_percent",
 			"The total amount of bytes read at this db level",
@@ -328,17 +335,17 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 			metric.NewGauge("oxia_server_kv_pebble_per_level_num_files",
 				"The total number of files at this db level",
 				"count", labels, func() int64 {
-					return pb.dbMetrics().Levels[level].NumFiles
+					return pb.dbMetrics().Levels[level].TablesCount
 				}),
 			metric.NewGauge("oxia_server_kv_pebble_per_level_size",
 				"The total size in bytes of the files at this db level",
 				metric.Bytes, labels, func() int64 {
-					return pb.dbMetrics().Levels[level].Size
+					return pb.dbMetrics().Levels[level].TablesSize
 				}),
 			metric.NewGauge("oxia_server_kv_pebble_per_level_read",
 				"The total amount of bytes read at this db level",
 				metric.Bytes, labels, func() int64 {
-					return int64(pb.dbMetrics().Levels[level].BytesRead)
+					return int64(pb.dbMetrics().Levels[level].TableBytesRead)
 				}),
 		)
 	}

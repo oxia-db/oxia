@@ -15,7 +15,7 @@
 package pebble
 
 import (
-	"github.com/cockroachdb/pebble/tool"
+	"github.com/cockroachdb/pebble/v2/tool"
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/server/kv"
