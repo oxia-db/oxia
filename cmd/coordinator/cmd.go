@@ -87,15 +87,14 @@ func init() {
 }
 
 func validate(*cobra.Command, []string) error {
-	switch conf.MetadataProviderName {
-	case metadata.ProviderNameConfigmap:
+	if conf.MetadataProviderName == metadata.ProviderNameConfigmap {
 		if conf.K8SMetadataNamespace == "" {
 			return errors.New("k8s-namespace must be set with metadata=configmap")
 		}
 		if conf.K8SMetadataConfigMapName == "" {
 			return errors.New("k8s-configmap-name must be set with metadata=configmap")
 		}
-	case metadata.ProviderNameRaft:
+	} else if conf.MetadataProviderName == metadata.ProviderNameRaft {
 		if conf.RaftAddress == "" {
 			return errors.New("raft-address must be set with metadata=raft")
 		}
