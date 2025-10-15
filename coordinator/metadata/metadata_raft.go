@@ -86,7 +86,7 @@ func (s *stateSnapshot) Persist(sink raft.SnapshotSink) error {
 	return sink.Close()
 }
 
-func (_ *stateSnapshot) Release() {}
+func (*stateSnapshot) Release() {}
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
