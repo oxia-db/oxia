@@ -820,14 +820,12 @@ func (lc *leaderController) write(ctx context.Context, requestSupplier func(offs
 
 	deferDbWrite := func(err error) {
 		if err != nil {
-			//nolint:contextcheck
 			timer.Done()
 			cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
 			return
 		}
 		tracker.AdvanceHeadOffset(newOffset)
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
-			//nolint:contextcheck
 			func(_ any) {
 				defer timer.Done()
 				var wr *proto.WriteResponse
