@@ -17,8 +17,6 @@ package pebble
 import (
 	"github.com/cockroachdb/pebble/tool"
 	"github.com/spf13/cobra"
-
-	"github.com/oxia-db/oxia/server/kv"
 )
 
 var (
@@ -30,7 +28,7 @@ var (
 )
 
 func init() {
-	t := tool.New(tool.DefaultComparer(kv.OxiaSlashSpanComparer))
+	t := tool.New()
 
 	for _, cmd := range t.Commands {
 		Cmd.AddCommand(cmd)

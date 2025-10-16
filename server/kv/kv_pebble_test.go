@@ -1051,3 +1051,45 @@ func TestPebbleFindLowerInBatch(t *testing.T) {
 	assert.NoError(t, kv.Close())
 	assert.NoError(t, factory.Close())
 }
+
+func toList(it KeyIterator) []string {
+	var list []string
+
+	for it.Valid() {
+		list = append(list, it.Key())
+		it.Next()
+	}
+
+	it.Close()
+	return list
+}
+
+func TestPebbleHierarchicalScanStop(t *testing.T) {
+	factory, err := NewPebbleKVFactory(testKVOptions)
+	assert.NoError(t, err)
+
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	assert.NoError(t, err)
+
+	wb := kv.NewWriteBatch()
+	keys := []string{"/a", "/b", "/a/a-1", "/a/a-2", "/b/c", "/b/c/b", "/b/c/b/1"}
+
+	for _, key := range keys {
+		assert.NoError(t, wb.Put(key, []byte(key)))
+	}
+
+	assert.NoError(t, wb.Commit())
+	assert.NoError(t, wb.Close())
+
+	it, _ := kv.KeyRangeScan("/", "//")
+	assert.Equal(t, []string{"/a", "/b"}, toList(it))
+
+	it, _ = kv.KeyRangeScan("/a/", "/a//")
+	assert.Equal(t, []string{"/a/a-1", "/a/a-2"}, toList(it))
+
+	it, _ = kv.KeyRangeScan("/b/", "/b//")
+	assert.Equal(t, []string{"/b/c"}, toList(it))
+
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
