@@ -820,14 +820,14 @@ func (lc *leaderController) write(ctx context.Context, requestSupplier func(offs
 
 	deferDbWrite := func(err error) {
 		if err != nil {
-			timer.Done()
+			timer.DoneCtx(ctx)
 			cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
 			return
 		}
 		tracker.AdvanceHeadOffset(newOffset)
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
 			func(_ any) {
-				defer timer.Done()
+				defer timer.DoneCtx(ctx)
 				var wr *proto.WriteResponse
 				if wr, err = lc.db.ProcessWrite(request, newOffset, timestamp, WrapperUpdateOperationCallback); err != nil {
 					cb.OnCompleteError(err)
@@ -835,7 +835,7 @@ func (lc *leaderController) write(ctx context.Context, requestSupplier func(offs
 				}
 				cb.OnComplete(wr)
 			}, func(err error) {
-				timer.Done()
+				timer.DoneCtx(ctx)
 				cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
 			}))
 	}
