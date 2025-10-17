@@ -202,16 +202,16 @@ func TestSyncClientImpl_SecondaryIndexesRepeated(t *testing.T) {
 func TestSyncClientImpl_SecondaryIndexes_Get(t *testing.T) {
 	config := server.NewTestConfig(t.TempDir())
 	config.NumShards = 10
-	doSecondaryIndexes_Get(t, config)
+	doSecondaryIndexesGet(t, config)
 }
 
 func TestSyncClientImpl_SecondaryIndexes_Get_NoNotifications(t *testing.T) {
 	config := server.NewTestConfig(t.TempDir())
 	config.NotificationsEnabled = false
-	doSecondaryIndexes_Get(t, config)
+	doSecondaryIndexesGet(t, config)
 }
 
-func doSecondaryIndexes_Get(t *testing.T, config server.StandaloneConfig) {
+func doSecondaryIndexesGet(t *testing.T, config server.StandaloneConfig) {
 	t.Helper()
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
