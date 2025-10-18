@@ -241,6 +241,10 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 		return nil, errors.Wrap(err, "failed to convert db")
 	}
 
+	if err := createMarker(dbPath, compare.EncoderHierarchical.Name()); err != nil {
+		return nil, errors.Wrap(err, "failed to create marker")
+	}
+
 	db, err := pebble.Open(dbPath, pbOptions)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open database at %s", dbPath)

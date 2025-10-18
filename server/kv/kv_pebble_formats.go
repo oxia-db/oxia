@@ -31,7 +31,6 @@ const (
 	markerFileName = "oxia-key-encoding-format"
 
 	keyEncodingFormatOldCompareHierarchical = "old-compare-hierarchical"
-	keyEncodingFormatHierarchical           = "hierarchical"
 )
 
 type pebbleDbConversion struct {
@@ -102,7 +101,7 @@ func (p *pebbleDbConversion) checkConvertDB() error {
 			confOld, compare.EncoderNatural,
 			confNew, compare.EncoderHierarchical)
 
-	case keyEncodingFormatHierarchical:
+	case compare.EncoderHierarchical.Name():
 		// Format is already ok - noop
 		return nil
 	default:
