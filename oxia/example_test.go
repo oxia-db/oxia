@@ -140,13 +140,11 @@ func ExampleNotifications() {
 		log.Fatal(err)
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg := sync.WaitGroup{}
+	wg.Go(func() {
 		time.Sleep(1 * time.Second)
 		_ = notifications.Close()
-	}()
+	})
 
 	// Receive all the notification from the server
 	for notification := range notifications.Ch() {

@@ -30,16 +30,13 @@ func TestCondCancelContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	go func() {
+	wg.Go(func() {
 		m.Lock()
 		defer m.Unlock()
 
 		err := c.Wait(ctx)
 		assert.ErrorIs(t, err, context.Canceled)
-		wg.Done()
-	}()
+	})
 
 	cancel()
 	wg.Wait()
@@ -51,16 +48,13 @@ func TestCondContextWithTimeout(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	go func() {
+	wg.Go(func() {
 		m.Lock()
 		defer m.Unlock()
 
 		err := c.Wait(ctx)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
-		wg.Done()
-	}()
+	})
 
 	wg.Wait()
 	cancel()
@@ -292,7 +286,7 @@ func TestCondSignalStealing(t *testing.T) {
 		select {
 		case <-ch:
 		case <-time.After(2 * time.Second):
-			t.Fatalf("First waiter didn't get broadcast.")
+			t.Fatal("First waiter didn't get broadcast.")
 		}
 
 		// Release the second waiter in case it didn't get the

@@ -333,7 +333,6 @@ func secondaryIndexGet(req *proto.GetRequest, db kv.DB) (*proto.GetResponse, err
 func doSecondaryGet(db kv.DB, req *proto.GetRequest) (primaryKey string, secondaryKey string, err error) {
 	indexName := *req.SecondaryIndexName
 	searchKey := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.Key)
-
 	it, err := db.KeyIterator()
 	if err != nil {
 		return "", "", err
@@ -346,6 +345,13 @@ func doSecondaryGet(db kv.DB, req *proto.GetRequest) (primaryKey string, seconda
 	} else {
 		// For all the other cases, we set the iterator on >=
 		it.SeekGE(searchKey)
+	}
+
+	if !it.Valid() && (req.ComparisonType == proto.KeyComparisonType_FLOOR ||
+		req.ComparisonType == proto.KeyComparisonType_CEILING) {
+		// There might be more keys in the db. Let's try to compare it
+		// to the highest one
+		it.Prev()
 	}
 
 	for it.Valid() {
@@ -379,6 +385,10 @@ func doSecondaryGet(db kv.DB, req *proto.GetRequest) (primaryKey string, seconda
 			}
 
 		case proto.KeyComparisonType_CEILING:
+			if cmp > 0 {
+				// The key is already over the max
+				primaryKey = ""
+			}
 			return primaryKey, secondaryKey, err
 
 		case proto.KeyComparisonType_HIGHER:
@@ -388,6 +398,10 @@ func doSecondaryGet(db kv.DB, req *proto.GetRequest) (primaryKey string, seconda
 				return primaryKey, secondaryKey, err
 			}
 		}
+	}
+
+	if !it.Valid() {
+		primaryKey = ""
 	}
 
 	return primaryKey, secondaryKey, err

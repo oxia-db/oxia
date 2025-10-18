@@ -31,7 +31,11 @@ type Timer struct {
 }
 
 func (tm Timer) Done() {
-	tm.histo.histo.Record(context.Background(), float64(time.Since(tm.start).Microseconds())/1000.0, tm.histo.attrs)
+	tm.DoneCtx(context.Background())
+}
+
+func (tm Timer) DoneCtx(ctx context.Context) {
+	tm.histo.histo.Record(ctx, float64(time.Since(tm.start).Microseconds())/1000.0, tm.histo.attrs)
 }
 
 type LatencyHistogram interface {

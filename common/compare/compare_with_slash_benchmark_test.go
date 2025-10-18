@@ -16,20 +16,100 @@ package compare
 
 import (
 	"bytes"
+	"strings"
 	"testing"
+	"unsafe"
 )
 
-var benchKeyA = []byte("/test/aaaaaaaaaaa/bbbbbbbbbbb/cccccccccccc/dddddddddddddd")
-var benchKeyB = []byte("/test/aaaaaaaaaaa/bbbbbbbbbbb/ccccccccccccddddddddddddddd")
+var benchKeyA = "/test/aaaaaaaaaaa/bbbbbbbbbbb/cccccccccccc/dddddddddddddd"
+var benchKeyB = "/test/aaaaaaaaaaa/bbbbbbbbbbb/ccccccccccccddddddddddddddd"
 
-func Benchmark_StandardCompare(b *testing.B) {
+var benchKeyAns = "test-aaaaaaaaaaa-bbbbbbbbbbb-cccccccccccc-dddddddddddddd"
+var benchKeyBns = "test-aaaaaaaaaaa-bbbbbbbbbbb-ccccccccccccddddddddddddddd"
+
+func Benchmark_BytesCompareCopy(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		bytes.Compare(benchKeyA, benchKeyB)
+		bytes.Compare([]byte(benchKeyA), []byte(benchKeyB))
+	}
+}
+
+func Benchmark_BytesCompareUnsafe(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		da := unsafe.StringData(benchKeyA)
+		ka := unsafe.Slice(da, len(benchKeyA))
+		db := unsafe.StringData(benchKeyB)
+		kb := unsafe.Slice(db, len(benchKeyB))
+		bytes.Compare(ka, kb)
+	}
+}
+
+func Benchmark_BytesCompareNoCopy(b *testing.B) {
+	ka := []byte(benchKeyA)
+	kb := []byte(benchKeyB)
+	for i := 0; i < b.N; i++ {
+		bytes.Compare(ka, kb)
+	}
+}
+
+func Benchmark_StringsCompare(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		strings.Compare(benchKeyA, benchKeyB)
 	}
 }
 
 func Benchmark_CompareWithSlash(b *testing.B) {
+	ka := []byte(benchKeyA)
+	kb := []byte(benchKeyB)
+
 	for i := 0; i < b.N; i++ {
-		CompareWithSlash(benchKeyA, benchKeyB)
+		CompareWithSlash(ka, kb)
+	}
+}
+
+func Benchmark_CompareWithSlashButNoSlashes(b *testing.B) {
+	ka := []byte(benchKeyAns)
+	kb := []byte(benchKeyBns)
+
+	for i := 0; i < b.N; i++ {
+		CompareWithSlash(ka, kb)
+	}
+}
+
+func Benchmark_EncodeHierarchical(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		EncoderHierarchical.Encode(benchKeyA)
+	}
+}
+
+func Benchmark_EncodeHierarchicalButNoSlashes(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		EncoderHierarchical.Encode(benchKeyAns)
+	}
+}
+
+func Benchmark_DecodeHierarchical(b *testing.B) {
+	e := EncoderHierarchical.Encode(benchKeyA)
+	for i := 0; i < b.N; i++ {
+		EncoderHierarchical.Decode(e)
+	}
+}
+
+func Benchmark_DecodeHierarchicalButNoSlashes(b *testing.B) {
+	e := EncoderHierarchical.Encode(benchKeyAns)
+	for i := 0; i < b.N; i++ {
+		EncoderHierarchical.Decode(e)
+	}
+}
+
+func Benchmark_EncodeNatural(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		EncoderNatural.Encode(benchKeyA)
+	}
+}
+
+func Benchmark_DecodeNatural(b *testing.B) {
+	e := EncoderHierarchical.Encode(benchKeyA)
+	for i := 0; i < b.N; i++ {
+		EncoderNatural.Decode(e)
 	}
 }

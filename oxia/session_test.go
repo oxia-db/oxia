@@ -32,7 +32,7 @@ func TestSessionEphemeralKeysLeak(t *testing.T) {
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	client, err := NewAsyncClient(fmt.Sprintf("localhost:%d", standaloneServer.RpcPort()),
+	client, err := NewAsyncClient(standaloneServer.ServiceAddr(),
 		// force the server cleanup the session to make the race-condition
 		withSessionKeepAliveTicker(16*time.Second),
 		WithSessionTimeout(10*time.Second))
@@ -54,7 +54,7 @@ loop:
 	err = client.Close()
 	assert.NoError(t, err)
 
-	syncClient, err := NewSyncClient(fmt.Sprintf("localhost:%d", standaloneServer.RpcPort()))
+	syncClient, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {

@@ -16,7 +16,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -41,11 +40,9 @@ func TestWriteClientClose(t *testing.T) {
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-
 	// Connect to the standalone server
-	conn, err := grpc.NewClient(serviceAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err, "Failed to connect to %s", serviceAddress)
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err, "Failed to connect to %s", standaloneServer.ServiceAddr())
 	defer conn.Close()
 
 	client := proto.NewOxiaClientClient(conn)

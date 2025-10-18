@@ -38,8 +38,7 @@ func TestAsyncClientImpl(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewAsyncClient(serviceAddress, WithBatchLinger(0))
+	client, err := NewAsyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
 	assert.NoError(t, err)
 
 	putResultA := <-client.Put("/a", []byte{0}, ExpectedRecordNotExists())
@@ -96,8 +95,7 @@ func TestSyncClientImpl_Notifications(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress, WithBatchLinger(0))
+	client, err := NewSyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
 	assert.NoError(t, err)
 
 	notifications, err := client.GetNotifications()
@@ -181,8 +179,7 @@ func TestAsyncClientImpl_NotificationsClose(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress, WithBatchLinger(0))
+	client, err := NewSyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
 	assert.NoError(t, err)
 
 	notifications, err := client.GetNotifications()
@@ -206,8 +203,7 @@ func TestAsyncClientImpl_Sessions(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewAsyncClient(serviceAddress, WithBatchLinger(0), WithSessionTimeout(5*time.Second))
+	client, err := NewAsyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0), WithSessionTimeout(5*time.Second))
 	assert.NoError(t, err)
 
 	putCh := client.Put("/x", []byte("x"), Ephemeral())
@@ -237,7 +233,7 @@ func TestAsyncClientImpl_Sessions(t *testing.T) {
 	assert.NoError(t, client.Close())
 	slog.Debug("First client closed")
 
-	client, err = NewAsyncClient(serviceAddress, WithBatchLinger(0))
+	client, err = NewAsyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
 	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
 		getCh = client.Get("/x")
@@ -261,7 +257,11 @@ func TestAsyncClientImpl_Sessions(t *testing.T) {
 }
 
 func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
-	client, err := NewSyncClient(serviceAddress,
+	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := NewSyncClient(standaloneServer.ServiceAddr(),
 		WithSessionTimeout(5*time.Second),
 	)
 	assert.NoError(t, err)
@@ -282,7 +282,7 @@ func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
 	assert.NoError(t, client.Close())
 
 	// Reopen
-	client, err = NewSyncClient(serviceAddress)
+	client, err = NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	var res []byte
@@ -296,7 +296,11 @@ func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
 }
 
 func TestAsyncClientImpl_ClientIdentity(t *testing.T) {
-	client1, err := NewSyncClient(serviceAddress,
+	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client1, err := NewSyncClient(standaloneServer.ServiceAddr(),
 		WithIdentity("client-1"),
 	)
 	assert.NoError(t, err)
@@ -308,7 +312,7 @@ func TestAsyncClientImpl_ClientIdentity(t *testing.T) {
 	assert.True(t, version.Ephemeral)
 	assert.Equal(t, "client-1", version.ClientIdentity)
 
-	client2, err := NewSyncClient(serviceAddress,
+	client2, err := NewSyncClient(standaloneServer.ServiceAddr(),
 		WithSessionTimeout(2*time.Second),
 		WithIdentity("client-2"),
 	)
@@ -336,11 +340,10 @@ func TestSyncClientImpl_SessionNotifications(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client1, err := NewSyncClient(serviceAddress, WithIdentity("client-1"))
+	client1, err := NewSyncClient(standaloneServer.ServiceAddr(), WithIdentity("client-1"))
 	assert.NoError(t, err)
 
-	client2, err := NewSyncClient(serviceAddress, WithIdentity("client-1"))
+	client2, err := NewSyncClient(standaloneServer.ServiceAddr(), WithIdentity("client-1"))
 	assert.NoError(t, err)
 
 	notifications, err := client2.GetNotifications()
@@ -377,8 +380,7 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
@@ -581,8 +583,7 @@ func TestSyncClientImpl_PartitionRouting(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
@@ -667,8 +668,7 @@ func TestSyncClientImpl_SequentialKeys(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
@@ -730,8 +730,7 @@ func TestSyncClientImpl_RangeScan(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
@@ -780,8 +779,7 @@ func TestSyncClientImpl_RangeScanOnPartition(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
@@ -828,8 +826,7 @@ func TestAsyncClientImpl_SequenceOrdering(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewAsyncClient(serviceAddress, WithMaxRequestsPerBatch(1))
+	client, err := NewAsyncClient(standaloneServer.ServiceAddr(), WithMaxRequestsPerBatch(1))
 	assert.NoError(t, err)
 
 	var responses []<-chan PutResult
@@ -853,8 +850,7 @@ func TestAsyncClientImpl_versionId(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewAsyncClient(serviceAddress)
+	client, err := NewAsyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ch0 := client.Put("/a", []byte("0"))
@@ -888,9 +884,9 @@ func TestAsyncClientImpl_versionId(t *testing.T) {
 func TestGetValueWithSessionId(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
+	defer standaloneServer.Close()
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewAsyncClient(serviceAddress)
+	client, err := NewAsyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ch0 := client.Put("/TestGetValueWithSessionId", []byte("0"), Ephemeral())
@@ -906,7 +902,7 @@ func TestGetValueWithSessionId(t *testing.T) {
 	// cleanup
 	client.Close()
 
-	client, err = NewAsyncClient(serviceAddress)
+	client, err = NewAsyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ch0 = client.Put("/TestGetValueWithSessionId", []byte("0"), Ephemeral())
@@ -926,8 +922,7 @@ func TestGetWithoutValue(t *testing.T) {
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewAsyncClient(serviceAddress)
+	client, err := NewAsyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 	defer client.Close()
 

@@ -30,7 +30,7 @@ func TestSequence_WithOtherKeyInBatch(t *testing.T) {
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	client, err := oxia.NewAsyncClient(fmt.Sprintf("localhost:%d", standaloneServer.RpcPort()))
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 	defer client.Close()
 
