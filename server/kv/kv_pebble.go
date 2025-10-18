@@ -144,7 +144,7 @@ type Pebble struct {
 	factory         *PebbleFactory
 	namespace       string
 	shardId         int64
-	dataDir         string
+	dbPath          string
 	db              *pebble.DB
 	snapshotCounter atomic.Int64
 
@@ -175,7 +175,7 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 		factory:    factory,
 		namespace:  namespace,
 		shardId:    shardId,
-		dataDir:    factory.dataDir,
+		dbPath:     factory.getKVPath(namespace, shardId),
 		keyEncoder: compare.EncoderHierarchical,
 
 		batchCommitLatency: metric.NewLatencyHistogram("oxia_server_kv_batch_commit_latency",
@@ -234,20 +234,18 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 		pbOptions.FS = vfs.NewMem()
 	}
 
-	dbPath := factory.getKVPath(namespace, shardId)
-
-	pebbleConv := newPebbleDbConversion(log, dbPath)
+	pebbleConv := newPebbleDbConversion(log, pb.dbPath)
 	if err := pebbleConv.checkConvertDB(); err != nil {
 		return nil, errors.Wrap(err, "failed to convert db")
 	}
 
-	if err := createMarker(dbPath, compare.EncoderHierarchical.Name()); err != nil {
+	if err := createMarker(pb.dbPath, compare.EncoderHierarchical.Name()); err != nil {
 		return nil, errors.Wrap(err, "failed to create marker")
 	}
 
-	db, err := pebble.Open(dbPath, pbOptions)
+	db, err := pebble.Open(pb.dbPath, pbOptions)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to open database at %s", dbPath)
+		return nil, errors.Wrapf(err, "failed to open database at %s", pb.dbPath)
 	}
 
 	pb.db = db
