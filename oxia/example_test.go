@@ -74,8 +74,6 @@ func Example() {
 		log.Fatal(err)
 	}
 	_ = client.Close()
-	// Sleep to avoid DATA RACE on zerolog read at os.Stdout，and runExamples write at os.Stdout
-	time.Sleep(2 * time.Second)
 
 	fmt.Printf("Result: key: %s - Value: %s - Version: %#v\n", key, string(value), version.VersionId)
 	// Output: Result: key: /my-key - Value: value-2 - Version: 1
@@ -112,8 +110,6 @@ func ExampleAsyncClient() {
 	fmt.Printf("First operation complete: version: %#v - error: %#v\n", r3.Version.VersionId, r3.Err)
 
 	_ = client.Close()
-	// Sleep to avoid DATA RACE on zerolog read at os.Stdout，and runExamples write at os.Stdout
-	time.Sleep(2 * time.Second)
 
 	// Output:
 	// First operation complete: version: 0 - error: <nil>
@@ -153,8 +149,6 @@ func ExampleNotifications() {
 	}
 
 	_ = client.Close()
-	// Sleep to avoid DATA RACE on zerolog read at os.Stdout，and runExamples write at os.Stdout
-	time.Sleep(2 * time.Second)
 	wg.Wait()
 
 	// Output:
