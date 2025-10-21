@@ -41,7 +41,7 @@ type pebbleSnapshotChunk struct {
 
 func newPebbleSnapshot(p *Pebble) (Snapshot, error) {
 	ps := &pebbleSnapshot{
-		path: filepath.Join(p.dataDir, "snapshots",
+		path: filepath.Join(p.factory.dataDir, "snapshots",
 			fmt.Sprintf("shard-%d", p.shardId),
 			fmt.Sprintf("snapshot-%d", p.snapshotCounter.Add(1))),
 	}
@@ -53,6 +53,13 @@ func newPebbleSnapshot(p *Pebble) (Snapshot, error) {
 	}
 
 	if err := p.db.Checkpoint(ps.path); err != nil {
+		return nil, err
+	}
+
+	// Include marker file
+	if err := os.Link(
+		filepath.Join(p.dbPath, markerFileName),
+		filepath.Join(ps.path, markerFileName)); err != nil {
 		return nil, err
 	}
 

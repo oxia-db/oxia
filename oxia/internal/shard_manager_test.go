@@ -15,7 +15,6 @@
 package internal
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -39,10 +38,11 @@ func (s *testShardStrategy) Get(key string) func(Shard) bool {
 func TestWithStandalone(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
+	defer standaloneServer.Close()
 
 	clientPool := rpc.NewClientPool(nil, nil)
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	shardManager, err := NewShardManager(&testShardStrategy{}, clientPool, serviceAddress, constant.DefaultNamespace, 30*time.Second)
+	shardManager, err := NewShardManager(&testShardStrategy{}, clientPool, standaloneServer.ServiceAddr(),
+		constant.DefaultNamespace, 30*time.Second)
 	assert.NoError(t, err)
 
 	defer func() {

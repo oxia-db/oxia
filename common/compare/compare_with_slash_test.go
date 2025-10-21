@@ -15,6 +15,7 @@
 package compare
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"testing"
@@ -68,6 +69,20 @@ func TestCompareWithDataset(t *testing.T) {
 		{"/aaaa/a/a", "/bbbbbbbbbb", +1},
 		{"/aaaa/a/a", "/aaaa/bbbbbbbbbb", +1},
 		{"/a/b/a/a/a", "/a/b/a/b", +1},
+
+		{"/a", "/b", -1},
+		{"/a", "/a/", -1},
+		{"/a/", "/a//", -1},
+		{"/a/a-2", "/b/c", -1},
+		{"/", "/a", -1},
+		{"/a", "//", -1},
+		{"/b", "//", -1},
+		{"//", "/a/a-1", -1},
+
+		{"//", "/a/a-1", -1},
+
+		{"/a/a-1", "/a//", -1},
+		{"/a//", "/b/c", -1},
 	} {
 		t.Run(fmt.Sprintf("%v?%v", test.leftKey, test.rightKey), func(t *testing.T) {
 			// test compare with slash
@@ -80,6 +95,12 @@ func TestCompareWithDataset(t *testing.T) {
 			} else {
 				assert.Equal(t, test.expect, cmp.Compare(lbk, rbk))
 			}
+
+			// Test encoded compare to ensure we are going to
+			// have the same exact sorting
+			encodedLeft := EncoderHierarchical.Encode(test.leftKey)
+			encodedRight := EncoderHierarchical.Encode(test.rightKey)
+			assert.Equal(t, test.expect, bytes.Compare(encodedLeft, encodedRight))
 		})
 	}
 }

@@ -43,6 +43,7 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: 1.25
+          cache: 'true'
 
       - name: Install protoc
         uses: arduino/setup-protoc@v1
@@ -65,12 +66,15 @@ jobs:
         with:
           version: v2.5.0
           args: --timeout=10m -v
+
       - name: Check git status if clean
-        uses: CatChen/check-git-status-action@v1
-        with:
-          fail-if-not-clean: true
-          push-if-not-clean: false
-          request-changes-if-not-clean: false
+        run: |
+          # refresh index / status
+          git status
+          echo "## Checking for cleanliness..."
+          git diff --quiet || { echo "Repository has unstaged changes"; git --no-pager diff; exit 1; }
+          git diff --cached --quiet || { echo "Repository has staged but uncommitted changes"; git --no-pager diff --cached; exit 1; }
+          echo "Repository is clean"
 
       - name: Test
         run: make test
@@ -82,14 +86,21 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
       - name: Build docker
         uses: docker/build-push-action@v3
         with:
           context: .
           push: false
+          load: true
           tags: oxia:latest
-          cache-from: type=registry,ref=oxia:latest
-          cache-to: type=inline
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - uses: helm/kind-action@v1.5.0
         with:
           cluster_name: kind
@@ -134,6 +145,7 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: 1.25
+          cache: 'true'
 
       - name: Set up JDK 17
         uses: actions/setup-java@v3

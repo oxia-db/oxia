@@ -15,6 +15,7 @@
 package kv
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,9 +24,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cockroachdb/pebble"
-	"github.com/cockroachdb/pebble/bloom"
-	"github.com/cockroachdb/pebble/vfs"
+	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/bloom"
+	"github.com/cockroachdb/pebble/v2/sstable"
+	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/net/context"
@@ -143,9 +145,11 @@ type Pebble struct {
 	factory         *PebbleFactory
 	namespace       string
 	shardId         int64
-	dataDir         string
+	dbPath          string
 	db              *pebble.DB
 	snapshotCounter atomic.Int64
+
+	keyEncoder compare.Encoder
 
 	dbMetrics          func() *pebble.Metrics
 	gauges             []metric.Gauge
@@ -167,12 +171,13 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	labels := metric.LabelsForShard(namespace, shardId)
 	pb := &Pebble{
-		ctx:       ctx,
-		cancel:    cancelFunc,
-		factory:   factory,
-		namespace: namespace,
-		shardId:   shardId,
-		dataDir:   factory.dataDir,
+		ctx:        ctx,
+		cancel:     cancelFunc,
+		factory:    factory,
+		namespace:  namespace,
+		shardId:    shardId,
+		dbPath:     factory.getKVPath(namespace, shardId),
+		keyEncoder: compare.EncoderHierarchical,
 
 		batchCommitLatency: metric.NewLatencyHistogram("oxia_server_kv_batch_commit_latency",
 			"The latency for committing a batch into the database", labels),
@@ -197,33 +202,36 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 			"The number of operations in a given batch", labels),
 	}
 
+	levelOptions := [7]pebble.LevelOptions{}
+	levelOptions[0] = pebble.LevelOptions{
+		BlockSize: 64 * 1024,
+		Compression: func() *sstable.CompressionProfile {
+			return sstable.NoCompression
+		},
+		FilterPolicy: bloom.FilterPolicy(10),
+	}
+
+	for i := 1; i < len(levelOptions); i++ {
+		levelOptions[i] = pebble.LevelOptions{
+			BlockSize: 64 * 1024,
+			Compression: func() *sstable.CompressionProfile {
+				return sstable.GoodCompression
+			},
+			FilterPolicy: bloom.FilterPolicy(10),
+		}
+	}
+
+	log := slog.With(
+		slog.String("component", "pebble"),
+		slog.Int64("shard", shardId),
+	)
 	pbOptions := &pebble.Options{
 		Cache:        factory.cache,
-		Comparer:     OxiaSlashSpanComparer,
 		MemTableSize: 32 * 1024 * 1024,
-		Levels: []pebble.LevelOptions{
-			{
-				BlockSize:      64 * 1024,
-				Compression:    pebble.NoCompression,
-				TargetFileSize: 32 * 1024 * 1024,
-				FilterPolicy:   bloom.FilterPolicy(10),
-				FilterType:     pebble.TableFilter,
-			}, {
-				BlockSize:      64 * 1024,
-				Compression:    pebble.ZstdCompression,
-				TargetFileSize: 64 * 1024 * 1024,
-				FilterPolicy:   bloom.FilterPolicy(10),
-				FilterType:     pebble.TableFilter,
-			},
-		},
-		FS:         vfs.Default,
-		DisableWAL: true,
-		Logger: &pebbleLogger{
-			slog.With(
-				slog.String("component", "pebble"),
-				slog.Int64("shard", shardId),
-			),
-		},
+		Levels:       levelOptions,
+		FS:           vfs.Default,
+		DisableWAL:   true,
+		Logger:       &pebbleLogger{log},
 
 		FormatMajorVersion: pebble.FormatVirtualSSTables,
 	}
@@ -232,10 +240,18 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 		pbOptions.FS = vfs.NewMem()
 	}
 
-	dbPath := factory.getKVPath(namespace, shardId)
-	db, err := pebble.Open(dbPath, pbOptions)
+	pebbleConv := newPebbleDbConversion(log, pb.dbPath)
+	if err := pebbleConv.checkConvertDB(); err != nil {
+		return nil, errors.Wrap(err, "failed to convert db")
+	}
+
+	if err := createMarker(pb.dbPath, compare.EncoderHierarchical.Name()); err != nil {
+		return nil, errors.Wrap(err, "failed to create marker")
+	}
+
+	db, err := pebble.Open(pb.dbPath, pbOptions)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to open database at %s", dbPath)
+		return nil, errors.Wrapf(err, "failed to open database at %s", pb.dbPath)
 	}
 
 	pb.db = db
@@ -301,12 +317,12 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 		metric.NewGauge("oxia_server_kv_pebble_num_files_total",
 			"The total number of files for the db",
 			"count", labels, func() int64 {
-				return pb.dbMetrics().Total().NumFiles
+				return pb.dbMetrics().Total().TablesCount
 			}),
 		metric.NewGauge("oxia_server_kv_pebble_read",
 			"The total amount of bytes read at this db level",
 			metric.Bytes, labels, func() int64 {
-				return int64(pb.dbMetrics().Total().BytesRead)
+				return int64(pb.dbMetrics().Total().TableBytesRead)
 			}),
 		metric.NewGauge("oxia_server_kv_pebble_write_amplification_percent",
 			"The total amount of bytes read at this db level",
@@ -328,17 +344,17 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 			metric.NewGauge("oxia_server_kv_pebble_per_level_num_files",
 				"The total number of files at this db level",
 				"count", labels, func() int64 {
-					return pb.dbMetrics().Levels[level].NumFiles
+					return pb.dbMetrics().Levels[level].TablesCount
 				}),
 			metric.NewGauge("oxia_server_kv_pebble_per_level_size",
 				"The total size in bytes of the files at this db level",
 				metric.Bytes, labels, func() int64 {
-					return pb.dbMetrics().Levels[level].Size
+					return pb.dbMetrics().Levels[level].TablesSize
 				}),
 			metric.NewGauge("oxia_server_kv_pebble_per_level_read",
 				"The total amount of bytes read at this db level",
 				metric.Bytes, labels, func() int64 {
-					return int64(pb.dbMetrics().Levels[level].BytesRead)
+					return int64(pb.dbMetrics().Levels[level].TableBytesRead)
 				}),
 		)
 	}
@@ -378,26 +394,26 @@ func (p *Pebble) NewWriteBatch() WriteBatch {
 	return &PebbleBatch{p: p, b: p.db.NewIndexedBatch()}
 }
 
-func (p *Pebble) getFloor(key string) (returnedKey string, value []byte, closer io.Closer, err error) {
+func (p *Pebble) getFloor(key []byte) (returnedKey string, value []byte, closer io.Closer, err error) {
 	// There is no <= comparison in Pebble
 	// We have to first check for == and then for <
-	value, closer, err = p.db.Get([]byte(key))
+	value, closer, err = p.db.Get(key)
 	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
 		return "", nil, nil, err
 	}
 
 	if err == nil {
 		// We found record with key ==
-		return key, value, closer, nil
+		return p.keyEncoder.Decode(key), value, closer, nil
 	}
 
 	// Do < search
 	return p.getLower(key)
 }
 
-func (p *Pebble) getCeiling(key string) (returnedKey string, value []byte, closer io.Closer, err error) {
+func (p *Pebble) getCeiling(key []byte) (returnedKey string, value []byte, closer io.Closer, err error) {
 	it, err := p.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(key),
+		LowerBound: key,
 	})
 	if err != nil {
 		return "", nil, nil, err
@@ -407,14 +423,14 @@ func (p *Pebble) getCeiling(key string) (returnedKey string, value []byte, close
 		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 	}
 
-	returnedKey = string(it.Key())
+	returnedKey = p.keyEncoder.Decode(it.Key())
 	value, err = it.ValueAndErr()
 	return returnedKey, value, it, err
 }
 
-func (p *Pebble) getLower(key string) (returnedKey string, value []byte, closer io.Closer, err error) {
+func (p *Pebble) getLower(key []byte) (returnedKey string, value []byte, closer io.Closer, err error) {
 	it, err := p.db.NewIter(&pebble.IterOptions{
-		UpperBound: []byte(key),
+		UpperBound: key,
 	})
 	if err != nil {
 		return "", nil, nil, err
@@ -424,14 +440,14 @@ func (p *Pebble) getLower(key string) (returnedKey string, value []byte, closer 
 		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 	}
 
-	returnedKey = string(it.Key())
+	returnedKey = p.keyEncoder.Decode(it.Key())
 	value, err = it.ValueAndErr()
 	return returnedKey, value, it, err
 }
 
-func (p *Pebble) getHigher(key string) (returnedKey string, value []byte, closer io.Closer, err error) {
+func (p *Pebble) getHigher(key []byte) (returnedKey string, value []byte, closer io.Closer, err error) {
 	it, err := p.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(key),
+		LowerBound: key,
 	})
 	if err != nil {
 		return "", nil, nil, err
@@ -444,34 +460,35 @@ func (p *Pebble) getHigher(key string) (returnedKey string, value []byte, closer
 		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 	}
 
-	returnedKey = string(it.Key())
-	if returnedKey == key {
+	itKey := it.Key()
+	if bytes.Equal(itKey, key) {
 		// We found the same key, skip it
 		if !it.Next() {
 			return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 		}
-		returnedKey = string(it.Key())
 	}
 
+	returnedKey = p.keyEncoder.Decode(it.Key())
 	value, err = it.ValueAndErr()
 	return returnedKey, value, it, err
 }
 
 func (p *Pebble) Get(key string, comparisonType ComparisonType) (returnedKey string, value []byte, closer io.Closer, err error) {
+	k := p.keyEncoder.Encode(key)
 	switch comparisonType {
 	case ComparisonEqual:
-		value, closer, err = p.db.Get([]byte(key))
+		value, closer, err = p.db.Get(k)
 		if err == nil {
 			returnedKey = key
 		}
 	case ComparisonFloor:
-		returnedKey, value, closer, err = p.getFloor(key)
+		returnedKey, value, closer, err = p.getFloor(k)
 	case ComparisonCeiling:
-		returnedKey, value, closer, err = p.getCeiling(key)
+		returnedKey, value, closer, err = p.getCeiling(k)
 	case ComparisonLower:
-		returnedKey, value, closer, err = p.getLower(key)
+		returnedKey, value, closer, err = p.getLower(k)
 	case ComparisonHigher:
-		returnedKey, value, closer, err = p.getHigher(key)
+		returnedKey, value, closer, err = p.getHigher(k)
 	default:
 		panic(fmt.Sprintf("Unknown comparison type: %v", comparisonType))
 	}
@@ -501,10 +518,10 @@ func (p *Pebble) KeyIterator() (KeyIterator, error) {
 func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string) (ReverseKeyIterator, error) {
 	opts := &pebble.IterOptions{}
 	if lowerBound != "" {
-		opts.LowerBound = []byte(lowerBound)
+		opts.LowerBound = p.keyEncoder.Encode(lowerBound)
 	}
 	if upperBound != "" {
-		opts.UpperBound = []byte(upperBound)
+		opts.UpperBound = p.keyEncoder.Encode(upperBound)
 	}
 	pbit, err := p.db.NewIter(opts)
 	if err != nil {
@@ -517,10 +534,10 @@ func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string) (ReverseKeyI
 func (p *Pebble) RangeScan(lowerBound, upperBound string) (KeyValueIterator, error) {
 	opts := &pebble.IterOptions{}
 	if lowerBound != "" {
-		opts.LowerBound = []byte(lowerBound)
+		opts.LowerBound = p.keyEncoder.Encode(lowerBound)
 	}
 	if upperBound != "" {
-		opts.UpperBound = []byte(upperBound)
+		opts.UpperBound = p.keyEncoder.Encode(upperBound)
 	}
 
 	pbit, err := p.db.NewIter(opts)
@@ -552,7 +569,10 @@ func (b *PebbleBatch) Size() int {
 }
 
 func (b *PebbleBatch) DeleteRange(lowerBound, upperBound string) error {
-	return b.b.DeleteRange([]byte(lowerBound), []byte(upperBound), pebble.NoSync)
+	return b.b.DeleteRange(
+		b.p.keyEncoder.Encode(lowerBound),
+		b.p.keyEncoder.Encode(upperBound),
+		pebble.NoSync)
 }
 
 func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string) (KeyIterator, error) {
@@ -560,14 +580,16 @@ func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string) (KeyIterator, 
 }
 
 func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator, error) {
+	lb := b.p.keyEncoder.Encode(lowerBound)
+	ub := b.p.keyEncoder.Encode(upperBound)
 	pbit, err := b.b.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(lowerBound),
-		UpperBound: []byte(upperBound),
+		LowerBound: lb,
+		UpperBound: ub,
 	})
 	if err != nil {
 		return nil, err
 	}
-	pbit.SeekGE([]byte(lowerBound))
+	pbit.SeekGE(lb)
 	return &PebbleIterator{b.p, pbit}, nil
 }
 
@@ -576,7 +598,7 @@ func (b *PebbleBatch) Close() error {
 }
 
 func (b *PebbleBatch) Put(key string, value []byte) error {
-	err := b.b.Set([]byte(key), value, pebble.NoSync)
+	err := b.b.Set(b.p.keyEncoder.Encode(key), value, pebble.NoSync)
 	if err != nil {
 		b.p.writeErrors.Inc()
 	}
@@ -584,7 +606,7 @@ func (b *PebbleBatch) Put(key string, value []byte) error {
 }
 
 func (b *PebbleBatch) Delete(key string) error {
-	err := b.b.Delete([]byte(key), pebble.NoSync)
+	err := b.b.Delete(b.p.keyEncoder.Encode(key), pebble.NoSync)
 	if err != nil {
 		b.p.writeErrors.Inc()
 	}
@@ -592,7 +614,7 @@ func (b *PebbleBatch) Delete(key string) error {
 }
 
 func (b *PebbleBatch) Get(key string) ([]byte, io.Closer, error) {
-	value, closer, err := b.b.Get([]byte(key))
+	value, closer, err := b.b.Get(b.p.keyEncoder.Encode(key))
 	if errors.Is(err, pebble.ErrNotFound) {
 		err = ErrKeyNotFound
 	} else if err != nil {
@@ -603,7 +625,7 @@ func (b *PebbleBatch) Get(key string) ([]byte, io.Closer, error) {
 
 func (b *PebbleBatch) FindLower(key string) (lowerKey string, err error) {
 	it, err := b.b.NewIter(&pebble.IterOptions{
-		UpperBound: []byte(key),
+		UpperBound: b.p.keyEncoder.Encode(key),
 	})
 	if err != nil {
 		return "", err
@@ -613,7 +635,7 @@ func (b *PebbleBatch) FindLower(key string) (lowerKey string, err error) {
 		return "", multierr.Combine(it.Close(), ErrKeyNotFound)
 	}
 
-	lowerKey = string(it.Key())
+	lowerKey = b.p.keyEncoder.Decode(it.Key())
 	return lowerKey, it.Close()
 }
 
@@ -649,7 +671,7 @@ func (p *PebbleIterator) Valid() bool {
 }
 
 func (p *PebbleIterator) Key() string {
-	return string(p.pi.Key())
+	return p.p.keyEncoder.Decode(p.pi.Key())
 }
 
 func (p *PebbleIterator) Next() bool {
@@ -661,11 +683,11 @@ func (p *PebbleIterator) Prev() bool {
 }
 
 func (p *PebbleIterator) SeekGE(key string) bool {
-	return p.pi.SeekGE([]byte(key))
+	return p.pi.SeekGE(p.p.keyEncoder.Encode(key))
 }
 
 func (p *PebbleIterator) SeekLT(key string) bool {
-	return p.pi.SeekLT([]byte(key))
+	return p.pi.SeekLT(p.p.keyEncoder.Encode(key))
 }
 
 func (p *PebbleIterator) Value() ([]byte, error) {
@@ -692,7 +714,7 @@ func (p *PebbleReverseIterator) Valid() bool {
 }
 
 func (p *PebbleReverseIterator) Key() string {
-	return string(p.pi.Key())
+	return p.p.keyEncoder.Decode(p.pi.Key())
 }
 
 func (p *PebbleReverseIterator) Prev() bool {

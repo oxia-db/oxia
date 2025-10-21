@@ -54,7 +54,7 @@ loop:
 	err = client.Close()
 	assert.NoError(t, err)
 
-	syncClient, err := NewSyncClient(fmt.Sprintf("localhost:%d", standaloneServer.RpcPort()))
+	syncClient, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {

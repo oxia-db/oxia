@@ -20,8 +20,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
 
 	"github.com/stretchr/testify/assert"
@@ -111,8 +111,7 @@ func TestSyncClientImpl_SecondaryIndexes(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	// ////////////////////////////////////////////////////////////////////////
@@ -168,8 +167,7 @@ func TestSyncClientImpl_SecondaryIndexesRepeated(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	// ////////////////////////////////////////////////////////////////////////
@@ -205,11 +203,21 @@ func TestSyncClientImpl_SecondaryIndexesRepeated(t *testing.T) {
 func TestSyncClientImpl_SecondaryIndexes_Get(t *testing.T) {
 	config := server.NewTestConfig(t.TempDir())
 	config.NumShards = 10
+	doSecondaryIndexesGet(t, config)
+}
+
+func TestSyncClientImpl_SecondaryIndexes_Get_NoNotifications(t *testing.T) {
+	config := server.NewTestConfig(t.TempDir())
+	config.NotificationsEnabled = false
+	doSecondaryIndexesGet(t, config)
+}
+
+func doSecondaryIndexesGet(t *testing.T, config server.StandaloneConfig) {
+	t.Helper()
 	standaloneServer, err := server.NewStandalone(config)
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress)
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	// ////////////////////////////////////////////////////////////////////////
@@ -218,10 +226,9 @@ func TestSyncClientImpl_SecondaryIndexes_Get(t *testing.T) {
 	for i := 1; i < 10; i++ {
 		primKey := fmt.Sprintf("%c", 'a'+i)
 		val := fmt.Sprintf("%03d", i)
-		log.Info().
-			Str("key", primKey).
-			Str("value", val).
-			Msg("Adding record")
+		slog.Info("Adding record",
+			slog.String("key", primKey),
+			slog.String("value", val))
 		_, _, _ = client.Put(ctx, primKey, []byte(val), SecondaryIndex("val-idx", val))
 	}
 
@@ -356,8 +363,7 @@ func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
-	client, err := NewSyncClient(serviceAddress, WithBatchLinger(0))
+	client, err := NewSyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
 	assert.NoError(t, err)
 
 	ch1, err := client.GetSequenceUpdates(context.Background(), "a")
@@ -388,13 +394,17 @@ func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 	k3, _, _ := client.Put(context.Background(), "a", []byte("0"), PartitionKey("x"), SequenceKeysDeltas(1))
 	assert.Empty(t, updates2)
 
-	select {
-	case <-updates2:
-		// Ok
+	assert.Eventually(t, func() bool {
+		select {
+		case <-updates2:
+			// Ok
+			return true
 
-	default:
-		assert.Fail(t, "should have been closed")
-	}
+		default:
+			assert.Fail(t, "should have been closed")
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond)
 
 	updates3, err := client.GetSequenceUpdates(context.Background(), "a", PartitionKey("x"))
 	require.NoError(t, err)

@@ -16,7 +16,6 @@ package client
 
 import (
 	"bytes"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -32,8 +31,6 @@ import (
 func TestClientCmd(t *testing.T) {
 	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
-
-	serviceAddress := fmt.Sprintf("localhost:%d", standaloneServer.RpcPort())
 
 	stdin := bytes.NewBufferString("")
 	stdout := bytes.NewBufferString("")
@@ -73,7 +70,7 @@ func TestClientCmd(t *testing.T) {
 			del.Config.Reset()
 
 			stdin.WriteString(test.stdin)
-			Cmd.SetArgs(append([]string{"-a", serviceAddress}, strings.Split(test.args, " ")...))
+			Cmd.SetArgs(append([]string{"-a", standaloneServer.ServiceAddr()}, strings.Split(test.args, " ")...))
 			err := Cmd.Execute()
 			if test.error {
 				assert.Error(t, err)
