@@ -39,7 +39,7 @@ func TestFollowerCursor(t *testing.T) {
 
 	stream := newMockRpcClient()
 	ackTracker := NewQuorumAckTracker(3, wal.InvalidOffset, wal.InvalidOffset)
-	kvf, err := kv.NewPebbleKVFactory(testKVOptions)
+	kvf, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvf, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
@@ -128,7 +128,7 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 
 	n := int64(10)
 	stream := newMockRpcClient()
-	kvf, err := kv.NewPebbleKVFactory(&kv.FactoryOptions{DataDir: t.TempDir()})
+	kvf, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvf, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)

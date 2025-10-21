@@ -77,6 +77,8 @@ func NewWithGrpcProvider(config Config, provider rpc.GrpcProvider, replicationRp
 	kvFactory, err := kv.NewPebbleKVFactory(&kv.FactoryOptions{
 		DataDir:     config.DataDir,
 		CacheSizeMB: config.DbBlockCacheMB,
+		UseWAL:      false, // WAL is kept outside the KV store
+		SyncData:    false, // WAL is kept outside the KV store
 	})
 	if err != nil {
 		return nil, err

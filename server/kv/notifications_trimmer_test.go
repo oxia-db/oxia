@@ -33,7 +33,7 @@ import (
 func TestNotificationsTrimmer(t *testing.T) {
 	clock := &time2.MockedClock{}
 
-	factory, err := NewPebbleKVFactory(testKVOptions)
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	dbx, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 10*time.Millisecond, clock)
 	assert.NoError(t, err)
