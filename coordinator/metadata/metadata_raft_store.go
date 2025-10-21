@@ -27,11 +27,6 @@ import (
 	"go.uber.org/multierr"
 )
 
-type kvRaftStoreInterface interface {
-	raft.StableStore
-	raft.LogStore
-}
-
 type kvRaftStore struct {
 	factory kv.Factory
 	kv      kv.KV
@@ -161,14 +156,11 @@ func (s *kvRaftStore) DeleteRange(minInclusive, maxInclusive uint64) error {
 
 // StableStore methods
 
-const stableKeyFormat = "store-%s"
-
 func (s *kvRaftStore) Set(key []byte, value []byte) error {
-	stableKey := fmt.Sprintf(stableKeyFormat, key)
 	wb := s.kv.NewWriteBatch()
 
 	return multierr.Combine(
-		wb.Put(stableKey, value),
+		wb.Put(string(key), value),
 		wb.Commit(),
 		wb.Close(),
 		s.kv.Flush(),
@@ -176,8 +168,7 @@ func (s *kvRaftStore) Set(key []byte, value []byte) error {
 }
 
 func (s *kvRaftStore) Get(key []byte) ([]byte, error) {
-	stableKey := fmt.Sprintf(stableKeyFormat, key)
-	_, value, closer, err := s.kv.Get(stableKey, kv.ComparisonEqual)
+	_, value, closer, err := s.kv.Get(string(key), kv.ComparisonEqual)
 	if err != nil {
 		if errors.Is(err, kv.ErrKeyNotFound) {
 			return []byte{}, nil
