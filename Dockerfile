@@ -16,18 +16,28 @@ FROM golang:1.25-alpine AS build
 
 RUN apk add --no-cache make git build-base bash
 
-ENV PATH=$PATH:/go/bin
-ADD . /src/oxia
+WORKDIR /src/oxia
 
-RUN cd /src/oxia \
-    && make
+# Copy only Go mod files first (for better caching)
+COPY go.mod go.sum ./
+
+# Download dependencies with BuildKit cache mounts
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Copy the rest of the source
+COPY . .
+
+# Build using cache mounts for build cache and module cache
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    make
 
 FROM alpine:3.22
 
 RUN apk add --no-cache bash bash-completion jq
 RUN apk upgrade --no-cache
 
-RUN mkdir /oxia
 WORKDIR /oxia
 
 COPY --from=build /src/oxia/bin/oxia /oxia/bin/oxia
