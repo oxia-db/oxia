@@ -38,7 +38,8 @@ func newKVRaftStore(path string) (store *kvRaftStore, err error) {
 	if store.factory, err = kv.NewPebbleKVFactory(&kv.FactoryOptions{
 		DataDir:     path,
 		CacheSizeMB: 1,
-		InMemory:    false,
+		UseWAL:      true,
+		SyncData:    true,
 	}); err != nil {
 		return nil, err
 	}
@@ -134,7 +135,6 @@ func (s *kvRaftStore) StoreLogs(logs []*raft.Log) error {
 	return multierr.Combine(
 		wb.Commit(),
 		wb.Close(),
-		s.kv.Flush(),
 	)
 }
 
@@ -147,7 +147,6 @@ func (s *kvRaftStore) DeleteRange(minInclusive, maxInclusive uint64) error {
 		wb.DeleteRange(minKeyInclusive, maxKeyExclusive),
 		wb.Commit(),
 		wb.Close(),
-		s.kv.Flush(),
 	)
 }
 
@@ -162,7 +161,6 @@ func (s *kvRaftStore) Set(key []byte, value []byte) error {
 		wb.Put(string(key), value),
 		wb.Commit(),
 		wb.Close(),
-		s.kv.Flush(),
 	)
 }
 
