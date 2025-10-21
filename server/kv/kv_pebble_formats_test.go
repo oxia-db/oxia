@@ -21,6 +21,8 @@ import (
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/common/compare"
 )
 
 func TestPebbleDbConversion(t *testing.T) {
@@ -55,7 +57,7 @@ func TestPebbleDbConversion(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	kv, err := kvFactory.NewKV("default", 0)
+	kv, err := kvFactory.NewKV("default", 0, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	// Test scan the new DB

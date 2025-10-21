@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/compare"
+
 	"github.com/oxia-db/oxia/common/constant"
 )
 
@@ -33,7 +35,7 @@ var testKVOptions = &FactoryOptions{
 func TestPebbbleSimple(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -107,7 +109,7 @@ func TestPebbbleSimple(t *testing.T) {
 func TestPebbbleKeyRangeScan(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -146,7 +148,7 @@ func TestPebbbleKeyRangeScan(t *testing.T) {
 func TestPebbbleKeyRangeScanReverse(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -185,7 +187,7 @@ func TestPebbbleKeyRangeScanReverse(t *testing.T) {
 func TestPebbleRangeScan(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -239,7 +241,7 @@ func TestPebbleRangeScanWithSlashOrder(t *testing.T) {
 
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -274,7 +276,7 @@ func TestPebbleRangeScanWithSlashOrder(t *testing.T) {
 func TestPebbbleGetWithinBatch(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -332,7 +334,7 @@ func TestPebbbleDurability(t *testing.T) {
 	{
 		factory, err := NewPebbleKVFactory(options)
 		assert.NoError(t, err)
-		kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+		kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 		assert.NoError(t, err)
 
 		wb := kv.NewWriteBatch()
@@ -348,7 +350,7 @@ func TestPebbbleDurability(t *testing.T) {
 	{
 		factory, err := NewPebbleKVFactory(options)
 		assert.NoError(t, err)
-		kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+		kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 		assert.NoError(t, err)
 
 		key, res, closer, err := kv.Get("a", ComparisonEqual)
@@ -365,7 +367,7 @@ func TestPebbbleDurability(t *testing.T) {
 func TestPebbbleRangeScanInBatch(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -430,7 +432,7 @@ func TestPebbbleDeleteRangeInBatch(t *testing.T) {
 
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -468,10 +470,10 @@ func TestPebbbleDoubleOpen(t *testing.T) {
 		InMemory:    false,
 	})
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 	assert.NoError(t, err)
 
-	kv2, err2 := factory.NewKV(constant.DefaultNamespace, 1)
+	kv2, err2 := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 	assert.Error(t, err2)
 	assert.Nil(t, kv2)
 
@@ -490,7 +492,7 @@ func TestPebbleSnapshot(t *testing.T) {
 			InMemory:    false,
 		})
 		assert.NoError(t, err)
-		kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+		kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 		assert.NoError(t, err)
 
 		for i := 0; i < 100; i++ {
@@ -545,7 +547,7 @@ func TestPebbleSnapshot(t *testing.T) {
 			InMemory:    false,
 		})
 		assert.NoError(t, err)
-		kv2, err := factory2.NewKV(constant.DefaultNamespace, 1)
+		kv2, err := factory2.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 		assert.NoError(t, err)
 
 		for i := 0; i < 100; i++ {
@@ -574,7 +576,7 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 		InMemory:    false,
 	})
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 	assert.NoError(t, err)
 
 	for i := 0; i < 100; i++ {
@@ -599,7 +601,7 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	kv2, err := factory2.NewKV(constant.DefaultNamespace, 1)
+	kv2, err := factory2.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 	assert.NoError(t, err)
 
 	// Any existing key would be removed when we load the snapshot
@@ -622,7 +624,7 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 	assert.NoError(t, loader.Close())
 	assert.NoError(t, snapshot.Close())
 
-	kv2, err = factory2.NewKV(constant.DefaultNamespace, 1)
+	kv2, err = factory2.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 	assert.NoError(t, err)
 
 	for i := 0; i < 100; i++ {
@@ -649,7 +651,7 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 func TestPebbleRangeScanNoLimits(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -754,7 +756,7 @@ func TestPebbleRangeScanNoLimits(t *testing.T) {
 func TestPebbleReverseRangeScanNoLimits(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -832,7 +834,7 @@ func TestPebbleReverseRangeScanNoLimits(t *testing.T) {
 func TestPebbbleFloorCeiling(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 	assert.NoError(t, err)
 
 	key, res, closer, err := kv.Get("e", ComparisonFloor)
@@ -1016,7 +1018,7 @@ func TestPebbbleFloorCeiling(t *testing.T) {
 func TestPebbleFindLowerInBatch(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderNatural)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
@@ -1068,7 +1070,7 @@ func TestPebbleHierarchicalScanStop(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
 
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, compare.EncoderHierarchical)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()

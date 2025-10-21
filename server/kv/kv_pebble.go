@@ -119,8 +119,8 @@ func (p *PebbleFactory) Close() error {
 	return nil
 }
 
-func (p *PebbleFactory) NewKV(namespace string, shardId int64) (KV, error) {
-	return newKVPebble(p, namespace, shardId)
+func (p *PebbleFactory) NewKV(namespace string, shardId int64, keyEncoder compare.Encoder) (KV, error) {
+	return newKVPebble(p, namespace, shardId, keyEncoder)
 }
 
 func (p *PebbleFactory) NewSnapshotLoader(namespace string, shardId int64) (SnapshotLoader, error) {
@@ -167,7 +167,7 @@ type Pebble struct {
 	batchCountHisto metric.Histogram
 }
 
-func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, error) {
+func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keyEncoder compare.Encoder) (KV, error) {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	labels := metric.LabelsForShard(namespace, shardId)
 	pb := &Pebble{
@@ -177,7 +177,7 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 		namespace:  namespace,
 		shardId:    shardId,
 		dbPath:     factory.getKVPath(namespace, shardId),
-		keyEncoder: compare.EncoderHierarchical,
+		keyEncoder: keyEncoder,
 
 		batchCommitLatency: metric.NewLatencyHistogram("oxia_server_kv_batch_commit_latency",
 			"The latency for committing a batch into the database", labels),
@@ -241,11 +241,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 	}
 
 	pebbleConv := newPebbleDbConversion(log, pb.dbPath)
-	if err := pebbleConv.checkConvertDB(); err != nil {
+	if err := pebbleConv.checkConvertDB(keyEncoder); err != nil {
 		return nil, errors.Wrap(err, "failed to convert db")
 	}
 
-	if err := createMarker(pb.dbPath, compare.EncoderHierarchical.Name()); err != nil {
+	if err := createMarker(pb.dbPath, keyEncoder.Name()); err != nil {
 		return nil, errors.Wrap(err, "failed to create marker")
 	}
 
@@ -793,10 +793,6 @@ func (sl *pebbleSnapshotLoader) AddChunk(fileName string, chunkIndex int32, chun
 	}
 
 	return nil
-}
-
-func (sl *pebbleSnapshotLoader) Load() (KV, error) {
-	return newKVPebble(sl.pf, sl.namespace, sl.shard)
 }
 
 func (sl *pebbleSnapshotLoader) Complete() {

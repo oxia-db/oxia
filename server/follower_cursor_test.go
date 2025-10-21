@@ -23,6 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/compare"
+
 	"github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
 
@@ -39,7 +41,7 @@ func TestFollowerCursor(t *testing.T) {
 	ackTracker := NewQuorumAckTracker(3, wal.InvalidOffset, wal.InvalidOffset)
 	kvf, err := kv.NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvf, 1*time.Hour, time2.SystemClock)
+	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvf, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 	wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
 	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
@@ -128,7 +130,7 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 	stream := newMockRpcClient()
 	kvf, err := kv.NewPebbleKVFactory(&kv.FactoryOptions{DataDir: t.TempDir()})
 	assert.NoError(t, err)
-	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvf, 1*time.Hour, time2.SystemClock)
+	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvf, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 	wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
 	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)

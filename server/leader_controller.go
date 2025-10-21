@@ -27,6 +27,8 @@ import (
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/compare"
+
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
@@ -156,7 +158,7 @@ func NewLeaderController(config Config, namespace string, shardId int64, rpcClie
 		return nil, err
 	}
 
-	if lc.db, err = kv.NewDB(namespace, shardId, kvFactory, config.NotificationsRetentionTime, time2.SystemClock); err != nil {
+	if lc.db, err = kv.NewDB(namespace, shardId, kvFactory, compare.EncoderHierarchical, config.NotificationsRetentionTime, time2.SystemClock); err != nil {
 		return nil, err
 	}
 
