@@ -77,12 +77,22 @@ func ConfigureLogger() {
 		Logger()
 
 	if !LogJSON {
-		writer := zerolog.SyncWriter(zerolog.ConsoleWriter{
-			Out:        os.Stdout,
-			TimeFormat: time.StampMicro,
-		})
+		if raceEnabled {
+			// Use simple non-colored logger in tests to avoid
+			// data races
+			zerologLogger = zerolog.New(os.Stdout).
+				With().
+				Timestamp().
+				Stack().
+				Logger()
+		} else {
+			writer := log.Output(zerolog.ConsoleWriter{
+				Out:        os.Stdout,
+				TimeFormat: time.StampMicro,
+			})
 
-		zerologLogger = log.Output(writer)
+			zerolog.New(zerolog.SyncWriter(writer))
+		}
 	}
 
 	slogLogger := slog.New(
