@@ -8,8 +8,6 @@ name: trivy
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: []
   schedule:
     - cron: '24 7 * * 5'
 
@@ -28,12 +26,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Build an image from Dockerfile
-        run: |
-          make docker
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+      - name: Build docker
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: false
+          load: true
+          tags: oxia:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.33.0
         with:
           image-ref: 'oxia:latest'
           format: 'template'
@@ -42,6 +53,6 @@ jobs:
           severity: 'LOW,MEDIUM,HIGH,CRITICAL'
 
       - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
