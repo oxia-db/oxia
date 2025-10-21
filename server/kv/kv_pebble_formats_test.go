@@ -15,19 +15,20 @@
 package kv
 
 import (
+	"log/slog"
 	"path/filepath"
 	"testing"
 
-	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/v2"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestPebbleDbConversion(t *testing.T) {
 	// Create DB with old format and insert some test keys
-	conv := pebbleDbConversion{}
+	tmpDir := t.TempDir()
+	conv := newPebbleDbConversion(slog.With(slog.StringValue("test")), tmpDir)
 	conf := conv.configForOldCompareHierarchical()
 
-	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "default", "shard-0")
 	oldDb, err := pebble.Open(dbPath, conf)
 	assert.NoError(t, err)

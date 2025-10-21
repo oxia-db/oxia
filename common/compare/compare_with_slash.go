@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"math"
 
-	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/v2"
 )
 
 func CompareWithSlash(a, b []byte) int { //nolint:revive

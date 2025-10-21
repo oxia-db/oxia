@@ -20,8 +20,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cockroachdb/pebble"
-	"github.com/cockroachdb/pebble/bloom"
+	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/bloom"
+	"github.com/cockroachdb/pebble/v2/sstable"
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/compare"
@@ -60,17 +61,29 @@ func (p *pebbleDbConversion) configForOldCompareHierarchical() *pebble.Options {
 }
 
 func (p *pebbleDbConversion) configForHierarchical() *pebble.Options {
+	levelOptions := [7]pebble.LevelOptions{}
+	levelOptions[0] = pebble.LevelOptions{
+		BlockSize: 64 * 1024,
+		Compression: func() *sstable.CompressionProfile {
+			return sstable.NoCompression
+		},
+		FilterPolicy: bloom.FilterPolicy(10),
+	}
+
+	for i := 1; i < len(levelOptions); i++ {
+		levelOptions[i] = pebble.LevelOptions{
+			BlockSize: 64 * 1024,
+			Compression: func() *sstable.CompressionProfile {
+				return sstable.GoodCompression
+			},
+			FilterPolicy: bloom.FilterPolicy(10),
+		}
+	}
 	return &pebble.Options{
 		DisableWAL:         true,
 		Logger:             &pebbleLogger{p.log},
 		FormatMajorVersion: pebble.FormatVirtualSSTables,
-		Levels: []pebble.LevelOptions{{
-			BlockSize:      64 * 1024,
-			Compression:    pebble.ZstdCompression,
-			TargetFileSize: 64 * 1024 * 1024,
-			FilterPolicy:   bloom.FilterPolicy(10),
-			FilterType:     pebble.TableFilter,
-		}},
+		Levels:             levelOptions,
 	}
 }
 
