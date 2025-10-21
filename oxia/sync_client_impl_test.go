@@ -404,7 +404,7 @@ func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 			assert.Fail(t, "should have been closed")
 			return false
 		}
-	}, 10*time.Millisecond, 10*time.Second)
+	}, 10*time.Second, 10*time.Millisecond)
 
 	updates3, err := client.GetSequenceUpdates(context.Background(), "a", PartitionKey("x"))
 	require.NoError(t, err)
