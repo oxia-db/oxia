@@ -82,7 +82,7 @@ func (s *kvRaftStore) FirstIndex() (uint64, error) {
 	}
 
 	var idx uint64
-	_, err = fmt.Sscanf(storedKey, logKeyFormat, &idx)
+	_, _ = fmt.Sscanf(storedKey, logKeyFormat, &idx)
 	return idx, err
 }
 
@@ -95,10 +95,8 @@ func (s *kvRaftStore) LastIndex() (idx uint64, err error) {
 		return 0, err
 	}
 
-	_, err = fmt.Sscanf(storedKey, logKeyFormat, &idx)
-
-	err = multierr.Combine(err, closer.Close())
-	return idx, err
+	_, _ = fmt.Sscanf(storedKey, logKeyFormat, &idx)
+	return idx, closer.Close()
 }
 
 func (s *kvRaftStore) GetLog(index uint64, log *raft.Log) error {
