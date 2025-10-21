@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -393,13 +394,17 @@ func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 	k3, _, _ := client.Put(context.Background(), "a", []byte("0"), PartitionKey("x"), SequenceKeysDeltas(1))
 	assert.Empty(t, updates2)
 
-	select {
-	case <-updates2:
-		// Ok
+	assert.Eventually(t, func() bool {
+		select {
+		case <-updates2:
+			// Ok
+			return true
 
-	default:
-		assert.Fail(t, "should have been closed")
-	}
+		default:
+			assert.Fail(t, "should have been closed")
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond)
 
 	updates3, err := client.GetSequenceUpdates(context.Background(), "a", PartitionKey("x"))
 	require.NoError(t, err)
