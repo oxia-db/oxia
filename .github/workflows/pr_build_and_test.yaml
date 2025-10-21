@@ -92,8 +92,8 @@ jobs:
           context: .
           push: false
           tags: oxia:latest
-          cache-from: type=registry,ref=oxia:latest
-          cache-to: type=inline
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - uses: helm/kind-action@v1.5.0
         with:
           cluster_name: kind
