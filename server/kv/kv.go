@@ -158,6 +158,7 @@ func (fo *FactoryOptions) EnsureDefaults() {
 }
 
 func NewFactoryOptionsForTest(t *testing.T) *FactoryOptions {
+	t.Helper()
 	return &FactoryOptions{
 		DataDir:     t.TempDir(),
 		CacheSizeMB: 1,
