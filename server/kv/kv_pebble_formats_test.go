@@ -15,24 +15,18 @@
 package kv
 
 import (
-	"log/slog"
-	"path/filepath"
 	"testing"
 
-	"github.com/cockroachdb/pebble/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/compare"
 )
 
 func TestPebbleDbConversion(t *testing.T) {
-	// Create DB with old format and insert some test keys
-	tmpDir := t.TempDir()
-	conv := newPebbleDbConversion(slog.With(slog.StringValue("test")), tmpDir)
-	conf := conv.configForOldCompareHierarchical()
-
-	dbPath := filepath.Join(tmpDir, "default", "shard-0")
-	oldDb, err := pebble.Open(dbPath, conf)
+	// Create DB with natural format and insert some test keys
+	kvFactory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	oldKV, err := kvFactory.NewKV("default", 0, compare.EncoderNatural)
 	assert.NoError(t, err)
 
 	keys := []string{"/key",
@@ -43,19 +37,15 @@ func TestPebbleDbConversion(t *testing.T) {
 		"/key/a/1/x", "/key/a/1/y",
 		"/key/b/1/x", "/key/b/1/y",
 	}
+
+	wb := oldKV.NewWriteBatch()
 	for _, key := range keys {
-		assert.NoError(t, oldDb.Set([]byte(key), []byte("value"), pebble.NoSync))
+		assert.NoError(t, wb.Put(key, []byte("value")))
 	}
+	assert.NoError(t, wb.Commit())
+	assert.NoError(t, wb.Close())
 
-	assert.NoError(t, oldDb.Flush())
-	assert.NoError(t, oldDb.Close())
-
-	kvFactory, err := NewPebbleKVFactory(&FactoryOptions{
-		DataDir:     tmpDir,
-		CacheSizeMB: 1,
-		InMemory:    false,
-	})
-	assert.NoError(t, err)
+	assert.NoError(t, oldKV.Close())
 
 	kv, err := kvFactory.NewKV("default", 0, compare.EncoderHierarchical)
 	assert.NoError(t, err)

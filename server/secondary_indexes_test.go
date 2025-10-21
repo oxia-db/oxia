@@ -33,7 +33,7 @@ import (
 func TestSecondaryIndices_List(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(testKVOptions)
+	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	walFactory := newTestWalFactory(t)
 
 	lc, _ := NewLeaderController(Config{}, constant.DefaultNamespace, shard, newMockRpcClient(), walFactory, kvFactory)
@@ -129,7 +129,7 @@ func TestSecondaryIndices_List(t *testing.T) {
 func TestSecondaryIndices_RangeScan(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(testKVOptions)
+	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	walFactory := newTestWalFactory(t)
 
 	lc, _ := NewLeaderController(Config{}, constant.DefaultNamespace, shard, newMockRpcClient(), walFactory, kvFactory)
@@ -240,7 +240,7 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 func TestSecondaryIndices_MultipleKeysForSameIdx(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(testKVOptions)
+	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	walFactory := newTestWalFactory(t)
 
 	lc, _ := NewLeaderController(Config{}, constant.DefaultNamespace, shard, newMockRpcClient(), walFactory, kvFactory)

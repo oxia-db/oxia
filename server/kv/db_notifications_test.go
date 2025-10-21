@@ -35,7 +35,7 @@ func init() {
 }
 
 func TestDB_Notifications(t *testing.T) {
-	factory, err := NewPebbleKVFactory(testKVOptions)
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
@@ -171,7 +171,7 @@ func TestDB_Notifications(t *testing.T) {
 }
 
 func TestDB_NotificationsCancelWait(t *testing.T) {
-	factory, err := NewPebbleKVFactory(testKVOptions)
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
@@ -211,7 +211,7 @@ func TestDB_NotificationsCancelWait(t *testing.T) {
 }
 
 func TestDB_NotificationsDisabled(t *testing.T) {
-	factory, err := NewPebbleKVFactory(testKVOptions)
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
@@ -234,7 +234,7 @@ func TestDB_NotificationsDisabled(t *testing.T) {
 }
 
 func TestDB_NotificationsDeleteRange(t *testing.T) {
-	factory, err := NewPebbleKVFactory(testKVOptions)
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
