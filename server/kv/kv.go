@@ -16,6 +16,7 @@ package kv
 
 import (
 	"io"
+	"testing"
 
 	"github.com/pkg/errors"
 
@@ -135,15 +136,34 @@ type KV interface {
 type FactoryOptions struct {
 	DataDir     string
 	CacheSizeMB int64
-
-	// Create a pure in-memory database. Used for unit-tests
-	InMemory bool
+	UseWAL      bool
+	SyncData    bool
 }
 
 var DefaultFactoryOptions = &FactoryOptions{
 	DataDir:     "data",
 	CacheSizeMB: 100,
-	InMemory:    false,
+	UseWAL:      true,
+	SyncData:    true,
+}
+
+func (fo *FactoryOptions) EnsureDefaults() {
+	if fo.DataDir == "" {
+		fo.DataDir = DefaultFactoryOptions.DataDir
+	}
+
+	if fo.CacheSizeMB == 0 {
+		fo.CacheSizeMB = DefaultFactoryOptions.CacheSizeMB
+	}
+}
+
+func NewFactoryOptionsForTest(t *testing.T) *FactoryOptions {
+	return &FactoryOptions{
+		DataDir:     t.TempDir(),
+		CacheSizeMB: 1,
+		UseWAL:      false,
+		SyncData:    false,
+	}
 }
 
 type Factory interface {

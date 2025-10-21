@@ -65,20 +65,12 @@ func NewPebbleKVFactory(options *FactoryOptions) (Factory, error) {
 	if options == nil {
 		options = DefaultFactoryOptions
 	}
-	cacheSizeMB := options.CacheSizeMB
-	if cacheSizeMB == 0 {
-		cacheSizeMB = DefaultFactoryOptions.CacheSizeMB
-	}
+	options.EnsureDefaults()
 
-	dataDir := options.DataDir
-	if dataDir == "" {
-		dataDir = DefaultFactoryOptions.DataDir
-	}
-
-	blockCache := pebble.NewCache(cacheSizeMB * 1024 * 1024)
+	blockCache := pebble.NewCache(options.CacheSizeMB * 1024 * 1024)
 
 	pf := &PebbleFactory{
-		dataDir: dataDir,
+		dataDir: options.DataDir,
 		options: options,
 
 		// Share a single cache instance across the databases for all the shards
@@ -148,6 +140,7 @@ type Pebble struct {
 	dbPath          string
 	db              *pebble.DB
 	snapshotCounter atomic.Int64
+	writeOptions    *pebble.WriteOptions
 
 	keyEncoder compare.Encoder
 
@@ -230,14 +223,10 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keyEnc
 		MemTableSize: 32 * 1024 * 1024,
 		Levels:       levelOptions,
 		FS:           vfs.Default,
-		DisableWAL:   true,
+		DisableWAL:   !factory.options.UseWAL,
 		Logger:       &pebbleLogger{log},
 
 		FormatMajorVersion: pebble.FormatVirtualSSTables,
-	}
-
-	if factory.options.InMemory {
-		pbOptions.FS = vfs.NewMem()
 	}
 
 	pebbleConv := newPebbleDbConversion(log, pb.dbPath)
@@ -255,6 +244,12 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keyEnc
 	}
 
 	pb.db = db
+
+	if factory.options.SyncData {
+		pb.writeOptions = pebble.Sync
+	} else {
+		pb.writeOptions = pebble.NoSync
+	}
 
 	// Cache the calls to db.Metrics() which are common to all the gauges
 	pb.dbMetrics = cache.Memoize(func() *pebble.Metrics {

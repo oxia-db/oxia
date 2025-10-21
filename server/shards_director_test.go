@@ -29,7 +29,7 @@ import (
 func TestShardsDirector_DeleteShardLeader(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(testKVOptions)
+	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	walFactory := newTestWalFactory(t)
 
 	sd := NewShardsDirector(Config{}, walFactory, kvFactory, newMockRpcClient())
@@ -67,7 +67,7 @@ func TestShardsDirector_DeleteShardLeader(t *testing.T) {
 func TestShardsDirector_GetOrCreateFollower(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(testKVOptions)
+	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	walFactory := newTestWalFactory(t)
 
 	sd := NewShardsDirector(Config{}, walFactory, kvFactory, newMockRpcClient())

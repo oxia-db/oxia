@@ -565,7 +565,7 @@ func createSessionManager(t *testing.T) (kv.Factory, wal.Factory, *sessionManage
 
 	var shard int64 = 1
 
-	kvFactory, err := kv.NewPebbleKVFactory(testKVOptions)
+	kvFactory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	walFactory := newTestWalFactory(t)
 	lc, err := NewLeaderController(Config{NotificationsRetentionTime: 10 * time.Second}, constant.DefaultNamespace, shard, newMockRpcClient(), walFactory, kvFactory)

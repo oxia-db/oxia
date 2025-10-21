@@ -31,10 +31,8 @@ import (
 )
 
 func BenchmarkDeleteRange(b *testing.B) {
-	factory, err := NewPebbleKVFactory(&FactoryOptions{
-		InMemory:    true,
-		CacheSizeMB: 1024,
-	})
+	dataDir := b.TempDir()
+	factory, err := NewPebbleKVFactory(&FactoryOptions{DataDir: dataDir})
 	assert.NoError(b, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time2.SystemClock)
 	assert.NoError(b, err)
