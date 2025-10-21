@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/compare"
+
 	"github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
 
@@ -33,7 +35,7 @@ func TestNotificationsTrimmer(t *testing.T) {
 
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	dbx, err := NewDB(constant.DefaultNamespace, 1, factory, 10*time.Millisecond, clock)
+	dbx, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 10*time.Millisecond, clock)
 	assert.NoError(t, err)
 	defer dbx.Close()
 

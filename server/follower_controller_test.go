@@ -25,6 +25,8 @@ import (
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/compare"
+
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/logging"
@@ -263,7 +265,7 @@ func TestFollower_RestoreCommitOffset(t *testing.T) {
 	assert.NoError(t, err)
 	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
 
-	db, err := kv.NewDB(constant.DefaultNamespace, shardId, kvFactory, 1*time.Hour, time2.SystemClock)
+	db, err := kv.NewDB(constant.DefaultNamespace, shardId, kvFactory, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:   "xx",
@@ -561,7 +563,7 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	db, err := kv.NewDB(constant.DefaultNamespace, shardId, kvFactory, 1*time.Hour, time2.SystemClock)
+	db, err := kv.NewDB(constant.DefaultNamespace, shardId, kvFactory, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 	// Force a new term in the DB before opening
 	assert.NoError(t, db.UpdateTerm(5, kv.TermOptions{}))
@@ -669,7 +671,7 @@ func prepareTestDb(t *testing.T) kv.Snapshot {
 		DataDir: t.TempDir(),
 	})
 	assert.NoError(t, err)
-	db, err := kv.NewDB(constant.DefaultNamespace, 0, kvFactory, 1*time.Hour, time2.SystemClock)
+	db, err := kv.NewDB(constant.DefaultNamespace, 0, kvFactory, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 
 	for i := 0; i < 100; i++ {

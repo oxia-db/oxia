@@ -17,6 +17,7 @@ package compare
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"strings"
 	"unsafe"
 
@@ -117,3 +118,16 @@ func (encoderNatural) Decode(encoded []byte) string {
 }
 
 var EncoderNatural = &encoderNatural{}
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+func GetEncoder(name string) (Encoder, error) {
+	switch name {
+	case "hierarchical":
+		return EncoderHierarchical, nil
+	case "natural":
+		return EncoderNatural, nil
+	default:
+		return nil, fmt.Errorf("unknown encoder %s", name)
+	}
+}

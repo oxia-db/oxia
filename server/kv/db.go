@@ -28,6 +28,8 @@ import (
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/compare"
+
 	"github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
 
@@ -95,8 +97,12 @@ type DB interface {
 	Delete() error
 }
 
-func NewDB(namespace string, shardId int64, factory Factory, notificationRetentionTime time.Duration, clock time2.Clock) (DB, error) {
-	kv, err := factory.NewKV(namespace, shardId)
+func NewDB(namespace string, shardId int64, factory Factory,
+	keyEncoder compare.Encoder,
+	notificationRetentionTime time.Duration,
+	clock time2.Clock,
+) (DB, error) {
+	kv, err := factory.NewKV(namespace, shardId, keyEncoder)
 	if err != nil {
 		return nil, err
 	}

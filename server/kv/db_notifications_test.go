@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/compare"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/logging"
 	time2 "github.com/oxia-db/oxia/common/time"
@@ -35,7 +37,7 @@ func init() {
 func TestDB_Notifications(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	db, err := NewDB(constant.DefaultNamespace, 1, factory, 1*time.Hour, time2.SystemClock)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 
 	t0 := now()
@@ -171,7 +173,7 @@ func TestDB_Notifications(t *testing.T) {
 func TestDB_NotificationsCancelWait(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	db, err := NewDB(constant.DefaultNamespace, 1, factory, 1*time.Hour, time2.SystemClock)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 
 	t0 := now()
@@ -211,7 +213,7 @@ func TestDB_NotificationsCancelWait(t *testing.T) {
 func TestDB_NotificationsDisabled(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	db, err := NewDB(constant.DefaultNamespace, 1, factory, 1*time.Hour, time2.SystemClock)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 
 	db.EnableNotifications(false)
@@ -234,7 +236,7 @@ func TestDB_NotificationsDisabled(t *testing.T) {
 func TestDB_NotificationsDeleteRange(t *testing.T) {
 	factory, err := NewPebbleKVFactory(testKVOptions)
 	assert.NoError(t, err)
-	db, err := NewDB(constant.DefaultNamespace, 1, factory, 1*time.Hour, time2.SystemClock)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 
 	t0 := now()
