@@ -46,6 +46,11 @@ var (
 
 			return NewMetadataProviderConfigMap(_fake, "ns", "n")
 		},
+		"raft": func(t *testing.T) Provider {
+			t.Helper()
+
+			return newTestRaftClusterProvider(t)
+		},
 	}
 )
 

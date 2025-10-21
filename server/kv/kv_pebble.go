@@ -567,7 +567,7 @@ func (b *PebbleBatch) DeleteRange(lowerBound, upperBound string) error {
 	return b.b.DeleteRange(
 		b.p.keyEncoder.Encode(lowerBound),
 		b.p.keyEncoder.Encode(upperBound),
-		pebble.NoSync)
+		b.p.writeOptions)
 }
 
 func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string) (KeyIterator, error) {
@@ -593,7 +593,7 @@ func (b *PebbleBatch) Close() error {
 }
 
 func (b *PebbleBatch) Put(key string, value []byte) error {
-	err := b.b.Set(b.p.keyEncoder.Encode(key), value, pebble.NoSync)
+	err := b.b.Set(b.p.keyEncoder.Encode(key), value, b.p.writeOptions)
 	if err != nil {
 		b.p.writeErrors.Inc()
 	}
@@ -601,7 +601,7 @@ func (b *PebbleBatch) Put(key string, value []byte) error {
 }
 
 func (b *PebbleBatch) Delete(key string) error {
-	err := b.b.Delete(b.p.keyEncoder.Encode(key), pebble.NoSync)
+	err := b.b.Delete(b.p.keyEncoder.Encode(key), b.p.writeOptions)
 	if err != nil {
 		b.p.writeErrors.Inc()
 	}
@@ -643,7 +643,7 @@ func (b *PebbleBatch) Commit() error {
 	timer := b.p.batchCommitLatency.Timer()
 	defer timer.Done()
 
-	err := b.b.Commit(pebble.NoSync)
+	err := b.b.Commit(b.p.writeOptions)
 	if err != nil {
 		b.p.writeErrors.Inc()
 	}
