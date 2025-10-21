@@ -689,10 +689,6 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 				return
 			}
 
-			defer func() {
-				_ = it.Close()
-			}()
-
 			for ; it.Valid(); it.Next() {
 				if err = cb.OnNext(it.Key()); err != nil {
 					break
@@ -701,6 +697,8 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 					break
 				}
 			}
+
+			err = multierr.Combine(err, it.Close())
 			cb.OnComplete(err)
 		},
 	)
@@ -746,10 +744,6 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 				return
 			}
 
-			defer func() {
-				_ = it.Close()
-			}()
-
 			var gr *proto.GetResponse
 			for ; it.Valid(); it.Next() {
 				if gr, err = it.Value(); err != nil {
@@ -762,6 +756,8 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 					break
 				}
 			}
+
+			err = multierr.Combine(err, it.Close())
 			cb.OnComplete(err)
 		},
 	)
