@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
-	boltdb "github.com/hashicorp/raft-boltdb"
 	"github.com/magodo/slog2hclog"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/coordinator/model"
 )
@@ -93,9 +93,10 @@ func (*stateSnapshot) Release() {}
 type metadataProviderRaft struct {
 	sync.Mutex
 
-	sc   *stateContainer
-	raft *raft.Raft
-	log  *slog.Logger
+	sc    *stateContainer
+	raft  *raft.Raft
+	store *kvRaftStore
+	log   *slog.Logger
 }
 
 func (mpr *metadataProviderRaft) WaitToBecomeLeader() error {
@@ -140,26 +141,25 @@ func NewMetadataProviderRaft(
 		return nil, errors.Wrap(err, "failed to create raft transport")
 	}
 
+	// Create stable store and log store
+	mpr.store, err = newKVRaftStore(filepath.Join(dataDir, "store"))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create data store")
+	}
+
 	// Create snapshot store
-	snapshotStore, err := raft.NewFileSnapshotStore(dataDir, 2, os.Stderr)
+	snapshotStore, err := raft.NewFileSnapshotStoreWithLogger(dataDir, 2, config.Logger)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create snapshot store")
 	}
 
-	// Create BoltDB-based stable store and log store
-	boltDBPath := filepath.Join(dataDir, "raft.db")
-	store, err := boltdb.NewBoltStore(boltDBPath)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create bolt store")
-	}
-
 	// Create Raft node
-	mpr.raft, err = raft.NewRaft(config, mpr.sc, store, store, snapshotStore, transport)
+	mpr.raft, err = raft.NewRaft(config, mpr.sc, mpr.store, mpr.store, snapshotStore, transport)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create raft node")
 	}
 
-	if hasState, err := raft.HasExistingState(store, store, snapshotStore); err != nil {
+	if hasState, err := raft.HasExistingState(mpr.store, mpr.store, snapshotStore); err != nil {
 		return nil, errors.Wrap(err, "failed to check existing state")
 	} else if !hasState {
 		configuration := raft.Configuration{
@@ -186,7 +186,10 @@ func getRaftServers(bootstrapNodes []string) []raft.Server {
 }
 
 func (mpr *metadataProviderRaft) Close() error {
-	return mpr.raft.Shutdown().Error()
+	return multierr.Combine(
+		mpr.raft.Shutdown().Error(),
+		mpr.store.Close(),
+	)
 }
 
 func (mpr *metadataProviderRaft) Get() (cs *model.ClusterStatus, version Version, err error) {
