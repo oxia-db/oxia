@@ -77,12 +77,12 @@ func ConfigureLogger() {
 		Logger()
 
 	if !LogJSON {
-		writer := log.Output(zerolog.ConsoleWriter{
+		writer := zerolog.SyncWriter(zerolog.ConsoleWriter{
 			Out:        os.Stdout,
 			TimeFormat: time.StampMicro,
 		})
 
-		zerolog.New(zerolog.SyncWriter(writer))
+		zerologLogger = log.Output(writer)
 	}
 
 	slogLogger := slog.New(
