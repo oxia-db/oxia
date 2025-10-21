@@ -60,7 +60,7 @@ func (p *pebbleDbConversion) configForOldCompareHierarchical() *pebble.Options {
 	}
 }
 
-func (p *pebbleDbConversion) configForHierarchical() *pebble.Options {
+func (p *pebbleDbConversion) configForNewerFormat() *pebble.Options {
 	levelOptions := [7]pebble.LevelOptions{}
 	levelOptions[0] = pebble.LevelOptions{
 		BlockSize: 64 * 1024,
@@ -87,7 +87,7 @@ func (p *pebbleDbConversion) configForHierarchical() *pebble.Options {
 	}
 }
 
-func (p *pebbleDbConversion) checkConvertDB() error {
+func (p *pebbleDbConversion) checkConvertDB(desiredEncoding compare.Encoder) error {
 	if !pathExists(p.dbPath) {
 		// No db, nothing to do
 		return nil
@@ -106,17 +106,31 @@ func (p *pebbleDbConversion) checkConvertDB() error {
 		keyEncodingMarker = string(markerData)
 	}
 
+	if keyEncodingMarker == desiredEncoding.Name() {
+		// Format is already correct, nothing to do
+		return nil
+	}
+
 	switch keyEncodingMarker {
 	case keyEncodingFormatOldCompareHierarchical:
 		confOld := p.configForOldCompareHierarchical()
-		confNew := p.configForHierarchical()
+		confNew := p.configForNewerFormat()
 		return p.convertDb(
 			confOld, compare.EncoderNatural,
-			confNew, compare.EncoderHierarchical)
+			confNew, desiredEncoding)
 
-	case compare.EncoderHierarchical.Name():
-		// Format is already ok - noop
-		return nil
+	case compare.EncoderNatural.Name(),
+		compare.EncoderHierarchical.Name():
+		confOld := p.configForNewerFormat()
+		confNew := p.configForNewerFormat()
+		oldEncoder, err := compare.GetEncoder(keyEncodingMarker)
+		if err != nil {
+			return err
+		}
+
+		return p.convertDb(
+			confOld, oldEncoder,
+			confNew, desiredEncoding)
 	default:
 		p.log.Warn("Found unknown encoding type. No conversion performed",
 			slog.String("keyEncodingMarker", keyEncodingMarker))

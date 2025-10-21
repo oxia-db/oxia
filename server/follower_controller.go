@@ -27,6 +27,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/compare"
+
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
@@ -135,7 +137,8 @@ func NewFollowerController(config Config, namespace string, shardId int64, wf wa
 
 	fc.lastAppendedOffset = fc.wal.LastOffset()
 
-	if fc.db, err = kv.NewDB(namespace, shardId, kvFactory, config.NotificationsRetentionTime, time.SystemClock); err != nil {
+	if fc.db, err = kv.NewDB(namespace, shardId, kvFactory,
+		compare.EncoderHierarchical, config.NotificationsRetentionTime, time.SystemClock); err != nil {
 		return nil, err
 	}
 
@@ -275,7 +278,8 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 
 	if fc.db == nil {
 		var err error
-		if fc.db, err = kv.NewDB(fc.namespace, fc.shardId, fc.kvFactory, fc.config.NotificationsRetentionTime, time.SystemClock); err != nil {
+		if fc.db, err = kv.NewDB(fc.namespace, fc.shardId, fc.kvFactory,
+			compare.EncoderHierarchical, fc.config.NotificationsRetentionTime, time.SystemClock); err != nil {
 			return nil, errors.Wrapf(err, "failed to reopen database")
 		}
 	}
@@ -689,7 +693,7 @@ func (fc *followerController) handleSnapshot(stream proto.OxiaLogReplication_Sen
 	// We have received all the files for the database
 	loader.Complete()
 
-	newDb, err := kv.NewDB(fc.namespace, fc.shardId, fc.kvFactory, fc.config.NotificationsRetentionTime, time.SystemClock)
+	newDb, err := kv.NewDB(fc.namespace, fc.shardId, fc.kvFactory, compare.EncoderHierarchical, fc.config.NotificationsRetentionTime, time.SystemClock)
 	if err != nil {
 		fc.closeStreamNoMutex(errors.Wrap(err, "failed to open database after loading snapshot"))
 		return

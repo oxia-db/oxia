@@ -25,6 +25,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/compare"
+
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
@@ -413,7 +415,7 @@ func TestLeaderController_FenceTerm(t *testing.T) {
 		BaseWalDir: t.TempDir(),
 	})
 
-	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvFactory, 1*time.Hour, time2.SystemClock)
+	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvFactory, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 	// Force a new term in the DB before opening
 	assert.NoError(t, db.UpdateTerm(5, kv.TermOptions{}))
@@ -460,7 +462,7 @@ func TestLeaderController_BecomeLeaderTerm(t *testing.T) {
 		BaseWalDir: t.TempDir(),
 	})
 
-	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvFactory, 1*time.Hour, time2.SystemClock)
+	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvFactory, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 	// Force a new term in the DB before opening
 	assert.NoError(t, db.UpdateTerm(5, kv.TermOptions{}))
@@ -637,7 +639,7 @@ func TestLeaderController_AddFollower_Truncate(t *testing.T) {
 	// Prepare some data in the leader log & db
 	walObject, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
 	assert.NoError(t, err)
-	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvFactory, 1*time.Hour, time2.SystemClock)
+	db, err := kv.NewDB(constant.DefaultNamespace, shard, kvFactory, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 
 	for i := int64(0); i < 10; i++ {
