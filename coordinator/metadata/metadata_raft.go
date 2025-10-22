@@ -178,10 +178,14 @@ func (mpr *metadataProviderRaft) Store(cs *model.ClusterStatus, expectedVersion 
 
 	future := mpr.raft.Apply(serializedCmd, 30*time.Second)
 	if err := future.Error(); err != nil {
-		return NotExists, errors.Wrap(err, "failed to apply metadata provider")
+		return NotExists, errors.Wrap(err, "failed to apply new cluster state")
 	}
 
-	applyRes := future.Response().(*applyResult)
+	applyRes, ok := future.Response().(*applyResult)
+	if !ok {
+		return NotExists, errors.Wrap(err, "failed to apply new cluster state")
+	}
+
 	if !applyRes.changeApplied {
 		panic(ErrMetadataBadVersion)
 	}
