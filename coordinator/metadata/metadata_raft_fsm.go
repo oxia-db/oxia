@@ -27,19 +27,19 @@ import (
 
 type raftOpCmd struct {
 	NewState        *model.ClusterStatus `json:"new_state"`
-	ExpectedVersion uint64               `json:"expected_version"`
+	ExpectedVersion int64                `json:"expected_version"`
 }
 
 type stateContainer struct {
 	State          *model.ClusterStatus `json:"state"`
-	CurrentVersion uint64               `json:"current_version"`
+	CurrentVersion int64                `json:"current_version"`
 	log            *slog.Logger
 }
 
 func newStateContainer(log *slog.Logger) *stateContainer {
 	return &stateContainer{
-		State:          &model.ClusterStatus{},
-		CurrentVersion: 0,
+		State:          nil,
+		CurrentVersion: -1,
 		log:            log,
 	}
 }
@@ -57,8 +57,8 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 
 	if opCmd.ExpectedVersion != sc.CurrentVersion {
 		sc.log.Warn("Failed to apply raft state",
-			slog.Uint64("expected-version", opCmd.ExpectedVersion),
-			slog.Uint64("current-version", sc.CurrentVersion),
+			slog.Int64("expected-version", opCmd.ExpectedVersion),
+			slog.Int64("current-version", sc.CurrentVersion),
 			slog.Any("proposed-state", opCmd.NewState))
 
 		return &applyResult{changeApplied: false}
@@ -68,7 +68,7 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 	sc.CurrentVersion++
 
 	sc.log.Info("Applied raft log entry",
-		slog.Uint64("new-version", sc.CurrentVersion))
+		slog.Int64("new-version", sc.CurrentVersion))
 	return &applyResult{changeApplied: true, newVersion: sc.CurrentVersion}
 }
 
@@ -105,5 +105,5 @@ func (*stateContainer) Release() {}
 
 type applyResult struct {
 	changeApplied bool
-	newVersion    uint64
+	newVersion    int64
 }

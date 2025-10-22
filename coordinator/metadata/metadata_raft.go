@@ -134,12 +134,12 @@ func (mpr *metadataProviderRaft) Close() error {
 	)
 }
 
-func toVersion(v uint64) Version {
-	return Version(strconv.FormatUint(v, 10))
+func toVersion(v int64) Version {
+	return Version(strconv.FormatInt(v, 10))
 }
 
-func fromVersion(v Version) uint64 {
-	n, _ := strconv.ParseUint(string(v), 10, 64)
+func fromVersion(v Version) int64 {
+	n, _ := strconv.ParseInt(string(v), 10, 64)
 	return n
 }
 
