@@ -16,11 +16,11 @@ package metadata
 
 import (
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,64 +31,6 @@ import (
 
 	"github.com/oxia-db/oxia/coordinator/model"
 )
-
-var _ Provider = &metadataProviderRaft{}
-
-type stateContainer struct {
-	ClusterStatus *model.ClusterStatus `json:"clusterStatus"`
-	Version       Version              `json:"version"`
-}
-
-func newStateContainer() *stateContainer {
-	return &stateContainer{
-		ClusterStatus: nil,
-		Version:       NotExists,
-	}
-}
-
-// Apply applies a Raft log entry to the FSM.
-func (sc *stateContainer) Apply(logEntry *raft.Log) any {
-	// Each log entry contains the whole state
-	return json.Unmarshal(logEntry.Data, sc)
-}
-
-// Snapshot returns a snapshot of the FSM.
-func (sc *stateContainer) Snapshot() (raft.FSMSnapshot, error) {
-	return &stateSnapshot{
-		ClusterStatus: sc.ClusterStatus.Clone(),
-		Version:       sc.Version,
-	}, nil
-}
-
-// Restore stores the key-value pairs from a snapshot.
-func (sc *stateContainer) Restore(rc io.ReadCloser) error {
-	defer rc.Close()
-
-	dec := json.NewDecoder(rc)
-	return dec.Decode(sc)
-}
-
-type stateSnapshot struct {
-	ClusterStatus *model.ClusterStatus `json:"clusterStatus"`
-	Version       Version              `json:"version"`
-}
-
-func (s *stateSnapshot) Persist(sink raft.SnapshotSink) error {
-	value, err := json.Marshal(s)
-	if err != nil {
-		_ = sink.Cancel()
-		return err
-	}
-	if _, err := sink.Write(value); err != nil {
-		_ = sink.Cancel()
-		return err
-	}
-	return sink.Close()
-}
-
-func (*stateSnapshot) Release() {}
-
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type metadataProviderRaft struct {
 	sync.Mutex
@@ -110,7 +52,7 @@ func NewMetadataProviderRaft(
 	raftDataDir string,
 ) (Provider, error) {
 	mpr := &metadataProviderRaft{
-		sc:  newStateContainer(),
+		sc:  newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
 		log: slog.With(slog.String("component", "metadata-provider-raft")),
 	}
 
@@ -192,11 +134,23 @@ func (mpr *metadataProviderRaft) Close() error {
 	)
 }
 
+func toVersion(v int64) Version {
+	return Version(strconv.FormatInt(v, 10))
+}
+
+func fromVersion(v Version) int64 {
+	n, _ := strconv.ParseInt(string(v), 10, 64)
+	return n
+}
+
 func (mpr *metadataProviderRaft) Get() (cs *model.ClusterStatus, version Version, err error) {
 	mpr.Lock()
 	defer mpr.Unlock()
 
-	return mpr.sc.ClusterStatus, mpr.sc.Version, nil
+	mpr.log.Debug("Get metadata",
+		slog.Any("cluster-status", mpr.sc.State),
+		slog.Any("current-version", mpr.sc.CurrentVersion))
+	return mpr.sc.State, toVersion(mpr.sc.CurrentVersion), nil
 }
 
 func (mpr *metadataProviderRaft) Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error) {
@@ -207,25 +161,34 @@ func (mpr *metadataProviderRaft) Store(cs *model.ClusterStatus, expectedVersion 
 		return NotExists, err
 	}
 
-	if mpr.sc.Version != expectedVersion {
-		panic(ErrMetadataBadVersion)
+	mpr.log.Debug("Store into raft",
+		slog.Any("cluster-status", cs),
+		slog.Any("expected-version", expectedVersion),
+		slog.Any("current-version", mpr.sc.CurrentVersion))
+
+	cmd := raftOpCmd{
+		NewState:        cs.Clone(),
+		ExpectedVersion: fromVersion(expectedVersion),
 	}
 
-	newState := &stateContainer{
-		ClusterStatus: cs.Clone(),
-		Version:       incrVersion(mpr.sc.Version),
-	}
-
-	serialized, err := json.Marshal(newState)
+	serializedCmd, err := json.Marshal(cmd)
 	if err != nil {
 		return NotExists, err
 	}
 
-	future := mpr.raft.Apply(serialized, 30*time.Second)
+	future := mpr.raft.Apply(serializedCmd, 30*time.Second)
 	if err := future.Error(); err != nil {
-		return NotExists, errors.Wrap(err, "failed to apply metadata provider")
+		return NotExists, errors.Wrap(err, "failed to apply new cluster state")
 	}
 
-	mpr.sc = newState
-	return newState.Version, nil
+	applyRes, ok := future.Response().(*applyResult)
+	if !ok {
+		return NotExists, errors.Wrap(err, "failed to apply new cluster state")
+	}
+
+	if !applyRes.changeApplied {
+		panic(ErrMetadataBadVersion)
+	}
+
+	return toVersion(applyRes.newVersion), nil
 }

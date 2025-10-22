@@ -86,12 +86,10 @@ func ConfigureLogger() {
 				Stack().
 				Logger()
 		} else {
-			writer := log.Output(zerolog.ConsoleWriter{
+			zerologLogger = log.Output(zerolog.SyncWriter(zerolog.ConsoleWriter{
 				Out:        os.Stdout,
 				TimeFormat: time.StampMicro,
-			})
-
-			zerolog.New(zerolog.SyncWriter(writer))
+			}))
 		}
 	}
 

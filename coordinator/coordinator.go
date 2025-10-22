@@ -423,7 +423,6 @@ func NewCoordinator(meta metadata.Provider,
 		nodeControllers:       make(map[string]controllers.NodeController),
 		drainingNodes:         make(map[string]controllers.NodeController),
 		rpc:                   rpcProvider,
-		statusResource:        resources.NewStatusResource(meta),
 	}
 
 	// Ensure we are to become the leader coordinator
@@ -436,6 +435,8 @@ func NewCoordinator(meta metadata.Provider,
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
+
+	c.statusResource = resources.NewStatusResource(meta)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:               c.ctx,
