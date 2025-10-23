@@ -21,7 +21,8 @@ metadata:
   name: {{ .Release.Name }}
 spec:
   endpoints:
-    - port: metrics
+    - port: "8080"
+    - path: "/metrics"
   selector:
     matchLabels:
       {{- include "oxia-cluster.server.selectorLabels" . | nindent 6 }}
