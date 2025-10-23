@@ -1,4 +1,4 @@
-# Copyright 2023-2025 The Oxia Authors
+# Copyright 2023 StreamNative, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ metadata:
   name: {{ .Release.Name }}
 spec:
   endpoints:
-    - port: "8080"
     - path: "/metrics"
+      port: "{{ .Values.server.ports.metrics }}"
   selector:
     matchLabels:
       {{- include "oxia-cluster.server.selectorLabels" . | nindent 6 }}

@@ -21,8 +21,8 @@ metadata:
   name: {{ .Release.Name }}-coordinator
 spec:
   endpoints:
-    - port: "8080"
     - path: "/metrics"
+      port: "{{ .Values.coordinator.ports.metrics }}"
   selector:
     matchLabels:
       {{- include "oxia-cluster.coordinator.selectorLabels" . | nindent 6 }}
