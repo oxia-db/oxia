@@ -65,12 +65,6 @@ type swapNodeRequest struct {
 	res  chan error
 }
 
-type newTermAndAddFollowerRequest struct {
-	ctx  context.Context
-	node model.Server
-	res  chan error
-}
-
 var _ ShardController = &shardController{}
 
 // The ShardController is responsible to handle all the state transition for a given a shard
@@ -729,20 +723,6 @@ func (s *shardController) becomeLeader(leader model.Server, followers map[model.
 	}
 
 	timer.Done()
-	return nil
-}
-
-func (s *shardController) addFollower(leader model.Server, follower string, followerHeadEntryId *proto.EntryId) error {
-	if _, err := s.rpc.AddFollower(s.ctx, leader, &proto.AddFollowerRequest{
-		Namespace:           s.namespace,
-		Shard:               s.shard,
-		Term:                s.shardMetadata.Term,
-		FollowerName:        follower,
-		FollowerHeadEntryId: followerHeadEntryId,
-	}); err != nil {
-		return err
-	}
-
 	return nil
 }
 
