@@ -111,7 +111,7 @@ func (encoderNatural) Encode(key string) []byte {
 }
 
 func (encoderNatural) Decode(encoded []byte) string {
-	// Load is necessary because the []byte memory is managed by Pebble
+	// Copy is necessary because the []byte memory is managed by Pebble
 	// and will be released/overwritten when the iterator is closed
 	// or moved
 	return string(encoded)
