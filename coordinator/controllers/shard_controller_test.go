@@ -183,6 +183,9 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	s1 := model.Server{Public: "s1:9091", Internal: "s1:8191"}
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
+	n1 := rpc.GetNode(s1)
+	n2 := rpc.GetNode(s2)
+	n3 := rpc.GetNode(s3)
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
@@ -190,7 +193,6 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	configResource := resources.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
-	defer configResource.Close()
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
@@ -199,9 +201,12 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 		Ensemble: []model.Server{s1, s2, s3},
 	}, configResource, statusResource, nil, rpc)
 
-	rpc.GetNode(s1).expectNoMoreNewTermRequest(t)
-	rpc.GetNode(s2).expectNoMoreNewTermRequest(t)
-	rpc.GetNode(s3).expectNoMoreNewTermRequest(t)
+	n1.expectGetStatusRequest(t, shard)
+	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+
+	n1.expectNoMoreNewTermRequest(t)
+	n2.expectNoMoreNewTermRequest(t)
+	n3.expectNoMoreNewTermRequest(t)
 
 	assert.NoError(t, sc.Close())
 }
