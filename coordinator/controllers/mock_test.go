@@ -130,6 +130,7 @@ type mockPerNodeChannels struct {
 }
 
 const defaultTimeout = 10 * time.Second
+const defaultNegativeTimeout = 1 * time.Second
 
 func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int64, term int64, replicationFactor uint32) {
 	t.Helper()
@@ -159,6 +160,17 @@ func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, te
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
 	assert.Equal(t, notificationsEnabled, r.Options.EnableNotifications)
+}
+
+func (m *mockPerNodeChannels) expectNoMoreNewTermRequest(t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-m.newTermRequests:
+		assert.Fail(t, "should not have received any new term request")
+	case <-time.After(defaultNegativeTimeout):
+		// expected
+	}
 }
 
 func (m *mockPerNodeChannels) expectDeleteShardRequest(t *testing.T, shard int64, term int64) {
