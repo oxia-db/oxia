@@ -440,10 +440,9 @@ func (s *shardController) onSwap(from model.Server, to model.Server) {
 	}
 	newMeta := s.metadata.Compute(func(metadata *model.ShardMetadata) {
 		metadata.RemovedNodes = append(metadata.RemovedNodes, from)
-		filteredList := slices.DeleteFunc(metadata.Ensemble, func(s model.Server) bool {
+		metadata.Ensemble = append(slices.DeleteFunc(metadata.Ensemble, func(s model.Server) bool {
 			return s.GetIdentifier() == from.GetIdentifier()
-		})
-		metadata.Ensemble = append(filteredList, to)
+		}), to)
 	})
 	s.Info(
 		"Swapping node",
