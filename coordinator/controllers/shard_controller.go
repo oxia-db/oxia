@@ -49,12 +49,6 @@ const (
 	chanBufferSize = 100
 )
 
-type swapNodeRequest struct {
-	from model.Server
-	to   model.Server
-	res  chan error
-}
-
 var _ ShardController = &shardController{}
 
 // The ShardController is responsible to handle all the state transition for a given a shard
