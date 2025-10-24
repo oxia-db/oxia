@@ -211,7 +211,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}
 }
 
-func TestBalanceWithoutDataLost(t *testing.T) {
+func TestBalanceWithoutDeadlock(t *testing.T) {
 	// init 3 nodes
 	s1, s1ad := mock.NewServer(t, "sv-1")
 	defer s1.Close()
