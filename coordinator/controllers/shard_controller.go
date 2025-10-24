@@ -182,15 +182,16 @@ func NewShardController(
 		slog.Any("shard-metadata", s.shardMetadata),
 	)
 
-	s.wg.Add(1)
-	go process.DoWithLabels(
-		s.ctx,
-		map[string]string{
-			"oxia":      "shard-controller",
-			"namespace": s.namespace,
-			"shard":     fmt.Sprintf("%d", s.shard),
-		}, s.run,
-	)
+	s.wg.Go(func() {
+		process.DoWithLabels(
+			s.ctx,
+			map[string]string{
+				"oxia":      "shard-controller",
+				"namespace": s.namespace,
+				"shard":     fmt.Sprintf("%d", s.shard),
+			}, s.run,
+		)
+	})
 
 	return s
 }
@@ -204,7 +205,6 @@ func (s *shardController) Election(action *actions.ElectionAction) string {
 }
 
 func (s *shardController) run() {
-	defer s.wg.Done()
 	// Do initial check or leader election
 	switch {
 	case s.shardMetadata.Status == model.ShardStatusDeleting:
