@@ -15,10 +15,13 @@
 package balancer
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+	"github.com/oxia-db/oxia/oxia"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/coordinator/model"
@@ -204,6 +207,89 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 			if name != "ns-3" {
 				assert.Equal(t, 3, nodeZones.Size())
 			}
+		}
+	}
+}
+
+func TestBalanceWithoutDataLost(t *testing.T) {
+	// init 3 nodes
+	s1, s1ad := mock.NewServer(t, "sv-1")
+	defer s1.Close()
+	s2, s2ad := mock.NewServer(t, "sv-2")
+	defer s2.Close()
+	s3, s3ad := mock.NewServer(t, "sv-3")
+	defer s3.Close()
+	s4, s4ad := mock.NewServer(t, "sv-4")
+	defer s4.Close()
+	s5, s5ad := mock.NewServer(t, "sv-5")
+	defer s5.Close()
+	s6, s6ad := mock.NewServer(t, "sv-5")
+	defer s6.Close()
+
+	// config
+	cc := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{
+			{
+				Name:              "ns-1",
+				InitialShardCount: 3,
+				ReplicationFactor: 3,
+			},
+			{
+				Name:              "ns-2",
+				InitialShardCount: 3,
+				ReplicationFactor: 3,
+			},
+			{
+				Name:              "ns-3",
+				InitialShardCount: 3,
+				ReplicationFactor: 3,
+			},
+		},
+		Servers: []model.Server{s1ad, s2ad, s3ad},
+	}
+	ch := make(chan any, 1)
+	coordinator := mock.NewCoordinator(t, &cc, ch)
+	defer coordinator.Close()
+
+	statusResource := coordinator.StatusResource()
+	configResource := coordinator.ConfigResource()
+	assert.Eventually(t, func() bool {
+		return statusResource.IsReady(configResource.Load())
+	}, 60*time.Second, 1*time.Second)
+
+	namespaces := []string{"ns-1", "ns-2", "ns-3"}
+
+	for _, namespace := range namespaces {
+		client, err := oxia.NewSyncClient(s1ad.Public, oxia.WithNamespace(namespace))
+		assert.NoError(t, err)
+		for i := 0; i < 1000; i++ {
+			_, _, err := client.Put(context.Background(), fmt.Sprintf("key-%d", i), []byte(fmt.Sprintf("value-%d", i)))
+			assert.NoError(t, err)
+		}
+	}
+
+	cc.Servers = append(cc.Servers, s4ad, s5ad, s6ad)
+	ch <- struct{}{}
+
+	assert.Eventually(t, func() bool {
+		_, exist := configResource.Node(s4ad.GetIdentifier())
+		return exist
+	}, 60*time.Second, 1*time.Second)
+
+	balancer := coordinator.LoadBalancer()
+	assert.Eventually(t, func() bool {
+		balancer.Trigger()
+		return balancer.IsBalanced()
+	}, 60*time.Second, 1*time.Second)
+
+	for _, namespace := range namespaces {
+		client, err := oxia.NewSyncClient(s1ad.Public, oxia.WithNamespace(namespace))
+		assert.NoError(t, err)
+		for i := 0; i < 1000; i++ {
+			expectedValue := []byte(fmt.Sprintf("value-%d", i))
+			_, value, _, err := client.Get(context.Background(), fmt.Sprintf("key-%d", i))
+			assert.NoError(t, err)
+			assert.EqualValues(t, expectedValue, value)
 		}
 	}
 }

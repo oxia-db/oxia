@@ -17,8 +17,9 @@ package actions
 type Type string
 
 const (
-	SwapNode Type = "swap-node"
-	Election Type = "election"
+	SwapNode   Type = "swap-node"
+	Election   Type = "election"
+	DeleteType      = "delete"
 )
 
 type Action interface {

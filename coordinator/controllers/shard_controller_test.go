@@ -117,7 +117,7 @@ func TestShardController(t *testing.T) {
 	}, configResource, statusResource, nil, rpc)
 
 	// Shard controller should initiate a leader election
-	// and newTerm each server
+	// and fenceNewTerm each server
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
@@ -199,11 +199,11 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 
 	select {
 	case <-rpc.GetNode(s1).newTermRequests:
-		assert.Fail(t, "shouldn't have received any newTerm requests")
+		assert.Fail(t, "shouldn't have received any fenceNewTerm requests")
 	case <-rpc.GetNode(s2).newTermRequests:
-		assert.Fail(t, "shouldn't have received any newTerm requests")
+		assert.Fail(t, "shouldn't have received any fenceNewTerm requests")
 	case <-rpc.GetNode(s3).newTermRequests:
-		assert.Fail(t, "shouldn't have received any newTerm requests")
+		assert.Fail(t, "shouldn't have received any fenceNewTerm requests")
 
 	case <-time.After(1 * time.Second):
 		// Ok
@@ -240,7 +240,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 
 	// Shard controller should initiate a leader election
-	// and newTerm each server
+	// and fenceNewTerm each server
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	// s3 is not responding
@@ -425,7 +425,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	}, configResource, statusResource, nil, rpc)
 
 	// Shard controller should initiate a leader election
-	// and newTerm each server
+	// and fenceNewTerm each server
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
