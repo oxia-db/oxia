@@ -356,7 +356,8 @@ func (s *shardController) eventLoop(metadataSnapshot *model.ShardMetadata) {
 			s.onSwap(op.From, op.To)
 			op.Done(nil)
 		case op := <-s.electionOp:
-			op.Done(s.election())
+			election := s.election()
+			op.Done(election.GetIdentifier())
 		case <-deleteRemovedTimer.C:
 			currentMetadata := s.metadata.Load()
 			if len(currentMetadata.RemovedNodes) == 0 {
@@ -404,7 +405,7 @@ func (s *shardController) election() model.Server {
 	if nsConfig, exist := s.configResource.NamespaceConfig(s.namespace); exist {
 		enableNotification = nsConfig.NotificationsEnabled
 	}
-	s.currentElection = CreateNewElection(s.Context, s.Logger,
+	s.currentElection = CreateNewElection(s.Context, s.Logger, s.eventListener,
 		s.statusResource, s.configResource, s.leaderSelector,
 		s.provider, &s.metadata, s.namespace, s.shard,
 		&proto.NewTermOptions{EnableNotifications: enableNotification.Get()},

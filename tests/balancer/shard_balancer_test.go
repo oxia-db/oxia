@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/stretchr/testify/assert"
 
@@ -209,6 +210,12 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 			}
 		}
 	}
+}
+
+func init() {
+	process.PprofEnable = true
+	process.PprofBindAddress = "127.0.0.1:6060"
+	process.RunProfiling()
 }
 
 func TestBalanceWithoutDataLost(t *testing.T) {

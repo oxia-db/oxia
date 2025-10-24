@@ -273,12 +273,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 	}
 	// Identify failed followers
 	group := sync.WaitGroup{}
-	keepFencingContext, keepFencingContextCancel := context.WithCancel(e.Context)
-	defer func() {
-		keepFencingContextCancel()
-		group.Wait()
-	}()
-
+	defer group.Wait()
 	for _, follower := range ensemble {
 		if follower == *leader {
 			continue
@@ -290,7 +285,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 
 		group.Add(1)
 		go process.DoWithLabels(
-			keepFencingContext,
+			e.Context,
 			map[string]string{
 				"oxia":     "shard-controller-retry-failed-follower",
 				"shard":    fmt.Sprintf("%d", e.shard),
@@ -299,7 +294,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 			func() {
 				defer group.Done()
 				_ = backoff.RetryNotify(func() error {
-					if err := e.fenceNewTermAndAddFollower(keepFencingContext, term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
+					if err := e.fenceNewTermAndAddFollower(e.Context, term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
 						// If we're receiving invalid term error, it would mean
 						// there's already a new term generated, and we don't have
 						// to keep trying with this old term
@@ -312,7 +307,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 					} else {
 						return err
 					}
-				}, oxiatime.NewBackOffWithInitialInterval(keepFencingContext, 1*time.Second), func(err error, duration time.Duration) {
+				}, oxiatime.NewBackOffWithInitialInterval(e.Context, 1*time.Second), func(err error, duration time.Duration) {
 					e.Logger.Warn(
 						"Failed to fenceNewTermAndAddFollower, retrying later",
 						slog.Any("error", err),
@@ -401,9 +396,10 @@ func (e *Election) Stop() {
 	e.Info("stop the election", slog.Int64("term", e.meta.Term()))
 }
 
-func CreateNewElection(ctx context.Context, logger *slog.Logger, statusResource resources.StatusResource,
-	configResource resources.ClusterConfigResource, leaderSelector selectors.Selector[*leaderselector.Context, model.Server],
-	provider rpc.Provider, metadata *Metadata, namespace string, shard int64, termOptions *proto.NewTermOptions,
+func CreateNewElection(ctx context.Context, logger *slog.Logger, eventListener ShardEventListener,
+	statusResource resources.StatusResource, configResource resources.ClusterConfigResource,
+	leaderSelector selectors.Selector[*leaderselector.Context, model.Server], provider rpc.Provider,
+	metadata *Metadata, namespace string, shard int64, termOptions *proto.NewTermOptions,
 	leaderElectionLatency metric.LatencyHistogram, newTermQuorumLatency metric.LatencyHistogram,
 	becomeLeaderLatency metric.LatencyHistogram, leaderElectionsFailed metric.Counter) *Election {
 	current, cancelFunc := context.WithCancel(ctx)
@@ -414,6 +410,7 @@ func CreateNewElection(ctx context.Context, logger *slog.Logger, statusResource 
 		CancelFunc:            cancelFunc,
 		statusResource:        statusResource,
 		configResource:        configResource,
+		eventListener:         eventListener,
 		leaderSelector:        leaderSelector,
 		meta:                  metadata,
 		provider:              provider,
