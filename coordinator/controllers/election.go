@@ -45,16 +45,14 @@ type Election struct {
 	provider       rpc.Provider
 	meta           *Metadata
 	// owned status
-	namespace        string
-	shard            int64
-	termOptions      *proto.NewTermOptions
-	ensemble         []model.Server
-	removedCandidate []model.Server
+	namespace   string
+	shard       int64
+	termOptions *proto.NewTermOptions
 }
 
-func (e *Election) refreshedEnsemble() []model.Server {
-	refreshedEnsembleNodeAddress := make([]model.Server, len(e.ensemble))
-	for idx, candidate := range e.ensemble {
+func (e *Election) refreshedEnsemble(ensemble []model.Server) []model.Server {
+	refreshedEnsembleNodeAddress := make([]model.Server, len(ensemble))
+	for idx, candidate := range ensemble {
 		if refreshedAddress, exist := e.configResource.Node(candidate.GetIdentifier()); exist {
 			refreshedEnsembleNodeAddress[idx] = *refreshedAddress
 			continue
@@ -62,19 +60,19 @@ func (e *Election) refreshedEnsemble() []model.Server {
 		refreshedEnsembleNodeAddress[idx] = candidate
 	}
 	if e.Logger.Enabled(e.Context, slog.LevelDebug) {
-		if !reflect.DeepEqual(e.ensemble, refreshedEnsembleNodeAddress) {
-			e.Logger.Info("refresh the shard ensemble node address", slog.Any("current-ensemble", e.ensemble),
+		if !reflect.DeepEqual(ensemble, refreshedEnsembleNodeAddress) {
+			e.Logger.Info("refresh the shard ensemble node address", slog.Any("current-ensemble", ensemble),
 				slog.Any("new-ensemble", refreshedEnsembleNodeAddress))
 		}
 	}
 	return refreshedEnsembleNodeAddress
 }
 
-func (e *Election) fenceNewTerm(ctx context.Context, node model.Server) (*proto.EntryId, error) {
+func (e *Election) fenceNewTerm(ctx context.Context, term int64, node model.Server) (*proto.EntryId, error) {
 	res, err := e.provider.NewTerm(ctx, node, &proto.NewTermRequest{
 		Namespace: e.namespace,
 		Shard:     e.shard,
-		Term:      e.meta.Term(),
+		Term:      term,
 		Options:   e.termOptions,
 	})
 	if err != nil {
@@ -86,10 +84,10 @@ func (e *Election) fenceNewTerm(ctx context.Context, node model.Server) (*proto.
 
 // Send NewTerm to all the ensemble members in parallel and wait for
 // a majority of them to reply successfully.
-func (e *Election) fenceNewTermQuorum() (map[model.Server]*proto.EntryId, error) {
+func (e *Election) fenceNewTermQuorum(term int64, ensemble []model.Server, removedCandidates []model.Server) (map[model.Server]*proto.EntryId, error) {
 	fenceQuorumTimer := e.newTermQuorumLatency.Timer()
 
-	fencingNodes := slices.Concat(e.ensemble, e.removedCandidate)
+	fencingNodes := slices.Concat(ensemble, removedCandidates)
 	fencingQuorumSize := len(fencingNodes)
 	majority := fencingQuorumSize/2 + 1
 
@@ -122,7 +120,7 @@ func (e *Election) fenceNewTermQuorum() (map[model.Server]*proto.EntryId, error)
 			}, func() {
 				defer latch.Done()
 
-				entryId, err := e.fenceNewTerm(fencingContext, pinedServer)
+				entryId, err := e.fenceNewTerm(fencingContext, term, pinedServer)
 				if err != nil {
 					e.Logger.Warn("Failed to fenceNewTerm node", slog.Any("error", err), slog.Any("node", pinedServer))
 				} else {
@@ -149,7 +147,7 @@ func (e *Election) fenceNewTermQuorum() (map[model.Server]*proto.EntryId, error)
 		if fencingResponse.error == nil {
 			successResponses++
 			// We don't consider the removed nodes as candidates for leader/followers
-			if slices.Contains(e.ensemble, fencingResponse.Server) {
+			if slices.Contains(ensemble, fencingResponse.Server) {
 				res[fencingResponse.Server] = fencingResponse.EntryId
 			}
 		} else {
@@ -216,7 +214,7 @@ func (e *Election) selectNewLeader(candidatesStatus map[model.Server]*proto.Entr
 	return leader, followers
 }
 
-func (e *Election) becomeLeader(leader model.Server, followers map[model.Server]*proto.EntryId) error {
+func (e *Election) becomeLeader(term int64, leader model.Server, followers map[model.Server]*proto.EntryId, replicationFactor uint32) error {
 	becomeLeaderTimer := e.becomeLeaderLatency.Timer()
 
 	followersMap := make(map[string]*proto.EntryId)
@@ -226,8 +224,8 @@ func (e *Election) becomeLeader(leader model.Server, followers map[model.Server]
 	if _, err := e.provider.BecomeLeader(e.Context, leader, &proto.BecomeLeaderRequest{
 		Namespace:         e.namespace,
 		Shard:             e.shard,
-		Term:              e.meta.Term(),
-		ReplicationFactor: uint32(len(e.ensemble)),
+		Term:              term,
+		ReplicationFactor: replicationFactor,
 		FollowerMaps:      followersMap,
 	}); err != nil {
 		return err
@@ -237,8 +235,8 @@ func (e *Election) becomeLeader(leader model.Server, followers map[model.Server]
 	return nil
 }
 
-func (e *Election) fenceNewTermAndAddFollower(ctx context.Context, leader model.Server, follower model.Server) error {
-	fr, err := e.fenceNewTerm(ctx, follower)
+func (e *Election) fenceNewTermAndAddFollower(ctx context.Context, term int64, leader model.Server, follower model.Server) error {
+	fr, err := e.fenceNewTerm(ctx, 0, follower)
 	if err != nil {
 		return err
 	}
@@ -246,7 +244,7 @@ func (e *Election) fenceNewTermAndAddFollower(ctx context.Context, leader model.
 	if _, err := e.provider.AddFollower(ctx, leader, &proto.AddFollowerRequest{
 		Namespace:    e.namespace,
 		Shard:        e.shard,
-		Term:         e.meta.Term(),
+		Term:         term,
 		FollowerName: follower.Internal,
 		FollowerHeadEntryId: &proto.EntryId{
 			Term:   fr.Term,
@@ -264,11 +262,12 @@ func (e *Election) fenceNewTermAndAddFollower(ctx context.Context, leader model.
 	return nil
 }
 
-func (e *Election) fencingFailedFollowers(leader *model.Server, successfulFollowers map[model.Server]*proto.EntryId) {
-	if len(successfulFollowers) == len(e.ensemble)-1 {
+func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, leader *model.Server,
+	successfulFollowers map[model.Server]*proto.EntryId) {
+	if len(successfulFollowers) == len(ensemble)-1 {
 		e.Logger.Debug(
 			"All the member of the ensemble were successfully added",
-			slog.Int64("term", e.meta.Term()),
+			slog.Int64("term", term),
 		)
 		return
 	}
@@ -280,7 +279,7 @@ func (e *Election) fencingFailedFollowers(leader *model.Server, successfulFollow
 		group.Wait()
 	}()
 
-	for _, follower := range e.ensemble {
+	for _, follower := range ensemble {
 		if follower == *leader {
 			continue
 		}
@@ -300,14 +299,14 @@ func (e *Election) fencingFailedFollowers(leader *model.Server, successfulFollow
 			func() {
 				defer group.Done()
 				_ = backoff.RetryNotify(func() error {
-					if err := e.fenceNewTermAndAddFollower(keepFencingContext, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
+					if err := e.fenceNewTermAndAddFollower(keepFencingContext, term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
 						// If we're receiving invalid term error, it would mean
 						// there's already a new term generated, and we don't have
 						// to keep trying with this old term
 						e.Logger.Warn(
 							"Failed to fenceNewTermAndAddFollower, invalid term. Stop trying",
 							slog.Any("follower", follower),
-							slog.Int64("term", e.meta.Term()),
+							slog.Int64("term", term),
 						)
 						return nil
 					} else {
@@ -318,7 +317,7 @@ func (e *Election) fencingFailedFollowers(leader *model.Server, successfulFollow
 						"Failed to fenceNewTermAndAddFollower, retrying later",
 						slog.Any("error", err),
 						slog.Any("follower", follower),
-						slog.Int64("term", e.meta.Term()),
+						slog.Int64("term", term),
 						slog.Duration("retry-after", duration),
 					)
 				})
@@ -333,12 +332,12 @@ func (e *Election) start() (model.Server, error) {
 		metadata.Status = model.ShardStatusElection
 		metadata.Leader = nil
 		metadata.Term++
-		metadata.Ensemble = e.refreshedEnsemble()
+		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
 	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, newMeta)
 
 	// Send NewTerm to all the ensemble members
-	candidatesStatus, err := e.fenceNewTermQuorum()
+	candidatesStatus, err := e.fenceNewTermQuorum(newMeta.Term, newMeta.Ensemble, newMeta.RemovedNodes)
 	if err != nil {
 		return model.Server{}, err
 	}
@@ -356,12 +355,12 @@ func (e *Election) start() (model.Server, error) {
 		}
 		e.Logger.Info(
 			"Successfully moved ensemble to a new term",
-			slog.Int64("term", e.meta.Term()),
+			slog.Int64("term", newMeta.Term),
 			slog.Any("new-leader", newLeader),
 			slog.Any("followers", f),
 		)
 	}
-	if err = e.becomeLeader(newLeader, followers); err != nil {
+	if err = e.becomeLeader(newMeta.Term, newLeader, followers, uint32(len(newMeta.Ensemble))); err != nil {
 		return model.Server{}, err
 	}
 	newMeta.Status = model.ShardStatusSteadyState
@@ -373,11 +372,11 @@ func (e *Election) start() (model.Server, error) {
 	}
 	e.Logger.Info(
 		"Elected new leader",
-		slog.Int64("term", e.meta.Term()),
+		slog.Int64("term", newMeta.Term),
 		slog.Any("leader", newMeta.Leader),
 	)
 	timer.Done()
-	e.fencingFailedFollowers(newMeta.Leader, followers)
+	e.fencingFailedFollowers(newMeta.Term, newMeta.Ensemble, newMeta.Leader, followers)
 	return newLeader, nil
 }
 
