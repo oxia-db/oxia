@@ -199,17 +199,9 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 		Ensemble: []model.Server{s1, s2, s3},
 	}, configResource, statusResource, nil, rpc)
 
-	select {
-	case <-rpc.GetNode(s1).newTermRequests:
-		assert.Fail(t, "shouldn't have received any newTerm requests")
-	case <-rpc.GetNode(s2).newTermRequests:
-		assert.Fail(t, "shouldn't have received any newTerm requests")
-	case <-rpc.GetNode(s3).newTermRequests:
-		assert.Fail(t, "shouldn't have received any newTerm requests")
-
-	case <-time.After(1 * time.Second):
-		// Ok
-	}
+	rpc.GetNode(s1).expectNoMoreNewTermRequest(t)
+	rpc.GetNode(s2).expectNoMoreNewTermRequest(t)
+	rpc.GetNode(s3).expectNoMoreNewTermRequest(t)
 
 	assert.NoError(t, sc.Close())
 }
@@ -351,47 +343,21 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 		Ensemble: []model.Server{s1, s2, s3},
 	}, configResource, statusResource, nil, rpc)
 
-	r1 := <-n1.getStatusRequests
-	assert.EqualValues(t, 5, r1.Shard)
-	n1.getStatusResponses <- struct {
-		*proto.GetStatusResponse
-		error
-	}{&proto.GetStatusResponse{
-		Term:   4,
-		Status: proto.ServingStatus_LEADER,
-	}, nil}
+	n1.expectGetStatusRequest(t, 5)
+	n1.GetStatusResponse(4, proto.ServingStatus_LEADER, 0, 0)
 
-	r2 := <-n2.getStatusRequests
-	assert.EqualValues(t, 5, r2.Shard)
-	n2.getStatusResponses <- struct {
-		*proto.GetStatusResponse
-		error
-	}{&proto.GetStatusResponse{
-		Term:   4,
-		Status: proto.ServingStatus_FOLLOWER,
-	}, nil}
+	n2.expectGetStatusRequest(t, 5)
+	n2.GetStatusResponse(4, proto.ServingStatus_FOLLOWER, 0, 0)
 
 	// The `s3` server was not properly fenced and it's stuck term 3
 	// It needs to be fenced again
-	r3 := <-n3.getStatusRequests
-	assert.EqualValues(t, 5, r3.Shard)
-	n3.getStatusResponses <- struct {
-		*proto.GetStatusResponse
-		error
-	}{&proto.GetStatusResponse{
-		Term:   3,
-		Status: proto.ServingStatus_FOLLOWER,
-	}, nil}
+	n3.expectGetStatusRequest(t, 5)
+	n3.GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 0, 0)
 
 	// This should have triggered a new election, since s3 was in the wrong term
-	nt1 := <-n1.newTermRequests
-	assert.EqualValues(t, 5, nt1.Term)
-
-	nt2 := <-n2.newTermRequests
-	assert.EqualValues(t, 5, nt2.Term)
-
-	nt3 := <-n3.newTermRequests
-	assert.EqualValues(t, 5, nt3.Term)
+	n1.expectNewTermRequest(t, shard, 5, true)
+	n2.expectNewTermRequest(t, shard, 5, true)
+	n3.expectNewTermRequest(t, shard, 5, true)
 
 	assert.NoError(t, sc.Close())
 }
