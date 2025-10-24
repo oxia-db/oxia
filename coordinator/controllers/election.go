@@ -236,7 +236,7 @@ func (e *Election) becomeLeader(term int64, leader model.Server, followers map[m
 }
 
 func (e *Election) fenceNewTermAndAddFollower(ctx context.Context, term int64, leader model.Server, follower model.Server) error {
-	fr, err := e.fenceNewTerm(ctx, 0, follower)
+	fr, err := e.fenceNewTerm(ctx, term, follower)
 	if err != nil {
 		return err
 	}
@@ -321,7 +321,77 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 	}
 }
 
+func (e *Election) ensureFollowerCaught() {
+	metadata := e.meta.Load()
+	if metadata.Leader == nil {
+		return
+	}
+	// Wait until all followers are caught up.
+	// This is done to avoid doing multiple node-swap concurrently, since it would create
+	// additional load in the system, while transferring multiple DB snapshots.
+	// Get current head offset for leader
+	leaderResponse, err := backoff.RetryNotifyWithData[*proto.GetStatusResponse](func() (*proto.GetStatusResponse, error) {
+		return e.provider.GetStatus(e.Context, *metadata.Leader, &proto.GetStatusRequest{Shard: e.shard})
+	}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {
+		e.Warn("Failed to get status from leader.",
+			slog.Any("error", err), slog.Any("retry-after", duration))
+	})
+	if err != nil {
+		e.Info("Abort node swap leader status validation due to context canceled", slog.Any("error", err))
+		return
+	}
+
+	leaderHeadOffset := leaderResponse.HeadOffset
+
+	waitGroup := sync.WaitGroup{}
+	for _, server := range metadata.Ensemble {
+		if server.GetIdentifier() == metadata.Leader.GetIdentifier() {
+			continue
+		}
+		waitGroup.Add(1)
+		go process.DoWithLabels(
+			e.Context,
+			map[string]string{
+				"oxia":      "shard-caught-up-monitor",
+				"namespace": e.namespace,
+				"shard":     fmt.Sprintf("%d", e.shard),
+			}, func() {
+				defer waitGroup.Done()
+				err = backoff.RetryNotify(func() error {
+					fs, err := e.provider.GetStatus(e.Context, server, &proto.GetStatusRequest{Shard: e.shard})
+					if err != nil {
+						return err
+					}
+					followerHeadOffset := fs.HeadOffset
+					if followerHeadOffset >= leaderHeadOffset {
+						e.Info(
+							"Follower is caught-up with the leader after node-swap",
+							slog.Any("server", server),
+						)
+						return nil
+					}
+					e.Info(
+						"Follower is *not* caught-up yet with the leader",
+						slog.Any("server", server),
+						slog.Int64("leader-head-offset", leaderHeadOffset),
+						slog.Int64("follower-head-offset", followerHeadOffset),
+					)
+					return errors.New("follower not caught up yet")
+				}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {
+					e.Warn("Failed to get the follower status. ", slog.Any("error", err.Error()), slog.Any("retry-after", duration))
+				})
+				if err != nil {
+					e.Info("Abort node swap follower status validation due to context canceled", slog.Any("error", err))
+					return
+				}
+			})
+	}
+	waitGroup.Wait()
+	return
+}
+
 func (e *Election) start() (model.Server, error) {
+	e.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
 	newMeta := e.meta.Compute(func(metadata *model.ShardMetadata) {
 		metadata.Status = model.ShardStatusElection
@@ -371,7 +441,10 @@ func (e *Election) start() (model.Server, error) {
 		slog.Any("leader", newMeta.Leader),
 	)
 	timer.Done()
+
 	e.fencingFailedFollowers(newMeta.Term, newMeta.Ensemble, newMeta.Leader, followers)
+
+	e.ensureFollowerCaught()
 	return newLeader, nil
 }
 
@@ -393,7 +466,7 @@ func (e *Election) Start() model.Server {
 func (e *Election) Stop() {
 	e.CancelFunc()
 	e.Wait()
-	e.Info("stop the election", slog.Int64("term", e.meta.Term()))
+	e.Info("stopped the election", slog.Any("term", e.meta.Term()))
 }
 
 func CreateNewElection(ctx context.Context, logger *slog.Logger, eventListener ShardEventListener,

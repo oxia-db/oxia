@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
-	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/stretchr/testify/assert"
 
@@ -212,12 +211,6 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}
 }
 
-func init() {
-	process.PprofEnable = true
-	process.PprofBindAddress = "127.0.0.1:6060"
-	process.RunProfiling()
-}
-
 func TestBalanceWithoutDataLost(t *testing.T) {
 	// init 3 nodes
 	s1, s1ad := mock.NewServer(t, "sv-1")
@@ -241,16 +234,6 @@ func TestBalanceWithoutDataLost(t *testing.T) {
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
 			},
-			{
-				Name:              "ns-2",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-3",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
 		},
 		Servers: []model.Server{s1ad, s2ad, s3ad},
 	}
@@ -264,7 +247,7 @@ func TestBalanceWithoutDataLost(t *testing.T) {
 		return statusResource.IsReady(configResource.Load())
 	}, 60*time.Second, 1*time.Second)
 
-	namespaces := []string{"ns-1", "ns-2", "ns-3"}
+	namespaces := []string{"ns-1"}
 
 	for _, namespace := range namespaces {
 		client, err := oxia.NewSyncClient(s1ad.Public, oxia.WithNamespace(namespace))

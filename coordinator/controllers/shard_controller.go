@@ -28,7 +28,6 @@ import (
 	"github.com/oxia-db/oxia/coordinator/actions"
 	"github.com/oxia-db/oxia/coordinator/selectors"
 	leaderselector "github.com/oxia-db/oxia/coordinator/selectors/leader"
-	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/coordinator/resources"
 
@@ -218,12 +217,10 @@ func NewShardController(
 
 func (s *shardController) Election(action *actions.ElectionAction) {
 	s.electionOp <- action
-	action.Waiter.Wait()
 }
 
 func (s *shardController) Swap(action *actions.SwapNodeAction) {
 	s.swapNodeOp <- action
-	action.Waiter.Wait()
 }
 
 func (s *shardController) Delete() {
@@ -368,6 +365,11 @@ func (s *shardController) eventLoop(metadataSnapshot *model.ShardMetadata) {
 			deleteRemovedBackoff.Reset()
 			deleteRemovedTimer.Reset(deleteRemovedBackoff.NextBackOff())
 			s.onDelete(currentMetadata.RemovedNodes)
+			// reset removed nodes
+			newMeta := s.metadata.Compute(func(metadata *model.ShardMetadata) {
+				metadata.RemovedNodes = make([]model.Server, 0)
+			})
+			s.statusResource.UpdateShardMetadata(s.namespace, s.shard, newMeta)
 		}
 	}
 }
@@ -433,77 +435,22 @@ func (s *shardController) onNodeFailure(failedNode model.Server) {
 }
 
 func (s *shardController) onSwap(from model.Server, to model.Server) {
-	metadataSnapshot := s.metadata.Load()
-	s.Info(
-		"Swapping node",
-		slog.Any("removed-nodes", metadataSnapshot.RemovedNodes),
-		slog.Any("new-ensemble", metadataSnapshot.Ensemble),
-		slog.Any("from", from),
-		slog.Any("to", to),
-	)
-	s.metadata.Compute(func(metadata *model.ShardMetadata) {
+	newMeta := s.metadata.Compute(func(metadata *model.ShardMetadata) {
 		metadata.RemovedNodes = append(metadata.RemovedNodes, from)
 		filteredList := slices.DeleteFunc(metadata.Ensemble, func(s model.Server) bool {
 			return s.GetIdentifier() == from.GetIdentifier()
 		})
 		metadata.Ensemble = append(filteredList, to)
 	})
+	s.Info(
+		"Swapping node",
+		slog.Any("removed-nodes", newMeta.RemovedNodes),
+		slog.Any("new-ensemble", newMeta.Ensemble),
+		slog.Any("from", from),
+		slog.Any("to", to),
+	)
 
-	newLeader := s.election()
-
-	newMetadataSnapshot := s.metadata.Load()
-	// Wait until all followers are caught up.
-	// This is done to avoid doing multiple node-swap concurrently, since it would create
-	// additional load in the system, while transferring multiple DB snapshots.
-	// Get current head offset for leader
-	leaderResponse, _ := backoff.RetryNotifyWithData[*proto.GetStatusResponse](func() (*proto.GetStatusResponse, error) {
-		return s.provider.GetStatus(s.Context, newLeader, &proto.GetStatusRequest{Shard: s.shard})
-	}, oxiatime.NewBackOff(s.Context), func(err error, duration time.Duration) {
-		s.Warn("Failed to get status from leader.",
-			slog.Any("error", err), slog.Any("retry-after", duration))
-	})
-	leaderHeadOffset := leaderResponse.HeadOffset
-
-	waitGroup := sync.WaitGroup{}
-	for _, server := range newMetadataSnapshot.Ensemble {
-		if server.GetIdentifier() == newLeader.GetIdentifier() {
-			continue
-		}
-		waitGroup.Add(1)
-		go process.DoWithLabels(
-			s.Context,
-			map[string]string{
-				"oxia":      "shard-caught-up-monitor",
-				"namespace": s.namespace,
-				"shard":     fmt.Sprintf("%d", s.shard),
-			}, func() {
-				defer waitGroup.Done()
-				_ = backoff.RetryNotify(func() error {
-					fs, err := s.provider.GetStatus(s.Context, server, &proto.GetStatusRequest{Shard: s.shard})
-					if err != nil {
-						return err
-					}
-					followerHeadOffset := fs.HeadOffset
-					if followerHeadOffset >= leaderHeadOffset {
-						s.Info(
-							"Follower is caught-up with the leader after node-swap",
-							slog.Any("server", server),
-						)
-						return nil
-					}
-					s.Info(
-						"Follower is *not* caught-up yet with the leader",
-						slog.Any("server", server),
-						slog.Int64("leader-head-offset", leaderHeadOffset),
-						slog.Int64("follower-head-offset", followerHeadOffset),
-					)
-					return errors.New("follower not caught up yet")
-				}, oxiatime.NewBackOff(s.Context), func(err error, duration time.Duration) {
-					s.Warn("failed to get the follower status. ", slog.Any("error", err), slog.Any("retry-after", duration))
-				})
-			})
-	}
-	waitGroup.Wait()
+	s.election()
 
 	s.Info("Successfully swapped node, All the followers are caught up after node-swap",
 		slog.Any("from", from), slog.Any("to", to))
