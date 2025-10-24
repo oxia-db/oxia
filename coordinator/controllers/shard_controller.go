@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+
 	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/coordinator/actions"
 	"github.com/oxia-db/oxia/coordinator/selectors"
@@ -393,7 +394,7 @@ func (s *shardController) onDelete(ensemble []model.Server) {
 		}
 		return nil
 	}, oxiatime.NewBackOff(s.Context), func(err error, duration time.Duration) {
-		s.Logger.Warn("Delete shard failed, retrying later", slog.Duration("retry-after", duration), slog.Any("error", err))
+		s.Warn("Delete shard failed, retrying later", slog.Duration("retry-after", duration), slog.Any("error", err))
 	})
 }
 

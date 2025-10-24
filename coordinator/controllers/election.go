@@ -23,6 +23,12 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
+	"golang.org/x/exp/maps"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc/status"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
@@ -33,11 +39,6 @@ import (
 	"github.com/oxia-db/oxia/coordinator/selectors"
 	leaderselector "github.com/oxia-db/oxia/coordinator/selectors/leader"
 	"github.com/oxia-db/oxia/proto"
-	"github.com/pkg/errors"
-	"go.uber.org/multierr"
-	"golang.org/x/exp/maps"
-	"golang.org/x/net/context"
-	"google.golang.org/grpc/status"
 )
 
 type Election struct {
@@ -72,9 +73,9 @@ func (e *Election) refreshedEnsemble(ensemble []model.Server) []model.Server {
 		}
 		refreshedEnsembleNodeAddress[idx] = candidate
 	}
-	if e.Logger.Enabled(e.Context, slog.LevelDebug) {
+	if e.Enabled(e.Context, slog.LevelDebug) {
 		if !reflect.DeepEqual(ensemble, refreshedEnsembleNodeAddress) {
-			e.Logger.Info("refresh the shard ensemble node address", slog.Any("current-ensemble", ensemble),
+			e.Info("refresh the shard ensemble node address", slog.Any("current-ensemble", ensemble),
 				slog.Any("new-ensemble", refreshedEnsembleNodeAddress))
 		}
 	}
@@ -133,9 +134,9 @@ func (e *Election) fenceNewTermQuorum(term int64, ensemble []model.Server, remov
 				}, func() {
 					entryId, err := e.fenceNewTerm(fencingContext, term, pinedServer)
 					if err != nil {
-						e.Logger.Warn("Failed to fenceNewTerm node", slog.Any("error", err), slog.Any("node", pinedServer))
+						e.Warn("Failed to fenceNewTerm node", slog.Any("error", err), slog.Any("node", pinedServer))
 					} else {
-						e.Logger.Info("Processed fenceNewTerm response", slog.Any("node", pinedServer), slog.Any("entry-id", entryId))
+						e.Info("Processed fenceNewTerm response", slog.Any("node", pinedServer), slog.Any("entry-id", entryId))
 					}
 					ch <- struct {
 						model.Server
@@ -270,7 +271,7 @@ func (e *Election) fenceNewTermAndAddFollower(ctx context.Context, term int64, l
 		return err
 	}
 
-	e.Logger.Info(
+	e.Info(
 		"Successfully rejoined the quorum",
 		slog.Any("follower", follower),
 		slog.Int64("term", fr.Term),
@@ -281,7 +282,7 @@ func (e *Election) fenceNewTermAndAddFollower(ctx context.Context, term int64, l
 func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, leader *model.Server,
 	successfulFollowers map[model.Server]*proto.EntryId) {
 	if len(successfulFollowers) == len(ensemble)-1 {
-		e.Logger.Debug(
+		e.Debug(
 			"All the member of the ensemble were successfully added",
 			slog.Int64("term", term),
 		)
@@ -297,7 +298,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 		if _, found := successfulFollowers[follower]; found {
 			continue
 		}
-		e.Logger.Info("Node has failed in leader election, retrying", slog.Any("follower", follower))
+		e.Info("Node has failed in leader election, retrying", slog.Any("follower", follower))
 
 		group.Add(1)
 		go process.DoWithLabels(
@@ -315,7 +316,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 						// If we're receiving invalid term error, it would mean
 						// there's already a new term generated, and we don't have
 						// to keep trying with this old term
-						e.Logger.Warn(
+						e.Warn(
 							"Failed to fenceNewTermAndAddFollower, invalid term. Stop trying",
 							slog.Any("follower", follower),
 							slog.Int64("term", term),
@@ -324,7 +325,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 					}
 					return err
 				}, oxiatime.NewBackOffWithInitialInterval(e.Context, 1*time.Second), func(err error, duration time.Duration) {
-					e.Logger.Warn(
+					e.Warn(
 						"Failed to fenceNewTermAndAddFollower, retrying later",
 						slog.Any("error", err),
 						slog.Any("follower", follower),
@@ -337,7 +338,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 	}
 }
 
-// EnsureFollowerCaught Must be called before we change ensemble to avoid any potential data lost
+// EnsureFollowerCaught Must be called before we change ensemble to avoid any potential data lost.
 func (e *Election) EnsureFollowerCaught() {
 	metadata := e.meta.Load()
 	if metadata.Leader == nil {
@@ -423,7 +424,7 @@ func (e *Election) start() (model.Server, error) {
 		return model.Server{}, err
 	}
 	newLeader, followers := e.selectNewLeader(candidatesStatus)
-	if e.Logger.Enabled(context.Background(), slog.LevelInfo) {
+	if e.Enabled(context.Background(), slog.LevelInfo) {
 		f := make([]struct {
 			ServerAddress model.Server   `json:"server-address"`
 			EntryId       *proto.EntryId `json:"entry-id"`
@@ -434,7 +435,7 @@ func (e *Election) start() (model.Server, error) {
 				EntryId       *proto.EntryId `json:"entry-id"`
 			}{ServerAddress: sa, EntryId: entryId})
 		}
-		e.Logger.Info(
+		e.Info(
 			"Successfully moved ensemble to a new term",
 			slog.Int64("term", newMeta.Term),
 			slog.Any("new-leader", newLeader),
@@ -451,14 +452,14 @@ func (e *Election) start() (model.Server, error) {
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
 	}
-	e.Logger.Info(
+	e.Info(
 		"Elected new leader",
 		slog.Int64("term", newMeta.Term),
 		slog.Any("leader", newMeta.Leader),
 	)
 	timer.Done()
 
-	e.WaitGroup.Go(func() {
+	e.Go(func() {
 		process.DoWithLabels(
 			e.Context,
 			map[string]string{
@@ -477,7 +478,7 @@ func (e *Election) Start() model.Server {
 		return e.start()
 	}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {
 		e.leaderElectionsFailed.Inc()
-		e.Logger.Warn(
+		e.Warn(
 			"Leader election has failed, retrying later",
 			slog.Int64("term", e.meta.Term()),
 			slog.Any("error", err),
