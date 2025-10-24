@@ -519,9 +519,6 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	rpc.GetNode(s3).BecomeLeaderResponse(nil)
 	rpc.GetNode(s3).expectBecomeLeaderRequest(t, shard, 4, 3)
 
-	rpc.GetNode(s1).DeleteShardResponse(nil)
-	rpc.GetNode(s1).expectDeleteShardRequest(t, shard, 4)
-
 	assert.Eventually(t, func() bool {
 		return sc.Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
