@@ -24,7 +24,9 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 
 	commonio "github.com/oxia-db/oxia/common/io"
 
@@ -182,11 +184,13 @@ func (n *nodeController) sendAssignmentsDispatchWithRetries() {
 			}
 		}
 	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {
-		n.Warn(
-			"Failed to send assignments updates to storage node",
-			slog.Duration("retry-after", duration),
-			slog.Any("error", err),
-		)
+		if !errors.Is(err, context.Canceled) {
+			n.Warn(
+				"Failed to send assignments updates to storage node",
+				slog.Duration("retry-after", duration),
+				slog.Any("error", err),
+			)
+		}
 	})
 }
 
@@ -270,7 +274,9 @@ func (n *nodeController) becomeUnavailable() {
 
 func (n *nodeController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
-		n.Warn("Node health check failed", slog.Any("error", err))
+		if !errors.Is(err, context.Canceled) && status.Code(err) != codes.Canceled {
+			n.Warn("Node health check failed", slog.Any("error", err))
+		}
 		return err
 	}
 	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
