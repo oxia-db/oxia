@@ -31,13 +31,6 @@ import (
 	"github.com/oxia-db/oxia/proto"
 )
 
-var namespaceConfig = &model.NamespaceConfig{
-	Name:                 "my-namespace",
-	InitialShardCount:    1,
-	ReplicationFactor:    3,
-	NotificationsEnabled: entity.OptBooleanDefaultTrue{},
-}
-
 func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
 	tests := []struct {
 		name           string

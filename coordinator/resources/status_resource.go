@@ -212,7 +212,6 @@ func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
 				return false
 			}
 		}
-
 	}
 	return true
 }

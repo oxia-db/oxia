@@ -310,6 +310,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 			func() {
 				defer group.Done()
 				_ = backoff.RetryNotify(func() error {
+					var err error
 					if err := e.fenceNewTermAndAddFollower(e.Context, term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
 						// If we're receiving invalid term error, it would mean
 						// there's already a new term generated, and we don't have
@@ -320,9 +321,8 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 							slog.Int64("term", term),
 						)
 						return nil
-					} else {
-						return err
 					}
+					return err
 				}, oxiatime.NewBackOffWithInitialInterval(e.Context, 1*time.Second), func(err error, duration time.Duration) {
 					e.Logger.Warn(
 						"Failed to fenceNewTermAndAddFollower, retrying later",
@@ -404,7 +404,6 @@ func (e *Election) EnsureFollowerCaught() {
 			})
 	}
 	waitGroup.Wait()
-	return
 }
 
 func (e *Election) start() (model.Server, error) {
@@ -469,7 +468,6 @@ func (e *Election) start() (model.Server, error) {
 				e.fencingFailedFollowers(newMeta.Term, newMeta.Ensemble, newMeta.Leader, followers)
 			},
 		)
-
 	})
 	return newLeader, nil
 }
@@ -495,6 +493,7 @@ func (e *Election) Stop() {
 	e.Info("stopped the election", slog.Any("term", e.meta.Term()))
 }
 
+//nolint:revive
 func CreateNewElection(ctx context.Context, logger *slog.Logger, eventListener ShardEventListener,
 	statusResource resources.StatusResource, configResource resources.ClusterConfigResource,
 	leaderSelector selectors.Selector[*leaderselector.Context, model.Server], provider rpc.Provider,
