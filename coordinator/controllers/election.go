@@ -24,12 +24,11 @@ import (
 	"golang.org/x/exp/maps"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/status"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 type Election struct {
 	*slog.Logger
-	wait.Group
+	sync.WaitGroup
 	context.Context
 	context.CancelFunc
 	// metrics
@@ -110,29 +109,28 @@ func (e *Election) fenceNewTermQuorum(term int64, ensemble []model.Server, remov
 	for _, server := range fencingNodes {
 		// We need to save the address because it gets modified in the eventLoop
 		pinedServer := server
-		latch.Add(1)
-		go process.DoWithLabels(
-			fencingContext,
-			map[string]string{
-				"oxia":  "shard-controller-leader-election",
-				"shard": fmt.Sprintf("%d", e.shard),
-				"node":  pinedServer.GetIdentifier(),
-			}, func() {
-				defer latch.Done()
-
-				entryId, err := e.fenceNewTerm(fencingContext, term, pinedServer)
-				if err != nil {
-					e.Logger.Warn("Failed to fenceNewTerm node", slog.Any("error", err), slog.Any("node", pinedServer))
-				} else {
-					e.Logger.Info("Processed fenceNewTerm response", slog.Any("node", pinedServer), slog.Any("entry-id", entryId))
-				}
-				ch <- struct {
-					model.Server
-					*proto.EntryId
-					error
-				}{pinedServer, entryId, err}
-			},
-		)
+		latch.Go(func() {
+			process.DoWithLabels(
+				fencingContext,
+				map[string]string{
+					"oxia":  "election-fence-new-term",
+					"shard": fmt.Sprintf("%d", e.shard),
+					"node":  pinedServer.GetIdentifier(),
+				}, func() {
+					entryId, err := e.fenceNewTerm(fencingContext, term, pinedServer)
+					if err != nil {
+						e.Logger.Warn("Failed to fenceNewTerm node", slog.Any("error", err), slog.Any("node", pinedServer))
+					} else {
+						e.Logger.Info("Processed fenceNewTerm response", slog.Any("node", pinedServer), slog.Any("entry-id", entryId))
+					}
+					ch <- struct {
+						model.Server
+						*proto.EntryId
+						error
+					}{pinedServer, entryId, err}
+				},
+			)
+		})
 	}
 	successResponses := 0
 	totalResponses := 0
@@ -287,7 +285,7 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 		go process.DoWithLabels(
 			e.Context,
 			map[string]string{
-				"oxia":     "shard-controller-retry-failed-follower",
+				"oxia":     "election-retry-failed-follower",
 				"shard":    fmt.Sprintf("%d", e.shard),
 				"follower": follower.GetIdentifier(),
 			},
@@ -321,7 +319,8 @@ func (e *Election) fencingFailedFollowers(term int64, ensemble []model.Server, l
 	}
 }
 
-func (e *Election) ensureFollowerCaught() {
+// EnsureFollowerCaught Must be called before we change ensemble to avoid any potential data lost
+func (e *Election) EnsureFollowerCaught() {
 	metadata := e.meta.Load()
 	if metadata.Leader == nil {
 		return
@@ -442,9 +441,18 @@ func (e *Election) start() (model.Server, error) {
 	)
 	timer.Done()
 
-	e.fencingFailedFollowers(newMeta.Term, newMeta.Ensemble, newMeta.Leader, followers)
+	e.WaitGroup.Go(func() {
+		process.DoWithLabels(
+			e.Context,
+			map[string]string{
+				"oxia":  "election-fencing-failed-followers",
+				"shard": fmt.Sprintf("%d", e.shard),
+			}, func() {
+				e.fencingFailedFollowers(newMeta.Term, newMeta.Ensemble, newMeta.Leader, followers)
+			},
+		)
 
-	e.ensureFollowerCaught()
+	})
 	return newLeader, nil
 }
 
@@ -478,7 +486,7 @@ func CreateNewElection(ctx context.Context, logger *slog.Logger, eventListener S
 	current, cancelFunc := context.WithCancel(ctx)
 	return &Election{
 		Logger:                logger,
-		Group:                 wait.Group{},
+		WaitGroup:             sync.WaitGroup{},
 		Context:               current,
 		CancelFunc:            cancelFunc,
 		statusResource:        statusResource,

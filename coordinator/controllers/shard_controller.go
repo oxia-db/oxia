@@ -435,6 +435,9 @@ func (s *shardController) onNodeFailure(failedNode model.Server) {
 }
 
 func (s *shardController) onSwap(from model.Server, to model.Server) {
+	if s.currentElection != nil {
+		s.currentElection.EnsureFollowerCaught()
+	}
 	newMeta := s.metadata.Compute(func(metadata *model.ShardMetadata) {
 		metadata.RemovedNodes = append(metadata.RemovedNodes, from)
 		filteredList := slices.DeleteFunc(metadata.Ensemble, func(s model.Server) bool {
