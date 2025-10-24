@@ -882,10 +882,9 @@ func (s *shardController) swapNode(from model.Server, to model.Server, res chan 
 		slog.Any("from", from),
 		slog.Any("to", to),
 	)
-	if _, err := s.electLeader(); err != nil {
-		res <- err
-		return
-	}
+
+	// Wait until we can re-establish a leader with the new ensemble
+	s.electLeaderWithRetries(nil)
 
 	leader := s.shardMetadata.Leader
 	ensemble := s.shardMetadata.Ensemble

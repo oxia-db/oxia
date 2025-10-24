@@ -149,6 +149,15 @@ func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, te
 	assert.Equal(t, notificationsEnabled, r.Options.EnableNotifications)
 }
 
+func (m *mockPerNodeChannels) expectDeleteShardRequest(t *testing.T, shard int64, term int64) {
+	t.Helper()
+
+	r := <-m.deleteShardRequests
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+}
+
 func (m *mockPerNodeChannels) expectAddFollowerRequest(t *testing.T, shard int64, term int64) {
 	t.Helper()
 
@@ -175,6 +184,13 @@ func (m *mockPerNodeChannels) BecomeLeaderResponse(err error) {
 		*proto.BecomeLeaderResponse
 		error
 	}{&proto.BecomeLeaderResponse{}, err}
+}
+
+func (m *mockPerNodeChannels) DeleteShardResponse(err error) {
+	m.deleteShardResponses <- struct {
+		*proto.DeleteShardResponse
+		error
+	}{&proto.DeleteShardResponse{}, err}
 }
 
 func (m *mockPerNodeChannels) AddFollowerResponse(err error) {
@@ -204,6 +220,11 @@ func newMockPerNodeChannels() *mockPerNodeChannels {
 		addFollowerRequests: make(chan *proto.AddFollowerRequest, 100),
 		addFollowerResponses: make(chan struct {
 			*proto.AddFollowerResponse
+			error
+		}, 100),
+		deleteShardRequests: make(chan *proto.DeleteShardRequest, 100),
+		deleteShardResponses: make(chan struct {
+			*proto.DeleteShardResponse
 			error
 		}, 100),
 		shardAssignmentsStream: newMockShardAssignmentClient(),

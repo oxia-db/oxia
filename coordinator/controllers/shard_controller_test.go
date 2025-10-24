@@ -21,6 +21,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/concurrent"
+
 	"github.com/oxia-db/oxia/coordinator/metadata"
 	"github.com/oxia-db/oxia/coordinator/resources"
 
@@ -435,6 +437,96 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	rpc.GetNode(s1).expectNewTermRequest(t, shard, 2, false)
 	rpc.GetNode(s2).expectNewTermRequest(t, shard, 2, false)
 	rpc.GetNode(s3).expectNewTermRequest(t, shard, 2, false)
+
+	assert.NoError(t, sc.Close())
+}
+
+func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
+	var shard int64 = 5
+	rpc := newMockRpcProvider()
+
+	s1 := model.Server{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
+
+	meta := metadata.NewMetadataProviderMemory()
+	defer meta.Close()
+
+	statusResource := resources.NewStatusResource(meta)
+	configResource := resources.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
+		return model.ClusterConfig{}, nil
+	}, nil, nil)
+	defer configResource.Close()
+
+	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+		Status:   model.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []model.Server{s1, s2, s3},
+	}, configResource, statusResource, nil, rpc)
+
+	// Do initial election
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+
+	rpc.GetNode(s1).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).expectNewTermRequest(t, shard, 2, true)
+
+	// s1 should be selected as new leader, without waiting for s3 to timeout
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
+
+	assert.Eventually(t, func() bool {
+		return sc.Status() == model.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 2, sc.Term())
+	assert.NotNil(t, sc.Leader())
+	assert.Equal(t, s1, *sc.Leader())
+
+	wg := concurrent.NewWaitGroup(1)
+
+	wg.Go(func() error {
+		return sc.SwapNode(s1, s4)
+	})
+
+	// First leader election before swap will fail
+	rpc.GetNode(s1).NewTermResponse(2, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(2, -1, errors.New("fails"))
+	rpc.GetNode(s3).NewTermResponse(2, -1, errors.New("fails"))
+	rpc.GetNode(s4).NewTermResponse(2, 0, nil)
+
+	rpc.GetNode(s1).expectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s2).expectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s3).expectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s4).expectNewTermRequest(t, shard, 3, true)
+
+	// Shard controller should retry and eventually succeed
+	rpc.GetNode(s1).NewTermResponse(2, 2, nil)
+	rpc.GetNode(s2).NewTermResponse(2, -1, errors.New("fails"))
+	rpc.GetNode(s3).NewTermResponse(2, 1, nil)
+	rpc.GetNode(s4).NewTermResponse(2, 0, nil)
+
+	rpc.GetNode(s1).expectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s2).expectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s3).expectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s4).expectNewTermRequest(t, shard, 4, true)
+
+	// s3 should be selected as new leader
+	rpc.GetNode(s3).BecomeLeaderResponse(nil)
+	rpc.GetNode(s3).expectBecomeLeaderRequest(t, shard, 4, 3)
+
+	rpc.GetNode(s1).DeleteShardResponse(nil)
+	rpc.GetNode(s1).expectDeleteShardRequest(t, shard, 4)
+
+	assert.Eventually(t, func() bool {
+		return sc.Status() == model.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 4, sc.Term())
+	assert.NotNil(t, sc.Leader())
+	assert.Equal(t, s3, *sc.Leader())
 
 	assert.NoError(t, sc.Close())
 }
