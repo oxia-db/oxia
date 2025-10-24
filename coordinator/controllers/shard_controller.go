@@ -346,6 +346,8 @@ func (s *shardController) eventLoop(metadataSnapshot *model.ShardMetadata) {
 		case op := <-s.deleteOp:
 			currentMeta := s.metadata.Load()
 			s.onDelete(slices.Concat(currentMeta.Ensemble, currentMeta.RemovedNodes))
+			s.statusResource.DeleteShardMetadata(s.namespace, s.shard)
+			s.eventListener.ShardDeleted(s.shard)
 			op.Done(nil)
 		case op := <-s.nodeFailureOp:
 			s.onNodeFailure(op)
@@ -389,8 +391,6 @@ func (s *shardController) onDelete(ensemble []model.Server) {
 			}
 			s.Info("Successfully deleted shard from node", slog.Any("server-address", server))
 		}
-		s.statusResource.DeleteShardMetadata(s.namespace, s.shard)
-		s.eventListener.ShardDeleted(s.shard)
 		return nil
 	}, oxiatime.NewBackOff(s.Context), func(err error, duration time.Duration) {
 		s.Logger.Warn("Delete shard failed, retrying later", slog.Duration("retry-after", duration), slog.Any("error", err))
