@@ -55,6 +55,8 @@ const (
 	catchupTimeout = 5 * time.Minute
 
 	chanBufferSize = 100
+
+	DefaultPeriodicTasksInterval = 1 * time.Minute
 )
 
 type swapNodeRequest struct {
@@ -109,9 +111,10 @@ type shardController struct {
 	swapNodeOp              chan swapNodeRequest
 	newTermAndAddFollowerOp chan newTermAndAddFollowerRequest
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     *sync.WaitGroup
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	wg                    *sync.WaitGroup
+	periodicTasksInterval time.Duration
 
 	currentElectionCtx    context.Context
 	currentElectionCancel context.CancelFunc
@@ -136,7 +139,8 @@ func NewShardController(
 	configResource resources.ClusterConfigResource,
 	statusResource resources.StatusResource,
 	eventListener ShardEventListener,
-	rpcProvider rpc.Provider) ShardController {
+	rpcProvider rpc.Provider,
+	periodTasksInterval time.Duration) ShardController {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &shardController{
 		namespace:               namespace,
@@ -153,6 +157,7 @@ func NewShardController(
 		nodeFailureOp:           make(chan model.Server, chanBufferSize),
 		swapNodeOp:              make(chan swapNodeRequest, chanBufferSize),
 		newTermAndAddFollowerOp: make(chan newTermAndAddFollowerRequest, chanBufferSize),
+		periodicTasksInterval:   periodTasksInterval,
 		log: slog.With(
 			slog.String("component", "shard-controller"),
 			slog.String("namespace", namespace),
@@ -229,6 +234,8 @@ func (s *shardController) run() {
 		slog.Any("leader", s.shardMetadata.Leader),
 	)
 
+	periodicTasksTimer := time.NewTicker(s.periodicTasksInterval)
+
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -242,6 +249,9 @@ func (s *shardController) run() {
 
 		case sw := <-s.swapNodeOp:
 			s.swapNode(sw.from, sw.to, sw.res)
+
+		case <-periodicTasksTimer.C:
+			s.handlePeriodicTasks()
 
 		case a := <-s.newTermAndAddFollowerOp:
 			s.internalNewTermAndAddFollower(a.ctx, a.node, a.res)
@@ -365,7 +375,7 @@ func (s *shardController) electLeader() (string, error) {
 	// Send NewTerm to all the ensemble members
 	fr, err := s.newTermQuorum()
 	if err != nil {
-		return "", err
+		return "", errors.Wrap(err, "Failed to create new term quorum")
 	}
 
 	newLeader, followers := s.selectNewLeader(fr)
@@ -390,20 +400,14 @@ func (s *shardController) electLeader() (string, error) {
 	}
 
 	if err = s.becomeLeader(newLeader, followers); err != nil {
-		return "", err
+		return "", errors.Wrapf(err, "failed to become leader for node %s", newLeader.GetIdentifier())
 	}
 
 	metadata := s.shardMetadata.Clone()
 	metadata.Status = model.ShardStatusSteadyState
+	metadata.PendingDeleteShardNodes = metadata.RemovedNodes
+	metadata.RemovedNodes = nil
 	metadata.Leader = &newLeader
-
-	if len(metadata.RemovedNodes) > 0 {
-		if err = s.deletingRemovedNodes(); err != nil {
-			return "", err
-		}
-
-		metadata.RemovedNodes = nil
-	}
 
 	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, metadata)
 
@@ -443,25 +447,6 @@ func (s *shardController) getRefreshedEnsemble() []model.Server {
 		}
 	}
 	return refreshedEnsembleServiceAddress
-}
-
-func (s *shardController) deletingRemovedNodes() error {
-	for _, ds := range s.shardMetadata.RemovedNodes {
-		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
-			Namespace: s.namespace,
-			Shard:     s.shard,
-			Term:      s.shardMetadata.Term,
-		}); err != nil {
-			return err
-		}
-
-		s.log.Info(
-			"Successfully deleted shard",
-			slog.Any("server", ds),
-		)
-	}
-
-	return nil
 }
 
 func (s *shardController) keepFencingFailedFollowers(successfulFollowers map[model.Server]*proto.EntryId) {
@@ -871,7 +856,11 @@ func (s *shardController) SwapNode(from model.Server, to model.Server) error {
 
 func (s *shardController) swapNode(from model.Server, to model.Server, res chan error) {
 	s.shardMetadataMutex.Lock()
-	s.shardMetadata.RemovedNodes = append(s.shardMetadata.RemovedNodes, from)
+	s.shardMetadata.RemovedNodes = listAddUnique(s.shardMetadata.RemovedNodes, from)
+
+	// A node might get re-added to the ensemble after it was swapped out and be in
+	// pending delete state. We don't want a background task to attempt deletion anymore
+	s.shardMetadata.PendingDeleteShardNodes = listRemove(s.shardMetadata.PendingDeleteShardNodes, to)
 	s.shardMetadata.Ensemble = replaceInList(s.shardMetadata.Ensemble, from, to)
 	s.shardMetadataMutex.Unlock()
 
@@ -942,7 +931,7 @@ func (s *shardController) waitForFollowersToCatchUp(ctx context.Context, leader 
 	// Get current head offset for leader
 	ls, err := s.rpc.GetStatus(ctx, leader, &proto.GetStatusRequest{Shard: s.shard})
 	if err != nil {
-		return errors.Wrap(err, "failed to get leader status")
+		return errors.Wrapf(err, "failed to get leader status from %s", leader.GetIdentifier())
 	}
 
 	leaderHeadOffset := ls.HeadOffset
@@ -957,7 +946,7 @@ func (s *shardController) waitForFollowersToCatchUp(ctx context.Context, leader 
 		}, time2.NewBackOff(ctx))
 
 		if err != nil {
-			return errors.Wrap(err, "failed to get the follower status")
+			return errors.Wrapf(err, "failed to get the follower status from %s", server.GetIdentifier())
 		}
 	}
 
@@ -982,6 +971,65 @@ func (s *shardController) SyncServerAddress() {
 	}
 	s.log.Info("server address changed, start a new leader election")
 	s.electionOp <- nil
+}
+
+func (s *shardController) handlePeriodicTasks() {
+	s.shardMetadataMutex.Lock()
+	metadata := s.shardMetadata.Clone()
+	s.shardMetadataMutex.Unlock()
+
+	if len(metadata.PendingDeleteShardNodes) > 0 {
+		var err error
+		if metadata, err = s.handlePendingDeleteShardNodes(metadata); err != nil {
+			s.log.Warn("Failed to handle pending delete shard nodes", "error", err)
+			return
+		}
+	}
+
+	// Update the shard status
+	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, metadata)
+
+	s.shardMetadataMutex.Lock()
+	s.shardMetadata = metadata
+	s.shardMetadataMutex.Unlock()
+}
+
+func (s *shardController) handlePendingDeleteShardNodes(metadata model.ShardMetadata) (model.ShardMetadata, error) {
+	for _, ds := range s.shardMetadata.PendingDeleteShardNodes {
+		s.log.Info("Deleting shard from removed node", "node", ds)
+
+		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
+			Namespace: s.namespace,
+			Shard:     s.shard,
+			Term:      s.shardMetadata.Term,
+		}); err != nil {
+			s.log.Warn("Failed to delete shard from removed node", "node", ds, "error", err)
+			return metadata, err
+		}
+
+		s.log.Info("Successfully deleted shard from node", "node", ds)
+	}
+
+	metadata.PendingDeleteShardNodes = nil
+	return metadata, nil
+}
+
+// listAddUnique Adds a server to the list if it's not already there
+func listAddUnique(list []model.Server, sa model.Server) []model.Server {
+	if !listContains(list, sa) {
+		list = append(list, sa)
+	}
+	return list
+}
+
+func listRemove(list []model.Server, toRemove model.Server) []model.Server {
+	for i, item := range list {
+		if item.GetIdentifier() == toRemove.GetIdentifier() {
+			return append(list[:i], list[i+1:]...)
+		}
+	}
+
+	return list
 }
 
 func listContains(list []model.Server, sa model.Server) bool {

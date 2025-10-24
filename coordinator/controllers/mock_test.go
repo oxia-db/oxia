@@ -189,6 +189,19 @@ func (m *mockPerNodeChannels) expectAddFollowerRequest(t *testing.T, shard int64
 	assert.Equal(t, term, r.Term)
 }
 
+func (m *mockPerNodeChannels) expectGetStatusRequest(t *testing.T, shard int64) {
+	t.Helper()
+
+	var r *proto.GetStatusRequest
+	select {
+	case r = <-m.getStatusRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive GetStatus request in time")
+	}
+
+	assert.Equal(t, shard, r.Shard)
+}
+
 func (m *mockPerNodeChannels) NewTermResponse(term int64, offset int64, err error) {
 	m.newTermResponses <- struct {
 		*proto.NewTermResponse
@@ -199,6 +212,19 @@ func (m *mockPerNodeChannels) NewTermResponse(term int64, offset int64, err erro
 			Offset: offset,
 		},
 	}, err}
+}
+
+func (m *mockPerNodeChannels) GetStatusResponse(term int64, status proto.ServingStatus,
+	headOffset int64, commitOffset int64) {
+	m.getStatusResponses <- struct {
+		*proto.GetStatusResponse
+		error
+	}{&proto.GetStatusResponse{
+		Term:         term,
+		Status:       status,
+		HeadOffset:   headOffset,
+		CommitOffset: commitOffset,
+	}, nil}
 }
 
 func (m *mockPerNodeChannels) BecomeLeaderResponse(err error) {
