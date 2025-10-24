@@ -491,7 +491,7 @@ func TestPebbleSnapshot(t *testing.T) {
 		s, err := kv.Snapshot()
 		assert.NoError(t, err)
 
-		// Load the snapshot to a new directory
+		// Copy the snapshot to a new directory
 		assert.NoError(t, os.MkdirAll(copiedLocationDbPath, 0755))
 
 		for ; s.Valid(); s.Next() {
