@@ -1461,7 +1461,7 @@ var file_replication_proto_depIdxs = []int32{
 	8,  // 11: replication.OxiaCoordination.BecomeLeader:input_type -> replication.BecomeLeaderRequest
 	9,  // 12: replication.OxiaCoordination.AddFollower:input_type -> replication.AddFollowerRequest
 	19, // 13: replication.OxiaCoordination.GetStatus:input_type -> replication.GetStatusRequest
-	17, // 14: replication.OxiaCoordination.Delete:input_type -> replication.DeleteShardRequest
+	17, // 14: replication.OxiaCoordination.DeleteShard:input_type -> replication.DeleteShardRequest
 	12, // 15: replication.OxiaLogReplication.Truncate:input_type -> replication.TruncateRequest
 	14, // 16: replication.OxiaLogReplication.Replicate:input_type -> replication.Append
 	4,  // 17: replication.OxiaLogReplication.SendSnapshot:input_type -> replication.SnapshotChunk
@@ -1470,7 +1470,7 @@ var file_replication_proto_depIdxs = []int32{
 	10, // 20: replication.OxiaCoordination.BecomeLeader:output_type -> replication.BecomeLeaderResponse
 	11, // 21: replication.OxiaCoordination.AddFollower:output_type -> replication.AddFollowerResponse
 	20, // 22: replication.OxiaCoordination.GetStatus:output_type -> replication.GetStatusResponse
-	18, // 23: replication.OxiaCoordination.Delete:output_type -> replication.DeleteShardResponse
+	18, // 23: replication.OxiaCoordination.DeleteShard:output_type -> replication.DeleteShardResponse
 	13, // 24: replication.OxiaLogReplication.Truncate:output_type -> replication.TruncateResponse
 	15, // 25: replication.OxiaLogReplication.Replicate:output_type -> replication.Ack
 	16, // 26: replication.OxiaLogReplication.SendSnapshot:output_type -> replication.SnapshotResponse
