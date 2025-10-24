@@ -37,6 +37,8 @@ type StatusResource interface {
 	UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata)
 
 	DeleteShardMetadata(namespace string, shard int64)
+
+	IsReady(clusterConfig *model.ClusterConfig) bool
 }
 
 var _ StatusResource = &status{}
@@ -191,6 +193,27 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) {
 			slog.Duration("retry-after", duration),
 		)
 	})
+}
+
+func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
+	currentStatus := s.Load()
+	for _, namespace := range clusterConfig.Namespaces {
+		count := namespace.InitialShardCount
+		name := namespace.Name
+		namespaceStatus, ok := currentStatus.Namespaces[name]
+		if !ok {
+			return false
+		}
+		if len(namespaceStatus.Shards) != int(count) {
+			return false
+		}
+		for _, shard := range namespaceStatus.Shards {
+			if shard.Status != model.ShardStatusSteadyState {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func NewStatusResource(meta metadata.Provider) StatusResource {
