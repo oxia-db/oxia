@@ -26,7 +26,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/status"
+	grpcstatus "google.golang.org/grpc/status"
 
 	commonio "github.com/oxia-db/oxia/common/io"
 
@@ -274,7 +274,7 @@ func (n *nodeController) becomeUnavailable() {
 
 func (n *nodeController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
-		if !errors.Is(err, context.Canceled) && status.Code(err) != codes.Canceled {
+		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
 			n.Warn("Node health check failed", slog.Any("error", err))
 		}
 		return err
