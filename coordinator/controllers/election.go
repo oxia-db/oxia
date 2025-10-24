@@ -190,6 +190,22 @@ func (e *Election) fenceNewTermQuorum(term int64, ensemble []model.Server, remov
 
 func (e *Election) selectNewLeader(candidatesStatus map[model.Server]*proto.EntryId) (
 	leader model.Server, followers map[model.Server]*proto.EntryId) {
+	candidates := chooseCandidates(candidatesStatus)
+	server, _ := e.leaderSelector.Select(&leaderselector.Context{
+		Candidates: candidates,
+		Status:     e.statusResource.Load(),
+	})
+	leader = server
+	followers = make(map[model.Server]*proto.EntryId)
+	for a, e := range candidatesStatus {
+		if a != leader {
+			followers[a] = e
+		}
+	}
+	return leader, followers
+}
+
+func chooseCandidates(candidatesStatus map[model.Server]*proto.EntryId) []model.Server {
 	// Select all the nodes that have the highest term first
 	var currentMaxTerm int64 = -1
 	// Select all the nodes that have the highest entry in the wal
@@ -211,19 +227,7 @@ func (e *Election) selectNewLeader(candidatesStatus map[model.Server]*proto.Entr
 			}
 		}
 	}
-
-	server, _ := e.leaderSelector.Select(&leaderselector.Context{
-		Candidates: candidates,
-		Status:     e.statusResource.Load(),
-	})
-	leader = server
-	followers = make(map[model.Server]*proto.EntryId)
-	for a, e := range candidatesStatus {
-		if a != leader {
-			followers[a] = e
-		}
-	}
-	return leader, followers
+	return candidates
 }
 
 func (e *Election) becomeLeader(term int64, leader model.Server, followers map[model.Server]*proto.EntryId, replicationFactor uint32) error {

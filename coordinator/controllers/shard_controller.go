@@ -89,6 +89,12 @@ func (s *Metadata) Store(metadata model.ShardMetadata) {
 	s.shardMetadata = metadata
 }
 
+func (s *Metadata) Status() model.ShardStatus {
+	s.RLock()
+	defer s.RUnlock()
+	return s.shardMetadata.Status
+}
+
 func (s *Metadata) Leader() *model.Server {
 	s.RLock()
 	defer s.RUnlock()
