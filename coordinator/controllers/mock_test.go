@@ -214,6 +214,7 @@ func (m *mockPerNodeChannels) NewTermResponse(term int64, offset int64, err erro
 	}, err}
 }
 
+//nolint:revive
 func (m *mockPerNodeChannels) GetStatusResponse(term int64, status proto.ServingStatus,
 	headOffset int64, commitOffset int64) {
 	m.getStatusResponses <- struct {

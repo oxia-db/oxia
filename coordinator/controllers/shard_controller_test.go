@@ -561,18 +561,16 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
-	//rpc.GetNode(s4).NewTermResponse(1, -1, nil)
 
 	rpc.GetNode(s1).expectNewTermRequest(t, shard, 2, true)
 	rpc.GetNode(s2).expectNewTermRequest(t, shard, 2, true)
 	rpc.GetNode(s3).expectNewTermRequest(t, shard, 2, true)
-	//rpc.GetNode(s4).expectNewTermRequest(t, shard, 2, true)
 
 	// s1 should be selected as new leader
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
 
-	/// Now start the swap node, which will trigger a new election
+	// Now start the swap node, which will trigger a new election
 	wg := concurrent.NewWaitGroup(1)
 	wg.Go(func() error {
 		return sc.SwapNode(s1, s4)

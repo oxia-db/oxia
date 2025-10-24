@@ -131,6 +131,7 @@ func (s *shardController) NodeBecameUnavailable(node model.Server) {
 	s.nodeFailureOp <- node
 }
 
+//nolint:revive
 func NewShardController(
 	namespace string,
 	shard int64,
@@ -1014,7 +1015,7 @@ func (s *shardController) handlePendingDeleteShardNodes(metadata model.ShardMeta
 	return metadata, nil
 }
 
-// listAddUnique Adds a server to the list if it's not already there
+// listAddUnique Adds a server to the list if it's not already there.
 func listAddUnique(list []model.Server, sa model.Server) []model.Server {
 	if !listContains(list, sa) {
 		list = append(list, sa)
