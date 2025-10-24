@@ -235,6 +235,16 @@ func TestBalanceWithoutDataLost(t *testing.T) {
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
 			},
+			{
+				Name:              "ns-2",
+				InitialShardCount: 3,
+				ReplicationFactor: 3,
+			},
+			{
+				Name:              "ns-3",
+				InitialShardCount: 3,
+				ReplicationFactor: 3,
+			},
 		},
 		Servers: []model.Server{s1ad, s2ad, s3ad},
 	}
@@ -248,7 +258,7 @@ func TestBalanceWithoutDataLost(t *testing.T) {
 		return statusResource.IsReady(configResource.Load())
 	}, 60*time.Second, 1*time.Second)
 
-	namespaces := []string{"ns-1"}
+	namespaces := []string{"ns-1", "ns-2", "ns-3"}
 
 	for _, namespace := range namespaces {
 		client, err := oxia.NewSyncClient(s1ad.Public, oxia.WithNamespace(namespace))
