@@ -129,10 +129,17 @@ type mockPerNodeChannels struct {
 	err                    error
 }
 
+const defaultTimeout = 10 * time.Second
+
 func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int64, term int64, replicationFactor uint32) {
 	t.Helper()
 
-	r := <-m.becomeLeaderRequests
+	var r *proto.BecomeLeaderRequest
+	select {
+	case r = <-m.becomeLeaderRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive BecomeLeader request in time")
+	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
@@ -142,7 +149,12 @@ func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int6
 func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, term int64, notificationsEnabled bool) {
 	t.Helper()
 
-	r := <-m.newTermRequests
+	var r *proto.NewTermRequest
+	select {
+	case r = <-m.newTermRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive NewTerm request in time")
+	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
@@ -152,7 +164,12 @@ func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, te
 func (m *mockPerNodeChannels) expectDeleteShardRequest(t *testing.T, shard int64, term int64) {
 	t.Helper()
 
-	r := <-m.deleteShardRequests
+	var r *proto.DeleteShardRequest
+	select {
+	case r = <-m.deleteShardRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive DeleteShard request in time")
+	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
@@ -161,7 +178,12 @@ func (m *mockPerNodeChannels) expectDeleteShardRequest(t *testing.T, shard int64
 func (m *mockPerNodeChannels) expectAddFollowerRequest(t *testing.T, shard int64, term int64) {
 	t.Helper()
 
-	r := <-m.addFollowerRequests
+	var r *proto.AddFollowerRequest
+	select {
+	case r = <-m.addFollowerRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive AddFollower request in time")
+	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
