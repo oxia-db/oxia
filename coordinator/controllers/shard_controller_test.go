@@ -610,7 +610,10 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	// Eventually, the shard should get deleted
 	rpc.GetNode(s1).expectDeleteShardRequest(t, shard, 3)
 	assert.Eventually(t, func() bool {
-		return len(sc.(*shardController).shardMetadata.PendingDeleteShardNodes) == 1
+		c := sc.(*shardController)
+		c.shardMetadataMutex.Lock()
+		defer c.shardMetadataMutex.Unlock()
+		return len(c.shardMetadata.PendingDeleteShardNodes) == 1
 	}, 10*time.Second, 100*time.Millisecond)
 
 	// Next attempt wlll succeed
@@ -619,7 +622,10 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 
 	// s1 should be completely removed from list
 	assert.Eventually(t, func() bool {
-		return len(sc.(*shardController).shardMetadata.PendingDeleteShardNodes) == 0
+		c := sc.(*shardController)
+		c.shardMetadataMutex.Lock()
+		defer c.shardMetadataMutex.Unlock()
+		return len(c.shardMetadata.PendingDeleteShardNodes) == 0
 	}, 10*time.Second, 100*time.Millisecond)
 
 	assert.NoError(t, sc.Close())
