@@ -406,7 +406,7 @@ func (s *shardController) electLeader() (string, error) {
 
 	metadata := s.shardMetadata.Clone()
 	metadata.Status = model.ShardStatusSteadyState
-	metadata.PendingDeleteShardNodes = metadata.RemovedNodes
+	metadata.PendingDeleteShardNodes = mergeLists(metadata.PendingDeleteShardNodes, metadata.RemovedNodes)
 	metadata.RemovedNodes = nil
 	metadata.Leader = &newLeader
 
