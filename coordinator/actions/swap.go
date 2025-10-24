@@ -37,3 +37,12 @@ func (s *SwapNodeAction) Done(_ any) {
 func (*SwapNodeAction) Type() Type {
 	return SwapNode
 }
+
+func (s *SwapNodeAction) Clone() *SwapNodeAction {
+	return &SwapNodeAction{
+		Shard:  s.Shard,
+		From:   s.From,
+		To:     s.To,
+		Waiter: &sync.WaitGroup{},
+	}
+}

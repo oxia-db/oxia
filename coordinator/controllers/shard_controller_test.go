@@ -31,13 +31,6 @@ import (
 	"github.com/oxia-db/oxia/proto"
 )
 
-var namespaceConfig = &model.NamespaceConfig{
-	Name:                 "my-namespace",
-	InitialShardCount:    1,
-	ReplicationFactor:    3,
-	NotificationsEnabled: entity.OptBooleanDefaultTrue{},
-}
-
 func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -109,7 +102,7 @@ func TestShardController(t *testing.T) {
 	}, nil, nil)
 	defer configResource.Close()
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+	sc := NewShardController(constant.DefaultNamespace, shard, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -117,7 +110,7 @@ func TestShardController(t *testing.T) {
 	}, configResource, statusResource, nil, rpc)
 
 	// Shard controller should initiate a leader election
-	// and newTerm each server
+	// and fenceNewTerm each server
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
@@ -132,10 +125,10 @@ func TestShardController(t *testing.T) {
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Load().Status == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 2, sc.Term())
-	assert.Equal(t, s1, *sc.Leader())
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.Equal(t, s1, *sc.Metadata().Leader())
 
 	rpc.GetNode(s2).NewTermResponse(2, 0, nil)
 	rpc.GetNode(s3).NewTermResponse(2, -1, nil)
@@ -154,11 +147,11 @@ func TestShardController(t *testing.T) {
 	rpc.GetNode(s2).expectBecomeLeaderRequest(t, shard, 3, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Load().Status == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
 
-	assert.EqualValues(t, 3, sc.Term())
-	assert.Equal(t, s2, *sc.Leader())
+	assert.EqualValues(t, 3, sc.Metadata().Term())
+	assert.Equal(t, s2, *sc.Metadata().Leader())
 
 	// Simulate the failure of the leader
 	sc.NodeBecameUnavailable(s2)
@@ -190,7 +183,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	}, nil, nil)
 	defer configResource.Close()
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+	sc := NewShardController(constant.DefaultNamespace, shard, model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
 		Term:     1,
 		Leader:   &s1,
@@ -199,11 +192,11 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 
 	select {
 	case <-rpc.GetNode(s1).newTermRequests:
-		assert.Fail(t, "shouldn't have received any newTerm requests")
+		assert.Fail(t, "shouldn't have received any fenceNewTerm requests")
 	case <-rpc.GetNode(s2).newTermRequests:
-		assert.Fail(t, "shouldn't have received any newTerm requests")
+		assert.Fail(t, "shouldn't have received any fenceNewTerm requests")
 	case <-rpc.GetNode(s3).newTermRequests:
-		assert.Fail(t, "shouldn't have received any newTerm requests")
+		assert.Fail(t, "shouldn't have received any fenceNewTerm requests")
 
 	case <-time.After(1 * time.Second):
 		// Ok
@@ -228,7 +221,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	}, nil, nil)
 	defer configResource.Close()
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+	sc := NewShardController(constant.DefaultNamespace, shard, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -240,7 +233,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 
 	// Shard controller should initiate a leader election
-	// and newTerm each server
+	// and fenceNewTerm each server
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	// s3 is not responding
@@ -255,12 +248,12 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	assert.WithinDuration(t, timeStart, time.Now(), 1*time.Second)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
 
-	assert.Equal(t, model.ShardStatusSteadyState, sc.Status())
-	assert.EqualValues(t, 2, sc.Term())
-	assert.Equal(t, s1, *sc.Leader())
+	assert.Equal(t, model.ShardStatusSteadyState, sc.Metadata().Status())
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.Equal(t, s1, *sc.Metadata().Leader())
 
 	assert.NoError(t, sc.Close())
 }
@@ -281,7 +274,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	}, nil, nil)
 	defer configResource.Close()
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+	sc := NewShardController(constant.DefaultNamespace, shard, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -302,11 +295,11 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 2, sc.Term())
-	assert.NotNil(t, sc.Leader())
-	assert.Equal(t, s1, *sc.Leader())
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.NotNil(t, sc.Metadata().Leader())
+	assert.Equal(t, s1, *sc.Metadata().Leader())
 
 	// One more failure from s1
 	rpc.GetNode(s3).NewTermResponse(1, -1, errors.New("fails"))
@@ -342,7 +335,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 	}, nil, nil)
 	defer configResource.Close()
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+	sc := NewShardController(constant.DefaultNamespace, shard, model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
 		Term:     4,
 		Leader:   &s1,
@@ -402,22 +395,24 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	namespaceConfig := &model.NamespaceConfig{
-		Name:                 "my-ns-2",
-		InitialShardCount:    1,
-		ReplicationFactor:    1,
-		NotificationsEnabled: entity.Bool(false),
-	}
-
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
 	statusResource := resources.NewStatusResource(meta)
 	configResource := resources.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
+		return model.ClusterConfig{
+			Namespaces: []model.NamespaceConfig{
+				{
+					Name:                 constant.DefaultNamespace,
+					InitialShardCount:    1,
+					ReplicationFactor:    1,
+					NotificationsEnabled: entity.Bool(false),
+				},
+			},
+		}, nil
 	}, nil, nil)
 	defer configResource.Close()
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+	sc := NewShardController(constant.DefaultNamespace, shard, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -425,7 +420,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	}, configResource, statusResource, nil, rpc)
 
 	// Shard controller should initiate a leader election
-	// and newTerm each server
+	// and fenceNewTerm each server
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	rpc.GetNode(s3).NewTermResponse(1, -1, nil)

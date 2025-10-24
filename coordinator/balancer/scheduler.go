@@ -433,7 +433,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		}
 		r.actionCh <- ac
 		latch.Wait()
-		leader := ac.NewLeader
+		leader := ac.NewLeader()
 		r.Info("triggered new election", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
 		if leader == maxLeadersNodeID { // no changes
 			r.Info("quarantine the shard due to no leader changed", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))

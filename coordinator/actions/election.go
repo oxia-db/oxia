@@ -19,13 +19,18 @@ import "sync"
 type ElectionAction struct {
 	Shard int64
 
-	NewLeader string
-	Waiter    *sync.WaitGroup
+	Waiter *sync.WaitGroup
+
+	newLeader string
 }
 
 func (e *ElectionAction) Done(leader any) {
-	e.NewLeader = leader.(string) //nolint:revive
+	e.newLeader = leader.(string) //nolint:revive
 	e.Waiter.Done()
+}
+
+func (e *ElectionAction) NewLeader() string {
+	return e.newLeader
 }
 
 func (*ElectionAction) Type() Type {

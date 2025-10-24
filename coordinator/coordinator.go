@@ -172,15 +172,15 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	}
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
-		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
-			c.shardControllers[shard] = controllers.NewShardController(namespace, shard, namespaceConfig, shardMetadata, c.configResource, c.statusResource, c, c.rpc)
+		if _, exist := c.configResource.NamespaceConfig(namespace); exist {
+			c.shardControllers[shard] = controllers.NewShardController(namespace, shard, shardMetadata, c.configResource, c.statusResource, c, c.rpc)
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
 		}
 	}
 	for _, shard := range shardsToDelete {
 		if s, exist := c.shardControllers[shard]; exist {
-			s.DeleteShard()
+			s.Delete()
 		}
 	}
 
@@ -333,7 +333,7 @@ func (c *coordinator) handleActionElection(ac actions.Action) {
 	if electionAc, ok = ac.(*actions.ElectionAction); !ok {
 		panic("unexpected action type")
 	}
-	c.Info("Applying swap action", slog.Any("swap-action", ac))
+	c.Info("Applying election action", slog.Any("election-action", ac))
 
 	c.RLock()
 	sc, ok := c.shardControllers[electionAc.Shard]
@@ -343,7 +343,7 @@ func (c *coordinator) handleActionElection(ac actions.Action) {
 		electionAc.Done(nil)
 		return
 	}
-	electionAc.Done(sc.Election(electionAc))
+	sc.Election(electionAc)
 }
 
 func (c *coordinator) handleActionSwap(ac actions.Action) {
@@ -352,7 +352,6 @@ func (c *coordinator) handleActionSwap(ac actions.Action) {
 	if swapAction, ok = ac.(*actions.SwapNodeAction); !ok {
 		panic("unexpected action type")
 	}
-	defer swapAction.Done(nil)
 	c.Info("Applying swap action", slog.Any("swap-action", ac))
 
 	c.RLock()
@@ -362,10 +361,7 @@ func (c *coordinator) handleActionSwap(ac actions.Action) {
 		c.Warn("Shard controller not found", slog.Int64("shard", swapAction.Shard))
 		return
 	}
-
-	if err := sc.SwapNode(swapAction.From, swapAction.To); err != nil {
-		c.Warn("Failed to swap node", slog.Any("error", err), slog.Int64("shard", swapAction.Shard), slog.Any("swap-action", ac))
-	}
+	sc.Swap(swapAction)
 }
 
 // This is called while already holding the lock on the coordinator.
@@ -487,12 +483,7 @@ func NewCoordinator(meta metadata.Provider,
 	for ns, shards := range clusterStatus.Namespaces {
 		for shard := range shards.Shards {
 			shardMetadata := shards.Shards[shard]
-			var nsConfig *model.NamespaceConfig
-			var exist bool
-			if nsConfig, exist = c.configResource.NamespaceConfig(ns); !exist {
-				nsConfig = &model.NamespaceConfig{}
-			}
-			c.shardControllers[shard] = controllers.NewShardController(ns, shard, nsConfig, shardMetadata, c.configResource, c.statusResource, c, c.rpc)
+			c.shardControllers[shard] = controllers.NewShardController(ns, shard, shardMetadata, c.configResource, c.statusResource, c, c.rpc)
 		}
 	}
 

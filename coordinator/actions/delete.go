@@ -14,16 +14,24 @@
 
 package actions
 
-type Type string
+import "sync"
 
-const (
-	SwapNode   Type = "swap-node"
-	Election   Type = "election"
-	DeleteType      = "delete"
-)
+type DeleteAction struct {
+	Shard  int64
+	Waiter *sync.WaitGroup
+}
 
-type Action interface {
-	Type() Type
+func (e *DeleteAction) Done(_ any) {
+	e.Waiter.Done()
+}
 
-	Done(t any)
+func (*DeleteAction) Type() Type {
+	return Election
+}
+
+func (e *DeleteAction) Clone() *DeleteAction {
+	return &DeleteAction{
+		Shard:  e.Shard,
+		Waiter: &sync.WaitGroup{},
+	}
 }
