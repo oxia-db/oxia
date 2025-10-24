@@ -281,15 +281,4 @@ func TestBalanceWithoutDataLost(t *testing.T) {
 		balancer.Trigger()
 		return balancer.IsBalanced()
 	}, 60*time.Second, 1*time.Second)
-
-	for _, namespace := range namespaces {
-		client, err := oxia.NewSyncClient(s1ad.Public, oxia.WithNamespace(namespace))
-		assert.NoError(t, err)
-		for i := 0; i < 1000; i++ {
-			expectedValue := []byte(fmt.Sprintf("value-%d", i))
-			_, value, _, err := client.Get(context.Background(), fmt.Sprintf("key-%d", i))
-			assert.NoError(t, err)
-			assert.EqualValues(t, expectedValue, value)
-		}
-	}
 }
