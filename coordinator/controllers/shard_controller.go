@@ -403,6 +403,9 @@ func (s *shardController) electLeader() (string, error) {
 
 	s.shardMetadataMutex.Lock()
 	s.shardMetadata = metadata
+	term := metadata.Term
+	ensemble := metadata.Ensemble
+	leader := metadata.Leader
 	s.shardMetadataMutex.Unlock()
 
 	s.log.Info(
@@ -422,7 +425,7 @@ func (s *shardController) electLeader() (string, error) {
 			"oxia":  "election-fencing-failed-followers",
 			"shard": fmt.Sprintf("%d", s.shard),
 		}, func() {
-			s.keepFencingFailedFollowers(s.shardMetadata.Term, s.shardMetadata.Ensemble, s.shardMetadata.Leader, followers)
+			s.keepFencingFailedFollowers(term, ensemble, leader, followers)
 		},
 	)
 	return newLeader.GetIdentifier(), nil
