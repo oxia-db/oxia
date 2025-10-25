@@ -15,6 +15,7 @@
 package controllers
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -116,7 +117,7 @@ func TestShardController(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc)
+	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -199,7 +200,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 		Term:     1,
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc)
+	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, shard)
 	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
@@ -232,7 +233,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc)
+	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
 
 	timeStart := time.Now()
 
@@ -285,7 +286,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc)
+	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// s3 is failing, though we can still elect a leader
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -346,7 +347,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 		Term:     4,
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc)
+	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, 5)
 	n1.GetStatusResponse(4, proto.ServingStatus_LEADER, 0, 0)
@@ -395,7 +396,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc)
+	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -435,7 +436,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc)
+	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -489,15 +490,114 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	rpc.GetNode(s3).BecomeLeaderResponse(nil)
 	rpc.GetNode(s3).expectBecomeLeaderRequest(t, shard, 4, 3)
 
-	rpc.GetNode(s1).DeleteShardResponse(nil)
-	rpc.GetNode(s1).expectDeleteShardRequest(t, shard, 4)
-
 	assert.Eventually(t, func() bool {
 		return sc.Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
 	assert.EqualValues(t, 4, sc.Term())
 	assert.NotNil(t, sc.Leader())
 	assert.Equal(t, s3, *sc.Leader())
+
+	assert.NoError(t, sc.Close())
+}
+
+func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) {
+	var shard int64 = 5
+	rpc := newMockRpcProvider()
+
+	s1 := model.Server{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
+
+	meta := metadata.NewMetadataProviderMemory()
+	defer meta.Close()
+
+	statusResource := resources.NewStatusResource(meta)
+	configResource := resources.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
+		return model.ClusterConfig{}, nil
+	}, nil, nil)
+	defer configResource.Close()
+
+	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+		Status:   model.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []model.Server{s1, s2, s3},
+	}, configResource, statusResource, nil, rpc, 1*time.Second)
+
+	// Do initial election
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+
+	rpc.GetNode(s1).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).expectNewTermRequest(t, shard, 2, true)
+
+	// s1 should be selected as new leader
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
+
+	// Now start the swap node, which will trigger a new election
+	wg := concurrent.NewWaitGroup(1)
+	wg.Go(func() error {
+		return sc.SwapNode(s1, s4)
+	})
+
+	rpc.GetNode(s1).NewTermResponse(2, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(2, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(2, -1, nil)
+	rpc.GetNode(s4).NewTermResponse(2, 0, nil)
+
+	rpc.GetNode(s1).expectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s2).expectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s3).expectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s4).expectNewTermRequest(t, shard, 3, true)
+
+	// s4 should be selected as new leader
+	rpc.GetNode(s4).BecomeLeaderResponse(nil)
+	rpc.GetNode(s4).expectBecomeLeaderRequest(t, shard, 3, 3)
+
+	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s4).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
+
+	rpc.GetNode(s2).expectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).expectGetStatusRequest(t, shard)
+
+	// s1 fails in removing the shard the first time
+	rpc.GetNode(s1).DeleteShardResponse(errors.New("could not delete shard"))
+
+	assert.Eventually(t, func() bool {
+		return sc.Status() == model.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 3, sc.Term())
+	assert.NotNil(t, sc.Leader())
+	assert.Equal(t, s4, *sc.Leader())
+
+	// The swap node should be free to complete as well
+	assert.NoError(t, wg.Wait(context.Background()))
+
+	// Eventually, the shard should get deleted
+	rpc.GetNode(s1).expectDeleteShardRequest(t, shard, 3)
+	assert.Eventually(t, func() bool {
+		c := sc.(*shardController)
+		c.shardMetadataMutex.Lock()
+		defer c.shardMetadataMutex.Unlock()
+		return len(c.shardMetadata.PendingDeleteShardNodes) == 1
+	}, 10*time.Second, 100*time.Millisecond)
+
+	// Next attempt wlll succeed
+	rpc.GetNode(s1).DeleteShardResponse(nil)
+	rpc.GetNode(s1).expectDeleteShardRequest(t, shard, 3)
+
+	// s1 should be completely removed from list
+	assert.Eventually(t, func() bool {
+		c := sc.(*shardController)
+		c.shardMetadataMutex.Lock()
+		defer c.shardMetadataMutex.Unlock()
+		return len(c.shardMetadata.PendingDeleteShardNodes) == 0
+	}, 10*time.Second, 100*time.Millisecond)
 
 	assert.NoError(t, sc.Close())
 }
