@@ -125,6 +125,8 @@ type ShardController interface {
 	io.Closer
 	NodeEventListener
 
+	Metadata() *Metadata
+
 	SyncServerAddress()
 
 	SwapNode(from model.Server, to model.Server) error
@@ -166,6 +168,10 @@ type shardController struct {
 	becomeLeaderLatency   metric.LatencyHistogram
 	leaderElectionsFailed metric.Counter
 	termGauge             metric.Gauge
+}
+
+func (s *shardController) Metadata() *Metadata {
+	return &s.metadata
 }
 
 func (s *shardController) NodeBecameUnavailable(node model.Server) {
