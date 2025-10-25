@@ -39,7 +39,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
-	time2 "github.com/oxia-db/oxia/common/time"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/coordinator/model"
@@ -62,12 +62,6 @@ const (
 type swapNodeRequest struct {
 	from model.Server
 	to   model.Server
-	res  chan error
-}
-
-type newTermAndAddFollowerRequest struct {
-	ctx  context.Context
-	node model.Server
 	res  chan error
 }
 
@@ -105,11 +99,10 @@ type shardController struct {
 	configResource resources.ClusterConfigResource
 	statusResource resources.StatusResource
 
-	electionOp              chan *actions.ElectionAction
-	deleteOp                chan any
-	nodeFailureOp           chan model.Server
-	swapNodeOp              chan swapNodeRequest
-	newTermAndAddFollowerOp chan newTermAndAddFollowerRequest
+	electionOp    chan *actions.ElectionAction
+	deleteOp      chan any
+	nodeFailureOp chan model.Server
+	swapNodeOp    chan swapNodeRequest
 
 	ctx                   context.Context
 	cancel                context.CancelFunc
@@ -144,21 +137,20 @@ func NewShardController(
 	periodTasksInterval time.Duration) ShardController {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &shardController{
-		namespace:               namespace,
-		shard:                   shard,
-		namespaceConfig:         nc,
-		shardMetadata:           shardMetadata,
-		rpc:                     rpcProvider,
-		configResource:          configResource,
-		statusResource:          statusResource,
-		eventListener:           eventListener,
-		leaderSelector:          leaderselector.NewSelector(),
-		electionOp:              make(chan *actions.ElectionAction, chanBufferSize),
-		deleteOp:                make(chan any, chanBufferSize),
-		nodeFailureOp:           make(chan model.Server, chanBufferSize),
-		swapNodeOp:              make(chan swapNodeRequest, chanBufferSize),
-		newTermAndAddFollowerOp: make(chan newTermAndAddFollowerRequest, chanBufferSize),
-		periodicTasksInterval:   periodTasksInterval,
+		namespace:             namespace,
+		shard:                 shard,
+		namespaceConfig:       nc,
+		shardMetadata:         shardMetadata,
+		rpc:                   rpcProvider,
+		configResource:        configResource,
+		statusResource:        statusResource,
+		eventListener:         eventListener,
+		leaderSelector:        leaderselector.NewSelector(),
+		electionOp:            make(chan *actions.ElectionAction, chanBufferSize),
+		deleteOp:              make(chan any, chanBufferSize),
+		nodeFailureOp:         make(chan model.Server, chanBufferSize),
+		swapNodeOp:            make(chan swapNodeRequest, chanBufferSize),
+		periodicTasksInterval: periodTasksInterval,
 		log: slog.With(
 			slog.String("component", "shard-controller"),
 			slog.String("namespace", namespace),
@@ -254,9 +246,6 @@ func (s *shardController) run() {
 		case <-periodicTasksTimer.C:
 			s.handlePeriodicTasks()
 
-		case a := <-s.newTermAndAddFollowerOp:
-			s.internalNewTermAndAddFollower(a.ctx, a.node, a.res)
-
 		case eo := <-s.electionOp:
 			s.electLeaderWithRetries(eo)
 		}
@@ -334,7 +323,7 @@ func (s *shardController) verifyCurrentEnsemble() bool {
 func (s *shardController) electLeaderWithRetries(ea *actions.ElectionAction) {
 	newLeader, _ := backoff.RetryNotifyWithData[string](func() (string, error) {
 		return s.electLeader()
-	}, time2.NewBackOff(s.ctx),
+	}, oxiatime.NewBackOff(s.ctx),
 		func(err error, duration time.Duration) {
 			s.leaderElectionsFailed.Inc()
 			s.log.Warn(
@@ -414,6 +403,9 @@ func (s *shardController) electLeader() (string, error) {
 
 	s.shardMetadataMutex.Lock()
 	s.shardMetadata = metadata
+	term := metadata.Term
+	ensemble := metadata.Ensemble
+	leader := metadata.Leader
 	s.shardMetadataMutex.Unlock()
 
 	s.log.Info(
@@ -427,7 +419,15 @@ func (s *shardController) electLeader() (string, error) {
 		s.eventListener.LeaderElected(s.shard, newLeader, maps.Keys(followers))
 	}
 
-	s.keepFencingFailedFollowers(followers)
+	go process.DoWithLabels(
+		s.currentElectionCtx,
+		map[string]string{
+			"oxia":  "election-fencing-failed-followers",
+			"shard": fmt.Sprintf("%d", s.shard),
+		}, func() {
+			s.keepFencingFailedFollowers(term, ensemble, leader, followers)
+		},
+	)
 	return newLeader.GetIdentifier(), nil
 }
 
@@ -450,111 +450,86 @@ func (s *shardController) getRefreshedEnsemble() []model.Server {
 	return refreshedEnsembleServiceAddress
 }
 
-func (s *shardController) keepFencingFailedFollowers(successfulFollowers map[model.Server]*proto.EntryId) {
-	if len(successfulFollowers) == len(s.shardMetadata.Ensemble)-1 {
+func (s *shardController) keepFencingFailedFollowers(term int64, ensemble []model.Server, leader *model.Server,
+	successfulFollowers map[model.Server]*proto.EntryId) {
+	if len(successfulFollowers) == len(ensemble)-1 {
 		s.log.Debug(
 			"All the member of the ensemble were successfully added",
-			slog.Int64("term", s.shardMetadata.Term),
+			slog.Int64("term", term),
 		)
 		return
 	}
-
 	// Identify failed followers
-	for _, sa := range s.shardMetadata.Ensemble {
-		if sa == *s.shardMetadata.Leader {
+	for _, follower := range ensemble {
+		if follower == *leader {
 			continue
 		}
-
-		if _, found := successfulFollowers[sa]; found {
+		if _, found := successfulFollowers[follower]; found {
 			continue
 		}
+		s.log.Info("Node has failed in leader election, retrying", slog.Any("follower", follower))
 
-		s.keepFencingFollower(s.currentElectionCtx, sa)
-	}
-}
-
-func (s *shardController) keepFencingFollower(ctx context.Context, node model.Server) {
-	s.log.Info(
-		"Node has failed in leader election, retrying",
-		slog.Any("follower", node),
-	)
-
-	go process.DoWithLabels(
-		s.ctx,
-		map[string]string{
-			"oxia":     "shard-controller-retry-failed-follower",
-			"shard":    fmt.Sprintf("%d", s.shard),
-			"follower": node.GetIdentifier(),
-		},
-		func() {
-			backOff := time2.NewBackOffWithInitialInterval(ctx, 1*time.Second)
-
-			_ = backoff.RetryNotify(func() error {
-				err := s.newTermAndAddFollower(ctx, node)
-				if status.Code(err) == constant.CodeInvalidTerm {
-					// If we're receiving invalid term error, it would mean
-					// there's already a new term generated, and we don't have
-					// to keep trying with this old term
+		go process.DoWithLabels(
+			s.currentElectionCtx,
+			map[string]string{
+				"oxia":     "election-retry-failed-follower",
+				"shard":    fmt.Sprintf("%d", s.shard),
+				"follower": follower.GetIdentifier(),
+			},
+			func() {
+				bf := oxiatime.NewBackOffWithInitialInterval(s.currentElectionCtx, 1*time.Second)
+				_ = backoff.RetryNotify(func() error {
+					var err error
+					if err = s.newTermAndAddFollower(term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
+						// If we're receiving invalid term error, it would mean
+						// there's already a new term generated, and we don't have
+						// to keep trying with this old term
+						s.log.Warn(
+							"Failed to newTermAndAddFollower, invalid term. Stop trying",
+							slog.Any("follower", follower),
+							slog.Int64("term", term),
+						)
+						return nil
+					}
+					return err
+				}, bf, func(err error, duration time.Duration) {
 					s.log.Warn(
-						"Failed to newTerm, invalid term. Stop trying",
-						slog.Any("follower", node),
-						slog.Int64("term", s.Term()),
+						"Failed to newTermAndAddFollower, retrying later",
+						slog.Any("error", err),
+						slog.Any("follower", follower),
+						slog.Int64("term", term),
+						slog.Duration("retry-after", duration),
 					)
-					return nil
-				}
-				return err
-			}, backOff, func(err error, duration time.Duration) {
-				s.log.Warn(
-					"Failed to newTerm, retrying later",
-					slog.Any("error", err),
-					slog.Any("follower", node),
-					slog.Int64("term", s.Term()),
-					slog.Duration("retry-after", duration),
-				)
-			})
-		},
-	)
-}
-
-func (s *shardController) newTermAndAddFollower(ctx context.Context, node model.Server) error {
-	res := make(chan error)
-	s.newTermAndAddFollowerOp <- newTermAndAddFollowerRequest{
-		ctx:  ctx,
-		node: node,
-		res:  res,
+				})
+			},
+		)
 	}
-
-	return <-res
 }
 
-func (s *shardController) internalNewTermAndAddFollower(ctx context.Context, node model.Server, res chan error) {
-	fr, err := s.newTerm(ctx, node)
+func (s *shardController) newTermAndAddFollower(term int64, leader model.Server, follower model.Server) error {
+	fr, err := s.newTerm(s.currentElectionCtx, term, follower)
 	if err != nil {
-		res <- err
-		return
+		return err
 	}
-
-	leader := s.shardMetadata.Leader
-	if leader == nil {
-		res <- errors.New("not leader is active on the shard")
-		return
-	}
-
-	if err = s.addFollower(*s.shardMetadata.Leader, node.Internal, &proto.EntryId{
-		Term:   fr.Term,
-		Offset: fr.Offset,
+	if _, err := s.rpc.AddFollower(s.currentElectionCtx, leader, &proto.AddFollowerRequest{
+		Namespace:    s.namespace,
+		Shard:        s.shard,
+		Term:         term,
+		FollowerName: follower.Internal,
+		FollowerHeadEntryId: &proto.EntryId{
+			Term:   fr.Term,
+			Offset: fr.Offset,
+		},
 	}); err != nil {
-		res <- err
-		return
+		return err
 	}
 
 	s.log.Info(
 		"Successfully rejoined the quorum",
-		slog.Any("follower", node),
+		slog.Any("follower", follower),
 		slog.Int64("term", fr.Term),
 	)
-
-	res <- nil
+	return nil
 }
 
 // Send NewTerm to all the ensemble members in parallel and wait for
@@ -587,7 +562,7 @@ func (s *shardController) newTermQuorum() (map[model.Server]*proto.EntryId, erro
 				"shard": fmt.Sprintf("%d", s.shard),
 				"node":  pinedServer.GetIdentifier(),
 			}, func() {
-				entryId, err := s.newTerm(ctx, pinedServer)
+				entryId, err := s.newTerm(ctx, s.shardMetadata.Term, pinedServer)
 				if err != nil {
 					s.log.Warn(
 						"Failed to newTerm node",
@@ -660,11 +635,11 @@ func (s *shardController) newTermQuorum() (map[model.Server]*proto.EntryId, erro
 	return res, nil
 }
 
-func (s *shardController) newTerm(ctx context.Context, node model.Server) (*proto.EntryId, error) {
+func (s *shardController) newTerm(ctx context.Context, term int64, node model.Server) (*proto.EntryId, error) {
 	res, err := s.rpc.NewTerm(ctx, node, &proto.NewTermRequest{
 		Namespace: s.namespace,
 		Shard:     s.shard,
-		Term:      s.shardMetadata.Term,
+		Term:      term,
 		Options: &proto.NewTermOptions{
 			EnableNotifications: s.namespaceConfig.NotificationsEnabled.Get(),
 		},
@@ -752,20 +727,6 @@ func (s *shardController) becomeLeader(leader model.Server, followers map[model.
 	return nil
 }
 
-func (s *shardController) addFollower(leader model.Server, follower string, followerHeadEntryId *proto.EntryId) error {
-	if _, err := s.rpc.AddFollower(s.ctx, leader, &proto.AddFollowerRequest{
-		Namespace:           s.namespace,
-		Shard:               s.shard,
-		Term:                s.shardMetadata.Term,
-		FollowerName:        follower,
-		FollowerHeadEntryId: followerHeadEntryId,
-	}); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (s *shardController) DeleteShard() {
 	s.deleteOp <- nil
 }
@@ -773,7 +734,7 @@ func (s *shardController) DeleteShard() {
 func (s *shardController) deleteShardWithRetries() {
 	s.log.Info("Deleting shard")
 
-	_ = backoff.RetryNotify(s.deleteShard, time2.NewBackOff(s.ctx),
+	_ = backoff.RetryNotify(s.deleteShard, oxiatime.NewBackOff(s.ctx),
 		func(err error, duration time.Duration) {
 			s.log.Warn(
 				"Delete shard failed, retrying later",
@@ -944,7 +905,7 @@ func (s *shardController) waitForFollowersToCatchUp(ctx context.Context, leader 
 
 		err = backoff.Retry(func() error {
 			return s.isFollowerCatchUp(ctx, server, leaderHeadOffset)
-		}, time2.NewBackOff(ctx))
+		}, oxiatime.NewBackOff(ctx))
 
 		if err != nil {
 			return errors.Wrapf(err, "failed to get the follower status from %s", server.GetIdentifier())
