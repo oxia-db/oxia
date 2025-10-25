@@ -398,7 +398,7 @@ func (s *shardController) electLeader() (string, error) {
 
 	s.currentElectionCtx, s.currentElectionCancel = context.WithCancel(s.ctx)
 
-	shardMeta := s.metadata.Compute(func(shardMeta *model.ShardMetadata) {
+	mutShardMeta := s.metadata.Compute(func(shardMeta *model.ShardMetadata) {
 		shardMeta.Status = model.ShardStatusElection
 		shardMeta.Leader = nil
 		shardMeta.Term++
@@ -408,13 +408,13 @@ func (s *shardController) electLeader() (string, error) {
 
 	s.log.Info(
 		"Starting leader election",
-		slog.Int64("term", shardMeta.Term),
+		slog.Int64("term", mutShardMeta.Term),
 	)
 
-	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, shardMeta)
+	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta)
 
 	// Send NewTerm to all the ensemble members
-	fr, err := s.newTermQuorum(&shardMeta)
+	fr, err := s.newTermQuorum(&mutShardMeta)
 	if err != nil {
 		return "", errors.Wrap(err, "Failed to create new term quorum")
 	}
@@ -434,32 +434,32 @@ func (s *shardController) electLeader() (string, error) {
 		}
 		s.log.Info(
 			"Successfully moved ensemble to a new term",
-			slog.Int64("term", shardMeta.Term),
+			slog.Int64("term", mutShardMeta.Term),
 			slog.Any("new-leader", newLeader),
 			slog.Any("followers", f),
 		)
 	}
 
-	if err = s.becomeLeader(shardMeta.Term, shardMeta.Ensemble, newLeader, followers); err != nil {
+	if err = s.becomeLeader(mutShardMeta.Term, mutShardMeta.Ensemble, newLeader, followers); err != nil {
 		return "", errors.Wrapf(err, "failed to become leader for node %s", newLeader.GetIdentifier())
 	}
 
-	shardMeta.Status = model.ShardStatusSteadyState
-	shardMeta.PendingDeleteShardNodes = mergeLists(shardMeta.PendingDeleteShardNodes, shardMeta.RemovedNodes)
-	shardMeta.RemovedNodes = nil
-	shardMeta.Leader = &newLeader
+	mutShardMeta.Status = model.ShardStatusSteadyState
+	mutShardMeta.PendingDeleteShardNodes = mergeLists(mutShardMeta.PendingDeleteShardNodes, mutShardMeta.RemovedNodes)
+	mutShardMeta.RemovedNodes = nil
+	mutShardMeta.Leader = &newLeader
 
-	term := shardMeta.Term
-	ensemble := shardMeta.Ensemble
-	leader := shardMeta.Leader
+	term := mutShardMeta.Term
+	ensemble := mutShardMeta.Ensemble
+	leader := mutShardMeta.Leader
 
-	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, shardMeta)
-	s.metadata.Store(shardMeta)
+	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta)
+	s.metadata.Store(mutShardMeta)
 
 	s.log.Info(
 		"Elected new leader",
-		slog.Int64("term", shardMeta.Term),
-		slog.Any("leader", shardMeta.Leader),
+		slog.Int64("term", mutShardMeta.Term),
+		slog.Any("leader", mutShardMeta.Leader),
 	)
 	timer.Done()
 
@@ -868,6 +868,8 @@ func (s *shardController) swapNode(from model.Server, to model.Server, res chan 
 	// Wait until we can re-establish a leader with the new ensemble
 	s.electLeaderWithRetries(nil)
 
+	// Reload snapshot from latest
+	shardMeta = s.metadata.Load()
 	// Wait until all followers are caught up.
 	// This is done to avoid doing multiple node-swap concurrently, since it would create
 	// additional load in the system, while transferring multiple DB snapshots.
