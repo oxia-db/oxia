@@ -122,7 +122,7 @@ jobs:
           kubectl_version: v1.25.5
       - name: Clone oxia helm charts
         run: |
-          git clone https://github.com/oxia-project/oxia-helm.git
+          git clone https://github.com/oxia-db/helm-charts.git
       - name: Deploy oxia
         run: |
           kubectl create namespace oxia
