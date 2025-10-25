@@ -507,7 +507,7 @@ func (s *shardController) keepFencingFailedFollowers(term int64, ensemble []mode
 }
 
 func (s *shardController) newTermAndAddFollower(term int64, leader model.Server, follower model.Server) error {
-	fr, err := s.newTerm(s.currentElectionCtx, follower)
+	fr, err := s.newTerm(s.currentElectionCtx, term, follower)
 	if err != nil {
 		return err
 	}
@@ -562,7 +562,7 @@ func (s *shardController) newTermQuorum() (map[model.Server]*proto.EntryId, erro
 				"shard": fmt.Sprintf("%d", s.shard),
 				"node":  pinedServer.GetIdentifier(),
 			}, func() {
-				entryId, err := s.newTerm(ctx, pinedServer)
+				entryId, err := s.newTerm(ctx, s.shardMetadata.Term, pinedServer)
 				if err != nil {
 					s.log.Warn(
 						"Failed to newTerm node",
@@ -635,11 +635,11 @@ func (s *shardController) newTermQuorum() (map[model.Server]*proto.EntryId, erro
 	return res, nil
 }
 
-func (s *shardController) newTerm(ctx context.Context, node model.Server) (*proto.EntryId, error) {
+func (s *shardController) newTerm(ctx context.Context, term int64, node model.Server) (*proto.EntryId, error) {
 	res, err := s.rpc.NewTerm(ctx, node, &proto.NewTermRequest{
 		Namespace: s.namespace,
 		Shard:     s.shard,
-		Term:      s.shardMetadata.Term,
+		Term:      term,
 		Options: &proto.NewTermOptions{
 			EnableNotifications: s.namespaceConfig.NotificationsEnabled.Get(),
 		},
