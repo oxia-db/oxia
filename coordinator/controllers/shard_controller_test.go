@@ -204,6 +204,10 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 
 	n1.expectGetStatusRequest(t, shard)
 	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+	n2.expectGetStatusRequest(t, shard)
+	n2.GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+	n3.expectGetStatusRequest(t, shard)
+	n3.GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
 
 	n1.expectNoMoreNewTermRequest(t)
 	n2.expectNoMoreNewTermRequest(t)
