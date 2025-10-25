@@ -129,10 +129,18 @@ type mockPerNodeChannels struct {
 	err                    error
 }
 
+const defaultTimeout = 10 * time.Second
+const defaultNegativeTimeout = 1 * time.Second
+
 func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int64, term int64, replicationFactor uint32) {
 	t.Helper()
 
-	r := <-m.becomeLeaderRequests
+	var r *proto.BecomeLeaderRequest
+	select {
+	case r = <-m.becomeLeaderRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive BecomeLeader request in time")
+	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
@@ -142,20 +150,68 @@ func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int6
 func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, term int64, notificationsEnabled bool) {
 	t.Helper()
 
-	r := <-m.newTermRequests
+	var r *proto.NewTermRequest
+	select {
+	case r = <-m.newTermRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive NewTerm request in time")
+	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
 	assert.Equal(t, notificationsEnabled, r.Options.EnableNotifications)
 }
 
-func (m *mockPerNodeChannels) expectAddFollowerRequest(t *testing.T, shard int64, term int64) {
+func (m *mockPerNodeChannels) expectNoMoreNewTermRequest(t *testing.T) {
 	t.Helper()
 
-	r := <-m.addFollowerRequests
+	select {
+	case <-m.newTermRequests:
+		assert.Fail(t, "should not have received any new term request")
+	case <-time.After(defaultNegativeTimeout):
+		// expected
+	}
+}
+
+func (m *mockPerNodeChannels) expectDeleteShardRequest(t *testing.T, shard int64, term int64) {
+	t.Helper()
+
+	var r *proto.DeleteShardRequest
+	select {
+	case r = <-m.deleteShardRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive DeleteShard request in time")
+	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
+}
+
+func (m *mockPerNodeChannels) expectAddFollowerRequest(t *testing.T, shard int64, term int64) {
+	t.Helper()
+
+	var r *proto.AddFollowerRequest
+	select {
+	case r = <-m.addFollowerRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive AddFollower request in time")
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+}
+
+func (m *mockPerNodeChannels) expectGetStatusRequest(t *testing.T, shard int64) {
+	t.Helper()
+
+	var r *proto.GetStatusRequest
+	select {
+	case r = <-m.getStatusRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive GetStatus request in time")
+	}
+
+	assert.Equal(t, shard, r.Shard)
 }
 
 func (m *mockPerNodeChannels) NewTermResponse(term int64, offset int64, err error) {
@@ -170,11 +226,32 @@ func (m *mockPerNodeChannels) NewTermResponse(term int64, offset int64, err erro
 	}, err}
 }
 
+//nolint:revive
+func (m *mockPerNodeChannels) GetStatusResponse(term int64, status proto.ServingStatus,
+	headOffset int64, commitOffset int64) {
+	m.getStatusResponses <- struct {
+		*proto.GetStatusResponse
+		error
+	}{&proto.GetStatusResponse{
+		Term:         term,
+		Status:       status,
+		HeadOffset:   headOffset,
+		CommitOffset: commitOffset,
+	}, nil}
+}
+
 func (m *mockPerNodeChannels) BecomeLeaderResponse(err error) {
 	m.becomeLeaderResponses <- struct {
 		*proto.BecomeLeaderResponse
 		error
 	}{&proto.BecomeLeaderResponse{}, err}
+}
+
+func (m *mockPerNodeChannels) DeleteShardResponse(err error) {
+	m.deleteShardResponses <- struct {
+		*proto.DeleteShardResponse
+		error
+	}{&proto.DeleteShardResponse{}, err}
 }
 
 func (m *mockPerNodeChannels) AddFollowerResponse(err error) {
@@ -204,6 +281,11 @@ func newMockPerNodeChannels() *mockPerNodeChannels {
 		addFollowerRequests: make(chan *proto.AddFollowerRequest, 100),
 		addFollowerResponses: make(chan struct {
 			*proto.AddFollowerResponse
+			error
+		}, 100),
+		deleteShardRequests: make(chan *proto.DeleteShardRequest, 100),
+		deleteShardResponses: make(chan struct {
+			*proto.DeleteShardResponse
 			error
 		}, 100),
 		shardAssignmentsStream: newMockShardAssignmentClient(),

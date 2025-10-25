@@ -30,6 +30,9 @@ type WaitGroup interface {
 
 	// Fail Signal that one party has failed in the operation
 	Fail(err error)
+
+	// Go Run the function in a go-routing and automaticatly mark as done or failed
+	Go(f func() error)
 }
 
 type waitGroup struct {
@@ -42,6 +45,16 @@ func NewWaitGroup(parties int) WaitGroup {
 		parties:   parties,
 		responses: make(chan error, parties),
 	}
+}
+
+func (g *waitGroup) Go(f func() error) {
+	go func() {
+		if err := f(); err != nil {
+			g.Fail(err)
+		} else {
+			g.Done()
+		}
+	}()
 }
 
 func (g *waitGroup) Wait(ctx context.Context) error {
