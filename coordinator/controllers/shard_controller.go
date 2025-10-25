@@ -393,23 +393,23 @@ func (s *shardController) electLeader() (string, error) {
 
 	s.currentElectionCtx, s.currentElectionCancel = context.WithCancel(s.ctx)
 
-	newShardMeta := s.metadata.Compute(func(metadata *model.ShardMetadata) {
-		metadata.Status = model.ShardStatusElection
-		metadata.Leader = nil
-		metadata.Term++
+	shardMeta := s.metadata.Compute(func(shardMeta *model.ShardMetadata) {
+		shardMeta.Status = model.ShardStatusElection
+		shardMeta.Leader = nil
+		shardMeta.Term++
 		// it's a safe point to update the service info
-		metadata.Ensemble = s.getRefreshedEnsemble(metadata)
+		shardMeta.Ensemble = s.getRefreshedEnsemble(shardMeta)
 	})
 
 	s.log.Info(
 		"Starting leader election",
-		slog.Int64("term", newShardMeta.Term),
+		slog.Int64("term", shardMeta.Term),
 	)
 
-	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, newShardMeta)
+	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, shardMeta)
 
 	// Send NewTerm to all the ensemble members
-	fr, err := s.newTermQuorum(&newShardMeta)
+	fr, err := s.newTermQuorum(&shardMeta)
 	if err != nil {
 		return "", errors.Wrap(err, "Failed to create new term quorum")
 	}
@@ -429,31 +429,31 @@ func (s *shardController) electLeader() (string, error) {
 		}
 		s.log.Info(
 			"Successfully moved ensemble to a new term",
-			slog.Int64("term", newShardMeta.Term),
+			slog.Int64("term", shardMeta.Term),
 			slog.Any("new-leader", newLeader),
 			slog.Any("followers", f),
 		)
 	}
 
-	if err = s.becomeLeader(newShardMeta.Term, newShardMeta.Ensemble, newLeader, followers); err != nil {
+	if err = s.becomeLeader(shardMeta.Term, shardMeta.Ensemble, newLeader, followers); err != nil {
 		return "", errors.Wrapf(err, "failed to become leader for node %s", newLeader.GetIdentifier())
 	}
 
-	newShardMeta.Status = model.ShardStatusSteadyState
-	newShardMeta.PendingDeleteShardNodes = mergeLists(newShardMeta.PendingDeleteShardNodes, newShardMeta.RemovedNodes)
-	newShardMeta.RemovedNodes = nil
-	newShardMeta.Leader = &newLeader
-	term := newShardMeta.Term
-	ensemble := newShardMeta.Ensemble
-	leader := newShardMeta.Leader
+	shardMeta.Status = model.ShardStatusSteadyState
+	shardMeta.PendingDeleteShardNodes = mergeLists(shardMeta.PendingDeleteShardNodes, shardMeta.RemovedNodes)
+	shardMeta.RemovedNodes = nil
+	shardMeta.Leader = &newLeader
+	term := shardMeta.Term
+	ensemble := shardMeta.Ensemble
+	leader := shardMeta.Leader
 
-	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, newShardMeta)
-	s.metadata.Store(newShardMeta)
+	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, shardMeta)
+	s.metadata.Store(shardMeta)
 
 	s.log.Info(
 		"Elected new leader",
-		slog.Int64("term", newShardMeta.Term),
-		slog.Any("leader", newShardMeta.Leader),
+		slog.Int64("term", shardMeta.Term),
+		slog.Any("leader", shardMeta.Leader),
 	)
 	timer.Done()
 
@@ -473,8 +473,8 @@ func (s *shardController) electLeader() (string, error) {
 	return newLeader.GetIdentifier(), nil
 }
 
-func (s *shardController) getRefreshedEnsemble(metadata *model.ShardMetadata) []model.Server {
-	currentEnsemble := metadata.Ensemble
+func (s *shardController) getRefreshedEnsemble(shardMeta *model.ShardMetadata) []model.Server {
+	currentEnsemble := shardMeta.Ensemble
 	refreshedEnsembleServiceAddress := make([]model.Server, len(currentEnsemble))
 	for idx, candidate := range currentEnsemble {
 		if refreshedAddress, exist := s.configResource.Node(candidate.GetIdentifier()); exist {
@@ -842,13 +842,13 @@ func (s *shardController) SwapNode(from model.Server, to model.Server) error {
 }
 
 func (s *shardController) swapNode(from model.Server, to model.Server, res chan error) {
-	shardMeta := s.metadata.Compute(func(metadata *model.ShardMetadata) {
-		metadata.RemovedNodes = listAddUnique(metadata.RemovedNodes, from)
+	shardMeta := s.metadata.Compute(func(shardMeta *model.ShardMetadata) {
+		shardMeta.RemovedNodes = listAddUnique(shardMeta.RemovedNodes, from)
 
 		// A node might get re-added to the ensemble after it was swapped out and be in
 		// pending delete state. We don't want a background task to attempt deletion anymore
-		metadata.PendingDeleteShardNodes = listRemove(metadata.PendingDeleteShardNodes, to)
-		metadata.Ensemble = replaceInList(metadata.Ensemble, from, to)
+		shardMeta.PendingDeleteShardNodes = listRemove(shardMeta.PendingDeleteShardNodes, to)
+		shardMeta.Ensemble = replaceInList(shardMeta.Ensemble, from, to)
 	})
 
 	s.log.Info(
