@@ -476,9 +476,10 @@ func (s *shardController) keepFencingFailedFollowers(successfulFollowers map[mod
 				"follower": follower.GetIdentifier(),
 			},
 			func() {
+				bf := oxiatime.NewBackOffWithInitialInterval(s.currentElectionCtx, 1*time.Second)
 				_ = backoff.RetryNotify(func() error {
 					var err error
-					if err := s.newTermAndAddFollower(term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
+					if err = s.newTermAndAddFollower(term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
 						// If we're receiving invalid term error, it would mean
 						// there's already a new term generated, and we don't have
 						// to keep trying with this old term
@@ -490,7 +491,7 @@ func (s *shardController) keepFencingFailedFollowers(successfulFollowers map[mod
 						return nil
 					}
 					return err
-				}, oxiatime.NewBackOffWithInitialInterval(s.currentElectionCtx, 1*time.Second), func(err error, duration time.Duration) {
+				}, bf, func(err error, duration time.Duration) {
 					s.log.Warn(
 						"Failed to newTermAndAddFollower, retrying later",
 						slog.Any("error", err),
