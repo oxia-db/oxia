@@ -137,20 +137,20 @@ func NewShardController(
 	periodTasksInterval time.Duration) ShardController {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &shardController{
-		namespace:               namespace,
-		shard:                   shard,
-		namespaceConfig:         nc,
-		shardMetadata:           shardMetadata,
-		rpc:                     rpcProvider,
-		configResource:          configResource,
-		statusResource:          statusResource,
-		eventListener:           eventListener,
-		leaderSelector:          leaderselector.NewSelector(),
-		electionOp:              make(chan *actions.ElectionAction, chanBufferSize),
-		deleteOp:                make(chan any, chanBufferSize),
-		nodeFailureOp:           make(chan model.Server, chanBufferSize),
-		swapNodeOp:              make(chan swapNodeRequest, chanBufferSize),
-		periodicTasksInterval:   periodTasksInterval,
+		namespace:             namespace,
+		shard:                 shard,
+		namespaceConfig:       nc,
+		shardMetadata:         shardMetadata,
+		rpc:                   rpcProvider,
+		configResource:        configResource,
+		statusResource:        statusResource,
+		eventListener:         eventListener,
+		leaderSelector:        leaderselector.NewSelector(),
+		electionOp:            make(chan *actions.ElectionAction, chanBufferSize),
+		deleteOp:              make(chan any, chanBufferSize),
+		nodeFailureOp:         make(chan model.Server, chanBufferSize),
+		swapNodeOp:            make(chan swapNodeRequest, chanBufferSize),
+		periodicTasksInterval: periodTasksInterval,
 		log: slog.With(
 			slog.String("component", "shard-controller"),
 			slog.String("namespace", namespace),
@@ -450,7 +450,8 @@ func (s *shardController) getRefreshedEnsemble() []model.Server {
 	return refreshedEnsembleServiceAddress
 }
 
-func (s *shardController) keepFencingFailedFollowers(successfulFollowers map[model.Server]*proto.EntryId) {
+func (s *shardController) keepFencingFailedFollowers(term int64, ensemble []model.Server, leader *model.Server,
+	successfulFollowers map[model.Server]*proto.EntryId) {
 	if len(successfulFollowers) == len(s.shardMetadata.Ensemble)-1 {
 		s.log.Debug(
 			"All the member of the ensemble were successfully added",
