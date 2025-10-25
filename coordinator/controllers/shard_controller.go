@@ -581,10 +581,10 @@ func (s *shardController) newTermAndAddFollower(term int64, leader model.Server,
 
 // Send NewTerm to all the ensemble members in parallel and wait for
 // a majority of them to reply successfully.
-func (s *shardController) newTermQuorum(metadata *model.ShardMetadata) (map[model.Server]*proto.EntryId, error) {
+func (s *shardController) newTermQuorum(shardMeta *model.ShardMetadata) (map[model.Server]*proto.EntryId, error) {
 	timer := s.newTermQuorumLatency.Timer()
 
-	fencingQuorum := mergeLists(metadata.Ensemble, metadata.RemovedNodes)
+	fencingQuorum := mergeLists(shardMeta.Ensemble, shardMeta.RemovedNodes)
 	fencingQuorumSize := len(fencingQuorum)
 	majority := fencingQuorumSize/2 + 1
 
@@ -609,7 +609,7 @@ func (s *shardController) newTermQuorum(metadata *model.ShardMetadata) (map[mode
 				"shard": fmt.Sprintf("%d", s.shard),
 				"node":  pinedServer.GetIdentifier(),
 			}, func() {
-				entryId, err := s.newTerm(ctx, metadata.Term, pinedServer)
+				entryId, err := s.newTerm(ctx, shardMeta.Term, pinedServer)
 				if err != nil {
 					s.log.Warn(
 						"Failed to newTerm node",
@@ -648,7 +648,7 @@ func (s *shardController) newTermQuorum(metadata *model.ShardMetadata) (map[mode
 			successResponses++
 
 			// We don't consider the removed nodes as candidates for leader/followers
-			if listContains(metadata.Ensemble, r.Server) {
+			if listContains(shardMeta.Ensemble, r.Server) {
 				res[r.Server] = r.EntryId
 			}
 		} else {
