@@ -459,8 +459,6 @@ func (s *shardController) keepFencingFailedFollowers(successfulFollowers map[mod
 		return
 	}
 	// Identify failed followers
-	group := sync.WaitGroup{}
-	defer group.Wait()
 	for _, follower := range ensemble {
 		if follower == *leader {
 			continue
@@ -470,45 +468,43 @@ func (s *shardController) keepFencingFailedFollowers(successfulFollowers map[mod
 		}
 		s.log.Info("Node has failed in leader election, retrying", slog.Any("follower", follower))
 
-		group.Go(func() {
-			process.DoWithLabels(
-				s.currentElectionCtx,
-				map[string]string{
-					"oxia":     "election-retry-failed-follower",
-					"shard":    fmt.Sprintf("%d", s.shard),
-					"follower": follower.GetIdentifier(),
-				},
-				func() {
-					_ = backoff.RetryNotify(func() error {
-						var err error
-						if err := s.fenceNewTermAndAddFollower(term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
-							// If we're receiving invalid term error, it would mean
-							// there's already a new term generated, and we don't have
-							// to keep trying with this old term
-							s.log.Warn(
-								"Failed to fenceNewTermAndAddFollower, invalid term. Stop trying",
-								slog.Any("follower", follower),
-								slog.Int64("term", term),
-							)
-							return nil
-						}
-						return err
-					}, oxiatime.NewBackOffWithInitialInterval(s.currentElectionCtx, 1*time.Second), func(err error, duration time.Duration) {
+		go process.DoWithLabels(
+			s.currentElectionCtx,
+			map[string]string{
+				"oxia":     "election-retry-failed-follower",
+				"shard":    fmt.Sprintf("%d", s.shard),
+				"follower": follower.GetIdentifier(),
+			},
+			func() {
+				_ = backoff.RetryNotify(func() error {
+					var err error
+					if err := s.newTermAndAddFollower(term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
+						// If we're receiving invalid term error, it would mean
+						// there's already a new term generated, and we don't have
+						// to keep trying with this old term
 						s.log.Warn(
-							"Failed to fenceNewTermAndAddFollower, retrying later",
-							slog.Any("error", err),
+							"Failed to newTermAndAddFollower, invalid term. Stop trying",
 							slog.Any("follower", follower),
 							slog.Int64("term", term),
-							slog.Duration("retry-after", duration),
 						)
-					})
-				},
-			)
-		})
+						return nil
+					}
+					return err
+				}, oxiatime.NewBackOffWithInitialInterval(s.currentElectionCtx, 1*time.Second), func(err error, duration time.Duration) {
+					s.log.Warn(
+						"Failed to newTermAndAddFollower, retrying later",
+						slog.Any("error", err),
+						slog.Any("follower", follower),
+						slog.Int64("term", term),
+						slog.Duration("retry-after", duration),
+					)
+				})
+			},
+		)
 	}
 }
 
-func (s *shardController) fenceNewTermAndAddFollower(term int64, leader model.Server, follower model.Server) error {
+func (s *shardController) newTermAndAddFollower(term int64, leader model.Server, follower model.Server) error {
 	fr, err := s.newTerm(s.currentElectionCtx, follower)
 	if err != nil {
 		return err
