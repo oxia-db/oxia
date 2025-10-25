@@ -120,13 +120,16 @@ jobs:
         with:
           cluster_name: kind
           kubectl_version: v1.25.5
+      - name: Clone oxia helm charts
+        run: |
+          git clone https://github.com/oxia-project/oxia-helm.git
       - name: Deploy oxia
         run: |
           kubectl create namespace oxia
           kind load docker-image oxia:latest
           helm -n oxia install oxia \
             -f deploy/chaos-mesh/oxia-cluster.yaml \
-            deploy/charts/oxia-cluster
+            ./helm-charts/charts/oxia-cluster
           sleep 30
           kubectl -n oxia run perf \
             --image=oxia:latest --image-pull-policy=Never \
