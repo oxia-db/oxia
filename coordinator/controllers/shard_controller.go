@@ -452,7 +452,7 @@ func (s *shardController) getRefreshedEnsemble() []model.Server {
 
 func (s *shardController) keepFencingFailedFollowers(term int64, ensemble []model.Server, leader *model.Server,
 	successfulFollowers map[model.Server]*proto.EntryId) {
-	if len(successfulFollowers) == len(s.shardMetadata.Ensemble)-1 {
+	if len(successfulFollowers) == len(ensemble)-1 {
 		s.log.Debug(
 			"All the member of the ensemble were successfully added",
 			slog.Int64("term", term),
