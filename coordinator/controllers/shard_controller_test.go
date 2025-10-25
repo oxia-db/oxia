@@ -135,10 +135,10 @@ func TestShardController(t *testing.T) {
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 2, sc.Term())
-	assert.Equal(t, s1, *sc.Leader())
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.Equal(t, s1, *sc.Metadata().Leader())
 
 	rpc.GetNode(s2).NewTermResponse(2, 0, nil)
 	rpc.GetNode(s3).NewTermResponse(2, -1, nil)
@@ -157,11 +157,11 @@ func TestShardController(t *testing.T) {
 	rpc.GetNode(s2).expectBecomeLeaderRequest(t, shard, 3, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
 
-	assert.EqualValues(t, 3, sc.Term())
-	assert.Equal(t, s2, *sc.Leader())
+	assert.EqualValues(t, 3, sc.Metadata().Term())
+	assert.Equal(t, s2, *sc.Metadata().Leader())
 
 	// Simulate the failure of the leader
 	sc.NodeBecameUnavailable(s2)
@@ -259,12 +259,12 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	assert.WithinDuration(t, timeStart, time.Now(), 1*time.Second)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
 
-	assert.Equal(t, model.ShardStatusSteadyState, sc.Status())
-	assert.EqualValues(t, 2, sc.Term())
-	assert.Equal(t, s1, *sc.Leader())
+	assert.Equal(t, model.ShardStatusSteadyState, sc.Metadata().Status())
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.Equal(t, s1, *sc.Metadata().Leader())
 
 	assert.NoError(t, sc.Close())
 }
@@ -306,11 +306,11 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 2, sc.Term())
-	assert.NotNil(t, sc.Leader())
-	assert.Equal(t, s1, *sc.Leader())
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.NotNil(t, sc.Metadata().Leader())
+	assert.Equal(t, s1, *sc.Metadata().Leader())
 
 	// One more failure from s1
 	rpc.GetNode(s3).NewTermResponse(1, -1, errors.New("fails"))
@@ -456,11 +456,11 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 2, sc.Term())
-	assert.NotNil(t, sc.Leader())
-	assert.Equal(t, s1, *sc.Leader())
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.NotNil(t, sc.Metadata().Leader())
+	assert.Equal(t, s1, *sc.Metadata().Leader())
 
 	wg := concurrent.NewWaitGroup(1)
 
@@ -495,11 +495,11 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	rpc.GetNode(s3).expectBecomeLeaderRequest(t, shard, 4, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 4, sc.Term())
-	assert.NotNil(t, sc.Leader())
-	assert.Equal(t, s3, *sc.Leader())
+	assert.EqualValues(t, 4, sc.Metadata().Term())
+	assert.NotNil(t, sc.Metadata().Leader())
+	assert.Equal(t, s3, *sc.Metadata().Leader())
 
 	assert.NoError(t, sc.Close())
 }
@@ -573,11 +573,11 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	rpc.GetNode(s1).DeleteShardResponse(errors.New("could not delete shard"))
 
 	assert.Eventually(t, func() bool {
-		return sc.Status() == model.ShardStatusSteadyState
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 3, sc.Term())
-	assert.NotNil(t, sc.Leader())
-	assert.Equal(t, s4, *sc.Leader())
+	assert.EqualValues(t, 3, sc.Metadata().Term())
+	assert.NotNil(t, sc.Metadata().Leader())
+	assert.Equal(t, s4, *sc.Metadata().Leader())
 
 	// The swap node should be free to complete as well
 	assert.NoError(t, wg.Wait(context.Background()))
@@ -586,9 +586,8 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	rpc.GetNode(s1).expectDeleteShardRequest(t, shard, 3)
 	assert.Eventually(t, func() bool {
 		c := sc.(*shardController)
-		c.shardMetadataMutex.Lock()
-		defer c.shardMetadataMutex.Unlock()
-		return len(c.shardMetadata.PendingDeleteShardNodes) == 1
+		shardMeta := c.metadata.Load()
+		return len(shardMeta.PendingDeleteShardNodes) == 1
 	}, 10*time.Second, 100*time.Millisecond)
 
 	// Next attempt wlll succeed
@@ -598,9 +597,8 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	// s1 should be completely removed from list
 	assert.Eventually(t, func() bool {
 		c := sc.(*shardController)
-		c.shardMetadataMutex.Lock()
-		defer c.shardMetadataMutex.Unlock()
-		return len(c.shardMetadata.PendingDeleteShardNodes) == 0
+		shardMeta := c.metadata.Load()
+		return len(shardMeta.PendingDeleteShardNodes) == 0
 	}, 10*time.Second, 100*time.Millisecond)
 
 	assert.NoError(t, sc.Close())
