@@ -842,7 +842,7 @@ func (s *shardController) SwapNode(from model.Server, to model.Server) error {
 }
 
 func (s *shardController) swapNode(from model.Server, to model.Server, res chan error) {
-	newShardMeta := s.metadata.Compute(func(metadata *model.ShardMetadata) {
+	shardMeta := s.metadata.Compute(func(metadata *model.ShardMetadata) {
 		metadata.RemovedNodes = listAddUnique(metadata.RemovedNodes, from)
 
 		// A node might get re-added to the ensemble after it was swapped out and be in
@@ -853,8 +853,8 @@ func (s *shardController) swapNode(from model.Server, to model.Server, res chan 
 
 	s.log.Info(
 		"Swapping node",
-		slog.Any("removed-nodes", newShardMeta),
-		slog.Any("new-ensemble", newShardMeta),
+		slog.Any("removed-nodes", shardMeta),
+		slog.Any("new-ensemble", shardMeta),
 		slog.Any("from", from),
 		slog.Any("to", to),
 	)
@@ -862,8 +862,8 @@ func (s *shardController) swapNode(from model.Server, to model.Server, res chan 
 	// Wait until we can re-establish a leader with the new ensemble
 	s.electLeaderWithRetries(nil)
 
-	leader := newShardMeta.Leader
-	ensemble := newShardMeta.Ensemble
+	leader := shardMeta.Leader
+	ensemble := shardMeta.Ensemble
 	ctx := s.currentElectionCtx
 
 	// Wait until all followers are caught up.
@@ -975,14 +975,14 @@ func (s *shardController) handlePeriodicTasks() {
 	s.metadata.Store(mutShardMeta)
 }
 
-func (s *shardController) handlePendingDeleteShardNodes(metadata *model.ShardMetadata) error {
-	for _, ds := range metadata.PendingDeleteShardNodes {
+func (s *shardController) handlePendingDeleteShardNodes(mutShardMeta *model.ShardMetadata) error {
+	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
 		s.log.Info("Deleting shard from removed node", "node", ds)
 
 		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
-			Term:      metadata.Term,
+			Term:      mutShardMeta.Term,
 		}); err != nil {
 			s.log.Warn("Failed to delete shard from removed node", "node", ds, "error", err)
 			return err
@@ -991,7 +991,7 @@ func (s *shardController) handlePendingDeleteShardNodes(metadata *model.ShardMet
 		s.log.Info("Successfully deleted shard from node", "node", ds)
 	}
 
-	metadata.PendingDeleteShardNodes = nil
+	mutShardMeta.PendingDeleteShardNodes = nil
 	return nil
 }
 
