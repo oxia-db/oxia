@@ -136,12 +136,11 @@ type ShardController interface {
 }
 
 type shardController struct {
-	namespace          string
-	shard              int64
-	namespaceConfig    *model.NamespaceConfig
-	shardMetadataMutex sync.RWMutex
-	rpc                rpc.Provider
-	metadata           Metadata
+	namespace       string
+	shard           int64
+	namespaceConfig *model.NamespaceConfig
+	rpc             rpc.Provider
+	metadata        Metadata
 
 	leaderSelector selectors.Selector[*leaderselector.Context, model.Server]
 
