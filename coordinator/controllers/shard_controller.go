@@ -448,6 +448,7 @@ func (s *shardController) electLeader() (string, error) {
 	shardMeta.PendingDeleteShardNodes = mergeLists(shardMeta.PendingDeleteShardNodes, shardMeta.RemovedNodes)
 	shardMeta.RemovedNodes = nil
 	shardMeta.Leader = &newLeader
+
 	term := shardMeta.Term
 	ensemble := shardMeta.Ensemble
 	leader := shardMeta.Leader
@@ -867,14 +868,10 @@ func (s *shardController) swapNode(from model.Server, to model.Server, res chan 
 	// Wait until we can re-establish a leader with the new ensemble
 	s.electLeaderWithRetries(nil)
 
-	leader := shardMeta.Leader
-	ensemble := shardMeta.Ensemble
-	ctx := s.currentElectionCtx
-
 	// Wait until all followers are caught up.
 	// This is done to avoid doing multiple node-swap concurrently, since it would create
 	// additional load in the system, while transferring multiple DB snapshots.
-	if err := s.waitForFollowersToCatchUp(ctx, *leader, ensemble); err != nil {
+	if err := s.waitForFollowersToCatchUp(s.currentElectionCtx, *shardMeta.Leader, shardMeta.Ensemble); err != nil {
 		s.log.Error(
 			"Failed to wait for followers to catch up",
 			slog.Any("error", err),
