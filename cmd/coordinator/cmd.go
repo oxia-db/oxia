@@ -54,6 +54,7 @@ var (
 func init() {
 	flag.InternalAddr(Cmd, &conf.InternalServiceAddr)
 	flag.MetricsAddr(Cmd, &conf.MetricsServiceAddr)
+	flag.AdminAddr(Cmd, &conf.AdminServiceAddr)
 	Cmd.Flags().StringVar(&conf.MetadataProviderName, "metadata", "file", "Metadata provider implementation: file, configmap, raft or memory")
 
 	Cmd.Flags().StringVar(&conf.K8SMetadataNamespace, "k8s-namespace", conf.K8SMetadataNamespace, "Kubernetes namespace for oxia config maps")

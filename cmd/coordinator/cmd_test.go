@@ -68,6 +68,7 @@ func TestCmd(t *testing.T) {
 		{[]string{}, coordinator.Config{
 			InternalServiceAddr:  "localhost:6649",
 			MetricsServiceAddr:   "localhost:8080",
+			AdminServiceAddr:     "localhost:6651",
 			MetadataProviderName: metadata.ProviderNameFile,
 		}, model.ClusterConfig{
 			Namespaces: []model.NamespaceConfig{{
@@ -85,6 +86,7 @@ func TestCmd(t *testing.T) {
 		{[]string{"-i=localhost:1234"}, coordinator.Config{
 			InternalServiceAddr:  "localhost:1234",
 			MetricsServiceAddr:   "localhost:8080",
+			AdminServiceAddr:     "localhost:6651",
 			MetadataProviderName: metadata.ProviderNameFile,
 		}, model.ClusterConfig{
 			Namespaces: []model.NamespaceConfig{{
@@ -102,6 +104,7 @@ func TestCmd(t *testing.T) {
 		{[]string{"-i=0.0.0.0:1234"}, coordinator.Config{
 			InternalServiceAddr:  "0.0.0.0:1234",
 			MetricsServiceAddr:   "localhost:8080",
+			AdminServiceAddr:     "localhost:6651",
 			MetadataProviderName: metadata.ProviderNameFile,
 		}, model.ClusterConfig{
 			Namespaces: []model.NamespaceConfig{{
@@ -119,6 +122,7 @@ func TestCmd(t *testing.T) {
 		{[]string{"-m=localhost:1234"}, coordinator.Config{
 			InternalServiceAddr:  "localhost:6649",
 			MetricsServiceAddr:   "localhost:1234",
+			AdminServiceAddr:     "localhost:6651",
 			MetadataProviderName: metadata.ProviderNameFile,
 		}, model.ClusterConfig{
 			Namespaces: []model.NamespaceConfig{{
@@ -136,6 +140,7 @@ func TestCmd(t *testing.T) {
 		{[]string{"-f=" + name}, coordinator.Config{
 			InternalServiceAddr:  "localhost:6649",
 			MetricsServiceAddr:   "localhost:8080",
+			AdminServiceAddr:     "localhost:6651",
 			MetadataProviderName: metadata.ProviderNameFile,
 		}, model.ClusterConfig{
 			Namespaces: []model.NamespaceConfig{{
@@ -153,8 +158,27 @@ func TestCmd(t *testing.T) {
 		{[]string{"-f=invalid.yaml"}, coordinator.Config{
 			InternalServiceAddr:  "localhost:6649",
 			MetricsServiceAddr:   "localhost:8080",
+			AdminServiceAddr:     "localhost:6651",
 			MetadataProviderName: metadata.ProviderNameFile,
 		}, model.ClusterConfig{}, true},
+		{[]string{"-a=localhost:9090"}, coordinator.Config{
+			InternalServiceAddr:  "localhost:6649",
+			MetricsServiceAddr:   "localhost:8080",
+			AdminServiceAddr:     "localhost:9090",
+			MetadataProviderName: metadata.ProviderNameFile,
+		}, model.ClusterConfig{
+			Namespaces: []model.NamespaceConfig{{
+				Name:                 constant.DefaultNamespace,
+				ReplicationFactor:    1,
+				InitialShardCount:    2,
+				NotificationsEnabled: entity.Bool(false),
+			}},
+			Servers: []model.Server{{
+				Public:   "public:1234",
+				Internal: "internal:5678",
+			},
+			},
+		}, false},
 	} {
 		t.Run(strings.Join(test.args, "_"), func(t *testing.T) {
 			conf = coordinator.NewConfig()

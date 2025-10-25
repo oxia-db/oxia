@@ -12,21 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package constant
+package common
 
-import "time"
+import (
+	"github.com/stretchr/testify/mock"
 
-const (
-	MetadataTerm      = "term"
-	MetadataNamespace = "namespace"
-	MetadataShardId   = "shard-id"
-	DefaultNamespace  = "default"
-
-	DefaultPublicPort   = 6648
-	DefaultInternalPort = 6649
-	DefaultAdminPort    = 6651
-	DefaultMetricsPort  = 8080
-
-	MaxSessionTimeout = 5 * time.Minute
-	MinSessionTimeout = 2 * time.Second
+	"github.com/oxia-db/oxia/oxia"
 )
+
+var _ oxia.AdminClient = (*MockAdminClient)(nil)
+
+type MockAdminClient struct {
+	mock.Mock
+}
+
+func NewMockAdminClient() *MockAdminClient {
+	return &MockAdminClient{}
+}
+
+func (m *MockAdminClient) Close() error {
+	args := m.MethodCalled("Close")
+	return args.Error(0)
+}
+
+func (m *MockAdminClient) ListNamespaces() *oxia.ListNamespacesResult {
+	args := m.MethodCalled("ListNamespaces")
+	return args.Get(0).(*oxia.ListNamespacesResult)
+}
