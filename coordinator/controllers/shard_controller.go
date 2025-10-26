@@ -546,7 +546,12 @@ func (s *shardController) SyncServerAddress() {
 		return
 	}
 	s.log.Info("server address changed, start a new leader election")
-	s.electionOp <- nil
+	group := &sync.WaitGroup{}
+	group.Add(1)
+	s.electionOp <- &actions.ElectionAction{
+		Shard:  s.shard,
+		Waiter: group,
+	}
 }
 
 func (s *shardController) handlePeriodicTasks() {
