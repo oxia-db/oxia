@@ -19,16 +19,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"reflect"
 	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
-	"golang.org/x/exp/maps"
-	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/coordinator/actions"
 	"github.com/oxia-db/oxia/coordinator/selectors"
 	leaderselector "github.com/oxia-db/oxia/coordinator/selectors/leader"
@@ -37,7 +34,6 @@ import (
 
 	"github.com/oxia-db/oxia/coordinator/rpc"
 
-	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 
@@ -105,10 +101,9 @@ type shardController struct {
 	cancel                context.CancelFunc
 	wg                    *sync.WaitGroup
 	periodicTasksInterval time.Duration
-
-	currentElectionCtx    context.Context
-	currentElectionCancel context.CancelFunc
 	log                   *slog.Logger
+
+	currentElection *ShardElection
 
 	leaderElectionLatency metric.LatencyHistogram
 	newTermQuorumLatency  metric.LatencyHistogram
@@ -209,7 +204,7 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 	case initShardMeta.Status == model.ShardStatusDeleting:
 		s.DeleteShard()
 	case initShardMeta.Leader == nil || initShardMeta.Status != model.ShardStatusSteadyState:
-		s.electLeaderWithRetries(nil)
+		s.electLeader()
 	default:
 		s.log.Info(
 			"There is already a node marked as leader on the shard, verifying",
@@ -217,7 +212,7 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 		)
 
 		if !s.verifyCurrentEnsemble(initShardMeta) {
-			s.electLeaderWithRetries(nil)
+			s.electLeader()
 		} else {
 			s.SyncServerAddress()
 		}
@@ -244,8 +239,9 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 		case <-periodicTasksTimer.C:
 			s.handlePeriodicTasks()
 
-		case eo := <-s.electionOp:
-			s.electLeaderWithRetries(eo)
+		case electionAction := <-s.electionOp:
+			newLeader := s.electLeader()
+			electionAction.Done(newLeader)
 		}
 	}
 }
@@ -264,7 +260,7 @@ func (s *shardController) handleNodeFailure(failedNode model.Server) {
 			"Detected failure on shard leader",
 			slog.Any("leader", failedNode),
 		)
-		s.electLeaderWithRetries(nil)
+		s.electLeader()
 	}
 }
 
@@ -319,332 +315,26 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *model.ShardMetada
 	return true
 }
 
-func (s *shardController) electLeaderWithRetries(ea *actions.ElectionAction) {
-	newLeader, _ := backoff.RetryNotifyWithData[string](func() (string, error) {
-		return s.electLeader()
-	}, oxiatime.NewBackOff(s.ctx),
-		func(err error, duration time.Duration) {
-			s.leaderElectionsFailed.Inc()
-			s.log.Warn(
-				"Leader election has failed, retrying later",
-				slog.Any("error", err),
-				slog.Duration("retry-after", duration),
-			)
-		})
-	if ea != nil {
-		ea.Done(newLeader)
+func (s *shardController) electLeader() model.Server {
+	// stop the current term election
+	if s.currentElection != nil {
+		s.currentElection.Stop()
+		s.currentElection = nil
 	}
-}
-
-func (s *shardController) electLeader() (string, error) {
-	timer := s.leaderElectionLatency.Timer()
-
-	if s.currentElectionCancel != nil {
-		// Cancel any pending activity from the previous election
-		s.currentElectionCancel()
+	enableNotification := entity.OptBooleanDefaultTrue{}
+	if nsConfig, exist := s.configResource.NamespaceConfig(s.namespace); exist {
+		enableNotification = nsConfig.NotificationsEnabled
 	}
-
-	s.currentElectionCtx, s.currentElectionCancel = context.WithCancel(s.ctx)
-
-	mutShardMeta := s.metadata.Compute(func(shardMeta *model.ShardMetadata) {
-		shardMeta.Status = model.ShardStatusElection
-		shardMeta.Leader = nil
-		shardMeta.Term++
-		// it's a safe point to update the service info
-		shardMeta.Ensemble = s.getRefreshedEnsemble(shardMeta)
-	})
-
-	s.log.Info(
-		"Starting leader election",
-		slog.Int64("term", mutShardMeta.Term),
-	)
-
-	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta)
-
-	// Send NewTerm to all the ensemble members
-	fr, err := s.newTermQuorum(&mutShardMeta)
-	if err != nil {
-		return "", errors.Wrap(err, "Failed to create new term quorum")
-	}
-
-	newLeader, followers := s.selectNewLeader(fr)
-
-	if s.log.Enabled(context.Background(), slog.LevelInfo) {
-		f := make([]struct {
-			ServerAddress model.Server   `json:"server-address"`
-			EntryId       *proto.EntryId `json:"entry-id"`
-		}, 0)
-		for sa, entryId := range followers {
-			f = append(f, struct {
-				ServerAddress model.Server   `json:"server-address"`
-				EntryId       *proto.EntryId `json:"entry-id"`
-			}{ServerAddress: sa, EntryId: entryId})
-		}
-		s.log.Info(
-			"Successfully moved ensemble to a new term",
-			slog.Int64("term", mutShardMeta.Term),
-			slog.Any("new-leader", newLeader),
-			slog.Any("followers", f),
-		)
-	}
-
-	if err = s.becomeLeader(mutShardMeta.Term, mutShardMeta.Ensemble, newLeader, followers); err != nil {
-		return "", errors.Wrapf(err, "failed to become leader for node %s", newLeader.GetIdentifier())
-	}
-
-	mutShardMeta.Status = model.ShardStatusSteadyState
-	mutShardMeta.PendingDeleteShardNodes = mergeLists(mutShardMeta.PendingDeleteShardNodes, mutShardMeta.RemovedNodes)
-	mutShardMeta.RemovedNodes = nil
-	mutShardMeta.Leader = &newLeader
-
-	term := mutShardMeta.Term
-	ensemble := mutShardMeta.Ensemble
-	leader := mutShardMeta.Leader
-
-	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta)
-	s.metadata.Store(mutShardMeta)
-
-	s.log.Info(
-		"Elected new leader",
-		slog.Int64("term", mutShardMeta.Term),
-		slog.Any("leader", mutShardMeta.Leader),
-	)
-	timer.Done()
-
-	if s.eventListener != nil {
-		s.eventListener.LeaderElected(s.shard, newLeader, maps.Keys(followers))
-	}
-
-	go process.DoWithLabels(
-		s.currentElectionCtx,
-		map[string]string{
-			"oxia":  "election-fencing-failed-followers",
-			"shard": fmt.Sprintf("%d", s.shard),
-		}, func() {
-			s.keepFencingFailedFollowers(term, ensemble, leader, followers)
-		},
-	)
-	return newLeader.GetIdentifier(), nil
-}
-
-func (s *shardController) getRefreshedEnsemble(shardMeta *model.ShardMetadata) []model.Server {
-	currentEnsemble := shardMeta.Ensemble
-	refreshedEnsembleServiceAddress := make([]model.Server, len(currentEnsemble))
-	for idx, candidate := range currentEnsemble {
-		if refreshedAddress, exist := s.configResource.Node(candidate.GetIdentifier()); exist {
-			refreshedEnsembleServiceAddress[idx] = *refreshedAddress
-			continue
-		}
-		refreshedEnsembleServiceAddress[idx] = candidate
-	}
-	if s.log.Enabled(s.ctx, slog.LevelDebug) {
-		if !reflect.DeepEqual(currentEnsemble, refreshedEnsembleServiceAddress) {
-			s.log.Info("refresh the shard ensemble server address", slog.Any("current-ensemble", currentEnsemble),
-				slog.Any("new-ensemble", refreshedEnsembleServiceAddress))
-		}
-	}
-	return refreshedEnsembleServiceAddress
-}
-
-func (s *shardController) keepFencingFailedFollowers(term int64, ensemble []model.Server, leader *model.Server,
-	successfulFollowers map[model.Server]*proto.EntryId) {
-	if len(successfulFollowers) == len(ensemble)-1 {
-		s.log.Debug(
-			"All the member of the ensemble were successfully added",
-			slog.Int64("term", term),
-		)
-		return
-	}
-	// Identify failed followers
-	for _, follower := range ensemble {
-		if follower == *leader {
-			continue
-		}
-		if _, found := successfulFollowers[follower]; found {
-			continue
-		}
-		s.log.Info("Node has failed in leader election, retrying", slog.Any("follower", follower))
-
-		go process.DoWithLabels(
-			s.currentElectionCtx,
-			map[string]string{
-				"oxia":     "election-retry-failed-follower",
-				"shard":    fmt.Sprintf("%d", s.shard),
-				"follower": follower.GetIdentifier(),
-			},
-			func() {
-				bf := oxiatime.NewBackOffWithInitialInterval(s.currentElectionCtx, 1*time.Second)
-				_ = backoff.RetryNotify(func() error {
-					var err error
-					if err = s.newTermAndAddFollower(term, *leader, follower); status.Code(err) == constant.CodeInvalidTerm {
-						// If we're receiving invalid term error, it would mean
-						// there's already a new term generated, and we don't have
-						// to keep trying with this old term
-						s.log.Warn(
-							"Failed to newTermAndAddFollower, invalid term. Stop trying",
-							slog.Any("follower", follower),
-							slog.Int64("term", term),
-						)
-						return nil
-					}
-					return err
-				}, bf, func(err error, duration time.Duration) {
-					s.log.Warn(
-						"Failed to newTermAndAddFollower, retrying later",
-						slog.Any("error", err),
-						slog.Any("follower", follower),
-						slog.Int64("term", term),
-						slog.Duration("retry-after", duration),
-					)
-				})
-			},
-		)
-	}
-}
-
-func (s *shardController) newTermAndAddFollower(term int64, leader model.Server, follower model.Server) error {
-	fr, err := s.newTerm(s.currentElectionCtx, term, follower)
-	if err != nil {
-		return err
-	}
-	if _, err := s.rpc.AddFollower(s.currentElectionCtx, leader, &proto.AddFollowerRequest{
-		Namespace:    s.namespace,
-		Shard:        s.shard,
-		Term:         term,
-		FollowerName: follower.Internal,
-		FollowerHeadEntryId: &proto.EntryId{
-			Term:   fr.Term,
-			Offset: fr.Offset,
-		},
-	}); err != nil {
-		return err
-	}
-
-	s.log.Info(
-		"Successfully rejoined the quorum",
-		slog.Any("follower", follower),
-		slog.Int64("term", fr.Term),
-	)
-	return nil
-}
-
-// Send NewTerm to all the ensemble members in parallel and wait for
-// a majority of them to reply successfully.
-func (s *shardController) newTermQuorum(shardMeta *model.ShardMetadata) (map[model.Server]*proto.EntryId, error) {
-	timer := s.newTermQuorumLatency.Timer()
-
-	fencingQuorum := mergeLists(shardMeta.Ensemble, shardMeta.RemovedNodes)
-	fencingQuorumSize := len(fencingQuorum)
-	majority := fencingQuorumSize/2 + 1
-
-	// Use a new context, so we can cancel the pending requests
-	ctx, cancel := context.WithCancel(s.ctx)
-	defer cancel()
-
-	// Channel to receive responses or errors from each server
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, fencingQuorumSize)
-
-	for _, server := range fencingQuorum {
-		// We need to save the address because it gets modified in the loop
-		pinedServer := server
-		go process.DoWithLabels(
-			s.ctx,
-			map[string]string{
-				"oxia":  "shard-controller-leader-election",
-				"shard": fmt.Sprintf("%d", s.shard),
-				"node":  pinedServer.GetIdentifier(),
-			}, func() {
-				entryId, err := s.newTerm(ctx, shardMeta.Term, pinedServer)
-				if err != nil {
-					s.log.Warn(
-						"Failed to newTerm node",
-						slog.Any("error", err),
-						slog.Any("node", pinedServer),
-					)
-				} else {
-					s.log.Info(
-						"Processed newTerm response",
-						slog.Any("node", pinedServer),
-						slog.Any("entry-id", entryId),
-					)
-				}
-
-				ch <- struct {
-					model.Server
-					*proto.EntryId
-					error
-				}{pinedServer, entryId, err}
-			},
-		)
-	}
-
-	successResponses := 0
-	totalResponses := 0
-
-	res := make(map[model.Server]*proto.EntryId)
-	var err error
-
-	// Wait for a majority to respond
-	for successResponses < majority && totalResponses < fencingQuorumSize {
-		r := <-ch
-
-		totalResponses++
-		if r.error == nil {
-			successResponses++
-
-			// We don't consider the removed nodes as candidates for leader/followers
-			if listContains(shardMeta.Ensemble, r.Server) {
-				res[r.Server] = r.EntryId
-			}
-		} else {
-			err = multierr.Append(err, r.error)
-		}
-	}
-
-	if successResponses < majority {
-		return nil, errors.Wrap(err, "failed to newTerm shard")
-	}
-
-	// If we have already reached a quorum of successful responses, we can wait a
-	// tiny bit more, to allow time for all the "healthy" nodes to respond.
-	for err == nil && totalResponses < fencingQuorumSize {
-		select {
-		case r := <-ch:
-			totalResponses++
-			if r.error == nil {
-				res[r.Server] = r.EntryId
-			} else {
-				err = multierr.Append(err, r.error)
-			}
-
-		case <-time.After(quorumFencingGracePeriod):
-			timer.Done()
-			return res, nil
-		}
-	}
-
-	timer.Done()
-	return res, nil
-}
-
-func (s *shardController) newTerm(ctx context.Context, term int64, node model.Server) (*proto.EntryId, error) {
-	res, err := s.rpc.NewTerm(ctx, node, &proto.NewTermRequest{
-		Namespace: s.namespace,
-		Shard:     s.shard,
-		Term:      term,
-		Options: &proto.NewTermOptions{
-			EnableNotifications: s.namespaceConfig.NotificationsEnabled.Get(),
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return res.HeadEntryId, nil
+	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
+		s.statusResource, s.configResource, s.leaderSelector,
+		s.rpc, &s.metadata, s.namespace, s.shard,
+		&proto.NewTermOptions{EnableNotifications: enableNotification.Get()},
+		s.leaderElectionLatency,
+		s.newTermQuorumLatency,
+		s.becomeLeaderLatency,
+		s.leaderElectionsFailed)
+	leaderNode := s.currentElection.Start()
+	return leaderNode
 }
 
 func (s *shardController) deleteShardRpc(ctx context.Context, node model.Server) error {
@@ -655,72 +345,6 @@ func (s *shardController) deleteShardRpc(ctx context.Context, node model.Server)
 	})
 
 	return err
-}
-
-func chooseCandidates(newTermResponses map[model.Server]*proto.EntryId) []model.Server {
-	// Select all the nodes that have the highest term first
-	var currentMaxTerm int64 = -1
-	// Select all the nodes that have the highest entry in the wal
-	var currentMax int64 = -1
-	var candidates []model.Server
-
-	for addr, headEntryId := range newTermResponses {
-		if headEntryId.Term > currentMaxTerm {
-			// the new max
-			currentMaxTerm = headEntryId.Term
-			currentMax = headEntryId.Offset
-			candidates = []model.Server{addr}
-		} else if headEntryId.Term == currentMaxTerm {
-			if headEntryId.Offset > currentMax {
-				// the new max
-				currentMax = headEntryId.Offset
-				candidates = []model.Server{addr}
-			} else if headEntryId.Offset == currentMax {
-				candidates = append(candidates, addr)
-			}
-		}
-	}
-	return candidates
-}
-
-func (s *shardController) selectNewLeader(newTermResponses map[model.Server]*proto.EntryId) (
-	leader model.Server, followers map[model.Server]*proto.EntryId) {
-	candidates := chooseCandidates(newTermResponses)
-
-	server, _ := s.leaderSelector.Select(&leaderselector.Context{
-		Candidates: candidates,
-		Status:     s.statusResource.Load(),
-	})
-	leader = server
-	followers = make(map[model.Server]*proto.EntryId)
-	for a, e := range newTermResponses {
-		if a != leader {
-			followers[a] = e
-		}
-	}
-	return leader, followers
-}
-
-func (s *shardController) becomeLeader(term int64, ensemble []model.Server, leader model.Server, followers map[model.Server]*proto.EntryId) error {
-	timer := s.becomeLeaderLatency.Timer()
-
-	followersMap := make(map[string]*proto.EntryId)
-	for server, e := range followers {
-		followersMap[server.Internal] = e
-	}
-
-	if _, err := s.rpc.BecomeLeader(s.ctx, leader, &proto.BecomeLeaderRequest{
-		Namespace:         s.namespace,
-		Shard:             s.shard,
-		Term:              term,
-		ReplicationFactor: uint32(len(ensemble)),
-		FollowerMaps:      followersMap,
-	}); err != nil {
-		return err
-	}
-
-	timer.Done()
-	return nil
 }
 
 func (s *shardController) DeleteShard() {
@@ -814,14 +438,14 @@ func (s *shardController) swapNode(from model.Server, to model.Server, res chan 
 	)
 
 	// Wait until we can re-establish a leader with the new ensemble
-	s.electLeaderWithRetries(nil)
+	s.electLeader()
 
 	// Reload snapshot from latest
 	shardMeta = s.metadata.Load()
 	// Wait until all followers are caught up.
 	// This is done to avoid doing multiple node-swap concurrently, since it would create
 	// additional load in the system, while transferring multiple DB snapshots.
-	if err := s.waitForFollowersToCatchUp(s.currentElectionCtx, *shardMeta.Leader, shardMeta.Ensemble); err != nil {
+	if err := s.waitForFollowersToCatchUp(s.ctx, *shardMeta.Leader, shardMeta.Ensemble); err != nil {
 		s.log.Error(
 			"Failed to wait for followers to catch up",
 			slog.Any("error", err),
@@ -973,14 +597,6 @@ func listContains(list []model.Server, sa model.Server) bool {
 	}
 
 	return false
-}
-
-func mergeLists[T any](lists ...[]T) []T {
-	var res []T
-	for _, list := range lists {
-		res = append(res, list...)
-	}
-	return res
 }
 
 func replaceInList(list []model.Server, oldServer, newServer model.Server) []model.Server {
