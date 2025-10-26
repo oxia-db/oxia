@@ -317,9 +317,6 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []model.Serv
 }
 
 func (e *ShardElection) start() (model.Server, error) {
-	if swapped := e.started.CompareAndSwap(false, true); !swapped {
-		return model.Server{}, errors.New("the election has been started")
-	}
 	e.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
 	mutShardMeta := e.meta.Compute(func(metadata *model.ShardMetadata) {
@@ -394,6 +391,9 @@ func (e *ShardElection) start() (model.Server, error) {
 }
 
 func (e *ShardElection) Start() model.Server {
+	if swapped := e.started.CompareAndSwap(false, true); !swapped {
+		panic("bug! the election has been started")
+	}
 	newLeader, _ := backoff.RetryNotifyWithData[model.Server](func() (model.Server, error) {
 		return e.start()
 	}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {

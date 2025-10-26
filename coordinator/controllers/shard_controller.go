@@ -246,7 +246,7 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 
 		case electionAction := <-s.electionOp:
 			newLeader := s.electLeader()
-			electionAction.Done(newLeader)
+			electionAction.Done(newLeader.GetIdentifier())
 		}
 	}
 }
