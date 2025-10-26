@@ -105,6 +105,11 @@ type shardController struct {
 
 	currentElection *ShardElection
 
+	// --- temporary context, will be moved.
+	currentElectionCtx    context.Context
+	currentElectionCancel context.CancelFunc
+	// ======================================
+
 	leaderElectionLatency metric.LatencyHistogram
 	newTermQuorumLatency  metric.LatencyHistogram
 	becomeLeaderLatency   metric.LatencyHistogram
@@ -321,11 +326,20 @@ func (s *shardController) electLeader() model.Server {
 		s.currentElection.Stop()
 		s.currentElection = nil
 	}
+	if s.currentElectionCtx != nil {
+		s.currentElectionCancel()
+		s.currentElectionCtx = nil
+	}
 	enableNotification := entity.OptBooleanDefaultTrue{}
 	if nsConfig, exist := s.configResource.NamespaceConfig(s.namespace); exist {
 		enableNotification = nsConfig.NotificationsEnabled
 	}
-	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
+	// --- temporary context, will be moved.
+	ctx, cancelFunc := context.WithCancel(s.ctx)
+	s.currentElectionCtx = ctx
+	s.currentElectionCancel = cancelFunc
+	// ======================================
+	s.currentElection = NewShardElection(ctx, s.log, s.eventListener,
 		s.statusResource, s.configResource, s.leaderSelector,
 		s.rpc, &s.metadata, s.namespace, s.shard,
 		&proto.NewTermOptions{EnableNotifications: enableNotification.Get()},
@@ -445,7 +459,7 @@ func (s *shardController) swapNode(from model.Server, to model.Server, res chan 
 	// Wait until all followers are caught up.
 	// This is done to avoid doing multiple node-swap concurrently, since it would create
 	// additional load in the system, while transferring multiple DB snapshots.
-	if err := s.waitForFollowersToCatchUp(s.ctx, *shardMeta.Leader, shardMeta.Ensemble); err != nil {
+	if err := s.waitForFollowersToCatchUp(s.currentElectionCtx, *shardMeta.Leader, shardMeta.Ensemble); err != nil {
 		s.log.Error(
 			"Failed to wait for followers to catch up",
 			slog.Any("error", err),
