@@ -286,7 +286,6 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []model.Serv
 					"follower": follower.GetIdentifier(),
 				},
 				func() {
-					defer group.Done()
 					bo := oxiatime.NewBackOffWithInitialInterval(e.Context, 1*time.Second)
 					_ = backoff.RetryNotify(func() error {
 						var err error
