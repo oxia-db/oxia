@@ -224,8 +224,10 @@ func (t *wal) readCache(index int64) *proto.LogEntry {
 	}
 
 	if entry, ok := t.logEntryCache.Get(index); ok {
-		t.cacheHits.Inc()
-		return entry.(*proto.LogEntry) //nolint
+		if e, ok := entry.(*proto.LogEntry); ok {
+			t.cacheHits.Inc()
+			return e.CloneVT()
+		}
 	}
 	return nil
 }
@@ -406,6 +408,8 @@ func (t *wal) drainSyncRequestsChannel(callbacks []func(error)) []func(error) {
 
 func (t *wal) runSync() {
 	var callbacks []func(error)
+	ticker := time.NewTicker(1 * time.Millisecond)
+	defer ticker.Stop()
 
 	for {
 		// Clear the slice
@@ -416,13 +420,17 @@ func (t *wal) runSync() {
 			// Wal is closing, exit the go routine
 			return
 
-		case callback := <-t.syncRequests:
-			// Wait for the first request
-			callbacks = append(callbacks, callback)
+		case _, more := <-ticker.C:
+			if !more {
+				continue
+			}
 		}
 
 		// Clear all the other requests in the channel
 		callbacks = t.drainSyncRequestsChannel(callbacks)
+		if len(callbacks) == 0 {
+			continue
+		}
 
 		t.Lock()
 		segment := t.currentSegment
