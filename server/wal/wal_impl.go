@@ -225,7 +225,7 @@ func (t *wal) readCache(index int64) *proto.LogEntry {
 
 	if entry, ok := t.logEntryCache.Get(index); ok {
 		t.cacheHits.Inc()
-		return entry.(*proto.LogEntry) // nolint
+		return entry.(*proto.LogEntry) //nolint
 	}
 	return nil
 }
