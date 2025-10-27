@@ -143,11 +143,12 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 				ReplicationFactor: 3,
 				Shards: map[int64]model.ShardMetadata{
 					0: {
-						Status:       model.ShardStatusUnknown,
-						Term:         -1,
-						Leader:       nil,
-						Ensemble:     []model.Server{s1, s2, s3},
-						RemovedNodes: []model.Server{},
+						Status:                  model.ShardStatusUnknown,
+						Term:                    -1,
+						Leader:                  nil,
+						Ensemble:                []model.Server{s1, s2, s3},
+						RemovedNodes:            []model.Server{},
+						PendingDeleteShardNodes: []model.Server{},
 						Int32HashRange: model.Int32HashRange{
 							Min: 0,
 							Max: math.MaxUint32,
@@ -254,11 +255,12 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 				ReplicationFactor: 3,
 				Shards: map[int64]model.ShardMetadata{
 					0: {
-						Status:       model.ShardStatusUnknown,
-						Term:         -1,
-						Leader:       nil,
-						Ensemble:     []model.Server{s1, s2, s3},
-						RemovedNodes: []model.Server{},
+						Status:                  model.ShardStatusUnknown,
+						Term:                    -1,
+						Leader:                  nil,
+						Ensemble:                []model.Server{s1, s2, s3},
+						RemovedNodes:            []model.Server{},
+						PendingDeleteShardNodes: []model.Server{},
 						Int32HashRange: model.Int32HashRange{
 							Min: 0,
 							Max: math.MaxUint32,
@@ -270,22 +272,24 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 				ReplicationFactor: 3,
 				Shards: map[int64]model.ShardMetadata{
 					1: {
-						Status:       model.ShardStatusDeleting,
-						Term:         -1,
-						Leader:       nil,
-						Ensemble:     []model.Server{s4, s1, s2},
-						RemovedNodes: []model.Server{},
+						Status:                  model.ShardStatusDeleting,
+						Term:                    -1,
+						Leader:                  nil,
+						Ensemble:                []model.Server{s4, s1, s2},
+						RemovedNodes:            []model.Server{},
+						PendingDeleteShardNodes: []model.Server{},
 						Int32HashRange: model.Int32HashRange{
 							Min: 0,
 							Max: math.MaxUint32 / 2,
 						},
 					},
 					2: {
-						Status:       model.ShardStatusDeleting,
-						Term:         -1,
-						Leader:       nil,
-						Ensemble:     []model.Server{s3, s4, s1},
-						RemovedNodes: []model.Server{},
+						Status:                  model.ShardStatusDeleting,
+						Term:                    -1,
+						Leader:                  nil,
+						Ensemble:                []model.Server{s3, s4, s1},
+						RemovedNodes:            []model.Server{},
+						PendingDeleteShardNodes: []model.Server{},
 						Int32HashRange: model.Int32HashRange{
 							Min: math.MaxUint32/2 + 1,
 							Max: math.MaxUint32,

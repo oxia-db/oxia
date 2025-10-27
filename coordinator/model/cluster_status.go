@@ -23,12 +23,22 @@ type Int32HashRange struct {
 }
 
 type ShardMetadata struct {
-	Status         ShardStatus    `json:"status" yaml:"status"`
-	Term           int64          `json:"term" yaml:"term"`
-	Leader         *Server        `json:"leader" yaml:"leader"`
-	Ensemble       []Server       `json:"ensemble" yaml:"ensemble"`
-	RemovedNodes   []Server       `json:"removedNodes" yaml:"removedNodes"`
-	Int32HashRange Int32HashRange `json:"int32HashRange" yaml:"int32HashRange"`
+	Status   ShardStatus `json:"status" yaml:"status"`
+	Term     int64       `json:"term" yaml:"term"`
+	Leader   *Server     `json:"leader" yaml:"leader"`
+	Ensemble []Server    `json:"ensemble" yaml:"ensemble"`
+
+	// RemovedNodes are nodes that are being swapped out of the ensembles
+	// They still participate in the leader election, as they are part of
+	// the NewTerm quorum.
+	RemovedNodes []Server `json:"removedNodes" yaml:"removedNodes"`
+
+	// PendingDeleteShardNodes are nodes that were already swapped out
+	// of the ensemble. We are just tracking them until the shard can
+	// be deleted from disk. These are not anymore part of the NewTerm
+	// quorum.
+	PendingDeleteShardNodes []Server       `json:"pendingDeleteShardNodes" yaml:"pendingDeleteShardNodes"`
+	Int32HashRange          Int32HashRange `json:"int32HashRange" yaml:"int32HashRange"`
 }
 
 type NamespaceStatus struct {
@@ -59,16 +69,18 @@ func (sm Int32HashRange) Clone() Int32HashRange {
 
 func (sm ShardMetadata) Clone() ShardMetadata {
 	r := ShardMetadata{
-		Status:         sm.Status,
-		Term:           sm.Term,
-		Leader:         sm.Leader,
-		Ensemble:       make([]Server, len(sm.Ensemble)),
-		RemovedNodes:   make([]Server, len(sm.RemovedNodes)),
-		Int32HashRange: sm.Int32HashRange.Clone(),
+		Status:                  sm.Status,
+		Term:                    sm.Term,
+		Leader:                  sm.Leader,
+		Ensemble:                make([]Server, len(sm.Ensemble)),
+		RemovedNodes:            make([]Server, len(sm.RemovedNodes)),
+		PendingDeleteShardNodes: make([]Server, len(sm.PendingDeleteShardNodes)),
+		Int32HashRange:          sm.Int32HashRange.Clone(),
 	}
 
 	copy(r.Ensemble, sm.Ensemble)
 	copy(r.RemovedNodes, sm.RemovedNodes)
+	copy(r.PendingDeleteShardNodes, sm.PendingDeleteShardNodes)
 
 	return r
 }

@@ -45,6 +45,7 @@ func TestClusterStatus_Clone(t *testing.T) {
 							Public:   "r1",
 							Internal: "r1",
 						}},
+						PendingDeleteShardNodes: []Server{{}},
 					},
 				},
 			},
