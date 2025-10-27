@@ -15,9 +15,9 @@
 package listnamespaces
 
 import (
+	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/spf13/cobra"
 
-	"github.com/oxia-db/oxia/cmd/admin/common"
 	cc "github.com/oxia-db/oxia/cmd/client/common"
 	"github.com/oxia-db/oxia/oxia"
 )
@@ -35,7 +35,7 @@ var Cmd = &cobra.Command{
 }
 
 func exec(cmd *cobra.Command, _ []string) error {
-	client, err := common.AdminConfig.NewAdminClient()
+	client, err := commons.AdminConfig.NewAdminClient()
 	defer func(client oxia.AdminClient) {
 		_ = client.Close()
 	}(client)

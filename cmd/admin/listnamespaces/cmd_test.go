@@ -19,10 +19,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oxia-db/oxia/cmd/admin/commons"
+
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/cmd/admin/common"
 	"github.com/oxia-db/oxia/oxia"
 )
 
@@ -36,10 +37,10 @@ func runCmd(cmd *cobra.Command) (string, error) {
 }
 
 func Test_cmd_listnamespaces(t *testing.T) {
-	common.MockedAdminClient = common.NewMockAdminClient()
+	commons.MockedAdminClient = commons.NewMockAdminClient()
 
-	common.MockedAdminClient.On("Close").Return(nil)
-	common.MockedAdminClient.On("ListNamespaces").Return(&oxia.ListNamespacesResult{
+	commons.MockedAdminClient.On("Close").Return(nil)
+	commons.MockedAdminClient.On("ListNamespaces").Return(&oxia.ListNamespacesResult{
 		Namespaces: []string{"ns1", "ns2"},
 		Error:      nil,
 	})

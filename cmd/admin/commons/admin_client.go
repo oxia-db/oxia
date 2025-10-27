@@ -12,30 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package commons
 
 import (
-	"github.com/stretchr/testify/mock"
+	"time"
 
 	"github.com/oxia-db/oxia/oxia"
 )
 
-var _ oxia.AdminClient = (*MockAdminClient)(nil)
+var (
+	AdminConfig       = AdminClientConfig{}
+	MockedAdminClient *MockAdminClient
+)
 
-type MockAdminClient struct {
-	mock.Mock
+type AdminClientConfig struct {
+	AdminAddress   string
+	RequestTimeout time.Duration
 }
 
-func NewMockAdminClient() *MockAdminClient {
-	return &MockAdminClient{}
-}
-
-func (m *MockAdminClient) Close() error {
-	args := m.MethodCalled("Close")
-	return args.Error(0)
-}
-
-func (m *MockAdminClient) ListNamespaces() *oxia.ListNamespacesResult {
-	args := m.MethodCalled("ListNamespaces")
-	return args.Get(0).(*oxia.ListNamespacesResult)
+func (AdminClientConfig) NewAdminClient() (oxia.AdminClient, error) {
+	if MockedAdminClient != nil {
+		return MockedAdminClient, nil
+	}
+	return oxia.NewAdminClient(AdminConfig.AdminAddress, nil, nil)
 }

@@ -16,7 +16,9 @@ package admin
 
 import (
 	"fmt"
-	"github.com/oxia-db/oxia/cmd/admin/common"
+
+	"github.com/oxia-db/oxia/cmd/admin/commons"
+
 	"github.com/oxia-db/oxia/cmd/admin/listnamespaces"
 
 	oxiacommon "github.com/oxia-db/oxia/common/constant"
@@ -34,7 +36,7 @@ var (
 
 func init() {
 	defaultAdminClientAddress := fmt.Sprintf("localhost:%d", oxiacommon.DefaultAdminPort)
-	Cmd.PersistentFlags().StringVar(&common.AdminConfig.AdminAddress, "admin-address", defaultAdminClientAddress, "Admin client address")
+	Cmd.PersistentFlags().StringVar(&commons.AdminConfig.AdminAddress, "admin-address", defaultAdminClientAddress, "Admin client address")
 
 	Cmd.AddCommand(listnamespaces.Cmd)
 }

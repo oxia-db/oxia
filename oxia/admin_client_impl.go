@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+
 	"github.com/oxia-db/oxia/oxia/auth"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -60,8 +61,8 @@ func (admin *adminClientImpl) ListNamespaces() *ListNamespacesResult {
 	}
 }
 
-func NewAdminClient(adminAddr string, tlsConf *tls.Config, auth auth.Authentication) (AdminClient, error) {
-	c := rpc.NewClientPool(tlsConf, auth)
+func NewAdminClient(adminAddr string, tlsConf *tls.Config, authentication auth.Authentication) (AdminClient, error) {
+	c := rpc.NewClientPool(tlsConf, authentication)
 	return &adminClientImpl{
 		adminAddr:  adminAddr,
 		clientPool: c,
