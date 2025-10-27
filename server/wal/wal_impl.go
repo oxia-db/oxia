@@ -175,9 +175,6 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 }
 
 func (t *wal) readAtIndex(index int64) (*proto.LogEntry, error) {
-	t.RLock()
-	defer t.RUnlock()
-
 	timer := t.readLatency.Timer()
 	defer timer.Done()
 
@@ -185,6 +182,9 @@ func (t *wal) readAtIndex(index int64) (*proto.LogEntry, error) {
 	if entry := t.readCache(index); entry != nil {
 		return entry, nil
 	}
+
+	t.RLock()
+	defer t.RUnlock()
 
 	var err error
 	var rc object.RefCount[ReadOnlySegment]
