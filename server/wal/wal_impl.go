@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/slices"
@@ -70,6 +71,7 @@ type wal struct {
 	currentSegment       ReadWriteSegment
 	readOnlySegments     ReadOnlySegmentsGroup
 	commitOffsetProvider CommitOffsetProvider
+	logEntryCache        *lru.Cache
 
 	// The last offset appended to the Wal. It might not yet be synced
 	lastAppendedOffset atomic.Int64
@@ -92,6 +94,7 @@ type wal struct {
 	writeErrors   metric.Counter
 	activeEntries metric.Gauge
 	syncLatency   metric.LatencyHistogram
+	cacheHits     metric.Counter
 }
 
 func walPath(logDir string, namespace string, shard int64) string {
@@ -129,6 +132,12 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 			"The number of IO errors in the WAL read operations", "count", labels),
 		syncLatency: metric.NewLatencyHistogram("oxia_server_wal_sync_latency",
 			"The time it takes to fsync the wal data on disk", labels),
+	}
+
+	if cache, err := lru.New(logEntryCacheSize); err == nil {
+		w.cacheHits = metric.NewCounter("oxia_server_wal_cache_hits",
+			"The number of log entries read from the cache", "count", labels)
+		w.logEntryCache = cache
 	}
 
 	var err error
@@ -172,6 +181,11 @@ func (t *wal) readAtIndex(index int64) (*proto.LogEntry, error) {
 	timer := t.readLatency.Timer()
 	defer timer.Done()
 
+	// Read the entry from the cache first
+	if entry := t.readCache(index); entry != nil {
+		return entry, nil
+	}
+
 	var err error
 	var rc object.RefCount[ReadOnlySegment]
 	var segment ReadOnlySegment
@@ -202,6 +216,25 @@ func (t *wal) readAtIndex(index int64) (*proto.LogEntry, error) {
 	}
 	t.readBytes.Add(len(val))
 	return entry, err
+}
+
+func (t *wal) readCache(index int64) *proto.LogEntry {
+	if t.logEntryCache == nil {
+		return nil
+	}
+
+	if entry, ok := t.logEntryCache.Get(index); ok {
+		t.cacheHits.Inc()
+		return entry.(*proto.LogEntry) // nolint
+	}
+	return nil
+}
+
+func (t *wal) writeCache(entry *proto.LogEntry) {
+	if t.logEntryCache == nil {
+		return
+	}
+	t.logEntryCache.Add(entry.Offset, entry)
 }
 
 func (t *wal) LastOffset() int64 {
@@ -327,6 +360,8 @@ func (t *wal) appendAsync0(entry *proto.LogEntry) error {
 
 	t.lastAppendedOffset.Store(entry.Offset)
 	t.firstOffset.CompareAndSwap(InvalidOffset, entry.Offset)
+	// Add the entry into cache
+	t.writeCache(entry)
 
 	t.appendBytes.Add(len(val))
 	return nil

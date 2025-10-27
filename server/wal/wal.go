@@ -24,6 +24,10 @@ import (
 	"github.com/oxia-db/oxia/proto"
 )
 
+const (
+	logEntryCacheSize int = 32
+)
+
 var (
 	ErrEntryNotFound     = errors.New("oxia: entry not found")
 	ErrReaderClosed      = errors.New("oxia: reader already closed")
