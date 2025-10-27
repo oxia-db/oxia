@@ -380,18 +380,20 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	namespaceConfig := &model.NamespaceConfig{
-		Name:                 "my-ns-2",
-		InitialShardCount:    1,
-		ReplicationFactor:    1,
-		NotificationsEnabled: entity.Bool(false),
-	}
-
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
 	statusResource := resources.NewStatusResource(meta)
 	configResource := resources.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
+		return model.ClusterConfig{
+			Namespaces: []model.NamespaceConfig{
+				{
+					Name:                 "default",
+					InitialShardCount:    1,
+					ReplicationFactor:    1,
+					NotificationsEnabled: entity.Bool(false),
+				},
+			},
+		}, nil
 	}, nil, nil)
 	defer configResource.Close()
 
