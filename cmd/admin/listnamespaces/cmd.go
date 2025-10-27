@@ -15,8 +15,9 @@
 package listnamespaces
 
 import (
-	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/cmd/admin/commons"
 
 	cc "github.com/oxia-db/oxia/cmd/client/common"
 	"github.com/oxia-db/oxia/oxia"
