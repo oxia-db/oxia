@@ -408,8 +408,6 @@ func (t *wal) drainSyncRequestsChannel(callbacks []func(error)) []func(error) {
 
 func (t *wal) runSync() {
 	var callbacks []func(error)
-	ticker := time.NewTicker(1 * time.Millisecond)
-	defer ticker.Stop()
 
 	for {
 		// Clear the slice
@@ -420,17 +418,13 @@ func (t *wal) runSync() {
 			// Wal is closing, exit the go routine
 			return
 
-		case _, more := <-ticker.C:
-			if !more {
-				continue
-			}
+		case callback := <-t.syncRequests:
+			// Wait for the first request
+			callbacks = append(callbacks, callback)
 		}
 
 		// Clear all the other requests in the channel
 		callbacks = t.drainSyncRequestsChannel(callbacks)
-		if len(callbacks) == 0 {
-			continue
-		}
 
 		t.Lock()
 		segment := t.currentSegment
