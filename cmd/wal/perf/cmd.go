@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"sync"
 	"time"
 
@@ -58,6 +59,14 @@ func init() {
 
 //nolint:revive
 func run(*cobra.Command, []string) error {
+	//
+	//process.PprofEnable = true
+	//process.PprofBindAddress = "127.0.0.1:6060"
+	//process.RunProfiling()
+
+	if err := os.RemoveAll(common.WalOption.WalDir); err != nil {
+		panic(err)
+	}
 	factory := wal.NewWalFactory(&wal.FactoryOptions{
 		BaseWalDir:  common.WalOption.WalDir,
 		Retention:   math.MaxInt64,
@@ -84,19 +93,24 @@ func run(*cobra.Command, []string) error {
 		defer wg.Done()
 		n := time.Now().UnixMicro()
 
+		writeGroup := sync.WaitGroup{}
 		for i := int64(0); i < options.entryCount; i++ {
+			writeGroup.Add(1)
 			entry := &proto.LogEntry{
 				Term:      1,
 				Offset:    i,
 				Value:     data,
 				Timestamp: uint64(time.Now().UnixMicro()),
 			}
-			err := writeAheadLog.Append(entry)
-			if err != nil {
-				panic(err)
-			}
-			writeEntryTimesArray[i] = time.Now().UnixMicro() - int64(entry.Timestamp)
+			writeAheadLog.AppendAndSync(entry, func(err error) {
+				writeEntryTimesArray[i] = time.Now().UnixMicro() - int64(entry.Timestamp)
+				writeGroup.Done()
+				if err != nil {
+					panic(err)
+				}
+			})
 		}
+		writeGroup.Wait()
 		threadTimesArray[0] = time.Now().UnixMicro() - n
 		slog.Info("writer thread has done", slog.Int64("Elapse", threadTimesArray[0]))
 	}()
