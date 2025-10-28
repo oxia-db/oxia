@@ -434,10 +434,13 @@ func NewCoordinator(meta metadata.Provider,
 	c.Info("This coordinator is now leader")
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
 
+	// Initialize statusResource BEFORE configResource
 	c.statusResource = resources.NewStatusResource(meta)
+
+	// Now initialize configResource
+	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:               c.ctx,
