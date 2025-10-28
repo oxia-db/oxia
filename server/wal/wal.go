@@ -116,7 +116,7 @@ type cacheValue struct {
 	length int
 }
 
-// LogEntryCache is a FIFO cache for log entries
+// LogEntryCache is a FIFO cache for log entries.
 type LogEntryCache struct {
 	sync.RWMutex
 	// Map to store offset to cacheValue mapping for O(1) lookup
