@@ -94,8 +94,8 @@ func run(*cobra.Command, []string) error {
 				Timestamp: uint64(time.Now().UnixMicro()),
 			}
 			writeAheadLog.AppendAndSync(entry, func(err error) {
-				writeEntryTimesArray[i] = time.Now().UnixMicro() - int64(entry.Timestamp)
 				writeGroup.Done()
+				writeEntryTimesArray[i] = time.Now().UnixMicro() - int64(entry.Timestamp)
 				if err != nil {
 					panic(err)
 				}
