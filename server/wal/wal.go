@@ -15,8 +15,10 @@
 package wal
 
 import (
+	"container/list"
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -25,7 +27,7 @@ import (
 )
 
 const (
-	logEntryCacheSize int = 32
+	logEntryCacheSizeInBytes int = 2 * 1024 * 1024 // 2MB
 )
 
 var (
@@ -107,4 +109,83 @@ type Wal interface {
 
 	// Delete all the files and directories of the wal
 	Delete() error
+}
+
+type cacheValue struct {
+	value  *proto.LogEntry
+	length int
+}
+
+// LogEntryCache is a FIFO cache for log entries
+type LogEntryCache struct {
+	sync.RWMutex
+	// Map to store offset to cacheValue mapping for O(1) lookup
+	index map[int64]*cacheValue
+	// List to maintain insertion order for FIFO (only storing offsets)
+	fifo      *list.List
+	cacheSize int
+	cacheUsed int
+}
+
+func NewLogEntryCache(cacheSize int) *LogEntryCache {
+	return &LogEntryCache{
+		index:     make(map[int64]*cacheValue, 1024),
+		fifo:      list.New(),
+		cacheSize: cacheSize,
+		cacheUsed: 0,
+	}
+}
+
+func (t *LogEntryCache) Get(offset int64) (*proto.LogEntry, bool) {
+	t.RLock()
+	defer t.RUnlock()
+
+	if ce, ok := t.index[offset]; ok {
+		return ce.value.CloneVT(), true
+	}
+	return nil, false
+}
+
+func (t *LogEntryCache) Add(offset int64, entry *proto.LogEntry, length int) {
+	t.Lock()
+	defer t.Unlock()
+
+	// If offset already exists, skip update
+	if _, exists := t.index[offset]; !exists {
+		// Ensure enough space
+		t.ensureCacheSize(length)
+		if t.cacheUsed+length > t.cacheSize {
+			return
+		}
+		// Add new element to the end of the queue
+		t.fifo.PushBack(offset)
+		// Record in index
+		t.index[offset] = &cacheValue{
+			value:  entry,
+			length: length,
+		}
+		t.cacheUsed += length
+	}
+}
+
+func (t *LogEntryCache) ensureCacheSize(length int) {
+	// Remove the oldest elements (FIFO order) until there is enough space
+	for t.fifo.Len() > 0 && t.cacheUsed+length > t.cacheSize {
+		// Get the first element (earliest inserted)
+		oldest := t.fifo.Front()
+		if oldest == nil {
+			return
+		}
+
+		// Remove from list
+		t.fifo.Remove(oldest)
+
+		// Remove from map
+		offset := oldest.Value.(int64) //nolint
+		cv := t.index[offset]
+		delete(t.index, offset)
+
+		// Update used size
+		t.cacheUsed -= cv.length
+	}
 }
