@@ -435,12 +435,7 @@ func NewCoordinator(meta metadata.Provider,
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-
-	// Initialize statusResource BEFORE configResource
 	c.statusResource = resources.NewStatusResource(meta)
-
-	// Now initialize configResource
-	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:               c.ctx,
@@ -507,5 +502,8 @@ func NewCoordinator(meta metadata.Provider,
 	}, c.startBackgroundActionWorker)
 
 	c.loadBalancer.Start()
+
+	// Init the config resource after all the coordinator components are initialized.
+	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 	return c, nil
 }
