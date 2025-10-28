@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
 	"sync"
 	"time"
 
@@ -59,14 +58,6 @@ func init() {
 
 //nolint:revive
 func run(*cobra.Command, []string) error {
-	//
-	//process.PprofEnable = true
-	//process.PprofBindAddress = "127.0.0.1:6060"
-	//process.RunProfiling()
-
-	if err := os.RemoveAll(common.WalOption.WalDir); err != nil {
-		panic(err)
-	}
 	factory := wal.NewWalFactory(&wal.FactoryOptions{
 		BaseWalDir:  common.WalOption.WalDir,
 		Retention:   math.MaxInt64,
