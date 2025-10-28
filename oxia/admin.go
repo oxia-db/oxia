@@ -12,21 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package constant
+package oxia
 
-import "time"
+import "io"
 
-const (
-	MetadataTerm      = "term"
-	MetadataNamespace = "namespace"
-	MetadataShardId   = "shard-id"
-	DefaultNamespace  = "default"
+type AdminClient interface {
+	io.Closer
 
-	DefaultPublicPort   = 6648
-	DefaultInternalPort = 6649
-	DefaultAdminPort    = 6651
-	DefaultMetricsPort  = 8080
+	ListNamespaces() *ListNamespacesResult
+}
 
-	MaxSessionTimeout = 5 * time.Minute
-	MinSessionTimeout = 2 * time.Second
-)
+type ListNamespacesResult struct {
+	Namespaces []string
+	Error      error
+}

@@ -24,6 +24,7 @@ import (
 func TestCoordinator_MarshalingError(t *testing.T) {
 	config := Config{
 		InternalServiceAddr:       "123",
+		AdminServiceAddr:          "123",
 		InternalSecureServiceAddr: "123",
 		MetadataProviderName:      "123",
 		K8SMetadataConfigMapName:  "123",

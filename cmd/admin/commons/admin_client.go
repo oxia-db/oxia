@@ -12,21 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package constant
+package commons
 
-import "time"
+import (
+	"time"
 
-const (
-	MetadataTerm      = "term"
-	MetadataNamespace = "namespace"
-	MetadataShardId   = "shard-id"
-	DefaultNamespace  = "default"
-
-	DefaultPublicPort   = 6648
-	DefaultInternalPort = 6649
-	DefaultAdminPort    = 6651
-	DefaultMetricsPort  = 8080
-
-	MaxSessionTimeout = 5 * time.Minute
-	MinSessionTimeout = 2 * time.Second
+	"github.com/oxia-db/oxia/oxia"
 )
+
+var (
+	AdminConfig       = AdminClientConfig{}
+	MockedAdminClient *MockAdminClient
+)
+
+type AdminClientConfig struct {
+	AdminAddress   string
+	RequestTimeout time.Duration
+}
+
+func (AdminClientConfig) NewAdminClient() (oxia.AdminClient, error) {
+	if MockedAdminClient != nil {
+		return MockedAdminClient, nil
+	}
+	return oxia.NewAdminClient(AdminConfig.AdminAddress, nil, nil)
+}

@@ -30,6 +30,7 @@ import (
 	"github.com/oxia-db/oxia/coordinator/metadata"
 	"github.com/oxia-db/oxia/coordinator/model"
 	coordinatorrpc "github.com/oxia-db/oxia/coordinator/rpc"
+	"github.com/oxia-db/oxia/proto"
 
 	"github.com/oxia-db/oxia/common/rpc"
 
@@ -38,6 +39,7 @@ import (
 
 type Config struct {
 	InternalServiceAddr       string
+	AdminServiceAddr          string
 	InternalSecureServiceAddr string
 	PeerTLS                   *tls.Config `json:"-"`
 	ServerTLS                 *tls.Config `json:"-"`
@@ -59,12 +61,14 @@ func NewConfig() Config {
 	return Config{
 		InternalServiceAddr:  fmt.Sprintf("localhost:%d", constant.DefaultInternalPort),
 		MetricsServiceAddr:   fmt.Sprintf("localhost:%d", constant.DefaultMetricsPort),
+		AdminServiceAddr:     fmt.Sprintf("localhost:%d", constant.DefaultAdminPort),
 		MetadataProviderName: metadata.ProviderNameFile,
 	}
 }
 
 type GrpcServer struct {
 	grpcServer   rpc.GrpcServer
+	adminServer  rpc.GrpcServer
 	healthServer *health.Server
 	coordinator  Coordinator
 	clientPool   rpc.ClientPool
@@ -108,6 +112,18 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 	grpcServer, err := rpc.Default.StartGrpcServer("coordinator", config.InternalServiceAddr, func(registrar grpc.ServiceRegistrar) {
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, config.ServerTLS, &auth.Disabled)
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Construct the admin server
+	admin := newAdminServer(coordinatorInstance.StatusResource(), config.ClusterConfigProvider)
+	// Start admin grpc server
+	adminGrpcServer, err := rpc.Default.StartGrpcServer("admin", config.AdminServiceAddr, func(registrar grpc.ServiceRegistrar) {
+		proto.RegisterOxiaAdminServer(registrar, admin)
+	}, config.ServerTLS, &auth.Disabled)
+
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +134,7 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 
 	return &GrpcServer{
 		grpcServer:   grpcServer,
+		adminServer:  adminGrpcServer,
 		healthServer: healthServer,
 		clientPool:   clientPool,
 		coordinator:  coordinatorInstance,
@@ -130,6 +147,7 @@ func (s *GrpcServer) Close() error {
 	return multierr.Combine(
 		s.clientPool.Close(),
 		s.grpcServer.Close(),
+		s.adminServer.Close(),
 		s.coordinator.Close(),
 		s.metrics.Close(),
 	)
