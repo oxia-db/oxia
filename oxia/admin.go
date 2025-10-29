@@ -20,9 +20,22 @@ type AdminClient interface {
 	io.Closer
 
 	ListNamespaces() *ListNamespacesResult
+
+	ListNodes() *ListNodesResult
 }
 
 type ListNamespacesResult struct {
 	Namespaces []string
 	Error      error
+}
+
+type Node struct {
+	Name            *string
+	PublicAddress   string
+	InternalAddress string
+}
+
+type ListNodesResult struct {
+	Nodes []*Node
+	Error error
 }

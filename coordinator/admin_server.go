@@ -49,6 +49,24 @@ func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesR
 	}, nil
 }
 
+func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
+	cnf, err := admin.clusterConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	cnfNodes := cnf.Servers
+	nodes := make([]*proto.Node, len(cnfNodes))
+	for i, node := range cnfNodes {
+		nodes[i] = &proto.Node{
+			Name:            node.Name,
+			PublicAddress:   node.Public,
+			InternalAddress: node.Internal,
+		}
+	}
+	return &proto.ListNodesResponse{Nodes: nodes}, nil
+}
+
 func newAdminServer(statusResource resources.StatusResource, clusterConfig func() (model.ClusterConfig, error)) *adminServer {
 	return &adminServer{
 		statusResource: statusResource,

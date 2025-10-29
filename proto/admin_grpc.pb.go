@@ -37,6 +37,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	OxiaAdmin_ListNamespaces_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/ListNamespaces"
+	OxiaAdmin_ListNodes_FullMethodName      = "/io.oxia.proto.v1.OxiaAdmin/ListNodes"
 )
 
 // OxiaAdminClient is the client API for OxiaAdmin service.
@@ -44,6 +45,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OxiaAdminClient interface {
 	ListNamespaces(ctx context.Context, in *ListNamespacesRequest, opts ...grpc.CallOption) (*ListNamespacesResponse, error)
+	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 }
 
 type oxiaAdminClient struct {
@@ -64,11 +66,22 @@ func (c *oxiaAdminClient) ListNamespaces(ctx context.Context, in *ListNamespaces
 	return out, nil
 }
 
+func (c *oxiaAdminClient) ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListNodesResponse)
+	err := c.cc.Invoke(ctx, OxiaAdmin_ListNodes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OxiaAdminServer is the server API for OxiaAdmin service.
 // All implementations must embed UnimplementedOxiaAdminServer
 // for forward compatibility.
 type OxiaAdminServer interface {
 	ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error)
+	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	mustEmbedUnimplementedOxiaAdminServer()
 }
 
@@ -81,6 +94,9 @@ type UnimplementedOxiaAdminServer struct{}
 
 func (UnimplementedOxiaAdminServer) ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListNamespaces not implemented")
+}
+func (UnimplementedOxiaAdminServer) ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListNodes not implemented")
 }
 func (UnimplementedOxiaAdminServer) mustEmbedUnimplementedOxiaAdminServer() {}
 func (UnimplementedOxiaAdminServer) testEmbeddedByValue()                   {}
@@ -121,6 +137,24 @@ func _OxiaAdmin_ListNamespaces_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OxiaAdmin_ListNodes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNodesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaAdminServer).ListNodes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaAdmin_ListNodes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaAdminServer).ListNodes(ctx, req.(*ListNodesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OxiaAdmin_ServiceDesc is the grpc.ServiceDesc for OxiaAdmin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -131,6 +165,10 @@ var OxiaAdmin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListNamespaces",
 			Handler:    _OxiaAdmin_ListNamespaces_Handler,
+		},
+		{
+			MethodName: "ListNodes",
+			Handler:    _OxiaAdmin_ListNodes_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

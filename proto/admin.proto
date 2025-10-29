@@ -26,6 +26,8 @@ service OxiaAdmin {
 
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
 
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+
 }
 
 message ListNamespacesRequest {
@@ -33,4 +35,16 @@ message ListNamespacesRequest {
 
 message ListNamespacesResponse {
   repeated string namespaces = 1;
+}
+
+message ListNodesRequest {
+}
+
+message Node {
+  optional string name = 1;
+  string public_address = 2;
+  string internal_address = 3;
+}
+message ListNodesResponse {
+  repeated Node nodes = 1;
 }
