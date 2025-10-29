@@ -651,7 +651,7 @@ func TestShardController_ShardsDataLost(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shardId, 2, 3)
 
-	// Now start the change enesmble, which will trigger a new election
+	// Now start the change ensemble, which will trigger a new election
 
 	// plus, 30 offset increased
 	go func() {

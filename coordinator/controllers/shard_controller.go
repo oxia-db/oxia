@@ -401,7 +401,6 @@ func (s *shardController) ChangeEnsemble(action *actions.ChangeEnsembleAction) {
 }
 
 func (s *shardController) onChangeEnsemble(action *actions.ChangeEnsembleAction) {
-	// -------- validate if the current ensemble is okay for change.
 	var err error
 	defer func() {
 		if err != nil {
