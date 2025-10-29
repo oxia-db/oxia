@@ -25,11 +25,12 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/oxia-db/oxia/coordinator/actions"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/maps"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/coordinator/actions"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
@@ -44,7 +45,7 @@ import (
 )
 
 var (
-	ErrNotReadyForChangeEnsemble = errors.New("the shard is not ready for change ensemble, please retry later.")
+	ErrNotReadyForChangeEnsemble = errors.New("shard is not ready for change ensemble, please retry later.")
 )
 
 type ShardElection struct {

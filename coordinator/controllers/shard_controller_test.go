@@ -21,9 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/coordinator/actions"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/coordinator/actions"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 

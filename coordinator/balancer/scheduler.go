@@ -22,8 +22,9 @@ import (
 
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
-	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/pkg/errors"
+
+	"github.com/oxia-db/oxia/common/concurrent"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/coordinator/actions"
@@ -257,9 +258,9 @@ func (r *nodeBasedBalancer) swapShard(
 	r.Info("propose to swap the shard", slog.Int64("shard", candidateShard.ShardID), slog.Any("from", fromNode), slog.Any("to", targetNodeID))
 	swapGroup.Add(1)
 	r.actionCh <- actions.NewChangeEnsembleActionWithCallback(candidateShard.ShardID, fromNode, *targetNode,
-		concurrent.NewOnce(func(t any) {
+		concurrent.NewOnce(func(_ any) {
 			swapGroup.Done()
-		}, func(err error) {
+		}, func(_ error) {
 			swapGroup.Done()
 		}))
 	loadRatios.MoveShardToNode(candidateShard, fromNodeID, targetNodeID)

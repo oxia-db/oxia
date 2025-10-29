@@ -415,10 +415,7 @@ func (s *shardController) onChangeEnsemble(action *actions.ChangeEnsembleAction)
 			return
 		}
 	}
-	leader := s.Metadata().Leader()
-	if action.From.GetIdentifier() != leader.GetIdentifier() {
-		// todo: support optimized ensemble change to avoid start a new election
-	}
+	// todo: support optimized ensemble change to avoid start a new election
 	s.onElectLeader(action)
 }
 func (s *shardController) SyncServerAddress() {
