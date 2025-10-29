@@ -17,6 +17,7 @@ package controllers
 import (
 	"context"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -614,7 +615,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	assert.NoError(t, sc.Close())
 }
 
-func TestShardController_ShardsDataLost(t *testing.T) {
+func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	var shardId = rand.Int63()
 	rpc := newMockRpcProvider()
 
@@ -623,6 +624,7 @@ func TestShardController_ShardsDataLost(t *testing.T) {
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
 	s5 := model.Server{Public: "s5:9091", Internal: "s5:8191"}
+	s6 := model.Server{Public: "s6:9091", Internal: "s6:8191"}
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
@@ -651,64 +653,65 @@ func TestShardController_ShardsDataLost(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shardId, 2, 3)
 
-	// Now start the change ensemble, which will trigger a new election
+	// test newTerm stage error would not change metadata ensemble
+	action1 := actions.NewChangeEnsembleAction(shardId, s1, s4)
+	sc.ChangeEnsemble(action1)
+	action2 := actions.NewChangeEnsembleAction(shardId, s2, s5)
+	sc.ChangeEnsemble(action2)
+	action3 := actions.NewChangeEnsembleAction(shardId, s3, s6)
+	sc.ChangeEnsemble(action3)
 
-	// plus, 30 offset increased
-	go func() {
-		action := actions.NewChangeEnsembleAction(shardId, s1, s4)
-		sc.ChangeEnsemble(action)
-		_, err := action.Wait()
-		assert.NoError(t, err)
-	}()
-	rpc.GetNode(s1).NewTermResponse(2, 30, nil)
-	rpc.GetNode(s2).NewTermResponse(2, 30, nil)
-	rpc.GetNode(s3).NewTermResponse(2, 20, nil)
-	// s4 failed
+	_, err := action1.Wait()
+	assert.Error(t, err)
+	_, err = action2.Wait()
+	assert.Error(t, err)
+	_, err = action3.Wait()
+	assert.Error(t, err)
 
-	// s2 should be selected as new leader
-	rpc.GetNode(s2).BecomeLeaderResponse(nil)
-	rpc.GetNode(s2).expectBecomeLeaderRequest(t, shardId, 3, 3)
+	metaSnap := sc.Metadata().Load()
+	assert.EqualValues(t, metaSnap.Ensemble, []model.Server{s1, s2, s3})
 
-	// wait follower timeout
-	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
-	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
-	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
+	// test become leader would not change metadata ensemble
+	wait := sync.WaitGroup{}
+	wait.Go(func() {
+		action1 := actions.NewChangeEnsembleAction(shardId, s1, s4)
+		sc.ChangeEnsemble(action1)
+		_, err := action1.Wait()
+		assert.Error(t, err)
+	})
 
-	// deleted the shard-1
-	rpc.GetNode(s1).DeleteShardResponse(nil)
+	rpc.GetNode(s1).NewTermResponse(2, 3, nil)
+	rpc.GetNode(s2).NewTermResponse(2, 3, nil)
+	rpc.GetNode(s3).NewTermResponse(2, 3, nil)
+	rpc.GetNode(s4).NewTermResponse(2, -1, nil)
+	wait.Wait()
 
-	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == model.ShardStatusSteadyState
-	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 3, sc.Metadata().Term())
-	assert.NotNil(t, sc.Metadata().Leader())
-	assert.Equal(t, s2, *sc.Metadata().Leader())
+	wait = sync.WaitGroup{}
+	wait.Go(func() {
+		action1 := actions.NewChangeEnsembleAction(shardId, s2, s5)
+		sc.ChangeEnsemble(action1)
+		_, err := action1.Wait()
+		assert.Error(t, err)
+	})
+	rpc.GetNode(s2).NewTermResponse(3, 3, nil)
+	rpc.GetNode(s3).NewTermResponse(3, 3, nil)
+	rpc.GetNode(s4).NewTermResponse(3, -1, nil)
+	rpc.GetNode(s5).NewTermResponse(3, 3, nil)
+	wait.Wait()
 
-	// plus, 30 offset increased
-	// swap again
-	go func() {
-		action := actions.NewChangeEnsembleAction(shardId, s2, s5)
-		sc.ChangeEnsemble(action)
-		_, err := action.Wait()
-		assert.NoError(t, err)
-	}()
-	rpc.GetNode(s2).NewTermResponse(3, 30, nil)
-	rpc.GetNode(s3).NewTermResponse(3, 20, nil)
-	// s4 failed
-	rpc.GetNode(s5).NewTermResponse(3, -1, nil)
+	wait = sync.WaitGroup{}
+	wait.Go(func() {
+		action1 := actions.NewChangeEnsembleAction(shardId, s3, s6)
+		sc.ChangeEnsemble(action1)
+		_, err := action1.Wait()
+		assert.Error(t, err)
+	})
+	rpc.GetNode(s3).NewTermResponse(4, 3, nil)
+	rpc.GetNode(s4).NewTermResponse(4, -1, nil)
+	rpc.GetNode(s5).NewTermResponse(4, 3, nil)
+	rpc.GetNode(s6).NewTermResponse(4, 3, nil)
+	wait.Wait()
 
-	// s3 should be selected as new leader
-	rpc.GetNode(s3).BecomeLeaderResponse(nil)
-	rpc.GetNode(s3).expectBecomeLeaderRequest(t, shardId, 4, 3)
-
-	// wait follower timeout
-	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
-
-	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == model.ShardStatusSteadyState
-	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 4, sc.Metadata().Term())
-	assert.NotNil(t, sc.Metadata().Leader())
-	assert.Equal(t, s3, *sc.Metadata().Leader())
-	assert.Fail(t, "data lost!")
+	metaSnap = sc.Metadata().Load()
+	assert.EqualValues(t, metaSnap.Ensemble, []model.Server{s1, s2, s3})
 }
