@@ -45,7 +45,7 @@ import (
 )
 
 var (
-	ErrNotReadyForChangeEnsemble = errors.New("shard is not ready for change ensemble, please retry later.")
+	ErrNotReadyForChangeEnsemble = errors.New("shard is not ready for change ensemble, please retry later")
 )
 
 type ShardElection struct {

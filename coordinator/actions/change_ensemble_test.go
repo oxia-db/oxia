@@ -17,10 +17,11 @@ package actions
 import (
 	"testing"
 
-	"github.com/oxia-db/oxia/common/concurrent"
-	"github.com/oxia-db/oxia/coordinator/model"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/common/concurrent"
+	"github.com/oxia-db/oxia/coordinator/model"
 )
 
 func TestChangeEnsembleAction_WithCallback(t *testing.T) {
