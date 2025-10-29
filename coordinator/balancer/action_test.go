@@ -25,7 +25,7 @@ import (
 func TestActionSwapDone(t *testing.T) {
 	group := &sync.WaitGroup{}
 	group.Add(1)
-	swapAction := actions.SwapNodeAction{
+	swapAction := actions.changeEnsembleAction{
 		Shard: int64(1),
 		From: model.Server{
 			Internal: "sv-1",

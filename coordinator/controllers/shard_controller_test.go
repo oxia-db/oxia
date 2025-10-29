@@ -16,9 +16,11 @@ package controllers
 
 import (
 	"context"
+	"math/rand"
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/coordinator/actions"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
@@ -467,7 +469,10 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	wg := concurrent.NewWaitGroup(1)
 
 	wg.Go(func() error {
-		return sc.SwapNode(s1, s4)
+		action := actions.NewChangeEnsembleAction(shard, s1, s4)
+		sc.ChangeEnsemble(action)
+		_, err := action.Wait()
+		return err
 	})
 
 	// First leader election before swap will fail
@@ -547,7 +552,10 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	// Now start the swap node, which will trigger a new election
 	wg := concurrent.NewWaitGroup(1)
 	wg.Go(func() error {
-		return sc.SwapNode(s1, s4)
+		action := actions.NewChangeEnsembleAction(shard, s1, s4)
+		sc.ChangeEnsemble(action)
+		_, err := action.Wait()
+		return err
 	})
 
 	rpc.GetNode(s1).NewTermResponse(2, 0, nil)
@@ -604,4 +612,103 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	}, 10*time.Second, 100*time.Millisecond)
 
 	assert.NoError(t, sc.Close())
+}
+
+func TestShardController_ShardsDataLost(t *testing.T) {
+	var shardId = rand.Int63()
+	rpc := newMockRpcProvider()
+
+	s1 := model.Server{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
+	s5 := model.Server{Public: "s5:9091", Internal: "s5:8191"}
+
+	meta := metadata.NewMetadataProviderMemory()
+	defer meta.Close()
+	statusResource := resources.NewStatusResource(meta)
+	configResource := resources.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
+		return model.ClusterConfig{}, nil
+	}, nil, nil)
+	defer configResource.Close()
+	sc := NewShardController(constant.DefaultNamespace, shardId, namespaceConfig, model.ShardMetadata{
+		Status:   model.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []model.Server{s1, s2, s3},
+	}, configResource, statusResource, nil, rpc, 1*time.Second)
+
+	// Do initial election
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+
+	rpc.GetNode(s1).expectNewTermRequest(t, shardId, 2, true)
+	rpc.GetNode(s2).expectNewTermRequest(t, shardId, 2, true)
+	rpc.GetNode(s3).expectNewTermRequest(t, shardId, 2, true)
+
+	// s1 should be selected as new leader
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shardId, 2, 3)
+
+	// Now start the change enesmble, which will trigger a new election
+
+	// plus, 30 offset increased
+	go func() {
+		action := actions.NewChangeEnsembleAction(shardId, s1, s4)
+		sc.ChangeEnsemble(action)
+		_, err := action.Wait()
+		assert.NoError(t, err)
+	}()
+	rpc.GetNode(s1).NewTermResponse(2, 30, nil)
+	rpc.GetNode(s2).NewTermResponse(2, 30, nil)
+	rpc.GetNode(s3).NewTermResponse(2, 20, nil)
+	// s4 failed
+
+	// s2 should be selected as new leader
+	rpc.GetNode(s2).BecomeLeaderResponse(nil)
+	rpc.GetNode(s2).expectBecomeLeaderRequest(t, shardId, 3, 3)
+
+	// wait follower timeout
+	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
+
+	// deleted the shard-1
+	rpc.GetNode(s1).DeleteShardResponse(nil)
+
+	assert.Eventually(t, func() bool {
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 3, sc.Metadata().Term())
+	assert.NotNil(t, sc.Metadata().Leader())
+	assert.Equal(t, s2, *sc.Metadata().Leader())
+
+	// plus, 30 offset increased
+	// swap again
+	go func() {
+		action := actions.NewChangeEnsembleAction(shardId, s2, s5)
+		sc.ChangeEnsemble(action)
+		_, err := action.Wait()
+		assert.NoError(t, err)
+	}()
+	rpc.GetNode(s2).NewTermResponse(3, 30, nil)
+	rpc.GetNode(s3).NewTermResponse(3, 20, nil)
+	// s4 failed
+	rpc.GetNode(s5).NewTermResponse(3, -1, nil)
+
+	// s3 should be selected as new leader
+	rpc.GetNode(s3).BecomeLeaderResponse(nil)
+	rpc.GetNode(s3).expectBecomeLeaderRequest(t, shardId, 4, 3)
+
+	// wait follower timeout
+	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
+
+	assert.Eventually(t, func() bool {
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 4, sc.Metadata().Term())
+	assert.NotNil(t, sc.Metadata().Leader())
+	assert.Equal(t, s3, *sc.Metadata().Leader())
+	assert.Fail(t, "data lost!")
 }

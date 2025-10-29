@@ -16,24 +16,70 @@ package actions
 
 import (
 	"sync"
+	"sync/atomic"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/coordinator/model"
 )
 
-var _ Action = &SwapNodeAction{}
+var _ Action = &ChangeEnsembleAction{}
 
-type SwapNodeAction struct {
+type ChangeEnsembleAction struct {
+	sync.WaitGroup
+
 	Shard int64
 	From  model.Server
 	To    model.Server
 
-	Waiter *sync.WaitGroup
+	finished     atomic.Bool
+	executeError error
+	callback     concurrent.Callback[any]
 }
 
-func (s *SwapNodeAction) Done(_ any) {
-	s.Waiter.Done()
+func (s *ChangeEnsembleAction) Done(_ any) {
+	if !s.finished.CompareAndSwap(false, true) { // Ordering::SeqCst
+		return
+	}
+	if s.callback != nil {
+		s.callback.OnComplete(nil)
+	}
+	s.WaitGroup.Done()
 }
 
-func (*SwapNodeAction) Type() Type {
+func (s *ChangeEnsembleAction) Error(err error) {
+	if !s.finished.CompareAndSwap(false, true) { // Ordering::SeqCst
+		return
+	}
+	s.executeError = err
+	if s.callback != nil {
+		s.callback.OnCompleteError(err)
+	}
+	s.WaitGroup.Done()
+}
+
+func (s *ChangeEnsembleAction) Wait() (any, error) {
+	s.WaitGroup.Wait()
+	return nil, s.executeError
+}
+
+func (*ChangeEnsembleAction) Type() Type {
 	return SwapNode
+}
+
+func NewChangeEnsembleAction(shard int64, from model.Server, to model.Server) *ChangeEnsembleAction {
+	return NewChangeEnsembleActionWithCallback(shard, from, to, nil)
+}
+
+func NewChangeEnsembleActionWithCallback(shard int64, from model.Server, to model.Server, callback concurrent.Callback[any]) *ChangeEnsembleAction {
+	action := ChangeEnsembleAction{
+		WaitGroup:    sync.WaitGroup{},
+		Shard:        shard,
+		From:         from,
+		To:           to,
+		finished:     atomic.Bool{},
+		executeError: nil,
+		callback:     callback,
+	}
+	action.Add(1)
+	return &action
 }
