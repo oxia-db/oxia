@@ -65,6 +65,9 @@ type coordinator struct {
 	sync.WaitGroup
 	sync.RWMutex
 
+	// Cluster config resource wg, ConfigChanged method should be called after NewCoordinator finished.
+	ccrWg sync.WaitGroup
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -120,6 +123,7 @@ func (c *coordinator) NodeControllers() map[string]controllers.NodeController {
 }
 
 func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
+	c.ccrWg.Wait()
 	c.Lock()
 	defer c.Unlock()
 
@@ -418,6 +422,7 @@ func NewCoordinator(meta metadata.Provider,
 			slog.String("component", "coordinator"),
 		),
 		WaitGroup:             sync.WaitGroup{},
+		ccrWg:                 sync.WaitGroup{},
 		clusterConfigChangeCh: clusterConfigNotificationsCh,
 		ensembleSelector:      ensemble.NewSelector(),
 		shardControllers:      make(map[int64]controllers.ShardController),
@@ -425,6 +430,7 @@ func NewCoordinator(meta metadata.Provider,
 		drainingNodes:         make(map[string]controllers.NodeController),
 		rpc:                   rpcProvider,
 	}
+	c.ccrWg.Add(1)
 
 	// Ensure we are to become the leader coordinator
 	c.Info("Waiting to become leader")
@@ -434,10 +440,10 @@ func NewCoordinator(meta metadata.Provider,
 	c.Info("This coordinator is now leader")
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-
 	c.statusResource = resources.NewStatusResource(meta)
+
+	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:               c.ctx,
@@ -504,5 +510,6 @@ func NewCoordinator(meta metadata.Provider,
 	}, c.startBackgroundActionWorker)
 
 	c.loadBalancer.Start()
+	c.ccrWg.Done()
 	return c, nil
 }
