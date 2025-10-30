@@ -545,3 +545,180 @@ func TestReaderReadNext(t *testing.T) {
 	assert.NoError(t, reader.Close())
 	assert.NoError(t, f.Close())
 }
+
+func TestLogEntryCache_NewLogEntryCache(t *testing.T) {
+	cache := NewLogEntryCache(1024)
+	assert.NotNil(t, cache)
+	assert.Equal(t, 1024, cache.cacheSize)
+	assert.Equal(t, 0, cache.cacheUsed)
+	assert.NotNil(t, cache.index)
+	assert.NotNil(t, cache.fifo)
+}
+
+func TestLogEntryCache_AddAndGet(t *testing.T) {
+	cache := NewLogEntryCache(1024)
+
+	// Test adding and getting an entry
+	entry := &proto.LogEntry{
+		Term:   1,
+		Offset: 100,
+		Value:  []byte("test data"),
+	}
+
+	cache.Add(100, entry, len(entry.Value))
+
+	// Test getting existing entry
+	retrieved, ok := cache.Get(100)
+	assert.True(t, ok)
+	assert.Equal(t, entry.Term, retrieved.Term)
+	assert.Equal(t, entry.Offset, retrieved.Offset)
+	assert.Equal(t, entry.Value, retrieved.Value)
+
+	// Test getting non-existing entry
+	_, ok = cache.Get(200)
+	assert.False(t, ok)
+}
+
+func TestLogEntryCache_DuplicateAdd(t *testing.T) {
+	cache := NewLogEntryCache(1024)
+
+	entry1 := &proto.LogEntry{
+		Term:   1,
+		Offset: 100,
+		Value:  []byte("test data 1"),
+	}
+
+	entry2 := &proto.LogEntry{
+		Term:   2,
+		Offset: 100,
+		Value:  []byte("test data 2 "),
+	}
+
+	// Add the same offset twice
+	cache.Add(100, entry1, len(entry1.Value))
+	firstLen := cache.cacheUsed
+
+	cache.Add(100, entry2, len(entry2.Value))
+	secondLen := cache.cacheUsed
+
+	// Cache size should not change when adding duplicate
+	assert.Equal(t, firstLen, secondLen)
+
+	// Should still return the first entry
+	retrieved, ok := cache.Get(100)
+	assert.True(t, ok)
+	assert.Equal(t, entry1, retrieved)
+}
+
+func TestLogEntryCache_ValueLengthGreaterThanCacheSize(t *testing.T) {
+	size := 5
+	cache := NewLogEntryCache(size)
+	entry := &proto.LogEntry{
+		Offset: 100,
+		Value:  make([]byte, size+1),
+	}
+
+	cache.Add(entry.Offset, entry, len(entry.Value))
+	assert.Equal(t, 0, cache.cacheUsed)
+}
+
+func TestLogEntryCache_CacheSizeLimit(t *testing.T) {
+	cacheSize := 100
+	cache := NewLogEntryCache(cacheSize)
+
+	// Add entries until cache is full
+	for i := 0; i < 20; i++ {
+		entry := &proto.LogEntry{
+			Term:   int64(i),
+			Offset: int64(i),
+			Value:  make([]byte, 10), // 10 bytes each
+		}
+		cache.Add(int64(i), entry, len(entry.Value))
+	}
+
+	// Cache used should not exceed cacheSize
+	assert.True(t, cache.cacheUsed <= cacheSize)
+
+	// Older entries should have been evicted
+	_, ok := cache.Get(0)
+	assert.False(t, ok) // First entry should be evicted
+}
+
+func TestLogEntryCache_FIFORemoval(t *testing.T) {
+	cacheSize := 50
+	cache := NewLogEntryCache(cacheSize)
+
+	// Add 3 entries
+	entries := make([]*proto.LogEntry, 3)
+	for i := 0; i < 3; i++ {
+		entries[i] = &proto.LogEntry{
+			Term:   int64(i),
+			Offset: int64(i),
+			Value:  []byte("data"),
+		}
+		cache.Add(int64(i), entries[i], len(entries[i].Value))
+	}
+
+	// Add a large entry that forces eviction
+	largeEntry := &proto.LogEntry{
+		Term:   4,
+		Offset: 4,
+		Value:  make([]byte, 45), // This should evict first 2 entries
+	}
+	cache.Add(4, largeEntry, len(largeEntry.Value))
+
+	// Check that first entries were evicted (FIFO)
+	_, ok := cache.Get(0)
+	assert.False(t, ok)
+
+	_, ok = cache.Get(1)
+	assert.False(t, ok)
+
+	// Check that last entry is still there
+	_, ok = cache.Get(2)
+	assert.True(t, ok)
+
+	// Check that new entry is there
+	_, ok = cache.Get(4)
+	assert.True(t, ok)
+}
+
+func TestLogEntryCache_EmptyCache(t *testing.T) {
+	cache := NewLogEntryCache(1024)
+
+	// Test getting from empty cache
+	_, ok := cache.Get(1)
+	assert.False(t, ok)
+
+	// Test ensureCacheSize on empty cache
+	cache.ensureCacheSize(100)
+	assert.Equal(t, 0, cache.cacheUsed)
+}
+
+func TestLogEntryCache_ConcurrentAccess(t *testing.T) {
+	cache := NewLogEntryCache(1024)
+
+	// This test mainly checks that there are no panics or race conditions
+	done := make(chan bool)
+
+	// Start multiple goroutines for concurrent access
+	for i := 0; i < 10; i++ {
+		go func(id int) {
+			for j := 0; j < 1000; j++ {
+				entry := &proto.LogEntry{
+					Term:   int64(j),
+					Offset: int64(j),
+					Value:  []byte("concurrent test"),
+				}
+				cache.Add(int64(id*1000+j), entry, len(entry.Value))
+				cache.Get(int64(id*1000 + j))
+			}
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}
