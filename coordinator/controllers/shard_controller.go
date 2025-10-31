@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/coordinator/actions"
@@ -47,19 +46,10 @@ const (
 	// to include responses from all healthy servers.
 	quorumFencingGracePeriod = 100 * time.Millisecond
 
-	// Timeout when waiting for followers to catchup with leader.
-	catchupTimeout = 5 * time.Minute
-
 	chanBufferSize = 100
 
 	DefaultPeriodicTasksInterval = 1 * time.Minute
 )
-
-type swapNodeRequest struct {
-	from model.Server
-	to   model.Server
-	res  chan error
-}
 
 var _ ShardController = &shardController{}
 
@@ -73,10 +63,11 @@ type ShardController interface {
 
 	SyncServerAddress()
 
-	SwapNode(from model.Server, to model.Server) error
 	DeleteShard()
 
 	Election(action *actions.ElectionAction) string
+
+	ChangeEnsemble(action *actions.ChangeEnsembleAction)
 }
 
 type shardController struct {
@@ -92,10 +83,10 @@ type shardController struct {
 	configResource resources.ClusterConfigResource
 	statusResource resources.StatusResource
 
-	electionOp    chan *actions.ElectionAction
-	deleteOp      chan any
-	nodeFailureOp chan model.Server
-	swapNodeOp    chan swapNodeRequest
+	electionOp       chan *actions.ElectionAction
+	deleteOp         chan any
+	nodeFailureOp    chan model.Server
+	changeEnsembleOp chan *actions.ChangeEnsembleAction
 
 	ctx                   context.Context
 	cancel                context.CancelFunc
@@ -104,11 +95,6 @@ type shardController struct {
 	log                   *slog.Logger
 
 	currentElection *ShardElection
-
-	// --- temporary context, will be moved.
-	currentElectionCtx    context.Context
-	currentElectionCancel context.CancelFunc
-	// ======================================
 
 	leaderElectionLatency metric.LatencyHistogram
 	newTermQuorumLatency  metric.LatencyHistogram
@@ -138,19 +124,20 @@ func NewShardController(
 	periodTasksInterval time.Duration) ShardController {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &shardController{
-		namespace:             namespace,
-		shard:                 shard,
-		namespaceConfig:       nc,
-		metadata:              NewMetadata(shardMetadata),
-		rpc:                   rpcProvider,
-		configResource:        configResource,
-		statusResource:        statusResource,
-		eventListener:         eventListener,
-		leaderSelector:        leaderselector.NewSelector(),
-		electionOp:            make(chan *actions.ElectionAction, chanBufferSize),
-		deleteOp:              make(chan any, chanBufferSize),
-		nodeFailureOp:         make(chan model.Server, chanBufferSize),
-		swapNodeOp:            make(chan swapNodeRequest, chanBufferSize),
+		namespace:        namespace,
+		shard:            shard,
+		namespaceConfig:  nc,
+		metadata:         NewMetadata(shardMetadata),
+		rpc:              rpcProvider,
+		configResource:   configResource,
+		statusResource:   statusResource,
+		eventListener:    eventListener,
+		leaderSelector:   leaderselector.NewSelector(),
+		electionOp:       make(chan *actions.ElectionAction, chanBufferSize),
+		deleteOp:         make(chan any, chanBufferSize),
+		nodeFailureOp:    make(chan model.Server, chanBufferSize),
+		changeEnsembleOp: make(chan *actions.ChangeEnsembleAction, chanBufferSize),
+
 		periodicTasksInterval: periodTasksInterval,
 		log: slog.With(
 			slog.String("component", "shard-controller"),
@@ -209,7 +196,7 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 	case initShardMeta.Status == model.ShardStatusDeleting:
 		s.DeleteShard()
 	case initShardMeta.Leader == nil || initShardMeta.Status != model.ShardStatusSteadyState:
-		s.electLeader()
+		s.onElectLeader(nil)
 	default:
 		s.log.Info(
 			"There is already a node marked as leader on the shard, verifying",
@@ -217,7 +204,7 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 		)
 
 		if !s.verifyCurrentEnsemble(initShardMeta) {
-			s.electLeader()
+			s.onElectLeader(nil)
 		} else {
 			s.SyncServerAddress()
 		}
@@ -234,18 +221,14 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 
 		case <-s.deleteOp:
 			s.deleteShardWithRetries()
-
 		case n := <-s.nodeFailureOp:
 			s.handleNodeFailure(n)
-
-		case sw := <-s.swapNodeOp:
-			s.swapNode(sw.from, sw.to, sw.res)
-
+		case op := <-s.changeEnsembleOp:
+			s.onChangeEnsemble(op)
 		case <-periodicTasksTimer.C:
 			s.handlePeriodicTasks()
-
 		case electionAction := <-s.electionOp:
-			newLeader := s.electLeader()
+			newLeader := s.onElectLeader(nil)
 			electionAction.Done(newLeader.GetIdentifier())
 		}
 	}
@@ -265,7 +248,7 @@ func (s *shardController) handleNodeFailure(failedNode model.Server) {
 			"Detected failure on shard leader",
 			slog.Any("leader", failedNode),
 		)
-		s.electLeader()
+		s.onElectLeader(nil)
 	}
 }
 
@@ -320,28 +303,19 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *model.ShardMetada
 	return true
 }
 
-func (s *shardController) electLeader() model.Server {
+func (s *shardController) onElectLeader(action *actions.ChangeEnsembleAction) model.Server {
 	// stop the current term election
 	if s.currentElection != nil {
 		s.currentElection.Stop()
 		s.currentElection = nil
 	}
-	if s.currentElectionCtx != nil {
-		s.currentElectionCancel()
-		s.currentElectionCtx = nil
-	}
 	enableNotification := entity.OptBooleanDefaultTrue{}
 	if nsConfig, exist := s.configResource.NamespaceConfig(s.namespace); exist {
 		enableNotification = nsConfig.NotificationsEnabled
 	}
-	// --- temporary context, will be moved.
-	ctx, cancelFunc := context.WithCancel(s.ctx)
-	s.currentElectionCtx = ctx
-	s.currentElectionCancel = cancelFunc
-	// ======================================
-	s.currentElection = NewShardElection(ctx, s.log, s.eventListener,
+	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
 		s.statusResource, s.configResource, s.leaderSelector,
-		s.rpc, &s.metadata, s.namespace, s.shard,
+		s.rpc, &s.metadata, s.namespace, s.shard, action,
 		&proto.NewTermOptions{EnableNotifications: enableNotification.Get()},
 		s.leaderElectionLatency,
 		s.newTermQuorumLatency,
@@ -422,115 +396,28 @@ func (s *shardController) close() error {
 	return nil
 }
 
-func (s *shardController) SwapNode(from model.Server, to model.Server) error {
-	res := make(chan error)
-	s.swapNodeOp <- swapNodeRequest{
-		from: from,
-		to:   to,
-		res:  res,
-	}
-
-	return <-res
+func (s *shardController) ChangeEnsemble(action *actions.ChangeEnsembleAction) {
+	s.changeEnsembleOp <- action
 }
 
-func (s *shardController) swapNode(from model.Server, to model.Server, res chan error) {
-	shardMeta := s.metadata.Compute(func(shardMeta *model.ShardMetadata) {
-		shardMeta.RemovedNodes = listAddUnique(shardMeta.RemovedNodes, from)
-
-		// A node might get re-added to the ensemble after it was swapped out and be in
-		// pending delete state. We don't want a background task to attempt deletion anymore
-		shardMeta.PendingDeleteShardNodes = listRemove(shardMeta.PendingDeleteShardNodes, to)
-		shardMeta.Ensemble = replaceInList(shardMeta.Ensemble, from, to)
-	})
-
-	s.log.Info(
-		"Swapping node",
-		slog.Any("removed-nodes", shardMeta),
-		slog.Any("new-ensemble", shardMeta),
-		slog.Any("from", from),
-		slog.Any("to", to),
-	)
-
-	// Wait until we can re-establish a leader with the new ensemble
-	s.electLeader()
-
-	// Reload snapshot from latest
-	shardMeta = s.metadata.Load()
-	// Wait until all followers are caught up.
-	// This is done to avoid doing multiple node-swap concurrently, since it would create
-	// additional load in the system, while transferring multiple DB snapshots.
-	if err := s.waitForFollowersToCatchUp(s.currentElectionCtx, *shardMeta.Leader, shardMeta.Ensemble); err != nil {
-		s.log.Error(
-			"Failed to wait for followers to catch up",
-			slog.Any("error", err),
-		)
-		res <- err
-		return
-	}
-
-	s.log.Info(
-		"Successfully swapped node",
-		slog.Any("from", from),
-		slog.Any("to", to),
-	)
-	res <- nil
-}
-
-func (s *shardController) isFollowerCatchUp(ctx context.Context, server model.Server, leaderHeadOffset int64) error {
-	fs, err := s.rpc.GetStatus(ctx, server, &proto.GetStatusRequest{Shard: s.shard})
-	if err != nil {
-		return err
-	}
-
-	followerHeadOffset := fs.HeadOffset
-	if followerHeadOffset >= leaderHeadOffset {
-		s.log.Info(
-			"Follower is caught-up with the leader after node-swap",
-			slog.Any("server", server),
-		)
-		return nil
-	}
-
-	s.log.Info(
-		"Follower is *not* caught-up yet with the leader",
-		slog.Any("server", server),
-		slog.Int64("leader-head-offset", leaderHeadOffset),
-		slog.Int64("follower-head-offset", followerHeadOffset),
-	)
-	return errors.New("follower not caught up yet")
-}
-
-// Check that all the followers in the ensemble are catching up with the leader.
-func (s *shardController) waitForFollowersToCatchUp(ctx context.Context, leader model.Server, ensemble []model.Server) error {
-	ctx, cancel := context.WithTimeout(ctx, catchupTimeout)
-	defer cancel()
-
-	// Get current head offset for leader
-	ls, err := s.rpc.GetStatus(ctx, leader, &proto.GetStatusRequest{Shard: s.shard})
-	if err != nil {
-		return errors.Wrapf(err, "failed to get leader status from %s", leader.GetIdentifier())
-	}
-
-	leaderHeadOffset := ls.HeadOffset
-
-	for _, server := range ensemble {
-		if server.GetIdentifier() == leader.GetIdentifier() {
-			continue
-		}
-
-		err = backoff.Retry(func() error {
-			return s.isFollowerCatchUp(ctx, server, leaderHeadOffset)
-		}, oxiatime.NewBackOff(ctx))
-
+func (s *shardController) onChangeEnsemble(action *actions.ChangeEnsembleAction) {
+	var err error
+	defer func() {
 		if err != nil {
-			return errors.Wrapf(err, "failed to get the follower status from %s", server.GetIdentifier())
+			action.Error(err)
+		} else {
+			action.Done(nil)
+		}
+	}()
+	if s.currentElection != nil {
+		if ready := s.currentElection.IsReadyForChangeEnsemble(); !ready {
+			err = ErrNotReadyForChangeEnsemble
+			return
 		}
 	}
-
-	s.log.Info("All the followers are caught up after node-swap")
-	return nil
+	// todo: support optimized ensemble change to avoid start a new election
+	s.onElectLeader(action)
 }
-
 func (s *shardController) SyncServerAddress() {
 	shardMeta := s.metadata.Load()
 	needSync := false
@@ -588,44 +475,4 @@ func (s *shardController) handlePendingDeleteShardNodes(mutShardMeta *model.Shar
 
 	mutShardMeta.PendingDeleteShardNodes = nil
 	return nil
-}
-
-// listAddUnique Adds a server to the list if it's not already there.
-func listAddUnique(list []model.Server, sa model.Server) []model.Server {
-	if !listContains(list, sa) {
-		list = append(list, sa)
-	}
-	return list
-}
-
-func listRemove(list []model.Server, toRemove model.Server) []model.Server {
-	for i, item := range list {
-		if item.GetIdentifier() == toRemove.GetIdentifier() {
-			return append(list[:i], list[i+1:]...)
-		}
-	}
-
-	return list
-}
-
-func listContains(list []model.Server, sa model.Server) bool {
-	for _, item := range list {
-		if item.GetIdentifier() == sa.GetIdentifier() {
-			return true
-		}
-	}
-
-	return false
-}
-
-func replaceInList(list []model.Server, oldServer, newServer model.Server) []model.Server {
-	var res []model.Server
-	for _, item := range list {
-		if item.GetIdentifier() != oldServer.GetIdentifier() {
-			res = append(res, item)
-		}
-	}
-
-	res = append(res, newServer)
-	return res
 }
