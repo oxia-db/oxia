@@ -461,6 +461,10 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
 
+	// caught-up the leader election entry
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+
 	assert.Eventually(t, func() bool {
 		return sc.Metadata().Status() == model.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
@@ -479,9 +483,9 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 
 	// First leader election before swap will fail
 	rpc.GetNode(s1).NewTermResponse(2, 0, nil)
-	rpc.GetNode(s2).NewTermResponse(2, -1, errors.New("fails"))
-	rpc.GetNode(s3).NewTermResponse(2, -1, errors.New("fails"))
-	rpc.GetNode(s4).NewTermResponse(2, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(2, 0, errors.New("fails"))
+	rpc.GetNode(s3).NewTermResponse(2, 0, errors.New("fails"))
+	rpc.GetNode(s4).NewTermResponse(2, -1, nil)
 
 	rpc.GetNode(s1).expectNewTermRequest(t, shard, 3, true)
 	rpc.GetNode(s2).expectNewTermRequest(t, shard, 3, true)
@@ -490,7 +494,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 
 	// Shard controller should retry and eventually succeed
 	rpc.GetNode(s1).NewTermResponse(2, 2, nil)
-	rpc.GetNode(s2).NewTermResponse(2, -1, errors.New("fails"))
+	rpc.GetNode(s2).NewTermResponse(2, 0, errors.New("fails"))
 	rpc.GetNode(s3).NewTermResponse(2, 1, nil)
 	rpc.GetNode(s4).NewTermResponse(2, 0, nil)
 
@@ -551,6 +555,17 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
 
+	// caught-up the leader election entry
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	assert.Eventually(t, func() bool {
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.NotNil(t, sc.Metadata().Leader())
+	assert.Equal(t, s1, *sc.Metadata().Leader())
+
 	// Now start the swap node, which will trigger a new election
 	wg := concurrent.NewWaitGroup(1)
 	wg.Go(func() error {
@@ -560,26 +575,26 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 		return err
 	})
 
-	rpc.GetNode(s1).NewTermResponse(2, 0, nil)
-	rpc.GetNode(s2).NewTermResponse(2, -1, nil)
-	rpc.GetNode(s3).NewTermResponse(2, -1, nil)
-	rpc.GetNode(s4).NewTermResponse(2, 0, nil)
+	rpc.GetNode(s1).NewTermResponse(2, 1, nil)
+	rpc.GetNode(s2).NewTermResponse(2, 2, nil)
+	rpc.GetNode(s3).NewTermResponse(2, 1, nil)
+	rpc.GetNode(s4).NewTermResponse(2, -1, nil)
 
 	rpc.GetNode(s1).expectNewTermRequest(t, shard, 3, true)
 	rpc.GetNode(s2).expectNewTermRequest(t, shard, 3, true)
 	rpc.GetNode(s3).expectNewTermRequest(t, shard, 3, true)
 	rpc.GetNode(s4).expectNewTermRequest(t, shard, 3, true)
 
-	// s4 should be selected as new leader
-	rpc.GetNode(s4).BecomeLeaderResponse(nil)
-	rpc.GetNode(s4).expectBecomeLeaderRequest(t, shard, 3, 3)
+	// s2 should be selected as new leader
+	rpc.GetNode(s2).BecomeLeaderResponse(nil)
+	rpc.GetNode(s2).expectBecomeLeaderRequest(t, shard, 3, 3)
 
-	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 0, 0)
-	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 0, 0)
-	rpc.GetNode(s4).GetStatusResponse(3, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_LEADER, 1, 1)
+	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 1, 1)
+	rpc.GetNode(s4).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, -1, -1)
 
-	rpc.GetNode(s2).expectGetStatusRequest(t, shard)
 	rpc.GetNode(s3).expectGetStatusRequest(t, shard)
+	rpc.GetNode(s4).expectGetStatusRequest(t, shard)
 
 	// s1 fails in removing the shard the first time
 	rpc.GetNode(s1).DeleteShardResponse(errors.New("could not delete shard"))
@@ -589,7 +604,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	}, 10*time.Second, 100*time.Millisecond)
 	assert.EqualValues(t, 3, sc.Metadata().Term())
 	assert.NotNil(t, sc.Metadata().Leader())
-	assert.Equal(t, s4, *sc.Metadata().Leader())
+	assert.Equal(t, s2, *sc.Metadata().Leader())
 
 	// The swap node should be free to complete as well
 	assert.NoError(t, wg.Wait(context.Background()))

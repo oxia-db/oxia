@@ -263,7 +263,7 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []model.Server, leader *mo
 					followerHeadOffset := fs.HeadOffset
 					if followerHeadOffset >= leaderEntry.Offset {
 						e.Info(
-							"Follower is caught-up with the leader after node-swap",
+							"Follower is caught-up with the leader after election",
 							slog.Any("server", server),
 						)
 						return nil
@@ -390,7 +390,7 @@ func (e *ShardElection) prepareIfChangeEnsemble(mutShardMeta *model.ShardMetadat
 		return node.GetIdentifier() == from.GetIdentifier()
 	}), to)
 	e.Info(
-		"Swapping node",
+		"Changing ensemble",
 		slog.Any("removed-nodes", mutShardMeta.RemovedNodes),
 		slog.Any("new-ensemble", mutShardMeta.Ensemble),
 		slog.Any("from", from),

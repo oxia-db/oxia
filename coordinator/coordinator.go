@@ -174,7 +174,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
 			c.shardControllers[shard] = controllers.NewShardController(namespace, shard, namespaceConfig,
-				shardMetadata, c.configResource, c.statusResource, c, c.rpc, controllers.DefaultPeriodicTasksInterval)
+				shardMetadata.Clone(), c.configResource, c.statusResource, c, c.rpc, controllers.DefaultPeriodicTasksInterval)
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
 		}

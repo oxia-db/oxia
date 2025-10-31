@@ -91,7 +91,7 @@ func (s *status) LoadWithVersion() (*model.ClusterStatus, metadata.Version) {
 		s.loadWithInitSlow()
 		s.lock.RLock()
 	}
-	return s.current, s.currentVersionID
+	return s.current.Clone(), s.currentVersionID
 }
 
 func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) bool {
@@ -147,7 +147,7 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 	if !exist {
 		return
 	}
-	ns.Shards[shard] = shardMetadata
+	ns.Shards[shard] = shardMetadata.Clone()
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
