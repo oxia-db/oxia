@@ -33,3 +33,7 @@ func InternalAddr(cmd *cobra.Command, conf *string) {
 func MetricsAddr(cmd *cobra.Command, conf *string) {
 	cmd.Flags().StringVarP(conf, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", constant.DefaultMetricsPort), "Metrics service bind address")
 }
+
+func AdminAddr(cmd *cobra.Command, conf *string) {
+	cmd.Flags().StringVarP(conf, "admin-addr", "a", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Admin service bind address")
+}

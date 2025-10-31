@@ -25,6 +25,7 @@ import (
 	"github.com/oxia-db/oxia/common/logging"
 	"github.com/oxia-db/oxia/common/process"
 
+	"github.com/oxia-db/oxia/cmd/admin"
 	"github.com/oxia-db/oxia/cmd/client"
 	"github.com/oxia-db/oxia/cmd/coordinator"
 	"github.com/oxia-db/oxia/cmd/health"
@@ -68,6 +69,7 @@ func init() {
 	rootCmd.AddCommand(standalone.Cmd)
 	rootCmd.AddCommand(pebble.Cmd)
 	rootCmd.AddCommand(wal.Cmd)
+	rootCmd.AddCommand(admin.Cmd)
 }
 
 func configureLogLevel(_ *cobra.Command, _ []string) error {

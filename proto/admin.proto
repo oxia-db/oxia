@@ -12,21 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package constant
+/**
+ * Oxia Coordinator Admin API
+ */
+syntax = "proto3";
 
-import "time"
+package io.oxia.proto.v1;
 
-const (
-	MetadataTerm      = "term"
-	MetadataNamespace = "namespace"
-	MetadataShardId   = "shard-id"
-	DefaultNamespace  = "default"
+option go_package = "github.com/oxia-db/oxia/proto";
+option java_multiple_files = true;
 
-	DefaultPublicPort   = 6648
-	DefaultInternalPort = 6649
-	DefaultAdminPort    = 6651
-	DefaultMetricsPort  = 8080
+service OxiaAdmin {
 
-	MaxSessionTimeout = 5 * time.Minute
-	MinSessionTimeout = 2 * time.Second
-)
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+
+}
+
+message ListNamespacesRequest {
+}
+
+message ListNamespacesResponse {
+  repeated string namespaces = 1;
+}

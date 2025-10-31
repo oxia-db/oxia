@@ -50,6 +50,7 @@ type ClientPool interface {
 	GetHealthRpc(target string) (grpc_health_v1.HealthClient, io.Closer, error)
 	GetCoordinationRpc(target string) (proto.OxiaCoordinationClient, error)
 	GetReplicationRpc(target string) (proto.OxiaLogReplicationClient, error)
+	GetAminRpc(target string) (proto.OxiaAdminClient, error)
 
 	// Clear all the pooled client instances for the given target
 	Clear(target string)
@@ -62,6 +63,14 @@ type clientPool struct {
 	tls            *tls.Config
 	authentication auth.Authentication
 	log            *slog.Logger
+}
+
+func (cp *clientPool) GetAminRpc(target string) (proto.OxiaAdminClient, error) {
+	cnx, err := cp.getConnectionFromPool(target)
+	if err != nil {
+		return nil, err
+	}
+	return proto.NewOxiaAdminClient(cnx), nil
 }
 
 func NewClientPool(tlsConf *tls.Config, authentication auth.Authentication) ClientPool {

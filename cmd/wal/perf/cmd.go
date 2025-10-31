@@ -84,19 +84,24 @@ func run(*cobra.Command, []string) error {
 		defer wg.Done()
 		n := time.Now().UnixMicro()
 
+		writeGroup := sync.WaitGroup{}
 		for i := int64(0); i < options.entryCount; i++ {
+			writeGroup.Add(1)
 			entry := &proto.LogEntry{
 				Term:      1,
 				Offset:    i,
 				Value:     data,
 				Timestamp: uint64(time.Now().UnixMicro()),
 			}
-			err := writeAheadLog.Append(entry)
-			if err != nil {
-				panic(err)
-			}
-			writeEntryTimesArray[i] = time.Now().UnixMicro() - int64(entry.Timestamp)
+			writeAheadLog.AppendAndSync(entry, func(err error) {
+				writeGroup.Done()
+				writeEntryTimesArray[i] = time.Now().UnixMicro() - int64(entry.Timestamp)
+				if err != nil {
+					panic(err)
+				}
+			})
 		}
+		writeGroup.Wait()
 		threadTimesArray[0] = time.Now().UnixMicro() - n
 		slog.Info("writer thread has done", slog.Int64("Elapse", threadTimesArray[0]))
 	}()
