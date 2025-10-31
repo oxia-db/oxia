@@ -14,7 +14,12 @@
 
 package constant
 
-import "time"
+import (
+	"time"
+
+	"github.com/oxia-db/oxia/node/wal"
+	"github.com/oxia-db/oxia/proto"
+)
 
 const (
 	MetadataTerm      = "term"
@@ -26,7 +31,9 @@ const (
 	DefaultInternalPort = 6649
 	DefaultAdminPort    = 6651
 	DefaultMetricsPort  = 8080
-
-	MaxSessionTimeout = 5 * time.Minute
-	MinSessionTimeout = 2 * time.Second
 )
+
+var InvalidEntryId = &proto.EntryId{
+	Term:   wal.InvalidTerm,
+	Offset: wal.InvalidOffset,
+}

@@ -37,10 +37,10 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/coordinator/model"
+	"github.com/oxia-db/oxia/node"
+	"github.com/oxia-db/oxia/node/auth"
 	"github.com/oxia-db/oxia/oxia"
 	clientauth "github.com/oxia-db/oxia/oxia/auth"
-	"github.com/oxia-db/oxia/server"
-	"github.com/oxia-db/oxia/server/auth"
 )
 
 func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (address string, closeFunc func()) {
@@ -55,7 +55,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		ProviderName:   auth.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
-	s1, err := server.New(server.Config{
+	s1, err := node.New(node.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -69,7 +69,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
-	s2, err := server.New(server.Config{
+	s2, err := node.New(node.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -83,7 +83,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
-	s3, err := server.New(server.Config{
+	s3, err := node.New(node.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict

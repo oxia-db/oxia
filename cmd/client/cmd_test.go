@@ -25,11 +25,11 @@ import (
 	"github.com/oxia-db/oxia/cmd/client/get"
 	"github.com/oxia-db/oxia/cmd/client/list"
 	"github.com/oxia-db/oxia/cmd/client/put"
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/node"
 )
 
 func TestClientCmd(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := node.NewStandalone(node.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
 	stdin := bytes.NewBufferString("")

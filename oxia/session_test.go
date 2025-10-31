@@ -23,12 +23,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/time/rate"
 
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/node"
 )
 
 func TestSessionEphemeralKeysLeak(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
-	standaloneServer, err := server.NewStandalone(config)
+	config := node.NewTestConfig(t.TempDir())
+	standaloneServer, err := node.NewStandalone(config)
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 

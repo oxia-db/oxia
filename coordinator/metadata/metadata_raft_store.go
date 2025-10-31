@@ -21,11 +21,11 @@ import (
 	"math"
 
 	"github.com/hashicorp/raft"
+	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/compare"
-	"github.com/oxia-db/oxia/server/kv"
 )
 
 type kvRaftStore struct {

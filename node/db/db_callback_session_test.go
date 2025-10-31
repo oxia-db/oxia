@@ -1,0 +1,263 @@
+package db
+
+import (
+	"io"
+	"testing"
+
+	. "github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/db/kv"
+	"github.com/oxia-db/oxia/proto"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
+	pb "google.golang.org/protobuf/proto"
+)
+
+type mockWriteBatch map[string]any
+
+func (m mockWriteBatch) Count() int {
+	return 0
+}
+
+func (m mockWriteBatch) Size() int {
+	return 0
+}
+
+var _ kv.WriteBatch = (*mockWriteBatch)(nil)
+
+type mockCloser struct{}
+
+var _ io.Closer = (*mockCloser)(nil)
+
+func (m mockCloser) Close() error {
+	return nil
+}
+
+func (m mockWriteBatch) Close() error {
+	return nil
+}
+
+func (m mockWriteBatch) Put(key string, value []byte) error {
+	val, found := m[key]
+	if found {
+		if valAsError, wasError := val.(error); wasError {
+			return valAsError
+		}
+	}
+	m[key] = value
+	return nil
+}
+
+func (m mockWriteBatch) Delete(key string) error {
+	delete(m, key)
+	return nil
+}
+
+func (m mockWriteBatch) Get(key string) ([]byte, io.Closer, error) {
+	val, found := m[key]
+	if !found {
+		return nil, nil, kv.ErrKeyNotFound
+	}
+	err, wasError := val.(error)
+	if wasError {
+		return nil, nil, err
+	}
+	return val.([]byte), &mockCloser{}, nil
+}
+
+func (m mockWriteBatch) FindLower(key string) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+func (m mockWriteBatch) DeleteRange(_, _ string) error {
+	return nil
+}
+
+func (m mockWriteBatch) KeyRangeScan(_, _ string) (kv.KeyIterator, error) {
+	return nil, kv.ErrKeyNotFound
+}
+
+func (m mockWriteBatch) RangeScan(_, _ string) (kv.KeyValueIterator, error) {
+	return nil, kv.ErrKeyNotFound
+}
+
+func (m mockWriteBatch) Commit() error {
+	return nil
+}
+
+func storageEntry(t *testing.T, sessionId int64) []byte {
+	t.Helper()
+
+	entry := &proto.StorageEntry{
+		Value:                 nil,
+		VersionId:             0,
+		CreationTimestamp:     0,
+		ModificationTimestamp: 0,
+		SessionId:             &sessionId,
+	}
+	bytes, err := pb.Marshal(entry)
+	assert.NoError(t, err)
+	return bytes
+}
+
+func TestSessionUpdateOperationCallback_OnDelete(t *testing.T) {
+	sessionId := int64(12345)
+
+	writeBatch := mockWriteBatch{
+		"a/b/c": storageEntry(t, sessionId),
+		SessionKey(SessionId(sessionId)) + "/a%2Fb%2Fc": []byte{},
+	}
+
+	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, nil, "a/b/c")
+	assert.NoError(t, err)
+	_, found := writeBatch[SessionKey(SessionId(sessionId))+"/a%2Fb%2Fc"]
+	assert.False(t, found)
+}
+
+func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
+	sessionId := int64(12345)
+	versionId := int64(2)
+
+	noSessionPutRequest := &proto.PutRequest{
+		Key:   "a/b/c",
+		Value: []byte("b"),
+	}
+	sessionPutRequest := &proto.PutRequest{
+		Key:               "a/b/c",
+		Value:             []byte("b"),
+		ExpectedVersionId: &versionId,
+		SessionId:         &sessionId,
+	}
+
+	writeBatch := mockWriteBatch{}
+
+	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, noSessionPutRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, status)
+	assert.Equal(t, len(writeBatch), 0)
+
+	writeBatch = mockWriteBatch{
+		"a/b/c": []byte{},
+		ShadowKey(SessionId(sessionId-1), "a/b/c"): []byte{},
+	}
+
+	se := &proto.StorageEntry{
+		Value:                 []byte("value"),
+		VersionId:             0,
+		CreationTimestamp:     0,
+		ModificationTimestamp: 0,
+		SessionId:             &sessionId,
+	}
+
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, noSessionPutRequest, se)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, status)
+	_, oldKeyFound := writeBatch[SessionKey(SessionId(sessionId))+"a"]
+	assert.False(t, oldKeyFound)
+
+	writeBatch = mockWriteBatch{
+		"a/b/c": []byte{},
+		ShadowKey(SessionId(sessionId-1), "a/b/c"): []byte{},
+		SessionKey(SessionId(sessionId - 1)):       []byte{},
+		SessionKey(SessionId(sessionId)):           []byte{},
+	}
+
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, status)
+	_, oldKeyFound = writeBatch[SessionKey(SessionId(sessionId-1))+"a"]
+	assert.False(t, oldKeyFound)
+	_, newKeyFound := writeBatch[SessionKey(SessionId(sessionId))+"a"]
+	assert.False(t, newKeyFound)
+
+	writeBatch = mockWriteBatch{}
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_SESSION_DOES_NOT_EXIST, status)
+
+	// session (sessionID -1) entry
+	tmpSessionId := sessionId - 1
+	se = &proto.StorageEntry{
+		Value:                 []byte("value"),
+		VersionId:             0,
+		CreationTimestamp:     0,
+		ModificationTimestamp: 0,
+		SessionId:             &tmpSessionId,
+	}
+	// sessionID has expired
+	writeBatch = mockWriteBatch{
+		"a/b/c": []byte{}, // real data
+		ShadowKey(SessionId(sessionId-1), "a/b/c"): []byte{}, // shadow key
+		SessionKey(SessionId(sessionId - 1)):       []byte{}, // session
+	}
+	// try to use current session override the (sessionID -1)
+	sessionPutRequest = &proto.PutRequest{
+		Key:       "a/b/c",
+		Value:     []byte("b"),
+		SessionId: &sessionId,
+	}
+
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_SESSION_DOES_NOT_EXIST, status)
+	_, closer, err := writeBatch.Get(ShadowKey(SessionId(sessionId-1), "a/b/c"))
+	assert.NoError(t, err)
+	closer.Close()
+
+	expectedErr := errors.New("error coming from the DB on read")
+	writeBatch = mockWriteBatch{
+		SessionKey(SessionId(sessionId)): expectedErr,
+	}
+	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
+	assert.ErrorIs(t, err, expectedErr)
+
+	writeBatch = mockWriteBatch{
+		SessionKey(SessionId(sessionId)): []byte{},
+	}
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, status)
+	sessionShadowKey := ShadowKey(SessionId(sessionId), "a/b/c")
+	_, found := writeBatch[sessionShadowKey]
+	assert.True(t, found)
+
+	expectedErr = errors.New("error coming from the DB on write")
+	writeBatch = mockWriteBatch{
+		SessionKey(SessionId(sessionId)): []byte{},
+		sessionShadowKey:                 expectedErr,
+	}
+	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
+	assert.ErrorIs(t, err, expectedErr)
+}
+
+func TestSession_PutWithExpiredSession(t *testing.T) {
+	var oldSessionId int64 = 100
+	var newSessionId int64 = 101
+
+	se := &proto.StorageEntry{
+		Value:                 []byte("value"),
+		VersionId:             0,
+		CreationTimestamp:     0,
+		ModificationTimestamp: 0,
+		SessionId:             &oldSessionId,
+	}
+	// sessionID has expired
+	writeBatch := mockWriteBatch{
+		"a/b/c": []byte{}, // real data
+		ShadowKey(SessionId(oldSessionId), "a/b/c"): []byte{}, // shadow key
+		SessionKey(SessionId(oldSessionId)):         []byte{}, // session
+	}
+	// try to use current session override the (sessionID -1)
+	sessionPutRequest := &proto.PutRequest{
+		Key:       "a/b/c",
+		Value:     []byte("b"),
+		SessionId: &newSessionId,
+	}
+
+	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_SESSION_DOES_NOT_EXIST, status)
+
+	_, closer, err := writeBatch.Get(ShadowKey(SessionId(oldSessionId), "a/b/c"))
+	assert.NoError(t, err)
+	assert.NoError(t, closer.Close())
+}

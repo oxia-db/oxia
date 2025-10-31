@@ -1,0 +1,152 @@
+package db
+
+import (
+	"log/slog"
+	"net/url"
+
+	. "github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/db/kv"
+	"github.com/oxia-db/oxia/proto"
+	"github.com/pkg/errors"
+)
+
+type sessionManagerUpdateOperationCallbackS struct{}
+
+var sessionManagerUpdateOperationCallback UpdateOperationCallback = &sessionManagerUpdateOperationCallbackS{}
+
+func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kv.WriteBatch, notification *Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+	var _, closer, err = batch.Get(SessionKey(SessionId(*request.SessionId)))
+	if err != nil {
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			return proto.Status_SESSION_DOES_NOT_EXIST, nil
+		}
+		return proto.Status_SESSION_DOES_NOT_EXIST, err
+	}
+	if err = closer.Close(); err != nil {
+		return proto.Status_SESSION_DOES_NOT_EXIST, err
+	}
+	// delete existing session shadow
+	if status, err := deleteShadow(batch, notification, request.Key, existingEntry); err != nil {
+		return status, err
+	}
+	// Create the session shadow entry
+	err = batch.Put(ShadowKey(SessionId(*request.SessionId), request.Key), []byte{})
+	if err != nil {
+		return proto.Status_SESSION_DOES_NOT_EXIST, err
+	}
+
+	return proto.Status_OK, nil
+}
+
+func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kv.WriteBatch, notification *Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+	if request.SessionId != nil {
+		// override by session operation
+		return s.OnPutWithinSession(batch, notification, request, existingEntry)
+	}
+
+	// override by normal operation
+	if status, err := deleteShadow(batch, notification, request.Key, existingEntry); err != nil {
+		return status, err
+	}
+
+	return proto.Status_OK, nil
+}
+
+func deleteShadow(batch kv.WriteBatch, _ *Notifications, key string, existingEntry *proto.StorageEntry) (proto.Status, error) {
+	// We are overwriting an ephemeral value, let's delete its shadow
+	if existingEntry != nil && existingEntry.SessionId != nil {
+		existingSessionId := SessionId(*existingEntry.SessionId)
+		err := batch.Delete(ShadowKey(existingSessionId, key))
+		if err != nil && !errors.Is(err, kv.ErrKeyNotFound) {
+			return proto.Status_SESSION_DOES_NOT_EXIST, err
+		}
+	}
+	return proto.Status_OK, nil
+}
+
+func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kv.WriteBatch, notification *Notifications, key string) error {
+	se, err := GetStorageEntry(batch, key)
+	if err != nil {
+		if errors.Is(err, kv.ErrKeyNotFound) {
+			return nil
+		}
+		return err
+	}
+	defer se.ReturnToVTPool()
+	return s.OnDeleteWithEntry(batch, notification, key, se)
+}
+
+func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, notification *Notifications, key string, entry *proto.StorageEntry) error {
+	if _, err := deleteShadow(batch, notification, key, entry); err != nil {
+		return err
+	}
+	if !IsSessionKey(key) {
+		return nil
+	}
+	sessionKey := key
+	// Read "index"
+	it, err := batch.KeyRangeScan(sessionKey+"/", sessionKey+"//")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err = it.Close(); err != nil {
+			slog.Warn("Failed to close the iterator when delete session ephemeral keys.", slog.Any("error", err))
+		}
+	}()
+	for ; it.Valid(); it.Next() {
+		escapedEphemeralKey := it.Key()
+		// delete the ephemeral key index
+		if err := batch.Delete(escapedEphemeralKey); err != nil {
+			return err
+		}
+		unescapedEphemeralKey, err := url.PathUnescape(escapedEphemeralKey[len(sessionKey)+1:])
+		if err != nil {
+			return err
+		}
+		if unescapedEphemeralKey != "" {
+			// delete the ephemeral key
+			if err := batch.Delete(unescapedEphemeralKey); err != nil {
+				return err
+			}
+			// add ephemeral key to notification
+			if notification != nil {
+				notification.Deleted(unescapedEphemeralKey)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kv.WriteBatch, notification *Notifications, keyStartInclusive string, keyEndExclusive string) error {
+	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err = it.Close(); err != nil {
+			slog.Warn("Failed to close the iterator when deleting the range.", slog.Any("error", err))
+		}
+	}()
+
+	// introduce the processor here for better defer resource release
+	iteratorProcessor := func(batch kv.WriteBatch, it kv.KeyValueIterator) error {
+		value, err := it.Value()
+		if err != nil {
+			return err
+		}
+		se := proto.StorageEntryFromVTPool()
+		defer se.ReturnToVTPool()
+		if err = Deserialize(value, se); err != nil {
+			return err
+		}
+		return s.OnDeleteWithEntry(batch, notification, it.Key(), se)
+	}
+
+	for ; it.Valid(); it.Next() {
+		if err := iteratorProcessor(batch, it); err != nil {
+			return errors.Wrap(err, "oxia db: failed to delete range")
+		}
+	}
+	return nil
+}

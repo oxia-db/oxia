@@ -26,7 +26,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/node"
 )
 
 type neverCompleteAsyncClient struct {
@@ -105,10 +105,10 @@ func assertCancellable(t *testing.T, operationFunc func(context.Context) error) 
 }
 
 func TestSyncClientImpl_SecondaryIndexes(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
+	config := node.NewTestConfig(t.TempDir())
 	// Test with multiple shards to ensure correctness across shards
 	config.NumShards = 1
-	standaloneServer, err := server.NewStandalone(config)
+	standaloneServer, err := node.NewStandalone(config)
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr())
@@ -161,10 +161,10 @@ func TestSyncClientImpl_SecondaryIndexes(t *testing.T) {
 }
 
 func TestSyncClientImpl_SecondaryIndexesRepeated(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
+	config := node.NewTestConfig(t.TempDir())
 	// Test with multiple shards to ensure correctness across shards
 	config.NumShards = 1
-	standaloneServer, err := server.NewStandalone(config)
+	standaloneServer, err := node.NewStandalone(config)
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr())
@@ -201,20 +201,20 @@ func TestSyncClientImpl_SecondaryIndexesRepeated(t *testing.T) {
 }
 
 func TestSyncClientImpl_SecondaryIndexes_Get(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
+	config := node.NewTestConfig(t.TempDir())
 	config.NumShards = 10
 	doSecondaryIndexesGet(t, config)
 }
 
 func TestSyncClientImpl_SecondaryIndexes_Get_NoNotifications(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
+	config := node.NewTestConfig(t.TempDir())
 	config.NotificationsEnabled = false
 	doSecondaryIndexesGet(t, config)
 }
 
-func doSecondaryIndexesGet(t *testing.T, config server.StandaloneConfig) {
+func doSecondaryIndexesGet(t *testing.T, config node.StandaloneConfig) {
 	t.Helper()
-	standaloneServer, err := server.NewStandalone(config)
+	standaloneServer, err := node.NewStandalone(config)
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr())
@@ -360,7 +360,7 @@ func doSecondaryIndexesGet(t *testing.T, config server.StandaloneConfig) {
 }
 
 func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := node.NewStandalone(node.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))

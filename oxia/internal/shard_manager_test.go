@@ -23,7 +23,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/node"
 )
 
 type testShardStrategy struct {
@@ -36,7 +36,7 @@ func (s *testShardStrategy) Get(key string) func(Shard) bool {
 }
 
 func TestWithStandalone(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := node.NewStandalone(node.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
