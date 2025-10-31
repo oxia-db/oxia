@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"github.com/oxia-db/oxia/node/conf"
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -148,7 +149,7 @@ func NewFollowerController(config conf.Config, namespace string, shardId int64, 
 		return nil, err
 	}
 
-	if fc.term != wal.InvalidTerm {
+	if fc.term != InvalidTerm {
 		fc.status = proto.ServingStatus_FENCED
 	}
 
@@ -160,7 +161,7 @@ func NewFollowerController(config conf.Config, namespace string, shardId int64, 
 	}
 	fc.commitOffset.Store(commitOffset)
 
-	if fc.lastAppendedOffset == wal.InvalidOffset {
+	if fc.lastAppendedOffset == InvalidOffset {
 		// The wal is empty, though we have restored from snapshot
 		fc.lastAppendedOffset = commitOffset
 	}
@@ -633,7 +634,7 @@ func (fc *followerController) readSnapshotStream(stream proto.OxiaLogReplication
 			return totalSize, err
 		case snapChunk == nil:
 			return totalSize, nil
-		case fc.term != wal.InvalidTerm && snapChunk.Term != fc.term:
+		case fc.term != InvalidTerm && snapChunk.Term != fc.term:
 			// The follower could be left with term=-1 by a previous failed
 			// attempt at sending the snapshot. It's ok to proceed in that case.
 			fc.closeStreamNoMutex(constant.ErrInvalidTerm)

@@ -23,7 +23,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/node/util"
 )
 
 var (
@@ -108,7 +107,7 @@ type quorumAckTracker struct {
 
 	// Keep track of the number of acks that each entry has received
 	// The bitset is used to handle duplicate acks from a single follower
-	tracker            map[int64]*util.BitSet
+	tracker            map[int64]*BitSet
 	cursorIdxGenerator int
 	closed             bool
 }
@@ -133,7 +132,7 @@ func NewQuorumAckTracker(replicationFactor uint32, headOffset int64, commitOffse
 		// We are using RF/2 (and not RF/2 + 1) because the leader is already storing 1 copy locally
 		requiredAcks:      replicationFactor / 2,
 		replicationFactor: replicationFactor,
-		tracker:           make(map[int64]*util.BitSet),
+		tracker:           make(map[int64]*BitSet),
 		waitingRequests:   make([]waitingRequest, 0),
 	}
 
@@ -143,7 +142,7 @@ func NewQuorumAckTracker(replicationFactor uint32, headOffset int64, commitOffse
 
 	// Add entries to track the entries we're not yet sure that are fully committed
 	for offset := commitOffset + 1; offset <= headOffset; offset++ {
-		q.tracker[offset] = &util.BitSet{}
+		q.tracker[offset] = &BitSet{}
 	}
 
 	q.waitForHeadOffset = concurrent.NewConditionContext(q)
@@ -168,7 +167,7 @@ func (q *quorumAckTracker) AdvanceHeadOffset(headOffset int64) {
 	if q.requiredAcks == 0 {
 		q.notifyCommitOffsetAdvanced(headOffset)
 	} else {
-		q.tracker[headOffset] = &util.BitSet{}
+		q.tracker[headOffset] = &BitSet{}
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/oauth2-proxy/mockoidc"
+	"github.com/oxia-db/oxia/node/conf"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
@@ -55,7 +56,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		ProviderName:   auth.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
-	s1, err := node.New(node.Config{
+	s1, err := node.New(conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -69,7 +70,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
-	s2, err := node.New(node.Config{
+	s2, err := node.New(conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -83,7 +84,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
-	s3, err := node.New(node.Config{
+	s3, err := node.New(conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict

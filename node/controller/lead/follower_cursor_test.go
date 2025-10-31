@@ -21,13 +21,14 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/common/rpc"
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/compare"
 
-	"github.com/oxia-db/oxia/common/constant"
+	. "github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
 
 	. "github.com/oxia-db/oxia/node/db"
@@ -40,13 +41,13 @@ func TestFollowerCursor(t *testing.T) {
 	var shard int64 = 2
 
 	stream := rpc.NewMockRpcClient()
-	ackTracker := NewQuorumAckTracker(3, wal.InvalidOffset, wal.InvalidOffset)
+	ackTracker := NewQuorumAckTracker(3, InvalidOffset, InvalidOffset)
 	kvf, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
-	db, err := NewDB(constant.DefaultNamespace, shard, kvf, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
+	db, err := NewDB(DefaultNamespace, shard, kvf, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 	wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
-	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
+	w, err := wf.NewWal(DefaultNamespace, shard, nil)
 	assert.NoError(t, err)
 
 	err = w.Append(&proto.LogEntry{
@@ -57,7 +58,7 @@ func TestFollowerCursor(t *testing.T) {
 	assert.NoError(t, err)
 	slog.Info("Appended entry 0 to the log")
 
-	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, wal.InvalidOffset)
+	fc, err := NewFollowerCursor("f1", term, DefaultNamespace, shard, stream, ackTracker, w, db, InvalidOffset)
 	assert.NoError(t, err)
 
 	time.Sleep(10 * time.Millisecond)
@@ -67,24 +68,24 @@ func TestFollowerCursor(t *testing.T) {
 	// it will start to `streamEntries` and maybe make it advanced to 0.
 	assert.True(t, func() bool {
 		lastPushed := fc.LastPushed()
-		return lastPushed == wal.InvalidOffset || lastPushed == 0
+		return lastPushed == InvalidOffset || lastPushed == 0
 	}())
-	assert.Equal(t, wal.InvalidOffset, fc.AckOffset())
+	assert.Equal(t, InvalidOffset, fc.AckOffset())
 
 	assert.Eventually(t, func() bool {
 		return fc.LastPushed() == 0
 	}, 10*time.Second, 100*time.Millisecond)
 
-	assert.Equal(t, wal.InvalidOffset, fc.AckOffset())
+	assert.Equal(t, InvalidOffset, fc.AckOffset())
 
 	ackTracker.AdvanceHeadOffset(0)
 
-	assert.Equal(t, wal.InvalidOffset, fc.AckOffset())
+	assert.Equal(t, InvalidOffset, fc.AckOffset())
 
 	// The follower is acking back
 	req := <-stream.AppendReqs
 	assert.EqualValues(t, 1, req.Term)
-	assert.Equal(t, wal.InvalidOffset, req.CommitOffset)
+	assert.Equal(t, InvalidOffset, req.CommitOffset)
 
 	stream.AckResps <- &proto.Ack{
 		Offset: 0,
@@ -132,10 +133,10 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 	stream := rpc.NewMockRpcClient()
 	kvf, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
-	db, err := NewDB(constant.DefaultNamespace, shard, kvf, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
+	db, err := NewDB(DefaultNamespace, shard, kvf, compare.EncoderHierarchical, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
 	wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
-	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
+	w, err := wf.NewWal(DefaultNamespace, shard, nil)
 	assert.NoError(t, err)
 
 	// Load some entries into the db & wal
@@ -169,7 +170,7 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 
 	ackTracker := NewQuorumAckTracker(3, n-1, n-1)
 
-	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, wal.InvalidOffset)
+	fc, err := NewFollowerCursor("f1", term, DefaultNamespace, shard, stream, ackTracker, w, db, InvalidOffset)
 	assert.NoError(t, err)
 
 	s := stream.SendSnapshotStream

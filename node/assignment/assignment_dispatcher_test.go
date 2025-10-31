@@ -45,7 +45,7 @@ func TestUninitializedAssignmentDispatcher(t *testing.T) {
 
 func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
-	coordinatorStream := rpc.newMockShardAssignmentControllerStream()
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
 		err := dispatcher.PushShardAssignments(coordinatorStream)
 		assert.NoError(t, err)
@@ -56,8 +56,8 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
-					newShardAssignment(0, "server1", 0, 100),
-					newShardAssignment(1, "server2", 100, math.MaxUint32),
+					newShardAssignment(0, "node1", 0, 100),
+					newShardAssignment(1, "node2", 100, math.MaxUint32),
 				},
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
 			},
@@ -66,7 +66,7 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		return dispatcher.Initialized()
 	}, 10*time.Second, 10*time.Millisecond)
-	mockClient := rpc.newMockShardAssignmentClientStream()
+	mockClient := rpc.NewMockShardAssignmentClientStream()
 
 	wg := sync.WaitGroup{}
 	wg.Go(func() {
@@ -75,7 +75,7 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	mockClient.cancel()
+	mockClient.Cancel()
 	wg.Wait()
 
 	assert.NoError(t, dispatcher.Close())
@@ -84,7 +84,7 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 	healthServer := rpc.NewClosableHealthServer(t.Context())
 	dispatcher := NewShardAssignmentDispatcher(healthServer)
-	coordinatorStream := rpc.newMockShardAssignmentControllerStream()
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
 		err := dispatcher.PushShardAssignments(coordinatorStream)
 		assert.NoError(t, err)
@@ -104,8 +104,8 @@ func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
-					newShardAssignment(0, "server1", 0, 100),
-					newShardAssignment(1, "server2", 100, math.MaxUint32),
+					newShardAssignment(0, "node1", 0, 100),
+					newShardAssignment(1, "node2", 100, math.MaxUint32),
 				},
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
 			},
@@ -125,13 +125,13 @@ func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
-	shard0InitialAssignment := newShardAssignment(0, "server1", 0, 100)
-	shard1InitialAssignment := newShardAssignment(1, "server2", 100, math.MaxUint32)
-	shard1UpdatedAssignment := newShardAssignment(1, "server3", 100, math.MaxUint32)
+	shard0InitialAssignment := newShardAssignment(0, "node1", 0, 100)
+	shard1InitialAssignment := newShardAssignment(1, "node2", 100, math.MaxUint32)
+	shard1UpdatedAssignment := newShardAssignment(1, "node3", 100, math.MaxUint32)
 
 	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
 
-	coordinatorStream := rpc.newMockShardAssignmentControllerStream()
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
 		err := dispatcher.PushShardAssignments(coordinatorStream)
 		assert.NoError(t, err)
@@ -155,7 +155,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// Should get the whole assignment as they arrived from controller
-	mockClient := rpc.newMockShardAssignmentClientStream()
+	mockClient := rpc.NewMockShardAssignmentClientStream()
 
 	wg := sync.WaitGroup{}
 	wg.Go(func() {
@@ -184,11 +184,11 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	response = mockClient.GetResponse()
 	assert.True(t, pb.Equal(request, response))
 
-	mockClient.cancel()
+	mockClient.Cancel()
 	wg.Wait()
 
 	// Should get the whole assignment with the update applied
-	mockClient = rpc.newMockShardAssignmentClientStream()
+	mockClient = rpc.NewMockShardAssignmentClientStream()
 	wg2 := sync.WaitGroup{}
 	wg2.Add(1)
 
@@ -202,7 +202,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	response = mockClient.GetResponse()
 	assert.True(t, pb.Equal(request, response))
 
-	mockClient.cancel()
+	mockClient.Cancel()
 	wg.Wait()
 
 	assert.NoError(t, dispatcher.Close())
@@ -211,7 +211,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
 
-	coordinatorStream := rpc.newMockShardAssignmentControllerStream()
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
 		err := dispatcher.PushShardAssignments(coordinatorStream)
 		assert.NoError(t, err)
@@ -249,7 +249,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// Should get the whole assignment as they arrived from controller
-	mockClient := rpc.newMockShardAssignmentClientStream()
+	mockClient := rpc.NewMockShardAssignmentClientStream()
 
 	wg := sync.WaitGroup{}
 	wg.Go(func() {
@@ -258,7 +258,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	mockClient.cancel()
+	mockClient.Cancel()
 	wg.Wait()
 
 	response := mockClient.GetResponse()
@@ -275,7 +275,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 	}, response))
 
 	// If namespace is not passed, it will use "default"
-	mockClient = rpc.newMockShardAssignmentClientStream()
+	mockClient = rpc.NewMockShardAssignmentClientStream()
 	wg = sync.WaitGroup{}
 	wg.Go(func() {
 		req := &proto.ShardAssignmentsRequest{Namespace: ""}
@@ -283,7 +283,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	mockClient.cancel()
+	mockClient.Cancel()
 	wg.Wait()
 
 	response = mockClient.GetResponse()
@@ -300,7 +300,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 	}, response))
 
 	// If the namespace is not valid, we'll get an error
-	mockClient = rpc.newMockShardAssignmentClientStream()
+	mockClient = rpc.NewMockShardAssignmentClientStream()
 	wg = sync.WaitGroup{}
 	wg.Go(func() {
 		req := &proto.ShardAssignmentsRequest{Namespace: "non-valid-namespace"}
@@ -308,7 +308,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 		assert.ErrorIs(t, err, constant.ErrNamespaceNotFound)
 	})
 
-	mockClient.cancel()
+	mockClient.Cancel()
 	wg.Wait()
 
 	assert.NoError(t, dispatcher.Close())

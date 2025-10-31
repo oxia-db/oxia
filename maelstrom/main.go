@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/oxia-db/oxia/node/conf"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
@@ -188,7 +189,7 @@ func main() {
 		}
 	} else {
 		// Any other node will be a storage node
-		_, err := node.NewWithGrpcProvider(node.Config{
+		_, err := node.NewWithGrpcProvider(conf.Config{
 			MetricsServiceAddr: "",
 			DataDir:            filepath.Join(dataDir, thisNode, "db"),
 			WalDir:             filepath.Join(dataDir, thisNode, "wal"),

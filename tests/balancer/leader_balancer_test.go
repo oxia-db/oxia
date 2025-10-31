@@ -27,11 +27,11 @@ import (
 )
 
 func TestLeaderBalanced(t *testing.T) {
-	s1, s1ad := mock.NewServer(t, "sv-1")
+	s1, s1ad := mock.NewNode(t, "sv-1")
 	defer s1.Close()
-	s2, s2ad := mock.NewServer(t, "sv-2")
+	s2, s2ad := mock.NewNode(t, "sv-2")
 	defer s2.Close()
-	s3, s3ad := mock.NewServer(t, "sv-3")
+	s3, s3ad := mock.NewNode(t, "sv-3")
 	defer s3.Close()
 	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
 
@@ -95,11 +95,11 @@ func TestLeaderBalanced(t *testing.T) {
 }
 
 func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
-	s1, s1ad := mock.NewServer(t, "sv-1")
+	s1, s1ad := mock.NewNode(t, "sv-1")
 	defer s1.Close()
-	s2, s2ad := mock.NewServer(t, "sv-2")
+	s2, s2ad := mock.NewNode(t, "sv-2")
 	defer s2.Close()
-	s3, s3ad := mock.NewServer(t, "sv-3")
+	s3, s3ad := mock.NewNode(t, "sv-3")
 	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
 
 	cc := &model.ClusterConfig{
@@ -196,17 +196,17 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 }
 
 func TestLeaderBalancedNodeAdded(t *testing.T) {
-	s1, s1ad := mock.NewServer(t, "sv-1")
+	s1, s1ad := mock.NewNode(t, "sv-1")
 	defer s1.Close()
-	s2, s2ad := mock.NewServer(t, "sv-2")
+	s2, s2ad := mock.NewNode(t, "sv-2")
 	defer s2.Close()
-	s3, s3ad := mock.NewServer(t, "sv-3")
+	s3, s3ad := mock.NewNode(t, "sv-3")
 	defer s3.Close()
-	s4, s4ad := mock.NewServer(t, "sv-4")
+	s4, s4ad := mock.NewNode(t, "sv-4")
 	defer s4.Close()
-	s5, s5ad := mock.NewServer(t, "sv-5")
+	s5, s5ad := mock.NewNode(t, "sv-5")
 	defer s5.Close()
-	s6, s6ad := mock.NewServer(t, "sv-6")
+	s6, s6ad := mock.NewNode(t, "sv-6")
 	defer s6.Close()
 
 	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())

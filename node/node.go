@@ -51,7 +51,7 @@ func New(config conf.Config) (*Node, error) {
 
 func NewWithGrpcProvider(config conf.Config, provider rpc.GrpcProvider, replicationRpcProvider rpc.ReplicationRpcProvider) (*Node, error) {
 	slog.Info(
-		"Starting Oxia server",
+		"Starting Oxia Node",
 		slog.Any("config", config),
 	)
 

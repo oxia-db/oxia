@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxia-db/oxia/node/constant"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 
@@ -111,7 +112,7 @@ func run(*cobra.Command, []string) error {
 			defer wg.Done()
 			n := time.Now().UnixMicro()
 
-			reader, err := writeAheadLog.NewReader(wal.InvalidOffset)
+			reader, err := writeAheadLog.NewReader(constant.InvalidOffset)
 			if err != nil {
 				panic(err)
 			}

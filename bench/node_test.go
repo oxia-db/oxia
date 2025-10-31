@@ -26,6 +26,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/logging"
 	"github.com/oxia-db/oxia/node"
+	"github.com/oxia-db/oxia/node/conf"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/perf"
 )
@@ -38,7 +39,7 @@ func BenchmarkNode(b *testing.B) {
 
 	standaloneConf := node.StandaloneConfig{
 		NumShards: 1,
-		Config: node.Config{
+		Config: conf.Config{
 			InternalServiceAddr: "localhost:0",
 			PublicServiceAddr:   "localhost:0",
 			MetricsServiceAddr:  "localhost:0",

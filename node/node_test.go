@@ -15,19 +15,27 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/oxia-db/oxia/node/conf"
+	"github.com/oxia-db/oxia/proto"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	insecure "google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/oxia-db/oxia/common/rpc"
 )
 
-func TestNewServer(t *testing.T) {
-	config := Config{
+func TestNewNode(t *testing.T) {
+	config := conf.Config{
 		InternalServiceAddr: "localhost:0",
 		PublicServiceAddr:   "localhost:0",
 		MetricsServiceAddr:  "localhost:0",
@@ -53,7 +61,7 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestNewServerClosableWithHealthWatch(t *testing.T) {
-	config := Config{
+	config := conf.Config{
 		InternalServiceAddr: "localhost:0",
 		PublicServiceAddr:   "localhost:0",
 		MetricsServiceAddr:  "localhost:0",
@@ -74,4 +82,53 @@ func TestNewServerClosableWithHealthWatch(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NoError(t, watchStream.CloseSend())
+}
+
+func TestWriteClientClose(t *testing.T) {
+	standaloneNode, err := NewStandalone(NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneNode.Close()
+
+	// Connect to the standalone server
+	conn, err := grpc.NewClient(standaloneNode.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err, "Failed to connect to %s", standaloneNode.ServiceAddr())
+	defer conn.Close()
+
+	client := proto.NewOxiaClientClient(conn)
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(map[string]string{
+		"shard-id":  "0",
+		"namespace": "default",
+	}))
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	stream, err := client.WriteStream(ctx)
+	require.NoError(t, err, "Failed to create write stream")
+
+	// Send a Put request
+	putReq := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{
+				Key:   "test-key",
+				Value: []byte("test-value"),
+			},
+		},
+	}
+	err = stream.Send(putReq)
+	require.NoError(t, err, "Failed to send put request")
+
+	// Validate the request succeeded
+	resp, err := stream.Recv()
+	require.NoError(t, err, "Failed to receive response")
+	assert.Len(t, resp.Puts, 1)
+	assert.Equal(t, proto.Status_OK, resp.Puts[0].Status)
+
+	// Close the client side of the stream, and then expect no more responses
+	err = stream.CloseSend()
+	require.NoError(t, err, "Failed to close send")
+
+	resp, err = stream.Recv()
+	t.Logf("resp %v err %v", resp, err)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, io.EOF)
 }

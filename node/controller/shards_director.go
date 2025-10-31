@@ -76,9 +76,9 @@ func NewShardsDirector(config conf.Config, walFactory wal.Factory, kvFactory kv.
 		),
 
 		leadersCounter: metric.NewUpDownCounter("oxia_server_leaders_count",
-			"The number of leader controllers in a server", "count", map[string]any{}),
+			"The number of leader controllers in a node", "count", map[string]any{}),
 		followersCounter: metric.NewUpDownCounter("oxia_server_followers_count",
-			"The number of follower controllers in a server", "count", map[string]any{}),
+			"The number of follower controllers in a node", "count", map[string]any{}),
 	}
 
 	return sd

@@ -20,28 +20,17 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/constant"
 
-	"github.com/oxia-db/oxia/proto"
 	"github.com/oxia-db/oxia/node/wal/codec"
+	"github.com/oxia-db/oxia/proto"
 )
 
 const shard = int64(100)
-
-func NewTestWalFactory(t *testing.T) Factory {
-	t.Helper()
-
-	dir := t.TempDir()
-	return NewWalFactory(&FactoryOptions{
-		BaseWalDir:  dir,
-		Retention:   1 * time.Hour,
-		SegmentSize: 128 * 1024,
-		SyncData:    true,
-	})
-}
 
 func createWal(t *testing.T) (Factory, Wal) {
 	t.Helper()

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //revive:disable-next-line:var-naming
-package util
+package lead
 
 import (
 	"testing"

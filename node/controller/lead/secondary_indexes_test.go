@@ -12,15 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package lead
 
 import (
 	"context"
 	"testing"
 
 	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/node"
-	"github.com/oxia-db/oxia/node/controller/lead"
+	"github.com/oxia-db/oxia/node/conf"
 	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/oxia-db/oxia/node/wal"
 	"github.com/stretchr/testify/assert"
@@ -40,7 +39,7 @@ func TestSecondaryIndices_List(t *testing.T) {
 	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	walFactory := wal.NewTestWalFactory(t)
 
-	lc, _ := lead.NewLeaderController(node.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
+	lc, _ := NewLeaderController(conf.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
 	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
 	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
@@ -136,7 +135,7 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	walFactory := wal.NewTestWalFactory(t)
 
-	lc, _ := lead.NewLeaderController(node.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
+	lc, _ := NewLeaderController(conf.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
 	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
 	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
@@ -247,7 +246,7 @@ func TestSecondaryIndices_MultipleKeysForSameIdx(t *testing.T) {
 	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
 	walFactory := wal.NewTestWalFactory(t)
 
-	lc, _ := lead.NewLeaderController(node.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
+	lc, _ := NewLeaderController(conf.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
 	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
 	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,

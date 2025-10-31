@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/oxia-db/oxia/node/constant"
 	wal2 "github.com/oxia-db/oxia/node/wal"
 	"github.com/stretchr/testify/assert"
 
@@ -77,7 +78,7 @@ func Benchmark_Wal_Append_with_Read(b *testing.B) {
 
 	for i := 0; i < c-1; i++ {
 		wg.Go(func() {
-			reader, err := wal.NewReader(wal2.InvalidOffset)
+			reader, err := wal.NewReader(InvalidOffset)
 			assert.NoError(b, err)
 
 			for i := 0; i < b.N; i++ {
@@ -126,7 +127,7 @@ func Benchmark_Wal_Append_to_Read_latency(b *testing.B) {
 	})
 
 	wg.Go(func() {
-		reader, err := wal.NewReader(wal2.InvalidOffset)
+		reader, err := wal.NewReader(InvalidOffset)
 		assert.NoError(b, err)
 		for i := 0; i < b.N; i++ {
 			for {

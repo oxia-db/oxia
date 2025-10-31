@@ -24,6 +24,7 @@ import (
 	"github.com/oxia-db/oxia/common/protobuf"
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/node/conf"
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/status"
@@ -58,7 +59,7 @@ func TestFollower(t *testing.T) {
 
 	fenceRes, err := fc.NewTerm(&proto.NewTermRequest{Term: 1})
 	assert.NoError(t, err)
-	assert.Equal(t, constant.InvalidEntryId, fenceRes.HeadEntryId)
+	assert.Equal(t, InvalidEntryId, fenceRes.HeadEntryId)
 
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 1, fc.Term())
@@ -72,7 +73,7 @@ func TestFollower(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.EqualValues(t, 1, truncateResp.HeadEntryId.Term)
-	assert.Equal(t, wal.InvalidOffset, truncateResp.HeadEntryId.Offset)
+	assert.Equal(t, InvalidOffset, truncateResp.HeadEntryId.Offset)
 
 	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
 
@@ -85,7 +86,7 @@ func TestFollower(t *testing.T) {
 		wg.Done()
 	}()
 
-	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, InvalidOffset))
 
 	// Wait for response
 	response := stream.GetResponse()
@@ -95,7 +96,7 @@ func TestFollower(t *testing.T) {
 	assert.EqualValues(t, 0, response.Offset)
 
 	// Write next entry
-	stream.AddRequest(createAddRequest(t, 1, 1, map[string]string{"a": "4", "b": "5"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 1, map[string]string{"a": "4", "b": "5"}, InvalidOffset))
 
 	// Wait for response
 	response = stream.GetResponse()
@@ -135,13 +136,13 @@ func TestFollower(t *testing.T) {
 		assert.ErrorIs(t, err, context.Canceled)
 		wg2.Done()
 	}()
-	stream.AddRequest(createAddRequest(t, 2, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 2, 0, map[string]string{"a": "0", "b": "1"}, InvalidOffset))
 	// Wait for response
 	response = stream.GetResponse()
 	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
 	assert.EqualValues(t, 0, response.Offset)
 	// Write next entry
-	stream.AddRequest(createAddRequest(t, 2, 1, map[string]string{"a": "4", "b": "5"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 2, 1, map[string]string{"a": "4", "b": "5"}, InvalidOffset))
 
 	// Wait for response
 	response = stream.GetResponse()
@@ -150,7 +151,7 @@ func TestFollower(t *testing.T) {
 	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
 	assert.EqualValues(t, 2, fc.Term())
 
-	stream.AddRequest(createAddRequest(t, 2, 2, map[string]string{"a": "4", "b": "5"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 2, 2, map[string]string{"a": "4", "b": "5"}, InvalidOffset))
 	response = stream.GetResponse()
 	assert.EqualValues(t, 2, response.Offset)
 	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
@@ -197,7 +198,7 @@ func TestReadingUpToCommitOffset(t *testing.T) {
 		Term: 1,
 		HeadEntryId: &proto.EntryId{
 			Term:   0,
-			Offset: wal.InvalidOffset,
+			Offset: InvalidOffset,
 		},
 	})
 	assert.NoError(t, err)
@@ -209,7 +210,7 @@ func TestReadingUpToCommitOffset(t *testing.T) {
 		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
 	}()
 
-	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, InvalidOffset))
 
 	stream.AddRequest(createAddRequest(t, 1, 1, map[string]string{"a": "2", "b": "3"},
 		// Commit offset points to previous entry
@@ -468,11 +469,11 @@ func TestFollower_PersistentTerm(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, fc.Status())
-	assert.Equal(t, wal.InvalidTerm, fc.Term())
+	assert.Equal(t, InvalidTerm, fc.Term())
 
 	fenceRes, err := fc.NewTerm(&proto.NewTermRequest{Term: 4})
 	assert.NoError(t, err)
-	assert.Equal(t, constant.InvalidEntryId, fenceRes.HeadEntryId)
+	assert.Equal(t, InvalidEntryId, fenceRes.HeadEntryId)
 
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 4, fc.Term())
@@ -564,7 +565,7 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	assert.EqualValues(t, 5, fc.Term())
 
 	stream := rpc.NewMockServerReplicateStream()
-	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "1", "b": "1"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "1", "b": "1"}, InvalidOffset))
 
 	// Follower will reject the entry because it's from an earlier term
 	err = fc.Replicate(stream)
@@ -574,7 +575,7 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	assert.EqualValues(t, 5, fc.Term())
 
 	// If we send an entry of same term, it will be accepted
-	stream.AddRequest(createAddRequest(t, 5, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 5, 0, map[string]string{"a": "2", "b": "2"}, InvalidOffset))
 
 	go func() {
 		// cancelled due to fc.Close() below
@@ -594,7 +595,7 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	assert.NoError(t, err)
 
 	stream = rpc.NewMockServerReplicateStream()
-	stream.AddRequest(createAddRequest(t, 6, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 6, 0, map[string]string{"a": "2", "b": "2"}, InvalidOffset))
 	err = fc.Replicate(stream)
 	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err), "Unexpected error: %s", err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
@@ -618,7 +619,7 @@ func TestFollower_RejectTruncateInvalidTerm(t *testing.T) {
 
 	fenceRes, err := fc.NewTerm(&proto.NewTermRequest{Term: 5})
 	assert.NoError(t, err)
-	assert.Equal(t, constant.InvalidEntryId, fenceRes.HeadEntryId)
+	assert.Equal(t, InvalidEntryId, fenceRes.HeadEntryId)
 
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
@@ -767,7 +768,7 @@ func TestFollower_HandleSnapshot(t *testing.T) {
 		assert.Equal(t, []byte(fmt.Sprintf("value-%d", i)), dbRes.Value)
 	}
 
-	assert.Equal(t, wal.InvalidOffset, fc.(*followerController).wal.LastOffset())
+	assert.Equal(t, InvalidOffset, fc.(*followerController).wal.LastOffset())
 
 	assert.NoError(t, fc.Close())
 
@@ -839,8 +840,8 @@ func TestFollower_DupEntries(t *testing.T) {
 		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
 	}()
 
-	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
-	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, InvalidOffset))
 
 	// Wait for responses
 	r1 := stream.GetResponse()
@@ -850,12 +851,12 @@ func TestFollower_DupEntries(t *testing.T) {
 	assert.EqualValues(t, 0, r2.Offset)
 
 	// Write next entry
-	stream.AddRequest(createAddRequest(t, 1, 1, map[string]string{"a": "4", "b": "5"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 1, map[string]string{"a": "4", "b": "5"}, InvalidOffset))
 	r3 := stream.GetResponse()
 	assert.EqualValues(t, 1, r3.Offset)
 
 	// Go back with older offset
-	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "4", "b": "5"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "4", "b": "5"}, InvalidOffset))
 	r4 := stream.GetResponse()
 	assert.EqualValues(t, 0, r4.Offset)
 
@@ -878,7 +879,7 @@ func TestFollowerController_DeleteShard(t *testing.T) {
 		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
 	}()
 
-	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, InvalidOffset))
 
 	// Wait for responses
 	r1 := stream.GetResponse()
@@ -924,7 +925,7 @@ func TestFollowerController_Closed(t *testing.T) {
 	fc, err := NewFollowerController(conf.Config{}, constant.DefaultNamespace, shard, walFactory, kvFactory)
 	assert.NoError(t, err)
 
-	assert.EqualValues(t, wal.InvalidTerm, fc.Term())
+	assert.EqualValues(t, InvalidTerm, fc.Term())
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, fc.Status())
 
 	assert.NoError(t, fc.Close())
@@ -967,7 +968,7 @@ func TestFollower_GetStatus(t *testing.T) {
 		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
 	}()
 
-	stream.AddRequest(createAddRequest(t, 2, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 2, 0, map[string]string{"a": "0", "b": "1"}, InvalidOffset))
 	stream.AddRequest(createAddRequest(t, 2, 1, map[string]string{"a": "0", "b": "1"}, 0))
 	stream.AddRequest(createAddRequest(t, 2, 2, map[string]string{"a": "0", "b": "1"}, 1))
 

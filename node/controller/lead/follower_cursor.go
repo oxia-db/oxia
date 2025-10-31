@@ -26,6 +26,8 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/dustin/go-humanize"
+	"github.com/oxia-db/oxia/common/rpc"
+	. "github.com/oxia-db/oxia/node/constant"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -59,7 +61,7 @@ type followerCursor struct {
 
 	term                    int64
 	follower                string
-	replicateStreamProvider ReplicateStreamProvider
+	replicateStreamProvider rpc.ReplicateStreamProvider
 	stream                  proto.OxiaLogReplication_ReplicateClient
 
 	ackTracker  QuorumAckTracker
@@ -89,7 +91,7 @@ func NewFollowerCursor( //nolint:revive
 	term int64,
 	namespace string,
 	shardId int64,
-	replicateStreamProvider ReplicateStreamProvider,
+	replicateStreamProvider rpc.ReplicateStreamProvider,
 	ackTracker QuorumAckTracker,
 	walObject wal.Wal,
 	db db.DB,
@@ -163,7 +165,7 @@ func (fc *followerCursor) shouldSendSnapshot() bool {
 	ackOffset := fc.ackOffset.Load()
 	walFirstOffset := fc.wal.FirstOffset()
 
-	if ackOffset == wal.InvalidOffset && fc.ackTracker.CommitOffset() >= 0 {
+	if ackOffset == InvalidOffset && fc.ackTracker.CommitOffset() >= 0 {
 		fc.log.Info(
 			"Sending snapshot to empty follower",
 			slog.Int64("follower-ack-offset", ackOffset),
@@ -410,7 +412,7 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 		}
 
 		if res == nil {
-			// Stream was closed by server side
+			// Stream was closed by node side
 			return
 		}
 

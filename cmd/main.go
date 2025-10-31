@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/oxia-db/oxia/cmd/node"
 	"github.com/spf13/cobra"
 	"go.uber.org/automaxprocs/maxprocs"
 
@@ -66,6 +67,7 @@ func init() {
 	rootCmd.AddCommand(health.Cmd)
 	rootCmd.AddCommand(perf.Cmd)
 	rootCmd.AddCommand(server.Cmd)
+	rootCmd.AddCommand(node.Cmd)
 	rootCmd.AddCommand(standalone.Cmd)
 	rootCmd.AddCommand(pebble.Cmd)
 	rootCmd.AddCommand(wal.Cmd)

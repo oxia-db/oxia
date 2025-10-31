@@ -12,29 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//revive:disable-next-line:var-naming
-package util
+package codec
 
 import (
-	"fmt"
-	"math/bits"
+	"hash/crc32"
 )
 
-const MaxBitSetSize = 16
+const MagicNumber uint32 = 0xa282ead8
 
-// BitSet
-// Simplified and compact bitset.
-type BitSet struct {
-	bits uint16
+var table = crc32.MakeTable(crc32.Castagnoli)
+
+type Checksum uint32
+
+func (c Checksum) Update(b []byte) Checksum {
+	return Checksum(crc32.Update(uint32(c), table, b))
 }
-
-func (bs *BitSet) Count() int {
-	return bits.OnesCount16(bs.bits)
-}
-
-func (bs *BitSet) Set(idx int) {
-	if idx < 0 || idx >= MaxBitSetSize {
-		panic(fmt.Sprintf("invalid index: %d", idx))
-	}
-	bs.bits |= 1 << idx
+func (c Checksum) Value() uint32 {
+	return uint32(c>>15|c<<17) + MagicNumber
 }

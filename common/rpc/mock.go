@@ -61,23 +61,21 @@ func NewMockRpcClient() *MockRpcClient {
 		AppendReqs:         make(chan *proto.Append, 1000),
 		AckResps:           make(chan *proto.Ack, 1000),
 		TruncateReqs:       make(chan *proto.TruncateRequest, 1000),
-		TruncateResps: make(chan struct {
-			*proto.TruncateResponse
-			error
-		}, 1000),
+		TruncateResps:      make(chan TruncateResps, 1000),
 	}
 }
 
+type TruncateResps struct {
+	Response *proto.TruncateResponse
+	Error    error
+}
 type MockRpcClient struct {
 	MockBase
 	SendSnapshotStream *MockSendSnapshotClientStream
 	AppendReqs         chan *proto.Append
 	AckResps           chan *proto.Ack
 	TruncateReqs       chan *proto.TruncateRequest
-	TruncateResps      chan struct {
-		*proto.TruncateResponse
-		error
-	}
+	TruncateResps      chan TruncateResps
 }
 
 func (m *MockRpcClient) Close() error {
@@ -112,11 +110,11 @@ func (m *MockRpcClient) Truncate(follower string, req *proto.TruncateRequest) (*
 	// Caller needs to provide Response to the channel
 
 	x := <-m.TruncateResps
-	return x.TruncateResponse, x.error
+	return x.Response, x.Error
 }
 
-func newMockShardAssignmentClientStream() *mockShardAssignmentClientStream {
-	r := &mockShardAssignmentClientStream{
+func NewMockShardAssignmentClientStream() *MockShardAssignmentClientStream {
+	r := &MockShardAssignmentClientStream{
 		responses: make(chan *proto.ShardAssignments, 1000),
 	}
 
@@ -124,18 +122,22 @@ func newMockShardAssignmentClientStream() *mockShardAssignmentClientStream {
 	return r
 }
 
-type mockShardAssignmentClientStream struct {
+type MockShardAssignmentClientStream struct {
 	MockBase
 	responses chan *proto.ShardAssignments
 	cancel    context.CancelFunc
 }
 
-func (m *mockShardAssignmentClientStream) GetResponse() *proto.ShardAssignments {
+func (m *MockShardAssignmentClientStream) Cancel() {
+	m.cancel()
+}
+
+func (m *MockShardAssignmentClientStream) GetResponse() *proto.ShardAssignments {
 	x := <-m.responses
 	return x
 }
 
-func (m *mockShardAssignmentClientStream) Send(response *proto.ShardAssignments) error {
+func (m *MockShardAssignmentClientStream) Send(response *proto.ShardAssignments) error {
 	m.responses <- response
 	return nil
 }

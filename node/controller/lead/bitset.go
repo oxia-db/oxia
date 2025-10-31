@@ -13,19 +13,28 @@
 // limitations under the License.
 
 //revive:disable-next-line:var-naming
-package util
+package lead
 
 import (
-	"errors"
-	"os"
+	"fmt"
+	"math/bits"
 )
 
-// RemoveFileIfExists removes the file, it will return nil if the file does not exist.
-func RemoveFileIfExists(path string) error {
-	err := os.Remove(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
+const MaxBitSetSize = 16
 
-	return nil
+// BitSet
+// Simplified and compact bitset.
+type BitSet struct {
+	bits uint16
+}
+
+func (bs *BitSet) Count() int {
+	return bits.OnesCount16(bs.bits)
+}
+
+func (bs *BitSet) Set(idx int) {
+	if idx < 0 || idx >= MaxBitSetSize {
+		panic(fmt.Sprintf("invalid index: %d", idx))
+	}
+	bs.bits |= 1 << idx
 }

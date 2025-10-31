@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -28,7 +29,6 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/time"
 
-	"github.com/oxia-db/oxia/node/wal"
 	"github.com/oxia-db/oxia/proto"
 )
 
@@ -305,7 +305,7 @@ func TestDBList(t *testing.T) {
 		}},
 	}
 
-	writeRes, err := db.ProcessWrite(writeReq, wal.InvalidOffset, now(), NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, InvalidOffset, now(), NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 5, len(writeRes.Puts))
@@ -379,7 +379,7 @@ func TestDBDeleteRange(t *testing.T) {
 		}},
 	}
 
-	_, err = db.ProcessWrite(writeReq, wal.InvalidOffset, 0, NoOpCallback)
+	_, err = db.ProcessWrite(writeReq, InvalidOffset, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	writeReq = &proto.WriteRequest{
@@ -392,7 +392,7 @@ func TestDBDeleteRange(t *testing.T) {
 		}},
 	}
 
-	writeRes, err := db.ProcessWrite(writeReq, wal.InvalidOffset, 0, NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, InvalidOffset, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	keys := make([]string, 0)
@@ -431,7 +431,7 @@ func TestDB_ReadCommitOffset(t *testing.T) {
 
 	commitOffset, err := db.ReadCommitOffset()
 	assert.NoError(t, err)
-	assert.Equal(t, wal.InvalidOffset, commitOffset)
+	assert.Equal(t, InvalidOffset, commitOffset)
 
 	writeReq := &proto.WriteRequest{
 		Puts: []*proto.PutRequest{{
@@ -458,7 +458,7 @@ func TestDb_UpdateTerm(t *testing.T) {
 
 	term, options, err := db.ReadTerm()
 	assert.NoError(t, err)
-	assert.Equal(t, wal.InvalidOffset, term)
+	assert.Equal(t, InvalidOffset, term)
 	assert.Equal(t, TermOptions{}, options)
 
 	err = db.UpdateTerm(1, TermOptions{NotificationsEnabled: true})
@@ -835,7 +835,7 @@ func TestDBRangeScan(t *testing.T) {
 		}},
 	}
 
-	writeRes, err := db.ProcessWrite(writeReq, wal.InvalidOffset, now(), NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, InvalidOffset, now(), NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 5, len(writeRes.Puts))

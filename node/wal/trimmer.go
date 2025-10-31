@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"time"
 
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/process"

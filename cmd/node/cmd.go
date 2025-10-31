@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package node
 
 import (
 	"io"
@@ -37,11 +37,10 @@ var (
 	internalServerTLS = security.TLSOption{}
 
 	Cmd = &cobra.Command{
-		Deprecated: "using node instead",
-		Use:        "server",
-		Short:      "Start a server",
-		Long:       `Long description`,
-		Run:        exec,
+		Use:   "node",
+		Short: "Start a node",
+		Long:  `Start a oxia data node`,
+		Run:   exec,
 	}
 )
 

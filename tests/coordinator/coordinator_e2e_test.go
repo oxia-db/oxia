@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/node/conf"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/coordinator"
@@ -41,7 +42,7 @@ func newServer(t *testing.T) (s *node.Node, addr model.Server) {
 	t.Helper()
 
 	var err error
-	s, err = node.New(node.Config{
+	s, err = node.New(conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict

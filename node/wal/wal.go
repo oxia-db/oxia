@@ -19,7 +19,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/oxia-db/oxia/common/constant"
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/proto"
@@ -30,9 +30,6 @@ var (
 	ErrReaderClosed      = errors.New("oxia: reader already closed")
 	ErrInvalidNextOffset = errors.New("oxia: invalid next offset in wal")
 	ErrSegmentFull       = errors.New("oxia: current segment is full")
-
-	InvalidTerm   int64 = -1
-	InvalidOffset int64 = -1
 )
 
 type FactoryOptions struct {
@@ -113,7 +110,7 @@ func GetLastEntryIdInWal(walObject Wal) (*proto.EntryId, error) {
 	}
 
 	if !reader.HasNext() {
-		return constant.InvalidEntryId, nil
+		return InvalidEntryId, nil
 	}
 
 	entry, err := reader.ReadNext()

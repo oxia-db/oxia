@@ -19,19 +19,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/node/conf"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/node"
 )
 
 func TestServerCmd(t *testing.T) {
 	for _, test := range []struct {
 		args         []string
-		expectedConf node.Config
+		expectedConf conf.Config
 		isErr        bool
 	}{
-		{[]string{}, node.Config{
+		{[]string{}, conf.Config{
 			PublicServiceAddr:          "0.0.0.0:6648",
 			InternalServiceAddr:        "0.0.0.0:6649",
 			MetricsServiceAddr:         "0.0.0.0:8080",
@@ -50,7 +49,7 @@ func TestServerCmd(t *testing.T) {
 			}
 			err := Cmd.Execute()
 			assert.Equal(t, test.isErr, err != nil)
-			assert.Equal(t, test.expectedConf, conf)
+			assert.Equal(t, test.expectedConf, config)
 		})
 	}
 }

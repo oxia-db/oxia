@@ -13,37 +13,19 @@
 // limitations under the License.
 
 //revive:disable-next-line:var-naming
-package util
+package codec
 
 import (
 	"errors"
 	"os"
-	"path"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
-func TestRemoveFileIfExists(t *testing.T) {
-	t.Run("file not exists", func(t *testing.T) {
-		path := path.Join(t.TempDir(), "file_not_exists")
-		_, err := os.Stat(path)
-		assert.True(t, errors.Is(err, os.ErrNotExist))
+// RemoveFileIfExists removes the file, it will return nil if the file does not exist.
+func RemoveFileIfExists(path string) error {
+	err := os.Remove(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 
-		err = RemoveFileIfExists(path)
-		assert.NoError(t, err)
-	})
-
-	t.Run("file exists", func(t *testing.T) {
-		path := path.Join(t.TempDir(), "file_exists")
-		f, err := os.Create(path)
-		assert.NoError(t, err)
-		assert.NoError(t, f.Close())
-
-		err = RemoveFileIfExists(path)
-		assert.NoError(t, err)
-
-		_, err = os.Stat(path)
-		assert.True(t, errors.Is(err, os.ErrNotExist))
-	})
+	return nil
 }

@@ -14,13 +14,6 @@
 
 package constant
 
-import (
-	"time"
-
-	"github.com/oxia-db/oxia/node/wal"
-	"github.com/oxia-db/oxia/proto"
-)
-
 const (
 	MetadataTerm      = "term"
 	MetadataNamespace = "namespace"
@@ -32,8 +25,3 @@ const (
 	DefaultAdminPort    = 6651
 	DefaultMetricsPort  = 8080
 )
-
-var InvalidEntryId = &proto.EntryId{
-	Term:   wal.InvalidTerm,
-	Offset: wal.InvalidOffset,
-}

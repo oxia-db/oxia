@@ -24,7 +24,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/object"
 
-	"github.com/oxia-db/oxia/node/util"
 	"github.com/oxia-db/oxia/node/wal/codec"
 )
 
@@ -173,8 +172,8 @@ func (r *readOnlySegmentsGroup) TrimSegments(offset int64) error {
 		}
 
 		err2 = multierr.Combine(
-			util.RemoveFileIfExists(c.idxPath),
-			util.RemoveFileIfExists(c.txnPath),
+			codec.RemoveFileIfExists(c.idxPath),
+			codec.RemoveFileIfExists(c.txnPath),
 		)
 		if err2 != nil {
 			err = multierr.Append(err, err2)

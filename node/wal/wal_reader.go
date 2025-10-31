@@ -17,6 +17,7 @@ package wal
 import (
 	"sync"
 
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/proto"
 )
 

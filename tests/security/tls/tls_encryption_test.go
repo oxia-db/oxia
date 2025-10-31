@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/node/conf"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/coordinator"
@@ -74,12 +75,12 @@ func getClientTLSOption() (*security.TLSOption, error) {
 
 func newTLSServer(t *testing.T) (s *node.Node, addr model.Server) {
 	t.Helper()
-	return newTLSServerWithInterceptor(t, func(config *node.Config) {
+	return newTLSServerWithInterceptor(t, func(config *conf.Config) {
 
 	})
 }
 
-func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *node.Config)) (s *node.Node, addr model.Server) {
+func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *conf.Config)) (s *node.Node, addr model.Server) {
 	t.Helper()
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -89,7 +90,7 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *node.Con
 	peerTLSConf, err := option.MakeClientTLSConf()
 	assert.NoError(t, err)
 
-	config := node.Config{
+	config := conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -299,7 +300,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 }
 
 func TestOnlyEnablePublicTls(t *testing.T) {
-	disableInternalTLS := func(config *node.Config) {
+	disableInternalTLS := func(config *conf.Config) {
 		config.InternalServerTLS = nil
 		config.PeerTLS = nil
 	}

@@ -30,7 +30,6 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/node/util"
 	"github.com/oxia-db/oxia/proto"
 )
 
@@ -44,6 +43,7 @@ type ShardAssignmentsDispatcher interface {
 	io.Closer
 	Initialized() bool
 	PushShardAssignments(stream proto.OxiaCoordination_PushShardAssignmentsServer) error
+	UpdateShardAssignment(assignments *proto.ShardAssignments) error
 	RegisterForUpdates(req *proto.ShardAssignmentsRequest, client Client) error
 }
 
@@ -136,7 +136,7 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 			return nil
 
 		case <-s.ctx.Done():
-			// the server is closing
+			// the node is closing
 			return nil
 		}
 	}
@@ -201,10 +201,10 @@ func (s *shardAssignmentDispatcher) Initialized() bool {
 }
 
 func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordination_PushShardAssignmentsServer) error {
-	streamReader := util.ReadStream(
+	streamReader := ReadStream(
 		s.ctx,
 		stream,
-		s.updateShardAssignment,
+		s.UpdateShardAssignment,
 		map[string]string{
 			"oxia": "receive-shards-assignments",
 		},
@@ -215,7 +215,7 @@ func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordi
 	return streamReader.Run()
 }
 
-func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.ShardAssignments) error {
+func (s *shardAssignmentDispatcher) UpdateShardAssignment(assignments *proto.ShardAssignments) error {
 	// Once we receive the first update of the shards mapping, this service can be
 	// considered "ready" and it will be able to respond to service discovery requests
 	s.healthServer.SetServingStatus(rpc.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
@@ -246,7 +246,16 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 }
 
 func NewShardAssignmentDispatcher(healthServer rpc.HealthServer) ShardAssignmentsDispatcher {
+	return newShardAssignmentDispatcher(healthServer, false)
+}
+
+func NewStandaloneShardAssignmentDispatcher(healthServer rpc.HealthServer) ShardAssignmentsDispatcher {
+	return newShardAssignmentDispatcher(healthServer, true)
+}
+
+func newShardAssignmentDispatcher(healthServer rpc.HealthServer, standalone bool) ShardAssignmentsDispatcher {
 	s := &shardAssignmentDispatcher{
+		standalone:   standalone,
 		assignments:  nil,
 		healthServer: healthServer,
 		clients:      make(map[int64]chan *proto.ShardAssignments),
@@ -265,6 +274,5 @@ func NewShardAssignmentDispatcher(healthServer rpc.HealthServer) ShardAssignment
 
 			return int64(len(s.clients))
 		})
-
 	return s
 }

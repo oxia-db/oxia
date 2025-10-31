@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/node/conf"
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -168,7 +169,7 @@ func NewLeaderController(config conf.Config, namespace string, shardId int64, rp
 		return nil, err
 	}
 
-	if lc.term != wal.InvalidTerm {
+	if lc.term != InvalidTerm {
 		lc.status = proto.ServingStatus_FENCED
 	}
 
@@ -983,7 +984,7 @@ func (lc *leaderController) CommitOffset() int64 {
 	if qat != nil {
 		return qat.CommitOffset()
 	}
-	return wal.InvalidOffset
+	return InvalidOffset
 }
 
 func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
@@ -991,8 +992,8 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 	defer lc.RUnlock()
 
 	var (
-		headOffset   = wal.InvalidOffset
-		commitOffset = wal.InvalidOffset
+		headOffset   = InvalidOffset
+		commitOffset = InvalidOffset
 	)
 	if lc.quorumAckTracker != nil {
 		headOffset = lc.quorumAckTracker.HeadOffset()

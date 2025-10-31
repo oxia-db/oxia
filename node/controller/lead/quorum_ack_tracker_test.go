@@ -19,18 +19,17 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/constant"
-
-	"github.com/oxia-db/oxia/node/wal"
 )
 
 func TestQuorumAckTrackerNoFollower(t *testing.T) {
-	at := NewQuorumAckTracker(1, 1, wal.InvalidOffset)
+	at := NewQuorumAckTracker(1, 1, InvalidOffset)
 
 	assert.EqualValues(t, 1, at.HeadOffset())
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 
 	at.AdvanceHeadOffset(5)
 	assert.EqualValues(t, 5, at.HeadOffset())
@@ -47,16 +46,16 @@ func TestQuorumAckTrackerNoFollower(t *testing.T) {
 }
 
 func TestQuorumAckTrackerRF2(t *testing.T) {
-	at := NewQuorumAckTracker(2, 1, wal.InvalidOffset)
+	at := NewQuorumAckTracker(2, 1, InvalidOffset)
 
 	assert.EqualValues(t, 1, at.HeadOffset())
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 
 	at.AdvanceHeadOffset(2)
 	assert.EqualValues(t, 2, at.HeadOffset())
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 
-	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	c1, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 
 	c1.Ack(2)
@@ -65,19 +64,19 @@ func TestQuorumAckTrackerRF2(t *testing.T) {
 }
 
 func TestQuorumAckTrackerRF3(t *testing.T) {
-	at := NewQuorumAckTracker(3, 1, wal.InvalidOffset)
+	at := NewQuorumAckTracker(3, 1, InvalidOffset)
 
 	assert.EqualValues(t, 1, at.HeadOffset())
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 
 	at.AdvanceHeadOffset(2)
 	assert.EqualValues(t, 2, at.HeadOffset())
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 
-	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	c1, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 
-	c2, err := at.NewCursorAcker(wal.InvalidOffset)
+	c2, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 
 	c1.Ack(2)
@@ -90,30 +89,30 @@ func TestQuorumAckTrackerRF3(t *testing.T) {
 }
 
 func TestQuorumAckTrackerRF5(t *testing.T) {
-	at := NewQuorumAckTracker(5, 1, wal.InvalidOffset)
+	at := NewQuorumAckTracker(5, 1, InvalidOffset)
 
 	assert.EqualValues(t, 1, at.HeadOffset())
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 
 	at.AdvanceHeadOffset(2)
 	assert.EqualValues(t, 2, at.HeadOffset())
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 
-	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	c1, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 
-	c2, err := at.NewCursorAcker(wal.InvalidOffset)
+	c2, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 
-	c3, err := at.NewCursorAcker(wal.InvalidOffset)
+	c3, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 
-	c4, err := at.NewCursorAcker(wal.InvalidOffset)
+	c4, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 
 	c1.Ack(2)
 	assert.EqualValues(t, 2, at.HeadOffset())
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 
 	c2.Ack(2)
 	assert.EqualValues(t, 2, at.HeadOffset())
@@ -129,23 +128,23 @@ func TestQuorumAckTrackerRF5(t *testing.T) {
 }
 
 func TestQuorumAckTrackerMaxCursors(t *testing.T) {
-	at := NewQuorumAckTracker(3, 1, wal.InvalidOffset)
+	at := NewQuorumAckTracker(3, 1, InvalidOffset)
 
-	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	c1, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 	assert.NotNil(t, c1)
 
-	c2, err := at.NewCursorAcker(wal.InvalidOffset)
+	c2, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 	assert.NotNil(t, c2)
 
-	c3, err := at.NewCursorAcker(wal.InvalidOffset)
+	c3, err := at.NewCursorAcker(InvalidOffset)
 	assert.ErrorIs(t, err, ErrTooManyCursors)
 	assert.Nil(t, c3)
 }
 
 func TestQuorumAckTracker_WaitForHeadOffset(t *testing.T) {
-	at := NewQuorumAckTracker(1, 1, wal.InvalidOffset)
+	at := NewQuorumAckTracker(1, 1, InvalidOffset)
 
 	assert.EqualValues(t, 1, at.HeadOffset())
 
@@ -178,13 +177,13 @@ func TestQuorumAckTracker_WaitForHeadOffset(t *testing.T) {
 }
 
 func TestQuorumAckTracker_WaitForCommitOffset(t *testing.T) {
-	at := NewQuorumAckTracker(3, 1, wal.InvalidOffset)
+	at := NewQuorumAckTracker(3, 1, InvalidOffset)
 
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 	at.AdvanceHeadOffset(2)
 	at.AdvanceHeadOffset(3)
 	at.AdvanceHeadOffset(4)
-	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+	assert.Equal(t, InvalidOffset, at.CommitOffset())
 
 	ch := make(chan error)
 
@@ -200,7 +199,7 @@ func TestQuorumAckTracker_WaitForCommitOffset(t *testing.T) {
 		// Expected. There should be nothing in the channel
 	}
 
-	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	c1, err := at.NewCursorAcker(InvalidOffset)
 	assert.NoError(t, err)
 	assert.NotNil(t, c1)
 	c1.Ack(2)

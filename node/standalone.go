@@ -101,16 +101,11 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 
-	s.rpc, err = server.newPublicRpcServer(rpc.Default, config.PublicServiceAddr, s.shardsDirector,
-		nil, config.ServerTLS, &auth.Disabled)
+	s.shardAssignmentDispatcher = NewStandaloneShardAssignmentDispatcher(config.NumShards)
+	s.rpc, err = server.NewPublicRpcServer(rpc.Default, config.PublicServiceAddr, s.shardsDirector, s.shardAssignmentDispatcher, config.ServerTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
-
-	s.shardAssignmentDispatcher = controller.NewStandaloneShardAssignmentDispatcher(config.NumShards)
-
-	s.rpc.AssignmentDispatcher = s.shardAssignmentDispatcher
-
 	if config.MetricsServiceAddr != "" {
 		s.metrics, err = metric.Start(config.MetricsServiceAddr)
 	}
@@ -197,8 +192,7 @@ func newNoOpReplicationRpcProvider() rpc.ReplicationRpcProvider {
 }
 
 func NewStandaloneShardAssignmentDispatcher(numShards uint32) assignment.ShardAssignmentsDispatcher {
-	assignmentDispatcher := assignment.NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(context.Background())).(assignment.ShardAssignmentsDispatcher) //nolint:revive
-	assignmentDispatcher.standalone = true
+	assignmentDispatcher := assignment.NewStandaloneShardAssignmentDispatcher(rpc.NewClosableHealthServer(context.Background())).(assignment.ShardAssignmentsDispatcher) //nolint:revive
 	res := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
@@ -207,8 +201,7 @@ func NewStandaloneShardAssignmentDispatcher(numShards uint32) assignment.ShardAs
 			},
 		},
 	}
-
-	err := assignmentDispatcher.updateShardAssignment(res)
+	err := assignmentDispatcher.UpdateShardAssignment(res)
 	if err != nil {
 		panic(err)
 	}

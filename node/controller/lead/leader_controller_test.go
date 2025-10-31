@@ -23,6 +23,7 @@ import (
 	. "github.com/oxia-db/oxia/common/protobuf"
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/node/conf"
+	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/status"
@@ -53,7 +54,7 @@ func TestLeaderController_NotInitialized(t *testing.T) {
 	lc, err := NewLeaderController(conf.Config{}, DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
 	assert.NoError(t, err)
 
-	assert.EqualValues(t, wal.InvalidTerm, lc.Term())
+	assert.EqualValues(t, InvalidTerm, lc.Term())
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, lc.Status())
 
 	res, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
@@ -90,7 +91,7 @@ func TestLeaderController_Closed(t *testing.T) {
 	lc, err := NewLeaderController(conf.Config{}, DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
 	assert.NoError(t, err)
 
-	assert.EqualValues(t, wal.InvalidTerm, lc.Term())
+	assert.EqualValues(t, InvalidTerm, lc.Term())
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, lc.Status())
 
 	assert.NoError(t, lc.Close())
@@ -126,7 +127,7 @@ func TestLeaderController_BecomeLeader_NoFencing(t *testing.T) {
 	lc, err := NewLeaderController(conf.Config{}, DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
 	assert.NoError(t, err)
 
-	assert.EqualValues(t, wal.InvalidTerm, lc.Term())
+	assert.EqualValues(t, InvalidTerm, lc.Term())
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, lc.Status())
 	resp, err := lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
@@ -152,7 +153,7 @@ func TestLeaderController_BecomeLeader_RF1(t *testing.T) {
 	lc, err := NewLeaderController(conf.Config{}, DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
 	assert.NoError(t, err)
 
-	assert.EqualValues(t, wal.InvalidTerm, lc.Term())
+	assert.EqualValues(t, InvalidTerm, lc.Term())
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, lc.Status())
 
 	fr, err := lc.NewTerm(&proto.NewTermRequest{
@@ -252,7 +253,7 @@ func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	lc, err := NewLeaderController(conf.Config{}, DefaultNamespace, shard, rpc, walFactory, kvFactory)
 	assert.NoError(t, err)
 
-	assert.EqualValues(t, wal.InvalidTerm, lc.Term())
+	assert.EqualValues(t, InvalidTerm, lc.Term())
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, lc.Status())
 
 	fr, err := lc.NewTerm(&proto.NewTermRequest{
@@ -361,7 +362,7 @@ func TestLeaderController_TermPersistent(t *testing.T) {
 	lc, err := NewLeaderController(conf.Config{}, DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
 	assert.NoError(t, err)
 
-	assert.EqualValues(t, wal.InvalidTerm, lc.Term())
+	assert.EqualValues(t, InvalidTerm, lc.Term())
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, lc.Status())
 
 	// Set NewTerm to leader
@@ -371,7 +372,7 @@ func TestLeaderController_TermPersistent(t *testing.T) {
 		Term:  5,
 	})
 	assert.NoError(t, err)
-	AssertProtoEqual(t, &proto.EntryId{Term: wal.InvalidTerm, Offset: wal.InvalidOffset}, fr2.HeadEntryId)
+	AssertProtoEqual(t, &proto.EntryId{Term: InvalidTerm, Offset: InvalidOffset}, fr2.HeadEntryId)
 
 	assert.EqualValues(t, 5, lc.Term())
 	assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
@@ -700,10 +701,7 @@ func TestLeaderController_AddFollower_Truncate(t *testing.T) {
 		assert.Equal(t, proto.Status_OK, res.Puts[0].Status)
 	}
 
-	rpcClient.TruncateResps <- struct {
-		*proto.TruncateResponse
-		error
-	}{&proto.TruncateResponse{HeadEntryId: &proto.EntryId{Term: 5, Offset: 9}}, nil}
+	rpcClient.TruncateResps <- rpc.TruncateResps{Response: &proto.TruncateResponse{HeadEntryId: &proto.EntryId{Term: 5, Offset: 9}}}
 
 	// Adding a follower that needs to be truncated
 	_, err = lc.AddFollower(&proto.AddFollowerRequest{
@@ -879,7 +877,8 @@ func TestLeaderController_Notifications(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
-	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
+	invalid := InvalidOffset
+	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &invalid}, adaptor)
 
 	// WriteBlock entry
 	_, _ = lc.WriteBlock(context.Background(), &proto.WriteRequest{
@@ -929,7 +928,8 @@ func TestLeaderController_NotificationsCloseLeader(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
-	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
+	invalidOffset := InvalidOffset
+	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &invalidOffset}, adaptor)
 
 	// The handler is still running waiting for more notifications
 	time.Sleep(1 * time.Second)
@@ -961,7 +961,8 @@ func TestLeaderController_NotificationsWhenNotReady(t *testing.T) {
 	defer cancel()
 
 	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
-	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
+	invalid := InvalidOffset
+	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &invalid}, adaptor)
 	assert.Equal(t, status.Code(adaptor.Error()), CodeInvalidStatus)
 
 	assert.NoError(t, lc.Close())
@@ -1307,7 +1308,8 @@ func TestLeaderController_NotificationsDisabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
-	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
+	invalid := InvalidOffset
+	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &invalid}, adaptor)
 	assert.ErrorIs(t, adaptor.Error(), ErrNotificationsNotEnabled)
 
 	assert.NoError(t, lc.Close())
