@@ -91,7 +91,7 @@ func (s *status) LoadWithVersion() (*model.ClusterStatus, metadata.Version) {
 		s.loadWithInitSlow()
 		s.lock.RLock()
 	}
-	return s.current.Clone(), s.currentVersionID
+	return s.current, s.currentVersionID
 }
 
 func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) bool {
