@@ -71,7 +71,7 @@ linters:
           arguments:
             - allowFloats: 0.0,0.,0.5,0.50,0.95,0.99,0.999,1.0,1.,2.0,2.,80.0,100.0
               allowInts: 0,1,2,3,4,5,6,7,8,9,10,11,16,17,20,22,32,64,100,128,1000,1024,0644,0755,0600,1000000,3600,500,900,990,999
-              allowStrs: '"","count"'
+              allowStrs: '"","count","not implemented"'
               ignoreFuncs: slog\.*,metrics\.*,fmt\.*
               maxLitCount: "3"
           severity: warning

@@ -21,7 +21,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/node/constant"
 )
 
 type Encoder interface {

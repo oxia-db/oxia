@@ -20,15 +20,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/oxia-db/oxia/node/storage/kvstore"
+
 	"github.com/oxia-db/oxia/common/process"
 
 	"github.com/oxia-db/oxia/cmd/flag"
-	"github.com/oxia-db/oxia/server"
-	"github.com/oxia-db/oxia/server/kv"
+	"github.com/oxia-db/oxia/node"
 )
 
 var (
-	conf = server.StandaloneConfig{}
+	conf = node.StandaloneConfig{}
 
 	Cmd = &cobra.Command{
 		Use:   "standalone",
@@ -49,12 +50,12 @@ func init() {
 
 	Cmd.Flags().BoolVar(&conf.NotificationsEnabled, "notifications-enabled", true, "Whether notifications are enabled")
 	Cmd.Flags().DurationVar(&conf.NotificationsRetentionTime, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
-	Cmd.Flags().Int64Var(&conf.DbBlockCacheMB, "db-cache-size-mb", kv.DefaultFactoryOptions.CacheSizeMB,
+	Cmd.Flags().Int64Var(&conf.DbBlockCacheMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
 }
 
 func exec(*cobra.Command, []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		return server.NewStandalone(conf)
+		return node.NewStandalone(conf)
 	})
 }

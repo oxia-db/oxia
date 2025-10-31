@@ -31,15 +31,15 @@ import (
 )
 
 func TestNormalShardBalancer(t *testing.T) {
-	s1, s1ad := mock.NewServer(t, "sv-1")
+	s1, s1ad := mock.NewNode(t, "sv-1")
 	defer s1.Close()
-	s2, s2ad := mock.NewServer(t, "sv-2")
+	s2, s2ad := mock.NewNode(t, "sv-2")
 	defer s2.Close()
-	s3, s3ad := mock.NewServer(t, "sv-3")
+	s3, s3ad := mock.NewNode(t, "sv-3")
 	defer s3.Close()
-	s4, s4ad := mock.NewServer(t, "sv-4")
+	s4, s4ad := mock.NewNode(t, "sv-4")
 	defer s4.Close()
-	s5, s5ad := mock.NewServer(t, "sv-5")
+	s5, s5ad := mock.NewNode(t, "sv-5")
 	defer s5.Close()
 
 	cc := model.ClusterConfig{
@@ -97,15 +97,15 @@ func TestNormalShardBalancer(t *testing.T) {
 }
 
 func TestPolicyBasedShardBalancer(t *testing.T) {
-	s1, s1ad := mock.NewServer(t, "sv-1")
+	s1, s1ad := mock.NewNode(t, "sv-1")
 	defer s1.Close()
-	s2, s2ad := mock.NewServer(t, "sv-2")
+	s2, s2ad := mock.NewNode(t, "sv-2")
 	defer s2.Close()
-	s3, s3ad := mock.NewServer(t, "sv-3")
+	s3, s3ad := mock.NewNode(t, "sv-3")
 	defer s3.Close()
-	s4, s4ad := mock.NewServer(t, "sv-4")
+	s4, s4ad := mock.NewNode(t, "sv-4")
 	defer s4.Close()
-	s5, s5ad := mock.NewServer(t, "sv-5")
+	s5, s5ad := mock.NewNode(t, "sv-5")
 	defer s5.Close()
 	serverMetadata := map[string]model.ServerMetadata{
 		s1ad.GetIdentifier(): {
@@ -214,17 +214,17 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 
 func TestBalanceWithoutDeadlock(t *testing.T) {
 	// init 3 nodes
-	s1, s1ad := mock.NewServer(t, "sv-1")
+	s1, s1ad := mock.NewNode(t, "sv-1")
 	defer s1.Close()
-	s2, s2ad := mock.NewServer(t, "sv-2")
+	s2, s2ad := mock.NewNode(t, "sv-2")
 	defer s2.Close()
-	s3, s3ad := mock.NewServer(t, "sv-3")
+	s3, s3ad := mock.NewNode(t, "sv-3")
 	defer s3.Close()
-	s4, s4ad := mock.NewServer(t, "sv-4")
+	s4, s4ad := mock.NewNode(t, "sv-4")
 	defer s4.Close()
-	s5, s5ad := mock.NewServer(t, "sv-5")
+	s5, s5ad := mock.NewNode(t, "sv-5")
 	defer s5.Close()
-	s6, s6ad := mock.NewServer(t, "sv-6")
+	s6, s6ad := mock.NewNode(t, "sv-6")
 	defer s6.Close()
 
 	// config
