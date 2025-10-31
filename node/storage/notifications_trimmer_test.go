@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package storage
 
 import (
 	"context"
@@ -20,8 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/compare"
 
@@ -34,7 +35,7 @@ import (
 func TestNotificationsTrimmer(t *testing.T) {
 	clock := &time2.MockedClock{}
 
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	dbx, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 10*time.Millisecond, clock)
 	assert.NoError(t, err)

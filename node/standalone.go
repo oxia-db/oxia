@@ -20,14 +20,15 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/common/sharding"
 	"github.com/oxia-db/oxia/node/assignment"
 	"github.com/oxia-db/oxia/node/conf"
 	"github.com/oxia-db/oxia/node/controller"
 	"github.com/oxia-db/oxia/node/controller/lead"
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/oxia-db/oxia/node/server"
-	"go.uber.org/multierr"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
@@ -48,7 +49,7 @@ type StandaloneConfig struct {
 type Standalone struct {
 	config                    StandaloneConfig
 	rpc                       *server.PublicRpcServer
-	kvFactory                 kv.Factory
+	kvFactory                 kvstore.Factory
 	walFactory                wal.Factory
 	shardsDirector            controller.ShardsDirector
 	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
@@ -78,7 +79,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 
 	s := &Standalone{config: config}
 
-	kvOptions := kv.FactoryOptions{
+	kvOptions := kvstore.FactoryOptions{
 		DataDir:     config.DataDir,
 		UseWAL:      false, // WAL is kept outside the KV store
 		SyncData:    false, // WAL is kept outside the KV store
@@ -91,7 +92,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		SyncData:    config.WalSyncData,
 	})
 	var err error
-	if s.kvFactory, err = kv.NewPebbleKVFactory(&kvOptions); err != nil {
+	if s.kvFactory, err = kvstore.NewPebbleKVFactory(&kvOptions); err != nil {
 		return nil, err
 	}
 
@@ -192,7 +193,7 @@ func newNoOpReplicationRpcProvider() rpc.ReplicationRpcProvider {
 }
 
 func NewStandaloneShardAssignmentDispatcher(numShards uint32) assignment.ShardAssignmentsDispatcher {
-	assignmentDispatcher := assignment.NewStandaloneShardAssignmentDispatcher(rpc.NewClosableHealthServer(context.Background())).(assignment.ShardAssignmentsDispatcher) //nolint:revive
+	assignmentDispatcher := assignment.NewStandaloneShardAssignmentDispatcher(rpc.NewClosableHealthServer(context.Background()))
 	res := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {

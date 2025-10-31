@@ -21,9 +21,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/oxia-db/oxia/node/conf"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/node/conf"
 
 	"github.com/oxia-db/oxia/coordinator"
 	"github.com/oxia-db/oxia/coordinator/metadata"
@@ -147,11 +148,11 @@ func main() {
 	dispatcher := newDispatcher(grpcProvider, replicationGrpcProvider)
 
 	var servers []model.Server
-	for _, node := range allNodes {
-		if node != thisNode {
+	for _, n := range allNodes {
+		if n != thisNode {
 			servers = append(servers, model.Server{
-				Public:   node,
-				Internal: node,
+				Public:   n,
+				Internal: n,
 			})
 		}
 	}

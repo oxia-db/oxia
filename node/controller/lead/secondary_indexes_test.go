@@ -18,12 +18,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/node/conf"
-	"github.com/oxia-db/oxia/node/db/kv"
-	"github.com/oxia-db/oxia/node/wal"
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/common/rpc"
+	"github.com/oxia-db/oxia/node/conf"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
+	"github.com/oxia-db/oxia/node/wal"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
@@ -36,7 +37,7 @@ import (
 func TestSecondaryIndices_List(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	walFactory := wal.NewTestWalFactory(t)
 
 	lc, _ := NewLeaderController(conf.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
@@ -132,7 +133,7 @@ func TestSecondaryIndices_List(t *testing.T) {
 func TestSecondaryIndices_RangeScan(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	walFactory := wal.NewTestWalFactory(t)
 
 	lc, _ := NewLeaderController(conf.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
@@ -243,7 +244,7 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 func TestSecondaryIndices_MultipleKeysForSameIdx(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	walFactory := wal.NewTestWalFactory(t)
 
 	lc, _ := NewLeaderController(conf.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)

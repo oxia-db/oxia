@@ -12,26 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package storage
 
 import (
 	"log/slog"
 	"net/url"
 
-	. "github.com/oxia-db/oxia/node/constant"
-	"github.com/oxia-db/oxia/node/db/kv"
-	"github.com/oxia-db/oxia/proto"
 	"github.com/pkg/errors"
+
+	"github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
+	"github.com/oxia-db/oxia/proto"
 )
 
 type sessionManagerUpdateOperationCallbackS struct{}
 
 var sessionManagerUpdateOperationCallback UpdateOperationCallback = &sessionManagerUpdateOperationCallbackS{}
 
-func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kv.WriteBatch, notification *Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
-	var _, closer, err = batch.Get(SessionKey(SessionId(*request.SessionId)))
+func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.WriteBatch, notification *Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+	var _, closer, err = batch.Get(constant.SessionKey(constant.SessionId(*request.SessionId)))
 	if err != nil {
-		if errors.Is(err, kv.ErrKeyNotFound) {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			return proto.Status_SESSION_DOES_NOT_EXIST, nil
 		}
 		return proto.Status_SESSION_DOES_NOT_EXIST, err
@@ -44,7 +45,7 @@ func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kv.Write
 		return status, err
 	}
 	// Create the session shadow entry
-	err = batch.Put(ShadowKey(SessionId(*request.SessionId), request.Key), []byte{})
+	err = batch.Put(constant.ShadowKey(constant.SessionId(*request.SessionId), request.Key), []byte{})
 	if err != nil {
 		return proto.Status_SESSION_DOES_NOT_EXIST, err
 	}
@@ -52,7 +53,7 @@ func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kv.Write
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kv.WriteBatch, notification *Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kvstore.WriteBatch, notification *Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	if request.SessionId != nil {
 		// override by session operation
 		return s.OnPutWithinSession(batch, notification, request, existingEntry)
@@ -66,22 +67,22 @@ func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kv.WriteBatch, noti
 	return proto.Status_OK, nil
 }
 
-func deleteShadow(batch kv.WriteBatch, _ *Notifications, key string, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func deleteShadow(batch kvstore.WriteBatch, _ *Notifications, key string, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	// We are overwriting an ephemeral value, let's delete its shadow
 	if existingEntry != nil && existingEntry.SessionId != nil {
-		existingSessionId := SessionId(*existingEntry.SessionId)
-		err := batch.Delete(ShadowKey(existingSessionId, key))
-		if err != nil && !errors.Is(err, kv.ErrKeyNotFound) {
+		existingSessionId := constant.SessionId(*existingEntry.SessionId)
+		err := batch.Delete(constant.ShadowKey(existingSessionId, key))
+		if err != nil && !errors.Is(err, kvstore.ErrKeyNotFound) {
 			return proto.Status_SESSION_DOES_NOT_EXIST, err
 		}
 	}
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kv.WriteBatch, notification *Notifications, key string) error {
+func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBatch, notification *Notifications, key string) error {
 	se, err := GetStorageEntry(batch, key)
 	if err != nil {
-		if errors.Is(err, kv.ErrKeyNotFound) {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			return nil
 		}
 		return err
@@ -90,11 +91,11 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kv.WriteBatch, n
 	return s.OnDeleteWithEntry(batch, notification, key, se)
 }
 
-func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteBatch, notification *Notifications, key string, entry *proto.StorageEntry) error {
+func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, notification *Notifications, key string, entry *proto.StorageEntry) error {
 	if _, err := deleteShadow(batch, notification, key, entry); err != nil {
 		return err
 	}
-	if !IsSessionKey(key) {
+	if !constant.IsSessionKey(key) {
 		return nil
 	}
 	sessionKey := key
@@ -132,7 +133,7 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kv.WriteB
 	return nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kv.WriteBatch, notification *Notifications, keyStartInclusive string, keyEndExclusive string) error {
+func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kvstore.WriteBatch, notification *Notifications, keyStartInclusive string, keyEndExclusive string) error {
 	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
 	if err != nil {
 		return err
@@ -144,7 +145,7 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kv.WriteBat
 	}()
 
 	// introduce the processor here for better defer resource release
-	iteratorProcessor := func(batch kv.WriteBatch, it kv.KeyValueIterator) error {
+	iteratorProcessor := func(batch kvstore.WriteBatch, it kvstore.KeyValueIterator) error {
 		value, err := it.Value()
 		if err != nil {
 			return err

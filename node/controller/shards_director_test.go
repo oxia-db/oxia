@@ -18,11 +18,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/node/conf"
-	"github.com/oxia-db/oxia/node/db/kv"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 	"github.com/oxia-db/oxia/node/wal"
-	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/constant"
 
@@ -32,7 +33,7 @@ import (
 func TestShardsDirector_DeleteShardLeader(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	walFactory := wal.NewTestWalFactory(t)
 
 	sd := NewShardsDirector(conf.Config{}, walFactory, kvFactory, rpc.NewMockRpcClient())
@@ -70,7 +71,7 @@ func TestShardsDirector_DeleteShardLeader(t *testing.T) {
 func TestShardsDirector_GetOrCreateFollower(t *testing.T) {
 	var shard int64 = 1
 
-	kvFactory, _ := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	walFactory := wal.NewTestWalFactory(t)
 
 	sd := NewShardsDirector(conf.Config{}, walFactory, kvFactory, rpc.NewMockRpcClient())

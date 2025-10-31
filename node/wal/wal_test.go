@@ -20,9 +20,10 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+
+	nodeconstant "github.com/oxia-db/oxia/node/constant"
 
 	"github.com/oxia-db/oxia/common/constant"
 
@@ -85,7 +86,7 @@ func TestFactoryNewWal(t *testing.T) {
 	assert.False(t, rr.HasNext())
 
 	assert.NoError(t, rr.Close())
-	fr, err := w.NewReader(InvalidOffset)
+	fr, err := w.NewReader(nodeconstant.InvalidOffset)
 	assert.NoError(t, err)
 	assert.False(t, fr.HasNext())
 	assert.NoError(t, fr.Close())
@@ -116,7 +117,7 @@ func TestAppend(t *testing.T) {
 	assert.NoError(t, rr.Close())
 
 	// Read with forward reader from beginning
-	fr, err := w.NewReader(InvalidOffset)
+	fr, err := w.NewReader(nodeconstant.InvalidOffset)
 	assert.NoError(t, err)
 	assertReaderReads(t, fr, input)
 	assert.NoError(t, fr.Close())
@@ -170,10 +171,10 @@ func TestAppendAsync(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	assert.Equal(t, InvalidOffset, w.LastOffset())
+	assert.Equal(t, nodeconstant.InvalidOffset, w.LastOffset())
 
 	// Read with forward reader from beginning
-	fr, err := w.NewReader(InvalidOffset)
+	fr, err := w.NewReader(nodeconstant.InvalidOffset)
 	assert.NoError(t, err)
 	assert.False(t, fr.HasNext())
 
@@ -185,7 +186,7 @@ func TestAppendAsync(t *testing.T) {
 
 	assert.EqualValues(t, 2, w.LastOffset())
 
-	fr, err = w.NewReader(InvalidOffset)
+	fr, err = w.NewReader(nodeconstant.InvalidOffset)
 	assert.NoError(t, err)
 	assert.True(t, fr.HasNext())
 
@@ -230,7 +231,7 @@ func TestRollover(t *testing.T) {
 	assert.NoError(t, rr.Close())
 
 	// Read with forward reader from beginning
-	fr, err := w.NewReader(InvalidOffset)
+	fr, err := w.NewReader(nodeconstant.InvalidOffset)
 	assert.NoError(t, err)
 	for i := 0; i < 300; i++ {
 		assert.True(t, fr.HasNext())
@@ -277,7 +278,7 @@ func TestTruncate(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Read with forward reader from beginning
-	fr, err := w.NewReader(InvalidOffset)
+	fr, err := w.NewReader(nodeconstant.InvalidOffset)
 	assert.NoError(t, err)
 	assertReaderReads(t, fr, input[:3])
 	assert.NoError(t, fr.Close())
@@ -291,8 +292,8 @@ func TestTruncate(t *testing.T) {
 func TestTruncateClear(t *testing.T) {
 	f, w := createWal(t)
 
-	assert.Equal(t, InvalidOffset, w.FirstOffset())
-	assert.Equal(t, InvalidOffset, w.LastOffset())
+	assert.Equal(t, nodeconstant.InvalidOffset, w.FirstOffset())
+	assert.Equal(t, nodeconstant.InvalidOffset, w.LastOffset())
 
 	err := w.Append(&proto.LogEntry{Term: 2, Offset: 3})
 	assert.NoError(t, err)
@@ -302,13 +303,13 @@ func TestTruncateClear(t *testing.T) {
 	assert.Equal(t, int64(3), w.FirstOffset())
 	assert.Equal(t, int64(4), w.LastOffset())
 
-	lastOffset, err := w.TruncateLog(InvalidOffset)
+	lastOffset, err := w.TruncateLog(nodeconstant.InvalidOffset)
 
-	assert.Equal(t, InvalidOffset, lastOffset)
+	assert.Equal(t, nodeconstant.InvalidOffset, lastOffset)
 	assert.NoError(t, err)
 
-	assert.Equal(t, InvalidOffset, w.FirstOffset())
-	assert.Equal(t, InvalidOffset, w.LastOffset())
+	assert.Equal(t, nodeconstant.InvalidOffset, w.FirstOffset())
+	assert.Equal(t, nodeconstant.InvalidOffset, w.LastOffset())
 
 	err = w.Close()
 	assert.NoError(t, err)
@@ -337,7 +338,7 @@ func TestReopen(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Read with forward reader from beginning
-	fr, err := w.NewReader(InvalidOffset)
+	fr, err := w.NewReader(nodeconstant.InvalidOffset)
 	assert.NoError(t, err)
 	assertReaderReads(t, fr, input)
 	assert.NoError(t, fr.Close())
@@ -351,8 +352,8 @@ func TestReopen(t *testing.T) {
 func TestClear(t *testing.T) {
 	f, w := createWal(t)
 
-	assert.EqualValues(t, InvalidOffset, w.FirstOffset())
-	assert.EqualValues(t, InvalidOffset, w.LastOffset())
+	assert.EqualValues(t, nodeconstant.InvalidOffset, w.FirstOffset())
+	assert.EqualValues(t, nodeconstant.InvalidOffset, w.LastOffset())
 
 	for i := 0; i < 100; i++ {
 		assert.NoError(t, w.Append(&proto.LogEntry{
@@ -367,8 +368,8 @@ func TestClear(t *testing.T) {
 
 	assert.NoError(t, w.Clear())
 
-	assert.EqualValues(t, InvalidOffset, w.FirstOffset())
-	assert.EqualValues(t, InvalidOffset, w.LastOffset())
+	assert.EqualValues(t, nodeconstant.InvalidOffset, w.FirstOffset())
+	assert.EqualValues(t, nodeconstant.InvalidOffset, w.LastOffset())
 
 	for i := 250; i < 300; i++ {
 		assert.NoError(t, w.Append(&proto.LogEntry{
@@ -420,8 +421,8 @@ func TestClear(t *testing.T) {
 func TestTrim(t *testing.T) {
 	f, w := createWal(t)
 
-	assert.EqualValues(t, InvalidOffset, w.FirstOffset())
-	assert.EqualValues(t, InvalidOffset, w.LastOffset())
+	assert.EqualValues(t, nodeconstant.InvalidOffset, w.FirstOffset())
+	assert.EqualValues(t, nodeconstant.InvalidOffset, w.LastOffset())
 
 	for i := 0; i < 100; i++ {
 		assert.NoError(t, w.Append(&proto.LogEntry{
@@ -499,8 +500,8 @@ func TestDelete(t *testing.T) {
 	w, err := f.NewWal(constant.DefaultNamespace, 1, nil)
 	assert.NoError(t, err)
 
-	assert.EqualValues(t, InvalidOffset, w.FirstOffset())
-	assert.EqualValues(t, InvalidOffset, w.LastOffset())
+	assert.EqualValues(t, nodeconstant.InvalidOffset, w.FirstOffset())
+	assert.EqualValues(t, nodeconstant.InvalidOffset, w.LastOffset())
 
 	assert.NoError(t, w.Close())
 	assert.NoError(t, f.Close())

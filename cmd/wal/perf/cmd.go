@@ -21,9 +21,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oxia-db/oxia/node/constant"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/node/constant"
 
 	"github.com/oxia-db/oxia/cmd/wal/common"
 	"github.com/oxia-db/oxia/node/wal"
@@ -199,7 +200,7 @@ func printLatench(name string, datas []int64) {
 		}
 	}
 
-	fmt.Printf(`
+	_, err = fmt.Printf(`
 Histogram of %s latency:
 P50:  %s
 P90:  %s 
@@ -211,4 +212,7 @@ P999: %s
 		time.Duration(p99)*time.Microsecond,
 		time.Duration(p999)*time.Microsecond,
 	)
+	if err != nil {
+		panic(err)
+	}
 }

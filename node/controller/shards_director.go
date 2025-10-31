@@ -19,13 +19,14 @@ import (
 	"log/slog"
 	"sync"
 
+	"go.uber.org/multierr"
+	"google.golang.org/grpc/status"
+
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/node/conf"
 	"github.com/oxia-db/oxia/node/controller/follow"
 	"github.com/oxia-db/oxia/node/controller/lead"
-	"github.com/oxia-db/oxia/node/db/kv"
-	"go.uber.org/multierr"
-	"google.golang.org/grpc/status"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/constant"
 
@@ -53,7 +54,7 @@ type shardsDirector struct {
 	leaders   map[int64]lead.Controller
 	followers map[int64]follow.FollowerController
 
-	kvFactory              kv.Factory
+	kvFactory              kvstore.Factory
 	walFactory             wal.Factory
 	replicationRpcProvider rpc.ReplicationRpcProvider
 	closed                 bool
@@ -63,7 +64,7 @@ type shardsDirector struct {
 	followersCounter metric.UpDownCounter
 }
 
-func NewShardsDirector(config conf.Config, walFactory wal.Factory, kvFactory kv.Factory, provider rpc.ReplicationRpcProvider) ShardsDirector {
+func NewShardsDirector(config conf.Config, walFactory wal.Factory, kvFactory kvstore.Factory, provider rpc.ReplicationRpcProvider) ShardsDirector {
 	sd := &shardsDirector{
 		config:                 config,
 		walFactory:             walFactory,

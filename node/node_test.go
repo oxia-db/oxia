@@ -22,14 +22,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/node/conf"
-	"github.com/oxia-db/oxia/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	insecure "google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
+
+	"github.com/oxia-db/oxia/node/conf"
+	"github.com/oxia-db/oxia/proto"
 
 	"github.com/oxia-db/oxia/common/rpc"
 )

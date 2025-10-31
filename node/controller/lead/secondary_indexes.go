@@ -12,24 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package lead
 
 import (
 	"fmt"
 
 	"github.com/oxia-db/oxia/common/compare"
-	. "github.com/oxia-db/oxia/node/constant"
-	. "github.com/oxia-db/oxia/node/db/kv"
+	"github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/storage"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
+
+	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/proto"
-	"github.com/pkg/errors"
 )
 
-func NewSecondaryIndexListIterator(req *proto.ListRequest, db DB) (KeyIterator, error) {
+func NewSecondaryIndexListIterator(req *proto.ListRequest, db storage.DB) (kvstore.KeyIterator, error) {
 	indexName := *req.SecondaryIndexName
 	it, err := db.List(&proto.ListRequest{
-		StartInclusive: fmt.Sprintf(SecondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
-		EndExclusive:   fmt.Sprintf(SecondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
+		StartInclusive: fmt.Sprintf(constant.SecondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
+		EndExclusive:   fmt.Sprintf(constant.SecondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
 	})
 	if err != nil {
 		return nil, err
@@ -39,7 +41,7 @@ func NewSecondaryIndexListIterator(req *proto.ListRequest, db DB) (KeyIterator, 
 }
 
 type secondaryIndexListIterator struct {
-	it KeyIterator
+	it kvstore.KeyIterator
 }
 
 func (it *secondaryIndexListIterator) Valid() bool {
@@ -48,7 +50,7 @@ func (it *secondaryIndexListIterator) Valid() bool {
 
 func (it *secondaryIndexListIterator) Key() string {
 	idxKey := it.it.Key()
-	primaryKey, err := SecondaryIndexPrimaryKey(idxKey)
+	primaryKey, err := constant.SecondaryIndexPrimaryKey(idxKey)
 	if err != nil {
 		// This should never happen since we control the key format
 		panic(errors.Wrap(err, "Failed to parse secondary index key"))
@@ -79,11 +81,11 @@ func (it *secondaryIndexListIterator) Close() error {
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-func NewSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db DB) (RangeScanIterator, error) {
+func NewSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db storage.DB) (storage.RangeScanIterator, error) {
 	indexName := *req.SecondaryIndexName
 	it, err := db.List(&proto.ListRequest{
-		StartInclusive: fmt.Sprintf(SecondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
-		EndExclusive:   fmt.Sprintf(SecondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
+		StartInclusive: fmt.Sprintf(constant.SecondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
+		EndExclusive:   fmt.Sprintf(constant.SecondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
 	})
 	if err != nil {
 		return nil, err
@@ -95,7 +97,7 @@ func NewSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db DB) (Ran
 
 type secondaryIndexRangeIterator struct {
 	listIt *secondaryIndexListIterator
-	db     DB
+	db     storage.DB
 }
 
 func (it *secondaryIndexRangeIterator) Close() error {
@@ -131,9 +133,9 @@ func (it *secondaryIndexRangeIterator) Value() (*proto.GetResponse, error) {
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-func SecondaryIndexGet(req *proto.GetRequest, db DB) (*proto.GetResponse, error) {
+func SecondaryIndexGet(req *proto.GetRequest, db storage.DB) (*proto.GetResponse, error) {
 	primaryKey, secondaryKey, err := doSecondaryGet(db, req)
-	if err != nil && !errors.Is(err, ErrFailedToParseSecondaryKey) {
+	if err != nil && !errors.Is(err, constant.ErrFailedToParseSecondaryKey) {
 		return nil, err
 	}
 
@@ -155,9 +157,9 @@ func SecondaryIndexGet(req *proto.GetRequest, db DB) (*proto.GetResponse, error)
 }
 
 //nolint:revive
-func doSecondaryGet(db DB, req *proto.GetRequest) (primaryKey string, secondaryKey string, err error) {
+func doSecondaryGet(db storage.DB, req *proto.GetRequest) (primaryKey string, secondaryKey string, err error) {
 	indexName := *req.SecondaryIndexName
-	searchKey := fmt.Sprintf(SecondaryIdxRangePrefixFormat, indexName, req.Key)
+	searchKey := fmt.Sprintf(constant.SecondaryIdxRangePrefixFormat, indexName, req.Key)
 	it, err := db.KeyIterator()
 	if err != nil {
 		return "", "", err
@@ -181,8 +183,8 @@ func doSecondaryGet(db DB, req *proto.GetRequest) (primaryKey string, secondaryK
 
 	for it.Valid() {
 		itKey := it.Key()
-		primaryKey, secondaryKey, err = SecondaryIndexPrimaryAndSecondaryKey(itKey)
-		if err != nil && !errors.Is(err, ErrFailedToParseSecondaryKey) {
+		primaryKey, secondaryKey, err = constant.SecondaryIndexPrimaryAndSecondaryKey(itKey)
+		if err != nil && !errors.Is(err, constant.ErrFailedToParseSecondaryKey) {
 			return "", "", err
 		}
 

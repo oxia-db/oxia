@@ -19,11 +19,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/oxia-db/oxia/node/assignment"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/oxia-db/oxia/node/assignment"
 
 	"github.com/oxia-db/oxia/common/rpc"
 )

@@ -22,12 +22,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/oxia-db/oxia/common/collection"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
-	. "github.com/oxia-db/oxia/node/constant"
+	nodeconstant "github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/proto"
-	"github.com/pkg/errors"
 )
 
 // --- SessionManager
@@ -47,7 +48,7 @@ type sessionManager struct {
 	leaderController *leaderController
 	namespace        string
 	shardId          int64
-	sessions         collection.Map[SessionId, *session]
+	sessions         collection.Map[nodeconstant.SessionId, *session]
 	log              *slog.Logger
 
 	ctx    context.Context
@@ -62,7 +63,7 @@ type sessionManager struct {
 func NewSessionManager(ctx context.Context, namespace string, shardId int64, controller *leaderController) SessionManager {
 	labels := metric.LabelsForShard(namespace, shardId)
 	sm := &sessionManager{
-		sessions:         collection.NewVisibleMap[SessionId, *session](),
+		sessions:         collection.NewVisibleMap[nodeconstant.SessionId, *session](),
 		namespace:        namespace,
 		shardId:          shardId,
 		leaderController: controller,
@@ -92,12 +93,12 @@ func NewSessionManager(ctx context.Context, namespace string, shardId int64, con
 }
 
 func (sm *sessionManager) CreateSession(request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	return sm.createSession(request, MinSessionTimeout)
+	return sm.createSession(request, nodeconstant.MinSessionTimeout)
 }
 
 func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, minTimeout time.Duration) (*proto.CreateSessionResponse, error) {
 	timeout := time.Duration(request.SessionTimeoutMs) * time.Millisecond
-	if timeout > MaxSessionTimeout || timeout < minTimeout {
+	if timeout > nodeconstant.MaxSessionTimeout || timeout < minTimeout {
 		return nil, errors.Wrap(constant.ErrInvalidSessionTimeout, fmt.Sprintf("timeoutMs=%d", request.SessionTimeoutMs))
 	}
 
@@ -110,13 +111,13 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 	if err != nil {
 		return nil, errors.Wrap(err, "could not marshal session metadata")
 	}
-	var sessionId SessionId
+	var sessionId nodeconstant.SessionId
 	resp, err := sm.leaderController.writeBlock(sm.ctx, func(offset int64) *proto.WriteRequest {
-		sessionId = SessionId(offset)
+		sessionId = nodeconstant.SessionId(offset)
 		return &proto.WriteRequest{
 			Shard: &request.Shard,
 			Puts: []*proto.PutRequest{{
-				Key:   SessionKey(sessionId),
+				Key:   nodeconstant.SessionKey(sessionId),
 				Value: marshalledMetadata,
 			}},
 		}
@@ -137,7 +138,7 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 }
 
 func (sm *sessionManager) getSession(sessionId int64) (*session, error) {
-	s, found := sm.sessions.Get(SessionId(sessionId))
+	s, found := sm.sessions.Get(nodeconstant.SessionId(sessionId))
 	if !found {
 		sm.log.Warn(
 			"Session not found",
@@ -193,11 +194,11 @@ func (sm *sessionManager) Initialize() error {
 	return nil
 }
 
-func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, error) {
+func (sm *sessionManager) readSessions() (map[nodeconstant.SessionId]*proto.SessionMetadata, error) {
 	keys, err := sm.leaderController.ListBlock(context.Background(), &proto.ListRequest{
 		Shard:          &sm.shardId,
-		StartInclusive: SessionKeyPrefix + "/",
-		EndExclusive:   SessionKeyPrefix + "//",
+		StartInclusive: nodeconstant.SessionKeyPrefix + "/",
+		EndExclusive:   nodeconstant.SessionKeyPrefix + "//",
 	})
 	if err != nil {
 		return nil, err
@@ -205,7 +206,7 @@ func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, 
 
 	sm.log.Info("All sessions", slog.Int("count", len(keys)))
 
-	result := map[SessionId]*proto.SessionMetadata{}
+	result := map[nodeconstant.SessionId]*proto.SessionMetadata{}
 
 	for _, key := range keys {
 		metaEntry, err := sm.leaderController.db.Get(&proto.GetRequest{
@@ -224,7 +225,7 @@ func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, 
 			)
 			continue
 		}
-		sessionId, err := KeyToId(key)
+		sessionId, err := nodeconstant.KeyToId(key)
 		if err != nil {
 			sm.log.Warn(
 				"error parsing session key",

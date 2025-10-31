@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package storage
 
 import (
 	"context"
@@ -24,9 +24,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	constant2 "github.com/oxia-db/oxia/node/constant"
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
+
+	constant2 "github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
@@ -107,13 +108,13 @@ func parseNotificationKey(key string) (offset int64, err error) {
 	return offset, nil
 }
 
-type notificationsTracker struct {
+type NotificationsTracker struct {
 	sync.Mutex
 	cond       concurrent.ConditionContext
 	shard      int64
 	lastOffset atomic.Int64
 	closed     atomic.Bool
-	kv         kv.KV
+	kv         kvstore.KV
 	log        *slog.Logger
 
 	ctx       context.Context
@@ -125,11 +126,12 @@ type notificationsTracker struct {
 	readBytesCounter metric.Counter
 }
 
-func NewNotificationsTracker(namespace string, shard int64, lastOffset int64, kv kv.KV, notificationRetentionTime time.Duration, clock time2.Clock) *notificationsTracker {
+func NewNotificationsTracker(namespace string, shard int64, lastOffset int64, keyValueStore kvstore.KV,
+	notificationRetentionTime time.Duration, clock time2.Clock) *NotificationsTracker {
 	labels := metric.LabelsForShard(namespace, shard)
-	nt := &notificationsTracker{
+	nt := &NotificationsTracker{
 		shard:     shard,
-		kv:        kv,
+		kv:        keyValueStore,
 		waitClose: concurrent.NewWaitGroup(1),
 		log: slog.With(
 			slog.String("component", "notifications-tracker"),
@@ -146,16 +148,16 @@ func NewNotificationsTracker(namespace string, shard int64, lastOffset int64, kv
 	nt.lastOffset.Store(lastOffset)
 	nt.cond = concurrent.NewConditionContext(nt)
 	nt.ctx, nt.cancel = context.WithCancel(context.Background())
-	newNotificationsTrimmer(nt.ctx, namespace, shard, kv, notificationRetentionTime, nt.waitClose, clock)
+	newNotificationsTrimmer(nt.ctx, namespace, shard, keyValueStore, notificationRetentionTime, nt.waitClose, clock)
 	return nt
 }
 
-func (nt *notificationsTracker) UpdatedCommitOffset(offset int64) {
+func (nt *NotificationsTracker) UpdatedCommitOffset(offset int64) {
 	nt.lastOffset.Store(offset)
 	nt.cond.Broadcast()
 }
 
-func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startOffset int64) error {
+func (nt *NotificationsTracker) waitForNotifications(ctx context.Context, startOffset int64) error {
 	nt.Lock()
 	defer nt.Unlock()
 
@@ -178,7 +180,7 @@ func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startO
 	return nil
 }
 
-func (nt *notificationsTracker) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error) {
+func (nt *NotificationsTracker) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error) {
 	if err := nt.waitForNotifications(ctx, startOffset); err != nil {
 		return nil, err
 	}
@@ -216,7 +218,7 @@ func (nt *notificationsTracker) ReadNextNotifications(ctx context.Context, start
 	return res, nil
 }
 
-func (nt *notificationsTracker) Close() error {
+func (nt *NotificationsTracker) Close() error {
 	select {
 	case <-nt.ctx.Done():
 		return nil

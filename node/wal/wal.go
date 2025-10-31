@@ -19,9 +19,9 @@ import (
 	"io"
 	"time"
 
-	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/proto"
 )
 
@@ -110,7 +110,7 @@ func GetLastEntryIdInWal(walObject Wal) (*proto.EntryId, error) {
 	}
 
 	if !reader.HasNext() {
-		return InvalidEntryId, nil
+		return constant.InvalidEntryId, nil
 	}
 
 	entry, err := reader.ReadNext()

@@ -26,16 +26,17 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/dustin/go-humanize"
-	"github.com/oxia-db/oxia/common/rpc"
-	. "github.com/oxia-db/oxia/node/constant"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/common/rpc"
+	"github.com/oxia-db/oxia/node/constant"
 
 	"github.com/oxia-db/oxia/common/process"
 	time2 "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/node/db"
+	"github.com/oxia-db/oxia/node/storage"
 	"github.com/oxia-db/oxia/node/wal"
 	"github.com/oxia-db/oxia/proto"
 )
@@ -67,7 +68,7 @@ type followerCursor struct {
 	ackTracker  QuorumAckTracker
 	cursorAcker CursorAcker
 	wal         wal.Wal
-	db          db.DB
+	db          storage.DB
 	lastPushed  atomic.Int64
 	ackOffset   atomic.Int64
 	namespace   string
@@ -94,7 +95,7 @@ func NewFollowerCursor( //nolint:revive
 	replicateStreamProvider rpc.ReplicateStreamProvider,
 	ackTracker QuorumAckTracker,
 	walObject wal.Wal,
-	db db.DB,
+	database storage.DB,
 	ackOffset int64) (FollowerCursor, error) {
 	labels := map[string]any{
 		"namespace": namespace,
@@ -108,7 +109,7 @@ func NewFollowerCursor( //nolint:revive
 		ackTracker:              ackTracker,
 		replicateStreamProvider: replicateStreamProvider,
 		wal:                     walObject,
-		db:                      db,
+		db:                      database,
 		namespace:               namespace,
 		shardId:                 shardId,
 
@@ -165,7 +166,7 @@ func (fc *followerCursor) shouldSendSnapshot() bool {
 	ackOffset := fc.ackOffset.Load()
 	walFirstOffset := fc.wal.FirstOffset()
 
-	if ackOffset == InvalidOffset && fc.ackTracker.CommitOffset() >= 0 {
+	if ackOffset == constant.InvalidOffset && fc.ackTracker.CommitOffset() >= 0 {
 		fc.log.Info(
 			"Sending snapshot to empty follower",
 			slog.Int64("follower-ack-offset", ackOffset),

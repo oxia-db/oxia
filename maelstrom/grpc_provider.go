@@ -30,8 +30,8 @@ import (
 
 	"github.com/oxia-db/oxia/common/rpc"
 
-	"github.com/oxia-db/oxia/proto"
 	"github.com/oxia-db/oxia/node/auth"
+	"github.com/oxia-db/oxia/proto"
 )
 
 const (

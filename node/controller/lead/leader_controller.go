@@ -22,18 +22,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oxia-db/oxia/node/conf"
-	. "github.com/oxia-db/oxia/node/constant"
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/node/conf"
+	"github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
+
 	"github.com/oxia-db/oxia/common/compare"
 
 	"github.com/oxia-db/oxia/common/concurrent"
-	. "github.com/oxia-db/oxia/common/constant"
+	commonconstant "github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
@@ -43,7 +44,7 @@ import (
 	"github.com/oxia-db/oxia/common/channel"
 
 	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/node/db"
+	"github.com/oxia-db/oxia/node/storage"
 	"github.com/oxia-db/oxia/node/wal"
 	"github.com/oxia-db/oxia/proto"
 )
@@ -59,7 +60,7 @@ type Controller interface {
 	Read(ctx context.Context, request *proto.ReadRequest, cb concurrent.StreamCallback[*proto.GetResponse])
 	RangeScan(ctx context.Context, request *proto.RangeScanRequest, cb concurrent.StreamCallback[*proto.GetResponse])
 
-	GetSequenceUpdates(ctx context.Context, request *proto.GetSequenceUpdatesRequest) (db.SequenceWaiter, error)
+	GetSequenceUpdates(ctx context.Context, request *proto.GetSequenceUpdatesRequest) (storage.SequenceWaiter, error)
 
 	GetNotifications(ctx context.Context, req *proto.NotificationsRequest, cb concurrent.StreamCallback[*proto.NotificationBatch])
 
@@ -106,8 +107,8 @@ type leaderController struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	wal            wal.Wal
-	db             db.DB
-	termOptions    db.TermOptions
+	db             storage.DB
+	termOptions    storage.TermOptions
 	rpcClient      rpc.ReplicationRpcProvider
 	sessionManager SessionManager
 	log            *slog.Logger
@@ -118,7 +119,7 @@ type leaderController struct {
 	followerAckOffsetGauges map[string]metric.Gauge
 }
 
-func NewLeaderController(config conf.Config, namespace string, shardId int64, rpcClient rpc.ReplicationRpcProvider, walFactory wal.Factory, kvFactory kv.Factory) (Controller, error) {
+func NewLeaderController(config conf.Config, namespace string, shardId int64, rpcClient rpc.ReplicationRpcProvider, walFactory wal.Factory, kvFactory kvstore.Factory) (Controller, error) {
 	labels := metric.LabelsForShard(namespace, shardId)
 	lc := &leaderController{
 		status:           proto.ServingStatus_NOT_MEMBER,
@@ -161,7 +162,7 @@ func NewLeaderController(config conf.Config, namespace string, shardId int64, rp
 		return nil, err
 	}
 
-	if lc.db, err = db.NewDB(namespace, shardId, kvFactory, compare.EncoderHierarchical, config.NotificationsRetentionTime, time2.SystemClock); err != nil {
+	if lc.db, err = storage.NewDB(namespace, shardId, kvFactory, compare.EncoderHierarchical, config.NotificationsRetentionTime, time2.SystemClock); err != nil {
 		return nil, err
 	}
 
@@ -169,7 +170,7 @@ func NewLeaderController(config conf.Config, namespace string, shardId int64, rp
 		return nil, err
 	}
 
-	if lc.term != InvalidTerm {
+	if lc.term != constant.InvalidTerm {
 		lc.status = proto.ServingStatus_FENCED
 	}
 
@@ -235,11 +236,11 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	defer lc.Unlock()
 
 	if lc.isClosed() {
-		return nil, ErrAlreadyClosed
+		return nil, commonconstant.ErrAlreadyClosed
 	}
 
 	if req.Term < lc.term {
-		return nil, ErrInvalidTerm
+		return nil, commonconstant.ErrInvalidTerm
 	} else if req.Term == lc.term && lc.status != proto.ServingStatus_FENCED {
 		// It's OK to receive a duplicate Fence request, for the same term, as long as we haven't moved
 		// out of the Fenced state for that term
@@ -249,10 +250,10 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 			slog.Int64("new-term", req.Term),
 			slog.Any("status", lc.status),
 		)
-		return nil, ErrInvalidStatus
+		return nil, commonconstant.ErrInvalidStatus
 	}
 
-	lc.termOptions = db.ToDbOption(req.Options)
+	lc.termOptions = storage.ToDbOption(req.Options)
 	if err := lc.db.UpdateTerm(req.Term, lc.termOptions); err != nil {
 		return nil, err
 	}
@@ -334,15 +335,15 @@ func (lc *leaderController) BecomeLeader(ctx context.Context, req *proto.BecomeL
 	defer lc.Unlock()
 
 	if lc.isClosed() {
-		return nil, ErrAlreadyClosed
+		return nil, commonconstant.ErrAlreadyClosed
 	}
 
 	if lc.status != proto.ServingStatus_FENCED {
-		return nil, ErrInvalidStatus
+		return nil, commonconstant.ErrInvalidStatus
 	}
 
 	if req.Term != lc.term {
-		return nil, ErrInvalidTerm
+		return nil, commonconstant.ErrInvalidTerm
 	}
 
 	lc.replicationFactor = req.GetReplicationFactor()
@@ -395,11 +396,11 @@ func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.A
 	defer lc.Unlock()
 
 	if req.Term != lc.term {
-		return nil, ErrInvalidTerm
+		return nil, commonconstant.ErrInvalidTerm
 	}
 
 	if lc.status != proto.ServingStatus_LEADER {
-		return nil, errors.Wrap(ErrInvalidStatus, "Node is not leader")
+		return nil, errors.Wrap(commonconstant.ErrInvalidStatus, "Node is not leader")
 	}
 
 	if _, followerAlreadyPresent := lc.followers[req.FollowerName]; followerAlreadyPresent {
@@ -473,7 +474,7 @@ func (lc *leaderController) applyAllEntriesIntoDBLoop(r wal.Reader) error {
 			return err
 		}
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
-			if _, err = lc.db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, db.WrapperUpdateOperationCallback); err != nil {
+			if _, err = lc.db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, storage.WrapperUpdateOperationCallback); err != nil {
 				return err
 			}
 		}
@@ -536,7 +537,7 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, followerHe
 	// Coordinator should never send us a follower with an invalid term.
 	// Checking for sanity here.
 	if followerHeadEntryId.Term > lc.leaderElectionHeadEntryId.Term {
-		return nil, ErrInvalidStatus
+		return nil, commonconstant.ErrInvalidStatus
 	}
 
 	lastEntryInFollowerTerm, err := getHighestEntryOfTerm(lc.wal, followerHeadEntryId.Term)
@@ -582,13 +583,13 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, followerHe
 func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {
 	r, err := w.NewReverseReader()
 	if err != nil {
-		return InvalidEntryId, err
+		return constant.InvalidEntryId, err
 	}
 	defer r.Close()
 	for r.HasNext() {
 		e, err := r.ReadNext()
 		if err != nil {
-			return InvalidEntryId, err
+			return constant.InvalidEntryId, err
 		}
 		if e.Term <= term {
 			return &proto.EntryId{
@@ -597,7 +598,7 @@ func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {
 			}, nil
 		}
 	}
-	return InvalidEntryId, nil
+	return constant.InvalidEntryId, nil
 }
 
 func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
@@ -622,7 +623,7 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 
 			for _, get := range request.Gets {
 				if get.SecondaryIndexName != nil {
-					response, err = db.SecondaryIndexGet(get, lc.db)
+					response, err = SecondaryIndexGet(get, lc.db)
 				} else {
 					response, err = lc.db.Get(get)
 				}
@@ -641,7 +642,7 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 	)
 }
 
-func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto.GetSequenceUpdatesRequest) (db.SequenceWaiter, error) {
+func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto.GetSequenceUpdatesRequest) (storage.SequenceWaiter, error) {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
 	lc.RUnlock()
@@ -675,11 +676,11 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 		func() {
 			lc.log.Debug("Received list request", slog.Any("request", request))
 
-			var it kv.KeyIterator
+			var it kvstore.KeyIterator
 			var err error
 
 			if request.SecondaryIndexName != nil {
-				it, err = db.NewSecondaryIndexListIterator(request, lc.db)
+				it, err = NewSecondaryIndexListIterator(request, lc.db)
 			} else {
 				it, err = lc.db.List(request)
 			}
@@ -732,11 +733,11 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 		func() {
 			lc.log.Debug("Received list request", slog.Any("request", request))
 
-			var it db.RangeScanIterator
+			var it storage.RangeScanIterator
 			var err error
 
 			if request.SecondaryIndexName != nil {
-				it, err = db.NewSecondaryIndexRangeScanIterator(request, lc.db)
+				it, err = NewSecondaryIndexRangeScanIterator(request, lc.db)
 			} else {
 				it, err = lc.db.RangeScan(request)
 			}
@@ -830,7 +831,7 @@ func (lc *leaderController) write(ctx context.Context, requestSupplier func(offs
 			func(_ any) {
 				defer timer.DoneCtx(ctx)
 				var wr *proto.WriteResponse
-				if wr, err = lc.db.ProcessWrite(request, newOffset, timestamp, db.WrapperUpdateOperationCallback); err != nil {
+				if wr, err = lc.db.ProcessWrite(request, newOffset, timestamp, storage.WrapperUpdateOperationCallback); err != nil {
 					cb.OnCompleteError(err)
 					return
 				}
@@ -854,7 +855,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 	}
 	if !lc.termOptions.NotificationsEnabled {
 		lc.Unlock()
-		cb.OnComplete(ErrNotificationsNotEnabled)
+		cb.OnComplete(commonconstant.ErrNotificationsNotEnabled)
 		return
 	}
 	qat := lc.quorumAckTracker
@@ -865,7 +866,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 		offsetExclusive = *req.StartOffsetExclusive
 	} else {
 		if qat == nil {
-			cb.OnComplete(ErrInvalidStatus)
+			cb.OnComplete(commonconstant.ErrInvalidStatus)
 			return
 		}
 		commitOffset := qat.CommitOffset()
@@ -901,7 +902,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			for {
 				select {
 				case <-lc.ctx.Done():
-					cb.OnComplete(ErrAlreadyClosed)
+					cb.OnComplete(commonconstant.ErrAlreadyClosed)
 					return
 				case <-ctx.Done():
 					cb.OnComplete(nil)
@@ -984,7 +985,7 @@ func (lc *leaderController) CommitOffset() int64 {
 	if qat != nil {
 		return qat.CommitOffset()
 	}
-	return InvalidOffset
+	return constant.InvalidOffset
 }
 
 func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
@@ -992,8 +993,8 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 	defer lc.RUnlock()
 
 	var (
-		headOffset   = InvalidOffset
-		commitOffset = InvalidOffset
+		headOffset   = constant.InvalidOffset
+		commitOffset = constant.InvalidOffset
 	)
 	if lc.quorumAckTracker != nil {
 		headOffset = lc.quorumAckTracker.HeadOffset()
@@ -1017,7 +1018,7 @@ func (lc *leaderController) DeleteShard(request *proto.DeleteShardRequest) (*pro
 			slog.Int64("follower-term", lc.term),
 			slog.Int64("new-term", request.Term))
 		_ = lc.close()
-		return nil, ErrInvalidTerm
+		return nil, commonconstant.ErrInvalidTerm
 	}
 
 	lc.log.Info("Deleting shard")
@@ -1054,7 +1055,7 @@ func (lc *leaderController) CloseSession(request *proto.CloseSessionRequest) (*p
 
 func checkStatusIsLeader(actual proto.ServingStatus) error {
 	if actual != proto.ServingStatus_LEADER {
-		return status.Errorf(CodeInvalidStatus, "Received message in the wrong state. In %+v, should be %+v.", actual, proto.ServingStatus_LEADER)
+		return status.Errorf(commonconstant.CodeInvalidStatus, "Received message in the wrong state. In %+v, should be %+v.", actual, proto.ServingStatus_LEADER)
 	}
 	return nil
 }

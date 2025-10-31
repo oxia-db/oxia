@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package storage
 
 import (
-	. "github.com/oxia-db/oxia/node/constant"
-	. "github.com/oxia-db/oxia/node/db/kv"
-	"github.com/oxia-db/oxia/proto"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/node/constant"
+
+	"github.com/oxia-db/oxia/node/storage/kvstore"
+	"github.com/oxia-db/oxia/proto"
 )
 
 var WrapperUpdateOperationCallback UpdateOperationCallback = &wrapperUpdateCallback{}
@@ -28,7 +30,7 @@ type secondaryIndexesUpdateCallbackS struct{}
 
 var secondaryIndexesUpdateCallback UpdateOperationCallback = &secondaryIndexesUpdateCallbackS{}
 
-func (secondaryIndexesUpdateCallbackS) OnPut(batch WriteBatch, _ *Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	if existingEntry != nil {
 		// TODO: We might want to check if there are indexes that did not change
 		// between the existing and the new record.
@@ -40,10 +42,10 @@ func (secondaryIndexesUpdateCallbackS) OnPut(batch WriteBatch, _ *Notifications,
 	return proto.Status_OK, writeSecondaryIndexes(batch, request.Key, request.SecondaryIndexes)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDelete(batch WriteBatch, _ *Notifications, key string) error {
+func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *Notifications, key string) error {
 	se, err := GetStorageEntry(batch, key)
 	if err != nil {
-		if errors.Is(err, ErrKeyNotFound) {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			return nil
 		}
 		return err
@@ -52,11 +54,11 @@ func (secondaryIndexesUpdateCallbackS) OnDelete(batch WriteBatch, _ *Notificatio
 	return deleteSecondaryIndexes(batch, key, se)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch WriteBatch, _ *Notifications, key string, value *proto.StorageEntry) error {
+func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, _ *Notifications, key string, value *proto.StorageEntry) error {
 	return deleteSecondaryIndexes(batch, key, value)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDeleteRange(batch WriteBatch, _ *Notifications, keyStartInclusive string, keyEndExclusive string) error {
+func (secondaryIndexesUpdateCallbackS) OnDeleteRange(batch kvstore.WriteBatch, _ *Notifications, keyStartInclusive string, keyEndExclusive string) error {
 	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
 	if err != nil {
 		return err
@@ -88,10 +90,10 @@ func (secondaryIndexesUpdateCallbackS) OnDeleteRange(batch WriteBatch, _ *Notifi
 	return err
 }
 
-func deleteSecondaryIndexes(batch WriteBatch, primaryKey string, existingEntry *proto.StorageEntry) error {
+func deleteSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, existingEntry *proto.StorageEntry) error {
 	if len(existingEntry.SecondaryIndexes) > 0 {
 		for _, si := range existingEntry.SecondaryIndexes {
-			if err := batch.Delete(SecondaryIndexKey(primaryKey, si)); err != nil {
+			if err := batch.Delete(constant.SecondaryIndexKey(primaryKey, si)); err != nil {
 				return err
 			}
 		}
@@ -99,10 +101,10 @@ func deleteSecondaryIndexes(batch WriteBatch, primaryKey string, existingEntry *
 	return nil
 }
 
-func writeSecondaryIndexes(batch WriteBatch, primaryKey string, secondaryIndexes []*proto.SecondaryIndex) error {
+func writeSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, secondaryIndexes []*proto.SecondaryIndex) error {
 	if len(secondaryIndexes) > 0 {
 		for _, si := range secondaryIndexes {
-			if err := batch.Put(SecondaryIndexKey(primaryKey, si), EmptyValue); err != nil {
+			if err := batch.Put(constant.SecondaryIndexKey(primaryKey, si), constant.EmptyValue); err != nil {
 				return err
 			}
 		}

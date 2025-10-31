@@ -19,9 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/node/conf"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/node/conf"
 )
 
 func TestServerCmd(t *testing.T) {

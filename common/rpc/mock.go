@@ -78,7 +78,7 @@ type MockRpcClient struct {
 	TruncateResps      chan TruncateResps
 }
 
-func (m *MockRpcClient) Close() error {
+func (*MockRpcClient) Close() error {
 	return nil
 }
 
@@ -92,19 +92,19 @@ func (m *MockRpcClient) Recv() (*proto.Ack, error) {
 	return res, nil
 }
 
-func (m *MockRpcClient) CloseSend() error {
+func (*MockRpcClient) CloseSend() error {
 	return nil
 }
 
-func (m *MockRpcClient) GetReplicateStream(ctx context.Context, follower string, namespace string, shard int64, term int64) (proto.OxiaLogReplication_ReplicateClient, error) {
+func (m *MockRpcClient) GetReplicateStream(context.Context, string, string, int64, int64) (proto.OxiaLogReplication_ReplicateClient, error) {
 	return m, nil
 }
 
-func (m *MockRpcClient) SendSnapshot(ctx context.Context, follower string, namespace string, shard int64, term int64) (proto.OxiaLogReplication_SendSnapshotClient, error) {
+func (m *MockRpcClient) SendSnapshot(context.Context, string, string, int64, int64) (proto.OxiaLogReplication_SendSnapshotClient, error) {
 	return m.SendSnapshotStream, nil
 }
 
-func (m *MockRpcClient) Truncate(follower string, req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
+func (m *MockRpcClient) Truncate(_ string, req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
 	m.TruncateReqs <- req
 
 	// Caller needs to provide Response to the channel
@@ -245,27 +245,27 @@ type MockBase struct {
 	ctx context.Context
 }
 
-func (m *MockBase) SendHeader(_ metadata.MD) error {
+func (*MockBase) SendHeader(_ metadata.MD) error {
 	panic("not implemented")
 }
 
-func (m *MockBase) RecvMsg(msg any) error {
+func (*MockBase) RecvMsg(any) error {
 	panic("not implemented")
 }
 
-func (m *MockBase) SendMsg(msg any) error {
+func (*MockBase) SendMsg(any) error {
 	panic("not implemented")
 }
 
-func (m *MockBase) SetTrailer(md metadata.MD) {
+func (*MockBase) SetTrailer(metadata.MD) {
 	panic("not implemented")
 }
 
-func (m *MockBase) Header() (metadata.MD, error) {
+func (*MockBase) Header() (metadata.MD, error) {
 	panic("not implemented")
 }
 
-func (m *MockBase) Trailer() metadata.MD {
+func (*MockBase) Trailer() metadata.MD {
 	panic("not implemented")
 }
 

@@ -18,9 +18,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/oxia-db/oxia/node/conf"
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/node/conf"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/process"
 
@@ -56,7 +57,7 @@ func init() {
 	Cmd.Flags().DurationVar(&config.NotificationsRetentionTime, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
 
 	Cmd.Flags().BoolVar(&config.WalSyncData, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
-	Cmd.Flags().Int64Var(&config.DbBlockCacheMB, "db-cache-size-mb", kv.DefaultFactoryOptions.CacheSizeMB,
+	Cmd.Flags().Int64Var(&config.DbBlockCacheMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
 	Cmd.Flags().StringVar(&config.AuthOptions.ProviderName, "auth-provider-name", "", "Authentication provider name. supported: oidc")
 	Cmd.Flags().StringVar(&config.AuthOptions.ProviderParams, "auth-provider-params", "", "Authentication provider params. \n oidc: "+"{\"allowedIssueURLs\":\"required1,required2\",\"allowedAudiences\":\"required1,required2\",\"userNameClaim\":\"optional(default:sub)\"}")

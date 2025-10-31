@@ -22,13 +22,14 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/oxia-db/oxia/node/conf"
-	. "github.com/oxia-db/oxia/node/constant"
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/node/conf"
+	nodeconstant "github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/compare"
 
@@ -38,7 +39,7 @@ import (
 	"github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/node/db"
+	"github.com/oxia-db/oxia/node/storage"
 	"github.com/oxia-db/oxia/node/wal"
 	"github.com/oxia-db/oxia/proto"
 )
@@ -101,9 +102,9 @@ type followerController struct {
 
 	status      proto.ServingStatus
 	wal         wal.Wal
-	kvFactory   kv.Factory
-	db          db.DB
-	termOptions db.TermOptions
+	kvFactory   kvstore.Factory
+	db          storage.DB
+	termOptions storage.TermOptions
 
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -117,7 +118,7 @@ type followerController struct {
 	writeLatencyHisto metric.LatencyHistogram
 }
 
-func NewFollowerController(config conf.Config, namespace string, shardId int64, wf wal.Factory, kvFactory kv.Factory) (FollowerController, error) {
+func NewFollowerController(config conf.Config, namespace string, shardId int64, wf wal.Factory, kvFactory kvstore.Factory) (FollowerController, error) {
 	fc := &followerController{
 		config:           config,
 		namespace:        namespace,
@@ -140,7 +141,7 @@ func NewFollowerController(config conf.Config, namespace string, shardId int64, 
 
 	fc.lastAppendedOffset = fc.wal.LastOffset()
 
-	if fc.db, err = db.NewDB(namespace, shardId, kvFactory,
+	if fc.db, err = storage.NewDB(namespace, shardId, kvFactory,
 		compare.EncoderHierarchical, config.NotificationsRetentionTime, time.SystemClock); err != nil {
 		return nil, err
 	}
@@ -149,7 +150,7 @@ func NewFollowerController(config conf.Config, namespace string, shardId int64, 
 		return nil, err
 	}
 
-	if fc.term != InvalidTerm {
+	if fc.term != nodeconstant.InvalidTerm {
 		fc.status = proto.ServingStatus_FENCED
 	}
 
@@ -161,7 +162,7 @@ func NewFollowerController(config conf.Config, namespace string, shardId int64, 
 	}
 	fc.commitOffset.Store(commitOffset)
 
-	if fc.lastAppendedOffset == InvalidOffset {
+	if fc.lastAppendedOffset == nodeconstant.InvalidOffset {
 		// The wal is empty, though we have restored from snapshot
 		fc.lastAppendedOffset = commitOffset
 	}
@@ -281,13 +282,13 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 
 	if fc.db == nil {
 		var err error
-		if fc.db, err = db.NewDB(fc.namespace, fc.shardId, fc.kvFactory,
+		if fc.db, err = storage.NewDB(fc.namespace, fc.shardId, fc.kvFactory,
 			compare.EncoderHierarchical, fc.config.NotificationsRetentionTime, time.SystemClock); err != nil {
 			return nil, errors.Wrapf(err, "failed to reopen database")
 		}
 	}
 
-	fc.termOptions = db.ToDbOption(req.Options)
+	fc.termOptions = storage.ToDbOption(req.Options)
 	if err := fc.db.UpdateTerm(req.Term, fc.termOptions); err != nil {
 		return nil, err
 	}
@@ -503,7 +504,7 @@ func (fc *followerController) applyAllCommittedEntries() {
 
 func (fc *followerController) processCommitRequest(entry *proto.LogEntry, logEntryValue *proto.LogEntryValue) error {
 	for _, br := range logEntryValue.GetRequests().Writes {
-		_, err := fc.db.ProcessWrite(br, entry.Offset, entry.Timestamp, db.WrapperUpdateOperationCallback)
+		_, err := fc.db.ProcessWrite(br, entry.Offset, entry.Timestamp, storage.WrapperUpdateOperationCallback)
 		if err != nil {
 			fc.log.Error(
 				"Error applying committed entry",
@@ -619,7 +620,7 @@ func (fc *followerController) SendSnapshot(stream proto.OxiaLogReplication_SendS
 	return closeStreamWg.Wait(fc.ctx)
 }
 
-func (fc *followerController) readSnapshotStream(stream proto.OxiaLogReplication_SendSnapshotServer, loader kv.SnapshotLoader) (int64, error) {
+func (fc *followerController) readSnapshotStream(stream proto.OxiaLogReplication_SendSnapshotServer, loader kvstore.SnapshotLoader) (int64, error) {
 	var totalSize int64
 
 	for {
@@ -634,7 +635,7 @@ func (fc *followerController) readSnapshotStream(stream proto.OxiaLogReplication
 			return totalSize, err
 		case snapChunk == nil:
 			return totalSize, nil
-		case fc.term != InvalidTerm && snapChunk.Term != fc.term:
+		case fc.term != nodeconstant.InvalidTerm && snapChunk.Term != fc.term:
 			// The follower could be left with term=-1 by a previous failed
 			// attempt at sending the snapshot. It's ok to proceed in that case.
 			fc.closeStreamNoMutex(constant.ErrInvalidTerm)
@@ -696,7 +697,7 @@ func (fc *followerController) handleSnapshot(stream proto.OxiaLogReplication_Sen
 	// We have received all the files for the database
 	loader.Complete()
 
-	newDb, err := db.NewDB(fc.namespace, fc.shardId, fc.kvFactory, compare.EncoderHierarchical, fc.config.NotificationsRetentionTime, time.SystemClock)
+	newDb, err := storage.NewDB(fc.namespace, fc.shardId, fc.kvFactory, compare.EncoderHierarchical, fc.config.NotificationsRetentionTime, time.SystemClock)
 	if err != nil {
 		fc.closeStreamNoMutex(errors.Wrap(err, "failed to open database after loading snapshot"))
 		return

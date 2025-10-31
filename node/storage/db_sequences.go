@@ -12,22 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package storage
 
 import (
 	"fmt"
 	"math"
 	"strings"
 
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
+
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/proto"
 )
 
 const maxSequence = uint64(math.MaxUint64)
 
-func generateUniqueKeyFromSequences(batch kv.WriteBatch, req *proto.PutRequest) (string, error) {
+func GenerateUniqueKeyFromSequences(batch kvstore.WriteBatch, req *proto.PutRequest) (string, error) {
 	if req.PartitionKey == nil {
 		// All the keys need to be in same shard to guarantee atomicity
 		return "", ErrMissingPartitionKey
@@ -68,15 +69,15 @@ func generateUniqueKeyFromSequences(batch kv.WriteBatch, req *proto.PutRequest) 
 	return newKey, nil
 }
 
-func findCurrentLastKeyInSequence(wb kv.WriteBatch, req *proto.PutRequest) ([]string, error) {
+func findCurrentLastKeyInSequence(wb kvstore.WriteBatch, req *proto.PutRequest) ([]string, error) {
 	prefixKey := req.Key
 	maxKey := fmt.Sprintf("%s-%020d", prefixKey, maxSequence)
 	lastKeyInSequence, err := wb.FindLower(maxKey)
-	if err != nil && !errors.Is(err, kv.ErrKeyNotFound) {
+	if err != nil && !errors.Is(err, kvstore.ErrKeyNotFound) {
 		return nil, err
 	}
 
-	if errors.Is(err, kv.ErrKeyNotFound) || !strings.HasPrefix(lastKeyInSequence, prefixKey) {
+	if errors.Is(err, kvstore.ErrKeyNotFound) || !strings.HasPrefix(lastKeyInSequence, prefixKey) {
 		lastKeyInSequence = ""
 	} else {
 		lastKeyInSequence = strings.TrimPrefix(lastKeyInSequence, prefixKey)

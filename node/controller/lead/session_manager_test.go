@@ -20,13 +20,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/node/conf"
-	. "github.com/oxia-db/oxia/node/constant"
-	"github.com/oxia-db/oxia/node/db/kv"
-	"github.com/stretchr/testify/assert"
-	pb "google.golang.org/protobuf/proto"
+	nodeconstant "github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 
@@ -38,15 +39,15 @@ import (
 )
 
 func TestSessionKey(t *testing.T) {
-	id := SessionId(0xC0DE)
-	sessionKey := SessionKey(id)
+	id := nodeconstant.SessionId(0xC0DE)
+	sessionKey := nodeconstant.SessionKey(id)
 	assert.Equal(t, "__oxia/session/000000000000c0de", sessionKey)
-	parsed, err := KeyToId(sessionKey)
+	parsed, err := nodeconstant.KeyToId(sessionKey)
 	assert.NoError(t, err)
 	assert.Equal(t, id, parsed)
 
 	for _, key := range []string{"__oxia/session/", "too_short"} {
-		_, err = KeyToId(key)
+		_, err = nodeconstant.KeyToId(key)
 		assert.Error(t, err, key)
 	}
 }
@@ -329,7 +330,7 @@ func getSessionMetadata(t *testing.T, lc *leaderController, sessionId int64) *pr
 	t.Helper()
 
 	resp, err := lc.db.Get(&proto.GetRequest{
-		Key:          SessionKey(SessionId(sessionId)),
+		Key:          nodeconstant.SessionKey(nodeconstant.SessionId(sessionId)),
 		IncludeValue: true,
 	})
 	assert.NoError(t, err)
@@ -344,12 +345,12 @@ func getSessionMetadata(t *testing.T, lc *leaderController, sessionId int64) *pr
 	return &meta
 }
 
-func createSessionManager(t *testing.T) (kv.Factory, wal.Factory, *sessionManager, *leaderController) {
+func createSessionManager(t *testing.T) (kvstore.Factory, wal.Factory, *sessionManager, *leaderController) {
 	t.Helper()
 
 	var shard int64 = 1
 
-	kvFactory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	walFactory := wal.NewTestWalFactory(t)
 	lc, err := NewLeaderController(conf.Config{NotificationsRetentionTime: 10 * time.Second}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory)
@@ -369,7 +370,7 @@ func createSessionManager(t *testing.T) (kv.Factory, wal.Factory, *sessionManage
 	return kvFactory, walFactory, sessionManager, lc.(*leaderController)
 }
 
-func reopenLeaderController(t *testing.T, kvFactory kv.Factory, walFactory wal.Factory, oldlc *leaderController) *leaderController {
+func reopenLeaderController(t *testing.T, kvFactory kvstore.Factory, walFactory wal.Factory, oldlc *leaderController) *leaderController {
 	t.Helper()
 
 	var shard int64 = 1
@@ -456,7 +457,7 @@ func TestIsSessionKey(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := IsSessionKey(tc.key)
+			got := nodeconstant.IsSessionKey(tc.key)
 			if got != tc.want {
 				t.Errorf("IsSessionKey(%q) got = %v, want %v", tc.key, got, tc.want)
 			}

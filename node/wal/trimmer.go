@@ -21,8 +21,9 @@ import (
 	"log/slog"
 	"time"
 
-	. "github.com/oxia-db/oxia/node/constant"
 	"github.com/pkg/errors"
+
+	"github.com/oxia-db/oxia/node/constant"
 
 	"github.com/oxia-db/oxia/common/process"
 	time2 "github.com/oxia-db/oxia/common/time"
@@ -125,7 +126,7 @@ func (t *trimmer) doTrim() error {
 		slog.Int64("last-offset", t.wal.LastOffset()),
 	)
 
-	if t.wal.LastOffset() == InvalidOffset {
+	if t.wal.LastOffset() == constant.InvalidOffset {
 		return nil
 	}
 
@@ -183,7 +184,7 @@ func (t *trimmer) binarySearch(firstOffset, lastOffset int64, cutoffTime time.Ti
 		}
 		tsMed, err := t.readAtOffset(med)
 		if err != nil {
-			return InvalidOffset, err
+			return constant.InvalidOffset, err
 		}
 
 		if cutoffTime.Before(tsMed) {

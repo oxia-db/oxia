@@ -18,12 +18,13 @@ import (
 	"context"
 	"log/slog"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/node/assignment"
 	"github.com/oxia-db/oxia/node/conf"
 	"github.com/oxia-db/oxia/node/controller"
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/oxia-db/oxia/node/server"
-	"go.uber.org/multierr"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/rpc"
 
@@ -40,7 +41,7 @@ type Node struct {
 	shardsDirector            controller.ShardsDirector
 	metrics                   *metric.PrometheusMetrics
 	walFactory                wal.Factory
-	kvFactory                 kv.Factory
+	kvFactory                 kvstore.Factory
 
 	healthServer rpc.HealthServer
 }
@@ -55,7 +56,7 @@ func NewWithGrpcProvider(config conf.Config, provider rpc.GrpcProvider, replicat
 		slog.Any("config", config),
 	)
 
-	kvFactory, err := kv.NewPebbleKVFactory(&kv.FactoryOptions{
+	kvFactory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
 		DataDir:     config.DataDir,
 		CacheSizeMB: config.DbBlockCacheMB,
 		UseWAL:      false, // WAL is kept outside the KV store

@@ -12,15 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package storage
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/compare"
 
@@ -36,7 +37,7 @@ func init() {
 }
 
 func TestDB_Notifications(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
@@ -172,7 +173,7 @@ func TestDB_Notifications(t *testing.T) {
 }
 
 func TestDB_NotificationsCancelWait(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
@@ -212,7 +213,7 @@ func TestDB_NotificationsCancelWait(t *testing.T) {
 }
 
 func TestDB_NotificationsDisabled(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)
@@ -235,7 +236,7 @@ func TestDB_NotificationsDisabled(t *testing.T) {
 }
 
 func TestDB_NotificationsDeleteRange(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 1*time.Hour, time2.SystemClock)
 	assert.NoError(t, err)

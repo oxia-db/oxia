@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package storage
 
 import (
 	"context"
@@ -20,9 +20,10 @@ import (
 	"log/slog"
 	"time"
 
-	kv2 "github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
 	pb "google.golang.org/protobuf/proto"
+
+	kv2 "github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/process"

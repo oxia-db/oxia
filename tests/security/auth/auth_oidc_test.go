@@ -23,12 +23,13 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/oauth2-proxy/mockoidc"
-	"github.com/oxia-db/oxia/node/conf"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
+
+	"github.com/oxia-db/oxia/node/conf"
 
 	"github.com/oxia-db/oxia/coordinator"
 	"github.com/oxia-db/oxia/coordinator/metadata"

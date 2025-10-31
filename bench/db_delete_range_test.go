@@ -19,10 +19,11 @@ import (
 	"testing"
 	"time"
 
-	db2 "github.com/oxia-db/oxia/node/db"
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/utils/ptr"
+
+	db2 "github.com/oxia-db/oxia/node/storage"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/compare"
 
@@ -34,7 +35,7 @@ import (
 
 func BenchmarkDeleteRange(b *testing.B) {
 	dataDir := b.TempDir()
-	factory, err := kv.NewPebbleKVFactory(&kv.FactoryOptions{DataDir: dataDir})
+	factory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{DataDir: dataDir})
 	assert.NoError(b, err)
 	db, err := db2.NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time2.SystemClock)
 	assert.NoError(b, err)

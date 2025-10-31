@@ -12,17 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package db
+package storage
 
 import (
 	"fmt"
 	"testing"
 
-	. "github.com/oxia-db/oxia/node/constant"
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
+
+	nodeconstant "github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/compare"
 
@@ -33,7 +34,7 @@ import (
 )
 
 func TestDBSimple(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -173,7 +174,7 @@ func TestDBSimple(t *testing.T) {
 }
 
 func TestDBSameKeyMutations(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -281,7 +282,7 @@ func TestDBSameKeyMutations(t *testing.T) {
 }
 
 func TestDBList(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -305,7 +306,7 @@ func TestDBList(t *testing.T) {
 		}},
 	}
 
-	writeRes, err := db.ProcessWrite(writeReq, InvalidOffset, now(), NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, nodeconstant.InvalidOffset, now(), NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 5, len(writeRes.Puts))
@@ -344,7 +345,7 @@ func TestDBList(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
-func keyIteratorToSlice(it kv.KeyIterator, err error) []string {
+func keyIteratorToSlice(it kvstore.KeyIterator, err error) []string {
 	assert.NoError(nil, err)
 	var keys []string
 	for ; it.Valid(); it.Next() {
@@ -355,7 +356,7 @@ func keyIteratorToSlice(it kv.KeyIterator, err error) []string {
 }
 
 func TestDBDeleteRange(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -379,7 +380,7 @@ func TestDBDeleteRange(t *testing.T) {
 		}},
 	}
 
-	_, err = db.ProcessWrite(writeReq, InvalidOffset, 0, NoOpCallback)
+	_, err = db.ProcessWrite(writeReq, nodeconstant.InvalidOffset, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	writeReq = &proto.WriteRequest{
@@ -392,7 +393,7 @@ func TestDBDeleteRange(t *testing.T) {
 		}},
 	}
 
-	writeRes, err := db.ProcessWrite(writeReq, InvalidOffset, 0, NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, nodeconstant.InvalidOffset, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	keys := make([]string, 0)
@@ -424,14 +425,14 @@ func TestDBDeleteRange(t *testing.T) {
 func TestDB_ReadCommitOffset(t *testing.T) {
 	offset := int64(13)
 
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
 
 	commitOffset, err := db.ReadCommitOffset()
 	assert.NoError(t, err)
-	assert.Equal(t, InvalidOffset, commitOffset)
+	assert.Equal(t, nodeconstant.InvalidOffset, commitOffset)
 
 	writeReq := &proto.WriteRequest{
 		Puts: []*proto.PutRequest{{
@@ -451,14 +452,14 @@ func TestDB_ReadCommitOffset(t *testing.T) {
 }
 
 func TestDb_UpdateTerm(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
 
 	term, options, err := db.ReadTerm()
 	assert.NoError(t, err)
-	assert.Equal(t, InvalidOffset, term)
+	assert.Equal(t, nodeconstant.InvalidOffset, term)
 	assert.Equal(t, TermOptions{}, options)
 
 	err = db.UpdateTerm(1, TermOptions{NotificationsEnabled: true})
@@ -485,7 +486,7 @@ func TestDb_UpdateTerm(t *testing.T) {
 func TestDB_Delete(t *testing.T) {
 	offset := int64(13)
 
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -516,7 +517,7 @@ func TestDB_Delete(t *testing.T) {
 }
 
 func TestDB_FloorCeiling(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderHierarchical, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -681,7 +682,7 @@ func TestDB_FloorCeiling(t *testing.T) {
 }
 
 func TestDB_SequentialKeys(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -811,7 +812,7 @@ func rangeScanIteratorToSlice(it RangeScanIterator, err error) []string {
 }
 
 func TestDBRangeScan(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -835,7 +836,7 @@ func TestDBRangeScan(t *testing.T) {
 		}},
 	}
 
-	writeRes, err := db.ProcessWrite(writeReq, InvalidOffset, now(), NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, nodeconstant.InvalidOffset, now(), NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 5, len(writeRes.Puts))
@@ -875,7 +876,7 @@ func TestDBRangeScan(t *testing.T) {
 }
 
 func TestDb_versionId(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -926,30 +927,30 @@ type FailureCallback struct{}
 
 const FailureCallbackKey = "failure"
 
-func (f FailureCallback) OnPut(_ kv.WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
+func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
 	if req.Key == FailureCallbackKey {
 		return proto.Status_SESSION_DOES_NOT_EXIST, errors.New("failure injection")
 	}
 	return proto.Status_OK, nil
 }
-func (f FailureCallback) OnDelete(_ kv.WriteBatch, _ *Notifications, key string) error {
+func (f FailureCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, key string) error {
 	if key == FailureCallbackKey {
 		return errors.New("failure injection")
 	}
 	return nil
 }
-func (f FailureCallback) OnDeleteWithEntry(_ kv.WriteBatch, _ *Notifications, key string, _ *proto.StorageEntry) error {
+func (f FailureCallback) OnDeleteWithEntry(_ kvstore.WriteBatch, _ *Notifications, key string, _ *proto.StorageEntry) error {
 	if key == FailureCallbackKey {
 		return errors.New("failure injection")
 	}
 	return nil
 }
-func (f FailureCallback) OnDeleteRange(kv.WriteBatch, *Notifications, string, string) error {
+func (f FailureCallback) OnDeleteRange(kvstore.WriteBatch, *Notifications, string, string) error {
 	return nil
 }
 
 func TestDBVersionIDWithError(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)
@@ -1014,7 +1015,7 @@ func TestDBVersionIDWithError(t *testing.T) {
 }
 
 func TestDB_SequentialKeysNotification(t *testing.T) {
-	factory, err := kv.NewPebbleKVFactory(kv.NewFactoryOptionsForTest(t))
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
 	assert.NoError(t, err)

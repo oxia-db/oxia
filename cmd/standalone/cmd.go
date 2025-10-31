@@ -18,8 +18,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/oxia-db/oxia/node/db/kv"
 	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/node/storage/kvstore"
 
 	"github.com/oxia-db/oxia/common/process"
 
@@ -49,7 +50,7 @@ func init() {
 
 	Cmd.Flags().BoolVar(&conf.NotificationsEnabled, "notifications-enabled", true, "Whether notifications are enabled")
 	Cmd.Flags().DurationVar(&conf.NotificationsRetentionTime, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
-	Cmd.Flags().Int64Var(&conf.DbBlockCacheMB, "db-cache-size-mb", kv.DefaultFactoryOptions.CacheSizeMB,
+	Cmd.Flags().Int64Var(&conf.DbBlockCacheMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
 }
 

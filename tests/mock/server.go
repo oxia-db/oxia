@@ -19,8 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/node/conf"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/node/conf"
 
 	"github.com/oxia-db/oxia/coordinator/model"
 	"github.com/oxia-db/oxia/node"

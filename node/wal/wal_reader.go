@@ -17,7 +17,7 @@ package wal
 import (
 	"sync"
 
-	. "github.com/oxia-db/oxia/node/constant"
+	"github.com/oxia-db/oxia/node/constant"
 	"github.com/oxia-db/oxia/proto"
 )
 
@@ -132,5 +132,5 @@ func (r *reverseReader) HasNext() bool {
 	}
 
 	firstOffset := r.wal.FirstOffset()
-	return firstOffset != InvalidOffset && r.nextOffset != (firstOffset-1)
+	return firstOffset != constant.InvalidOffset && r.nextOffset != (firstOffset-1)
 }

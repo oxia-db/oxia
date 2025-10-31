@@ -20,8 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/node"
+	"github.com/oxia-db/oxia/oxia"
 )
 
 func TestSequence_WithOtherKeyInBatch(t *testing.T) {

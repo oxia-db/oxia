@@ -21,15 +21,16 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/oxia-db/oxia/node/constant"
-	wal2 "github.com/oxia-db/oxia/node/wal"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/node/constant"
+	nodewal "github.com/oxia-db/oxia/node/wal"
 
 	"github.com/oxia-db/oxia/proto"
 )
 
 func Benchmark_Wal_Append(b *testing.B) {
-	walFactory := wal2.NewWalFactory(&wal2.FactoryOptions{
+	walFactory := nodewal.NewWalFactory(&nodewal.FactoryOptions{
 		BaseWalDir:  b.TempDir(),
 		Retention:   time.Minute,
 		SegmentSize: 1024 * 1024,
@@ -52,7 +53,7 @@ func Benchmark_Wal_Append(b *testing.B) {
 }
 
 func Benchmark_Wal_Append_with_Read(b *testing.B) {
-	walFactory := wal2.NewWalFactory(&wal2.FactoryOptions{
+	walFactory := nodewal.NewWalFactory(&nodewal.FactoryOptions{
 		BaseWalDir:  b.TempDir(),
 		Retention:   time.Minute,
 		SegmentSize: 1024 * 1024,
@@ -78,7 +79,7 @@ func Benchmark_Wal_Append_with_Read(b *testing.B) {
 
 	for i := 0; i < c-1; i++ {
 		wg.Go(func() {
-			reader, err := wal.NewReader(InvalidOffset)
+			reader, err := wal.NewReader(constant.InvalidOffset)
 			assert.NoError(b, err)
 
 			for i := 0; i < b.N; i++ {
@@ -100,7 +101,7 @@ func Benchmark_Wal_Append_with_Read(b *testing.B) {
 }
 
 func Benchmark_Wal_Append_to_Read_latency(b *testing.B) {
-	walFactory := wal2.NewWalFactory(&wal2.FactoryOptions{
+	walFactory := nodewal.NewWalFactory(&nodewal.FactoryOptions{
 		BaseWalDir:  b.TempDir(),
 		Retention:   time.Minute,
 		SegmentSize: 1024 * 1024,
@@ -127,7 +128,7 @@ func Benchmark_Wal_Append_to_Read_latency(b *testing.B) {
 	})
 
 	wg.Go(func() {
-		reader, err := wal.NewReader(InvalidOffset)
+		reader, err := wal.NewReader(constant.InvalidOffset)
 		assert.NoError(b, err)
 		for i := 0; i < b.N; i++ {
 			for {
