@@ -17,12 +17,14 @@ package listnodes
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/oxia"
-	"github.com/spf13/cobra"
-	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/cmd/admin/commons"
+	"github.com/oxia-db/oxia/oxia"
 )
 
 func runCmd(cmd *cobra.Command) (string, error) {
