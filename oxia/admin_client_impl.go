@@ -58,6 +58,7 @@ func (admin *adminClientImpl) ListNodes() *ListNodesResult {
 			Name:            node.Name,
 			PublicAddress:   node.PublicAddress,
 			InternalAddress: node.InternalAddress,
+			Metadata:        node.Metadata,
 		}
 	}
 	return &ListNodesResult{Nodes: nodes}

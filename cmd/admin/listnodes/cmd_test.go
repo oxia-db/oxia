@@ -46,11 +46,13 @@ func Test_cmd_listnodes(t *testing.T) {
 				Name:            nil,
 				PublicAddress:   "public1",
 				InternalAddress: "internal1",
+				Metadata:        map[string]string{"key1": "value1"},
 			},
 			{
 				Name:            nil,
 				PublicAddress:   "public2",
 				InternalAddress: "internal2",
+				Metadata:        nil,
 			},
 		},
 		Error: nil,
@@ -65,6 +67,10 @@ func Test_cmd_listnodes(t *testing.T) {
 	assert.Equal(t, "public2", nodes[1].PublicAddress)
 	assert.Equal(t, "internal1", nodes[0].InternalAddress)
 	assert.Equal(t, "internal2", nodes[1].InternalAddress)
+
+	assert.Equal(t, "value1", nodes[0].Metadata["key1"])
+	var expected map[string]string
+	assert.Equal(t, expected, nodes[1].Metadata)
 	assert.Nil(t, nodes[0].Name)
 	assert.Nil(t, nodes[1].Name)
 }

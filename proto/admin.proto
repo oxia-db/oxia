@@ -44,7 +44,9 @@ message Node {
   optional string name = 1;
   string public_address = 2;
   string internal_address = 3;
+  map<string, string> metadata = 4;
 }
+
 message ListNodesResponse {
   repeated Node nodes = 1;
 }

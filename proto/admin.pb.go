@@ -159,6 +159,7 @@ type Node struct {
 	Name            *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	PublicAddress   string                 `protobuf:"bytes,2,opt,name=public_address,json=publicAddress,proto3" json:"public_address,omitempty"`
 	InternalAddress string                 `protobuf:"bytes,3,opt,name=internal_address,json=internalAddress,proto3" json:"internal_address,omitempty"`
+	Metadata        map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -212,6 +213,13 @@ func (x *Node) GetInternalAddress() string {
 		return x.InternalAddress
 	}
 	return ""
+}
+
+func (x *Node) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
 }
 
 type ListNodesResponse struct {
@@ -268,11 +276,15 @@ const file_admin_proto_rawDesc = "" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\tR\n" +
 	"namespaces\"\x12\n" +
-	"\x10ListNodesRequest\"z\n" +
+	"\x10ListNodesRequest\"\xf9\x01\n" +
 	"\x04Node\x12\x17\n" +
 	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
 	"\x0epublic_address\x18\x02 \x01(\tR\rpublicAddress\x12)\n" +
-	"\x10internal_address\x18\x03 \x01(\tR\x0finternalAddressB\a\n" +
+	"\x10internal_address\x18\x03 \x01(\tR\x0finternalAddress\x12@\n" +
+	"\bmetadata\x18\x04 \x03(\v2$.io.oxia.proto.v1.Node.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
 	"\x05_name\"A\n" +
 	"\x11ListNodesResponse\x12,\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x16.io.oxia.proto.v1.NodeR\x05nodes2\xc6\x01\n" +
@@ -292,25 +304,27 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_admin_proto_goTypes = []any{
 	(*ListNamespacesRequest)(nil),  // 0: io.oxia.proto.v1.ListNamespacesRequest
 	(*ListNamespacesResponse)(nil), // 1: io.oxia.proto.v1.ListNamespacesResponse
 	(*ListNodesRequest)(nil),       // 2: io.oxia.proto.v1.ListNodesRequest
 	(*Node)(nil),                   // 3: io.oxia.proto.v1.Node
 	(*ListNodesResponse)(nil),      // 4: io.oxia.proto.v1.ListNodesResponse
+	nil,                            // 5: io.oxia.proto.v1.Node.MetadataEntry
 }
 var file_admin_proto_depIdxs = []int32{
-	3, // 0: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
-	0, // 1: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
-	2, // 2: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
-	1, // 3: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
-	4, // 4: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	5, // 0: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
+	3, // 1: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
+	0, // 2: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
+	2, // 3: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
+	1, // 4: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
+	4, // 5: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
+	4, // [4:6] is the sub-list for method output_type
+	2, // [2:4] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -325,7 +339,7 @@ func file_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

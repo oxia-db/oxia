@@ -33,6 +33,7 @@ type Node struct {
 	Name            *string
 	PublicAddress   string
 	InternalAddress string
+	Metadata        map[string]string
 }
 
 type ListNodesResult struct {

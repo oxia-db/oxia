@@ -56,12 +56,18 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 	}
 
 	cnfNodes := cnf.Servers
+	cnfMeta := cnf.ServerMetadata
 	nodes := make([]*proto.Node, len(cnfNodes))
 	for i, node := range cnfNodes {
+		nodeMeta, found := cnfMeta[node.GetIdentifier()]
+		if !found {
+			nodeMeta = model.ServerMetadata{}
+		}
 		nodes[i] = &proto.Node{
 			Name:            node.Name,
 			PublicAddress:   node.Public,
 			InternalAddress: node.Internal,
+			Metadata:        nodeMeta.Labels,
 		}
 	}
 	return &proto.ListNodesResponse{Nodes: nodes}, nil
