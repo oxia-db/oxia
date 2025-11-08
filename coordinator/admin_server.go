@@ -49,6 +49,30 @@ func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesR
 	}, nil
 }
 
+func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
+	cnf, err := admin.clusterConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	cnfNodes := cnf.Servers
+	cnfMeta := cnf.ServerMetadata
+	nodes := make([]*proto.Node, len(cnfNodes))
+	for i, node := range cnfNodes {
+		nodeMeta, found := cnfMeta[node.GetIdentifier()]
+		if !found {
+			nodeMeta = model.ServerMetadata{}
+		}
+		nodes[i] = &proto.Node{
+			Name:            node.Name,
+			PublicAddress:   node.Public,
+			InternalAddress: node.Internal,
+			Metadata:        nodeMeta.Labels,
+		}
+	}
+	return &proto.ListNodesResponse{Nodes: nodes}, nil
+}
+
 func newAdminServer(statusResource resources.StatusResource, clusterConfig func() (model.ClusterConfig, error)) *adminServer {
 	return &adminServer{
 		statusResource: statusResource,

@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
+	"github.com/oxia-db/oxia/cmd/admin/listnodes"
 
 	"github.com/oxia-db/oxia/cmd/admin/listnamespaces"
 
@@ -39,4 +40,5 @@ func init() {
 	Cmd.PersistentFlags().StringVar(&commons.AdminConfig.AdminAddress, "admin-address", defaultAdminClientAddress, "Admin client address")
 
 	Cmd.AddCommand(listnamespaces.Cmd)
+	Cmd.AddCommand(listnodes.Cmd)
 }

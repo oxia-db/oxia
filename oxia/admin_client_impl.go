@@ -33,6 +33,37 @@ type adminClientImpl struct {
 	clientPool rpc.ClientPool
 }
 
+func (admin *adminClientImpl) ListNodes() *ListNodesResult {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return &ListNodesResult{
+			Error: err,
+		}
+	}
+
+	if client == nil {
+		return &ListNodesResult{
+			Error: errors.New("unable to connect to admin server"),
+		}
+	}
+
+	response, err := client.ListNodes(context.Background(), &proto.ListNodesRequest{})
+	if err != nil {
+		return &ListNodesResult{Error: err}
+	}
+
+	nodes := make([]*Node, len(response.Nodes))
+	for i, node := range response.Nodes {
+		nodes[i] = &Node{
+			Name:            node.Name,
+			PublicAddress:   node.PublicAddress,
+			InternalAddress: node.InternalAddress,
+			Metadata:        node.Metadata,
+		}
+	}
+	return &ListNodesResult{Nodes: nodes}
+}
+
 func (admin *adminClientImpl) Close() error {
 	return admin.clientPool.Close()
 }
