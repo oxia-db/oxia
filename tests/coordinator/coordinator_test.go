@@ -51,12 +51,13 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	metadata := model.ShardMetadata{
-		Status:         model.ShardStatusSteadyState,
-		Term:           999,
-		Leader:         nil,
-		Ensemble:       []model.Server{},
-		RemovedNodes:   []model.Server{},
-		Int32HashRange: model.Int32HashRange{Min: 2000, Max: 100000},
+		Status:                  model.ShardStatusSteadyState,
+		Term:                    999,
+		Leader:                  nil,
+		Ensemble:                []model.Server{},
+		RemovedNodes:            []model.Server{},
+		PendingDeleteShardNodes: make([]model.Server, 0),
+		Int32HashRange:          model.Int32HashRange{Min: 2000, Max: 100000},
 	}
 	statusResource := coordinatorInstance.StatusResource()
 	statusResource.UpdateShardMetadata("default", 1, metadata)
