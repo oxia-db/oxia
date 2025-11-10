@@ -24,6 +24,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
+	"github.com/oxia-db/oxia/node/conf"
+
 	"github.com/oxia-db/oxia/coordinator"
 	"github.com/oxia-db/oxia/coordinator/metadata"
 
@@ -31,7 +33,7 @@ import (
 	"github.com/oxia-db/oxia/common/logging"
 
 	"github.com/oxia-db/oxia/coordinator/model"
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/node"
 )
 
 var (
@@ -146,11 +148,11 @@ func main() {
 	dispatcher := newDispatcher(grpcProvider, replicationGrpcProvider)
 
 	var servers []model.Server
-	for _, node := range allNodes {
-		if node != thisNode {
+	for _, n := range allNodes {
+		if n != thisNode {
 			servers = append(servers, model.Server{
-				Public:   node,
-				Internal: node,
+				Public:   n,
+				Internal: n,
 			})
 		}
 	}
@@ -188,7 +190,7 @@ func main() {
 		}
 	} else {
 		// Any other node will be a storage node
-		_, err := server.NewWithGrpcProvider(server.Config{
+		_, err := node.NewWithGrpcProvider(conf.Config{
 			MetricsServiceAddr: "",
 			DataDir:            filepath.Join(dataDir, thisNode, "db"),
 			WalDir:             filepath.Join(dataDir, thisNode, "wal"),

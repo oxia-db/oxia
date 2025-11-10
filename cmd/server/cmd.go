@@ -20,45 +20,48 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/oxia-db/oxia/node/conf"
+	"github.com/oxia-db/oxia/node/storage/kvstore"
+
 	"github.com/oxia-db/oxia/common/process"
 
 	"github.com/oxia-db/oxia/cmd/flag"
 	"github.com/oxia-db/oxia/common/security"
-	"github.com/oxia-db/oxia/server"
-	"github.com/oxia-db/oxia/server/kv"
+	"github.com/oxia-db/oxia/node"
 )
 
 var (
-	conf = server.Config{}
+	config = conf.Config{}
 
 	peerTLS           = security.TLSOption{}
 	serverTLS         = security.TLSOption{}
 	internalServerTLS = security.TLSOption{}
 
 	Cmd = &cobra.Command{
-		Use:   "server",
-		Short: "Start a server",
-		Long:  `Long description`,
-		Run:   exec,
+		Deprecated: "using node instead",
+		Use:        "server",
+		Short:      "Start a server",
+		Long:       `Long description`,
+		Run:        exec,
 	}
 )
 
 func init() {
 	Cmd.Flags().SortFlags = false
 
-	flag.PublicAddr(Cmd, &conf.PublicServiceAddr)
-	flag.InternalAddr(Cmd, &conf.InternalServiceAddr)
-	flag.MetricsAddr(Cmd, &conf.MetricsServiceAddr)
-	Cmd.Flags().StringVar(&conf.DataDir, "data-dir", "./data/db", "Directory where to store data")
-	Cmd.Flags().StringVar(&conf.WalDir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
-	Cmd.Flags().DurationVar(&conf.WalRetentionTime, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
-	Cmd.Flags().DurationVar(&conf.NotificationsRetentionTime, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
+	flag.PublicAddr(Cmd, &config.PublicServiceAddr)
+	flag.InternalAddr(Cmd, &config.InternalServiceAddr)
+	flag.MetricsAddr(Cmd, &config.MetricsServiceAddr)
+	Cmd.Flags().StringVar(&config.DataDir, "data-dir", "./data/db", "Directory where to store data")
+	Cmd.Flags().StringVar(&config.WalDir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
+	Cmd.Flags().DurationVar(&config.WalRetentionTime, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
+	Cmd.Flags().DurationVar(&config.NotificationsRetentionTime, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
 
-	Cmd.Flags().BoolVar(&conf.WalSyncData, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
-	Cmd.Flags().Int64Var(&conf.DbBlockCacheMB, "db-cache-size-mb", kv.DefaultFactoryOptions.CacheSizeMB,
+	Cmd.Flags().BoolVar(&config.WalSyncData, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
+	Cmd.Flags().Int64Var(&config.DbBlockCacheMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
-	Cmd.Flags().StringVar(&conf.AuthOptions.ProviderName, "auth-provider-name", "", "Authentication provider name. supported: oidc")
-	Cmd.Flags().StringVar(&conf.AuthOptions.ProviderParams, "auth-provider-params", "", "Authentication provider params. \n oidc: "+"{\"allowedIssueURLs\":\"required1,required2\",\"allowedAudiences\":\"required1,required2\",\"userNameClaim\":\"optional(default:sub)\"}")
+	Cmd.Flags().StringVar(&config.AuthOptions.ProviderName, "auth-provider-name", "", "Authentication provider name. supported: oidc")
+	Cmd.Flags().StringVar(&config.AuthOptions.ProviderParams, "auth-provider-params", "", "Authentication provider params. \n oidc: "+"{\"allowedIssueURLs\":\"required1,required2\",\"allowedAudiences\":\"required1,required2\",\"userNameClaim\":\"optional(default:sub)\"}")
 
 	// server TLS section
 	Cmd.Flags().StringVar(&serverTLS.CertFile, "tls-cert-file", "", "Tls certificate file")
@@ -93,24 +96,24 @@ func exec(*cobra.Command, []string) {
 		if err := configureTLS(); err != nil {
 			return nil, err
 		}
-		return server.New(conf)
+		return node.New(config)
 	})
 }
 
 func configureTLS() error {
 	var err error
 	if serverTLS.IsConfigured() {
-		if conf.ServerTLS, err = serverTLS.MakeServerTLSConf(); err != nil {
+		if config.ServerTLS, err = serverTLS.MakeServerTLSConf(); err != nil {
 			return err
 		}
 	}
 	if peerTLS.IsConfigured() {
-		if conf.PeerTLS, err = peerTLS.MakeClientTLSConf(); err != nil {
+		if config.PeerTLS, err = peerTLS.MakeClientTLSConf(); err != nil {
 			return err
 		}
 	}
 	if internalServerTLS.IsConfigured() {
-		if conf.InternalServerTLS, err = internalServerTLS.MakeServerTLSConf(); err != nil {
+		if config.InternalServerTLS, err = internalServerTLS.MakeServerTLSConf(); err != nil {
 			return err
 		}
 	}

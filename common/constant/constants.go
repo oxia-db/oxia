@@ -14,8 +14,6 @@
 
 package constant
 
-import "time"
-
 const (
 	MetadataTerm      = "term"
 	MetadataNamespace = "namespace"
@@ -26,7 +24,4 @@ const (
 	DefaultInternalPort = 6649
 	DefaultAdminPort    = 6651
 	DefaultMetricsPort  = 8080
-
-	MaxSessionTimeout = 5 * time.Minute
-	MinSessionTimeout = 2 * time.Second
 )

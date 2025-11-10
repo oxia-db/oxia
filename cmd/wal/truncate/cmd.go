@@ -21,7 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/wal/common"
-	"github.com/oxia-db/oxia/server/wal"
+	"github.com/oxia-db/oxia/node/wal"
 )
 
 type truncateOptions struct {

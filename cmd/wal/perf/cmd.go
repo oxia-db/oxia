@@ -24,9 +24,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 
+	"github.com/oxia-db/oxia/node/constant"
+
 	"github.com/oxia-db/oxia/cmd/wal/common"
+	"github.com/oxia-db/oxia/node/wal"
 	"github.com/oxia-db/oxia/proto"
-	"github.com/oxia-db/oxia/server/wal"
 )
 
 type perfOptions struct {
@@ -111,7 +113,7 @@ func run(*cobra.Command, []string) error {
 			defer wg.Done()
 			n := time.Now().UnixMicro()
 
-			reader, err := writeAheadLog.NewReader(wal.InvalidOffset)
+			reader, err := writeAheadLog.NewReader(constant.InvalidOffset)
 			if err != nil {
 				panic(err)
 			}
@@ -198,7 +200,7 @@ func printLatench(name string, datas []int64) {
 		}
 	}
 
-	fmt.Printf(`
+	_, err = fmt.Printf(`
 Histogram of %s latency:
 P50:  %s
 P90:  %s 
@@ -210,4 +212,7 @@ P999: %s
 		time.Duration(p99)*time.Microsecond,
 		time.Duration(p999)*time.Microsecond,
 	)
+	if err != nil {
+		panic(err)
+	}
 }

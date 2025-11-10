@@ -22,18 +22,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/node"
 )
 
 var (
 	exampleServerAddr = "localhost:6648"
 )
 
-func initExampleServer(serviceAddr string) *server.Standalone {
+func initExampleServer(serviceAddr string) *node.Standalone {
 	dir, _ := os.MkdirTemp(os.TempDir(), "oxia-test-*")
-	config := server.NewTestConfig(dir)
+	config := node.NewTestConfig(dir)
 	config.PublicServiceAddr = serviceAddr
-	standaloneServer, err := server.NewStandalone(config)
+	standaloneServer, err := node.NewStandalone(config)
 	if err != nil {
 		log.Fatal(err)
 	}
