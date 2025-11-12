@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/oxia-db/oxia/common/auth/server"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
@@ -33,8 +34,6 @@ import (
 	"github.com/oxia-db/oxia/proto"
 
 	"github.com/oxia-db/oxia/common/rpc"
-
-	"github.com/oxia-db/oxia/server/auth"
 )
 
 type Config struct {
@@ -111,7 +110,7 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 
 	grpcServer, err := rpc.Default.StartGrpcServer("coordinator", config.InternalServiceAddr, func(registrar grpc.ServiceRegistrar) {
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
-	}, config.ServerTLS, &auth.Disabled)
+	}, config.ServerTLS, &server.Disabled)
 
 	if err != nil {
 		return nil, err
@@ -122,7 +121,7 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 	// Start admin grpc server
 	adminGrpcServer, err := rpc.Default.StartGrpcServer("admin", config.AdminServiceAddr, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaAdminServer(registrar, admin)
-	}, config.ServerTLS, &auth.Disabled)
+	}, config.ServerTLS, &server.Disabled)
 
 	if err != nil {
 		return nil, err

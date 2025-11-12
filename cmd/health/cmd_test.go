@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/oxia-db/oxia/common/auth/server"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -26,15 +27,13 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/rpc"
-
-	"github.com/oxia-db/oxia/server/auth"
 )
 
 func TestHealthCmd(t *testing.T) {
 	_health := health.NewServer()
 	server, err := rpc.Default.StartGrpcServer("health", "localhost:0", func(registrar grpc.ServiceRegistrar) {
 		grpc_health_v1.RegisterHealthServer(registrar, _health)
-	}, nil, &auth.Options{})
+	}, nil, &server.Options{})
 	assert.NoError(t, err)
 	defer func() {
 		_ = server.Close()

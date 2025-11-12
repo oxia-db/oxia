@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/oxia-db/oxia/common/auth/server"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -27,7 +28,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/proto"
-	"github.com/oxia-db/oxia/server/auth"
 	"github.com/oxia-db/oxia/server/kv"
 	"github.com/oxia-db/oxia/server/wal"
 )
@@ -96,7 +96,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 	}
 
 	s.rpc, err = newPublicRpcServer(rpc.Default, config.PublicServiceAddr, s.shardsDirector,
-		nil, config.ServerTLS, &auth.Disabled)
+		nil, config.ServerTLS, &server.Disabled)
 	if err != nil {
 		return nil, err
 	}

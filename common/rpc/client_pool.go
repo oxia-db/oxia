@@ -32,7 +32,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 
-	"github.com/oxia-db/oxia/oxia/auth"
+	"github.com/oxia-db/oxia/common/auth"
 	"github.com/oxia-db/oxia/proto"
 )
 
