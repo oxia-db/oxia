@@ -45,3 +45,13 @@ func (m *MockAdminClient) ListNamespaces() *oxia.ListNamespacesResult {
 		Error: errors.New("no namespaces available"),
 	}
 }
+
+func (m *MockAdminClient) ListNodes() *oxia.ListNodesResult {
+	args := m.MethodCalled("ListNodes")
+	if v, ok := args.Get(0).(*oxia.ListNodesResult); ok {
+		return v
+	}
+	return &oxia.ListNodesResult{
+		Error: errors.New("no namespaces available"),
+	}
+}
