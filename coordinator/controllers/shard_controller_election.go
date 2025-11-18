@@ -30,6 +30,8 @@ import (
 	"golang.org/x/exp/maps"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/coordinator/actions"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
@@ -40,6 +42,10 @@ import (
 	"github.com/oxia-db/oxia/coordinator/selectors"
 	leaderselector "github.com/oxia-db/oxia/coordinator/selectors/leader"
 	"github.com/oxia-db/oxia/proto"
+)
+
+var (
+	ErrNotReadyForChangeEnsemble = errors.New("shard is not ready for change ensemble, please retry later")
 )
 
 type ShardElection struct {
@@ -60,9 +66,11 @@ type ShardElection struct {
 	provider       rpc.Provider
 	meta           *Metadata
 	// owned status
-	namespace   string
-	shard       int64
-	termOptions *proto.NewTermOptions
+	namespace            string
+	shard                int64
+	changeEnsembleAction *actions.ChangeEnsembleAction
+	followerCaughtUp     atomic.Bool // If the followers caught up leader after election
+	termOptions          *proto.NewTermOptions
 	// started
 	started atomic.Bool
 }
@@ -230,6 +238,55 @@ func (e *ShardElection) becomeLeader(term int64, leader model.Server, followers 
 	return nil
 }
 
+// ensureFollowerCaught Must be called before we change ensemble to avoid any potential data lost.
+func (e *ShardElection) ensureFollowerCaught(ensemble []model.Server, leader *model.Server, leaderEntry *proto.EntryId) {
+	waitGroup := sync.WaitGroup{}
+	for _, server := range ensemble {
+		if server.GetIdentifier() == leader.GetIdentifier() {
+			continue
+		}
+		waitGroup.Add(1)
+		go process.DoWithLabels(
+			e.Context,
+			map[string]string{
+				"oxia":      "shard-caught-up-monitor",
+				"namespace": e.namespace,
+				"shard":     fmt.Sprintf("%d", e.shard),
+				"node":      server.GetIdentifier(),
+			}, func() {
+				defer waitGroup.Done()
+				err := backoff.RetryNotify(func() error {
+					fs, err := e.provider.GetStatus(e.Context, server, &proto.GetStatusRequest{Shard: e.shard})
+					if err != nil {
+						return err
+					}
+					followerHeadOffset := fs.HeadOffset
+					if followerHeadOffset >= leaderEntry.Offset {
+						e.Info(
+							"Follower is caught-up with the leader after election",
+							slog.Any("server", server),
+						)
+						return nil
+					}
+					e.Info(
+						"Follower is *not* caught-up yet with the leader",
+						slog.Any("server", server),
+						slog.Int64("leader-head-offset", leaderEntry.Offset),
+						slog.Int64("follower-head-offset", followerHeadOffset),
+					)
+					return errors.New("follower not caught up yet")
+				}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {
+					e.Warn("Failed to get the follower status. ", slog.Any("error", err.Error()), slog.Any("retry-after", duration))
+				})
+				if err != nil {
+					e.Info("Abort node swap follower status validation due to context canceled", slog.Any("error", err))
+					return
+				}
+			})
+	}
+	waitGroup.Wait()
+}
+
 func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int64, leader model.Server, follower model.Server) error {
 	fr, err := e.fenceNewTerm(ctx, term, follower)
 	if err != nil {
@@ -316,9 +373,35 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []model.Serv
 	}
 }
 
+func (e *ShardElection) prepareIfChangeEnsemble(mutShardMeta *model.ShardMetadata) {
+	from := e.changeEnsembleAction.From
+	to := e.changeEnsembleAction.To
+	if !slices.ContainsFunc(mutShardMeta.RemovedNodes, func(server model.Server) bool {
+		return server.GetIdentifier() == from.GetIdentifier()
+	}) {
+		mutShardMeta.RemovedNodes = append(mutShardMeta.RemovedNodes, from)
+	}
+	// A node might get re-added to the ensemble after it was swapped out and be in
+	// pending delete state. We don't want a background task to attempt deletion anymore
+	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes, func(node model.Server) bool {
+		return node.GetIdentifier() == to.GetIdentifier()
+	})
+	mutShardMeta.Ensemble = append(slices.DeleteFunc(mutShardMeta.Ensemble, func(node model.Server) bool {
+		return node.GetIdentifier() == from.GetIdentifier()
+	}), to)
+	e.Info(
+		"Changing ensemble",
+		slog.Any("removed-nodes", mutShardMeta.RemovedNodes),
+		slog.Any("new-ensemble", mutShardMeta.Ensemble),
+		slog.Any("from", from),
+		slog.Any("to", to),
+	)
+}
+
 func (e *ShardElection) start() (model.Server, error) {
 	e.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
+
 	mutShardMeta := e.meta.Compute(func(metadata *model.ShardMetadata) {
 		metadata.Status = model.ShardStatusElection
 		metadata.Leader = nil
@@ -326,6 +409,10 @@ func (e *ShardElection) start() (model.Server, error) {
 		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
 	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+
+	if e.changeEnsembleAction != nil {
+		e.prepareIfChangeEnsemble(&mutShardMeta)
+	}
 
 	// Send NewTerm to all the ensemble members
 	candidatesStatus, err := e.fenceNewTermQuorum(mutShardMeta.Term, mutShardMeta.Ensemble, mutShardMeta.RemovedNodes)
@@ -362,6 +449,7 @@ func (e *ShardElection) start() (model.Server, error) {
 	term := mutShardMeta.Term
 	ensemble := mutShardMeta.Ensemble
 	leader := mutShardMeta.Leader
+	leaderEntry := candidatesStatus[*leader]
 
 	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
 	e.meta.Store(mutShardMeta)
@@ -373,6 +461,7 @@ func (e *ShardElection) start() (model.Server, error) {
 		"Elected new leader",
 		slog.Int64("term", mutShardMeta.Term),
 		slog.Any("leader", mutShardMeta.Leader),
+		slog.Any("ensemble", mutShardMeta.Ensemble),
 	)
 	timer.Done()
 
@@ -387,7 +476,24 @@ func (e *ShardElection) start() (model.Server, error) {
 			},
 		)
 	})
+	e.Go(func() {
+		process.DoWithLabels(
+			e.Context,
+			map[string]string{
+				"oxia":  "election-monitor-followers-caught-up",
+				"shard": fmt.Sprintf("%d", e.shard),
+			}, func() {
+				e.ensureFollowerCaught(ensemble, leader, leaderEntry)
+
+				e.followerCaughtUp.Store(true)
+			},
+		)
+	})
 	return newLeader, nil
+}
+
+func (e *ShardElection) IsReadyForChangeEnsemble() bool {
+	return e.followerCaughtUp.Load()
 }
 
 func (e *ShardElection) Start() model.Server {
@@ -417,8 +523,9 @@ func (e *ShardElection) Stop() {
 //nolint:revive
 func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener ShardEventListener,
 	statusResource resources.StatusResource, configResource resources.ClusterConfigResource,
-	leaderSelector selectors.Selector[*leaderselector.Context, model.Server], provider rpc.Provider,
-	metadata *Metadata, namespace string, shard int64, termOptions *proto.NewTermOptions,
+	leaderSelector selectors.Selector[*leaderselector.Context, model.Server],
+	provider rpc.Provider, metadata *Metadata, namespace string, shard int64,
+	changeEnsembleAction *actions.ChangeEnsembleAction, termOptions *proto.NewTermOptions,
 	leaderElectionLatency metric.LatencyHistogram, newTermQuorumLatency metric.LatencyHistogram,
 	becomeLeaderLatency metric.LatencyHistogram, leaderElectionsFailed metric.Counter) *ShardElection {
 	current, cancelFunc := context.WithCancel(ctx)
@@ -436,6 +543,7 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 		namespace:             namespace,
 		shard:                 shard,
 		termOptions:           termOptions,
+		changeEnsembleAction:  changeEnsembleAction,
 		leaderElectionLatency: leaderElectionLatency,
 		newTermQuorumLatency:  newTermQuorumLatency,
 		becomeLeaderLatency:   becomeLeaderLatency,
