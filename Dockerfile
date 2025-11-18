@@ -17,9 +17,14 @@ FROM golang:1.25-alpine AS build
 RUN apk add --no-cache make git build-base bash
 
 WORKDIR /src/oxia
+RUN mkdir common oxia
 
 # Copy only Go mod files first (for better caching)
 COPY go.mod go.sum ./
+COPY common/go.* ./common
+COPY oxia/go.* ./oxia
+
+RUN ls ./common
 
 # Download dependencies with BuildKit cache mounts
 RUN --mount=type=cache,target=/go/pkg/mod \
