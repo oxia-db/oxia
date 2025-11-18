@@ -527,7 +527,11 @@ func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string) (ReverseKeyI
 }
 
 func (p *Pebble) RangeScan(lowerBound, upperBound string) (KeyValueIterator, error) {
-	opts := &pebble.IterOptions{}
+	opts := &pebble.IterOptions{
+		SkipPoint: func(encodedKey []byte) bool {
+			return p.keyEncoder.IsInternalKey(encodedKey)
+		},
+	}
 	if lowerBound != "" {
 		opts.LowerBound = p.keyEncoder.Encode(lowerBound)
 	}
