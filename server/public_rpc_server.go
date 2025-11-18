@@ -21,13 +21,14 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/oxia-db/oxia/common/auth/server"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
+
+	serverauth "github.com/oxia-db/oxia/common/auth/server"
 
 	"github.com/oxia-db/oxia/proto/compat"
 
@@ -59,12 +60,12 @@ type publicRpcServer struct {
 }
 
 func newPublicRpcServer(provider rpc.GrpcProvider, bindAddress string, shardsDirector ShardsDirector, assignmentDispatcher ShardAssignmentsDispatcher,
-	tlsConf *tls.Config, options *server.Options) (*publicRpcServer, error) {
+	tlsConf *tls.Config, options *serverauth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,
 		log: slog.With(
-			slog.String("component", "public-rpc-server"),
+			slog.String("component", "public-rpc-rpcServer"),
 		),
 	}
 

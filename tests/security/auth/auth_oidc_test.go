@@ -23,13 +23,14 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/oauth2-proxy/mockoidc"
-	clientauth "github.com/oxia-db/oxia/common/auth"
-	server2 "github.com/oxia-db/oxia/common/auth/server"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
+
+	clientauth "github.com/oxia-db/oxia/common/auth"
+	server2 "github.com/oxia-db/oxia/common/auth/server"
 
 	"github.com/oxia-db/oxia/coordinator"
 	"github.com/oxia-db/oxia/coordinator/metadata"
