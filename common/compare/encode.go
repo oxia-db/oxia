@@ -110,7 +110,8 @@ var EncoderHierarchical Encoder = &encoderHierarchical{}
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-var internalKeyPrefixBytes = []byte(constant.InternalKeyPrefix)
+const encodedInternalPrefix = 0xFF
+
 var encodedInternalKeyPrefixBytes = []byte(strings.ReplaceAll(constant.InternalKeyPrefix, "__", "\xff\xff"))
 
 type encoderNatural struct{}
@@ -123,14 +124,14 @@ func (encoderNatural) Encode(key string) []byte {
 	if !strings.HasPrefix(key, constant.InternalKeyPrefix) {
 		// Avoid copying the string
 		return unsafe.Slice(unsafe.StringData(key), len(key))
-	} else {
-		// Encode internal keys so that they don't end up in the middle of ascii sorting
-		// eg: a DeleteRange('A', 'Z') would also delete the '__oxia/...' keys
-		b := []byte(key)
-		b[0] = 0xff
-		b[1] = 0xff
-		return b
 	}
+
+	// Encode internal keys so that they don't end up in the middle of ascii sorting
+	// eg: a DeleteRange('A', 'Z') would also delete the '__oxia/...' keys
+	b := []byte(key)
+	b[0] = encodedInternalPrefix
+	b[1] = encodedInternalPrefix
+	return b
 }
 
 func (encoderNatural) Decode(encoded []byte) string {
