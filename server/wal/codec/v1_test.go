@@ -89,3 +89,40 @@ func TestV1_RecoverIndex(t *testing.T) {
 		assert.EqualValues(t, payloads[i], payload)
 	}
 }
+
+func TestV1_RecoverIndex0(t *testing.T) {
+	elementsNum := 5
+
+	buf := make([]byte, 100)
+	var payloads [][]byte
+	for i := 0; i < elementsNum; i++ {
+		payload, err := uuid.New().MarshalBinary()
+		assert.NoError(t, err)
+		payloads = append(payloads, payload)
+	}
+
+	fOffset := uint32(0)
+	for i := 0; i < elementsNum; i++ {
+		recordSize, _ := v1.WriteRecord(buf, fOffset, 0, payloads[i])
+		fOffset += recordSize
+	}
+
+	file, err := os.CreateTemp("", "TestV1_RecoverIndex0")
+	assert.NoError(t, err)
+	defer os.Remove(file.Name())
+	_, err = file.Write(buf)
+	assert.NoError(t, err)
+
+	stats, err := file.Stat()
+	assert.NoError(t, err)
+	index, _, newFileOffset, lastEntryOffset, err := v1.RecoverIndex0(NewFileReader(file, stats), 0, 0, nil)
+	assert.NoError(t, err)
+	assert.EqualValues(t, lastEntryOffset, 4)
+	assert.EqualValues(t, fOffset, newFileOffset)
+	for i := 0; i < elementsNum; i++ {
+		fOffset := ReadInt(index, uint32(i*4))
+		payload, err := v1.ReadRecordWithValidation(buf, fOffset)
+		assert.NoError(t, err)
+		assert.EqualValues(t, payloads[i], payload)
+	}
+}

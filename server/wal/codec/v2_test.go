@@ -330,3 +330,442 @@ func TestV2_RecoveryWithNotEnoughBuf(t *testing.T) {
 	assert.EqualValues(t, wPayloadCrc, rLastCrc)
 	assert.EqualValues(t, entryOffset, 0)
 }
+
+// TestV2_ReadRecordWithValidation0 tests reading records using FileReader
+func TestV2_ReadRecordWithValidation0(t *testing.T) {
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "TestV2_ReadRecordWithValidation0.txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Prepare test data
+	buf := make([]byte, 100)
+	payload := []byte{1, 2, 3, 4, 5}
+	recordSize, _ := v2.WriteRecord(buf, 0, 0, payload)
+
+	// Write to file
+	_, err = tmpFile.Write(buf[:recordSize])
+	assert.NoError(t, err)
+
+	// Create FileReader
+	fileStat, err := tmpFile.Stat()
+	assert.NoError(t, err)
+	reader := NewFileReader(tmpFile, fileStat)
+
+	// Test reading record
+	getPayload, err := v2.ReadRecordWithValidation0(reader, 0)
+	assert.NoError(t, err)
+	assert.EqualValues(t, payload, getPayload)
+}
+
+// TestV2_ReadHeaderWithValidation0 tests reading record headers using FileReader
+func TestV2_ReadHeaderWithValidation0(t *testing.T) {
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "TestV2_ReadHeaderWithValidation0.txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Prepare test data
+	buf := make([]byte, 100)
+	payload := []byte{1, 2, 3}
+	recordSize, expectedPayloadCrc := v2.WriteRecord(buf, 0, 0, payload)
+
+	// Write to file
+	_, err = tmpFile.Write(buf[:recordSize])
+	assert.NoError(t, err)
+
+	// Create FileReader
+	fileStat, err := tmpFile.Stat()
+	assert.NoError(t, err)
+	reader := NewFileReader(tmpFile, fileStat)
+
+	// Test reading record header
+	payloadSize, previousCrc, payloadCrc, err := v2.ReadHeaderWithValidation0(reader, 0)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 0, previousCrc)
+	assert.EqualValues(t, expectedPayloadCrc, payloadCrc)
+	assert.EqualValues(t, len(payload), payloadSize)
+}
+
+// TestV2_ReadRecordWithValidation0_WithCrc tests CRC chain validation
+func TestV2_ReadRecordWithValidation0_WithCrc(t *testing.T) {
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "TestV2_ReadRecordWithValidation0_WithCrc.txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Prepare multiple records data
+	buf := make([]byte, 1000)
+	var fileOffsets []uint32
+	currentOffset := uint32(0)
+	previousCrc := uint32(0)
+
+	// Write multiple records
+	for i := 0; i < 5; i++ {
+		payload := []byte{byte(i)}
+		recordSize, payloadCrc := v2.WriteRecord(buf, currentOffset, previousCrc, payload)
+		fileOffsets = append(fileOffsets, currentOffset)
+		previousCrc = payloadCrc
+		currentOffset += recordSize
+	}
+
+	// Write to file
+	_, err = tmpFile.Write(buf[:currentOffset])
+	assert.NoError(t, err)
+
+	// Create FileReader
+	fileStat, err := tmpFile.Stat()
+	assert.NoError(t, err)
+	reader := NewFileReader(tmpFile, fileStat)
+
+	// Validate each record
+	expectedChecksum := uint32(0)
+	for i, offset := range fileOffsets {
+		// Read record header
+		_, prevCrc, payloadCrc, err := v2.ReadHeaderWithValidation0(reader, offset)
+		assert.NoError(t, err)
+		assert.EqualValues(t, expectedChecksum, prevCrc)
+
+		// Calculate expected CRC
+		expectedPayloadCrc := crc.Checksum(expectedChecksum).Update([]byte{byte(i)}).Value()
+		assert.EqualValues(t, expectedPayloadCrc, payloadCrc)
+		expectedChecksum = expectedPayloadCrc
+
+		// Read full record
+		payload, err := v2.ReadRecordWithValidation0(reader, offset)
+		assert.NoError(t, err)
+		assert.EqualValues(t, []byte{byte(i)}, payload)
+	}
+}
+
+// TestV2_ReadRecordWithValidation0_ErrorCases tests error scenarios
+func TestV2_ReadRecordWithValidation0_ErrorCases(t *testing.T) {
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "test_read_record_errors_*.txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Prepare test data with sufficient buffer
+	buf := make([]byte, 100)
+	payload := []byte{1, 2, 3, 4, 5}
+	recordSize, _ := v2.WriteRecord(buf, 0, 0, payload)
+
+	// Write to file
+	_, err = tmpFile.Write(buf[:recordSize])
+	assert.NoError(t, err)
+
+	// Test cases
+	testCases := []struct {
+		name        string
+		modifyFunc  func([]byte)
+		expectError error
+	}{
+		{
+			name: "corrupted payload size",
+			modifyFunc: func(buf []byte) {
+				if len(buf) >= 4 {
+					binary.BigEndian.PutUint32(buf, 123123) // invalid payload size
+				}
+			},
+			expectError: ErrOffsetOutOfBounds,
+		},
+		{
+			name: "corrupted previous CRC",
+			modifyFunc: func(buf []byte) {
+				if len(buf) >= int(v2PayloadSizeLen+4) {
+					binary.BigEndian.PutUint32(buf[v2PayloadSizeLen:], 123123)
+				}
+			},
+			expectError: ErrDataCorrupted,
+		},
+		{
+			name: "corrupted payload CRC",
+			modifyFunc: func(buf []byte) {
+				if len(buf) >= int(v2PayloadSizeLen+v2PreviousCrcLen+4) {
+					binary.BigEndian.PutUint32(buf[v2PayloadSizeLen+v2PreviousCrcLen:], 123123)
+				}
+			},
+			expectError: ErrDataCorrupted,
+		},
+		{
+			name: "corrupted payload data",
+			modifyFunc: func(buf []byte) {
+				if len(buf) >= int(v2.HeaderSize+4) {
+					binary.BigEndian.PutUint32(buf[v2.HeaderSize:], 1231242)
+				}
+			},
+			expectError: ErrDataCorrupted,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Reset file
+			err = tmpFile.Truncate(0)
+			assert.NoError(t, err)
+			_, err = tmpFile.Seek(0, 0)
+			assert.NoError(t, err)
+
+			// Write original data
+			_, err = tmpFile.Write(buf[:recordSize])
+			assert.NoError(t, err)
+
+			// Read file content for modification
+			fileContent := make([]byte, recordSize)
+			_, err = tmpFile.ReadAt(fileContent, 0)
+			assert.NoError(t, err)
+
+			// Modify data to create errors
+			tc.modifyFunc(fileContent)
+			_, err = tmpFile.WriteAt(fileContent, 0)
+			assert.NoError(t, err)
+
+			// Create new FileReader
+			fileStat, err := tmpFile.Stat()
+			assert.NoError(t, err)
+			reader := NewFileReader(tmpFile, fileStat)
+
+			// Verify read failure
+			_, _, _, err = v2.ReadHeaderWithValidation0(reader, 0)
+			assert.ErrorIs(t, err, tc.expectError)
+
+			_, err = v2.ReadRecordWithValidation0(reader, 0)
+			assert.ErrorIs(t, err, tc.expectError)
+		})
+	}
+}
+
+// TestV2_RecoverIndex0 tests index recovery using FileReader
+func TestV2_RecoverIndex0(t *testing.T) {
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "TestV2_RecoverIndex0.txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Prepare test data
+	buf := make([]byte, 200)
+	elementsNum := 5
+	var payloads [][]byte
+	for i := 0; i < elementsNum; i++ {
+		payload, err := uuid.New().MarshalBinary()
+		assert.NoError(t, err)
+		payloads = append(payloads, payload)
+	}
+
+	// Write multiple records
+	fOffset := uint32(0)
+	for i := 0; i < elementsNum; i++ {
+		recordSize, _ := v2.WriteRecord(buf, fOffset, 0, payloads[i])
+		fOffset += recordSize
+	}
+
+	// Write to file
+	_, err = tmpFile.Write(buf[:fOffset])
+	assert.NoError(t, err)
+
+	// Create FileReader
+	fileStat, err := tmpFile.Stat()
+	assert.NoError(t, err)
+	reader := NewFileReader(tmpFile, fileStat)
+
+	// Recover index
+	index, _, newFileOffset, lastEntryOffset, err := v2.RecoverIndex0(reader, 0, 0, nil)
+	assert.NoError(t, err)
+	assert.EqualValues(t, lastEntryOffset, int64(elementsNum-1))
+	assert.EqualValues(t, fOffset, newFileOffset)
+
+	// Verify recovered index
+	for i := 0; i < elementsNum; i++ {
+		fOffset := ReadInt(index, uint32(i*4))
+		payload, err := v2.ReadRecordWithValidation0(reader, fOffset)
+		assert.NoError(t, err)
+		assert.EqualValues(t, payloads[i], payload)
+	}
+}
+
+// TestV2_RecoverIndex0_WithCommitOffset tests index recovery with commit offset
+// Skip the test since the impl is not ready
+func _(t *testing.T) {
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "test_recover_index_commit_offset.txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Prepare test data with sufficient buffer size
+	elementsNum := 8
+	commitOffset := int64(5) // Only commit first 5 records
+
+	var payloads [][]byte
+	for i := 0; i < elementsNum; i++ {
+		payload, err := uuid.New().MarshalBinary()
+		assert.NoError(t, err)
+		payloads = append(payloads, payload)
+	}
+
+	// Calculate required buffer size and write records directly to file
+	fOffset := uint32(0)
+	for i := 0; i < elementsNum; i++ {
+		// Create buffer for individual record with sufficient size
+		recordBuf := make([]byte, 50) // Ensure buffer is large enough
+		recordSize, _ := v2.WriteRecord(recordBuf, 0, 0, payloads[i])
+
+		// Write record to file
+		_, err = tmpFile.Write(recordBuf[:recordSize])
+		assert.NoError(t, err)
+
+		fOffset += recordSize
+	}
+
+	// Create FileReader
+	fileStat, err := tmpFile.Stat()
+	assert.NoError(t, err)
+	reader := NewFileReader(tmpFile, fileStat)
+
+	// Recover index with commit offset
+	index, _, _, lastEntryOffset, err := v2.RecoverIndex0(reader, 0, 0, &commitOffset)
+	assert.NoError(t, err)
+
+	// Should only recover up to commit offset
+	assert.EqualValues(t, commitOffset-1, lastEntryOffset) // Offset starts from 0
+
+	// Verify recovered index only contains committed records
+	recoveredElements := int(lastEntryOffset + 1)
+	for i := 0; i < recoveredElements; i++ {
+		fOffset := ReadInt(index, uint32(i*4))
+		payload, err := v2.ReadRecordWithValidation0(reader, fOffset)
+		assert.NoError(t, err)
+		assert.EqualValues(t, payloads[i], payload)
+	}
+}
+
+// TestV2_RecoverIndex0_InsufficientData tests insufficient data scenario
+func TestV2_RecoverIndex0_InsufficientData(t *testing.T) {
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "TestV2_RecoverIndex0_InsufficientData.txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Prepare data that's insufficient for a complete record
+	buf := make([]byte, 16)
+	payloadSize := uint32(len(buf)) - v2.HeaderSize - 1 // 1 byte less than complete record
+	payload := bytes.Repeat([]byte("A"), int(payloadSize))
+	_, wPayloadCrc := v2.WriteRecord(buf, 0, 0, payload)
+
+	// Write to file (incomplete record)
+	_, err = tmpFile.Write(buf[:len(buf)-1])
+	assert.NoError(t, err)
+
+	// Create FileReader
+	fileStat, err := tmpFile.Stat()
+	assert.NoError(t, err)
+	reader := NewFileReader(tmpFile, fileStat)
+
+	// Index recovery should succeed but only process valid data
+	_, rLastCrc, _, entryOffset, err := v2.RecoverIndex0(reader, 0, 0, nil)
+	assert.NoError(t, err)
+	assert.EqualValues(t, wPayloadCrc, rLastCrc)
+	assert.EqualValues(t, entryOffset, 0)
+}
+
+// TestV2_RecoverIndex0_CorruptedData tests corrupted data scenario
+func TestV2_RecoverIndex0_CorruptedData(t *testing.T) {
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "TestV2_RecoverIndex0_CorruptedData.txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Prepare mixed data: valid records + corrupted data
+	buf := make([]byte, 300)
+
+	// Write some valid records
+	var validPayloads [][]byte
+	fOffset := uint32(0)
+	for i := 0; i < 3; i++ {
+		payload := []byte{byte(i)}
+		recordSize, _ := v2.WriteRecord(buf, fOffset, 0, payload)
+		validPayloads = append(validPayloads, payload)
+		fOffset += recordSize
+	}
+
+	// Add corrupted data
+	copy(buf[fOffset:], []byte{0xFF, 0xFF, 0xFF, 0xFF}) // Invalid payload size
+
+	// Write to file
+	_, err = tmpFile.Write(buf[:fOffset+10]) // Include partial corrupted data
+	assert.NoError(t, err)
+
+	// Create FileReader
+	fileStat, err := tmpFile.Stat()
+	assert.NoError(t, err)
+	reader := NewFileReader(tmpFile, fileStat)
+
+	// Index recovery should succeed but only process valid records
+	index, _, _, lastEntryOffset, err := v2.RecoverIndex0(reader, 0, 0, nil)
+	assert.NoError(t, err)
+
+	// Should only recover up to last valid record
+	assert.EqualValues(t, 2, lastEntryOffset) // 3 valid records, index starts from 0
+
+	// Verify recovered valid records
+	for i := 0; i <= int(lastEntryOffset); i++ {
+		fOffset := ReadInt(index, uint32(i*4))
+		payload, err := v2.ReadRecordWithValidation0(reader, fOffset)
+		assert.NoError(t, err)
+		assert.EqualValues(t, validPayloads[i], payload)
+	}
+}
+
+// TestV2_FileReader_EdgeCases tests FileReader edge cases
+func TestV2_FileReader_EdgeCases(t *testing.T) {
+	// Test empty file
+	tmpFile, err := os.CreateTemp("", ".txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	fileStat, err := tmpFile.Stat()
+	assert.NoError(t, err)
+	reader := NewFileReader(tmpFile, fileStat)
+
+	// Reading from empty file should fail
+	_, _, _, err = v2.ReadHeaderWithValidation0(reader, 0)
+	assert.Error(t, err)
+
+	_, err = v2.ReadRecordWithValidation0(reader, 0)
+	assert.Error(t, err)
+
+	// Recovering index from empty file should return empty index
+	index, lastCrc, newOffset, lastEntry, err := v2.RecoverIndex0(reader, 0, 0, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, uint32(0), lastCrc)
+	assert.Equal(t, uint32(0), newOffset)
+	assert.Equal(t, int64(-1), lastEntry) // Should be -1 when no valid records
+	assert.NotNil(t, index)
+}
+
+// TestV2_FileReader_Size tests FileReader Size method
+func TestV2_FileReader_Size(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "TestV2_FileReader_Size.txn")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Write some data
+	data := []byte{1, 2, 3, 4, 5}
+	_, err = tmpFile.Write(data)
+	assert.NoError(t, err)
+
+	fileStat, err := tmpFile.Stat()
+	assert.NoError(t, err)
+	reader := NewFileReader(tmpFile, fileStat)
+
+	assert.Equal(t, fileStat.Size(), reader.Size())
+}

@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/edsrzf/mmap-go"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -59,8 +58,8 @@ type readOnlySegment struct {
 	lastCrc    uint32
 	closed     bool
 
-	txnFile       *os.File
-	txnMappedFile mmap.MMap
+	txnFile *os.File
+	reader  *codec.FileReader
 
 	// Index file maps a logical "offset" to a physical file offset within the wal segment
 	idx           []byte
@@ -81,10 +80,11 @@ func newReadOnlySegment(basePath string, baseOffset int64) (ReadOnlySegment, err
 	if ms.txnFile, err = os.OpenFile(ms.c.txnPath, os.O_RDONLY, 0); err != nil {
 		return nil, errors.Wrapf(err, "failed to open segment txn file %s", ms.c.txnPath)
 	}
-
-	if ms.txnMappedFile, err = mmap.MapRegion(ms.txnFile, -1, mmap.RDONLY, 0, 0); err != nil {
-		return nil, errors.Wrapf(err, "failed to map segment txn file %s", ms.c.txnPath)
+	fileStat, err := ms.txnFile.Stat()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to stat segment txn file %s", ms.c.txnPath)
 	}
+	ms.reader = codec.NewFileReader(ms.txnFile, fileStat)
 
 	if ms.idx, err = ms.c.codec.ReadIndex(ms.c.idxPath); err != nil {
 		if !errors.Is(err, codec.ErrDataCorrupted) {
@@ -92,7 +92,7 @@ func newReadOnlySegment(basePath string, baseOffset int64) (ReadOnlySegment, err
 		}
 		slog.Warn("The segment index file is corrupted and the index is being rebuilt.", slog.String("path", ms.c.idxPath))
 		// recover from txn
-		if ms.idx, _, _, _, err = ms.c.codec.RecoverIndex(ms.txnMappedFile, 0,
+		if ms.idx, _, _, _, err = ms.c.codec.RecoverIndex0(ms.reader, 0,
 			ms.c.baseOffset, nil); err != nil {
 			slog.Error("The segment index file rebuild failed.", slog.String("path", ms.c.idxPath))
 			return nil, errors.Wrapf(err, "failed to rebuild segment index file %s", ms.c.idxPath)
@@ -108,7 +108,7 @@ func newReadOnlySegment(basePath string, baseOffset int64) (ReadOnlySegment, err
 
 	// recover the last crc
 	fo := fileOffset(ms.idx, ms.c.baseOffset, ms.lastOffset)
-	if _, _, ms.lastCrc, err = ms.c.codec.ReadHeaderWithValidation(ms.txnMappedFile, fo); err != nil {
+	if _, _, ms.lastCrc, err = ms.c.codec.ReadHeaderWithValidation0(ms.reader, fo); err != nil {
 		return nil, err
 	}
 	return ms, nil
@@ -133,7 +133,7 @@ func (ms *readOnlySegment) Read(offset int64) ([]byte, error) {
 	fileReadOffset := fileOffset(ms.idx, ms.c.baseOffset, offset)
 	var payload []byte
 	var err error
-	if payload, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {
+	if payload, err = ms.c.codec.ReadRecordWithValidation0(ms.reader, fileReadOffset); err != nil {
 		if errors.Is(err, codec.ErrDataCorrupted) {
 			return nil, errors.Wrapf(err, "read record failed. entryOffset: %d", offset)
 		}
@@ -149,7 +149,6 @@ func (ms *readOnlySegment) Close() error {
 
 	ms.closed = true
 	return multierr.Combine(
-		ms.txnMappedFile.Unmap(),
 		ms.txnFile.Close(),
 	)
 }

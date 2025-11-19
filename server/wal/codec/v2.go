@@ -97,6 +97,19 @@ func (v *V2) ReadRecordWithValidation(buf []byte, startFileOffset uint32) (paylo
 	return payload, nil
 }
 
+func (v *V2) ReadRecordWithValidation0(reader *FileReader, startFileOffset uint32) (payload []byte, err error) {
+	var payloadSize uint32
+	if payloadSize, _, _, err = v.ReadHeaderWithValidation0(reader, startFileOffset); err != nil {
+		return nil, err
+	}
+	payload = make([]byte, payloadSize)
+	payloadStartFileOffset := startFileOffset + v.HeaderSize
+	if _, err = reader.ReadAt(payload, int64(payloadStartFileOffset)); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
 func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (payloadSize uint32, previousCrc uint32, payloadCrc uint32, err error) {
 	bufSize := uint32(len(buf))
 	if startFileOffset >= bufSize {
@@ -131,6 +144,57 @@ func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 	payloadSlice := buf[payloadStartFileOffset : payloadStartFileOffset+payloadSize]
 
 	if expectedCrc := crc.Checksum(previousCrc).Update(payloadSlice).Value(); expectedCrc != payloadCrc {
+		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(ErrDataCorrupted,
+			" expected crc: %d; actual crc: %d", expectedCrc, payloadCrc)
+	}
+
+	return payloadSize, previousCrc, payloadCrc, nil
+}
+
+func (v *V2) ReadHeaderWithValidation0(reader *FileReader, startFileOffset uint32) (payloadSize uint32, previousCrc uint32, payloadCrc uint32, err error) {
+	fileSize := uint32(reader.Size())
+	if startFileOffset >= fileSize {
+		return payloadSize, previousCrc, payloadCrc,
+			errors.Wrapf(ErrOffsetOutOfBounds, "expected payload size: %d. actual buf size: %d ",
+				startFileOffset+v2PayloadSizeLen, fileSize)
+	}
+
+	// Read the header with 1 IO call.
+	headerBuf, err := ReadHeader(reader, startFileOffset, v.HeaderSize)
+	if err != nil {
+		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(err, "fail to read header")
+	}
+	var headerOffset uint32
+	payloadSize = ReadInt(headerBuf, headerOffset)
+	headerOffset += v2PayloadSizeLen
+
+	// It shouldn't happen when normal reading
+	if payloadSize == 0 {
+		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(ErrEmptyPayload, "unexpected empty payload")
+	}
+
+	expectSize := payloadSize + v.HeaderSize
+	// overflow checking
+	actualBufSize := fileSize - startFileOffset
+	if expectSize > actualBufSize {
+		return payloadSize, previousCrc, payloadCrc,
+			errors.Wrapf(ErrOffsetOutOfBounds, "expected payload size: %d. actual buf size: %d ", expectSize, fileSize)
+	}
+
+	previousCrc = ReadInt(headerBuf, headerOffset)
+
+	headerOffset += v2PreviousCrcLen
+	payloadCrc = ReadInt(headerBuf, headerOffset)
+	headerOffset += v2PayloadCrcLen
+
+	payloadStartFileOffset := startFileOffset + headerOffset
+	payloadBuf := make([]byte, payloadSize)
+	_, err = reader.ReadAt(payloadBuf, int64(payloadStartFileOffset))
+	if err != nil {
+		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(err, "fail to read payload")
+	}
+
+	if expectedCrc := crc.Checksum(previousCrc).Update(payloadBuf).Value(); expectedCrc != payloadCrc {
 		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(ErrDataCorrupted,
 			" expected crc: %d; actual crc: %d", expectedCrc, payloadCrc)
 	}
@@ -210,6 +274,42 @@ func (v *V2) RecoverIndex(buf []byte, startFileOffset uint32, baseEntryOffset in
 		var payloadCrc uint32
 		var err error
 		if payloadSize, _, payloadCrc, err = v.ReadHeaderWithValidation(buf, newFileOffset); err != nil {
+			if errors.Is(err, ErrEmptyPayload) {
+				// we might read the end of the segment.
+				break
+			}
+			// data corruption
+			if errors.Is(err, ErrOffsetOutOfBounds) || errors.Is(err, ErrDataCorrupted) {
+				if commitOffset != nil && currentEntryOffset > *commitOffset {
+					// uncommitted data corruption, simply discard it
+					slog.Warn("discard the corrupted uncommitted data.",
+						slog.Int64("entryId", currentEntryOffset), slog.Any("error", err))
+					break
+				}
+				return nil, 0, 0, 0, errors.Wrapf(err, "entryOffset: %d", currentEntryOffset)
+			}
+			return nil, 0, 0, 0, err
+		}
+		lastCrc = payloadCrc
+		index = binary.BigEndian.AppendUint32(index, newFileOffset)
+		newFileOffset += v.GetHeaderSize() + payloadSize
+		currentEntryOffset++
+	}
+	return index, lastCrc, newFileOffset, currentEntryOffset - 1, nil
+}
+
+func (v *V2) RecoverIndex0(reader *FileReader, startFileOffset uint32, baseEntryOffset int64, commitOffset *int64) (index []byte, lastCrc uint32, newFileOffset uint32, lastEntryOffset int64, err error) {
+	maxSize := uint32(reader.Size())
+	newFileOffset = startFileOffset
+	currentEntryOffset := baseEntryOffset
+
+	index = BorrowEmptyIndexBuf()
+
+	for newFileOffset+v.HeaderSize <= maxSize {
+		var payloadSize uint32
+		var payloadCrc uint32
+		var err error
+		if payloadSize, _, payloadCrc, err = v.ReadHeaderWithValidation0(reader, newFileOffset); err != nil {
 			if errors.Is(err, ErrEmptyPayload) {
 				// we might read the end of the segment.
 				break
