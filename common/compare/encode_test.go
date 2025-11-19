@@ -88,3 +88,25 @@ func TestEncodeCompare(t *testing.T) {
 	assert.Equal(t, -1, cmp(enc("/a/a-1"), enc("/a//")))
 	assert.Equal(t, -1, cmp(enc("/a//"), enc("/b/c")))
 }
+
+func TestEncodeInternalKeys(t *testing.T) {
+	cmp := bytes.Compare
+
+	for _, encoder := range []Encoder{EncoderNatural, EncoderHierarchical} {
+		t.Run(encoder.Name(), func(t *testing.T) {
+			enc := encoder.Encode
+			assert.False(t, encoder.IsInternalKey(enc("my-key")))
+			assert.False(t, encoder.IsInternalKey(enc("/my-key")))
+
+			assert.True(t, encoder.IsInternalKey(enc("__oxia/")))
+			assert.True(t, encoder.IsInternalKey(enc("__oxia/xyz")))
+
+			assert.Equal(t, -1, cmp(enc("my-key"), enc("__oxia/xyz")))
+			assert.Equal(t, -1, cmp(enc("/my-key"), enc("__oxia/xyz")))
+			assert.Equal(t, -1, cmp(enc("/my-key"), enc("__oxia/xyz")))
+
+			k := "__oxia/xyz"
+			assert.Equal(t, k, encoder.Decode(encoder.Encode(k)))
+		})
+	}
+}
