@@ -331,7 +331,7 @@ func TestV2_RecoveryWithNotEnoughBuf(t *testing.T) {
 	assert.EqualValues(t, entryOffset, 0)
 }
 
-// TestV2_ReadRecordWithValidation0 tests reading records using FileReader
+// TestV2_ReadRecordWithValidation0 tests reading records using FileReader.
 func TestV2_ReadRecordWithValidation0(t *testing.T) {
 	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "TestV2_ReadRecordWithValidation0.txn")
@@ -359,7 +359,7 @@ func TestV2_ReadRecordWithValidation0(t *testing.T) {
 	assert.EqualValues(t, payload, getPayload)
 }
 
-// TestV2_ReadHeaderWithValidation0 tests reading record headers using FileReader
+// TestV2_ReadHeaderWithValidation0 tests reading record headers using FileReader.
 func TestV2_ReadHeaderWithValidation0(t *testing.T) {
 	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "TestV2_ReadHeaderWithValidation0.txn")
@@ -389,7 +389,7 @@ func TestV2_ReadHeaderWithValidation0(t *testing.T) {
 	assert.EqualValues(t, len(payload), payloadSize)
 }
 
-// TestV2_ReadRecordWithValidation0_WithCrc tests CRC chain validation
+// TestV2_ReadRecordWithValidation0_WithCrc tests CRC chain validation.
 func TestV2_ReadRecordWithValidation0_WithCrc(t *testing.T) {
 	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "TestV2_ReadRecordWithValidation0_WithCrc.txn")
@@ -441,7 +441,7 @@ func TestV2_ReadRecordWithValidation0_WithCrc(t *testing.T) {
 	}
 }
 
-// TestV2_ReadRecordWithValidation0_ErrorCases tests error scenarios
+// TestV2_ReadRecordWithValidation0_ErrorCases tests error scenarios.
 func TestV2_ReadRecordWithValidation0_ErrorCases(t *testing.T) {
 	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "test_read_record_errors_*.txn")
@@ -539,7 +539,7 @@ func TestV2_ReadRecordWithValidation0_ErrorCases(t *testing.T) {
 	}
 }
 
-// TestV2_RecoverIndex0 tests index recovery using FileReader
+// TestV2_RecoverIndex0 tests index recovery using FileReader.
 func TestV2_RecoverIndex0(t *testing.T) {
 	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "TestV2_RecoverIndex0.txn")
@@ -588,63 +588,7 @@ func TestV2_RecoverIndex0(t *testing.T) {
 	}
 }
 
-// TestV2_RecoverIndex0_WithCommitOffset tests index recovery with commit offset
-// Skip the test since the impl is not ready
-func _(t *testing.T) {
-	// Create temporary file
-	tmpFile, err := os.CreateTemp("", "test_recover_index_commit_offset.txn")
-	assert.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
-
-	// Prepare test data with sufficient buffer size
-	elementsNum := 8
-	commitOffset := int64(5) // Only commit first 5 records
-
-	var payloads [][]byte
-	for i := 0; i < elementsNum; i++ {
-		payload, err := uuid.New().MarshalBinary()
-		assert.NoError(t, err)
-		payloads = append(payloads, payload)
-	}
-
-	// Calculate required buffer size and write records directly to file
-	fOffset := uint32(0)
-	for i := 0; i < elementsNum; i++ {
-		// Create buffer for individual record with sufficient size
-		recordBuf := make([]byte, 50) // Ensure buffer is large enough
-		recordSize, _ := v2.WriteRecord(recordBuf, 0, 0, payloads[i])
-
-		// Write record to file
-		_, err = tmpFile.Write(recordBuf[:recordSize])
-		assert.NoError(t, err)
-
-		fOffset += recordSize
-	}
-
-	// Create FileReader
-	fileStat, err := tmpFile.Stat()
-	assert.NoError(t, err)
-	reader := NewFileReader(tmpFile, fileStat)
-
-	// Recover index with commit offset
-	index, _, _, lastEntryOffset, err := v2.RecoverIndex0(reader, 0, 0, &commitOffset)
-	assert.NoError(t, err)
-
-	// Should only recover up to commit offset
-	assert.EqualValues(t, commitOffset-1, lastEntryOffset) // Offset starts from 0
-
-	// Verify recovered index only contains committed records
-	recoveredElements := int(lastEntryOffset + 1)
-	for i := 0; i < recoveredElements; i++ {
-		fOffset := ReadInt(index, uint32(i*4))
-		payload, err := v2.ReadRecordWithValidation0(reader, fOffset)
-		assert.NoError(t, err)
-		assert.EqualValues(t, payloads[i], payload)
-	}
-}
-
-// TestV2_RecoverIndex0_InsufficientData tests insufficient data scenario
+// TestV2_RecoverIndex0_InsufficientData tests insufficient data scenario.
 func TestV2_RecoverIndex0_InsufficientData(t *testing.T) {
 	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "TestV2_RecoverIndex0_InsufficientData.txn")
@@ -674,7 +618,7 @@ func TestV2_RecoverIndex0_InsufficientData(t *testing.T) {
 	assert.EqualValues(t, entryOffset, 0)
 }
 
-// TestV2_RecoverIndex0_CorruptedData tests corrupted data scenario
+// TestV2_RecoverIndex0_CorruptedData tests corrupted data scenario.
 func TestV2_RecoverIndex0_CorruptedData(t *testing.T) {
 	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "TestV2_RecoverIndex0_CorruptedData.txn")
@@ -723,7 +667,7 @@ func TestV2_RecoverIndex0_CorruptedData(t *testing.T) {
 	}
 }
 
-// TestV2_FileReader_EdgeCases tests FileReader edge cases
+// TestV2_FileReader_EdgeCases tests FileReader edge cases.
 func TestV2_FileReader_EdgeCases(t *testing.T) {
 	// Test empty file
 	tmpFile, err := os.CreateTemp("", ".txn")
@@ -751,7 +695,7 @@ func TestV2_FileReader_EdgeCases(t *testing.T) {
 	assert.NotNil(t, index)
 }
 
-// TestV2_FileReader_Size tests FileReader Size method
+// TestV2_FileReader_Size tests FileReader Size method.
 func TestV2_FileReader_Size(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "TestV2_FileReader_Size.txn")
 	assert.NoError(t, err)

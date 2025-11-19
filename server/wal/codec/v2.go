@@ -178,7 +178,7 @@ func (v *V2) ReadHeaderWithValidation0(reader *FileReader, startFileOffset uint3
 	actualBufSize := fileSize - startFileOffset
 	if expectSize > actualBufSize {
 		return payloadSize, previousCrc, payloadCrc,
-			errors.Wrapf(ErrOffsetOutOfBounds, "expected payload size: %d. actual buf size: %d ", expectSize, fileSize)
+			errors.Wrapf(ErrOffsetOutOfBounds, "expected payload size: %d. actual file size: %d ", expectSize, fileSize)
 	}
 
 	previousCrc = ReadInt(headerBuf, headerOffset)

@@ -124,7 +124,7 @@ func (v *V1) ReadHeaderWithValidation0(reader *FileReader, startFileOffset uint3
 	bufSize := uint32(reader.Size())
 	if startFileOffset >= bufSize {
 		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(ErrOffsetOutOfBounds,
-			"expected payload size: %d. actual buf size: %d ", startFileOffset+v1PayloadSizeLen, bufSize)
+			"expected payload size: %d. actual file size: %d ", startFileOffset+v1PayloadSizeLen, bufSize)
 	}
 
 	payloadSize, err = ReadUint32(reader, startFileOffset)
@@ -140,7 +140,7 @@ func (v *V1) ReadHeaderWithValidation0(reader *FileReader, startFileOffset uint3
 	actualBufSize := bufSize - startFileOffset
 	if expectSize > actualBufSize {
 		return payloadSize, previousCrc, payloadCrc,
-			errors.Wrapf(ErrOffsetOutOfBounds, "expected payload size: %d. actual buf size: %d ", expectSize, bufSize)
+			errors.Wrapf(ErrOffsetOutOfBounds, "expected payload size: %d. actual file size: %d ", expectSize, bufSize)
 	}
 	return payloadSize, previousCrc, payloadCrc, nil
 }
