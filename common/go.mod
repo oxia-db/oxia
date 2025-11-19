@@ -12,28 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package actions
+module github.com/oxia-db/oxia/common
 
-import (
-	"sync"
+go 1.25.2
 
-	"github.com/oxia-db/oxia/coordinator/model"
+require (
+	github.com/cenkalti/backoff/v4 v4.3.0
+	github.com/cockroachdb/pebble/v2 v2.1.0
+	github.com/coreos/go-oidc/v3 v3.14.1
+	github.com/mitchellh/mapstructure v1.5.0
+	github.com/pkg/errors v0.9.1
+	github.com/prometheus/client_golang v1.22.0
+	github.com/stretchr/testify v1.10.0
+	golang.org/x/exp v0.0.0-20250506013437-ce4c2cf36ca6
+	google.golang.org/grpc v1.72.0
+	google.golang.org/protobuf v1.36.6
 )
-
-var _ Action = &SwapNodeAction{}
-
-type SwapNodeAction struct {
-	Shard int64
-	From  model.Server
-	To    model.Server
-
-	Waiter *sync.WaitGroup
-}
-
-func (s *SwapNodeAction) Done(_ any) {
-	s.Waiter.Done()
-}
-
-func (*SwapNodeAction) Type() Type {
-	return SwapNode
-}

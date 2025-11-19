@@ -28,10 +28,11 @@ import (
 	"google.golang.org/grpc/metadata"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/auth/server"
+
 	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/proto"
-	"github.com/oxia-db/oxia/server/auth"
 )
 
 const (
@@ -55,7 +56,7 @@ func newMaelstromGrpcProvider() *maelstromGrpcProvider {
 }
 
 func (m *maelstromGrpcProvider) StartGrpcServer(name, _ string, registerFunc func(grpc.ServiceRegistrar),
-	_ *tls.Config, _ *auth.Options) (rpc.GrpcServer, error) {
+	_ *tls.Config, _ *server.Options) (rpc.GrpcServer, error) {
 	slog.Info(
 		"Start Grpc server",
 		slog.String("name", name),

@@ -147,7 +147,7 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 	if !exist {
 		return
 	}
-	ns.Shards[shard] = shardMetadata
+	ns.Shards[shard] = shardMetadata.Clone()
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {

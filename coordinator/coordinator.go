@@ -178,7 +178,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
 			c.shardControllers[shard] = controllers.NewShardController(namespace, shard, namespaceConfig,
-				shardMetadata, c.configResource, c.statusResource, c, c.rpc, controllers.DefaultPeriodicTasksInterval)
+				shardMetadata.Clone(), c.configResource, c.statusResource, c, c.rpc, controllers.DefaultPeriodicTasksInterval)
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
 		}
@@ -319,7 +319,7 @@ func (c *coordinator) startBackgroundActionWorker() {
 		case ac := <-c.loadBalancer.Action():
 			switch ac.Type() {
 			case actions.SwapNode:
-				c.handleActionSwap(ac)
+				c.handleActionChangeEnsemble(ac)
 			case actions.Election:
 				c.handleActionElection(ac)
 			default:
@@ -351,26 +351,23 @@ func (c *coordinator) handleActionElection(ac actions.Action) {
 	electionAc.Done(sc.Election(electionAc))
 }
 
-func (c *coordinator) handleActionSwap(ac actions.Action) {
-	var swapAction *actions.SwapNodeAction
+func (c *coordinator) handleActionChangeEnsemble(ac actions.Action) {
+	var changeEnsembleAction *actions.ChangeEnsembleAction
 	var ok bool
-	if swapAction, ok = ac.(*actions.SwapNodeAction); !ok {
+	if changeEnsembleAction, ok = ac.(*actions.ChangeEnsembleAction); !ok {
 		panic("unexpected action type")
 	}
-	defer swapAction.Done(nil)
 	c.Info("Applying swap action", slog.Any("swap-action", ac))
 
 	c.RLock()
-	sc, ok := c.shardControllers[swapAction.Shard]
+	sc, ok := c.shardControllers[changeEnsembleAction.Shard]
 	c.RUnlock()
 	if !ok {
-		c.Warn("Shard controller not found", slog.Int64("shard", swapAction.Shard))
+		c.Warn("Shard controller not found", slog.Int64("shard", changeEnsembleAction.Shard))
 		return
 	}
 
-	if err := sc.SwapNode(swapAction.From, swapAction.To); err != nil {
-		c.Warn("Failed to swap node", slog.Any("error", err), slog.Int64("shard", swapAction.Shard), slog.Any("swap-action", ac))
-	}
+	sc.ChangeEnsemble(changeEnsembleAction)
 }
 
 // This is called while already holding the lock on the coordinator.

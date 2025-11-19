@@ -29,6 +29,9 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
 
+	clientauth "github.com/oxia-db/oxia/common/auth"
+	server2 "github.com/oxia-db/oxia/common/auth/server"
+
 	"github.com/oxia-db/oxia/coordinator"
 	"github.com/oxia-db/oxia/coordinator/metadata"
 	rpc2 "github.com/oxia-db/oxia/coordinator/rpc"
@@ -38,21 +41,19 @@ import (
 
 	"github.com/oxia-db/oxia/coordinator/model"
 	"github.com/oxia-db/oxia/oxia"
-	clientauth "github.com/oxia-db/oxia/oxia/auth"
 	"github.com/oxia-db/oxia/server"
-	"github.com/oxia-db/oxia/server/auth"
 )
 
 func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (address string, closeFunc func()) {
 	t.Helper()
-	options := auth.OIDCOptions{
+	options := server2.OIDCOptions{
 		AllowedIssueURLs: issueURL,
 		AllowedAudiences: audiences,
 	}
 	jsonParams, err := json.Marshal(options)
 	assert.NoError(t, err)
-	authParams := auth.Options{
-		ProviderName:   auth.ProviderOIDC,
+	authParams := server2.Options{
+		ProviderName:   server2.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
 	s1, err := server.New(server.Config{

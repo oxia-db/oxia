@@ -28,6 +28,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 
+	serverauth "github.com/oxia-db/oxia/common/auth/server"
+
 	"github.com/oxia-db/oxia/proto/compat"
 
 	"github.com/oxia-db/oxia/common/concurrent"
@@ -38,7 +40,6 @@ import (
 	"github.com/oxia-db/oxia/common/channel"
 
 	"github.com/oxia-db/oxia/proto"
-	"github.com/oxia-db/oxia/server/auth"
 )
 
 const (
@@ -59,12 +60,12 @@ type publicRpcServer struct {
 }
 
 func newPublicRpcServer(provider rpc.GrpcProvider, bindAddress string, shardsDirector ShardsDirector, assignmentDispatcher ShardAssignmentsDispatcher,
-	tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
+	tlsConf *tls.Config, options *serverauth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,
 		log: slog.With(
-			slog.String("component", "public-rpc-server"),
+			slog.String("component", "public-rpc-rpcServer"),
 		),
 	}
 

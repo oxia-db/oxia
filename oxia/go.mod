@@ -12,29 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+module github.com/oxia-db/oxia/oxia
 
-import (
-	"sync"
-	"testing"
+go 1.25.2
 
-	"github.com/oxia-db/oxia/coordinator/actions"
-	"github.com/oxia-db/oxia/coordinator/model"
+require (
+	github.com/oxia-db/oxia/common v0.0.0-00010101000000-000000000000
 )
 
-func TestActionSwapDone(t *testing.T) {
-	group := &sync.WaitGroup{}
-	group.Add(1)
-	swapAction := actions.SwapNodeAction{
-		Shard: int64(1),
-		From: model.Server{
-			Internal: "sv-1",
-		},
-		To: model.Server{
-			Internal: "sv-2",
-		},
-		Waiter: group,
-	}
-	swapAction.Done(nil)
-	group.Wait()
-}
+replace github.com/oxia-db/oxia/common => ../common
