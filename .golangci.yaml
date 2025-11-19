@@ -116,6 +116,8 @@ linters:
         - name: bare-return
           severity: warning
           disabled: false
+    gomoddirectives:
+      replace-local: true
   exclusions:
     generated: lax
     presets:

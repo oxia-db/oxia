@@ -22,12 +22,13 @@ import (
 
 	"go.uber.org/multierr"
 
+	"github.com/oxia-db/oxia/common/auth/server"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/proto"
-	"github.com/oxia-db/oxia/server/auth"
 	"github.com/oxia-db/oxia/server/kv"
 	"github.com/oxia-db/oxia/server/wal"
 )
@@ -96,7 +97,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 	}
 
 	s.rpc, err = newPublicRpcServer(rpc.Default, config.PublicServiceAddr, s.shardsDirector,
-		nil, config.ServerTLS, &auth.Disabled)
+		nil, config.ServerTLS, &server.Disabled)
 	if err != nil {
 		return nil, err
 	}

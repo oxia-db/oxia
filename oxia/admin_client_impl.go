@@ -19,8 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 
-	"github.com/oxia-db/oxia/oxia/auth"
-
+	"github.com/oxia-db/oxia/common/auth"
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/proto"
 )
