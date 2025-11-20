@@ -18,18 +18,18 @@ import (
 	"io"
 	"time"
 
+	"github.com/oxia-db/oxia/dataserver"
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/common/process"
 
 	"github.com/oxia-db/oxia/cmd/flag"
 	"github.com/oxia-db/oxia/common/security"
-	"github.com/oxia-db/oxia/server"
-	"github.com/oxia-db/oxia/server/kv"
+	"github.com/oxia-db/oxia/dataserver/kv"
 )
 
 var (
-	conf = server.Config{}
+	conf = dataserver.Config{}
 
 	peerTLS           = security.TLSOption{}
 	serverTLS         = security.TLSOption{}
@@ -93,7 +93,7 @@ func exec(*cobra.Command, []string) {
 		if err := configureTLS(); err != nil {
 			return nil, err
 		}
-		return server.New(conf)
+		return dataserver.New(conf)
 	})
 }
 
