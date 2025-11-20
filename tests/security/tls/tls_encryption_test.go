@@ -32,8 +32,8 @@ import (
 
 	"github.com/oxia-db/oxia/common/security"
 	"github.com/oxia-db/oxia/coordinator/model"
+	"github.com/oxia-db/oxia/dataserver"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/server"
 )
 
 func getPeerTLSOption() (*security.TLSOption, error) {
@@ -72,14 +72,14 @@ func getClientTLSOption() (*security.TLSOption, error) {
 	return &clientOption, nil
 }
 
-func newTLSServer(t *testing.T) (s *server.Server, addr model.Server) {
+func newTLSServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
-	return newTLSServerWithInterceptor(t, func(config *server.Config) {
+	return newTLSServerWithInterceptor(t, func(config *dataserver.Config) {
 
 	})
 }
 
-func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *server.Config)) (s *server.Server, addr model.Server) {
+func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserver.Config)) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -89,7 +89,7 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *server.C
 	peerTLSConf, err := option.MakeClientTLSConf()
 	assert.NoError(t, err)
 
-	config := server.Config{
+	config := dataserver.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -103,7 +103,7 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *server.C
 
 	interceptor(&config)
 
-	s, err = server.New(config)
+	s, err = dataserver.New(config)
 
 	assert.NoError(t, err)
 
@@ -299,7 +299,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 }
 
 func TestOnlyEnablePublicTls(t *testing.T) {
-	disableInternalTLS := func(config *server.Config) {
+	disableInternalTLS := func(config *dataserver.Config) {
 		config.InternalServerTLS = nil
 		config.PeerTLS = nil
 	}
