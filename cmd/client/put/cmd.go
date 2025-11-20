@@ -45,7 +45,7 @@ func (flags *flags) Reset() {
 }
 
 func init() {
-	Cmd.Flags().Int64VarP(&Config.expectedVersion, "expected-version", "e", -1, "Version of entry expected to be on the server")
+	Cmd.Flags().Int64VarP(&Config.expectedVersion, "expected-version", "e", -1, "Version of entry expected to be on the dataserver")
 	Cmd.Flags().BoolVarP(&Config.readValueFromStdIn, "std-in", "c", false, "Read value from stdin")
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
 	Cmd.Flags().Int64SliceVarP(&Config.sequenceKeysDeltas, "sequence-keys-deltas", "d", nil, "Specify one or more sequence keys deltas to be added to the inserted key")
@@ -54,7 +54,7 @@ func init() {
 var Cmd = &cobra.Command{
 	Use:          "put [flags] KEY [VALUE]",
 	Short:        "Put value",
-	Long:         `Put a value and associated it with the given key, either inserting a new entry or updating the existing one. If an expected version is provided, the put will only take place if it matches the version of the current record on the server`,
+	Long:         `Put a value and associated it with the given key, either inserting a new entry or updating the existing one. If an expected version is provided, the put will only take place if it matches the version of the current record on the dataserver`,
 	Args:         cobra.RangeArgs(1, 2),
 	RunE:         exec,
 	SilenceUsage: true,

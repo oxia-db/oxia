@@ -22,16 +22,16 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/dataserver"
 )
 
 func TestServerCmd(t *testing.T) {
 	for _, test := range []struct {
 		args         []string
-		expectedConf server.Config
+		expectedConf dataserver.Config
 		isErr        bool
 	}{
-		{[]string{}, server.Config{
+		{[]string{}, dataserver.Config{
 			PublicServiceAddr:          "0.0.0.0:6648",
 			InternalServiceAddr:        "0.0.0.0:6649",
 			MetricsServiceAddr:         "0.0.0.0:8080",

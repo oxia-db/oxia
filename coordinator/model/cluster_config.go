@@ -24,7 +24,7 @@ import (
 type ClusterConfig struct {
 	Namespaces []NamespaceConfig `json:"namespaces" yaml:"namespaces"`
 	Servers    []Server          `json:"servers" yaml:"servers"`
-	// ServerMetadata is a map associating server names with their corresponding metadata.
+	// ServerMetadata is a map associating dataserver names with their corresponding metadata.
 	ServerMetadata map[string]ServerMetadata `json:"serverMetadata" yaml:"serverMetadata"`
 	LoadBalancer   *LoadBalancer             `json:"loadBalancer" yaml:"loadBalancer"`
 }

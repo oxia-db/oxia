@@ -55,12 +55,12 @@ func RunProfiling() io.Closer {
 	}
 
 	if !PprofEnable {
-		// Do not start pprof server
+		// Do not start pprof dataserver
 		return s
 	}
 
 	slog.Info(
-		"Starting pprof server",
+		"Starting pprof dataserver",
 		slog.String("address", s.Addr),
 	)
 	slog.Info(fmt.Sprintf("  use http://%s/debug/pprof to access the browser", s.Addr))
@@ -76,7 +76,7 @@ func RunProfiling() io.Closer {
 		func() {
 			if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error(
-					"Unable to start debug profiling server",
+					"Unable to start debug profiling dataserver",
 					slog.Any("error", err),
 					slog.String("component", "pprof"),
 				)

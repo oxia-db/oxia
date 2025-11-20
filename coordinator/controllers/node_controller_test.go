@@ -31,8 +31,8 @@ import (
 
 func TestNodeController_HealthCheck(t *testing.T) {
 	addr := model.Server{
-		Public:   "my-server:9190",
-		Internal: "my-server:8190",
+		Public:   "my-dataserver:9190",
+		Internal: "my-dataserver:8190",
 	}
 
 	sap := newMockShardAssignmentsProvider()
@@ -68,8 +68,8 @@ func TestNodeController_HealthCheck(t *testing.T) {
 
 func TestNodeController_ShardsAssignments(t *testing.T) {
 	addr := model.Server{
-		Public:   "my-server:9190",
-		Internal: "my-server:8190",
+		Public:   "my-dataserver:9190",
+		Internal: "my-dataserver:8190",
 	}
 
 	sap := newMockShardAssignmentsProvider()

@@ -40,8 +40,8 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/coordinator/model"
+	"github.com/oxia-db/oxia/dataserver"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/server"
 )
 
 func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (address string, closeFunc func()) {
@@ -56,7 +56,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		ProviderName:   server2.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
-	s1, err := server.New(server.Config{
+	s1, err := dataserver.New(dataserver.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -70,7 +70,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
-	s2, err := server.New(server.Config{
+	s2, err := dataserver.New(dataserver.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -84,7 +84,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
-	s3, err := server.New(server.Config{
+	s3, err := dataserver.New(dataserver.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict

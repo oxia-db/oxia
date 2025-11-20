@@ -87,7 +87,7 @@ func (s *sequenceKeysDeltas) applyPut(opts *putOptions) {
 }
 
 // SequenceKeysDeltas will request that the final record key to be
-// assigned by the server, based on the prefix record key and
+// assigned by the dataserver, based on the prefix record key and
 // appending one or more sequences.
 // The sequence numbers will be atomically added based on the deltas.
 // Deltas must be >= 0 and the first one strictly > 0.

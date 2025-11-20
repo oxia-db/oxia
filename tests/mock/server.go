@@ -22,14 +22,14 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/coordinator/model"
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/dataserver"
 )
 
-func NewServer(t *testing.T, name string) (s *server.Server, addr model.Server) {
+func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 
 	var err error
-	s, err = server.New(server.Config{
+	s, err = dataserver.New(dataserver.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -50,11 +50,11 @@ func NewServer(t *testing.T, name string) (s *server.Server, addr model.Server) 
 	return s, addr
 }
 
-func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *server.Server, addr model.Server) {
+func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 
 	var err error
-	s, err = server.New(server.Config{
+	s, err = dataserver.New(dataserver.Config{
 		PublicServiceAddr:          publicAddress,
 		InternalServiceAddr:        internalAddress,
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict

@@ -100,7 +100,7 @@ func TestSelectSatisfiedAntiAffinities(t *testing.T) {
 	}
 	assert.Equal(t, 6, selected.Size())
 	for idx := range replicas {
-		id := fmt.Sprintf("server%d", idx+1)
+		id := fmt.Sprintf("dataserver%d", idx+1)
 		assert.True(t, selected.Contains(id))
 	}
 }

@@ -31,7 +31,7 @@ import (
 	"github.com/oxia-db/oxia/common/logging"
 
 	"github.com/oxia-db/oxia/coordinator/model"
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/dataserver"
 )
 
 var (
@@ -188,7 +188,7 @@ func main() {
 		}
 	} else {
 		// Any other node will be a storage node
-		_, err := server.NewWithGrpcProvider(server.Config{
+		_, err := dataserver.NewWithGrpcProvider(dataserver.Config{
 			MetricsServiceAddr: "",
 			DataDir:            filepath.Join(dataDir, thisNode, "db"),
 			WalDir:             filepath.Join(dataDir, thisNode, "wal"),

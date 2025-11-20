@@ -24,7 +24,7 @@ import (
 )
 
 type TLSOption struct {
-	// CertFile is the path to the server certificate file.
+	// CertFile is the path to the dataserver certificate file.
 	CertFile string
 	// KeyFile is the path to the private key file.
 	KeyFile string
@@ -38,9 +38,9 @@ type TLSOption struct {
 	TrustedCaFile string
 	// InsecureSkipVerify controls whether it verifies the certificate chain and host name.
 	InsecureSkipVerify bool
-	// ServerName is the expected server name (for SNI) used when connecting to the server.
+	// ServerName is the expected dataserver name (for SNI) used when connecting to the dataserver.
 	ServerName string
-	// ClientAuth controls whether the server requires clients to authenticate with a certificate.
+	// ClientAuth controls whether the dataserver requires clients to authenticate with a certificate.
 	ClientAuth bool
 }
 

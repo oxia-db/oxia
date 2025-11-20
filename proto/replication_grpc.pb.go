@@ -117,7 +117,7 @@ func (c *oxiaCoordinationClient) DeleteShard(ctx context.Context, in *DeleteShar
 	return out, nil
 }
 
-// OxiaCoordinationServer is the server API for OxiaCoordination service.
+// OxiaCoordinationServer is the dataserver API for OxiaCoordination service.
 // All implementations must embed UnimplementedOxiaCoordinationServer
 // for forward compatibility
 type OxiaCoordinationServer interface {
@@ -410,7 +410,7 @@ func (x *oxiaLogReplicationSendSnapshotClient) CloseAndRecv() (*SnapshotResponse
 	return m, nil
 }
 
-// OxiaLogReplicationServer is the server API for OxiaLogReplication service.
+// OxiaLogReplicationServer is the dataserver API for OxiaLogReplication service.
 // All implementations must embed UnimplementedOxiaLogReplicationServer
 // for forward compatibility
 type OxiaLogReplicationServer interface {

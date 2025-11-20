@@ -21,12 +21,12 @@ type Server struct {
 	// Public is the endpoint that is advertised to clients
 	Public string `json:"public" yaml:"public"`
 
-	// Internal is the endpoint for server->server RPCs
+	// Internal is the endpoint for dataserver->dataserver RPCs
 	Internal string `json:"internal" yaml:"internal"`
 }
 
 type ServerMetadata struct {
-	// Labels represents a key-value map to store metadata associated with a server.
+	// Labels represents a key-value map to store metadata associated with a dataserver.
 	Labels map[string]string `json:"labels" yaml:"labels"`
 }
 

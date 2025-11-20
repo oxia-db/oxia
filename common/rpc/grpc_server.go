@@ -122,7 +122,7 @@ func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.Ser
 	c.port = listener.Addr().(*net.TCPAddr).Port
 
 	c.log = slog.With(
-		slog.String("grpc-server", name),
+		slog.String("grpc-dataserver", name),
 		slog.String("bindAddress", listener.Addr().String()),
 	)
 
@@ -143,7 +143,7 @@ func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.Ser
 		},
 	)
 
-	c.log.Info("Started Grpc server")
+	c.log.Info("Started Grpc dataserver")
 
 	return c, nil
 }
@@ -154,6 +154,6 @@ func (c *defaultGrpcServer) Port() int {
 
 func (c *defaultGrpcServer) Close() error {
 	c.server.GracefulStop()
-	c.log.Info("Stopped Grpc server")
+	c.log.Info("Stopped Grpc dataserver")
 	return nil
 }

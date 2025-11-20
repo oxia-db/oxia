@@ -124,7 +124,7 @@ func TestShardController(t *testing.T) {
 	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
-	// and newTerm each server
+	// and newTerm each dataserver
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
@@ -248,7 +248,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 
 	// Shard controller should initiate a leader election
-	// and newTerm each server
+	// and newTerm each dataserver
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	// s3 is not responding
@@ -363,7 +363,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 	n2.expectGetStatusRequest(t, 5)
 	n2.GetStatusResponse(4, proto.ServingStatus_FOLLOWER, 0, 0)
 
-	// The `s3` server was not properly fenced and it's stuck term 3
+	// The `s3` dataserver was not properly fenced and it's stuck term 3
 	// It needs to be fenced again
 	n3.expectGetStatusRequest(t, 5)
 	n3.GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 0, 0)
@@ -409,7 +409,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
-	// and newTerm each server
+	// and newTerm each dataserver
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	rpc.GetNode(s3).NewTermResponse(1, -1, nil)

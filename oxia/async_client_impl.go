@@ -53,7 +53,7 @@ type clientImpl struct {
 
 // NewAsyncClient creates a new Oxia client with the async interface
 //
-// ServiceAddress is the target host:port of any Oxia server to bootstrap the client. It is used for establishing the
+// ServiceAddress is the target host:port of any Oxia dataserver to bootstrap the client. It is used for establishing the
 // shard assignments. Ideally this should be a load-balanced endpoint.
 //
 // A list of ClientOption arguments can be passed to configure the Oxia client.

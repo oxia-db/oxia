@@ -34,7 +34,7 @@ func newDeleteOptions(opts []DeleteOption) *deleteOptions {
 }
 
 // ExpectedVersionId Marks that the operation should only be successful
-// if the versionId of the record stored in the server matches the expected one.
+// if the versionId of the record stored in the dataserver matches the expected one.
 func ExpectedVersionId(versionId int64) DeleteOption {
 	return &expectedVersionId{versionId}
 }

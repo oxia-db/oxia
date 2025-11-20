@@ -68,7 +68,7 @@ func init() {
 
 	Cmd.Flags().StringVarP(&configFile, "conf", "f", "", "Cluster config file")
 
-	// server TLS section
+	// dataserver TLS section
 	Cmd.Flags().StringVar(&serverTLS.CertFile, "tls-cert-file", "", "Tls certificate file")
 	Cmd.Flags().StringVar(&serverTLS.KeyFile, "tls-key-file", "", "Tls key file")
 	Cmd.Flags().Uint16Var(&serverTLS.MinVersion, "tls-min-version", 0, "Tls minimum version")
@@ -84,7 +84,7 @@ func init() {
 	Cmd.Flags().Uint16Var(&peerTLS.MaxVersion, "peer-tls-max-version", 0, "Peer tls maximum version")
 	Cmd.Flags().StringVar(&peerTLS.TrustedCaFile, "peer-tls-trusted-ca-file", "", "Peer tls trusted ca file")
 	Cmd.Flags().BoolVar(&peerTLS.InsecureSkipVerify, "peer-tls-insecure-skip-verify", false, "Peer tls insecure skip verify")
-	Cmd.Flags().StringVar(&peerTLS.ServerName, "peer-tls-server-name", "", "Peer tls server name")
+	Cmd.Flags().StringVar(&peerTLS.ServerName, "peer-tls-dataserver-name", "", "Peer tls dataserver name")
 }
 
 func validate(*cobra.Command, []string) error {
