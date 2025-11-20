@@ -24,20 +24,20 @@ import (
 
 	"github.com/oxia-db/oxia/cmd/flag"
 	"github.com/oxia-db/oxia/common/security"
-	"github.com/oxia-db/oxia/dataserver"
-	"github.com/oxia-db/oxia/dataserver/kv"
+	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/server/kv"
 )
 
 var (
-	conf = dataserver.Config{}
+	conf = server.Config{}
 
 	peerTLS           = security.TLSOption{}
 	serverTLS         = security.TLSOption{}
 	internalServerTLS = security.TLSOption{}
 
 	Cmd = &cobra.Command{
-		Use:   "dataserver",
-		Short: "Start a dataserver",
+		Use:   "server",
+		Short: "Start a server",
 		Long:  `Long description`,
 		Run:   exec,
 	}
@@ -60,7 +60,7 @@ func init() {
 	Cmd.Flags().StringVar(&conf.AuthOptions.ProviderName, "auth-provider-name", "", "Authentication provider name. supported: oidc")
 	Cmd.Flags().StringVar(&conf.AuthOptions.ProviderParams, "auth-provider-params", "", "Authentication provider params. \n oidc: "+"{\"allowedIssueURLs\":\"required1,required2\",\"allowedAudiences\":\"required1,required2\",\"userNameClaim\":\"optional(default:sub)\"}")
 
-	// dataserver TLS section
+	// server TLS section
 	Cmd.Flags().StringVar(&serverTLS.CertFile, "tls-cert-file", "", "Tls certificate file")
 	Cmd.Flags().StringVar(&serverTLS.KeyFile, "tls-key-file", "", "Tls key file")
 	Cmd.Flags().Uint16Var(&serverTLS.MinVersion, "tls-min-version", 0, "Tls minimum version")
@@ -69,14 +69,14 @@ func init() {
 	Cmd.Flags().BoolVar(&serverTLS.InsecureSkipVerify, "tls-insecure-skip-verify", false, "Tls insecure skip verify")
 	Cmd.Flags().BoolVar(&serverTLS.ClientAuth, "tls-client-auth", false, "Tls client auth")
 
-	// internal dataserver TLS section
-	Cmd.Flags().StringVar(&internalServerTLS.CertFile, "internal-tls-cert-file", "", "Internal dataserver tls certificate file")
-	Cmd.Flags().StringVar(&internalServerTLS.KeyFile, "internal-tls-key-file", "", "Internal dataserver tls key file")
-	Cmd.Flags().Uint16Var(&internalServerTLS.MinVersion, "internal-tls-min-version", 0, "Internal dataserver tls minimum version")
-	Cmd.Flags().Uint16Var(&internalServerTLS.MaxVersion, "internal-tls-max-version", 0, "Internal dataserver tls maximum version")
-	Cmd.Flags().StringVar(&internalServerTLS.TrustedCaFile, "internal-tls-trusted-ca-file", "", "Internal dataserver tls trusted ca file")
-	Cmd.Flags().BoolVar(&internalServerTLS.InsecureSkipVerify, "internal-tls-insecure-skip-verify", false, "Internal dataserver tls insecure skip verify")
-	Cmd.Flags().BoolVar(&internalServerTLS.ClientAuth, "internal-tls-client-auth", false, "Internal dataserver tls client auth")
+	// internal server TLS section
+	Cmd.Flags().StringVar(&internalServerTLS.CertFile, "internal-tls-cert-file", "", "Internal server tls certificate file")
+	Cmd.Flags().StringVar(&internalServerTLS.KeyFile, "internal-tls-key-file", "", "Internal server tls key file")
+	Cmd.Flags().Uint16Var(&internalServerTLS.MinVersion, "internal-tls-min-version", 0, "Internal server tls minimum version")
+	Cmd.Flags().Uint16Var(&internalServerTLS.MaxVersion, "internal-tls-max-version", 0, "Internal server tls maximum version")
+	Cmd.Flags().StringVar(&internalServerTLS.TrustedCaFile, "internal-tls-trusted-ca-file", "", "Internal server tls trusted ca file")
+	Cmd.Flags().BoolVar(&internalServerTLS.InsecureSkipVerify, "internal-tls-insecure-skip-verify", false, "Internal server tls insecure skip verify")
+	Cmd.Flags().BoolVar(&internalServerTLS.ClientAuth, "internal-tls-client-auth", false, "Internal server tls client auth")
 
 	// peer client TLS section
 	Cmd.Flags().StringVar(&peerTLS.CertFile, "peer-tls-cert-file", "", "Peer tls certificate file")
@@ -85,7 +85,7 @@ func init() {
 	Cmd.Flags().Uint16Var(&peerTLS.MaxVersion, "peer-tls-max-version", 0, "Peer tls maximum version")
 	Cmd.Flags().StringVar(&peerTLS.TrustedCaFile, "peer-tls-trusted-ca-file", "", "Peer tls trusted ca file")
 	Cmd.Flags().BoolVar(&peerTLS.InsecureSkipVerify, "peer-tls-insecure-skip-verify", false, "Peer tls insecure skip verify")
-	Cmd.Flags().StringVar(&peerTLS.ServerName, "peer-tls-dataserver-name", "", "Peer tls dataserver name")
+	Cmd.Flags().StringVar(&peerTLS.ServerName, "peer-tls-server-name", "", "Peer tls server name")
 }
 
 func exec(*cobra.Command, []string) {
@@ -93,7 +93,7 @@ func exec(*cobra.Command, []string) {
 		if err := configureTLS(); err != nil {
 			return nil, err
 		}
-		return dataserver.New(conf)
+		return server.New(conf)
 	})
 }
 

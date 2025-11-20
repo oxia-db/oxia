@@ -256,7 +256,7 @@ func (NotificationType) EnumDescriptor() ([]byte, []int) {
 }
 
 // *
-// A shard assignments request. Gets all shard-to-dataserver assignments as a
+// A shard assignments request. Gets all shard-to-server assignments as a
 // stream. Each set of assignments in the response stream will contain all the
 // assignments to bring the client up to date. For example, if a shard is split,
 // the stream will return a single response containing all the new shard
@@ -423,7 +423,7 @@ func (x *NamespaceShardsAssignment) GetShardKeyRouter() ShardKeyRouter {
 }
 
 // *
-// The assignment of a shard to a dataserver.
+// The assignment of a shard to a server.
 type ShardAssignment struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -579,7 +579,7 @@ type WriteRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// The shard id. This is optional allow for support for dataserver-side hashing
+	// The shard id. This is optional allow for support for server-side hashing
 	// and proxying in the future.
 	Shard *int64 `protobuf:"varint,1,opt,name=shard,proto3,oneof" json:"shard,omitempty"`
 	// The put requests
@@ -726,7 +726,7 @@ type ReadRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// The shard id. This is optional allow for support for dataserver-side hashing
+	// The shard id. This is optional allow for support for server-side hashing
 	// and proxying in the future.
 	Shard *int64 `protobuf:"varint,1,opt,name=shard,proto3,oneof" json:"shard,omitempty"`
 	// The get requests
@@ -896,7 +896,7 @@ type PutRequest struct {
 	Key string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	// The value
 	Value []byte `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
-	// An optional expected version_id. The put will fail if the dataserver's current version_id
+	// An optional expected version_id. The put will fail if the server's current version_id
 	// does not match
 	ExpectedVersionId *int64 `protobuf:"varint,3,opt,name=expected_version_id,json=expectedVersionId,proto3,oneof" json:"expected_version_id,omitempty"`
 	// Optional. Associate the new record with the session (i.e. ephemeral record).
@@ -907,7 +907,7 @@ type PutRequest struct {
 	// ephemeral record.
 	ClientIdentity *string `protobuf:"bytes,5,opt,name=client_identity,json=clientIdentity,proto3,oneof" json:"client_identity,omitempty"`
 	// If a partition key is present, it supersedes the regular record key in determining the routing of
-	// a record to a particular shard. It is passed to the dataserver because it needs to be persisted as
+	// a record to a particular shard. It is passed to the server because it needs to be persisted as
 	// part of the record. We would need the partition_key if we're going to do a split of the shards.
 	PartitionKey *string `protobuf:"bytes,6,opt,name=partition_key,json=partitionKey,proto3,oneof" json:"partition_key,omitempty"`
 	// If one or more sequence key are specified. The key will get added suffixes
@@ -1082,7 +1082,7 @@ type DeleteRequest struct {
 
 	// The key
 	Key string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	// An optional expected version_id. The delete will fail if the dataserver's current version_id
+	// An optional expected version_id. The delete will fail if the server's current version_id
 	// does not match
 	ExpectedVersionId *int64 `protobuf:"varint,2,opt,name=expected_version_id,json=expectedVersionId,proto3,oneof" json:"expected_version_id,omitempty"`
 }
@@ -1462,7 +1462,7 @@ type ListRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// The shard id. This is optional allow for support for dataserver-side hashing
+	// The shard id. This is optional allow for support for server-side hashing
 	// and proxying in the future.
 	Shard *int64 `protobuf:"varint,1,opt,name=shard,proto3,oneof" json:"shard,omitempty"`
 	// The start of the range, inclusive
@@ -1589,7 +1589,7 @@ type RangeScanRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// The shard id. This is optional allow for support for dataserver-side hashing
+	// The shard id. This is optional allow for support for server-side hashing
 	// and proxying in the future.
 	Shard *int64 `protobuf:"varint,1,opt,name=shard,proto3,oneof" json:"shard,omitempty"`
 	// The start of the range, inclusive

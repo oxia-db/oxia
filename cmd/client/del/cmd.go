@@ -37,14 +37,14 @@ func (flags *flags) Reset() {
 }
 
 func init() {
-	Cmd.Flags().Int64VarP(&Config.expectedVersion, "expected-version", "e", -1, "Version of entry expected to be on the dataserver")
+	Cmd.Flags().Int64VarP(&Config.expectedVersion, "expected-version", "e", -1, "Version of entry expected to be on the server")
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
 }
 
 var Cmd = &cobra.Command{
 	Use:          "delete [flags] KEY",
 	Short:        "Delete one record",
-	Long:         `Delete the record with the given key, if they exists. If an expected version is provided, the delete will only take place if it matches the version of the current record on the dataserver`,
+	Long:         `Delete the record with the given key, if they exists. If an expected version is provided, the delete will only take place if it matches the version of the current record on the server`,
 	Args:         cobra.ExactArgs(1),
 	RunE:         exec,
 	SilenceUsage: true,

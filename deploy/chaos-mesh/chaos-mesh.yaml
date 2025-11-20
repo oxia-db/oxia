@@ -30,7 +30,7 @@ spec:
             - oxia
           labelSelectors:
             app.kubernetes.io/name: oxia-cluster
-            app.kubernetes.io/component: dataserver
+            app.kubernetes.io/component: server
     - name: pod-failure
       deadline: 30s
       templateType: PodChaos
@@ -42,7 +42,7 @@ spec:
             - oxia
           labelSelectors:
             app.kubernetes.io/name: oxia-cluster
-            app.kubernetes.io/component: dataserver
+            app.kubernetes.io/component: server
     - name: network-delay
       deadline: 30s
       templateType: NetworkChaos
@@ -64,7 +64,7 @@ spec:
             - oxia
           labelSelectors:
             app.kubernetes.io/name: oxia-cluster
-            app.kubernetes.io/component: dataserver
+            app.kubernetes.io/component: server
     - name: network-partition
       deadline: 30s
       templateType: NetworkChaos
@@ -82,7 +82,7 @@ spec:
             - oxia
           labelSelectors:
             app.kubernetes.io/name: oxia-cluster
-            app.kubernetes.io/component: dataserver
+            app.kubernetes.io/component: server
     - name: network-bandwidth
       deadline: 30s
       templateType: NetworkChaos
@@ -104,7 +104,7 @@ spec:
             - oxia
           labelSelectors:
             app.kubernetes.io/name: oxia-cluster
-            app.kubernetes.io/component: dataserver
+            app.kubernetes.io/component: server
     - name: stress-cpu
       deadline: 30s
       templateType: StressChaos
@@ -119,7 +119,7 @@ spec:
             - oxia
           labelSelectors:
             app.kubernetes.io/name: oxia-cluster
-            app.kubernetes.io/component: dataserver
+            app.kubernetes.io/component: server
     - name: stress-memory
       deadline: 30s
       templateType: StressChaos
@@ -134,7 +134,7 @@ spec:
             - oxia
           labelSelectors:
             app.kubernetes.io/name: oxia-cluster
-            app.kubernetes.io/component: dataserver
+            app.kubernetes.io/component: server
     - name: time
       deadline: 30s
       templateType: TimeChaos
@@ -146,4 +146,4 @@ spec:
             - oxia
           labelSelectors:
             app.kubernetes.io/name: oxia-cluster
-            app.kubernetes.io/component: dataserver
+            app.kubernetes.io/component: server

@@ -23,20 +23,20 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OxiaClientClient interface {
 	// *
-	// Gets all shard-to-dataserver assignments as a stream. Each set of assignments
+	// Gets all shard-to-server assignments as a stream. Each set of assignments
 	// in the response stream will contain all the assignments to bring the client
 	// up to date. For example, if a shard is split, the stream will return a
 	// single response containing all the new shard assignments as opposed to
 	// multiple stream responses, each containing a single shard assignment.
 	//
-	// Clients should connect to a single random dataserver which will stream the
+	// Clients should connect to a single random server which will stream the
 	// assignments for all shards on all servers.
 	GetShardAssignments(ctx context.Context, in *ShardAssignmentsRequest, opts ...grpc.CallOption) (OxiaClient_GetShardAssignmentsClient, error)
 	// *
 	// Batches put, delete and delete_range requests.
 	//
 	// Clients should send this request to the shard leader. In the future,
-	// this may be handled dataserver-side in a proxy layer.
+	// this may be handled server-side in a proxy layer.
 	//
 	// Deprecated
 	Write(ctx context.Context, in *WriteRequest, opts ...grpc.CallOption) (*WriteResponse, error)
@@ -44,13 +44,13 @@ type OxiaClientClient interface {
 	// Batches put, delete and delete_range requests.
 	//
 	// Clients should send this request to the shard leader. In the future,
-	// this may be handled dataserver-side in a proxy layer.
+	// this may be handled server-side in a proxy layer.
 	WriteStream(ctx context.Context, opts ...grpc.CallOption) (OxiaClient_WriteStreamClient, error)
 	// *
 	// Batches get requests.
 	//
 	// Clients should send this request to the shard leader. In the future,
-	// this may be handled dataserver-side in a proxy layer.
+	// this may be handled server-side in a proxy layer.
 	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (OxiaClient_ReadClient, error)
 	// *
 	// Requests all the keys between a range of keys.
@@ -344,25 +344,25 @@ func (c *oxiaClientClient) CloseSession(ctx context.Context, in *CloseSessionReq
 	return out, nil
 }
 
-// OxiaClientServer is the dataserver API for OxiaClient service.
+// OxiaClientServer is the server API for OxiaClient service.
 // All implementations must embed UnimplementedOxiaClientServer
 // for forward compatibility
 type OxiaClientServer interface {
 	// *
-	// Gets all shard-to-dataserver assignments as a stream. Each set of assignments
+	// Gets all shard-to-server assignments as a stream. Each set of assignments
 	// in the response stream will contain all the assignments to bring the client
 	// up to date. For example, if a shard is split, the stream will return a
 	// single response containing all the new shard assignments as opposed to
 	// multiple stream responses, each containing a single shard assignment.
 	//
-	// Clients should connect to a single random dataserver which will stream the
+	// Clients should connect to a single random server which will stream the
 	// assignments for all shards on all servers.
 	GetShardAssignments(*ShardAssignmentsRequest, OxiaClient_GetShardAssignmentsServer) error
 	// *
 	// Batches put, delete and delete_range requests.
 	//
 	// Clients should send this request to the shard leader. In the future,
-	// this may be handled dataserver-side in a proxy layer.
+	// this may be handled server-side in a proxy layer.
 	//
 	// Deprecated
 	Write(context.Context, *WriteRequest) (*WriteResponse, error)
@@ -370,13 +370,13 @@ type OxiaClientServer interface {
 	// Batches put, delete and delete_range requests.
 	//
 	// Clients should send this request to the shard leader. In the future,
-	// this may be handled dataserver-side in a proxy layer.
+	// this may be handled server-side in a proxy layer.
 	WriteStream(OxiaClient_WriteStreamServer) error
 	// *
 	// Batches get requests.
 	//
 	// Clients should send this request to the shard leader. In the future,
-	// this may be handled dataserver-side in a proxy layer.
+	// this may be handled server-side in a proxy layer.
 	Read(*ReadRequest, OxiaClient_ReadServer) error
 	// *
 	// Requests all the keys between a range of keys.

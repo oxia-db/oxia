@@ -117,9 +117,9 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 		return nil, err
 	}
 
-	// Construct the admin dataserver
+	// Construct the admin server
 	admin := newAdminServer(coordinatorInstance.StatusResource(), config.ClusterConfigProvider)
-	// Start admin grpc dataserver
+	// Start admin grpc server
 	adminGrpcServer, err := rpc.Default.StartGrpcServer("admin", config.AdminServiceAddr, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaAdminServer(registrar, admin)
 	}, config.ServerTLS, &server.Disabled)

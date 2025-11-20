@@ -45,7 +45,7 @@ type ClosableHealthServer struct {
 	cancel context.CancelFunc
 }
 
-// Watch support to monitor the context of dataserver to allow close health dataserver manually.
+// Watch support to monitor the context of server to allow close health server manually.
 func (c *ClosableHealthServer) Watch(request *grpc_health_v1.HealthCheckRequest, g grpc.ServerStreamingServer[grpc_health_v1.HealthCheckResponse]) error {
 	finishCh := make(chan error, 1)
 	c.Add(1)

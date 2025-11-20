@@ -142,7 +142,7 @@ func ExampleNotifications() {
 		_ = notifications.Close()
 	})
 
-	// Receive all the notification from the dataserver
+	// Receive all the notification from the server
 	for notification := range notifications.Ch() {
 		fmt.Printf("Type %#v - Key: %s - VersionId: %d\n",
 			notification.Type, notification.Key, notification.VersionId)

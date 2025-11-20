@@ -125,7 +125,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 		fenceQuorumTimer.Done()
 	}()
 
-	// Channel to receive responses or errors from each dataserver
+	// Channel to receive responses or errors from each server
 	ch := make(chan struct {
 		model.Server
 		*proto.EntryId
@@ -264,13 +264,13 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []model.Server, leader *mo
 					if followerHeadOffset >= leaderEntry.Offset {
 						e.Info(
 							"Follower is caught-up with the leader after election",
-							slog.Any("dataserver", server),
+							slog.Any("server", server),
 						)
 						return nil
 					}
 					e.Info(
 						"Follower is *not* caught-up yet with the leader",
-						slog.Any("dataserver", server),
+						slog.Any("server", server),
 						slog.Int64("leader-head-offset", leaderEntry.Offset),
 						slog.Int64("follower-head-offset", followerHeadOffset),
 					)
@@ -422,12 +422,12 @@ func (e *ShardElection) start() (model.Server, error) {
 	newLeader, followers := e.selectNewLeader(candidatesStatus)
 	if e.Enabled(context.Background(), slog.LevelInfo) {
 		f := make([]struct {
-			ServerAddress model.Server   `json:"dataserver-address"`
+			ServerAddress model.Server   `json:"server-address"`
 			EntryId       *proto.EntryId `json:"entry-id"`
 		}, 0)
 		for sa, entryId := range followers {
 			f = append(f, struct {
-				ServerAddress model.Server   `json:"dataserver-address"`
+				ServerAddress model.Server   `json:"server-address"`
 				EntryId       *proto.EntryId `json:"entry-id"`
 			}{ServerAddress: sa, EntryId: entryId})
 		}

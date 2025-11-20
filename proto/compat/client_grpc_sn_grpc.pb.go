@@ -303,7 +303,7 @@ func (c *oxiaClientClient) CloseSession(ctx context.Context, in *proto.CloseSess
 	return out, nil
 }
 
-// OxiaClientServer is the dataserver API for OxiaClient service.
+// OxiaClientServer is the server API for OxiaClient service.
 // All implementations must embed UnimplementedOxiaClientServer
 // for forward compatibility
 type OxiaClientServer interface {

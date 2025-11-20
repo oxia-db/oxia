@@ -369,7 +369,7 @@ func (s *shardController) deleteShard() error {
 
 		s.log.Info(
 			"Successfully deleted shard from node",
-			slog.Any("dataserver-address", server),
+			slog.Any("server-address", server),
 		)
 	}
 
@@ -432,7 +432,7 @@ func (s *shardController) SyncServerAddress() {
 	if !needSync {
 		return
 	}
-	s.log.Info("dataserver address changed, start a new leader election")
+	s.log.Info("server address changed, start a new leader election")
 	group := &sync.WaitGroup{}
 	group.Add(1)
 	s.electionOp <- &actions.ElectionAction{

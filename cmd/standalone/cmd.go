@@ -23,12 +23,12 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 
 	"github.com/oxia-db/oxia/cmd/flag"
-	"github.com/oxia-db/oxia/dataserver"
-	"github.com/oxia-db/oxia/dataserver/kv"
+	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/server/kv"
 )
 
 var (
-	conf = dataserver.StandaloneConfig{}
+	conf = server.StandaloneConfig{}
 
 	Cmd = &cobra.Command{
 		Use:   "standalone",
@@ -55,6 +55,6 @@ func init() {
 
 func exec(*cobra.Command, []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		return dataserver.NewStandalone(conf)
+		return server.NewStandalone(conf)
 	})
 }

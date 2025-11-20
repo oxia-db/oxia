@@ -36,7 +36,7 @@ func WaitUntilSignal(closers ...io.Closer) {
 	for _, closer := range closers {
 		if err := closer.Close(); err != nil {
 			slog.Error(
-				"Failed when shutting down dataserver",
+				"Failed when shutting down server",
 				slog.Any("error", err),
 			)
 			code = 1

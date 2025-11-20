@@ -35,7 +35,7 @@ const (
 )
 
 var (
-	ErrNotInitialized          = status.Error(CodeNotInitialized, "oxia: dataserver not initialized yet")
+	ErrNotInitialized          = status.Error(CodeNotInitialized, "oxia: server not initialized yet")
 	ErrCancelled               = status.Error(CodeCancelled, "oxia: operation was cancelled")
 	ErrInvalidTerm             = status.Error(CodeInvalidTerm, "oxia: invalid term")
 	ErrInvalidStatus           = status.Error(CodeInvalidStatus, "oxia: invalid status")

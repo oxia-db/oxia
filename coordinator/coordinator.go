@@ -136,7 +136,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		}
 		// The node is present in the config, though we don't know it yet,
 		// therefore it must be a newly added node
-		c.Info("Detected new node", slog.Any("dataserver", sa))
+		c.Info("Detected new node", slog.Any("server", sa))
 		if nc, ok := c.drainingNodes[sa.GetIdentifier()]; ok {
 			// If there were any controller for a draining node, close it
 			// and recreate it as a new node
@@ -151,7 +151,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		if _, exist := c.configResource.Node(serverID); exist {
 			continue
 		}
-		c.Info("Detected a removed node", slog.Any("dataserver", serverID))
+		c.Info("Detected a removed node", slog.Any("server", serverID))
 		// Moved the node
 		delete(c.nodeControllers, serverID)
 		nc.SetStatus(controllers.Draining)
@@ -222,8 +222,8 @@ func (c *coordinator) waitForAllNodesToBeAvailable() {
 	}
 }
 
-// selectNewEnsemble select a new dataserver ensemble based on namespace policies and current cluster status.
-// It uses the ensemble selector to choose appropriate servers and returns the selected dataserver metadata or an error.
+// selectNewEnsemble select a new server ensemble based on namespace policies and current cluster status.
+// It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 func (c *coordinator) selectNewEnsemble(ns *model.NamespaceConfig, editingStatus *model.ClusterStatus) ([]model.Server, error) {
 	nodes, nodesMetadata := c.configResource.NodesWithMetadata()
 	ensembleContext := &ensemble.Context{

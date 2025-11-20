@@ -42,7 +42,7 @@ func (admin *adminClientImpl) ListNodes() *ListNodesResult {
 
 	if client == nil {
 		return &ListNodesResult{
-			Error: errors.New("unable to connect to admin dataserver"),
+			Error: errors.New("unable to connect to admin server"),
 		}
 	}
 

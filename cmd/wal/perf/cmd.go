@@ -25,8 +25,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/wal/common"
-	"github.com/oxia-db/oxia/dataserver/wal"
 	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/server/wal"
 )
 
 type perfOptions struct {

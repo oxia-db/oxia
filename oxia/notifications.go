@@ -178,7 +178,7 @@ func (snm *shardNotificationsManager) multiplexNotificationBatch(nb *proto.Notif
 
 		// We need to discard the very first notification, because it's only
 		// needed to ensure that the notification cursor is created on the
-		// dataserver side.
+		// server side.
 		snm.initialized = true
 		snm.nm.initWaitGroup.Done()
 		snm.lastOffsetReceived = nb.Offset

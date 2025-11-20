@@ -33,7 +33,7 @@ func TestSessionEphemeralKeysLeak(t *testing.T) {
 	defer standaloneServer.Close()
 
 	client, err := NewAsyncClient(standaloneServer.ServiceAddr(),
-		// force the dataserver cleanup the session to make the race-condition
+		// force the server cleanup the session to make the race-condition
 		withSessionKeepAliveTicker(16*time.Second),
 		WithSessionTimeout(10*time.Second))
 	assert.NoError(t, err)

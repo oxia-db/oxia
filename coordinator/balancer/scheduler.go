@@ -157,7 +157,7 @@ func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidat
 		fromNodeID := highestLoadRatioNode.NodeID
 		fromNode := highestLoadRatioNode.Node
 		if _, err := r.swapShard(highestLoadRatioShard, fromNode, swapGroup, loadRatios, candidates, metadata, currentStatus); err != nil {
-			r.Error("failed to select dataserver when swap the node",
+			r.Error("failed to select server when swap the node",
 				slog.String("namespace", highestLoadRatioShard.Namespace),
 				slog.Int64("shard", highestLoadRatioShard.ShardID),
 				slog.String("from-node", fromNodeID),
@@ -192,7 +192,7 @@ func (r *nodeBasedBalancer) cleanDeletedNode(loadRatios *model.Ratio,
 		for shardIter := nodeLoadRatio.ShardIterator(); shardIter.Next(); {
 			var shardRatio = shardIter.Value()
 			if swapped, err := r.swapShard(shardRatio, deletedNode, swapGroup, loadRatios, candidates, metadata, currentStatus); err != nil || !swapped {
-				r.Error("failed to select dataserver when move ensemble out of deleted node",
+				r.Error("failed to select server when move ensemble out of deleted node",
 					slog.String("namespace", shardRatio.Namespace),
 					slog.Int64("shard", shardRatio.ShardID),
 					slog.String("from-node", deletedNodeID),
