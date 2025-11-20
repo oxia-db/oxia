@@ -54,7 +54,7 @@ func newInternalRpcServer(grpcProvider rpc.GrpcProvider, bindAddress string, sha
 		assignmentDispatcher: assignmentDispatcher,
 		healthServer:         healthServer,
 		log: slog.With(
-			slog.String("component", "internal-rpc-dataserver"),
+			slog.String("component", "internal-rpc-server"),
 		),
 	}
 
