@@ -22,7 +22,10 @@ import (
 )
 
 func WriteOutput(out io.Writer, value any) {
-	if sl, ok := value.([]string); ok {
+	if s, ok := value.(string); ok {
+		writeString(out, s)
+		return
+	} else if sl, ok := value.([]string); ok {
 		writeStringSlice(out, sl)
 		return
 	} else if b, ok := value.([]byte); ok {
@@ -42,12 +45,16 @@ func WriteOutput(out io.Writer, value any) {
 
 func writeStringSlice(out io.Writer, sl []string) {
 	for _, s := range sl {
-		if _, err := out.Write([]byte(s)); err != nil {
-			panic(err)
-		}
-		if _, err := out.Write([]byte("\n")); err != nil {
-			panic(err)
-		}
+		writeString(out, s)
+	}
+}
+
+func writeString(out io.Writer, s string) {
+	if _, err := out.Write([]byte(s)); err != nil {
+		panic(err)
+	}
+	if _, err := out.Write([]byte("\n")); err != nil {
+		panic(err)
 	}
 }
 

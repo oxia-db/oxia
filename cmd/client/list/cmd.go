@@ -16,7 +16,6 @@ package list
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -82,7 +81,7 @@ func exec(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 
-		fmt.Println(gr.Key)
+		common.WriteOutput(cmd.OutOrStdout(), gr.Value)
 	}
 
 	return nil
