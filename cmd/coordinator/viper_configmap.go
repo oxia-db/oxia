@@ -23,7 +23,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
@@ -88,7 +88,7 @@ func (*cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.Re
 		"component": "k8s-configmap-watch",
 	}, func() {
 		for res := range w.ResultChan() {
-			cm, ok := res.Object.(*v1.ConfigMap)
+			cm, ok := res.Object.(*corev1.ConfigMap)
 			if !ok {
 				slog.Warn("Got wrong type of object notification",
 					slog.String("k8s-namespace", namespace),
