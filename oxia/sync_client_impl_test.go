@@ -462,7 +462,9 @@ func TestSyncClientImpl_InternalKeys(t *testing.T) {
 	assert.Equal(t, "b", (<-resCh).Key)
 	assert.Equal(t, "c", (<-resCh).Key)
 	assert.Equal(t, "__oxia/a-test", (<-resCh).Key)
-	assert.NotEmpty(t, resCh)
+	assert.Eventually(t, func() bool {
+		return assert.NotEmpty(t, resCh)
+	}, 1*time.Second, 10*time.Millisecond)
 
 	assert.NoError(t, client.Close())
 	assert.NoError(t, standaloneServer.Close())
