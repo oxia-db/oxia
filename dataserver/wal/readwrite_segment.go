@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/edsrzf/mmap-go"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -44,14 +43,15 @@ type readWriteSegment struct {
 
 	c *segmentConfig
 
-	lastOffset    int64
-	lastCrc       uint32
-	txnFile       *os.File
-	txnMappedFile mmap.MMap
+	lastOffset int64
+	lastCrc    uint32
+	txnFile    *os.File
+	txnBuf     []byte
 
 	currentFileOffset uint32
 	writingIdx        []byte
 
+	lastFlushed uint32
 	segmentSize uint32
 }
 
@@ -73,6 +73,7 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 		c:           c,
 		segmentSize: segmentSize,
 		lastCrc:     lastCrc,
+		txnBuf:      BorrowTxnBuf(segmentSize),
 	}
 
 	if ms.txnFile, err = os.OpenFile(ms.c.txnPath, os.O_CREATE|os.O_RDWR, 0644); err != nil {
@@ -83,10 +84,11 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 		if err = initFileWithZeroes(ms.txnFile, segmentSize); err != nil {
 			return nil, err
 		}
-	}
-
-	if ms.txnMappedFile, err = mmap.MapRegion(ms.txnFile, int(segmentSize), mmap.RDWR, 0, 0); err != nil {
-		return nil, errors.Wrapf(err, "failed to map segment file %s", ms.c.txnPath)
+	} else {
+		_, err = ms.txnFile.ReadAt(ms.txnBuf, 0)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to read segment file %s", ms.c.txnPath)
+		}
 	}
 
 	var commitOffset *int64
@@ -96,7 +98,7 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 	} else {
 		commitOffset = nil
 	}
-	if ms.writingIdx, ms.lastCrc, ms.currentFileOffset, ms.lastOffset, err = ms.c.codec.RecoverIndex(ms.txnMappedFile,
+	if ms.writingIdx, ms.lastCrc, ms.currentFileOffset, ms.lastOffset, err = ms.c.codec.RecoverIndex(ms.txnBuf,
 		ms.currentFileOffset, ms.c.baseOffset, commitOffset); err != nil {
 		return nil, errors.Wrapf(err, "failed to rebuild index for segment file %s", ms.c.txnPath)
 	}
@@ -130,7 +132,7 @@ func (ms *readWriteSegment) Read(offset int64) ([]byte, error) {
 	fileReadOffset := fileOffset(ms.writingIdx, ms.c.baseOffset, offset)
 	var payload []byte
 	var err error
-	if payload, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {
+	if payload, err = ms.c.codec.ReadRecordWithValidation(ms.txnBuf, fileReadOffset); err != nil {
 		if errors.Is(err, codec.ErrDataCorrupted) {
 			return nil, errors.Wrapf(err, "read record failed. entryOffset: %d", offset)
 		}
@@ -159,7 +161,7 @@ func (ms *readWriteSegment) Append(offset int64, data []byte) error {
 
 	fOffset := ms.currentFileOffset
 	var recordSize uint32
-	recordSize, ms.lastCrc = ms.c.codec.WriteRecord(ms.txnMappedFile, fOffset, ms.lastCrc, data)
+	recordSize, ms.lastCrc = ms.c.codec.WriteRecord(ms.txnBuf, fOffset, ms.lastCrc, data)
 	ms.currentFileOffset += recordSize
 	ms.lastOffset = offset
 	ms.writingIdx = binary.BigEndian.AppendUint32(ms.writingIdx, fOffset)
@@ -167,7 +169,43 @@ func (ms *readWriteSegment) Append(offset int64, data []byte) error {
 }
 
 func (ms *readWriteSegment) Flush() error {
-	return ms.txnMappedFile.Flush()
+	ms.Lock()
+	defer ms.Unlock()
+
+	return ms.doFlush()
+}
+
+func (ms *readWriteSegment) doFlush() (err error) {
+	if ms.lastFlushed >= ms.currentFileOffset {
+		return nil
+	}
+
+	if ms.lastFlushed > uint32(len(ms.txnBuf)) || ms.currentFileOffset > uint32(len(ms.txnBuf)) {
+		return errors.New("flush offsets out of buffer bounds")
+	}
+
+	dataToFlush := ms.txnBuf[ms.lastFlushed:ms.currentFileOffset]
+	if len(dataToFlush) == 0 {
+		return nil
+	}
+
+	// record the state before do flush
+	_ = ms.lastFlushed
+	flushEnd := ms.currentFileOffset
+
+	// write the data to file
+	if _, err = ms.txnFile.WriteAt(dataToFlush, int64(ms.lastFlushed)); err != nil {
+		return errors.Wrap(err, "failed to write data to file")
+	}
+
+	// sync the data to disk
+	if err = ms.txnFile.Sync(); err != nil {
+		return errors.Wrap(err, "failed to sync data to disk")
+	}
+
+	// Update the last flushed offset after write and flush finished.
+	ms.lastFlushed = flushEnd
+	return nil
 }
 
 func (*readWriteSegment) OpenTimestamp() time.Time {
@@ -179,11 +217,12 @@ func (ms *readWriteSegment) Close() error {
 	defer ms.Unlock()
 
 	err := multierr.Combine(
-		ms.txnMappedFile.Unmap(),
+		ms.doFlush(),
 		ms.txnFile.Close(),
 		// Write index file
 		ms.c.codec.WriteIndex(ms.c.idxPath, ms.writingIdx),
 	)
+	ReturnTxnBuf(&ms.txnBuf)
 	codec.ReturnIndexBuf(&ms.writingIdx)
 	return err
 }
@@ -205,19 +244,28 @@ func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 	fileLastSafeOffset := fileOffset(ms.writingIdx, ms.c.baseOffset, lastSafeOffset)
 	var recordSize uint32
 	var err error
-	if recordSize, err = ms.c.codec.GetRecordSize(ms.txnMappedFile, fileLastSafeOffset); err != nil {
+	if recordSize, err = ms.c.codec.GetRecordSize(ms.txnBuf, fileLastSafeOffset); err != nil {
 		return err
 	}
 	fileEndOffset := fileLastSafeOffset + recordSize
 	for i := fileEndOffset; i < ms.currentFileOffset; i++ {
-		ms.txnMappedFile[i] = 0
+		ms.txnBuf[i] = 0
 	}
+
+	lastFlushed0 := ms.lastFlushed
+	ms.lastFlushed = 0
+	if err = ms.Flush(); err != nil {
+		// If flush failed, rollback the last flushed offset.
+		ms.lastFlushed = lastFlushed0
+		return err
+	}
+	ms.lastFlushed = fileEndOffset
 
 	// Truncate the index
 	ms.writingIdx = ms.writingIdx[:4*(lastSafeOffset-ms.c.baseOffset+1)]
 	ms.currentFileOffset = fileEndOffset
 	ms.lastOffset = lastSafeOffset
-	return ms.Flush()
+	return nil
 }
 
 func initFileWithZeroes(f *os.File, size uint32) error {

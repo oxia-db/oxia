@@ -17,6 +17,7 @@ package wal
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -103,4 +104,30 @@ type Wal interface {
 
 	// Delete all the files and directories of the wal
 	Delete() error
+}
+
+var txnPool = sync.Pool{}
+
+func BorrowTxnBuf(size uint32) []byte {
+	var bts []byte
+	defer fillZero(bts)
+	if pooledBuffer, ok := txnPool.Get().(*[]byte); ok {
+		if cap(bts) >= int(size) {
+			bts = (*pooledBuffer)[:size]
+			return bts
+		}
+	}
+	// Start with empty slice, though with some initial capacity
+	bts = make([]byte, size)
+	return bts
+}
+
+func fillZero(bts []byte) {
+	for i := range bts {
+		bts[i] = 0
+	}
+}
+
+func ReturnTxnBuf(buf *[]byte) {
+	txnPool.Put(buf)
 }

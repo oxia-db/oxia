@@ -16,7 +16,9 @@ package wal
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -30,9 +32,28 @@ func TestReadOnlySegment(t *testing.T) {
 
 	rw, err := newReadWriteSegment(path, 0, 128*1024, 0, nil)
 	assert.NoError(t, err)
-	for i := int64(0); i < 10; i++ {
+	for i := int64(0); i < 5; i++ {
 		assert.NoError(t, rw.Append(i, []byte(fmt.Sprintf("entry-%d", i))))
 	}
+	assert.NoError(t, rw.Flush())
+	for i := int64(5); i < 10; i++ {
+		assert.NoError(t, rw.Append(i, []byte(fmt.Sprintf("entry-%d", i))))
+	}
+	assert.NoError(t, rw.Flush())
+
+	tnxBuf := rw.(*readWriteSegment).txnBuf
+	tnxFile := rw.(*readWriteSegment).txnFile
+	_, err = tnxFile.Seek(0, io.SeekStart)
+	assert.NoError(t, err)
+
+	bts, err := io.ReadAll(tnxFile)
+	assert.NoError(t, err)
+	bts = bts[:len(bts)-1] // see: readWriteSegment.initFileWithZeroes
+
+	bufStr := string(tnxBuf)
+	fileStr := string(bts)
+	assert.True(t, strings.EqualFold(bufStr, fileStr))
+
 	assert.NoError(t, rw.Close())
 
 	ro, err := newReadOnlySegment(path, 0)

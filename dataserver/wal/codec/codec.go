@@ -35,6 +35,26 @@ type Metadata struct {
 	IdxHeaderSize uint32
 }
 
+type FileReader struct {
+	file  *os.File
+	stats os.FileInfo
+}
+
+func NewFileReader(file *os.File, stats os.FileInfo) *FileReader {
+	return &FileReader{
+		file:  file,
+		stats: stats,
+	}
+}
+
+func (f *FileReader) ReadAt(b []byte, off int64) (n int, err error) {
+	return f.file.ReadAt(b, off)
+}
+
+func (f *FileReader) Size() int64 {
+	return f.stats.Size()
+}
+
 type Codec interface {
 	// GetHeaderSize returns the fixed size of the header in bytes
 	// for each record. This value is used to understand where the
@@ -65,6 +85,8 @@ type Codec interface {
 	// - err: Error if any issues occur during reading or validation.
 	ReadRecordWithValidation(buf []byte, startFileOffset uint32) (payload []byte, err error)
 
+	ReadRecordWithValidation0(reader *FileReader, startFileOffset uint32) (payload []byte, err error)
+
 	// ReadHeaderWithValidation reads the header of a record at the specified
 	// offset and validates the integrity of the header data (e.g., CRC checks).
 	//
@@ -78,6 +100,8 @@ type Codec interface {
 	// - payloadCrc: The CRC value of the current payload.
 	// - err: Error if any issues occur during reading or validation.
 	ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (payloadSize uint32, previousCrc uint32, payloadCrc uint32, err error)
+
+	ReadHeaderWithValidation0(reader *FileReader, startFileOffset uint32) (payloadSize uint32, previousCrc uint32, payloadCrc uint32, err error)
 
 	// WriteRecord writes a record to the buffer, starting at the specified
 	// offset, and includes a header with metadata like CRC.
@@ -127,6 +151,9 @@ type Codec interface {
 	//   - err: an error if the recovery process encounters issues, such as data corruption or invalid entries.
 	RecoverIndex(buf []byte, startFileOffset uint32, baseEntryOffset int64, commitOffset *int64) (index []byte,
 		lastCrc uint32, newFileOffset uint32, lastEntryOffset int64, err error)
+
+	RecoverIndex0(reader *FileReader, startFileOffset uint32, baseEntryOffset int64, commitOffset *int64) (index []byte,
+		lastCrc uint32, newFileOffset uint32, lastEntryOffset int64, err error)
 }
 
 // The latest codec.
@@ -163,6 +190,24 @@ func GetOrCreate(basePath string) (_codec Codec, exist bool, err error) {
 // ReadInt read unsigned int from buf with big endian.
 func ReadInt(b []byte, offset uint32) uint32 {
 	return binary.BigEndian.Uint32(b[offset : offset+4])
+}
+
+func ReadUint32(reader *FileReader, offset uint32) (uint32, error) {
+	buf := make([]byte, 4)
+	_, err := reader.ReadAt(buf, int64(offset))
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed to read uint32 at offset %d", offset)
+	}
+	return binary.BigEndian.Uint32(buf), nil
+}
+
+func ReadHeader(reader *FileReader, startFileOffset uint32, headerSize uint32) ([]byte, error) {
+	headerBuf := make([]byte, headerSize)
+	_, err := reader.ReadAt(headerBuf, int64(startFileOffset))
+	if err != nil {
+		return nil, errors.Wrapf(err, "fail to read header")
+	}
+	return headerBuf, nil
 }
 
 // Index buf.
