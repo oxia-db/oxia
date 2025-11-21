@@ -54,7 +54,7 @@ func TestWalTrimmer(t *testing.T) {
 	commitOffsetProvider := &mockedCommitOffsetProvider{}
 	commitOffsetProvider.commitOffset.Store(math.MaxInt64)
 
-	w, err := newWal(constant.DefaultNamespace, 1, options, commitOffsetProvider, clock, 10*time.Millisecond)
+	w, err := newWal(constant.DefaultNamespace, 1, options, commitOffsetProvider, clock, 10*time.Millisecond, nil)
 	assert.NoError(t, err)
 
 	for i := int64(0); i < 100; i++ {
@@ -112,7 +112,7 @@ func TestWalTrimUpToCommitOffset(t *testing.T) {
 			commitOffsetProvider := &mockedCommitOffsetProvider{}
 			commitOffsetProvider.commitOffset.Store(math.MaxInt64)
 
-			w, err := newWal(constant.DefaultNamespace, 1, options, commitOffsetProvider, clock, 10*time.Millisecond)
+			w, err := newWal(constant.DefaultNamespace, 1, options, commitOffsetProvider, clock, 10*time.Millisecond, nil)
 			assert.NoError(t, err)
 
 			commitOffsetProvider.commitOffset.Store(-1)

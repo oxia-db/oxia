@@ -41,20 +41,26 @@ import (
 
 type walFactory struct {
 	options *FactoryOptions
+	walLogs map[int64]Wal
 }
 
 func NewWalFactory(options *FactoryOptions) Factory {
 	return &walFactory{
 		options: options,
+		walLogs: make(map[int64]Wal),
 	}
 }
 
 func (f *walFactory) NewWal(namespace string, shard int64, commitOffsetProvider CommitOffsetProvider) (Wal, error) {
-	impl, err := newWal(namespace, shard, f.options, commitOffsetProvider, time2.SystemClock, DefaultCheckInterval)
+	if w, exist := f.walLogs[shard]; exist {
+		return w, nil
+	}
+	impl, err := newWal(namespace, shard, f.options, commitOffsetProvider, time2.SystemClock, DefaultCheckInterval, f)
 	return impl, err
 }
 
-func (*walFactory) Close() error {
+func (f *walFactory) Close() error {
+	f.walLogs = nil
 	return nil
 }
 
@@ -66,6 +72,7 @@ type wal struct {
 	firstOffset atomic.Int64
 	segmentSize uint32
 	syncData    bool
+	wf          *walFactory
 
 	currentSegment       ReadWriteSegment
 	readOnlySegments     ReadOnlySegmentsGroup
@@ -99,7 +106,7 @@ func walPath(logDir string, namespace string, shard int64) string {
 }
 
 func newWal(namespace string, shard int64, options *FactoryOptions, commitOffsetProvider CommitOffsetProvider,
-	clock time2.Clock, trimmerCheckInterval time.Duration) (Wal, error) {
+	clock time2.Clock, trimmerCheckInterval time.Duration, f *walFactory) (Wal, error) {
 	if options.SegmentSize == 0 {
 		options.SegmentSize = DefaultFactoryOptions.SegmentSize
 	}
@@ -112,6 +119,7 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 		segmentSize:          uint32(options.SegmentSize),
 		syncData:             options.SyncData,
 		commitOffsetProvider: commitOffsetProvider,
+		wf:                   f,
 
 		appendLatency: metric.NewLatencyHistogram("oxia_server_wal_append_latency",
 			"The time it takes to append entries to the WAL", labels),
@@ -161,7 +169,9 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 			w.runSync,
 		)
 	}
-
+	if f != nil {
+		f.walLogs[shard] = w
+	}
 	return w, nil
 }
 
@@ -233,6 +243,11 @@ func (t *wal) Close() error {
 
 	t.Lock()
 	defer t.Unlock()
+	defer func() {
+		if t.wf != nil {
+			delete(t.wf.walLogs, t.shard)
+		}
+	}()
 
 	return t.closeWithoutLock()
 }
