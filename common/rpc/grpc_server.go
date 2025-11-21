@@ -31,7 +31,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/process"
 
-	auth "github.com/oxia-db/oxia/common/auth/server"
+	"github.com/oxia-db/oxia/dataserver/auth"
 )
 
 const (

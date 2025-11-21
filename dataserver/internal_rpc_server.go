@@ -28,11 +28,10 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	authserver "github.com/oxia-db/oxia/common/auth/server"
-
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 
+	"github.com/oxia-db/oxia/dataserver/auth"
 	"github.com/oxia-db/oxia/proto"
 )
 
@@ -63,7 +62,7 @@ func newInternalRpcServer(grpcProvider rpc.GrpcProvider, bindAddress string, sha
 		proto.RegisterOxiaCoordinationServer(registrar, server)
 		proto.RegisterOxiaLogReplicationServer(registrar, server)
 		grpc_health_v1.RegisterHealthServer(registrar, server.healthServer)
-	}, tlsConf, &authserver.Disabled)
+	}, tlsConf, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
