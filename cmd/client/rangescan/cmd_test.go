@@ -48,7 +48,7 @@ func TestRangeScan_exec(t *testing.T) {
 		{"range", "--key-min a --key-max c", []any{"a", "c", emptyOptions}, []string{"a", "b"}},
 		{"short", "-s a -e c", []any{"a", "c", emptyOptions}, []string{"a", "b"}},
 		{"range-no-min", "--key-max c", []any{"", "c", emptyOptions}, []string{"a", "b"}},
-		{"range-no-max", "--key-min a", []any{"a", "__oxia/", emptyOptions}, []string{"a", "b", "c"}},
+		{"range-no-max", "--key-min a", []any{"a", "", emptyOptions}, []string{"a", "b", "c"}},
 		{"partition-key", "-s a -e c -p xyz", []any{"a", "c", []oxia.RangeScanOption{oxia.PartitionKey("xyz")}}, []string{"a", "b"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

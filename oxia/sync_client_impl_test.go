@@ -420,3 +420,52 @@ func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 
 	assert.NoError(t, standaloneServer.Close())
 }
+
+func TestSyncClientImpl_InternalKeys(t *testing.T) {
+	config := dataserver.NewTestConfig(t.TempDir())
+	// Test with multiple shards to ensure correctness across shards
+	config.NumShards = 1
+	standaloneServer, err := dataserver.NewStandalone(config)
+	assert.NoError(t, err)
+
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
+	assert.NoError(t, err)
+
+	// ////////////////////////////////////////////////////////////////////////
+
+	ctx := context.Background()
+	_, _, _ = client.Put(ctx, "a", []byte{})
+	_, _, _ = client.Put(ctx, "b", []byte{})
+	_, _, _ = client.Put(ctx, "c", []byte{})
+	_, _, _ = client.Put(ctx, "__oxia/a-test", []byte{})
+
+	// ////////////////////////////////////////////////////////////////////////
+
+	l, err := client.List(ctx, "a", "")
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"a", "b", "c"}, l)
+
+	l, err = client.List(ctx, "a", "__oxia/a-test---", ShowInternalKeys(true))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"a", "b", "c", "__oxia/a-test"}, l)
+
+	// ////////////////////////////////////////////////////////////////////////
+
+	resCh := client.RangeScan(ctx, "a", "")
+	assert.Equal(t, "a", (<-resCh).Key)
+	assert.Equal(t, "b", (<-resCh).Key)
+	assert.Equal(t, "c", (<-resCh).Key)
+	assert.Empty(t, resCh)
+
+	resCh = client.RangeScan(ctx, "a", "", ShowInternalKeys(true))
+	assert.Equal(t, "a", (<-resCh).Key)
+	assert.Equal(t, "b", (<-resCh).Key)
+	assert.Equal(t, "c", (<-resCh).Key)
+	assert.Equal(t, "__oxia/a-test", (<-resCh).Key)
+	assert.Eventually(t, func() bool {
+		return assert.NotEmpty(t, resCh)
+	}, 1*time.Second, 10*time.Millisecond)
+
+	assert.NoError(t, client.Close())
+	assert.NoError(t, standaloneServer.Close())
+}

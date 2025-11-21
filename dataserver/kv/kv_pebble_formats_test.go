@@ -51,7 +51,7 @@ func TestPebbleDbConversion(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test scan the new DB
-	it, err := kv.KeyRangeScan("/", "__oxia/")
+	it, err := kv.KeyRangeScan("/", "", NoInternalKeys)
 	assert.NoError(t, err)
 
 	var scanKeys []string
@@ -64,7 +64,7 @@ func TestPebbleDbConversion(t *testing.T) {
 	assert.NoError(t, it.Close())
 
 	// Test scan a range
-	it, err = kv.KeyRangeScan("/key/a/", "/key/a//")
+	it, err = kv.KeyRangeScan("/key/a/", "/key/a//", NoInternalKeys)
 	assert.NoError(t, err)
 
 	scanKeys = []string{}

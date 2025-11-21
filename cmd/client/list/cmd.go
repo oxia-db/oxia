@@ -28,10 +28,11 @@ var (
 )
 
 type flags struct {
-	keyMin         string
-	keyMax         string
-	partitionKey   string
-	secondaryIndex string
+	keyMin           string
+	keyMax           string
+	partitionKey     string
+	secondaryIndex   string
+	showInternalKeys bool
 }
 
 func (flags *flags) Reset() {
@@ -39,6 +40,7 @@ func (flags *flags) Reset() {
 	flags.keyMax = ""
 	flags.partitionKey = ""
 	flags.secondaryIndex = ""
+	flags.showInternalKeys = false
 }
 
 func init() {
@@ -46,6 +48,7 @@ func init() {
 	Cmd.Flags().StringVarP(&Config.keyMax, "key-max", "e", "", "Key range maximum (exclusive)")
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
 	Cmd.Flags().StringVar(&Config.secondaryIndex, "index", "", "Secondary Index")
+	Cmd.Flags().BoolVar(&Config.showInternalKeys, "internal-keys", false, "Show internal keys")
 }
 
 var Cmd = &cobra.Command{
@@ -63,10 +66,6 @@ func exec(cmd *cobra.Command, _ []string) error {
 	}
 
 	var options []oxia.RangeScanOption
-	if Config.keyMax == "" {
-		// By default, do not list internal keys
-		Config.keyMax = "__oxia/"
-	}
 
 	if Config.secondaryIndex != "" {
 		options = append(options, oxia.UseIndex(Config.secondaryIndex))
@@ -74,6 +73,10 @@ func exec(cmd *cobra.Command, _ []string) error {
 
 	if Config.partitionKey != "" {
 		options = append(options, oxia.PartitionKey(Config.partitionKey))
+	}
+
+	if Config.showInternalKeys {
+		options = append(options, oxia.ShowInternalKeys(true))
 	}
 
 	for gr := range client.RangeScan(context.Background(), Config.keyMin, Config.keyMax, options...) {

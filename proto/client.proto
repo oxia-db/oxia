@@ -377,6 +377,8 @@ message ListRequest {
   string end_exclusive = 3;
 
   optional string secondary_index_name = 4;
+
+  bool include_internal_keys = 5;
 }
 
 /**
@@ -400,6 +402,8 @@ message RangeScanRequest {
   string end_exclusive = 3;
 
   optional string secondary_index_name = 4;
+
+  bool include_internal_keys = 5;
 }
 
 /**
