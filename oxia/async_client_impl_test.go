@@ -638,9 +638,7 @@ func TestSyncClientImpl_PartitionRouting(t *testing.T) {
 	assert.Equal(t, "1", string(value))
 
 	key, value, _, err = client.Get(ctx, "a", ComparisonHigher(), PartitionKey("wrong-partition-key"))
-	assert.NoError(t, err)
-	assert.NotEqual(t, "b", key)
-	assert.NotEqual(t, "1", string(value))
+	assert.ErrorIs(t, err, ErrKeyNotFound)
 
 	// Delete with wrong partition key would fail to delete all keys
 	err = client.DeleteRange(ctx, "c", "e", PartitionKey("wrong-partition-key"))
