@@ -25,7 +25,6 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/perf"
 )
 
 var (
@@ -36,7 +35,7 @@ var (
 		Run:   exec,
 	}
 
-	config = perf.Config{}
+	config = Config{}
 )
 
 func init() {
@@ -76,6 +75,6 @@ func (c *closer) Close() error {
 
 func runPerf() (io.Closer, error) {
 	closer := newCloser(context.Background())
-	go perf.New(config).Run(closer.ctx)
+	go New(config).Run(closer.ctx)
 	return closer, nil
 }

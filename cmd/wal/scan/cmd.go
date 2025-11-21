@@ -21,12 +21,12 @@ import (
 	"math"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 	"github.com/oxia-db/oxia/proto"
 
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/wal/common"
-	"github.com/oxia-db/oxia/dataserver/wal"
 )
 
 type scanOptions struct {
@@ -114,7 +114,9 @@ func exec(*cobra.Command, []string) error {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(ser))
+			if _, err := fmt.Println(string(ser)); err != nil {
+				return err
+			}
 		} else {
 			for _, writes := range lev.GetRequests().Writes {
 				printPuts(le, writes.Puts)

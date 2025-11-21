@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oxia-db/oxia/dataserver"
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
 var (

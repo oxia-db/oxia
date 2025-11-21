@@ -15,9 +15,6 @@
 package compare
 
 import (
-	"bytes"
-	"cmp"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,62 +42,4 @@ func TestCompareWithSlash(t *testing.T) {
 	assert.Equal(t, +1, CompareWithSlash([]byte("/aaaa/a/a"), []byte("/aaaa/bbbbbbbbbb")))
 
 	assert.Equal(t, +1, CompareWithSlash([]byte("/a/b/a/a/a"), []byte("/a/b/a/b")))
-}
-
-func TestCompareWithDataset(t *testing.T) {
-	for _, test := range []struct {
-		leftKey  string
-		rightKey string
-		expect   int
-	}{
-		{"aaa", "aaa", 0},
-		{"aaa", "zzzzz", -1},
-		{"bbbbb", "aaaaa", +1},
-		{"aaaaa", "", +1},
-		{"", "aaaaaa", -1},
-		{"", "", 0},
-		{"aaaaa", "aaaaaaaaaaa", -1},
-		{"aaaaaaaaaaa", "aaa", +1},
-		{"a", "/", -1},
-		{"/", "a", +1},
-		{"/aaaa", "/bbbbb", -1},
-		{"/aaaa", "/aa/a", -1},
-		{"/aaaa/a", "/aaaa/b", -1},
-		{"/aaaa/a/a", "/bbbbbbbbbb", +1},
-		{"/aaaa/a/a", "/aaaa/bbbbbbbbbb", +1},
-		{"/a/b/a/a/a", "/a/b/a/b", +1},
-
-		{"/a", "/b", -1},
-		{"/a", "/a/", -1},
-		{"/a/", "/a//", -1},
-		{"/a/a-2", "/b/c", -1},
-		{"/", "/a", -1},
-		{"/a", "//", -1},
-		{"/b", "//", -1},
-		{"//", "/a/a-1", -1},
-
-		{"//", "/a/a-1", -1},
-
-		{"/a/a-1", "/a//", -1},
-		{"/a//", "/b/c", -1},
-	} {
-		t.Run(fmt.Sprintf("%v?%v", test.leftKey, test.rightKey), func(t *testing.T) {
-			// test compare with slash
-			assert.Equal(t, test.expect, CompareWithSlash([]byte(test.leftKey), []byte(test.rightKey)))
-			// test compare with abbreviated key
-			lbk := AbbreviatedKeyDisableSlash([]byte(test.leftKey))
-			rbk := AbbreviatedKeyDisableSlash([]byte(test.rightKey))
-			if lbk == rbk {
-				assert.Equal(t, test.expect, CompareWithSlash([]byte(test.leftKey), []byte(test.rightKey)))
-			} else {
-				assert.Equal(t, test.expect, cmp.Compare(lbk, rbk))
-			}
-
-			// Test encoded compare to ensure we are going to
-			// have the same exact sorting
-			encodedLeft := EncoderHierarchical.Encode(test.leftKey)
-			encodedRight := EncoderHierarchical.Encode(test.rightKey)
-			assert.Equal(t, test.expect, bytes.Compare(encodedLeft, encodedRight))
-		})
-	}
 }

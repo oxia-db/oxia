@@ -43,7 +43,9 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: 1.25
+          go-version-file: 'go.work'
           cache: 'true'
+          cache-dependency-path: "go.work.sum"
 
       - name: Install protoc
         uses: arduino/setup-protoc@v1
@@ -55,6 +57,7 @@ jobs:
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2
           go install github.com/palantir/go-license@latest
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.2
 
       - run: make license-check
 
@@ -62,10 +65,7 @@ jobs:
         run: make build
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.5.0
-          args: --timeout=10m -v
+        run: make lint
 
       - name: Check git status if clean
         run: |
@@ -162,8 +162,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v3
         with:
-          go-version: 1.25
+          go-version-file: 'go.work'
           cache: 'true'
+          cache-dependency-path: "go.work.sum"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v3

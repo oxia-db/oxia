@@ -24,9 +24,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/common/concurrent"
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 
-	"github.com/oxia-db/oxia/dataserver"
+	"github.com/oxia-db/oxia/common/concurrent"
 )
 
 type testStruct struct {

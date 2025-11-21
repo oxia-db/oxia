@@ -25,8 +25,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver"
+
 	"github.com/oxia-db/oxia/common/logging"
-	"github.com/oxia-db/oxia/dataserver"
 )
 
 func init() {
