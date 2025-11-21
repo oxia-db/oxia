@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/logging"
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/dataserver"
 )
 
 func init() {
@@ -35,7 +35,7 @@ func init() {
 }
 
 func TestAsyncClientImpl(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
 	client, err := NewAsyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
@@ -92,7 +92,7 @@ func TestAsyncClientImpl(t *testing.T) {
 }
 
 func TestSyncClientImpl_Notifications(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
@@ -176,7 +176,7 @@ func TestSyncClientImpl_Notifications(t *testing.T) {
 }
 
 func TestAsyncClientImpl_NotificationsClose(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
@@ -200,7 +200,7 @@ func TestAsyncClientImpl_NotificationsClose(t *testing.T) {
 }
 
 func TestAsyncClientImpl_Sessions(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
 	client, err := NewAsyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0), WithSessionTimeout(5*time.Second))
@@ -257,7 +257,7 @@ func TestAsyncClientImpl_Sessions(t *testing.T) {
 }
 
 func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
@@ -296,7 +296,7 @@ func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
 }
 
 func TestAsyncClientImpl_ClientIdentity(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
@@ -337,7 +337,7 @@ func TestAsyncClientImpl_ClientIdentity(t *testing.T) {
 }
 
 func TestSyncClientImpl_SessionNotifications(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
 	client1, err := NewSyncClient(standaloneServer.ServiceAddr(), WithIdentity("client-1"))
@@ -374,10 +374,10 @@ func TestSyncClientImpl_SessionNotifications(t *testing.T) {
 }
 
 func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
+	config := dataserver.NewTestConfig(t.TempDir())
 	// Test with multiple shards to ensure correctness across shards
 	config.NumShards = 10
-	standaloneServer, err := server.NewStandalone(config)
+	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr())
@@ -577,10 +577,10 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 }
 
 func TestSyncClientImpl_PartitionRouting(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
+	config := dataserver.NewTestConfig(t.TempDir())
 	// Test with multiple shards to ensure correctness across shards
 	config.NumShards = 10
-	standaloneServer, err := server.NewStandalone(config)
+	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr())
@@ -662,10 +662,10 @@ func TestSyncClientImpl_PartitionRouting(t *testing.T) {
 }
 
 func TestSyncClientImpl_SequentialKeys(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
+	config := dataserver.NewTestConfig(t.TempDir())
 	// Test with multiple shards to ensure correctness across shards
 	config.NumShards = 10
-	standaloneServer, err := server.NewStandalone(config)
+	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr())
@@ -724,10 +724,10 @@ func TestSyncClientImpl_SequentialKeys(t *testing.T) {
 }
 
 func TestSyncClientImpl_RangeScan(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
+	config := dataserver.NewTestConfig(t.TempDir())
 	// Test with multiple shards to ensure correctness across shards
 	config.NumShards = 10
-	standaloneServer, err := server.NewStandalone(config)
+	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr())
@@ -773,10 +773,10 @@ func TestSyncClientImpl_RangeScan(t *testing.T) {
 }
 
 func TestSyncClientImpl_RangeScanOnPartition(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
+	config := dataserver.NewTestConfig(t.TempDir())
 	// Test with multiple shards to ensure correctness across shards
 	config.NumShards = 10
-	standaloneServer, err := server.NewStandalone(config)
+	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
 	client, err := NewSyncClient(standaloneServer.ServiceAddr())
@@ -822,8 +822,8 @@ func TestSyncClientImpl_RangeScanOnPartition(t *testing.T) {
 }
 
 func TestAsyncClientImpl_SequenceOrdering(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
-	standaloneServer, err := server.NewStandalone(config)
+	config := dataserver.NewTestConfig(t.TempDir())
+	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
 	client, err := NewAsyncClient(standaloneServer.ServiceAddr(), WithMaxRequestsPerBatch(1))
@@ -847,7 +847,7 @@ func TestAsyncClientImpl_SequenceOrdering(t *testing.T) {
 }
 
 func TestAsyncClientImpl_versionId(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
 	client, err := NewAsyncClient(standaloneServer.ServiceAddr())
@@ -882,7 +882,7 @@ func TestAsyncClientImpl_versionId(t *testing.T) {
 }
 
 func TestGetValueWithSessionId(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
@@ -918,7 +918,7 @@ func TestGetValueWithSessionId(t *testing.T) {
 }
 
 func TestGetWithoutValue(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
