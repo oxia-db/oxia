@@ -20,13 +20,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/dataserver"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/server"
 )
 
 func TestSequence_WithOtherKeyInBatch(t *testing.T) {
-	config := server.NewTestConfig(t.TempDir())
-	standaloneServer, err := server.NewStandalone(config)
+	config := dataserver.NewTestConfig(t.TempDir())
+	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 

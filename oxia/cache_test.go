@@ -26,7 +26,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/concurrent"
 
-	"github.com/oxia-db/oxia/server"
+	"github.com/oxia-db/oxia/dataserver"
 )
 
 type testStruct struct {
@@ -39,7 +39,7 @@ func newKey() string {
 }
 
 func TestCache_Empty(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
@@ -70,7 +70,7 @@ func TestCache_Empty(t *testing.T) {
 }
 
 func TestCache_InsertionDeletion(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
@@ -129,7 +129,7 @@ func TestCache_InsertionDeletion(t *testing.T) {
 }
 
 func TestCache_PutOutSideTheCache(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
@@ -154,7 +154,7 @@ func TestCache_PutOutSideTheCache(t *testing.T) {
 }
 
 func TestCache_DeserializationFailure(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
@@ -175,7 +175,7 @@ func TestCache_DeserializationFailure(t *testing.T) {
 }
 
 func TestCache_ConcurrentUpdate(t *testing.T) {
-	standaloneServer, err := server.NewStandalone(server.NewTestConfig(t.TempDir()))
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 

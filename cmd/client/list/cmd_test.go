@@ -38,7 +38,7 @@ func runCmd(cmd *cobra.Command, args string, stdin string) (string, error) {
 }
 
 func TestList_exec(t *testing.T) {
-	var emptyOptions []oxia.ListOption
+	var emptyOptions []oxia.RangeScanOption
 
 	for _, test := range []struct {
 		name               string
@@ -49,12 +49,18 @@ func TestList_exec(t *testing.T) {
 		{"short", "-s a -e c", []any{"a", "c", emptyOptions}},
 		{"range-no-min", "--key-max c", []any{"", "c", emptyOptions}},
 		{"range-no-max", "--key-min a", []any{"a", "__oxia/", emptyOptions}},
-		{"partition-key", "-s a -e c -p xyz", []any{"a", "c", []oxia.ListOption{oxia.PartitionKey("xyz")}}},
+		{"partition-key", "-s a -e c -p xyz", []any{"a", "c", []oxia.RangeScanOption{oxia.PartitionKey("xyz")}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			common.MockedClient = common.NewMockClient()
 
-			common.MockedClient.On("List", test.expectedParameters...).Return([]string{"a", "b", "c"}, nil)
+			ch := make(chan oxia.GetResult, 3)
+			ch <- oxia.GetResult{Key: "a"}
+			ch <- oxia.GetResult{Key: "b"}
+			ch <- oxia.GetResult{Key: "c"}
+			close(ch)
+
+			common.MockedClient.On("RangeScan", test.expectedParameters...).Return(ch)
 			_, err := runCmd(Cmd, test.args, "")
 			assert.NoError(t, err)
 

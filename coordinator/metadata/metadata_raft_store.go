@@ -25,7 +25,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/compare"
-	"github.com/oxia-db/oxia/server/kv"
+	"github.com/oxia-db/oxia/dataserver/kv"
 )
 
 type kvRaftStore struct {

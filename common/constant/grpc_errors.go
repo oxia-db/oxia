@@ -41,8 +41,6 @@ var (
 	ErrInvalidStatus           = status.Error(CodeInvalidStatus, "oxia: invalid status")
 	ErrLeaderAlreadyConnected  = status.Error(CodeLeaderAlreadyConnected, "oxia: leader is already connected")
 	ErrAlreadyClosed           = status.Error(CodeAlreadyClosed, "oxia: resource is already closed")
-	ErrNodeIsNotLeader         = status.Error(CodeNodeIsNotLeader, "oxia: node is not leader for shard")
-	ErrNodeIsNotFollower       = status.Error(CodeNodeIsNotFollower, "oxia: node is not follower for shard")
 	ErrSessionNotFound         = status.Error(CodeSessionNotFound, "oxia: session not found")
 	ErrInvalidSessionTimeout   = status.Error(CodeInvalidSessionTimeout, "oxia: invalid session timeout")
 	ErrNamespaceNotFound       = status.Error(CodeNamespaceNotFound, "oxia: namespace not found")
