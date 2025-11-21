@@ -18,6 +18,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2
+	google.golang.org/genproto v0.0.0-20250218202821-56aae31c358a
 )
 
 require (

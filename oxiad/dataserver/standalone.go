@@ -20,9 +20,9 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/oxia-db/oxia/common/rpc/auth"
 	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/auth"
 	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 

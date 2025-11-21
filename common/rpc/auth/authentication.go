@@ -26,13 +26,6 @@ const (
 	ProviderParamTypeToken = "token"
 )
 
-var (
-	ErrUnsupportedProvider              = errors.New("unsupported authentication provider")
-	ErrUnMatchedAuthenticationParamType = errors.New("unmatched authentication parameter type")
-	ErrEmptyToken                       = errors.New("empty token")
-	ErrMalformedToken                   = errors.New("malformed token")
-)
-
 var Disabled = Options{}
 
 type Options struct {
@@ -43,6 +36,13 @@ type Options struct {
 func (op *Options) IsEnabled() bool {
 	return op != nil && op.ProviderName != ""
 }
+
+var (
+	ErrUnsupportedProvider              = errors.New("unsupported authentication provider")
+	ErrUnMatchedAuthenticationParamType = errors.New("unmatched authentication parameter type")
+	ErrEmptyToken                       = errors.New("empty token")
+	ErrMalformedToken                   = errors.New("malformed token")
+)
 
 // todo: add metrics
 type AuthenticationProvider interface {
