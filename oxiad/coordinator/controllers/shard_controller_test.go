@@ -21,12 +21,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/actions"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resources"
-	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 

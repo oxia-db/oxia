@@ -22,12 +22,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/compare"
 

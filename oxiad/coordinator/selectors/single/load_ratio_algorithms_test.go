@@ -17,8 +17,9 @@ package single
 import (
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 func TestDefaultShardsRank(t *testing.T) {

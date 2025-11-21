@@ -16,6 +16,7 @@ package single
 
 import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/policies"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
 )

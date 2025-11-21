@@ -19,8 +19,9 @@ import (
 	"testing"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 func TestGroupingCandidatesNormalCase(t *testing.T) {

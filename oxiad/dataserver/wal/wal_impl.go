@@ -23,11 +23,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/slices"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"

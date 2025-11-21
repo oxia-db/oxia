@@ -20,9 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 
 	"github.com/oxia-db/oxia/common/constant"
 

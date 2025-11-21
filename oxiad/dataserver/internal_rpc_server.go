@@ -21,13 +21,14 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/auth"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/auth"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"

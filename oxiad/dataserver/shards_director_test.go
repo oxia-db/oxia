@@ -18,8 +18,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 
 	"github.com/oxia-db/oxia/common/constant"
 

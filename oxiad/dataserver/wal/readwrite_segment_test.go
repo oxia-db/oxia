@@ -19,8 +19,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
 func TestReadWriteSegment(t *testing.T) {

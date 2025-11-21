@@ -20,10 +20,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/compare"
 

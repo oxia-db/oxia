@@ -20,9 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/common/constant"
 

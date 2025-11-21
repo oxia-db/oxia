@@ -17,9 +17,10 @@ package actions
 import (
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 )

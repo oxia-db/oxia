@@ -42,14 +42,20 @@ distribution:
 
 .PHONY: maelstrom
 maelstrom:
-	go build -v -o bin/oxia-maelstrom ./maelstrom
+	go build -v -o bin/oxia-maelstrom ./oxiad/maelstrom
 
 test: build
-	go test -cover -race ./cmd/... ./common/... ./oxia/... ./oxiad/... ./proto/... ./tests/...
+	go test -cover -race\
+	 ./cmd/...\
+	 ./common/...\
+	  ./oxia/...\
+	   ./oxiad/...\
+	    ./proto/...\
+	     ./tests/...
 
 lint:
 	#brew install golangci-lint
-	golangci-lint run -v
+	go work edit -json | jq -r '.Use[].DiskPath'  | xargs -I{} golangci-lint run {}/...
 
 clean:
 	rm -f bin/oxia bin/oxia-maelstrom

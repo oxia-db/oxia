@@ -20,8 +20,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
 func TestReadOnlySegment(t *testing.T) {

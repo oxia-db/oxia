@@ -20,6 +20,7 @@ import (
 
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 

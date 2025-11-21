@@ -21,9 +21,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/cmd/wal/common"
 	"github.com/oxia-db/oxia/proto"

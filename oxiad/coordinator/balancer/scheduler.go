@@ -22,13 +22,14 @@ import (
 
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+	"github.com/pkg/errors"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/actions"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resources"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selectors/single"
 	"github.com/oxia-db/oxia/oxiad/coordinator/utils"
-	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 

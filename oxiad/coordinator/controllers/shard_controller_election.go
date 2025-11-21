@@ -25,16 +25,17 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
+	"golang.org/x/exp/maps"
+	"google.golang.org/grpc/status"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/actions"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resources"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/selectors/leader"
-	"github.com/pkg/errors"
-	"go.uber.org/multierr"
-	"golang.org/x/exp/maps"
-	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"

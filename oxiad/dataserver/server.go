@@ -20,10 +20,11 @@ import (
 	"log/slog"
 	"time"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/auth"
 	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
-	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/rpc"
 

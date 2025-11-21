@@ -23,11 +23,12 @@ import (
 	"os"
 	"sync"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/auth"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/auth"
 
 	"github.com/oxia-db/oxia/common/rpc"
 

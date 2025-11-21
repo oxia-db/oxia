@@ -22,8 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/stretchr/testify/assert"
 )

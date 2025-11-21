@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resources"
 	"github.com/oxia-db/oxia/proto"

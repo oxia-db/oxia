@@ -18,9 +18,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 var (

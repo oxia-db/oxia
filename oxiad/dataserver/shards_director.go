@@ -19,10 +19,11 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/constant"
 

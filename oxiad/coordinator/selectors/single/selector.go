@@ -15,8 +15,9 @@
 package single
 
 import (
-	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
 	"github.com/pkg/errors"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
 )
 
 var _ selectors.Selector[*Context, string] = &server{}

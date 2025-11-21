@@ -23,9 +23,10 @@ import (
 	"time"
 
 	"github.com/edsrzf/mmap-go"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
 func segmentPath(basePath string, firstOffset int64) string {

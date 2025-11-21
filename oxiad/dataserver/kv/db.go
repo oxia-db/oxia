@@ -25,10 +25,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/compare"
 

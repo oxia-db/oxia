@@ -19,8 +19,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/oxia-db/oxia/cmd/client/del"
 	"github.com/oxia-db/oxia/cmd/client/get"

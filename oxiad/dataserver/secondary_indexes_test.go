@@ -18,9 +18,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"

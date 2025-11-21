@@ -18,6 +18,7 @@ import (
 	"cmp"
 
 	"github.com/emirpasic/gods/v2/lists/arraylist"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 

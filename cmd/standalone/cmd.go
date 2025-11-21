@@ -18,9 +18,10 @@ import (
 	"io"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
-	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/common/process"
 

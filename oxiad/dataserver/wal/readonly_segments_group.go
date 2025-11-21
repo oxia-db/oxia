@@ -20,9 +20,10 @@ import (
 	"time"
 
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/util"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
-	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/object"
 )

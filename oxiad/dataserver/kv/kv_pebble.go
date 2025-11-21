@@ -16,6 +16,7 @@ package kv
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -30,7 +31,6 @@ import (
 	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"golang.org/x/net/context"
 
 	"github.com/oxia-db/oxia/common/cache"
 

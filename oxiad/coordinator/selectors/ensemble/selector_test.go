@@ -18,10 +18,11 @@ import (
 	"testing"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/policies"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/exp/slices"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/policies"
 )
 
 func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {

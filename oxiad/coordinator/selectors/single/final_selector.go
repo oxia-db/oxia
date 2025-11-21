@@ -15,7 +15,7 @@
 package single
 
 import (
-	"math/rand"
+	"math/rand/v2"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
 )
@@ -34,5 +34,5 @@ func (*finalSelector) Select(ssContext *Context) (string, error) {
 		startIdx := ssContext.Status.ServerIdx
 		return candidatesArr[int(startIdx)%len(candidatesArr)], nil
 	}
-	return candidatesArr[rand.Intn(len(candidatesArr))], nil
+	return candidatesArr[rand.IntN(len(candidatesArr))], nil //nolint:gosec
 }

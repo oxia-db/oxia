@@ -22,8 +22,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/oxia-db/oxia/oxiad/dataserver/util/crc"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/util/crc"
 )
 
 func TestV2_GetHeaderSize(t *testing.T) {

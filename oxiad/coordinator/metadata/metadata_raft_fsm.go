@@ -20,8 +20,9 @@ import (
 	"log/slog"
 
 	"github.com/hashicorp/raft"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 type raftOpCmd struct {

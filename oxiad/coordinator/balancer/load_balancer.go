@@ -15,12 +15,12 @@
 package balancer
 
 import (
+	"context"
 	"io"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/actions"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resources"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
-	"golang.org/x/net/context"
 )
 
 type Options struct {

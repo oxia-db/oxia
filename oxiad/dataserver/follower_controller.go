@@ -22,12 +22,13 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/compare"
 

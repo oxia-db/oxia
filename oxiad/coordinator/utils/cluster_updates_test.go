@@ -20,8 +20,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 var (

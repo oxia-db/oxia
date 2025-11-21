@@ -19,9 +19,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
-	"github.com/stretchr/testify/assert"
 )
 
 func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {

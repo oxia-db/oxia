@@ -22,6 +22,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+	"go.uber.org/multierr"
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/actions"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controllers"
@@ -32,9 +36,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selectors/ensemble"
 	"github.com/oxia-db/oxia/oxiad/coordinator/utils"
-	"github.com/pkg/errors"
-	"go.uber.org/multierr"
-	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/process"
