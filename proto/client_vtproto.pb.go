@@ -487,6 +487,7 @@ func (m *ListRequest) CloneVT() *ListRequest {
 	r := new(ListRequest)
 	r.StartInclusive = m.StartInclusive
 	r.EndExclusive = m.EndExclusive
+	r.IncludeInternalKeys = m.IncludeInternalKeys
 	if rhs := m.Shard; rhs != nil {
 		tmpVal := *rhs
 		r.Shard = &tmpVal
@@ -534,6 +535,7 @@ func (m *RangeScanRequest) CloneVT() *RangeScanRequest {
 	r := new(RangeScanRequest)
 	r.StartInclusive = m.StartInclusive
 	r.EndExclusive = m.EndExclusive
+	r.IncludeInternalKeys = m.IncludeInternalKeys
 	if rhs := m.Shard; rhs != nil {
 		tmpVal := *rhs
 		r.Shard = &tmpVal
@@ -1459,6 +1461,9 @@ func (this *ListRequest) EqualVT(that *ListRequest) bool {
 	if p, q := this.SecondaryIndexName, that.SecondaryIndexName; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
 	}
+	if this.IncludeInternalKeys != that.IncludeInternalKeys {
+		return false
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
@@ -1510,6 +1515,9 @@ func (this *RangeScanRequest) EqualVT(that *RangeScanRequest) bool {
 		return false
 	}
 	if p, q := this.SecondaryIndexName, that.SecondaryIndexName; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
+	}
+	if this.IncludeInternalKeys != that.IncludeInternalKeys {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -2877,6 +2885,16 @@ func (m *ListRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.IncludeInternalKeys {
+		i--
+		if m.IncludeInternalKeys {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x28
+	}
 	if m.SecondaryIndexName != nil {
 		i -= len(*m.SecondaryIndexName)
 		copy(dAtA[i:], *m.SecondaryIndexName)
@@ -2977,6 +2995,16 @@ func (m *RangeScanRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.IncludeInternalKeys {
+		i--
+		if m.IncludeInternalKeys {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x28
 	}
 	if m.SecondaryIndexName != nil {
 		i -= len(*m.SecondaryIndexName)
@@ -4025,6 +4053,9 @@ func (m *ListRequest) SizeVT() (n int) {
 		l = len(*m.SecondaryIndexName)
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
+	if m.IncludeInternalKeys {
+		n += 2
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -4065,6 +4096,9 @@ func (m *RangeScanRequest) SizeVT() (n int) {
 	if m.SecondaryIndexName != nil {
 		l = len(*m.SecondaryIndexName)
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.IncludeInternalKeys {
+		n += 2
 	}
 	n += len(m.unknownFields)
 	return n
@@ -6848,6 +6882,26 @@ func (m *ListRequest) UnmarshalVT(dAtA []byte) error {
 			s := string(dAtA[iNdEx:postIndex])
 			m.SecondaryIndexName = &s
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IncludeInternalKeys", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.IncludeInternalKeys = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -7099,6 +7153,26 @@ func (m *RangeScanRequest) UnmarshalVT(dAtA []byte) error {
 			s := string(dAtA[iNdEx:postIndex])
 			m.SecondaryIndexName = &s
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IncludeInternalKeys", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.IncludeInternalKeys = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -11084,6 +11158,26 @@ func (m *ListRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 			s := stringValue
 			m.SecondaryIndexName = &s
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IncludeInternalKeys", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.IncludeInternalKeys = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -11351,6 +11445,26 @@ func (m *RangeScanRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 			s := stringValue
 			m.SecondaryIndexName = &s
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IncludeInternalKeys", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.IncludeInternalKeys = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

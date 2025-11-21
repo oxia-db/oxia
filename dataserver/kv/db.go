@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -81,7 +82,7 @@ type DB interface {
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
 	List(request *proto.ListRequest) (KeyIterator, error)
 	RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error)
-	KeyIterator() (KeyIterator, error)
+	KeyIterator(includeInternalKeys bool) (KeyIterator, error)
 
 	ReadCommitOffset() (int64, error)
 
@@ -326,8 +327,10 @@ func (d *db) GetSequenceUpdates(prefixKey string) (SequenceWaiter, error) {
 	sw := d.sequenceWaiterTracker.AddSequenceWaiter(prefixKey)
 
 	// First read last key in the sequence
-	it, err := d.kv.KeyRangeScanReverse(fmt.Sprintf("%s-%020d", prefixKey, 0),
-		fmt.Sprintf("%s-%020d", prefixKey, math.MaxInt64))
+	it, err := d.kv.KeyRangeScanReverse(
+		fmt.Sprintf("%s-%020d", prefixKey, 0),
+		fmt.Sprintf("%s-%020d", prefixKey, math.MaxInt64),
+		false)
 	if err != nil {
 		err = multierr.Append(err, sw.Close())
 		return nil, err
@@ -352,7 +355,7 @@ func (it *listIterator) Close() error {
 func (d *db) List(request *proto.ListRequest) (KeyIterator, error) {
 	d.listCounter.Add(1)
 
-	it, err := d.kv.KeyRangeScan(request.StartInclusive, request.EndExclusive)
+	it, err := d.kv.KeyRangeScan(request.StartInclusive, request.EndExclusive, request.IncludeInternalKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -375,7 +378,13 @@ func (it *rangeScanIterator) Value() (*proto.GetResponse, error) {
 	}
 
 	se := &proto.StorageEntry{}
-	if err = Deserialize(value, se); err != nil {
+
+	// Notifications are not using the stats headers so they would
+	// fail to deserialize. We just provide the content without the
+	// version object
+	if strings.HasPrefix(it.Key(), notificationsPrefix) {
+		se.Value = value
+	} else if err = Deserialize(value, se); err != nil {
 		return nil, err
 	}
 
@@ -404,7 +413,7 @@ func (it *rangeScanIterator) Close() error {
 func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error) {
 	d.rangeScanCounter.Add(1)
 
-	it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive)
+	it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive, request.IncludeInternalKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -415,8 +424,8 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 	}, nil
 }
 
-func (d *db) KeyIterator() (KeyIterator, error) {
-	return d.kv.KeyIterator()
+func (d *db) KeyIterator(includeInternalKeys bool) (KeyIterator, error) {
+	return d.kv.KeyIterator(includeInternalKeys)
 }
 
 func (d *db) ReadCommitOffset() (int64, error) {
@@ -707,7 +716,7 @@ func (d *db) applyDeleteRange(batch WriteBatch, notifications *Notifications, de
 }
 
 func applyGet(kv KV, getReq *proto.GetRequest) (*proto.GetResponse, error) {
-	key, value, closer, err := kv.Get(getReq.Key, ComparisonType(getReq.GetComparisonType()))
+	key, value, closer, err := kv.Get(getReq.Key, ComparisonType(getReq.GetComparisonType()), false)
 
 	if errors.Is(err, ErrKeyNotFound) {
 		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil

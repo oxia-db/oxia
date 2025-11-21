@@ -70,7 +70,7 @@ var (
 )
 
 func (s *kvRaftStore) FirstIndex() (uint64, error) {
-	storedKey, _, closer, err := s.kv.Get(logKeyMin, kv.ComparisonCeiling)
+	storedKey, _, closer, err := s.kv.Get(logKeyMin, kv.ComparisonCeiling, false)
 	if err != nil {
 		if errors.Is(err, kv.ErrKeyNotFound) {
 			return 0, nil
@@ -88,7 +88,7 @@ func (s *kvRaftStore) FirstIndex() (uint64, error) {
 }
 
 func (s *kvRaftStore) LastIndex() (idx uint64, err error) {
-	storedKey, _, closer, err := s.kv.Get(logKeyMax, kv.ComparisonFloor)
+	storedKey, _, closer, err := s.kv.Get(logKeyMax, kv.ComparisonFloor, false)
 	if err != nil {
 		if errors.Is(err, kv.ErrKeyNotFound) {
 			return 0, nil
@@ -102,7 +102,7 @@ func (s *kvRaftStore) LastIndex() (idx uint64, err error) {
 
 func (s *kvRaftStore) GetLog(index uint64, log *raft.Log) error {
 	key := fmt.Sprintf(logKeyFormat, index)
-	_, value, closer, err := s.kv.Get(key, kv.ComparisonEqual)
+	_, value, closer, err := s.kv.Get(key, kv.ComparisonEqual, false)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (s *kvRaftStore) Set(key []byte, value []byte) error {
 }
 
 func (s *kvRaftStore) Get(key []byte) ([]byte, error) {
-	_, value, closer, err := s.kv.Get(string(key), kv.ComparisonEqual)
+	_, value, closer, err := s.kv.Get(string(key), kv.ComparisonEqual, false)
 	if err != nil {
 		if errors.Is(err, kv.ErrKeyNotFound) {
 			return []byte{}, nil

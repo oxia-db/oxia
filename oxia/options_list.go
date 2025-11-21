@@ -18,6 +18,7 @@ type listOptions struct {
 	baseOptions
 
 	secondaryIndexName *string
+	showInternalKeys   bool
 }
 
 // ListOption represents an option for the [SyncClient.List] operation.
@@ -55,4 +56,28 @@ func (u *useIndex) applyGet(opts *getOptions) {
 // Note: The returned list will contain they primary keys of the records.
 func UseIndex(indexName string) ListOption {
 	return &useIndex{indexName}
+}
+
+// ///////////////////////////////////////////////////////////////////////////////////
+
+type showInternalKeys struct {
+	showInternalKeys bool
+}
+
+func (u *showInternalKeys) applyList(opts *listOptions) {
+	opts.showInternalKeys = u.showInternalKeys
+}
+
+func (u *showInternalKeys) applyRangeScan(opts *rangeScanOptions) {
+	opts.showInternalKeys = u.showInternalKeys
+}
+
+func (u *showInternalKeys) applyGet(_ *getOptions) {
+	// No-op
+}
+
+// ShowInternalKeys controls where to list Oxia's own internal keys.
+// By default, only user's keys are returned
+func ShowInternalKeys(show bool) ListOption {
+	return &showInternalKeys{show}
 }

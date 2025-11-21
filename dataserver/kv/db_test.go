@@ -1064,3 +1064,123 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
 }
+
+func TestDB_ShowInternalKeys(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, compare.EncoderNatural, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	writeReq := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{{
+			Key:   "a",
+			Value: []byte("a"),
+		}, {
+			Key:   "b",
+			Value: []byte("b"),
+		}, {
+			Key:   "c",
+			Value: []byte("c"),
+		}, {
+			Key:   "__oxia/a-test",
+			Value: []byte("x"),
+		}},
+	}
+
+	_, err = db.ProcessWrite(writeReq, wal.InvalidOffset, now(), NoOpCallback)
+	assert.NoError(t, err)
+
+	listReq1 := &proto.ListRequest{
+		StartInclusive: "a",
+		EndExclusive:   "",
+	}
+
+	keys1 := keyIteratorToSlice(db.List(listReq1))
+	assert.Len(t, keys1, 3)
+	assert.Equal(t, "a", keys1[0])
+	assert.Equal(t, "b", keys1[1])
+	assert.Equal(t, "c", keys1[2])
+
+	listReq2 := &proto.ListRequest{
+		StartInclusive:      "a",
+		EndExclusive:        "",
+		IncludeInternalKeys: true,
+	}
+
+	keys2 := keyIteratorToSlice(db.List(listReq2))
+	assert.Equal(t, "a", keys2[0])
+	assert.Equal(t, "b", keys2[1])
+	assert.Equal(t, "c", keys2[2])
+	assert.Equal(t, "__oxia/a-test", keys2[3])
+
+	// Range Scan
+
+	scanIt, err := db.RangeScan(&proto.RangeScanRequest{
+		StartInclusive:      "a",
+		EndExclusive:        "",
+		IncludeInternalKeys: false,
+	})
+	assert.NoError(t, err)
+	gr, _ := scanIt.Value()
+	assert.Equal(t, "a", *gr.Key)
+	assert.True(t, scanIt.Next())
+	gr, _ = scanIt.Value()
+	assert.Equal(t, "b", *gr.Key)
+	assert.True(t, scanIt.Next())
+	gr, _ = scanIt.Value()
+	assert.Equal(t, "c", *gr.Key)
+	assert.False(t, scanIt.Next())
+	assert.False(t, scanIt.Valid())
+
+	assert.NoError(t, scanIt.Close())
+
+	scanIt, err = db.RangeScan(&proto.RangeScanRequest{
+		StartInclusive:      "a",
+		EndExclusive:        "",
+		IncludeInternalKeys: true,
+	})
+	assert.NoError(t, err)
+	gr, _ = scanIt.Value()
+	assert.Equal(t, "a", *gr.Key)
+	assert.True(t, scanIt.Next())
+	gr, _ = scanIt.Value()
+	assert.Equal(t, "b", *gr.Key)
+	assert.True(t, scanIt.Next())
+	gr, _ = scanIt.Value()
+	assert.Equal(t, "c", *gr.Key)
+	assert.True(t, scanIt.Next())
+	gr, _ = scanIt.Value()
+	assert.Equal(t, "__oxia/a-test", *gr.Key)
+	assert.True(t, scanIt.Next())
+	assert.True(t, scanIt.Valid())
+
+	assert.NoError(t, scanIt.Close())
+
+	// Gets
+	gr, err = db.Get(&proto.GetRequest{
+		Key:            "c",
+		IncludeValue:   true,
+		ComparisonType: proto.KeyComparisonType_HIGHER,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_KEY_NOT_FOUND, gr.Status)
+
+	_, err = db.Get(&proto.GetRequest{
+		Key:            "z",
+		IncludeValue:   true,
+		ComparisonType: proto.KeyComparisonType_CEILING,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_KEY_NOT_FOUND, gr.Status)
+
+	gr, err = db.Get(&proto.GetRequest{
+		Key:            "__oxia/a-test",
+		IncludeValue:   true,
+		ComparisonType: proto.KeyComparisonType_EQUAL,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, gr.Status)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}

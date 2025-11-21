@@ -119,13 +119,13 @@ type KV interface {
 
 	NewWriteBatch() WriteBatch
 
-	Get(key string, comparisonType ComparisonType) (storedKey string, value []byte, closer io.Closer, err error)
+	Get(key string, comparisonType ComparisonType, includeInternalKeys bool) (storedKey string, value []byte, closer io.Closer, err error)
 
-	KeyRangeScan(lowerBound, upperBound string) (KeyIterator, error)
-	KeyRangeScanReverse(lowerBound, upperBound string) (ReverseKeyIterator, error)
-	KeyIterator() (KeyIterator, error)
+	KeyRangeScan(lowerBound, upperBound string, includeInternalKeys bool) (KeyIterator, error)
+	KeyRangeScanReverse(lowerBound, upperBound string, includeInternalKeys bool) (ReverseKeyIterator, error)
+	KeyIterator(includeInternalKeys bool) (KeyIterator, error)
 
-	RangeScan(lowerBound, upperBound string) (KeyValueIterator, error)
+	RangeScan(lowerBound, upperBound string, includeInternalKeys bool) (KeyValueIterator, error)
 
 	Snapshot() (Snapshot, error)
 

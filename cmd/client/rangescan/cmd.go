@@ -29,12 +29,13 @@ var (
 )
 
 type flags struct {
-	keyMin         string
-	keyMax         string
-	hexDump        bool
-	includeVersion bool
-	partitionKey   string
-	secondaryIndex string
+	keyMin           string
+	keyMax           string
+	hexDump          bool
+	includeVersion   bool
+	partitionKey     string
+	secondaryIndex   string
+	showInternalKeys bool
 }
 
 func (flags *flags) Reset() {
@@ -44,6 +45,7 @@ func (flags *flags) Reset() {
 	flags.includeVersion = false
 	flags.partitionKey = ""
 	flags.secondaryIndex = ""
+	flags.showInternalKeys = false
 }
 
 func init() {
@@ -53,6 +55,7 @@ func init() {
 	Cmd.Flags().BoolVar(&Config.hexDump, "hex", false, "Print the value in HexDump format")
 	Cmd.Flags().StringVarP(&Config.partitionKey, "partition-key", "p", "", "Partition Key to be used in override the shard routing")
 	Cmd.Flags().StringVar(&Config.secondaryIndex, "index", "", "Secondary Index")
+	Cmd.Flags().BoolVar(&Config.showInternalKeys, "internal-keys", false, "Show internal keys")
 }
 
 var Cmd = &cobra.Command{
@@ -79,9 +82,8 @@ func exec(cmd *cobra.Command, _ []string) error {
 		options = append(options, oxia.UseIndex(Config.secondaryIndex))
 	}
 
-	if Config.keyMax == "" {
-		// By default, do not list internal keys
-		Config.keyMax = "__oxia/"
+	if Config.showInternalKeys {
+		options = append(options, oxia.ShowInternalKeys(true))
 	}
 
 	ch := client.RangeScan(context.Background(), Config.keyMin, Config.keyMax, options...)

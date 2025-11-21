@@ -238,9 +238,10 @@ func (sm *sessionManager) Initialize() error {
 
 func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, error) {
 	keys, err := sm.leaderController.ListBlock(context.Background(), &proto.ListRequest{
-		Shard:          &sm.shardId,
-		StartInclusive: sessionKeyPrefix + "/",
-		EndExclusive:   sessionKeyPrefix + "//",
+		Shard:               &sm.shardId,
+		StartInclusive:      sessionKeyPrefix + "/",
+		EndExclusive:        sessionKeyPrefix + "//",
+		IncludeInternalKeys: true,
 	})
 	if err != nil {
 		return nil, err

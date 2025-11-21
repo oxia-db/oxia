@@ -203,8 +203,9 @@ func writeSecondaryIndexes(batch kv.WriteBatch, primaryKey string, secondaryInde
 func newSecondaryIndexListIterator(req *proto.ListRequest, db kv.DB) (kv.KeyIterator, error) {
 	indexName := *req.SecondaryIndexName
 	it, err := db.List(&proto.ListRequest{
-		StartInclusive: fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
-		EndExclusive:   fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
+		StartInclusive:      fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
+		EndExclusive:        fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
+		IncludeInternalKeys: true,
 	})
 	if err != nil {
 		return nil, err
@@ -257,8 +258,9 @@ func (it *secondaryIndexListIterator) Close() error {
 func newSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db kv.DB) (kv.RangeScanIterator, error) {
 	indexName := *req.SecondaryIndexName
 	it, err := db.List(&proto.ListRequest{
-		StartInclusive: fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
-		EndExclusive:   fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
+		StartInclusive:      fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
+		EndExclusive:        fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
+		IncludeInternalKeys: true,
 	})
 	if err != nil {
 		return nil, err
@@ -333,7 +335,7 @@ func secondaryIndexGet(req *proto.GetRequest, db kv.DB) (*proto.GetResponse, err
 func doSecondaryGet(db kv.DB, req *proto.GetRequest) (primaryKey string, secondaryKey string, err error) {
 	indexName := *req.SecondaryIndexName
 	searchKey := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.Key)
-	it, err := db.KeyIterator()
+	it, err := db.KeyIterator(true)
 	if err != nil {
 		return "", "", err
 	}
