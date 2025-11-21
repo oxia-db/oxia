@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/rpc/auth"
@@ -39,6 +40,7 @@ type StandaloneConfig struct {
 
 	NumShards            uint32
 	NotificationsEnabled bool
+	KeySorting           model.KeySorting
 }
 
 type Standalone struct {
@@ -119,20 +121,24 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 
 func (s *Standalone) initializeShards(numShards uint32) error {
 	var err error
+
+	newTermOptions := &proto.NewTermOptions{
+		EnableNotifications: s.config.NotificationsEnabled,
+		KeySorting:          s.config.KeySorting.ToProto(),
+	}
+
 	for i := int64(0); i < int64(numShards); i++ {
 		var lc LeaderController
-		if lc, err = s.shardsDirector.GetOrCreateLeader(constant.DefaultNamespace, i); err != nil {
+		if lc, err = s.shardsDirector.GetOrCreateLeader(constant.DefaultNamespace, i, newTermOptions); err != nil {
 			return err
 		}
 
 		newTerm := lc.Term() + 1
 
 		if _, err := lc.NewTerm(&proto.NewTermRequest{
-			Shard: i,
-			Term:  newTerm,
-			Options: &proto.NewTermOptions{
-				EnableNotifications: s.config.NotificationsEnabled,
-			},
+			Shard:   i,
+			Term:    newTerm,
+			Options: newTermOptions,
 		}); err != nil {
 			return err
 		}

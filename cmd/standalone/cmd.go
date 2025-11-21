@@ -50,6 +50,10 @@ func init() {
 
 	Cmd.Flags().BoolVar(&conf.NotificationsEnabled, "notifications-enabled", true, "Whether notifications are enabled")
 	Cmd.Flags().DurationVar(&conf.NotificationsRetentionTime, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
+
+	Cmd.Flags().Var(&conf.KeySorting, "key-sorting", `Key sorting. allowed: "hierarchical", "natural". Default: "hierarchical"`)
+	_ = Cmd.RegisterFlagCompletionFunc("key-sorting", keySortingCompletion)
+
 	Cmd.Flags().Int64Var(&conf.DbBlockCacheMB, "db-cache-size-mb", kv.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
 }
@@ -58,4 +62,11 @@ func exec(*cobra.Command, []string) {
 	process.RunProcess(func() (io.Closer, error) {
 		return dataserver.NewStandalone(conf)
 	})
+}
+
+func keySortingCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return []string{
+		"hierarchical\tUse file-system like hierarchical sorting based on `/`",
+		"natural\tUse natural, byte-wise sorting",
+	}, cobra.ShellCompDirectiveDefault
 }

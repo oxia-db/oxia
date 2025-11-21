@@ -309,13 +309,17 @@ func (s *shardController) onElectLeader(action *actions.ChangeEnsembleAction) mo
 		s.currentElection = nil
 	}
 	enableNotification := entity.OptBooleanDefaultTrue{}
-	if nsConfig, exist := s.configResource.NamespaceConfig(s.namespace); exist {
+	nsConfig, exist := s.configResource.NamespaceConfig(s.namespace)
+	if exist {
 		enableNotification = nsConfig.NotificationsEnabled
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
 		s.statusResource, s.configResource, s.leaderSelector,
 		s.rpc, &s.metadata, s.namespace, s.shard, action,
-		&proto.NewTermOptions{EnableNotifications: enableNotification.Get()},
+		&proto.NewTermOptions{
+			EnableNotifications: enableNotification.Get(),
+			KeySorting:          nsConfig.KeySorting.ToProto(),
+		},
 		s.leaderElectionLatency,
 		s.newTermQuorumLatency,
 		s.becomeLeaderLatency,

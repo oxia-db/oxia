@@ -26,6 +26,7 @@ func TestClusterConfig(t *testing.T) {
 			Name:              "ns1",
 			InitialShardCount: 2,
 			ReplicationFactor: 3,
+			KeySorting:        KeySortingHierarchical,
 		}},
 		Servers: []Server{{
 			Public:   "f1",
@@ -41,6 +42,7 @@ func TestClusterConfig(t *testing.T) {
 			Name:              "ns1",
 			InitialShardCount: 2,
 			ReplicationFactor: 3,
+			KeySorting:        KeySortingHierarchical,
 		}},
 		Servers: []Server{{
 			Public:   "f1",

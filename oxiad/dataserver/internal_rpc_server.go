@@ -132,7 +132,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 		return res, err2
 	}
 
-	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard)
+	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard, req.Options)
 	if err != nil {
 		log.Warn(
 			"NewTerm failed: could not get leader controller",
@@ -165,7 +165,7 @@ func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLea
 
 	log.Info("Received BecomeLeader request")
 
-	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard)
+	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard, nil)
 	if err != nil {
 		log.Warn(
 			"BecomeLeader failed: could not get leader controller",
@@ -219,7 +219,7 @@ func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateReque
 
 	log.Info("Received Truncate request")
 
-	follower, err := s.shardsDirector.GetOrCreateFollower(req.Namespace, req.Shard, req.Term)
+	follower, err := s.shardsDirector.GetOrCreateFollower(req.Namespace, req.Shard, req.Term, nil)
 	if err != nil {
 		log.Warn(
 			"Truncate failed: could not get follower controller",
@@ -269,7 +269,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 
 	log.Info("Received Replicate request")
 
-	follower, err := s.shardsDirector.GetOrCreateFollower(namespace, shardId, term)
+	follower, err := s.shardsDirector.GetOrCreateFollower(namespace, shardId, term, nil)
 	if err != nil {
 		log.Warn(
 			"Replicate failed: could not get follower controller",
@@ -318,7 +318,7 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 		slog.String("peer", rpc.GetPeer(srv.Context())),
 	)
 
-	follower, err := s.shardsDirector.GetOrCreateFollower(namespace, shardId, term)
+	follower, err := s.shardsDirector.GetOrCreateFollower(namespace, shardId, term, nil)
 	if err != nil {
 		s.log.Warn(
 			"SendSnapshot failed: could not get follower controller",

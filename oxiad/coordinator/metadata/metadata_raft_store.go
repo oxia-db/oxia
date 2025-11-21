@@ -21,12 +21,11 @@ import (
 	"math"
 
 	"github.com/hashicorp/raft"
+	"github.com/oxia-db/oxia/proto"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
-
-	"github.com/oxia-db/oxia/common/compare"
 )
 
 type kvRaftStore struct {
@@ -45,7 +44,7 @@ func newKVRaftStore(path string) (store *kvRaftStore, err error) {
 		return nil, err
 	}
 
-	if store.kv, err = store.factory.NewKV("raft", 0, compare.EncoderNatural); err != nil {
+	if store.kv, err = store.factory.NewKV("raft", 0, proto.KeySortingType_NATURAL); err != nil {
 		return nil, err
 	}
 

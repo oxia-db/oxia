@@ -31,8 +31,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
-	"github.com/oxia-db/oxia/common/compare"
-
 	"github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
 
@@ -72,6 +70,7 @@ type RangeScanIterator interface {
 
 type TermOptions struct {
 	NotificationsEnabled bool
+	KeySorting           proto.KeySortingType
 }
 
 type DB interface {
@@ -100,11 +99,11 @@ type DB interface {
 }
 
 func NewDB(namespace string, shardId int64, factory Factory,
-	keyEncoder compare.Encoder,
+	keySorting proto.KeySortingType,
 	notificationRetentionTime time.Duration,
 	clock time2.Clock,
 ) (DB, error) {
-	kv, err := factory.NewKV(namespace, shardId, keyEncoder)
+	kv, err := factory.NewKV(namespace, shardId, keySorting)
 	if err != nil {
 		return nil, err
 	}
