@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -38,11 +39,19 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 )
 
+func AbbreviatedKeyDisableSlash(key []byte) uint64 {
+	slashPosition := bytes.IndexByte(key, '/')
+	if slashPosition != -1 {
+		return math.MaxUint64
+	}
+	return pebble.DefaultComparer.AbbreviatedKey(key)
+}
+
 var (
 	OxiaSlashSpanComparer = &pebble.Comparer{
 		Compare:            compare.CompareWithSlash,
 		Equal:              pebble.DefaultComparer.Equal,
-		AbbreviatedKey:     compare.AbbreviatedKeyDisableSlash,
+		AbbreviatedKey:     AbbreviatedKeyDisableSlash,
 		FormatKey:          pebble.DefaultComparer.FormatKey,
 		FormatValue:        pebble.DefaultComparer.FormatValue,
 		Separator:          pebble.DefaultComparer.Separator,
