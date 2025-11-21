@@ -81,7 +81,7 @@ func exec(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 
-		common.WriteOutput(cmd.OutOrStdout(), gr.Value)
+		common.WriteOutput(cmd.OutOrStdout(), gr.Key)
 	}
 
 	return nil
