@@ -330,7 +330,7 @@ func (d *db) GetSequenceUpdates(prefixKey string) (SequenceWaiter, error) {
 	it, err := d.kv.KeyRangeScanReverse(
 		fmt.Sprintf("%s-%020d", prefixKey, 0),
 		fmt.Sprintf("%s-%020d", prefixKey, math.MaxInt64),
-		false)
+		NoInternalKeys)
 	if err != nil {
 		err = multierr.Append(err, sw.Close())
 		return nil, err
@@ -355,7 +355,8 @@ func (it *listIterator) Close() error {
 func (d *db) List(request *proto.ListRequest) (KeyIterator, error) {
 	d.listCounter.Add(1)
 
-	it, err := d.kv.KeyRangeScan(request.StartInclusive, request.EndExclusive, request.IncludeInternalKeys)
+	it, err := d.kv.KeyRangeScan(request.StartInclusive, request.EndExclusive,
+		IteratorOpts{request.IncludeInternalKeys})
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +414,8 @@ func (it *rangeScanIterator) Close() error {
 func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error) {
 	d.rangeScanCounter.Add(1)
 
-	it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive, request.IncludeInternalKeys)
+	it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive,
+		IteratorOpts{request.IncludeInternalKeys})
 	if err != nil {
 		return nil, err
 	}
@@ -425,7 +427,7 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 }
 
 func (d *db) KeyIterator(includeInternalKeys bool) (KeyIterator, error) {
-	return d.kv.KeyIterator(includeInternalKeys)
+	return d.kv.KeyIterator(IteratorOpts{includeInternalKeys})
 }
 
 func (d *db) ReadCommitOffset() (int64, error) {
@@ -716,7 +718,7 @@ func (d *db) applyDeleteRange(batch WriteBatch, notifications *Notifications, de
 }
 
 func applyGet(kv KV, getReq *proto.GetRequest) (*proto.GetResponse, error) {
-	key, value, closer, err := kv.Get(getReq.Key, ComparisonType(getReq.GetComparisonType()), false)
+	key, value, closer, err := kv.Get(getReq.Key, ComparisonType(getReq.GetComparisonType()), NoInternalKeys)
 
 	if errors.Is(err, ErrKeyNotFound) {
 		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil

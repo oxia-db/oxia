@@ -119,13 +119,13 @@ type KV interface {
 
 	NewWriteBatch() WriteBatch
 
-	Get(key string, comparisonType ComparisonType, includeInternalKeys bool) (storedKey string, value []byte, closer io.Closer, err error)
+	Get(key string, comparisonType ComparisonType, opts IteratorOpts) (storedKey string, value []byte, closer io.Closer, err error)
 
-	KeyRangeScan(lowerBound, upperBound string, includeInternalKeys bool) (KeyIterator, error)
-	KeyRangeScanReverse(lowerBound, upperBound string, includeInternalKeys bool) (ReverseKeyIterator, error)
-	KeyIterator(includeInternalKeys bool) (KeyIterator, error)
+	KeyRangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyIterator, error)
+	KeyRangeScanReverse(lowerBound, upperBound string, opts IteratorOpts) (ReverseKeyIterator, error)
+	KeyIterator(opts IteratorOpts) (KeyIterator, error)
 
-	RangeScan(lowerBound, upperBound string, includeInternalKeys bool) (KeyValueIterator, error)
+	RangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyValueIterator, error)
 
 	Snapshot() (Snapshot, error)
 
@@ -174,3 +174,12 @@ type Factory interface {
 
 	NewSnapshotLoader(namespace string, shardId int64) (SnapshotLoader, error)
 }
+
+type IteratorOpts struct {
+	IncludeInternalKeys bool
+}
+
+var (
+	NoInternalKeys   = IteratorOpts{IncludeInternalKeys: false}
+	ShowInternalKeys = IteratorOpts{IncludeInternalKeys: true}
+)

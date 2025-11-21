@@ -72,12 +72,12 @@ func (u *showInternalKeys) applyRangeScan(opts *rangeScanOptions) {
 	opts.showInternalKeys = u.showInternalKeys
 }
 
-func (u *showInternalKeys) applyGet(_ *getOptions) {
+func (*showInternalKeys) applyGet(*getOptions) {
 	// No-op
 }
 
 // ShowInternalKeys controls where to list Oxia's own internal keys.
-// By default, only user's keys are returned
+// By default, only user's keys are returned.
 func ShowInternalKeys(show bool) ListOption {
 	return &showInternalKeys{show}
 }

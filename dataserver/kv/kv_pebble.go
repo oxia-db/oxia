@@ -389,7 +389,7 @@ func (p *Pebble) NewWriteBatch() WriteBatch {
 	return &PebbleBatch{p: p, b: p.db.NewIndexedBatch()}
 }
 
-func (p *Pebble) getFloor(key []byte, includeInternalKeys bool) (returnedKey string, value []byte, closer io.Closer, err error) {
+func (p *Pebble) getFloor(key []byte, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
 	// There is no <= comparison in Pebble
 	// We have to first check for == and then for <
 	value, closer, err = p.db.Get(key)
@@ -403,11 +403,11 @@ func (p *Pebble) getFloor(key []byte, includeInternalKeys bool) (returnedKey str
 	}
 
 	// Do < search
-	return p.getLower(key, includeInternalKeys)
+	return p.getLower(key, itOpts)
 }
 
-func (p *Pebble) getCeiling(key []byte, includeInternalKeys bool) (returnedKey string, value []byte, closer io.Closer, err error) {
-	opts := newIterOptions(p.keyEncoder, includeInternalKeys)
+func (p *Pebble) getCeiling(key []byte, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
+	opts := newIterOptions(p.keyEncoder, itOpts)
 	opts.LowerBound = key
 	it, err := p.db.NewIter(opts)
 	if err != nil {
@@ -423,8 +423,8 @@ func (p *Pebble) getCeiling(key []byte, includeInternalKeys bool) (returnedKey s
 	return returnedKey, value, it, err
 }
 
-func (p *Pebble) getLower(key []byte, includeInternalKeys bool) (returnedKey string, value []byte, closer io.Closer, err error) {
-	opts := newIterOptions(p.keyEncoder, includeInternalKeys)
+func (p *Pebble) getLower(key []byte, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
+	opts := newIterOptions(p.keyEncoder, itOpts)
 	opts.UpperBound = key
 	it, err := p.db.NewIter(opts)
 	if err != nil {
@@ -440,8 +440,8 @@ func (p *Pebble) getLower(key []byte, includeInternalKeys bool) (returnedKey str
 	return returnedKey, value, it, err
 }
 
-func (p *Pebble) getHigher(key []byte, includeInternalKeys bool) (returnedKey string, value []byte, closer io.Closer, err error) {
-	opts := newIterOptions(p.keyEncoder, includeInternalKeys)
+func (p *Pebble) getHigher(key []byte, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
+	opts := newIterOptions(p.keyEncoder, itOpts)
 	opts.LowerBound = key
 	it, err := p.db.NewIter(opts)
 	if err != nil {
@@ -468,7 +468,7 @@ func (p *Pebble) getHigher(key []byte, includeInternalKeys bool) (returnedKey st
 	return returnedKey, value, it, err
 }
 
-func (p *Pebble) Get(key string, comparisonType ComparisonType, includeInternalKeys bool) (returnedKey string, value []byte, closer io.Closer, err error) {
+func (p *Pebble) Get(key string, comparisonType ComparisonType, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
 	k := p.keyEncoder.Encode(key)
 	switch comparisonType {
 	case ComparisonEqual:
@@ -477,13 +477,13 @@ func (p *Pebble) Get(key string, comparisonType ComparisonType, includeInternalK
 			returnedKey = key
 		}
 	case ComparisonFloor:
-		returnedKey, value, closer, err = p.getFloor(k, includeInternalKeys)
+		returnedKey, value, closer, err = p.getFloor(k, itOpts)
 	case ComparisonCeiling:
-		returnedKey, value, closer, err = p.getCeiling(k, includeInternalKeys)
+		returnedKey, value, closer, err = p.getCeiling(k, itOpts)
 	case ComparisonLower:
-		returnedKey, value, closer, err = p.getLower(k, includeInternalKeys)
+		returnedKey, value, closer, err = p.getLower(k, itOpts)
 	case ComparisonHigher:
-		returnedKey, value, closer, err = p.getHigher(k, includeInternalKeys)
+		returnedKey, value, closer, err = p.getHigher(k, itOpts)
 	default:
 		panic(fmt.Sprintf("Unknown comparison type: %v", comparisonType))
 	}
@@ -496,13 +496,13 @@ func (p *Pebble) Get(key string, comparisonType ComparisonType, includeInternalK
 	return returnedKey, value, closer, err
 }
 
-func (p *Pebble) KeyRangeScan(lowerBound, upperBound string, includeInternalKeys bool) (KeyIterator, error) {
-	return p.RangeScan(lowerBound, upperBound, includeInternalKeys)
+func (p *Pebble) KeyRangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyIterator, error) {
+	return p.RangeScan(lowerBound, upperBound, opts)
 }
 
-func (p *Pebble) KeyIterator(includeInternalKeys bool) (KeyIterator, error) {
+func (p *Pebble) KeyIterator(itOpts IteratorOpts) (KeyIterator, error) {
 	opts := &pebble.IterOptions{}
-	if !includeInternalKeys {
+	if !itOpts.IncludeInternalKeys {
 		opts.SkipPoint = func(encodedKey []byte) bool {
 			return p.keyEncoder.IsInternalKey(encodedKey)
 		}
@@ -515,9 +515,9 @@ func (p *Pebble) KeyIterator(includeInternalKeys bool) (KeyIterator, error) {
 	return &PebbleIterator{p, pbit}, nil
 }
 
-func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string, includeInternalKeys bool) (ReverseKeyIterator, error) {
+func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string, itOpts IteratorOpts) (ReverseKeyIterator, error) {
 	opts := &pebble.IterOptions{}
-	if !includeInternalKeys {
+	if !itOpts.IncludeInternalKeys {
 		opts.SkipPoint = func(encodedKey []byte) bool {
 			return p.keyEncoder.IsInternalKey(encodedKey)
 		}
@@ -536,9 +536,9 @@ func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string, includeInter
 	return &PebbleReverseIterator{p, pbit}, nil
 }
 
-func (p *Pebble) RangeScan(lowerBound, upperBound string, includeInternalKeys bool) (KeyValueIterator, error) {
+func (p *Pebble) RangeScan(lowerBound, upperBound string, itOpts IteratorOpts) (KeyValueIterator, error) {
 	opts := &pebble.IterOptions{}
-	if !includeInternalKeys {
+	if !itOpts.IncludeInternalKeys {
 		opts.SkipPoint = func(encodedKey []byte) bool {
 			return p.keyEncoder.IsInternalKey(encodedKey)
 		}
@@ -809,9 +809,9 @@ func (sl *pebbleSnapshotLoader) Complete() {
 	sl.complete = true
 }
 
-func newIterOptions(keyEncoder compare.Encoder, includeInternalKeys bool) *pebble.IterOptions {
+func newIterOptions(keyEncoder compare.Encoder, itOpts IteratorOpts) *pebble.IterOptions {
 	opts := &pebble.IterOptions{}
-	if !includeInternalKeys {
+	if !itOpts.IncludeInternalKeys {
 		opts.SkipPoint = func(encodedKey []byte) bool {
 			return keyEncoder.IsInternalKey(encodedKey)
 		}
