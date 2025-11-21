@@ -243,13 +243,13 @@ func (t *wal) Close() error {
 
 	t.Lock()
 	defer t.Unlock()
-	defer func() {
-		if t.wf != nil {
-			delete(t.wf.walLogs, t.shard)
-		}
-	}()
 
-	return t.closeWithoutLock()
+	var err error
+	if err = t.closeWithoutLock(); err == nil && t.wf != nil {
+		delete(t.wf.walLogs, t.shard)
+		return nil
+	}
+	return err
 }
 
 func (t *wal) closeWithoutLock() error {
