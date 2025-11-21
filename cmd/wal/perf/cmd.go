@@ -198,8 +198,7 @@ func printLatench(name string, datas []int64) {
 			}
 		}
 	}
-
-	fmt.Printf(`
+	if _, err := fmt.Printf(`
 Histogram of %s latency:
 P50:  %s
 P90:  %s 
@@ -210,5 +209,7 @@ P999: %s
 		time.Duration(p90)*time.Microsecond,
 		time.Duration(p99)*time.Microsecond,
 		time.Duration(p999)*time.Microsecond,
-	)
+	); err != nil {
+		panic(err)
+	}
 }

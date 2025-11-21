@@ -15,9 +15,6 @@
 package compare
 
 import (
-	"bytes"
-	"cmp"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
