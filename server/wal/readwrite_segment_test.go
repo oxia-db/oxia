@@ -153,7 +153,7 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrOffsetOutOfBounds(t *testing.
 	// inject payload size failure to trigger ErrOffsetOutOfBounds
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
-	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso:], 9999999)
+	binary.BigEndian.PutUint32(rwSegment.txnBuf[fso:], 9999999)
 
 	// close the segment
 	rwSegment.Close()
@@ -201,7 +201,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrOffsetOutOfBounds(t *testing.T)
 	// inject payload size failure to trigger ErrOffsetOutOfBounds
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
-	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso:], 9999999)
+	binary.BigEndian.PutUint32(rwSegment.txnBuf[fso:], 9999999)
 
 	// close the segment
 	rwSegment.Close()
@@ -240,7 +240,7 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrDataCorrupted(t *testing.T) {
 	// inject payload size failure to trigger ErrOffsetOutOfBounds
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
-	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso+4:], 9999999)
+	binary.BigEndian.PutUint32(rwSegment.txnBuf[fso+4:], 9999999)
 
 	// close the segment
 	rwSegment.Close()
@@ -288,7 +288,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrDataCorrupted(t *testing.T) {
 	// inject payload size failure to trigger ErrOffsetOutOfBounds
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
-	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso+4:], 9999999)
+	binary.BigEndian.PutUint32(rwSegment.txnBuf[fso+4:], 9999999)
 
 	// close the segment
 	rwSegment.Close()
