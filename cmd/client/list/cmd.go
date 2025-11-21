@@ -16,6 +16,7 @@ package list
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -62,7 +63,7 @@ func exec(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	var options []oxia.ListOption
+	var options []oxia.RangeScanOption
 	if Config.keyMax == "" {
 		// By default, do not list internal keys
 		Config.keyMax = "__oxia/"
@@ -76,11 +77,13 @@ func exec(cmd *cobra.Command, _ []string) error {
 		options = append(options, oxia.PartitionKey(Config.partitionKey))
 	}
 
-	list, err := client.List(context.Background(), Config.keyMin, Config.keyMax, options...)
-	if err != nil {
-		return err
+	for gr := range client.RangeScan(context.Background(), Config.keyMin, Config.keyMax, options...) {
+		if gr.Err != nil {
+			return err
+		}
+
+		fmt.Println(gr.Key)
 	}
 
-	common.WriteOutput(cmd.OutOrStdout(), list)
 	return nil
 }
