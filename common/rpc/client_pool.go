@@ -24,6 +24,8 @@ import (
 	"time"
 
 	grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/oxia-db/oxia/common/auth"
+	"github.com/oxia-db/oxia/proto"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -31,9 +33,6 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
-
-	"github.com/oxia-db/oxia/oxia/auth"
-	"github.com/oxia-db/oxia/proto"
 )
 
 const DefaultRpcTimeout = 30 * time.Second

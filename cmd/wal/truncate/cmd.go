@@ -18,10 +18,10 @@ import (
 	"log/slog"
 	"math"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/wal/common"
-	"github.com/oxia-db/oxia/dataserver/wal"
 )
 
 type truncateOptions struct {

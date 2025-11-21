@@ -24,14 +24,12 @@ import (
 	"time"
 
 	grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	authserver "github.com/oxia-db/oxia/common/auth/server"
+	"github.com/oxia-db/oxia/common/process"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
-
-	"github.com/oxia-db/oxia/common/process"
-
-	"github.com/oxia-db/oxia/dataserver/auth"
 )
 
 const (
@@ -48,7 +46,7 @@ type GrpcServer interface {
 }
 
 type GrpcProvider interface {
-	StartGrpcServer(name, bindAddress string, registerFunc func(grpc.ServiceRegistrar), tlsConf *tls.Config, options *auth.Options) (GrpcServer, error)
+	StartGrpcServer(name, bindAddress string, registerFunc func(grpc.ServiceRegistrar), tlsConf *tls.Config, options *authserver.Options) (GrpcServer, error)
 }
 
 var Default = &defaultProvider{}
@@ -56,7 +54,7 @@ var Default = &defaultProvider{}
 type defaultProvider struct {
 }
 
-func (*defaultProvider) StartGrpcServer(name, bindAddress string, registerFunc func(grpc.ServiceRegistrar), tlsConf *tls.Config, options *auth.Options) (GrpcServer, error) {
+func (*defaultProvider) StartGrpcServer(name, bindAddress string, registerFunc func(grpc.ServiceRegistrar), tlsConf *tls.Config, options *authserver.Options) (GrpcServer, error) {
 	return newDefaultGrpcProvider(name, bindAddress, registerFunc, tlsConf, options)
 }
 
@@ -68,7 +66,7 @@ type defaultGrpcServer struct {
 }
 
 func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.ServiceRegistrar),
-	tlsConf *tls.Config, authOptions *auth.Options) (GrpcServer, error) {
+	tlsConf *tls.Config, authOptions *authserver.Options) (GrpcServer, error) {
 	tcs := insecure.NewCredentials()
 	if tlsConf != nil {
 		tcs = credentials.NewTLS(tlsConf)
@@ -80,14 +78,14 @@ func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.Ser
 		grpcprometheus.UnaryServerInterceptor,
 	}
 	if authOptions.IsEnabled() {
-		provider, err := auth.NewAuthenticationProvider(context.Background(), *authOptions)
+		provider, err := authserver.NewAuthenticationProvider(context.Background(), *authOptions)
 		if err != nil {
 			slog.Error("Failed to init authentication provider",
 				slog.Any("authOptions", *authOptions),
 				slog.Any("error", err))
 			return nil, err
 		}
-		delegator, err := auth.NewGrpcAuthenticationDelegator(provider)
+		delegator, err := authserver.NewGrpcAuthenticationDelegator(provider)
 		if err != nil {
 			slog.Error("Failed to init grpc authentication delegator",
 				slog.Any("authOptions", *authOptions),

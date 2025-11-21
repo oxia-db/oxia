@@ -23,37 +23,36 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/oauth2-proxy/mockoidc"
+	"github.com/oxia-db/oxia/oxiad/coordinator"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
 
-	"github.com/oxia-db/oxia/coordinator"
-	"github.com/oxia-db/oxia/coordinator/metadata"
-	rpc2 "github.com/oxia-db/oxia/coordinator/rpc"
+	clientauth "github.com/oxia-db/oxia/common/auth"
+	server2 "github.com/oxia-db/oxia/common/auth/server"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 
-	"github.com/oxia-db/oxia/coordinator/model"
-	"github.com/oxia-db/oxia/dataserver"
-	"github.com/oxia-db/oxia/dataserver/auth"
 	"github.com/oxia-db/oxia/oxia"
-
-	clientauth "github.com/oxia-db/oxia/oxia/auth"
 )
 
 func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (address string, closeFunc func()) {
 	t.Helper()
-	options := auth.OIDCOptions{
+	options := server2.OIDCOptions{
 		AllowedIssueURLs: issueURL,
 		AllowedAudiences: audiences,
 	}
 	jsonParams, err := json.Marshal(options)
 	assert.NoError(t, err)
-	authParams := auth.Options{
-		ProviderName:   auth.ProviderOIDC,
+	authParams := server2.Options{
+		ProviderName:   server2.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
 	s1, err := dataserver.New(dataserver.Config{

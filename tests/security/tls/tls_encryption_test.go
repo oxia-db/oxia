@@ -21,18 +21,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/coordinator"
-	"github.com/oxia-db/oxia/coordinator/metadata"
-	rpc2 "github.com/oxia-db/oxia/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/common/security"
-	"github.com/oxia-db/oxia/coordinator/model"
-	"github.com/oxia-db/oxia/dataserver"
 	"github.com/oxia-db/oxia/oxia"
 )
 

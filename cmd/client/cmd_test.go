@@ -19,13 +19,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/cmd/client/del"
 	"github.com/oxia-db/oxia/cmd/client/get"
 	"github.com/oxia-db/oxia/cmd/client/list"
 	"github.com/oxia-db/oxia/cmd/client/put"
-	"github.com/oxia-db/oxia/dataserver"
 )
 
 func TestClientCmd(t *testing.T) {

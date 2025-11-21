@@ -18,15 +18,14 @@ import (
 	"io"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver"
+	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 	"github.com/spf13/cobra"
-
-	"github.com/oxia-db/oxia/dataserver"
 
 	"github.com/oxia-db/oxia/common/process"
 
 	"github.com/oxia-db/oxia/cmd/flag"
 	"github.com/oxia-db/oxia/common/security"
-	"github.com/oxia-db/oxia/dataserver/kv"
 )
 
 var (

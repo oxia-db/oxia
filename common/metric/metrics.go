@@ -24,12 +24,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/oxia-db/oxia/common/process"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/sdk/metric"
-
-	"github.com/oxia-db/oxia/common/process"
 )
 
 func init() {

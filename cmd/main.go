@@ -19,14 +19,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
-	"go.uber.org/automaxprocs/maxprocs"
-
-	"github.com/oxia-db/oxia/common/logging"
-	"github.com/oxia-db/oxia/common/process"
-
 	"github.com/oxia-db/oxia/cmd/admin"
-	"github.com/oxia-db/oxia/cmd/client"
+	client "github.com/oxia-db/oxia/cmd/client"
 	"github.com/oxia-db/oxia/cmd/coordinator"
 	"github.com/oxia-db/oxia/cmd/health"
 	"github.com/oxia-db/oxia/cmd/pebble"
@@ -34,6 +28,10 @@ import (
 	"github.com/oxia-db/oxia/cmd/server"
 	"github.com/oxia-db/oxia/cmd/standalone"
 	"github.com/oxia-db/oxia/cmd/wal"
+	"github.com/oxia-db/oxia/common/logging"
+	"github.com/oxia-db/oxia/common/process"
+	"github.com/spf13/cobra"
+	"go.uber.org/automaxprocs/maxprocs"
 )
 
 var (

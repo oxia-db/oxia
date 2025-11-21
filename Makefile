@@ -44,8 +44,16 @@ distribution:
 maelstrom:
 	go build -v -o bin/oxia-maelstrom ./maelstrom
 
+tidy:
+	pushd cmd; go mod tidy; popd
+	pushd common; go mod tidy; popd
+	pushd oxia; go mod tidy; popd
+	pushd oxiad; go mod tidy; popd
+	pushd tests; go mod tidy; popd
+	pushd proto; go mod tidy; popd
+
 test: build
-	go test -cover -race ./...
+	go test -cover -race ./cmd/... ./common/... ./oxia/... ./oxiad/... ./tests/... ./proto/...
 
 lint:
 	#brew install golangci-lint

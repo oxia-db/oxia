@@ -32,10 +32,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/oxia-db/oxia/common/entity"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/common/entity"
 )
 
 func Test_Once_Complete_Concurrent(t *testing.T) {

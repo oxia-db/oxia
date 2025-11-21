@@ -21,12 +21,12 @@ import (
 	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/policies"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxia"
 
-	"github.com/oxia-db/oxia/coordinator/model"
-	"github.com/oxia-db/oxia/coordinator/policies"
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
