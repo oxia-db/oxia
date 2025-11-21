@@ -21,13 +21,12 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
-	v1 "k8s.io/api/core/v1" //nolint:revive
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
-
-	"github.com/oxia-db/oxia/coordinator/metadata"
 
 	"github.com/oxia-db/oxia/common/process"
 )

@@ -45,7 +45,7 @@ maelstrom:
 	go build -v -o bin/oxia-maelstrom ./maelstrom
 
 test: build
-	go test -cover -race ./...
+	go test -cover -race ./cmd/... ./common/... ./oxia/... ./oxiad/... ./proto/... ./tests/...
 
 lint:
 	#brew install golangci-lint

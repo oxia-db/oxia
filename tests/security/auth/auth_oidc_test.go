@@ -23,22 +23,21 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/oauth2-proxy/mockoidc"
+	"github.com/oxia-db/oxia/oxiad/coordinator"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/oxia-db/oxia/oxiad/dataserver"
+	"github.com/oxia-db/oxia/oxiad/dataserver/auth"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
 
-	"github.com/oxia-db/oxia/coordinator"
-	"github.com/oxia-db/oxia/coordinator/metadata"
-	rpc2 "github.com/oxia-db/oxia/coordinator/rpc"
-
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 
-	"github.com/oxia-db/oxia/coordinator/model"
-	"github.com/oxia-db/oxia/dataserver"
-	"github.com/oxia-db/oxia/dataserver/auth"
 	"github.com/oxia-db/oxia/oxia"
 
 	clientauth "github.com/oxia-db/oxia/oxia/auth"

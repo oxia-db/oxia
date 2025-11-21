@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/dataserver"
 	"github.com/oxia-db/oxia/oxia"
 )
 

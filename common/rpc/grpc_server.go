@@ -24,14 +24,13 @@ import (
 	"time"
 
 	grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/oxia-db/oxia/oxiad/dataserver/auth"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/oxia-db/oxia/common/process"
-
-	"github.com/oxia-db/oxia/dataserver/auth"
 )
 
 const (
