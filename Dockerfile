@@ -18,13 +18,6 @@ RUN apk add --no-cache make git build-base bash
 
 WORKDIR /src/oxia
 
-# Copy only Go mod files first (for better caching)
-COPY go.work go.work.sum ./
-
-# Download dependencies with BuildKit cache mounts
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
-
 # Copy the rest of the source
 COPY . .
 
