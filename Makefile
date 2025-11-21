@@ -44,11 +44,6 @@ distribution:
 maelstrom:
 	go build -v -o bin/oxia-maelstrom ./maelstrom
 
-tidy:
-	pushd common; go mod tidy; popd
-	pushd oxia; go mod tidy; popd
-	go mod tidy
-
 test: build
 	go test -cover -race ./...
 

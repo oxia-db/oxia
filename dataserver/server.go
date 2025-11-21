@@ -22,11 +22,10 @@ import (
 
 	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/common/auth/server"
-
 	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/common/metric"
+	"github.com/oxia-db/oxia/dataserver/auth"
 	"github.com/oxia-db/oxia/dataserver/kv"
 	"github.com/oxia-db/oxia/dataserver/wal"
 )
@@ -39,7 +38,7 @@ type Config struct {
 	InternalServerTLS   *tls.Config
 	MetricsServiceAddr  string
 
-	AuthOptions server.Options
+	AuthOptions auth.Options
 
 	DataDir string
 	WalDir  string
