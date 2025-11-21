@@ -23,7 +23,7 @@ COPY go.work go.work.sum ./
 
 # Download dependencies with BuildKit cache mounts
 RUN --mount=type=cache,target=/go/pkg/mod \
-    go work sync
+    go mod download
 
 # Copy the rest of the source
 COPY . .
