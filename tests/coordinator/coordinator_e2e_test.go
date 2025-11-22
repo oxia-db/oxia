@@ -750,12 +750,12 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 
 func TestCoordinator_KeySorting(t *testing.T) {
 	for _, test := range []struct {
-		sorting proto.KeySortingType
+		sorting string
 	}{
-		{proto.KeySortingType_HIERARCHICAL},
-		{proto.KeySortingType_NATURAL},
+		{"hierarchical"},
+		{"natural"},
 	} {
-		t.Run(test.sorting.String(), func(t *testing.T) {
+		t.Run(test.sorting, func(t *testing.T) {
 			s1, err := dataserver.New(dataserver.Config{
 				PublicServiceAddr:   "localhost:0",
 				InternalServiceAddr: "localhost:0",
@@ -775,7 +775,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 					Name:              constant.DefaultNamespace,
 					ReplicationFactor: 1,
 					InitialShardCount: 1,
-					KeySorting:        model.KeySortingFromProto(test.sorting),
+					KeySorting:        model.KeySorting(test.sorting),
 				}},
 				Servers: []model.Server{sa1},
 			}
@@ -807,7 +807,8 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			list, err := client.List(context.Background(), "", "")
 			assert.NoError(t, err)
 
-			if test.sorting == proto.KeySortingType_HIERARCHICAL {
+			ks := model.KeySorting(test.sorting)
+			if ks.ToProto() == proto.KeySortingType_HIERARCHICAL {
 				assert.Equal(t, []string{"/a", "/b", "/a/b"}, list)
 			} else {
 				assert.Equal(t, []string{"/a", "/a/b", "/b"}, list)

@@ -1063,7 +1063,10 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	// The snapshot sending should fail because the term is invalid
 	assert.ErrorIs(t, constant.ErrInvalidTerm, wg.Wait(context.Background()))
 
-	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 5})
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 5, Options: &proto.NewTermOptions{
+		EnableNotifications: true,
+		KeySorting:          proto.KeySortingType_UNKNOWN,
+	}})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())

@@ -31,8 +31,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/selectors/leader"
 
-	"github.com/oxia-db/oxia/common/entity"
-
 	"github.com/oxia-db/oxia/common/process"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 
@@ -308,18 +306,19 @@ func (s *shardController) onElectLeader(action *actions.ChangeEnsembleAction) mo
 		s.currentElection.Stop()
 		s.currentElection = nil
 	}
-	enableNotification := entity.OptBooleanDefaultTrue{}
+	termOptions := &proto.NewTermOptions{
+		EnableNotifications: true,
+		KeySorting:          proto.KeySortingType_UNKNOWN,
+	}
 	nsConfig, exist := s.configResource.NamespaceConfig(s.namespace)
 	if exist {
-		enableNotification = nsConfig.NotificationsEnabled
+		termOptions.EnableNotifications = nsConfig.NotificationsEnabled.Get()
+		termOptions.KeySorting = nsConfig.KeySorting.ToProto()
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
 		s.statusResource, s.configResource, s.leaderSelector,
 		s.rpc, &s.metadata, s.namespace, s.shard, action,
-		&proto.NewTermOptions{
-			EnableNotifications: enableNotification.Get(),
-			KeySorting:          nsConfig.KeySorting.ToProto(),
-		},
+		termOptions,
 		s.leaderElectionLatency,
 		s.newTermQuorumLatency,
 		s.becomeLeaderLatency,

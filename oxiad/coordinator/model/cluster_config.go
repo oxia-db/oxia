@@ -42,7 +42,7 @@ type NamespaceConfig struct {
 	InitialShardCount    uint32                       `json:"initialShardCount" yaml:"initialShardCount"`
 	ReplicationFactor    uint32                       `json:"replicationFactor" yaml:"replicationFactor"`
 	NotificationsEnabled entity.OptBooleanDefaultTrue `json:"notificationsEnabled" yaml:"notificationsEnabled"`
-	KeySorting           KeySorting                   `json:"keySorting" yaml:"keySorting"`
+	KeySorting           KeySorting                   `json:"keySorting,omitempty" yaml:"keySorting,omitempty"`
 
 	// Policies represents additional configuration policies for the namespace, such as anti-affinity rules.
 	Policies *policies.Policies `json:"policies,omitempty" yaml:"policies,omitempty"`
@@ -83,16 +83,5 @@ func (ks *KeySorting) ToProto() proto.KeySortingType {
 		return proto.KeySortingType_HIERARCHICAL
 	default:
 		return proto.KeySortingType_UNKNOWN
-	}
-}
-
-func KeySortingFromProto(s proto.KeySortingType) KeySorting {
-	switch s {
-	case proto.KeySortingType_NATURAL:
-		return KeySortingNatural
-	case proto.KeySortingType_HIERARCHICAL:
-		return KeySortingHierarchical
-	default:
-		return ""
 	}
 }
