@@ -20,7 +20,7 @@ import (
 	"github.com/emirpasic/gods/v2/sets/hashset"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resources"
+	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/proto"
 )
 
@@ -29,7 +29,7 @@ var _ proto.OxiaAdminServer = (*adminServer)(nil)
 type adminServer struct {
 	proto.UnimplementedOxiaAdminServer
 
-	statusResource resources.StatusResource
+	statusResource resource.StatusResource
 	clusterConfig  func() (model.ClusterConfig, error)
 }
 
@@ -73,7 +73,7 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 	return &proto.ListNodesResponse{Nodes: nodes}, nil
 }
 
-func newAdminServer(statusResource resources.StatusResource, clusterConfig func() (model.ClusterConfig, error)) *adminServer {
+func newAdminServer(statusResource resource.StatusResource, clusterConfig func() (model.ClusterConfig, error)) *adminServer {
 	return &adminServer{
 		statusResource: statusResource,
 		clusterConfig:  clusterConfig,

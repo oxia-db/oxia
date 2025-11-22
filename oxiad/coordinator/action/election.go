@@ -12,36 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package action
 
-import (
-	"context"
-	"io"
+import "sync"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
-)
+type ElectionAction struct {
+	Shard int64
 
-type Options struct {
-	context.Context
-
-	StatusResource        resource.StatusResource
-	ClusterConfigResource resource.ClusterConfigResource
-
-	NodeAvailableJudger func(nodeID string) bool
+	NewLeader string
+	Waiter    *sync.WaitGroup
 }
 
-type LoadBalancer interface {
-	io.Closer
+func (e *ElectionAction) Done(leader any) {
+	e.NewLeader = leader.(string) //nolint:revive
+	e.Waiter.Done()
+}
 
-	Start()
+func (*ElectionAction) Type() Type {
+	return Election
+}
 
-	Trigger()
-
-	Action() <-chan action.Action
-
-	IsBalanced() bool
-
-	LoadRatioAlgorithm() selector.LoadRatioAlgorithm
+func (e *ElectionAction) Clone() *ElectionAction {
+	return &ElectionAction{
+		Shard:  e.Shard,
+		Waiter: &sync.WaitGroup{},
+	}
 }

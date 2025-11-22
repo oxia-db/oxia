@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/utils"
+	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 
 	"github.com/oxia-db/oxia/tests/mock"
 )
@@ -81,7 +81,7 @@ func TestLeaderBalanced(t *testing.T) {
 	balancer := coordinator.LoadBalancer()
 	assert.Eventually(t, func() bool {
 		status := statusResource.Load()
-		shardLeaders, electedShards, nodeShards := utils.NodeShardLeaders(candidates, status)
+		shardLeaders, electedShards, nodeShards := util.NodeShardLeaders(candidates, status)
 		if shardLeaders != electedShards {
 			return false
 		}
@@ -151,7 +151,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	balancer := coordinator.LoadBalancer()
 	assert.Eventually(t, func() bool {
 		status := statusResource.Load()
-		shardLeaders, electedShards, nodeShards := utils.NodeShardLeaders(candidates, status)
+		shardLeaders, electedShards, nodeShards := util.NodeShardLeaders(candidates, status)
 		if shardLeaders != electedShards {
 			return false
 		}
@@ -170,7 +170,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	// wait for leader moved
 	assert.Eventually(t, func() bool {
 		status := statusResource.Load()
-		_, _, nodeShards := utils.NodeShardLeaders(candidates, status)
+		_, _, nodeShards := util.NodeShardLeaders(candidates, status)
 		shards := nodeShards[s3ad.GetIdentifier()]
 		return shards.Size() == 0
 	}, 10*time.Second, 50*time.Millisecond)
@@ -182,7 +182,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	// wait for leader balanced
 	assert.Eventually(t, func() bool {
 		status := statusResource.Load()
-		shardLeaders, electedShards, nodeShards := utils.NodeShardLeaders(candidates, status)
+		shardLeaders, electedShards, nodeShards := util.NodeShardLeaders(candidates, status)
 		if shardLeaders != electedShards {
 			return false
 		}
@@ -260,7 +260,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	balancer := coordinator.LoadBalancer()
 	assert.Eventually(t, func() bool {
 		status := statusResource.Load()
-		shardLeaders, electedShards, nodeShards := utils.NodeShardLeaders(candidates, status)
+		shardLeaders, electedShards, nodeShards := util.NodeShardLeaders(candidates, status)
 		if shardLeaders != electedShards {
 			return false
 		}
@@ -280,7 +280,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	// wait for leader balanced
 	assert.Eventually(t, func() bool {
 		status := statusResource.Load()
-		shardLeaders, electedShards, nodeShards := utils.NodeShardLeaders(candidates, status)
+		shardLeaders, electedShards, nodeShards := util.NodeShardLeaders(candidates, status)
 		if shardLeaders != electedShards {
 			return false
 		}

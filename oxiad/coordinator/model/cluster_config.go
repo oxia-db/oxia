@@ -20,7 +20,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/entity"
-	"github.com/oxia-db/oxia/oxiad/coordinator/policies"
+	"github.com/oxia-db/oxia/oxiad/coordinator/policy"
 	"github.com/oxia-db/oxia/proto"
 )
 
@@ -44,8 +44,8 @@ type NamespaceConfig struct {
 	NotificationsEnabled entity.OptBooleanDefaultTrue `json:"notificationsEnabled" yaml:"notificationsEnabled"`
 	KeySorting           KeySorting                   `json:"keySorting,omitempty" yaml:"keySorting,omitempty"`
 
-	// Policies represents additional configuration policies for the namespace, such as anti-affinity rules.
-	Policies *policies.Policies `json:"policies,omitempty" yaml:"policies,omitempty"`
+	// Policies represents additional configuration policy for the namespace, such as anti-affinity rules.
+	Policies *policy.Policies `json:"policy,omitempty" yaml:"policy,omitempty"`
 }
 
 type KeySorting string

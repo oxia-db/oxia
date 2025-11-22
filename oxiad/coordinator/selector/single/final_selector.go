@@ -12,36 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package single
 
 import (
-	"context"
-	"io"
+	"math/rand/v2"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 )
 
-type Options struct {
-	context.Context
+var _ selector.Selector[*Context, string] = &finalSelector{}
 
-	StatusResource        resource.StatusResource
-	ClusterConfigResource resource.ClusterConfigResource
+type finalSelector struct{}
 
-	NodeAvailableJudger func(nodeID string) bool
-}
-
-type LoadBalancer interface {
-	io.Closer
-
-	Start()
-
-	Trigger()
-
-	Action() <-chan action.Action
-
-	IsBalanced() bool
-
-	LoadRatioAlgorithm() selector.LoadRatioAlgorithm
+func (*finalSelector) Select(ssContext *Context) (string, error) {
+	status := ssContext.Status
+	candidatesArr := ssContext.Candidates.Values()
+	if len(candidatesArr) == 0 {
+		return "", selector.ErrNoFunctioning
+	}
+	if status != nil {
+		startIdx := ssContext.Status.ServerIdx
+		return candidatesArr[int(startIdx)%len(candidatesArr)], nil
+	}
+	return candidatesArr[rand.IntN(len(candidatesArr))], nil //nolint:gosec
 }

@@ -12,36 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+//revive:disable-next-line:var-naming
+package util
 
-import (
-	"context"
-	"io"
+import "github.com/oxia-db/oxia/oxiad/coordinator/model"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
-)
-
-type Options struct {
-	context.Context
-
-	StatusResource        resource.StatusResource
-	ClusterConfigResource resource.ClusterConfigResource
-
-	NodeAvailableJudger func(nodeID string) bool
-}
-
-type LoadBalancer interface {
-	io.Closer
-
-	Start()
-
-	Trigger()
-
-	Action() <-chan action.Action
-
-	IsBalanced() bool
-
-	LoadRatioAlgorithm() selector.LoadRatioAlgorithm
+func SimpleEnsembleSupplier(candidates []model.Server, nc *model.NamespaceConfig, cs *model.ClusterStatus) []model.Server {
+	n := len(candidates)
+	res := make([]model.Server, nc.ReplicationFactor)
+	for i := uint32(0); i < nc.ReplicationFactor; i++ {
+		res[i] = candidates[int(cs.ServerIdx+i)%n]
+	}
+	return res
 }
