@@ -152,16 +152,17 @@ func getKeyEncoder(dbPath string, keySorting proto.KeySortingType) (compare.Enco
 	// If the sorting is not specific, check if it was already
 	// set in the db marker
 	var keyEncodingMarker string
-	if markerData, err := os.ReadFile(filepath.Join(dbPath, markerFileName)); err != nil {
+	markerData, err := os.ReadFile(filepath.Join(dbPath, markerFileName))
+	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
 
 		// Older versions were not setting the marker
 		return compare.EncoderHierarchical, nil
-	} else {
-		keyEncodingMarker = string(markerData)
 	}
+
+	keyEncodingMarker = string(markerData)
 
 	if keyEncodingMarker == string(model.KeySortingNatural) {
 		return compare.EncoderNatural, nil

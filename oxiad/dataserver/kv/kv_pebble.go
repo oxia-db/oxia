@@ -172,7 +172,6 @@ type Pebble struct {
 }
 
 func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error) {
-
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	labels := metric.LabelsForShard(namespace, shardId)
 	pb := &Pebble{

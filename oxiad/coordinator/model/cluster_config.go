@@ -69,7 +69,7 @@ func (ks *KeySorting) Set(v string) error {
 	}
 }
 
-func (ks *KeySorting) Type() string {
+func (*KeySorting) Type() string {
 	return "KeySorting"
 }
 
