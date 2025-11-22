@@ -39,10 +39,10 @@ import (
 	"github.com/oxia-db/oxia/proto"
 )
 
-type NodeStatus uint32
+type DataServerStatus uint32
 
 const (
-	Running NodeStatus = iota
+	Running DataServerStatus = iota
 	NotRunning
 	Draining //
 )
@@ -57,30 +57,30 @@ type ShardAssignmentsProvider interface {
 	WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error)
 }
 
-// The NodeController takes care of checking the health-status of each node
+// The DataServerController takes care of checking the health-status of each dataServer
 // and to push all the service discovery updates.
-type NodeController interface {
+type DataServerController interface {
 	io.Closer
 
-	Status() NodeStatus
+	Status() DataServerStatus
 
-	SetStatus(status NodeStatus)
+	SetStatus(status DataServerStatus)
 }
 
-type nodeController struct {
+type dataServerController struct {
 	*slog.Logger
 	sync.WaitGroup
 	ShardAssignmentsProvider
-	NodeEventListener
+	DataServerEventListener
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	node   model.Server
-	rpc    rpc.Provider
-	closed atomic.Bool
+	ctx        context.Context
+	cancel     context.CancelFunc
+	dataServer model.Server
+	rpc        rpc.Provider
+	closed     atomic.Bool
 
 	statusLock sync.RWMutex
-	status     NodeStatus
+	status     DataServerStatus
 
 	healthClientOnce   sync.Once
 	healthClient       grpc_health_v1.HealthClient
@@ -90,17 +90,17 @@ type nodeController struct {
 	healthCheckBackoff         backoff.BackOff
 	dispatchAssignmentsBackoff backoff.BackOff
 
-	nodeIsRunningGauge metric.Gauge
-	failedHealthChecks metric.Counter
+	dataServerRunningGauge metric.Gauge
+	failedHealthChecks     metric.Counter
 }
 
-func (n *nodeController) Status() NodeStatus {
+func (n *dataServerController) Status() DataServerStatus {
 	n.statusLock.RLock()
 	defer n.statusLock.RUnlock()
 	return n.status
 }
 
-func (n *nodeController) SetStatus(status NodeStatus) {
+func (n *dataServerController) SetStatus(status DataServerStatus) {
 	n.statusLock.Lock()
 	defer n.statusLock.Unlock()
 	previous := n.status
@@ -108,10 +108,10 @@ func (n *nodeController) SetStatus(status NodeStatus) {
 	n.Info("Changed status", slog.Any("from", previous), slog.Any("to", status))
 }
 
-func (n *nodeController) maybeInitHealthClient() {
+func (n *dataServerController) maybeInitHealthClient() {
 	n.healthClientOnce.Do(func() {
 		_ = backoff.RetryNotify(func() error {
-			health, closer, err := n.rpc.GetHealthClient(n.node)
+			health, closer, err := n.rpc.GetHealthClient(n.dataServer)
 			if err != nil {
 				return err
 			}
@@ -120,7 +120,7 @@ func (n *nodeController) maybeInitHealthClient() {
 			return nil
 		}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
 			n.Warn(
-				"Failed to create health client to storage node",
+				"Failed to create health client to storage data server",
 				slog.Duration("retry-after", duration),
 				slog.Any("error", err),
 			)
@@ -128,28 +128,28 @@ func (n *nodeController) maybeInitHealthClient() {
 	})
 }
 
-func (n *nodeController) Close() error {
+func (n *dataServerController) Close() error {
 	if !n.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	n.nodeIsRunningGauge.Unregister()
+	n.dataServerRunningGauge.Unregister()
 	n.cancel()
 	n.Wait()
 
 	var err error
 	if err = n.healthClientCloser.Close(); err != nil {
-		n.Warn("close node controller health client failed", slog.Any("error", err))
+		n.Warn("close data server controller health client failed", slog.Any("error", err))
 	}
-	n.Info("Closed node controller")
+	n.Info("Closed data server controller")
 	return err
 }
 
-func (n *nodeController) sendAssignmentsDispatchWithRetries() {
+func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
 		n.Debug("Ready to send assignments")
 
-		stream, err := n.rpc.PushShardAssignments(n.ctx, n.node)
+		stream, err := n.rpc.PushShardAssignments(n.ctx, n.dataServer)
 		if err != nil {
 			n.Debug("Failed to create shard assignments stream", slog.Any("error", err))
 			return err
@@ -187,7 +187,7 @@ func (n *nodeController) sendAssignmentsDispatchWithRetries() {
 	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {
 		if !errors.Is(err, context.Canceled) {
 			n.Warn(
-				"Failed to send assignments updates to storage node",
+				"Failed to send assignments updates to storage data server",
 				slog.Duration("retry-after", duration),
 				slog.Any("error", err),
 			)
@@ -195,7 +195,7 @@ func (n *nodeController) sendAssignmentsDispatchWithRetries() {
 	})
 }
 
-func (n *nodeController) healthPingWithRetries() {
+func (n *dataServerController) healthPingWithRetries() {
 	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
 		n.maybeInitHealthClient()
@@ -210,14 +210,14 @@ func (n *nodeController) healthPingWithRetries() {
 				response, err := n.healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 				pingCancel()
 				if err := n.healthCheckHandler(response, err); err != nil {
-					n.Warn("Node stopped responding to ping")
+					n.Warn("Data server stopped responding to ping")
 					return err
 				}
 			}
 		}
 	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
 		n.Warn(
-			"Failed to check storage node health by ping-pong",
+			"Failed to check storage data server health by ping-pong",
 			slog.Duration("retry-after", duration),
 			slog.Any("error", err),
 		)
@@ -225,7 +225,7 @@ func (n *nodeController) healthPingWithRetries() {
 	})
 }
 
-func (n *nodeController) healthWatchWithRetries() {
+func (n *dataServerController) healthWatchWithRetries() {
 	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
 		n.Debug("Start new health watch cycle")
@@ -246,7 +246,7 @@ func (n *nodeController) healthWatchWithRetries() {
 			}
 		}
 	}, n.healthWatchBackoff, func(err error, duration time.Duration) {
-		n.Warn("Failed to check storage node health by watch",
+		n.Warn("Failed to check storage data server health by watch",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
@@ -254,7 +254,7 @@ func (n *nodeController) healthWatchWithRetries() {
 	})
 }
 
-func (n *nodeController) becomeUnavailable() {
+func (n *dataServerController) becomeUnavailable() {
 	currentStatus := n.Status()
 	if currentStatus != Running && currentStatus != Draining {
 		return
@@ -270,27 +270,27 @@ func (n *nodeController) becomeUnavailable() {
 	n.statusLock.Unlock()
 
 	n.failedHealthChecks.Inc()
-	n.NodeBecameUnavailable(n.node)
+	n.BecameUnavailable(n.dataServer)
 }
 
-func (n *nodeController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
+func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
-			n.Warn("Node health check failed", slog.Any("error", err))
+			n.Warn("Data server health check failed", slog.Any("error", err))
 		}
 		return err
 	}
 	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
-		return errors.New("node is not actively serving")
+		return errors.New("Data server is not actively serving")
 	}
 
 	n.statusLock.Lock()
 	if n.status == NotRunning {
-		n.Info("Storage node is back online")
+		n.Info("Storage data server is back online")
 
 		// To avoid the send assignments stream to miss the notification about the current
-		// node went down, we interrupt the current stream when the ping on the node fails
-		n.rpc.ClearPooledConnections(n.node)
+		// dataServer went down, we interrupt the current stream when the ping on the dataServer fails
+		n.rpc.ClearPooledConnections(n.dataServer)
 		n.healthCheckBackoff.Reset()
 		n.healthWatchBackoff.Reset()
 	}
@@ -299,45 +299,45 @@ func (n *nodeController) healthCheckHandler(response *grpc_health_v1.HealthCheck
 	return nil
 }
 
-func NewNodeController(ctx context.Context, node model.Server,
+func NewDataServerController(ctx context.Context, dataServer model.Server,
 	shardAssignmentsProvider ShardAssignmentsProvider,
-	nodeEventListener NodeEventListener,
-	rpcProvider rpc.Provider) NodeController {
-	return newNodeController(ctx, node, shardAssignmentsProvider, nodeEventListener, rpcProvider, defaultInitialRetryBackoff)
+	dataServerEventListener DataServerEventListener,
+	rpcProvider rpc.Provider) DataServerController {
+	return newDataServerController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, defaultInitialRetryBackoff)
 }
 
-func newNodeController(ctx context.Context, node model.Server,
+func newDataServerController(ctx context.Context, dataServer model.Server,
 	shardAssignmentsProvider ShardAssignmentsProvider,
-	nodeEventListener NodeEventListener,
+	dataServerEventListener DataServerEventListener,
 	rpcProvider rpc.Provider,
-	initialRetryBackoff time.Duration) NodeController {
-	nodeCtx, cancel := context.WithCancel(ctx)
-	nodeID := node.GetIdentifier()
-	labels := map[string]any{"node": nodeID}
-	nc := &nodeController{
-		ctx:                      nodeCtx,
+	initialRetryBackoff time.Duration) DataServerController {
+	dataServerCtx, cancel := context.WithCancel(ctx)
+	dataServerID := dataServer.GetIdentifier()
+	labels := map[string]any{"data-server": dataServerID}
+	nc := &dataServerController{
+		ctx:                      dataServerCtx,
 		cancel:                   cancel,
-		node:                     node,
+		dataServer:               dataServer,
 		ShardAssignmentsProvider: shardAssignmentsProvider,
-		NodeEventListener:        nodeEventListener,
+		DataServerEventListener:  dataServerEventListener,
 		rpc:                      rpcProvider,
 		statusLock:               sync.RWMutex{},
 		status:                   Running,
 		Logger: slog.With(
-			slog.String("component", "node-controller"),
-			slog.Any("node", nodeID),
+			slog.String("component", "data-server-controller"),
+			slog.Any("data-server", dataServerID),
 		),
 		healthClientOnce:           sync.Once{},
 		healthClient:               nil,
 		healthClientCloser:         &commonio.NopCloser{},
-		healthCheckBackoff:         commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
-		healthWatchBackoff:         commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
-		dispatchAssignmentsBackoff: commontime.NewBackOffWithInitialInterval(nodeCtx, initialRetryBackoff),
+		healthCheckBackoff:         commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff),
+		healthWatchBackoff:         commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff),
+		dispatchAssignmentsBackoff: commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff),
 		failedHealthChecks: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
-			"The number of failed health checks to a node", "count", labels),
+			"The number of failed health checks to a dataServer", "count", labels),
 	}
-	nc.nodeIsRunningGauge = metric.NewGauge("oxia_coordinator_node_running",
-		"Whether the node is considered to be running by the coordinator", "count", labels, func() int64 {
+	nc.dataServerRunningGauge = metric.NewGauge("oxia_coordinator_node_running",
+		"Whether the dataServer is considered to be running by the coordinator", "count", labels, func() int64 {
 			if nc.Status() == Running {
 				return 1
 			}
@@ -348,8 +348,8 @@ func newNodeController(ctx context.Context, node model.Server,
 	go process.DoWithLabels(
 		nc.ctx,
 		map[string]string{
-			"component": "node-controller-health-watch",
-			"node":      nodeID,
+			"component":  "data-server-controller-health-watch",
+			"dataServer": dataServerID,
 		},
 		nc.healthWatchWithRetries,
 	)
@@ -358,8 +358,8 @@ func newNodeController(ctx context.Context, node model.Server,
 	go process.DoWithLabels(
 		nc.ctx,
 		map[string]string{
-			"component": "node-controller-health-ping",
-			"node":      nodeID,
+			"component":  "data-server-controller-health-ping",
+			"dataServer": dataServerID,
 		},
 		nc.healthPingWithRetries,
 	)
@@ -368,12 +368,12 @@ func newNodeController(ctx context.Context, node model.Server,
 	go process.DoWithLabels(
 		nc.ctx,
 		map[string]string{
-			"component": "node-controller-assignment-dispatcher",
-			"node":      nodeID,
+			"component":  "data-server-controller-assignment-dispatcher",
+			"dataServer": dataServerID,
 		},
 		nc.sendAssignmentsDispatchWithRetries,
 	)
 
-	nc.Info("Started node controller")
+	nc.Info("Started data server controller")
 	return nc
 }

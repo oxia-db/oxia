@@ -86,7 +86,7 @@ func (e *ShardElection) refreshedEnsemble(ensemble []model.Server) []model.Serve
 	}
 	if e.Enabled(e.Context, slog.LevelDebug) {
 		if !reflect.DeepEqual(ensemble, refreshedEnsembleNodeAddress) {
-			e.Info("refresh the shard ensemble node address", slog.Any("current-ensemble", ensemble),
+			e.Info("refresh the shard ensemble dataServer address", slog.Any("current-ensemble", ensemble),
 				slog.Any("new-ensemble", refreshedEnsembleNodeAddress))
 		}
 	}
@@ -139,15 +139,15 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 			process.DoWithLabels(
 				fencingContext,
 				map[string]string{
-					"oxia":  "election-fence-new-term",
-					"shard": fmt.Sprintf("%d", e.shard),
-					"node":  pinedServer.GetIdentifier(),
+					"oxia":        "election-fence-new-term",
+					"shard":       fmt.Sprintf("%d", e.shard),
+					"data-server": pinedServer.GetIdentifier(),
 				}, func() {
 					entryId, err := e.fenceNewTerm(fencingContext, term, pinedServer)
 					if err != nil {
-						e.Warn("Failed to fenceNewTerm node", slog.Any("error", err), slog.Any("node", pinedServer))
+						e.Warn("Failed to fenceNewTerm data server", slog.Any("error", err), slog.Any("data-server", pinedServer))
 					} else {
-						e.Info("Processed fenceNewTerm response", slog.Any("node", pinedServer), slog.Any("entry-id", entryId))
+						e.Info("Processed fenceNewTerm response", slog.Any("data-server", pinedServer), slog.Any("entry-id", entryId))
 					}
 					ch <- struct {
 						model.Server
@@ -249,10 +249,10 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []model.Server, leader *mo
 		go process.DoWithLabels(
 			e.Context,
 			map[string]string{
-				"oxia":      "shard-caught-up-monitor",
-				"namespace": e.namespace,
-				"shard":     fmt.Sprintf("%d", e.shard),
-				"node":      server.GetIdentifier(),
+				"oxia":        "shard-caught-up-monitor",
+				"namespace":   e.namespace,
+				"shard":       fmt.Sprintf("%d", e.shard),
+				"data-server": server.GetIdentifier(),
 			}, func() {
 				defer waitGroup.Done()
 				err := backoff.RetryNotify(func() error {
@@ -279,7 +279,7 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []model.Server, leader *mo
 					e.Warn("Failed to get the follower status. ", slog.Any("error", err.Error()), slog.Any("retry-after", duration))
 				})
 				if err != nil {
-					e.Info("Abort node swap follower status validation due to context canceled", slog.Any("error", err))
+					e.Info("Abort data server swap follower status validation due to context canceled", slog.Any("error", err))
 					return
 				}
 			})
@@ -381,7 +381,7 @@ func (e *ShardElection) prepareIfChangeEnsemble(mutShardMeta *model.ShardMetadat
 	}) {
 		mutShardMeta.RemovedNodes = append(mutShardMeta.RemovedNodes, from)
 	}
-	// A node might get re-added to the ensemble after it was swapped out and be in
+	// A dataServer might get re-added to the ensemble after it was swapped out and be in
 	// pending delete state. We don't want a background task to attempt deletion anymore
 	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes, func(node model.Server) bool {
 		return node.GetIdentifier() == to.GetIdentifier()

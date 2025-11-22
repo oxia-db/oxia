@@ -54,7 +54,7 @@ var _ ShardController = &shardController{}
 // e.g. electing a new leader.
 type ShardController interface {
 	io.Closer
-	NodeEventListener
+	DataServerEventListener
 
 	Metadata() *Metadata
 
@@ -104,7 +104,7 @@ func (s *shardController) Metadata() *Metadata {
 	return &s.metadata
 }
 
-func (s *shardController) NodeBecameUnavailable(node model.Server) {
+func (s *shardController) BecameUnavailable(node model.Server) {
 	s.nodeFailureOp <- node
 }
 
@@ -196,7 +196,7 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 		s.onElectLeader(nil)
 	default:
 		s.log.Info(
-			"There is already a node marked as leader on the shard, verifying",
+			"There is already a dataServer marked as leader on the shard, verifying",
 			slog.Any("current-leader", initShardMeta.Leader),
 		)
 
@@ -234,8 +234,8 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 func (s *shardController) handleNodeFailure(failedNode model.Server) {
 	shardMeta := s.metadata.Load()
 	s.log.Debug(
-		"Received notification of failed node",
-		slog.Any("failed-node", failedNode),
+		"Received notification of failed dataServer",
+		slog.Any("failed-dataServer", failedNode),
 		slog.Any("current-leader", shardMeta.Leader),
 	)
 
@@ -261,14 +261,14 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *model.ShardMetada
 			s.log.Warn(
 				"Failed to verify status for shard. Start a new election",
 				slog.Any("error", err),
-				slog.Any("node", node),
+				slog.Any("dataServer", node),
 			)
 			return false
 		case node.GetIdentifier() == initShardMeta.Leader.GetIdentifier() &&
 			nodeStatus.Status != proto.ServingStatus_LEADER:
 			s.log.Warn(
 				"Expected leader is not in leader status. Start a new election",
-				slog.Any("node", node),
+				slog.Any("dataServer", node),
 				slog.Any("status", nodeStatus.Status),
 			)
 			return false
@@ -276,22 +276,22 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *model.ShardMetada
 			nodeStatus.Status != proto.ServingStatus_FOLLOWER:
 			s.log.Warn(
 				"Expected follower is not in follower status. Start a new election",
-				slog.Any("node", node),
+				slog.Any("dataServer", node),
 				slog.Any("status", nodeStatus.Status),
 			)
 			return false
 		case nodeStatus.Term != initShardMeta.Term:
 			s.log.Warn(
 				"Node has a wrong term. Start a new election",
-				slog.Any("node", node),
-				slog.Any("node-term", nodeStatus.Term),
+				slog.Any("dataServer", node),
+				slog.Any("dataServer-term", nodeStatus.Term),
 				slog.Any("coordinator-term", initShardMeta.Term),
 			)
 			return false
 		default:
 			s.log.Info(
 				"Node looks ok",
-				slog.Any("node", node),
+				slog.Any("dataServer", node),
 			)
 		}
 	}
@@ -364,13 +364,13 @@ func (s *shardController) deleteShard() error {
 			s.log.Warn(
 				"Failed to delete shard",
 				slog.Any("error", err),
-				slog.Any("node", server),
+				slog.Any("dataServer", server),
 			)
 			return err
 		}
 
 		s.log.Info(
-			"Successfully deleted shard from node",
+			"Successfully deleted shard from dataServer",
 			slog.Any("server-address", server),
 		)
 	}
@@ -461,18 +461,18 @@ func (s *shardController) handlePeriodicTasks() {
 
 func (s *shardController) handlePendingDeleteShardNodes(mutShardMeta *model.ShardMetadata) error {
 	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
-		s.log.Info("Deleting shard from removed node", "node", ds)
+		s.log.Info("Deleting shard from removed dataServer", "dataServer", ds)
 
 		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
 			Term:      mutShardMeta.Term,
 		}); err != nil {
-			s.log.Warn("Failed to delete shard from removed node", "node", ds, "error", err)
+			s.log.Warn("Failed to delete shard from removed dataServer", "dataServer", ds, "error", err)
 			return err
 		}
 
-		s.log.Info("Successfully deleted shard from node", "node", ds)
+		s.log.Info("Successfully deleted shard from dataServer", "dataServer", ds)
 	}
 
 	mutShardMeta.PendingDeleteShardNodes = nil

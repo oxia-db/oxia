@@ -16,6 +16,6 @@ package controller
 
 import "github.com/oxia-db/oxia/oxiad/coordinator/model"
 
-type NodeEventListener interface {
-	NodeBecameUnavailable(node model.Server)
+type DataServerEventListener interface {
+	BecameUnavailable(dataServer model.Server)
 }

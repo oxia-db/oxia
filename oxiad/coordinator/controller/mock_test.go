@@ -90,7 +90,7 @@ func newMockNodeAvailabilityListener() *mockNodeAvailabilityListener {
 	}
 }
 
-func (nal *mockNodeAvailabilityListener) NodeBecameUnavailable(node model.Server) {
+func (nal *mockNodeAvailabilityListener) BecameUnavailable(node model.Server) {
 	nal.events <- node
 }
 
