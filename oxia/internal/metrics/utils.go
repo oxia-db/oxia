@@ -22,7 +22,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	ometric "github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func newHistogram(meter metric.Meter, name string, unit ometric.Unit) metric.Int64Histogram {

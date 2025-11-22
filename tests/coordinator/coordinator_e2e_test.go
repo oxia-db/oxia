@@ -27,7 +27,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"

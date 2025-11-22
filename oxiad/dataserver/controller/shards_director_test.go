@@ -27,7 +27,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func newTestWalFactory(t *testing.T) wal.Factory {

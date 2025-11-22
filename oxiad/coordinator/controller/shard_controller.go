@@ -35,7 +35,7 @@ import (
 	oxiatime "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const (

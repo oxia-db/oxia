@@ -10,7 +10,6 @@ require (
 	github.com/oxia-db/oxia/common v0.0.0
 	github.com/oxia-db/oxia/oxia v0.0.0
 	github.com/oxia-db/oxia/oxiad v0.0.0-20251121170122-7c84f6e6bbc3
-	github.com/oxia-db/oxia/proto v0.0.0
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.22.0
 	github.com/spf13/cobra v1.10.1
@@ -139,5 +138,4 @@ replace (
 	github.com/oxia-db/oxia/common => ../common
 	github.com/oxia-db/oxia/oxia => ../oxia
 	github.com/oxia-db/oxia/oxiad => ../oxiad
-	github.com/oxia-db/oxia/proto => ../proto
 )

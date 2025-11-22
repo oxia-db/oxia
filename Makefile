@@ -46,12 +46,11 @@ maelstrom:
 
 test: build
 	go test -cover -race\
-	 ./cmd/...\
-	 ./common/...\
-	  ./oxia/...\
-	   ./oxiad/...\
-	    ./proto/...\
-	     ./tests/...
+	 ./cmd/...     \
+	 ./common/...  \
+	 ./oxia/...    \
+	 ./oxiad/...   \
+	 ./tests/...
 
 lint:
 	#brew install golangci-lint
@@ -71,7 +70,7 @@ docker_multi_arch:
 .PHONY: proto
 proto:
 	# go install github.com/planetscale/vtprotobuf/cmd/protoc-gen-go-vtproto@latest
-	cd proto && \
+	cd common/proto && \
 	protoc \
 		--go_out=. \
 		--go_opt paths=source_relative \

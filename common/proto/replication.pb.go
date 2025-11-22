@@ -1325,7 +1325,7 @@ const file_replication_proto_rawDesc = "" +
 	"\x12OxiaLogReplication\x12G\n" +
 	"\bTruncate\x12\x1c.replication.TruncateRequest\x1a\x1d.replication.TruncateResponse\x126\n" +
 	"\tReplicate\x12\x13.replication.Append\x1a\x10.replication.Ack(\x010\x01\x12K\n" +
-	"\fSendSnapshot\x12\x1a.replication.SnapshotChunk\x1a\x1d.replication.SnapshotResponse(\x01B\x1fZ\x1dgithub.com/oxia-db/oxia/protob\x06proto3"
+	"\fSendSnapshot\x12\x1a.replication.SnapshotChunk\x1a\x1d.replication.SnapshotResponse(\x01B&Z$github.com/oxia-db/oxia/common/protob\x06proto3"
 
 var (
 	file_replication_proto_rawDescOnce sync.Once

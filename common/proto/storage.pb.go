@@ -352,7 +352,7 @@ const file_storage_proto_rawDesc = "" +
 	"\x05value\"G\n" +
 	"\rWriteRequests\x126\n" +
 	"\x06writes\x18\x01 \x03(\v2\x1e.io.oxia.proto.v1.WriteRequestR\x06writes:>\n" +
-	"\amempool\x12\x1f.google.protobuf.MessageOptions\x18\xe5\xf4\x03 \x01(\bR\amempool\x88\x01\x01B\x1fZ\x1dgithub.com/oxia-db/oxia/protob\x06proto3"
+	"\amempool\x12\x1f.google.protobuf.MessageOptions\x18\xe5\xf4\x03 \x01(\bR\amempool\x88\x01\x01B&Z$github.com/oxia-db/oxia/common/protob\x06proto3"
 
 var (
 	file_storage_proto_rawDescOnce sync.Once

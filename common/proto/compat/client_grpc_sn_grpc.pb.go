@@ -25,7 +25,7 @@ package compat
 
 import (
 	context "context"
-	proto "github.com/oxia-db/oxia/proto"
+	proto "github.com/oxia-db/oxia/common/proto"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"

@@ -21,8 +21,8 @@ import (
 	"math"
 	"time"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
-	"github.com/oxia-db/oxia/proto"
 
 	"github.com/spf13/cobra"
 

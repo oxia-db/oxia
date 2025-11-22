@@ -27,7 +27,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const secondaryIdxKeyPrefix = constant.InternalKeyPrefix + "idx"

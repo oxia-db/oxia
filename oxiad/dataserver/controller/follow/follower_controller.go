@@ -41,7 +41,7 @@ import (
 	"github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 // FollowerController handles all the operations of a given shard's follower.

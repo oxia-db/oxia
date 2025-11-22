@@ -28,11 +28,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	pb "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/common/rpc/auth"
-
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/rpc"
-
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/rpc/auth"
 )
 
 const (

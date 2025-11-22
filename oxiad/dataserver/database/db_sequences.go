@@ -23,7 +23,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const maxSequence = uint64(math.MaxUint64)

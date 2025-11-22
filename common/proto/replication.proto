@@ -18,7 +18,7 @@ package replication;
 
 import "client.proto";
 
-option go_package = "github.com/oxia-db/oxia/proto";
+option go_package = "github.com/oxia-db/oxia/common/proto";
 
 // coordinator -> node
 service OxiaCoordination {

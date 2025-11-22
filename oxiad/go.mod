@@ -16,7 +16,6 @@ require (
 	github.com/oxia-db/oxia/cmd v0.0.0-20251121170122-7c84f6e6bbc3
 	github.com/oxia-db/oxia/common v0.0.0-00010101000000-000000000000
 	github.com/oxia-db/oxia/oxia v0.0.0-00010101000000-000000000000
-	github.com/oxia-db/oxia/proto v0.0.0-00010101000000-000000000000
 	github.com/pingcap/errors v0.11.4
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.10.1
@@ -127,5 +126,4 @@ require (
 replace (
 	github.com/oxia-db/oxia/common => ../common
 	github.com/oxia-db/oxia/oxia => ../oxia
-	github.com/oxia-db/oxia/proto => ../proto
 )

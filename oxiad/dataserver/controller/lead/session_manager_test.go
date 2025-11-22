@@ -37,7 +37,7 @@ import (
 	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/entity"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func TestSessionKey(t *testing.T) {

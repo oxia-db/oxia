@@ -41,7 +41,7 @@ import (
 
 	oentity "github.com/oxia-db/oxia/common/entity"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func AssertProtoEqual(t *testing.T, expected, actual pb.Message) {

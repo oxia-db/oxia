@@ -36,5 +36,4 @@ require (
 
 replace (
 	github.com/oxia-db/oxia/common => ../common
-	github.com/oxia-db/oxia/proto => ../proto
 )

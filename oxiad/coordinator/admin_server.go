@@ -19,9 +19,9 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
-	"github.com/oxia-db/oxia/proto"
 )
 
 var _ proto.OxiaAdminServer = (*adminServer)(nil)
