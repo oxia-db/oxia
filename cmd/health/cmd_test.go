@@ -25,9 +25,8 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
-	"github.com/oxia-db/oxia/common/rpc/auth"
-
 	"github.com/oxia-db/oxia/common/rpc"
+	"github.com/oxia-db/oxia/common/rpc/auth"
 )
 
 func TestHealthCmd(t *testing.T) {
