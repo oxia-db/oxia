@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
-	github.com/golang-jwt/jwt/v5 v5.2.0
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
 	github.com/oxia-db/oxia/common v0.0.0
