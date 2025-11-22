@@ -300,7 +300,7 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *model.ShardMetada
 	return true
 }
 
-func (s *shardController) onElectLeader(action *action.ChangeEnsembleAction) model.Server {
+func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) model.Server {
 	// stop the current term election
 	if s.currentElection != nil {
 		s.currentElection.Stop()
@@ -317,7 +317,7 @@ func (s *shardController) onElectLeader(action *action.ChangeEnsembleAction) mod
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
 		s.statusResource, s.configResource, s.leaderSelector,
-		s.rpc, &s.metadata, s.namespace, s.shard, action,
+		s.rpc, &s.metadata, s.namespace, s.shard, changeEnsembleAction,
 		termOptions,
 		s.leaderElectionLatency,
 		s.newTermQuorumLatency,
@@ -398,17 +398,17 @@ func (s *shardController) close() error {
 	return nil
 }
 
-func (s *shardController) ChangeEnsemble(action *action.ChangeEnsembleAction) {
-	s.changeEnsembleOp <- action
+func (s *shardController) ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction) {
+	s.changeEnsembleOp <- changeEnsembleAction
 }
 
-func (s *shardController) onChangeEnsemble(action *action.ChangeEnsembleAction) {
+func (s *shardController) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction) {
 	var err error
 	defer func() {
 		if err != nil {
-			action.Error(err)
+			changeEnsembleAction.Error(err)
 		} else {
-			action.Done(nil)
+			changeEnsembleAction.Done(nil)
 		}
 	}()
 	if s.currentElection != nil {
@@ -418,7 +418,7 @@ func (s *shardController) onChangeEnsemble(action *action.ChangeEnsembleAction) 
 		}
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	s.onElectLeader(action)
+	s.onElectLeader(changeEnsembleAction)
 }
 func (s *shardController) SyncServerAddress() {
 	shardMeta := s.metadata.Load()
