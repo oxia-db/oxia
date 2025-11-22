@@ -110,6 +110,7 @@ func (m *NewTermOptions) CloneVT() *NewTermOptions {
 	}
 	r := new(NewTermOptions)
 	r.EnableNotifications = m.EnableNotifications
+	r.KeySorting = m.KeySorting
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -504,6 +505,9 @@ func (this *NewTermOptions) EqualVT(that *NewTermOptions) bool {
 		return false
 	}
 	if this.EnableNotifications != that.EnableNotifications {
+		return false
+	}
+	if this.KeySorting != that.KeySorting {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1095,6 +1099,11 @@ func (m *NewTermOptions) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.KeySorting != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.KeySorting))
+		i--
+		dAtA[i] = 0x10
 	}
 	if m.EnableNotifications {
 		i--
@@ -1913,6 +1922,9 @@ func (m *NewTermOptions) SizeVT() (n int) {
 	if m.EnableNotifications {
 		n += 2
 	}
+	if m.KeySorting != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.KeySorting))
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -2684,6 +2696,25 @@ func (m *NewTermOptions) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.EnableNotifications = bool(v != 0)
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeySorting", wireType)
+			}
+			m.KeySorting = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.KeySorting |= KeySortingType(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -4882,6 +4913,25 @@ func (m *NewTermOptions) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 			}
 			m.EnableNotifications = bool(v != 0)
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeySorting", wireType)
+			}
+			m.KeySorting = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.KeySorting |= KeySortingType(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

@@ -35,7 +35,7 @@ func TestShardsDirector_DeleteShardLeader(t *testing.T) {
 
 	sd := NewShardsDirector(Config{}, walFactory, kvFactory, newMockRpcClient())
 
-	lc, _ := sd.GetOrCreateLeader(constant.DefaultNamespace, shard)
+	lc, _ := sd.GetOrCreateLeader(constant.DefaultNamespace, shard, nil)
 	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
 	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
@@ -58,7 +58,7 @@ func TestShardsDirector_DeleteShardLeader(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Reopen
-	lc, err = sd.GetOrCreateLeader(constant.DefaultNamespace, shard)
+	lc, err = sd.GetOrCreateLeader(constant.DefaultNamespace, shard, nil)
 	assert.NoError(t, err)
 
 	assert.NoError(t, lc.Close())
@@ -73,7 +73,7 @@ func TestShardsDirector_GetOrCreateFollower(t *testing.T) {
 
 	sd := NewShardsDirector(Config{}, walFactory, kvFactory, newMockRpcClient())
 
-	lc, _ := sd.GetOrCreateLeader(constant.DefaultNamespace, shard)
+	lc, _ := sd.GetOrCreateLeader(constant.DefaultNamespace, shard, nil)
 	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
 	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
@@ -87,13 +87,13 @@ func TestShardsDirector_GetOrCreateFollower(t *testing.T) {
 	assert.EqualValues(t, 2, lc.Term())
 
 	// Should fail to get closed if the term is wrong
-	fc, err := sd.GetOrCreateFollower(constant.DefaultNamespace, shard, 1)
+	fc, err := sd.GetOrCreateFollower(constant.DefaultNamespace, shard, 1, nil)
 	assert.ErrorIs(t, constant.ErrInvalidTerm, err)
 	assert.Nil(t, fc)
 	assert.Equal(t, proto.ServingStatus_LEADER, lc.Status())
 
 	// Will get closed if term is correct
-	fc, err = sd.GetOrCreateFollower(constant.DefaultNamespace, shard, 2)
+	fc, err = sd.GetOrCreateFollower(constant.DefaultNamespace, shard, 2, nil)
 	assert.NoError(t, err)
 
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, lc.Status())

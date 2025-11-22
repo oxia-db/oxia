@@ -25,6 +25,9 @@ import (
 	"github.com/cockroachdb/pebble/v2/sstable"
 	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/proto"
+
 	"github.com/oxia-db/oxia/common/compare"
 )
 
@@ -136,6 +139,38 @@ func (p *pebbleDbConversion) checkConvertDB(desiredEncoding compare.Encoder) err
 			slog.String("keyEncodingMarker", keyEncodingMarker))
 		return nil
 	}
+}
+
+func getKeyEncoder(dbPath string, keySorting proto.KeySortingType) (compare.Encoder, error) {
+	switch keySorting {
+	case proto.KeySortingType_NATURAL:
+		return compare.EncoderNatural, nil
+	case proto.KeySortingType_HIERARCHICAL:
+		return compare.EncoderHierarchical, nil
+	}
+
+	// If the sorting is not specific, check if it was already
+	// set in the db marker
+	var keyEncodingMarker string
+	markerData, err := os.ReadFile(filepath.Join(dbPath, markerFileName))
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+
+		// Older versions were not setting the marker
+		return compare.EncoderHierarchical, nil
+	}
+
+	keyEncodingMarker = string(markerData)
+
+	if keyEncodingMarker == string(model.KeySortingNatural) {
+		return compare.EncoderNatural, nil
+	} else if keyEncodingMarker == string(model.KeySortingHierarchical) {
+		return compare.EncoderHierarchical, nil
+	}
+
+	return nil, errors.Errorf("unknown encoding sort type: %s", keySorting)
 }
 
 func createMarker(dbPath string, newEncodingFormat string) error {

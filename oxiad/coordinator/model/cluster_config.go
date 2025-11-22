@@ -17,8 +17,11 @@ package model
 import (
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/oxiad/coordinator/policies"
+	"github.com/oxia-db/oxia/proto"
 )
 
 type ClusterConfig struct {
@@ -39,6 +42,46 @@ type NamespaceConfig struct {
 	InitialShardCount    uint32                       `json:"initialShardCount" yaml:"initialShardCount"`
 	ReplicationFactor    uint32                       `json:"replicationFactor" yaml:"replicationFactor"`
 	NotificationsEnabled entity.OptBooleanDefaultTrue `json:"notificationsEnabled" yaml:"notificationsEnabled"`
+	KeySorting           KeySorting                   `json:"keySorting,omitempty" yaml:"keySorting,omitempty"`
+
 	// Policies represents additional configuration policies for the namespace, such as anti-affinity rules.
 	Policies *policies.Policies `json:"policies,omitempty" yaml:"policies,omitempty"`
+}
+
+type KeySorting string
+
+const (
+	KeySortingNatural      KeySorting = "natural"
+	KeySortingHierarchical KeySorting = "hierarchical"
+)
+
+func (ks *KeySorting) String() string {
+	return string(*ks)
+}
+
+func (ks *KeySorting) Set(v string) error {
+	switch v {
+	case string(KeySortingNatural), string(KeySortingHierarchical):
+		*ks = KeySorting(v)
+		return nil
+	default:
+		return errors.New(`must be one of "natural" or "hierarchical"`)
+	}
+}
+
+func (*KeySorting) Type() string {
+	return "KeySorting"
+}
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+func (ks *KeySorting) ToProto() proto.KeySortingType {
+	switch *ks {
+	case KeySortingNatural:
+		return proto.KeySortingType_NATURAL
+	case KeySortingHierarchical:
+		return proto.KeySortingType_HIERARCHICAL
+	default:
+		return proto.KeySortingType_UNKNOWN
+	}
 }

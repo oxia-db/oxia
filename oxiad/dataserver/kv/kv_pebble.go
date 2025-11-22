@@ -33,6 +33,8 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/oxia-db/oxia/proto"
+
 	"github.com/oxia-db/oxia/common/cache"
 
 	"github.com/oxia-db/oxia/common/compare"
@@ -120,8 +122,8 @@ func (p *PebbleFactory) Close() error {
 	return nil
 }
 
-func (p *PebbleFactory) NewKV(namespace string, shardId int64, keyEncoder compare.Encoder) (KV, error) {
-	return newKVPebble(p, namespace, shardId, keyEncoder)
+func (p *PebbleFactory) NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error) {
+	return newKVPebble(p, namespace, shardId, keySorting)
 }
 
 func (p *PebbleFactory) NewSnapshotLoader(namespace string, shardId int64) (SnapshotLoader, error) {
@@ -169,17 +171,16 @@ type Pebble struct {
 	batchCountHisto metric.Histogram
 }
 
-func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keyEncoder compare.Encoder) (KV, error) {
+func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error) {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	labels := metric.LabelsForShard(namespace, shardId)
 	pb := &Pebble{
-		ctx:        ctx,
-		cancel:     cancelFunc,
-		factory:    factory,
-		namespace:  namespace,
-		shardId:    shardId,
-		dbPath:     factory.getKVPath(namespace, shardId),
-		keyEncoder: keyEncoder,
+		ctx:       ctx,
+		cancel:    cancelFunc,
+		factory:   factory,
+		namespace: namespace,
+		shardId:   shardId,
+		dbPath:    factory.getKVPath(namespace, shardId),
 
 		batchCommitLatency: metric.NewLatencyHistogram("oxia_server_kv_batch_commit_latency",
 			"The latency for committing a batch into the database", labels),
@@ -202,6 +203,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keyEnc
 			"The size in bytes for a given batch", labels),
 		batchCountHisto: metric.NewCountHistogram("oxia_server_kv_batch_count",
 			"The number of operations in a given batch", labels),
+	}
+
+	var err error
+	if pb.keyEncoder, err = getKeyEncoder(pb.dbPath, keySorting); err != nil {
+		return nil, err
 	}
 
 	levelOptions := [7]pebble.LevelOptions{}
@@ -239,11 +245,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keyEnc
 	}
 
 	pebbleConv := newPebbleDbConversion(log, pb.dbPath)
-	if err := pebbleConv.checkConvertDB(keyEncoder); err != nil {
+	if err := pebbleConv.checkConvertDB(pb.keyEncoder); err != nil {
 		return nil, errors.Wrap(err, "failed to convert db")
 	}
 
-	if err := createMarker(pb.dbPath, keyEncoder.Name()); err != nil {
+	if err := createMarker(pb.dbPath, pb.keyEncoder.Name()); err != nil {
 		return nil, errors.Wrap(err, "failed to create marker")
 	}
 

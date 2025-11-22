@@ -35,6 +35,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type KeySortingType int32
+
+const (
+	KeySortingType_UNKNOWN      KeySortingType = 0
+	KeySortingType_NATURAL      KeySortingType = 1
+	KeySortingType_HIERARCHICAL KeySortingType = 2
+)
+
+// Enum value maps for KeySortingType.
+var (
+	KeySortingType_name = map[int32]string{
+		0: "UNKNOWN",
+		1: "NATURAL",
+		2: "HIERARCHICAL",
+	}
+	KeySortingType_value = map[string]int32{
+		"UNKNOWN":      0,
+		"NATURAL":      1,
+		"HIERARCHICAL": 2,
+	}
+)
+
+func (x KeySortingType) Enum() *KeySortingType {
+	p := new(KeySortingType)
+	*p = x
+	return p
+}
+
+func (x KeySortingType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (KeySortingType) Descriptor() protoreflect.EnumDescriptor {
+	return file_replication_proto_enumTypes[0].Descriptor()
+}
+
+func (KeySortingType) Type() protoreflect.EnumType {
+	return &file_replication_proto_enumTypes[0]
+}
+
+func (x KeySortingType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use KeySortingType.Descriptor instead.
+func (KeySortingType) EnumDescriptor() ([]byte, []int) {
+	return file_replication_proto_rawDescGZIP(), []int{0}
+}
+
 type ServingStatus int32
 
 const (
@@ -71,11 +120,11 @@ func (x ServingStatus) String() string {
 }
 
 func (ServingStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_replication_proto_enumTypes[0].Descriptor()
+	return file_replication_proto_enumTypes[1].Descriptor()
 }
 
 func (ServingStatus) Type() protoreflect.EnumType {
-	return &file_replication_proto_enumTypes[0]
+	return &file_replication_proto_enumTypes[1]
 }
 
 func (x ServingStatus) Number() protoreflect.EnumNumber {
@@ -84,7 +133,7 @@ func (x ServingStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ServingStatus.Descriptor instead.
 func (ServingStatus) EnumDescriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{0}
+	return file_replication_proto_rawDescGZIP(), []int{1}
 }
 
 type CoordinationShardAssignmentsResponse struct {
@@ -322,6 +371,7 @@ func (x *SnapshotChunk) GetChunkCount() int32 {
 type NewTermOptions struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	EnableNotifications bool                   `protobuf:"varint,1,opt,name=enable_notifications,json=enableNotifications,proto3" json:"enable_notifications,omitempty"`
+	KeySorting          KeySortingType         `protobuf:"varint,2,opt,name=key_sorting,json=keySorting,proto3,enum=replication.KeySortingType" json:"key_sorting,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -361,6 +411,13 @@ func (x *NewTermOptions) GetEnableNotifications() bool {
 		return x.EnableNotifications
 	}
 	return false
+}
+
+func (x *NewTermOptions) GetKeySorting() KeySortingType {
+	if x != nil {
+		return x.KeySorting
+	}
+	return KeySortingType_UNKNOWN
 }
 
 type NewTermRequest struct {
@@ -1188,9 +1245,11 @@ const file_replication_proto_rawDesc = "" +
 	"\vchunk_index\x18\x04 \x01(\x05R\n" +
 	"chunkIndex\x12\x1f\n" +
 	"\vchunk_count\x18\x05 \x01(\x05R\n" +
-	"chunkCount\"C\n" +
+	"chunkCount\"\x81\x01\n" +
 	"\x0eNewTermOptions\x121\n" +
-	"\x14enable_notifications\x18\x01 \x01(\bR\x13enableNotifications\"\x8f\x01\n" +
+	"\x14enable_notifications\x18\x01 \x01(\bR\x13enableNotifications\x12<\n" +
+	"\vkey_sorting\x18\x02 \x01(\x0e2\x1b.replication.KeySortingTypeR\n" +
+	"keySorting\"\x8f\x01\n" +
 	"\x0eNewTermRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
 	"\x05shard\x18\x02 \x01(\x03R\x05shard\x12\x12\n" +
@@ -1243,7 +1302,11 @@ const file_replication_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\x0e2\x1a.replication.ServingStatusR\x06status\x12\x1f\n" +
 	"\vhead_offset\x18\x03 \x01(\x03R\n" +
 	"headOffset\x12#\n" +
-	"\rcommit_offset\x18\x04 \x01(\x03R\fcommitOffset*E\n" +
+	"\rcommit_offset\x18\x04 \x01(\x03R\fcommitOffset*<\n" +
+	"\x0eKeySortingType\x12\v\n" +
+	"\aUNKNOWN\x10\x00\x12\v\n" +
+	"\aNATURAL\x10\x01\x12\x10\n" +
+	"\fHIERARCHICAL\x10\x02*E\n" +
 	"\rServingStatus\x12\x0e\n" +
 	"\n" +
 	"NOT_MEMBER\x10\x00\x12\n" +
@@ -1276,66 +1339,68 @@ func file_replication_proto_rawDescGZIP() []byte {
 	return file_replication_proto_rawDescData
 }
 
-var file_replication_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_replication_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_replication_proto_goTypes = []any{
-	(ServingStatus)(0),                           // 0: replication.ServingStatus
-	(*CoordinationShardAssignmentsResponse)(nil), // 1: replication.CoordinationShardAssignmentsResponse
-	(*EntryId)(nil),                              // 2: replication.EntryId
-	(*LogEntry)(nil),                             // 3: replication.LogEntry
-	(*SnapshotChunk)(nil),                        // 4: replication.SnapshotChunk
-	(*NewTermOptions)(nil),                       // 5: replication.NewTermOptions
-	(*NewTermRequest)(nil),                       // 6: replication.NewTermRequest
-	(*NewTermResponse)(nil),                      // 7: replication.NewTermResponse
-	(*BecomeLeaderRequest)(nil),                  // 8: replication.BecomeLeaderRequest
-	(*AddFollowerRequest)(nil),                   // 9: replication.AddFollowerRequest
-	(*BecomeLeaderResponse)(nil),                 // 10: replication.BecomeLeaderResponse
-	(*AddFollowerResponse)(nil),                  // 11: replication.AddFollowerResponse
-	(*TruncateRequest)(nil),                      // 12: replication.TruncateRequest
-	(*TruncateResponse)(nil),                     // 13: replication.TruncateResponse
-	(*Append)(nil),                               // 14: replication.Append
-	(*Ack)(nil),                                  // 15: replication.Ack
-	(*SnapshotResponse)(nil),                     // 16: replication.SnapshotResponse
-	(*DeleteShardRequest)(nil),                   // 17: replication.DeleteShardRequest
-	(*DeleteShardResponse)(nil),                  // 18: replication.DeleteShardResponse
-	(*GetStatusRequest)(nil),                     // 19: replication.GetStatusRequest
-	(*GetStatusResponse)(nil),                    // 20: replication.GetStatusResponse
-	nil,                                          // 21: replication.BecomeLeaderRequest.FollowerMapsEntry
-	(*ShardAssignments)(nil),                     // 22: io.oxia.proto.v1.ShardAssignments
+	(KeySortingType)(0),                          // 0: replication.KeySortingType
+	(ServingStatus)(0),                           // 1: replication.ServingStatus
+	(*CoordinationShardAssignmentsResponse)(nil), // 2: replication.CoordinationShardAssignmentsResponse
+	(*EntryId)(nil),                              // 3: replication.EntryId
+	(*LogEntry)(nil),                             // 4: replication.LogEntry
+	(*SnapshotChunk)(nil),                        // 5: replication.SnapshotChunk
+	(*NewTermOptions)(nil),                       // 6: replication.NewTermOptions
+	(*NewTermRequest)(nil),                       // 7: replication.NewTermRequest
+	(*NewTermResponse)(nil),                      // 8: replication.NewTermResponse
+	(*BecomeLeaderRequest)(nil),                  // 9: replication.BecomeLeaderRequest
+	(*AddFollowerRequest)(nil),                   // 10: replication.AddFollowerRequest
+	(*BecomeLeaderResponse)(nil),                 // 11: replication.BecomeLeaderResponse
+	(*AddFollowerResponse)(nil),                  // 12: replication.AddFollowerResponse
+	(*TruncateRequest)(nil),                      // 13: replication.TruncateRequest
+	(*TruncateResponse)(nil),                     // 14: replication.TruncateResponse
+	(*Append)(nil),                               // 15: replication.Append
+	(*Ack)(nil),                                  // 16: replication.Ack
+	(*SnapshotResponse)(nil),                     // 17: replication.SnapshotResponse
+	(*DeleteShardRequest)(nil),                   // 18: replication.DeleteShardRequest
+	(*DeleteShardResponse)(nil),                  // 19: replication.DeleteShardResponse
+	(*GetStatusRequest)(nil),                     // 20: replication.GetStatusRequest
+	(*GetStatusResponse)(nil),                    // 21: replication.GetStatusResponse
+	nil,                                          // 22: replication.BecomeLeaderRequest.FollowerMapsEntry
+	(*ShardAssignments)(nil),                     // 23: io.oxia.proto.v1.ShardAssignments
 }
 var file_replication_proto_depIdxs = []int32{
-	5,  // 0: replication.NewTermRequest.options:type_name -> replication.NewTermOptions
-	2,  // 1: replication.NewTermResponse.head_entry_id:type_name -> replication.EntryId
-	21, // 2: replication.BecomeLeaderRequest.follower_maps:type_name -> replication.BecomeLeaderRequest.FollowerMapsEntry
-	2,  // 3: replication.AddFollowerRequest.follower_head_entry_id:type_name -> replication.EntryId
-	2,  // 4: replication.TruncateRequest.head_entry_id:type_name -> replication.EntryId
-	2,  // 5: replication.TruncateResponse.head_entry_id:type_name -> replication.EntryId
-	3,  // 6: replication.Append.entry:type_name -> replication.LogEntry
-	0,  // 7: replication.GetStatusResponse.status:type_name -> replication.ServingStatus
-	2,  // 8: replication.BecomeLeaderRequest.FollowerMapsEntry.value:type_name -> replication.EntryId
-	22, // 9: replication.OxiaCoordination.PushShardAssignments:input_type -> io.oxia.proto.v1.ShardAssignments
-	6,  // 10: replication.OxiaCoordination.NewTerm:input_type -> replication.NewTermRequest
-	8,  // 11: replication.OxiaCoordination.BecomeLeader:input_type -> replication.BecomeLeaderRequest
-	9,  // 12: replication.OxiaCoordination.AddFollower:input_type -> replication.AddFollowerRequest
-	19, // 13: replication.OxiaCoordination.GetStatus:input_type -> replication.GetStatusRequest
-	17, // 14: replication.OxiaCoordination.DeleteShard:input_type -> replication.DeleteShardRequest
-	12, // 15: replication.OxiaLogReplication.Truncate:input_type -> replication.TruncateRequest
-	14, // 16: replication.OxiaLogReplication.Replicate:input_type -> replication.Append
-	4,  // 17: replication.OxiaLogReplication.SendSnapshot:input_type -> replication.SnapshotChunk
-	1,  // 18: replication.OxiaCoordination.PushShardAssignments:output_type -> replication.CoordinationShardAssignmentsResponse
-	7,  // 19: replication.OxiaCoordination.NewTerm:output_type -> replication.NewTermResponse
-	10, // 20: replication.OxiaCoordination.BecomeLeader:output_type -> replication.BecomeLeaderResponse
-	11, // 21: replication.OxiaCoordination.AddFollower:output_type -> replication.AddFollowerResponse
-	20, // 22: replication.OxiaCoordination.GetStatus:output_type -> replication.GetStatusResponse
-	18, // 23: replication.OxiaCoordination.DeleteShard:output_type -> replication.DeleteShardResponse
-	13, // 24: replication.OxiaLogReplication.Truncate:output_type -> replication.TruncateResponse
-	15, // 25: replication.OxiaLogReplication.Replicate:output_type -> replication.Ack
-	16, // 26: replication.OxiaLogReplication.SendSnapshot:output_type -> replication.SnapshotResponse
-	18, // [18:27] is the sub-list for method output_type
-	9,  // [9:18] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	0,  // 0: replication.NewTermOptions.key_sorting:type_name -> replication.KeySortingType
+	6,  // 1: replication.NewTermRequest.options:type_name -> replication.NewTermOptions
+	3,  // 2: replication.NewTermResponse.head_entry_id:type_name -> replication.EntryId
+	22, // 3: replication.BecomeLeaderRequest.follower_maps:type_name -> replication.BecomeLeaderRequest.FollowerMapsEntry
+	3,  // 4: replication.AddFollowerRequest.follower_head_entry_id:type_name -> replication.EntryId
+	3,  // 5: replication.TruncateRequest.head_entry_id:type_name -> replication.EntryId
+	3,  // 6: replication.TruncateResponse.head_entry_id:type_name -> replication.EntryId
+	4,  // 7: replication.Append.entry:type_name -> replication.LogEntry
+	1,  // 8: replication.GetStatusResponse.status:type_name -> replication.ServingStatus
+	3,  // 9: replication.BecomeLeaderRequest.FollowerMapsEntry.value:type_name -> replication.EntryId
+	23, // 10: replication.OxiaCoordination.PushShardAssignments:input_type -> io.oxia.proto.v1.ShardAssignments
+	7,  // 11: replication.OxiaCoordination.NewTerm:input_type -> replication.NewTermRequest
+	9,  // 12: replication.OxiaCoordination.BecomeLeader:input_type -> replication.BecomeLeaderRequest
+	10, // 13: replication.OxiaCoordination.AddFollower:input_type -> replication.AddFollowerRequest
+	20, // 14: replication.OxiaCoordination.GetStatus:input_type -> replication.GetStatusRequest
+	18, // 15: replication.OxiaCoordination.DeleteShard:input_type -> replication.DeleteShardRequest
+	13, // 16: replication.OxiaLogReplication.Truncate:input_type -> replication.TruncateRequest
+	15, // 17: replication.OxiaLogReplication.Replicate:input_type -> replication.Append
+	5,  // 18: replication.OxiaLogReplication.SendSnapshot:input_type -> replication.SnapshotChunk
+	2,  // 19: replication.OxiaCoordination.PushShardAssignments:output_type -> replication.CoordinationShardAssignmentsResponse
+	8,  // 20: replication.OxiaCoordination.NewTerm:output_type -> replication.NewTermResponse
+	11, // 21: replication.OxiaCoordination.BecomeLeader:output_type -> replication.BecomeLeaderResponse
+	12, // 22: replication.OxiaCoordination.AddFollower:output_type -> replication.AddFollowerResponse
+	21, // 23: replication.OxiaCoordination.GetStatus:output_type -> replication.GetStatusResponse
+	19, // 24: replication.OxiaCoordination.DeleteShard:output_type -> replication.DeleteShardResponse
+	14, // 25: replication.OxiaLogReplication.Truncate:output_type -> replication.TruncateResponse
+	16, // 26: replication.OxiaLogReplication.Replicate:output_type -> replication.Ack
+	17, // 27: replication.OxiaLogReplication.SendSnapshot:output_type -> replication.SnapshotResponse
+	19, // [19:28] is the sub-list for method output_type
+	10, // [10:19] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_replication_proto_init() }
@@ -1349,7 +1414,7 @@ func file_replication_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_replication_proto_rawDesc), len(file_replication_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   2,

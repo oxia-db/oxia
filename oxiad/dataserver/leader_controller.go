@@ -30,8 +30,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
-	"github.com/oxia-db/oxia/common/compare"
-
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
@@ -116,7 +114,11 @@ type leaderController struct {
 	followerAckOffsetGauges map[string]metric.Gauge
 }
 
-func NewLeaderController(config Config, namespace string, shardId int64, rpcClient ReplicationRpcProvider, walFactory wal.Factory, kvFactory kv.Factory) (LeaderController, error) {
+func NewLeaderController(config Config, namespace string, shardId int64,
+	rpcClient ReplicationRpcProvider,
+	walFactory wal.Factory, kvFactory kv.Factory,
+	newTermOptions *proto.NewTermOptions,
+) (LeaderController, error) {
 	labels := metric.LabelsForShard(namespace, shardId)
 	lc := &leaderController{
 		status:           proto.ServingStatus_NOT_MEMBER,
@@ -159,7 +161,12 @@ func NewLeaderController(config Config, namespace string, shardId int64, rpcClie
 		return nil, err
 	}
 
-	if lc.db, err = kv.NewDB(namespace, shardId, kvFactory, compare.EncoderHierarchical, config.NotificationsRetentionTime, time2.SystemClock); err != nil {
+	keySorting := proto.KeySortingType_UNKNOWN
+	if newTermOptions != nil {
+		keySorting = newTermOptions.KeySorting
+	}
+
+	if lc.db, err = kv.NewDB(namespace, shardId, kvFactory, keySorting, config.NotificationsRetentionTime, time2.SystemClock); err != nil {
 		return nil, err
 	}
 

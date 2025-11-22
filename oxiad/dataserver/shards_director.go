@@ -37,8 +37,8 @@ type ShardsDirector interface {
 	GetLeader(shardId int64) (LeaderController, error)
 	GetFollower(shardId int64) (FollowerController, error)
 
-	GetOrCreateLeader(namespace string, shardId int64) (LeaderController, error)
-	GetOrCreateFollower(namespace string, shardId int64, term int64) (FollowerController, error)
+	GetOrCreateLeader(namespace string, shardId int64, newTermOptions *proto.NewTermOptions) (LeaderController, error)
+	GetOrCreateFollower(namespace string, shardId int64, term int64, newTermOptions *proto.NewTermOptions) (FollowerController, error)
 
 	DeleteShard(req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
 }
@@ -121,7 +121,7 @@ func (s *shardsDirector) GetFollower(shardId int64) (FollowerController, error) 
 	return nil, status.Errorf(constant.CodeNodeIsNotFollower, "node is not follower for shard %d", shardId)
 }
 
-func (s *shardsDirector) GetOrCreateLeader(namespace string, shardId int64) (LeaderController, error) {
+func (s *shardsDirector) GetOrCreateLeader(namespace string, shardId int64, newTermOptions *proto.NewTermOptions) (LeaderController, error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -147,7 +147,7 @@ func (s *shardsDirector) GetOrCreateLeader(namespace string, shardId int64) (Lea
 	}
 
 	// Create new leader controller
-	lc, err := NewLeaderController(s.config, namespace, shardId, s.replicationRpcProvider, s.walFactory, s.kvFactory)
+	lc, err := NewLeaderController(s.config, namespace, shardId, s.replicationRpcProvider, s.walFactory, s.kvFactory, newTermOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func (s *shardsDirector) GetOrCreateLeader(namespace string, shardId int64) (Lea
 	return lc, nil
 }
 
-func (s *shardsDirector) GetOrCreateFollower(namespace string, shardId int64, term int64) (FollowerController, error) {
+func (s *shardsDirector) GetOrCreateFollower(namespace string, shardId int64, term int64, newTermOptions *proto.NewTermOptions) (FollowerController, error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -187,7 +187,7 @@ func (s *shardsDirector) GetOrCreateFollower(namespace string, shardId int64, te
 	}
 
 	// Create new follower controller
-	fc, err := NewFollowerController(s.config, namespace, shardId, s.walFactory, s.kvFactory)
+	fc, err := NewFollowerController(s.config, namespace, shardId, s.walFactory, s.kvFactory, newTermOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +223,7 @@ func (s *shardsDirector) DeleteShard(req *proto.DeleteShardRequest) (*proto.Dele
 		return resp, nil
 	}
 
-	fc, err := NewFollowerController(s.config, req.Namespace, req.Shard, s.walFactory, s.kvFactory)
+	fc, err := NewFollowerController(s.config, req.Namespace, req.Shard, s.walFactory, s.kvFactory, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -20,8 +20,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/oxia-db/oxia/common/compare"
-
 	"github.com/oxia-db/oxia/proto"
 )
 
@@ -170,7 +168,7 @@ func NewFactoryOptionsForTest(t *testing.T) *FactoryOptions {
 type Factory interface {
 	io.Closer
 
-	NewKV(namespace string, shardId int64, keyEncoder compare.Encoder) (KV, error)
+	NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error)
 
 	NewSnapshotLoader(namespace string, shardId int64) (SnapshotLoader, error)
 }

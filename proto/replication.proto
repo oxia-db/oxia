@@ -62,8 +62,15 @@ message SnapshotChunk {
   int32 chunk_count = 5;
 }
 
+enum KeySortingType {
+  UNKNOWN = 0;
+  NATURAL = 1;
+  HIERARCHICAL = 2;
+}
+
 message NewTermOptions {
   bool enable_notifications = 1;
+  KeySortingType key_sorting = 2;
 }
 
 message NewTermRequest {
