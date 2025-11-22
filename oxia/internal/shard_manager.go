@@ -32,7 +32,7 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 type ShardManager interface {

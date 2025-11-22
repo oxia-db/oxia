@@ -290,7 +290,7 @@ const file_admin_proto_rawDesc = "" +
 	"\x05nodes\x18\x01 \x03(\v2\x16.io.oxia.proto.v1.NodeR\x05nodes2\xc6\x01\n" +
 	"\tOxiaAdmin\x12c\n" +
 	"\x0eListNamespaces\x12'.io.oxia.proto.v1.ListNamespacesRequest\x1a(.io.oxia.proto.v1.ListNamespacesResponse\x12T\n" +
-	"\tListNodes\x12\".io.oxia.proto.v1.ListNodesRequest\x1a#.io.oxia.proto.v1.ListNodesResponseB!P\x01Z\x1dgithub.com/oxia-db/oxia/protob\x06proto3"
+	"\tListNodes\x12\".io.oxia.proto.v1.ListNodesRequest\x1a#.io.oxia.proto.v1.ListNodesResponseB(P\x01Z$github.com/oxia-db/oxia/common/protob\x06proto3"
 
 var (
 	file_admin_proto_rawDescOnce sync.Once

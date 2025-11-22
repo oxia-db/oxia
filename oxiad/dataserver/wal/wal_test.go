@@ -27,7 +27,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const shard = int64(100)

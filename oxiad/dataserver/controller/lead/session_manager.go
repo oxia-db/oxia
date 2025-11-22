@@ -32,7 +32,7 @@ import (
 	"github.com/oxia-db/oxia/common/collection"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const (

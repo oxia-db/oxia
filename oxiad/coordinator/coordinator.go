@@ -39,7 +39,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 type Coordinator interface {

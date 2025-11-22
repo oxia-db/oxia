@@ -5,6 +5,5 @@ use (
 	common
 	oxia
 	oxiad
-	proto
 	tests
 )

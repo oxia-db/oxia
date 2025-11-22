@@ -23,7 +23,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 type MsgType string

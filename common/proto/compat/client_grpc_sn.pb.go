@@ -24,7 +24,7 @@
 package compat
 
 import (
-	proto "github.com/oxia-db/oxia/proto"
+	proto "github.com/oxia-db/oxia/common/proto"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -55,7 +55,7 @@ const file_compat_client_grpc_sn_proto_rawDesc = "" +
 	"\x10GetNotifications\x12&.io.oxia.proto.v1.NotificationsRequest\x1a#.io.oxia.proto.v1.NotificationBatch0\x01\x12`\n" +
 	"\rCreateSession\x12&.io.oxia.proto.v1.CreateSessionRequest\x1a'.io.oxia.proto.v1.CreateSessionResponse\x12T\n" +
 	"\tKeepAlive\x12\".io.oxia.proto.v1.SessionHeartbeat\x1a#.io.oxia.proto.v1.KeepAliveResponse\x12]\n" +
-	"\fCloseSession\x12%.io.oxia.proto.v1.CloseSessionRequest\x1a&.io.oxia.proto.v1.CloseSessionResponseB(P\x01Z$github.com/oxia-db/oxia/proto/compatb\x06proto3"
+	"\fCloseSession\x12%.io.oxia.proto.v1.CloseSessionRequest\x1a&.io.oxia.proto.v1.CloseSessionResponseB/P\x01Z+github.com/oxia-db/oxia/common/proto/compatb\x06proto3"
 
 var file_compat_client_grpc_sn_proto_goTypes = []any{
 	(*proto.ShardAssignmentsRequest)(nil),    // 0: io.oxia.proto.v1.ShardAssignmentsRequest

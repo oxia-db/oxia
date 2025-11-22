@@ -15,8 +15,8 @@
 package constant
 
 import (
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
-	"github.com/oxia-db/oxia/proto"
 )
 
 var InvalidEntryId = &proto.EntryId{

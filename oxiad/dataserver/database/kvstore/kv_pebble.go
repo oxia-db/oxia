@@ -33,7 +33,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 
 	"github.com/oxia-db/oxia/common/cache"
 

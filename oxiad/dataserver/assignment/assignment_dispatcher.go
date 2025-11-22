@@ -32,7 +32,7 @@ import (
 	"github.com/oxia-db/oxia/common/sharding"
 
 	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 type Client interface {

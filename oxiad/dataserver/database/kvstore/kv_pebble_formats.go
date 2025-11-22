@@ -25,8 +25,8 @@ import (
 	"github.com/cockroachdb/pebble/v2/sstable"
 	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/proto"
 
 	"github.com/oxia-db/oxia/common/compare"
 )

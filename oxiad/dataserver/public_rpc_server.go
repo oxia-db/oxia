@@ -34,7 +34,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/rpc/auth"
 
-	"github.com/oxia-db/oxia/proto/compat"
+	"github.com/oxia-db/oxia/common/proto/compat"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
@@ -43,7 +43,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/channel"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const (

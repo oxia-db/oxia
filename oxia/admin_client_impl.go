@@ -21,8 +21,8 @@ import (
 
 	"github.com/oxia-db/oxia/oxia/auth"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/proto"
 )
 
 var _ AdminClient = (*adminClientImpl)(nil)

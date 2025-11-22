@@ -10,7 +10,6 @@ require (
 	github.com/oxia-db/oxia/common v0.0.0
 	github.com/oxia-db/oxia/oxia v0.0.0
 	github.com/oxia-db/oxia/oxiad v0.0.0
-	github.com/oxia-db/oxia/proto v0.14.5
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.10.0
 	google.golang.org/grpc v1.72.0
@@ -125,5 +124,4 @@ replace (
 	github.com/oxia-db/oxia/common => ../common
 	github.com/oxia-db/oxia/oxia => ../oxia
 	github.com/oxia-db/oxia/oxiad => ../oxiad
-	github.com/oxia-db/oxia/proto => ../proto
 )

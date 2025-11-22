@@ -30,7 +30,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/entity"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func TestSecondaryIndices_List(t *testing.T) {

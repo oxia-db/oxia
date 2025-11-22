@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 // --- Session

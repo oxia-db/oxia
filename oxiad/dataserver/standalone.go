@@ -38,7 +38,7 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 type StandaloneConfig struct {

@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package proto;
 
-option go_package = "github.com/oxia-db/oxia/proto";
+option go_package = "github.com/oxia-db/oxia/common/proto";
 
 import "client.proto";
 import "google/protobuf/descriptor.proto";

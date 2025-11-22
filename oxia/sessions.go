@@ -31,8 +31,8 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal"
-	"github.com/oxia-db/oxia/proto"
 )
 
 func newSessions(ctx context.Context, shardManager internal.ShardManager, pool rpc.ClientPool, options clientOptions) *sessions {
