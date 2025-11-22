@@ -29,6 +29,8 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+
 	"github.com/oxia-db/oxia/common/rpc/auth"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -56,7 +58,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		ProviderName:   auth.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
-	s1, err := dataserver.New(dataserver.Config{
+	s1, err := dataserver.New(conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -70,7 +72,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
-	s2, err := dataserver.New(dataserver.Config{
+	s2, err := dataserver.New(conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -84,7 +86,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
-	s3, err := dataserver.New(dataserver.Config{
+	s3, err := dataserver.New(conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict

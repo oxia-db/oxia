@@ -22,7 +22,6 @@ import (
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
 	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/util"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 
 	"github.com/oxia-db/oxia/common/object"
@@ -173,8 +172,8 @@ func (r *readOnlySegmentsGroup) TrimSegments(offset int64) error {
 		}
 
 		err2 = multierr.Combine(
-			util.RemoveFileIfExists(c.idxPath),
-			util.RemoveFileIfExists(c.txnPath),
+			codec.RemoveFileIfExists(c.idxPath),
+			codec.RemoveFileIfExists(c.txnPath),
 		)
 		if err2 != nil {
 			err = multierr.Append(err, err2)

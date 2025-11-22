@@ -24,19 +24,19 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/proto"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
+	"github.com/oxia-db/oxia/proto"
 )
 
 type kvRaftStore struct {
-	factory kv.Factory
-	kv      kv.KV
+	factory kvstore.Factory
+	kv      kvstore.KV
 }
 
 func newKVRaftStore(path string) (store *kvRaftStore, err error) {
 	store = &kvRaftStore{}
-	if store.factory, err = kv.NewPebbleKVFactory(&kv.FactoryOptions{
+	if store.factory, err = kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
 		DataDir:     path,
 		CacheSizeMB: 1,
 		UseWAL:      true,
@@ -71,9 +71,9 @@ var (
 )
 
 func (s *kvRaftStore) FirstIndex() (uint64, error) {
-	storedKey, _, closer, err := s.kv.Get(logKeyMin, kv.ComparisonCeiling, kv.NoInternalKeys)
+	storedKey, _, closer, err := s.kv.Get(logKeyMin, kvstore.ComparisonCeiling, kvstore.NoInternalKeys)
 	if err != nil {
-		if errors.Is(err, kv.ErrKeyNotFound) {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			return 0, nil
 		}
 		return 0, err
@@ -89,9 +89,9 @@ func (s *kvRaftStore) FirstIndex() (uint64, error) {
 }
 
 func (s *kvRaftStore) LastIndex() (idx uint64, err error) {
-	storedKey, _, closer, err := s.kv.Get(logKeyMax, kv.ComparisonFloor, kv.NoInternalKeys)
+	storedKey, _, closer, err := s.kv.Get(logKeyMax, kvstore.ComparisonFloor, kvstore.NoInternalKeys)
 	if err != nil {
-		if errors.Is(err, kv.ErrKeyNotFound) {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			return 0, nil
 		}
 		return 0, err
@@ -103,7 +103,7 @@ func (s *kvRaftStore) LastIndex() (idx uint64, err error) {
 
 func (s *kvRaftStore) GetLog(index uint64, log *raft.Log) error {
 	key := fmt.Sprintf(logKeyFormat, index)
-	_, value, closer, err := s.kv.Get(key, kv.ComparisonEqual, kv.NoInternalKeys)
+	_, value, closer, err := s.kv.Get(key, kvstore.ComparisonEqual, kvstore.NoInternalKeys)
 	if err != nil {
 		return err
 	}
@@ -166,9 +166,9 @@ func (s *kvRaftStore) Set(key []byte, value []byte) error {
 }
 
 func (s *kvRaftStore) Get(key []byte) ([]byte, error) {
-	_, value, closer, err := s.kv.Get(string(key), kv.ComparisonEqual, kv.NoInternalKeys)
+	_, value, closer, err := s.kv.Get(string(key), kvstore.ComparisonEqual, kvstore.NoInternalKeys)
 	if err != nil {
-		if errors.Is(err, kv.ErrKeyNotFound) {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			return []byte{}, nil
 		}
 		return nil, err

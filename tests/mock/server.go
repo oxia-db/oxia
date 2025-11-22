@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
@@ -29,7 +31,7 @@ func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Serv
 	t.Helper()
 
 	var err error
-	s, err = dataserver.New(dataserver.Config{
+	s, err = dataserver.New(conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -54,7 +56,7 @@ func NewServerWithAddress(t *testing.T, name string, publicAddress string, inter
 	t.Helper()
 
 	var err error
-	s, err = dataserver.New(dataserver.Config{
+	s, err = dataserver.New(conf.Config{
 		PublicServiceAddr:          publicAddress,
 		InternalServiceAddr:        internalAddress,
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict

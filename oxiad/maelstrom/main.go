@@ -24,6 +24,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -187,7 +189,7 @@ func main() {
 		}
 	} else {
 		// Any other node will be a storage node
-		_, err := dataserver.NewWithGrpcProvider(dataserver.Config{
+		_, err := dataserver.NewWithGrpcProvider(conf.Config{
 			MetricsServiceAddr: "",
 			DataDir:            filepath.Join(dataDir, thisNode, "db"),
 			WalDir:             filepath.Join(dataDir, thisNode, "wal"),
