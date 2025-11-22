@@ -427,7 +427,7 @@ func TestPebbbleDeleteRangeInBatch(t *testing.T) {
 
 	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_HIERARCHICAL)
 	assert.NoError(t, err)
 
 	wb := kv.NewWriteBatch()
