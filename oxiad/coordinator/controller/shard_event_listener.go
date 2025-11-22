@@ -12,36 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package controller
 
-import (
-	"context"
-	"io"
+import "github.com/oxia-db/oxia/oxiad/coordinator/model"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
-)
+type ShardEventListener interface {
+	LeaderElected(shard int64, leader model.Server, followers []model.Server)
 
-type Options struct {
-	context.Context
-
-	StatusResource        resource.StatusResource
-	ClusterConfigResource resource.ClusterConfigResource
-
-	NodeAvailableJudger func(nodeID string) bool
-}
-
-type LoadBalancer interface {
-	io.Closer
-
-	Start()
-
-	Trigger()
-
-	Action() <-chan action.Action
-
-	IsBalanced() bool
-
-	LoadRatioAlgorithm() selector.LoadRatioAlgorithm
+	ShardDeleted(shard int64)
 }

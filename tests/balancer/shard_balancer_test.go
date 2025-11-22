@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/policies"
+	"github.com/oxia-db/oxia/oxiad/coordinator/policy"
 
 	"github.com/oxia-db/oxia/oxia"
 
@@ -132,8 +132,8 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 				Name:              "ns-1",
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
-				Policies: &policies.Policies{
-					AntiAffinities: []policies.AntiAffinity{
+				Policies: &policy.Policies{
+					AntiAffinities: []policy.AntiAffinity{
 						{
 							Labels: []string{"zone"},
 						},
@@ -144,8 +144,8 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 				Name:              "ns-2",
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
-				Policies: &policies.Policies{
-					AntiAffinities: []policies.AntiAffinity{
+				Policies: &policy.Policies{
+					AntiAffinities: []policy.AntiAffinity{
 						{
 							Labels: []string{"zone"},
 						},
@@ -194,7 +194,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 		return balancer.IsBalanced()
 	}, 30*time.Second, 50*time.Millisecond)
 
-	// check if follow the policies
+	// check if follow the policy
 	for name, ns := range statusResource.Load().Namespaces {
 		for _, shard := range ns.Shards {
 			nodeIDs := linkedhashset.New[string]()

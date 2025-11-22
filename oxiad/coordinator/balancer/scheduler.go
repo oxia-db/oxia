@@ -24,12 +24,12 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/actions"
+	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resources"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selectors/single"
-	"github.com/oxia-db/oxia/oxiad/coordinator/utils"
+	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
+	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
+	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 
@@ -50,22 +50,22 @@ type nodeBasedBalancer struct {
 	cancel context.CancelFunc
 
 	loadBalancerConf    *model.LoadBalancer
-	statusResource      resources.StatusResource
-	configResource      resources.ClusterConfigResource
+	statusResource      resource.StatusResource
+	configResource      resource.ClusterConfigResource
 	nodeAvailableJudger func(nodeID string) bool
 
-	selector           selectors.Selector[*single.Context, string]
-	loadRatioAlgorithm selectors.LoadRatioAlgorithm
+	selector           selector.Selector[*single.Context, string]
+	loadRatioAlgorithm selector.LoadRatioAlgorithm
 
 	nodeQuarantineNodeMap   *sync.Map
 	shardQuarantineShardMap *sync.Map
 
 	triggerCh chan any
 
-	actionCh chan actions.Action
+	actionCh chan action.Action
 }
 
-func (r *nodeBasedBalancer) Action() <-chan actions.Action {
+func (r *nodeBasedBalancer) Action() <-chan action.Action {
 	return r.actionCh
 }
 
@@ -100,7 +100,7 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	swapGroup := &sync.WaitGroup{}
 	currentStatus := r.statusResource.Load()
 	candidates, metadata := r.configResource.NodesWithMetadata()
-	groupedStatus, historyNodes := utils.GroupingShardsNodeByStatus(candidates, currentStatus)
+	groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
 	r.Info("start shard rebalance",
@@ -258,7 +258,7 @@ func (r *nodeBasedBalancer) swapShard(
 
 	r.Info("propose to swap the shard", slog.Int64("shard", candidateShard.ShardID), slog.Any("from", fromNode), slog.Any("to", targetNodeID))
 	swapGroup.Add(1)
-	r.actionCh <- actions.NewChangeEnsembleActionWithCallback(candidateShard.ShardID, fromNode, *targetNode,
+	r.actionCh <- action.NewChangeEnsembleActionWithCallback(candidateShard.ShardID, fromNode, *targetNode,
 		concurrent.NewOnce(func(_ any) {
 			swapGroup.Done()
 		}, func(_ error) {
@@ -305,7 +305,7 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 func (r *nodeBasedBalancer) IsBalanced() bool {
 	status := r.statusResource.Load()
 	candidates := r.configResource.Nodes()
-	groupedStatus, historyNodes := utils.GroupingShardsNodeByStatus(candidates, status)
+	groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(candidates, status)
 	return r.loadRatioAlgorithm(
 		&model.RatioParams{
 			NodeShardsInfos: groupedStatus,
@@ -320,7 +320,7 @@ func (r *nodeBasedBalancer) Trigger() {
 	channel.PushNoBlock(r.triggerCh, nil)
 }
 
-func (r *nodeBasedBalancer) LoadRatioAlgorithm() selectors.LoadRatioAlgorithm {
+func (r *nodeBasedBalancer) LoadRatioAlgorithm() selector.LoadRatioAlgorithm {
 	return r.loadRatioAlgorithm
 }
 
@@ -373,7 +373,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 
 	status := r.statusResource.Load()
 	candidates := r.configResource.Nodes()
-	totalShards, electedShards, nodeLeaders := utils.NodeShardLeaders(candidates, status)
+	totalShards, electedShards, nodeLeaders := util.NodeShardLeaders(candidates, status)
 
 	electedRate := float64(electedShards) / float64(totalShards)
 	if electedRate < defaultThreshElectedThreshold {
@@ -430,7 +430,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 
 		latch := &sync.WaitGroup{}
 		latch.Add(1)
-		ac := &actions.ElectionAction{
+		ac := &action.ElectionAction{
 			Shard:  shard,
 			Waiter: latch,
 		}
@@ -446,13 +446,13 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 	}
 }
 
-func (r *nodeBasedBalancer) rankLeaders(nodeLeaders map[string]*arraylist.List[utils.NamespaceAndShard]) (maxLeadersNodeID string, maxLeaders int, minLeaders int) {
+func (r *nodeBasedBalancer) rankLeaders(nodeLeaders map[string]*arraylist.List[util.NamespaceAndShard]) (maxLeadersNodeID string, maxLeaders int, minLeaders int) {
 	maxLeadersNodeID = ""
 	maxLeaders = -1
 	minLeaders = -1
 	for nodeID, nsAndShards := range nodeLeaders {
 		if nsAndShards.Size() > 0 {
-			existNonQuarantineShard := nsAndShards.Any(func(_ int, value utils.NamespaceAndShard) bool {
+			existNonQuarantineShard := nsAndShards.Any(func(_ int, value util.NamespaceAndShard) bool {
 				_, exist := r.shardQuarantineShardMap.Load(value.ShardID)
 				return !exist
 			})
@@ -495,7 +495,7 @@ func NewLoadBalancer(options Options) LoadBalancer {
 		ctx:                     ctx,
 		cancel:                  cancelFunc,
 		loadBalancerConf:        options.ClusterConfigResource.LoadLoadBalancer(),
-		actionCh:                make(chan actions.Action, 1000),
+		actionCh:                make(chan action.Action, 1000),
 		nodeAvailableJudger:     options.NodeAvailableJudger,
 		statusResource:          options.StatusResource,
 		configResource:          options.ClusterConfigResource,

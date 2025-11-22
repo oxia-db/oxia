@@ -12,36 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package policy
 
-import (
-	"context"
-	"io"
-
-	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
-)
-
-type Options struct {
-	context.Context
-
-	StatusResource        resource.StatusResource
-	ClusterConfigResource resource.ClusterConfigResource
-
-	NodeAvailableJudger func(nodeID string) bool
-}
-
-type LoadBalancer interface {
-	io.Closer
-
-	Start()
-
-	Trigger()
-
-	Action() <-chan action.Action
-
-	IsBalanced() bool
-
-	LoadRatioAlgorithm() selector.LoadRatioAlgorithm
+type Policies struct {
+	// AntiAffinities defines a list of anti-affinity rules for placement policy, ensuring resource don't coexist undesirably.
+	AntiAffinities []AntiAffinity `json:"antiAffinities,omitempty" yaml:"antiAffinities,omitempty"`
 }

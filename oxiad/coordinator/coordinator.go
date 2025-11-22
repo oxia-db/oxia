@@ -26,16 +26,16 @@ import (
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/actions"
+	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
-	"github.com/oxia-db/oxia/oxiad/coordinator/controllers"
+	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resources"
+	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selectors"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selectors/ensemble"
-	"github.com/oxia-db/oxia/oxiad/coordinator/utils"
+	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/selector/ensemble"
+	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/process"
@@ -44,17 +44,17 @@ import (
 
 type Coordinator interface {
 	io.Closer
-	controllers.ShardEventListener
-	controllers.ShardAssignmentsProvider
-	controllers.NodeEventListener
-	resources.ClusterConfigEventListener
+	controller.ShardEventListener
+	controller.ShardAssignmentsProvider
+	controller.NodeEventListener
+	resource.ClusterConfigEventListener
 
-	NodeControllers() map[string]controllers.NodeController
+	NodeControllers() map[string]controller.NodeController
 
 	LoadBalancer() balancer.LoadBalancer
 
-	StatusResource() resources.StatusResource
-	ConfigResource() resources.ClusterConfigResource
+	StatusResource() resource.StatusResource
+	ConfigResource() resource.ClusterConfigResource
 }
 
 var _ Coordinator = &coordinator{}
@@ -70,18 +70,18 @@ type coordinator struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	statusResource resources.StatusResource
-	configResource resources.ClusterConfigResource
+	statusResource resource.StatusResource
+	configResource resource.ClusterConfigResource
 
-	shardControllers map[int64]controllers.ShardController
-	nodeControllers  map[string]controllers.NodeController
+	shardControllers map[int64]controller.ShardController
+	nodeControllers  map[string]controller.NodeController
 	// Draining nodes are nodes that were removed from the
 	// nodes list. We keep sending them assignments updates
 	// because they might be still reachable to clients.
-	drainingNodes map[string]controllers.NodeController
+	drainingNodes map[string]controller.NodeController
 
 	loadBalancer     balancer.LoadBalancer
-	ensembleSelector selectors.Selector[*ensemble.Context, []string]
+	ensembleSelector selector.Selector[*ensemble.Context, []string]
 
 	clusterConfigChangeCh chan any
 
@@ -107,15 +107,15 @@ func (c *coordinator) LoadBalancer() balancer.LoadBalancer {
 	return c.loadBalancer
 }
 
-func (c *coordinator) StatusResource() resources.StatusResource {
+func (c *coordinator) StatusResource() resource.StatusResource {
 	return c.statusResource
 }
 
-func (c *coordinator) ConfigResource() resources.ClusterConfigResource {
+func (c *coordinator) ConfigResource() resource.ClusterConfigResource {
 	return c.configResource
 }
 
-func (c *coordinator) NodeControllers() map[string]controllers.NodeController {
+func (c *coordinator) NodeControllers() map[string]controller.NodeController {
 	c.RLock()
 	defer c.RUnlock()
 	return c.nodeControllers
@@ -142,7 +142,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 			_ = nc.Close()
 			delete(c.drainingNodes, sa.GetIdentifier())
 		}
-		c.nodeControllers[sa.GetIdentifier()] = controllers.NewNodeController(c.ctx, sa, c, c, c.rpc)
+		c.nodeControllers[sa.GetIdentifier()] = controller.NewNodeController(c.ctx, sa, c, c, c.rpc)
 	}
 
 	// Check for nodes to remove
@@ -153,7 +153,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		c.Info("Detected a removed node", slog.Any("server", serverID))
 		// Moved the node
 		delete(c.nodeControllers, serverID)
-		nc.SetStatus(controllers.Draining)
+		nc.SetStatus(controller.Draining)
 		c.drainingNodes[serverID] = nc
 	}
 	for _, sc := range c.shardControllers {
@@ -166,7 +166,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	var shardsToAdd map[int64]string
 	var shardsToDelete []int64
 	for {
-		clusterStatus, shardsToAdd, shardsToDelete = utils.ApplyClusterChanges(newConfig, currentStatus, c.selectNewEnsemble)
+		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(newConfig, currentStatus, c.selectNewEnsemble)
 		if !c.statusResource.Swap(clusterStatus, version) {
 			currentStatus, version = c.statusResource.LoadWithVersion()
 			continue
@@ -176,8 +176,8 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
-			c.shardControllers[shard] = controllers.NewShardController(namespace, shard, namespaceConfig,
-				shardMetadata.Clone(), c.configResource, c.statusResource, c, c.rpc, controllers.DefaultPeriodicTasksInterval)
+			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
+				shardMetadata.Clone(), c.configResource, c.statusResource, c, c.rpc, controller.DefaultPeriodicTasksInterval)
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
 		}
@@ -201,7 +201,7 @@ func (c *coordinator) waitForAllNodesToBeAvailable() {
 
 			var unavailableNodes []string
 			for nodeName, nc := range c.nodeControllers {
-				if nc.Status() != controllers.Running {
+				if nc.Status() != controller.Running {
 					unavailableNodes = append(unavailableNodes, nodeName)
 				}
 			}
@@ -221,7 +221,7 @@ func (c *coordinator) waitForAllNodesToBeAvailable() {
 	}
 }
 
-// selectNewEnsemble select a new server ensemble based on namespace policies and current cluster status.
+// selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 func (c *coordinator) selectNewEnsemble(ns *model.NamespaceConfig, editingStatus *model.ClusterStatus) ([]model.Server, error) {
 	nodes, nodesMetadata := c.configResource.NodesWithMetadata()
@@ -232,7 +232,7 @@ func (c *coordinator) selectNewEnsemble(ns *model.NamespaceConfig, editingStatus
 		Status:             editingStatus,
 		Replicas:           int(ns.ReplicationFactor),
 		LoadRatioSupplier: func() *model.Ratio {
-			groupedStatus, historyNodes := utils.GroupingShardsNodeByStatus(nodes, editingStatus)
+			groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(nodes, editingStatus)
 			return c.loadBalancer.LoadRatioAlgorithm()(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 		},
 	}
@@ -286,7 +286,7 @@ func (c *coordinator) NodeBecameUnavailable(node model.Server) {
 		}()
 	}
 
-	ctrls := make(map[int64]controllers.ShardController)
+	ctrls := make(map[int64]controller.ShardController)
 	for k, sc := range c.shardControllers {
 		ctrls[k] = sc
 	}
@@ -317,9 +317,9 @@ func (c *coordinator) startBackgroundActionWorker() {
 		select {
 		case ac := <-c.loadBalancer.Action():
 			switch ac.Type() {
-			case actions.SwapNode:
+			case action.SwapNode:
 				c.handleActionChangeEnsemble(ac)
-			case actions.Election:
+			case action.Election:
 				c.handleActionElection(ac)
 			default:
 				panic("unknown action type")
@@ -331,10 +331,10 @@ func (c *coordinator) startBackgroundActionWorker() {
 	}
 }
 
-func (c *coordinator) handleActionElection(ac actions.Action) {
-	var electionAc *actions.ElectionAction
+func (c *coordinator) handleActionElection(ac action.Action) {
+	var electionAc *action.ElectionAction
 	var ok bool
-	if electionAc, ok = ac.(*actions.ElectionAction); !ok {
+	if electionAc, ok = ac.(*action.ElectionAction); !ok {
 		panic("unexpected action type")
 	}
 	c.Info("Applying swap action", slog.Any("swap-action", ac))
@@ -350,10 +350,10 @@ func (c *coordinator) handleActionElection(ac actions.Action) {
 	electionAc.Done(sc.Election(electionAc))
 }
 
-func (c *coordinator) handleActionChangeEnsemble(ac actions.Action) {
-	var changeEnsembleAction *actions.ChangeEnsembleAction
+func (c *coordinator) handleActionChangeEnsemble(ac action.Action) {
+	var changeEnsembleAction *action.ChangeEnsembleAction
 	var ok bool
-	if changeEnsembleAction, ok = ac.(*actions.ChangeEnsembleAction); !ok {
+	if changeEnsembleAction, ok = ac.(*action.ChangeEnsembleAction); !ok {
 		panic("unexpected action type")
 	}
 	c.Info("Applying swap action", slog.Any("swap-action", ac))
@@ -421,9 +421,9 @@ func NewCoordinator(meta metadata.Provider,
 		ccrWg:                 sync.WaitGroup{},
 		clusterConfigChangeCh: clusterConfigNotificationsCh,
 		ensembleSelector:      ensemble.NewSelector(),
-		shardControllers:      make(map[int64]controllers.ShardController),
-		nodeControllers:       make(map[string]controllers.NodeController),
-		drainingNodes:         make(map[string]controllers.NodeController),
+		shardControllers:      make(map[int64]controller.ShardController),
+		nodeControllers:       make(map[string]controller.NodeController),
+		drainingNodes:         make(map[string]controller.NodeController),
 		rpc:                   rpcProvider,
 	}
 	c.ccrWg.Add(1)
@@ -437,9 +437,9 @@ func NewCoordinator(meta metadata.Provider,
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.statusResource = resources.NewStatusResource(meta)
+	c.statusResource = resource.NewStatusResource(meta)
 
-	c.configResource = resources.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
+	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:               c.ctx,
@@ -449,16 +449,16 @@ func NewCoordinator(meta metadata.Provider,
 			c.RLock()
 			defer c.RUnlock()
 			nc := c.nodeControllers[nodeID]
-			return nc.Status() == controllers.Running
+			return nc.Status() == controller.Running
 		},
 	})
 
 	clusterConfig := c.configResource.Load()
 	clusterStatus := c.statusResource.Load()
 
-	// init node controllers
+	// init node controller
 	for _, node := range clusterConfig.Servers {
-		c.nodeControllers[node.GetIdentifier()] = controllers.NewNodeController(c.ctx, node, c, c, c.rpc)
+		c.nodeControllers[node.GetIdentifier()] = controller.NewNodeController(c.ctx, node, c, c, c.rpc)
 	}
 
 	// init status
@@ -470,7 +470,7 @@ func NewCoordinator(meta metadata.Provider,
 		c.waitForAllNodesToBeAvailable()
 		c.Info("Performing initial assignment", slog.Any("clusterConfig", clusterConfig))
 
-		clusterStatus, _, _ = utils.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
+		clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
 
 		c.statusResource.Update(clusterStatus)
 	} else {
@@ -478,7 +478,7 @@ func NewCoordinator(meta metadata.Provider,
 
 		var shardsToAdd map[int64]string
 		var shardsToDelete []int64
-		clusterStatus, shardsToAdd, shardsToDelete = utils.ApplyClusterChanges(clusterConfig,
+		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(clusterConfig,
 			clusterStatus, c.selectNewEnsemble)
 
 		if len(shardsToAdd) > 0 || len(shardsToDelete) > 0 {
@@ -486,7 +486,7 @@ func NewCoordinator(meta metadata.Provider,
 		}
 	}
 
-	// init shard controllers
+	// init shard controller
 	for ns, shards := range clusterStatus.Namespaces {
 		for shard := range shards.Shards {
 			shardMetadata := shards.Shards[shard]
@@ -495,8 +495,8 @@ func NewCoordinator(meta metadata.Provider,
 			if nsConfig, exist = c.configResource.NamespaceConfig(ns); !exist {
 				nsConfig = &model.NamespaceConfig{}
 			}
-			c.shardControllers[shard] = controllers.NewShardController(ns, shard, nsConfig,
-				shardMetadata, c.configResource, c.statusResource, c, c.rpc, controllers.DefaultPeriodicTasksInterval)
+			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
+				shardMetadata, c.configResource, c.statusResource, c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		}
 	}
 

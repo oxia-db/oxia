@@ -12,36 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package action
 
-import (
-	"context"
-	"io"
+type Type string
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
+const (
+	SwapNode Type = "swap-node"
+	Election Type = "election"
 )
 
-type Options struct {
-	context.Context
+type Action interface {
+	Type() Type
 
-	StatusResource        resource.StatusResource
-	ClusterConfigResource resource.ClusterConfigResource
-
-	NodeAvailableJudger func(nodeID string) bool
-}
-
-type LoadBalancer interface {
-	io.Closer
-
-	Start()
-
-	Trigger()
-
-	Action() <-chan action.Action
-
-	IsBalanced() bool
-
-	LoadRatioAlgorithm() selector.LoadRatioAlgorithm
+	Done(t any)
 }

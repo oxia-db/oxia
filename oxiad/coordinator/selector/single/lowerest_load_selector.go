@@ -12,36 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package single
 
 import (
-	"context"
-	"io"
-
-	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 )
 
-type Options struct {
-	context.Context
+var _ selector.Selector[*Context, string] = &lowerestLoadSelector{}
 
-	StatusResource        resource.StatusResource
-	ClusterConfigResource resource.ClusterConfigResource
+type lowerestLoadSelector struct{}
 
-	NodeAvailableJudger func(nodeID string) bool
-}
-
-type LoadBalancer interface {
-	io.Closer
-
-	Start()
-
-	Trigger()
-
-	Action() <-chan action.Action
-
-	IsBalanced() bool
-
-	LoadRatioAlgorithm() selector.LoadRatioAlgorithm
+func (*lowerestLoadSelector) Select(ssContext *Context) (string, error) {
+	if ssContext.LoadRatioSupplier == nil {
+		return "", selector.ErrNoFunctioning
+	}
+	loadRatios := ssContext.LoadRatioSupplier()
+	if loadRatios == nil {
+		return "", selector.ErrNoFunctioning
+	}
+	for iter := loadRatios.NodeIterator(); iter.Next(); {
+		nodeRatio := iter.Value()
+		lowerLoad := nodeRatio.NodeID
+		if ssContext.Candidates.Contains(lowerLoad) {
+			return lowerLoad, nil
+		}
+	}
+	return "", selector.ErrNoFunctioning
 }
