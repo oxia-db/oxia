@@ -30,7 +30,7 @@ import (
 	"github.com/oxia-db/oxia/proto"
 )
 
-func TestNodeController_HealthCheck(t *testing.T) {
+func TestDataServerController_HealthCheck(t *testing.T) {
 	addr := model.Server{
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
@@ -39,7 +39,7 @@ func TestNodeController_HealthCheck(t *testing.T) {
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newNodeController(context.Background(), addr, sap, nal, rpc, 1*time.Second)
+	nc := newDataServerController(context.Background(), addr, sap, nal, rpc, 1*time.Second)
 
 	assert.Equal(t, Running, nc.Status())
 
@@ -67,7 +67,7 @@ func TestNodeController_HealthCheck(t *testing.T) {
 	assert.NoError(t, nc.Close())
 }
 
-func TestNodeController_ShardsAssignments(t *testing.T) {
+func TestDataServerController_ShardsAssignments(t *testing.T) {
 	addr := model.Server{
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
@@ -76,7 +76,7 @@ func TestNodeController_ShardsAssignments(t *testing.T) {
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newNodeController(context.Background(), addr, sap, nal, rpc, 1*time.Second)
+	nc := newDataServerController(context.Background(), addr, sap, nal, rpc, 1*time.Second)
 
 	node := rpc.GetNode(addr)
 

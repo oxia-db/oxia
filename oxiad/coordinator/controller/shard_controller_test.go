@@ -150,7 +150,7 @@ func TestShardController(t *testing.T) {
 
 	// Simulate the failure of the leader
 	rpc.FailNode(s1, errors.New("failed to connect"))
-	sc.NodeBecameUnavailable(s1)
+	sc.BecameUnavailable(s1)
 
 	rpc.GetNode(s1).expectNewTermRequest(t, shard, 3, true)
 	rpc.GetNode(s2).expectNewTermRequest(t, shard, 3, true)
@@ -167,7 +167,7 @@ func TestShardController(t *testing.T) {
 	assert.Equal(t, s2, *sc.Metadata().Leader())
 
 	// Simulate the failure of the leader
-	sc.NodeBecameUnavailable(s2)
+	sc.BecameUnavailable(s2)
 
 	rpc.FailNode(s2, errors.New("failed to connect"))
 	rpc.GetNode(s3).NewTermResponse(2, -1, nil)
@@ -565,7 +565,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	assert.NotNil(t, sc.Metadata().Leader())
 	assert.Equal(t, s1, *sc.Metadata().Leader())
 
-	// Now start the swap node, which will trigger a new election
+	// Now start the swap dataServer, which will trigger a new election
 	wg := concurrent.NewWaitGroup(1)
 	wg.Go(func() error {
 		action := action.NewChangeEnsembleAction(shard, s1, s4)
@@ -605,7 +605,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	assert.NotNil(t, sc.Metadata().Leader())
 	assert.Equal(t, s2, *sc.Metadata().Leader())
 
-	// The swap node should be free to complete as well
+	// The swap dataServer should be free to complete as well
 	assert.NoError(t, wg.Wait(context.Background()))
 
 	// Eventually, the shard should get deleted

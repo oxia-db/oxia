@@ -46,10 +46,10 @@ type Coordinator interface {
 	io.Closer
 	controller.ShardEventListener
 	controller.ShardAssignmentsProvider
-	controller.NodeEventListener
+	controller.DataServerEventListener
 	resource.ClusterConfigEventListener
 
-	NodeControllers() map[string]controller.NodeController
+	NodeControllers() map[string]controller.DataServerController
 
 	LoadBalancer() balancer.LoadBalancer
 
@@ -74,11 +74,11 @@ type coordinator struct {
 	configResource resource.ClusterConfigResource
 
 	shardControllers map[int64]controller.ShardController
-	nodeControllers  map[string]controller.NodeController
+	nodeControllers  map[string]controller.DataServerController
 	// Draining nodes are nodes that were removed from the
 	// nodes list. We keep sending them assignments updates
 	// because they might be still reachable to clients.
-	drainingNodes map[string]controller.NodeController
+	drainingNodes map[string]controller.DataServerController
 
 	loadBalancer     balancer.LoadBalancer
 	ensembleSelector selector.Selector[*ensemble.Context, []string]
@@ -115,7 +115,7 @@ func (c *coordinator) ConfigResource() resource.ClusterConfigResource {
 	return c.configResource
 }
 
-func (c *coordinator) NodeControllers() map[string]controller.NodeController {
+func (c *coordinator) NodeControllers() map[string]controller.DataServerController {
 	c.RLock()
 	defer c.RUnlock()
 	return c.nodeControllers
@@ -142,7 +142,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 			_ = nc.Close()
 			delete(c.drainingNodes, sa.GetIdentifier())
 		}
-		c.nodeControllers[sa.GetIdentifier()] = controller.NewNodeController(c.ctx, sa, c, c, c.rpc)
+		c.nodeControllers[sa.GetIdentifier()] = controller.NewDataServerController(c.ctx, sa, c, c, c.rpc)
 	}
 
 	// Check for nodes to remove
@@ -272,7 +272,7 @@ func (c *coordinator) Close() error {
 	return err
 }
 
-func (c *coordinator) NodeBecameUnavailable(node model.Server) {
+func (c *coordinator) BecameUnavailable(node model.Server) {
 	c.Lock()
 	if nc, ok := c.drainingNodes[node.GetIdentifier()]; ok {
 		// The draining node became unavailable. Let's remove it
@@ -293,7 +293,7 @@ func (c *coordinator) NodeBecameUnavailable(node model.Server) {
 	c.Unlock()
 
 	for _, sc := range ctrls {
-		sc.NodeBecameUnavailable(node)
+		sc.BecameUnavailable(node)
 	}
 }
 
@@ -422,8 +422,8 @@ func NewCoordinator(meta metadata.Provider,
 		clusterConfigChangeCh: clusterConfigNotificationsCh,
 		ensembleSelector:      ensemble.NewSelector(),
 		shardControllers:      make(map[int64]controller.ShardController),
-		nodeControllers:       make(map[string]controller.NodeController),
-		drainingNodes:         make(map[string]controller.NodeController),
+		nodeControllers:       make(map[string]controller.DataServerController),
+		drainingNodes:         make(map[string]controller.DataServerController),
 		rpc:                   rpcProvider,
 	}
 	c.ccrWg.Add(1)
@@ -458,7 +458,7 @@ func NewCoordinator(meta metadata.Provider,
 
 	// init node controller
 	for _, node := range clusterConfig.Servers {
-		c.nodeControllers[node.GetIdentifier()] = controller.NewNodeController(c.ctx, node, c, c, c.rpc)
+		c.nodeControllers[node.GetIdentifier()] = controller.NewDataServerController(c.ctx, node, c, c, c.rpc)
 	}
 
 	// init status

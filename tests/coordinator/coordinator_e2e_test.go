@@ -395,7 +395,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 
 	// Trigger new leader election in order to have a new term
 	ns1Status = statusResource.Load().Namespaces["my-ns-1"]
-	coordinatorInstance.NodeBecameUnavailable(*ns1Status.Shards[0].Leader)
+	coordinatorInstance.BecameUnavailable(*ns1Status.Shards[0].Leader)
 
 	// Wait (again) for all shards to be ready
 	assert.Eventually(t, func() bool {
