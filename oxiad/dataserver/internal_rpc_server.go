@@ -28,6 +28,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
+
 	"github.com/oxia-db/oxia/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -40,15 +43,15 @@ type internalRpcServer struct {
 	proto.UnimplementedOxiaCoordinationServer
 	proto.UnimplementedOxiaLogReplicationServer
 
-	shardsDirector       ShardsDirector
-	assignmentDispatcher ShardAssignmentsDispatcher
+	shardsDirector       controller.ShardsDirector
+	assignmentDispatcher assignment.ShardAssignmentsDispatcher
 	grpcServer           rpc.GrpcServer
 	healthServer         rpc.HealthServer
 	log                  *slog.Logger
 }
 
-func newInternalRpcServer(grpcProvider rpc.GrpcProvider, bindAddress string, shardsDirector ShardsDirector,
-	assignmentDispatcher ShardAssignmentsDispatcher, healthServer rpc.HealthServer, tlsConf *tls.Config) (*internalRpcServer, error) {
+func newInternalRpcServer(grpcProvider rpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
+	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc.HealthServer, tlsConf *tls.Config) (*internalRpcServer, error) {
 	server := &internalRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,

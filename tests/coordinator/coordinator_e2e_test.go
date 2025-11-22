@@ -25,6 +25,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+
 	"github.com/oxia-db/oxia/proto"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
@@ -42,7 +44,7 @@ func newServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 
 	var err error
-	s, err = dataserver.New(dataserver.Config{
+	s, err = dataserver.New(conf.Config{
 		PublicServiceAddr:          "localhost:0",
 		InternalServiceAddr:        "localhost:0",
 		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
@@ -756,7 +758,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 		{"natural"},
 	} {
 		t.Run(test.sorting, func(t *testing.T) {
-			s1, err := dataserver.New(dataserver.Config{
+			s1, err := dataserver.New(conf.Config{
 				PublicServiceAddr:   "localhost:0",
 				InternalServiceAddr: "localhost:0",
 				DataDir:             t.TempDir(),

@@ -28,6 +28,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
+
 	"github.com/oxia-db/oxia/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/proto/compat"
@@ -53,13 +57,13 @@ const (
 type publicRpcServer struct {
 	proto.UnimplementedOxiaClientServer
 
-	shardsDirector       ShardsDirector
-	assignmentDispatcher ShardAssignmentsDispatcher
+	shardsDirector       controller.ShardsDirector
+	assignmentDispatcher assignment.ShardAssignmentsDispatcher
 	grpcServer           rpc.GrpcServer
 	log                  *slog.Logger
 }
 
-func newPublicRpcServer(provider rpc.GrpcProvider, bindAddress string, shardsDirector ShardsDirector, assignmentDispatcher ShardAssignmentsDispatcher,
+func newPublicRpcServer(provider rpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
 	tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
 		shardsDirector:       shardsDirector,
@@ -123,7 +127,7 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 	return wr, err
 }
 
-func procesWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer, lc LeaderController) {
+func procesWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer, lc lead.LeaderController) {
 	for {
 		req, err := stream.Recv()
 		if err != nil {
@@ -174,7 +178,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	)
 	log.Debug("Write request")
 
-	var lc LeaderController
+	var lc lead.LeaderController
 	lc, err = s.getLeader(&shardId)
 	if err != nil {
 		return err
@@ -286,7 +290,7 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 	)
 	ctx := stream.Context()
 
-	var lc LeaderController
+	var lc lead.LeaderController
 	var err error
 	if lc, err = s.getLeader(request.Shard); err != nil {
 		return err
@@ -328,7 +332,7 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 		slog.Any("req", req),
 	)
 
-	var lc LeaderController
+	var lc lead.LeaderController
 	var err error
 	if lc, err = s.getLeader(&req.Shard); err != nil {
 		return err
@@ -462,7 +466,7 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 	}
 }
 
-func (s *publicRpcServer) getLeader(shardId *int64) (LeaderController, error) {
+func (s *publicRpcServer) getLeader(shardId *int64) (lead.LeaderController, error) {
 	if shardId == nil {
 		return nil, status.Error(codes.InvalidArgument, "shard id is required")
 	}

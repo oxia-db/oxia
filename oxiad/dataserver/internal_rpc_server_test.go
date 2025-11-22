@@ -24,13 +24,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
+
 	"github.com/oxia-db/oxia/common/rpc"
 )
 
 func TestInternalHealthCheck(t *testing.T) {
 	healthServer := rpc.NewClosableHealthServer(t.Context())
 	server, err := newInternalRpcServer(rpc.Default, "localhost:0", nil,
-		NewShardAssignmentDispatcher(healthServer), healthServer, nil)
+		assignment.NewShardAssignmentDispatcher(healthServer), healthServer, nil)
 	assert.NoError(t, err)
 
 	target := fmt.Sprintf("localhost:%d", server.grpcServer.Port())

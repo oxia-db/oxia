@@ -20,10 +20,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver"
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/oxia-db/oxia/cmd/flag"
 )
@@ -54,7 +54,7 @@ func init() {
 	Cmd.Flags().Var(&conf.KeySorting, "key-sorting", `Key sorting. allowed: "hierarchical", "natural". Default: "hierarchical"`)
 	_ = Cmd.RegisterFlagCompletionFunc("key-sorting", keySortingCompletion)
 
-	Cmd.Flags().Int64Var(&conf.DbBlockCacheMB, "db-cache-size-mb", kv.DefaultFactoryOptions.CacheSizeMB,
+	Cmd.Flags().Int64Var(&conf.DbBlockCacheMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
 }
 

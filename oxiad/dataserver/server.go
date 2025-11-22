@@ -16,15 +16,15 @@ package dataserver
 
 import (
 	"context"
-	"crypto/tls"
 	"log/slog"
-	"time"
 
 	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/common/rpc/auth"
+	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
+	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -32,51 +32,31 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 )
 
-type Config struct {
-	PublicServiceAddr   string
-	InternalServiceAddr string
-	PeerTLS             *tls.Config
-	ServerTLS           *tls.Config
-	InternalServerTLS   *tls.Config
-	MetricsServiceAddr  string
-
-	AuthOptions auth.Options
-
-	DataDir string
-	WalDir  string
-
-	WalRetentionTime           time.Duration
-	WalSyncData                bool
-	NotificationsRetentionTime time.Duration
-
-	DbBlockCacheMB int64
-}
-
 type Server struct {
 	*internalRpcServer
 	*publicRpcServer
 
-	replicationRpcProvider    ReplicationRpcProvider
-	shardAssignmentDispatcher ShardAssignmentsDispatcher
-	shardsDirector            ShardsDirector
+	replicationRpcProvider    rpc.ReplicationRpcProvider
+	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
+	shardsDirector            controller.ShardsDirector
 	metrics                   *metric.PrometheusMetrics
 	walFactory                wal.Factory
-	kvFactory                 kv.Factory
+	kvFactory                 kvstore.Factory
 
 	healthServer rpc.HealthServer
 }
 
-func New(config Config) (*Server, error) {
-	return NewWithGrpcProvider(config, rpc.Default, NewReplicationRpcProvider(config.PeerTLS))
+func New(config conf.Config) (*Server, error) {
+	return NewWithGrpcProvider(config, rpc.Default, rpc.NewReplicationRpcProvider(config.PeerTLS))
 }
 
-func NewWithGrpcProvider(config Config, provider rpc.GrpcProvider, replicationRpcProvider ReplicationRpcProvider) (*Server, error) {
+func NewWithGrpcProvider(config conf.Config, provider rpc.GrpcProvider, replicationRpcProvider rpc.ReplicationRpcProvider) (*Server, error) {
 	slog.Info(
 		"Starting Oxia dataserver",
 		slog.Any("config", config),
 	)
 
-	kvFactory, err := kv.NewPebbleKVFactory(&kv.FactoryOptions{
+	kvFactory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
 		DataDir:     config.DataDir,
 		CacheSizeMB: config.DbBlockCacheMB,
 		UseWAL:      false, // WAL is kept outside the KV store
@@ -98,8 +78,8 @@ func NewWithGrpcProvider(config Config, provider rpc.GrpcProvider, replicationRp
 		healthServer: rpc.NewClosableHealthServer(context.Background()),
 	}
 
-	s.shardsDirector = NewShardsDirector(config, s.walFactory, s.kvFactory, replicationRpcProvider)
-	s.shardAssignmentDispatcher = NewShardAssignmentDispatcher(s.healthServer)
+	s.shardsDirector = controller.NewShardsDirector(config, s.walFactory, s.kvFactory, replicationRpcProvider)
+	s.shardAssignmentDispatcher = assignment.NewShardAssignmentDispatcher(s.healthServer)
 
 	s.internalRpcServer, err = newInternalRpcServer(provider, config.InternalServiceAddr,
 		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, config.InternalServerTLS)

@@ -22,11 +22,16 @@ import (
 
 	"go.uber.org/multierr"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
+	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/common/rpc/auth"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -37,7 +42,7 @@ import (
 )
 
 type StandaloneConfig struct {
-	Config
+	conf.Config
 
 	NumShards            uint32
 	NotificationsEnabled bool
@@ -47,17 +52,17 @@ type StandaloneConfig struct {
 type Standalone struct {
 	config                    StandaloneConfig
 	rpc                       *publicRpcServer
-	kvFactory                 kv.Factory
+	kvFactory                 kvstore.Factory
 	walFactory                wal.Factory
-	shardsDirector            ShardsDirector
-	shardAssignmentDispatcher ShardAssignmentsDispatcher
+	shardsDirector            controller.ShardsDirector
+	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
 
 	metrics *metric.PrometheusMetrics
 }
 
 func NewTestConfig(dir string) StandaloneConfig {
 	return StandaloneConfig{
-		Config: Config{
+		Config: conf.Config{
 			DataDir:             filepath.Join(dir, "db"),
 			WalDir:              filepath.Join(dir, "wal"),
 			InternalServiceAddr: "localhost:0",
@@ -77,7 +82,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 
 	s := &Standalone{config: config}
 
-	kvOptions := kv.FactoryOptions{
+	kvOptions := kvstore.FactoryOptions{
 		DataDir:     config.DataDir,
 		UseWAL:      false, // WAL is kept outside the KV store
 		SyncData:    false, // WAL is kept outside the KV store
@@ -90,11 +95,11 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		SyncData:    config.WalSyncData,
 	})
 	var err error
-	if s.kvFactory, err = kv.NewPebbleKVFactory(&kvOptions); err != nil {
+	if s.kvFactory, err = kvstore.NewPebbleKVFactory(&kvOptions); err != nil {
 		return nil, err
 	}
 
-	s.shardsDirector = NewShardsDirector(config.Config, s.walFactory, s.kvFactory, newNoOpReplicationRpcProvider())
+	s.shardsDirector = controller.NewShardsDirector(config.Config, s.walFactory, s.kvFactory, newNoOpReplicationRpcProvider())
 
 	if err := s.initializeShards(config.NumShards); err != nil {
 		return nil, err
@@ -106,7 +111,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 
-	s.shardAssignmentDispatcher = NewStandaloneShardAssignmentDispatcher(config.NumShards)
+	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards)
 
 	s.rpc.assignmentDispatcher = s.shardAssignmentDispatcher
 
@@ -129,7 +134,7 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 	}
 
 	for i := int64(0); i < int64(numShards); i++ {
-		var lc LeaderController
+		var lc lead.LeaderController
 		if lc, err = s.shardsDirector.GetOrCreateLeader(constant.DefaultNamespace, i, newTermOptions); err != nil {
 			return err
 		}
@@ -195,6 +200,6 @@ func (noOpReplicationRpcProvider) Truncate(string, *proto.TruncateRequest) (*pro
 	panic("not implemented")
 }
 
-func newNoOpReplicationRpcProvider() ReplicationRpcProvider {
+func newNoOpReplicationRpcProvider() rpc.ReplicationRpcProvider {
 	return &noOpReplicationRpcProvider{}
 }

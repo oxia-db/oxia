@@ -23,11 +23,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+
 	"github.com/oxia-db/oxia/common/rpc"
 )
 
 func TestNewServer(t *testing.T) {
-	config := Config{
+	config := conf.Config{
 		InternalServiceAddr: "localhost:0",
 		PublicServiceAddr:   "localhost:0",
 		MetricsServiceAddr:  "localhost:0",
@@ -53,7 +55,7 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestNewServerClosableWithHealthWatch(t *testing.T) {
-	config := Config{
+	config := conf.Config{
 		InternalServiceAddr: "localhost:0",
 		PublicServiceAddr:   "localhost:0",
 		MetricsServiceAddr:  "localhost:0",
