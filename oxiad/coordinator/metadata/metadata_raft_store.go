@@ -21,9 +21,10 @@ import (
 	"math"
 
 	"github.com/hashicorp/raft"
-	"github.com/oxia-db/oxia/proto"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/proto"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/kv"
 )

@@ -30,9 +30,10 @@ import (
 	"github.com/cockroachdb/pebble/v2/bloom"
 	"github.com/cockroachdb/pebble/v2/sstable"
 	"github.com/cockroachdb/pebble/v2/vfs"
-	"github.com/oxia-db/oxia/proto"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/proto"
 
 	"github.com/oxia-db/oxia/common/cache"
 

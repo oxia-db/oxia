@@ -64,7 +64,7 @@ func exec(*cobra.Command, []string) {
 	})
 }
 
-func keySortingCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+func keySortingCompletion(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 	return []string{
 		"hierarchical\tUse file-system like hierarchical sorting based on `/`",
 		"natural\tUse natural, byte-wise sorting",

@@ -19,14 +19,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/common/compare"
+	"github.com/oxia-db/oxia/proto"
 )
 
 func TestPebbleDbConversion(t *testing.T) {
 	// Create DB with natural format and insert some test keys
 	kvFactory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
-	oldKV, err := kvFactory.NewKV("default", 0, compare.EncoderNatural)
+	oldKV, err := kvFactory.NewKV("default", 0, proto.KeySortingType_NATURAL)
 	assert.NoError(t, err)
 
 	keys := []string{"/key",
@@ -47,7 +47,7 @@ func TestPebbleDbConversion(t *testing.T) {
 
 	assert.NoError(t, oldKV.Close())
 
-	kv, err := kvFactory.NewKV("default", 0, compare.EncoderHierarchical)
+	kv, err := kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
 	assert.NoError(t, err)
 
 	// Test scan the new DB

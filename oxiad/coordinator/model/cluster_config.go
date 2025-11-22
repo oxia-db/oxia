@@ -17,10 +17,11 @@ package model
 import (
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/oxiad/coordinator/policies"
 	"github.com/oxia-db/oxia/proto"
-	"github.com/pkg/errors"
 )
 
 type ClusterConfig struct {
