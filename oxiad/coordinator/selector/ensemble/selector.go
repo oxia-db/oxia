@@ -60,8 +60,8 @@ func (ensemble *ensemble) Select(context *Context) ([]string, error) {
 }
 
 func NewSelector() selector.Selector[*Context, []string] {
-	selector := single.NewSelector()
+	singleDataServerSelector := single.NewSelector()
 	return &ensemble{
-		singleServerSelector: selector,
+		singleServerSelector: singleDataServerSelector,
 	}
 }

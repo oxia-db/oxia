@@ -62,9 +62,9 @@ type ShardController interface {
 
 	DeleteShard()
 
-	Election(action *action.ElectionAction) string
+	Election(electionAction *action.ElectionAction) string
 
-	ChangeEnsemble(action *action.ChangeEnsembleAction)
+	ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction)
 }
 
 type shardController struct {
@@ -179,8 +179,8 @@ func NewShardController(
 	return s
 }
 
-func (s *shardController) Election(action *action.ElectionAction) string {
-	clonedAction := action.Clone()
+func (s *shardController) Election(electionAction *action.ElectionAction) string {
+	clonedAction := electionAction.Clone()
 	clonedAction.Waiter.Add(1)
 	s.electionOp <- clonedAction
 	clonedAction.Waiter.Wait()
