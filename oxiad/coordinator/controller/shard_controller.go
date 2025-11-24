@@ -148,7 +148,7 @@ func NewShardController(
 		leaderElectionsFailed: metric.NewCounter("oxia_coordinator_leader_election_failed",
 			"The number of failed leader elections", "count", labels),
 		newTermQuorumLatency: metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",
-			"The time it takes to take the ensemble of data server to a new term", labels),
+			"The time it takes to take the ensemble of data servers to a new term", labels),
 		becomeLeaderLatency: metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
 			"The time it takes for the new elected leader to start", labels),
 	}
