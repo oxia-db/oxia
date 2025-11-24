@@ -391,7 +391,7 @@ func (e *ShardElection) prepareIfChangeEnsemble(mutShardMeta *model.ShardMetadat
 	}), to)
 	e.Info(
 		"Changing ensemble",
-		slog.Any("removed-data-server", mutShardMeta.RemovedNodes),
+		slog.Any("removed-data-servers", mutShardMeta.RemovedNodes),
 		slog.Any("new-ensemble", mutShardMeta.Ensemble),
 		slog.Any("from", from),
 		slog.Any("to", to),
