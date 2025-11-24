@@ -196,7 +196,7 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 		s.onElectLeader(nil)
 	default:
 		s.log.Info(
-			"There is already a dataServer marked as leader on the shard, verifying",
+			"There is already a data server marked as leader on the shard, verifying",
 			slog.Any("current-leader", initShardMeta.Leader),
 		)
 
@@ -234,8 +234,8 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 func (s *shardController) handleDataServerFailure(failedDataServer model.Server) {
 	shardMeta := s.metadata.Load()
 	s.log.Debug(
-		"Received notification of failed dataServer",
-		slog.Any("failed-dataServer", failedDataServer.GetIdentifier()),
+		"Received notification of failed data server",
+		slog.Any("failed-data-server", failedDataServer.GetIdentifier()),
 		slog.Any("current-leader", shardMeta.Leader),
 	)
 
@@ -291,7 +291,7 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *model.ShardMetada
 		default:
 			s.log.Info(
 				"Data Server looks ok",
-				slog.Any("dataServer", dataServer),
+				slog.Any("data-server", dataServer),
 			)
 		}
 	}
@@ -364,13 +364,13 @@ func (s *shardController) deleteShard() error {
 			s.log.Warn(
 				"Failed to delete shard",
 				slog.Any("error", err),
-				slog.Any("dataServer", server),
+				slog.Any("data-server", server),
 			)
 			return err
 		}
 
 		s.log.Info(
-			"Successfully deleted shard from dataServer",
+			"Successfully deleted shard from data server",
 			slog.Any("server-address", server),
 		)
 	}
@@ -461,18 +461,18 @@ func (s *shardController) handlePeriodicTasks() {
 
 func (s *shardController) handlePendingDeleteShard(mutShardMeta *model.ShardMetadata) error {
 	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
-		s.log.Info("Deleting shard from removed dataServer", "dataServer", ds)
+		s.log.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
 
 		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
 			Term:      mutShardMeta.Term,
 		}); err != nil {
-			s.log.Warn("Failed to delete shard from removed dataServer", "dataServer", ds, "error", err)
+			s.log.Warn("Failed to delete shard from removed data server", slog.Any("data-server", ds), slog.Any("error", err))
 			return err
 		}
 
-		s.log.Info("Successfully deleted shard from dataServer", "dataServer", ds)
+		s.log.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
 	}
 
 	mutShardMeta.PendingDeleteShardNodes = nil
