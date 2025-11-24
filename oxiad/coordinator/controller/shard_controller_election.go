@@ -333,7 +333,7 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []model.Serv
 		if _, found := successfulFollowers[follower]; found {
 			continue
 		}
-		e.Info("Data servers has failed in leader election, retrying", slog.Any("follower", follower))
+		e.Info("Data server has failed in leader election, retrying", slog.Any("follower", follower))
 		group.Go(func() {
 			process.DoWithLabels(
 				e.Context,
