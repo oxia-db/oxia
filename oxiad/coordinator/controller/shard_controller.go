@@ -80,10 +80,10 @@ type shardController struct {
 	configResource resource.ClusterConfigResource
 	statusResource resource.StatusResource
 
-	electionOp       chan *action.ElectionAction
-	deleteOp         chan any
-	nodeFailureOp    chan model.Server
-	changeEnsembleOp chan *action.ChangeEnsembleAction
+	electionOp          chan *action.ElectionAction
+	deleteOp            chan any
+	dataServerFailureOp chan model.Server
+	changeEnsembleOp    chan *action.ChangeEnsembleAction
 
 	ctx                   context.Context
 	cancel                context.CancelFunc
@@ -104,8 +104,8 @@ func (s *shardController) Metadata() *Metadata {
 	return &s.metadata
 }
 
-func (s *shardController) BecameUnavailable(node model.Server) {
-	s.nodeFailureOp <- node
+func (s *shardController) BecameUnavailable(dataServer model.Server) {
+	s.dataServerFailureOp <- dataServer
 }
 
 //nolint:revive
@@ -121,19 +121,19 @@ func NewShardController(
 	periodTasksInterval time.Duration) ShardController {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &shardController{
-		namespace:        namespace,
-		shard:            shard,
-		namespaceConfig:  nc,
-		metadata:         NewMetadata(shardMetadata),
-		rpc:              rpcProvider,
-		configResource:   configResource,
-		statusResource:   statusResource,
-		eventListener:    eventListener,
-		leaderSelector:   leaderselector.NewSelector(),
-		electionOp:       make(chan *action.ElectionAction, chanBufferSize),
-		deleteOp:         make(chan any, chanBufferSize),
-		nodeFailureOp:    make(chan model.Server, chanBufferSize),
-		changeEnsembleOp: make(chan *action.ChangeEnsembleAction, chanBufferSize),
+		namespace:           namespace,
+		shard:               shard,
+		namespaceConfig:     nc,
+		metadata:            NewMetadata(shardMetadata),
+		rpc:                 rpcProvider,
+		configResource:      configResource,
+		statusResource:      statusResource,
+		eventListener:       eventListener,
+		leaderSelector:      leaderselector.NewSelector(),
+		electionOp:          make(chan *action.ElectionAction, chanBufferSize),
+		deleteOp:            make(chan any, chanBufferSize),
+		dataServerFailureOp: make(chan model.Server, chanBufferSize),
+		changeEnsembleOp:    make(chan *action.ChangeEnsembleAction, chanBufferSize),
 
 		periodicTasksInterval: periodTasksInterval,
 		log: slog.With(
@@ -148,7 +148,7 @@ func NewShardController(
 		leaderElectionsFailed: metric.NewCounter("oxia_coordinator_leader_election_failed",
 			"The number of failed leader elections", "count", labels),
 		newTermQuorumLatency: metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",
-			"The time it takes to take the ensemble of nodes to a new term", labels),
+			"The time it takes to take the ensemble of data servers to a new term", labels),
 		becomeLeaderLatency: metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
 			"The time it takes for the new elected leader to start", labels),
 	}
@@ -196,7 +196,7 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 		s.onElectLeader(nil)
 	default:
 		s.log.Info(
-			"There is already a dataServer marked as leader on the shard, verifying",
+			"There is already a data server marked as leader on the shard, verifying",
 			slog.Any("current-leader", initShardMeta.Leader),
 		)
 
@@ -218,8 +218,8 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 
 		case <-s.deleteOp:
 			s.deleteShardWithRetries()
-		case n := <-s.nodeFailureOp:
-			s.handleNodeFailure(n)
+		case n := <-s.dataServerFailureOp:
+			s.handleDataServerFailure(n)
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
 		case <-periodicTasksTimer.C:
@@ -231,19 +231,19 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 	}
 }
 
-func (s *shardController) handleNodeFailure(failedNode model.Server) {
+func (s *shardController) handleDataServerFailure(failedDataServer model.Server) {
 	shardMeta := s.metadata.Load()
 	s.log.Debug(
-		"Received notification of failed dataServer",
-		slog.Any("failed-dataServer", failedNode),
+		"Received notification of failed data server",
+		slog.Any("failed-data-server", failedDataServer.GetIdentifier()),
 		slog.Any("current-leader", shardMeta.Leader),
 	)
 
 	if shardMeta.Leader != nil &&
-		shardMeta.Leader.GetIdentifier() == failedNode.GetIdentifier() {
+		shardMeta.Leader.GetIdentifier() == failedDataServer.GetIdentifier() {
 		s.log.Info(
 			"Detected failure on shard leader",
-			slog.Any("leader", failedNode),
+			slog.Any("leader", failedDataServer.GetIdentifier()),
 		)
 		s.onElectLeader(nil)
 	}
@@ -253,50 +253,50 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *model.ShardMetada
 	// Ideally, we shouldn't need to trigger a new leader election if a follower
 	// is out of sync. We should just go back into the retry-to-fence follower
 	// loop. In practice, the current approach is easier for now.
-	for _, node := range initShardMeta.Ensemble {
-		nodeStatus, err := s.rpc.GetStatus(s.ctx, node, &proto.GetStatusRequest{Shard: s.shard})
+	for _, dataServer := range initShardMeta.Ensemble {
+		dataServerStatus, err := s.rpc.GetStatus(s.ctx, dataServer, &proto.GetStatusRequest{Shard: s.shard})
 
 		switch {
 		case err != nil:
 			s.log.Warn(
 				"Failed to verify status for shard. Start a new election",
 				slog.Any("error", err),
-				slog.Any("dataServer", node),
+				slog.Any("data-server", dataServer),
 			)
 			return false
-		case node.GetIdentifier() == initShardMeta.Leader.GetIdentifier() &&
-			nodeStatus.Status != proto.ServingStatus_LEADER:
+		case dataServer.GetIdentifier() == initShardMeta.Leader.GetIdentifier() &&
+			dataServerStatus.Status != proto.ServingStatus_LEADER:
 			s.log.Warn(
 				"Expected leader is not in leader status. Start a new election",
-				slog.Any("dataServer", node),
-				slog.Any("status", nodeStatus.Status),
+				slog.Any("data-server", dataServer),
+				slog.Any("status", dataServerStatus.Status),
 			)
 			return false
-		case node.GetIdentifier() != initShardMeta.Leader.GetIdentifier() &&
-			nodeStatus.Status != proto.ServingStatus_FOLLOWER:
+		case dataServer.GetIdentifier() != initShardMeta.Leader.GetIdentifier() &&
+			dataServerStatus.Status != proto.ServingStatus_FOLLOWER:
 			s.log.Warn(
 				"Expected follower is not in follower status. Start a new election",
-				slog.Any("dataServer", node),
-				slog.Any("status", nodeStatus.Status),
+				slog.Any("data-server", dataServer),
+				slog.Any("status", dataServerStatus.Status),
 			)
 			return false
-		case nodeStatus.Term != initShardMeta.Term:
+		case dataServerStatus.Term != initShardMeta.Term:
 			s.log.Warn(
 				"Node has a wrong term. Start a new election",
-				slog.Any("dataServer", node),
-				slog.Any("dataServer-term", nodeStatus.Term),
+				slog.Any("data-server", dataServer),
+				slog.Any("data-server-term", dataServerStatus.Term),
 				slog.Any("coordinator-term", initShardMeta.Term),
 			)
 			return false
 		default:
 			s.log.Info(
-				"Node looks ok",
-				slog.Any("dataServer", node),
+				"Data Server looks ok",
+				slog.Any("data-server", dataServer),
 			)
 		}
 	}
 
-	s.log.Info("All nodes look good. No need to trigger new leader election")
+	s.log.Info("All data servers look good. No need to trigger new leader election")
 	return true
 }
 
@@ -323,12 +323,12 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		s.newTermQuorumLatency,
 		s.becomeLeaderLatency,
 		s.leaderElectionsFailed)
-	leaderNode := s.currentElection.Start()
-	return leaderNode
+	leaderDataServer := s.currentElection.Start()
+	return leaderDataServer
 }
 
-func (s *shardController) deleteShardRpc(ctx context.Context, node model.Server) error {
-	_, err := s.rpc.DeleteShard(ctx, node, &proto.DeleteShardRequest{
+func (s *shardController) deleteShardRpc(ctx context.Context, dataServer model.Server) error {
+	_, err := s.rpc.DeleteShard(ctx, dataServer, &proto.DeleteShardRequest{
 		Namespace: s.namespace,
 		Shard:     s.shard,
 		Term:      s.metadata.Term(),
@@ -364,13 +364,13 @@ func (s *shardController) deleteShard() error {
 			s.log.Warn(
 				"Failed to delete shard",
 				slog.Any("error", err),
-				slog.Any("dataServer", server),
+				slog.Any("data-server", server),
 			)
 			return err
 		}
 
 		s.log.Info(
-			"Successfully deleted shard from dataServer",
+			"Successfully deleted shard from data server",
 			slog.Any("server-address", server),
 		)
 	}
@@ -448,8 +448,8 @@ func (s *shardController) handlePeriodicTasks() {
 
 	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
 		var err error
-		if err = s.handlePendingDeleteShardNodes(&mutShardMeta); err != nil {
-			s.log.Warn("Failed to handle pending delete shard nodes", "error", err)
+		if err = s.handlePendingDeleteShard(&mutShardMeta); err != nil {
+			s.log.Warn("Failed to handle pending delete shard", "error", err)
 			return
 		}
 	}
@@ -459,20 +459,20 @@ func (s *shardController) handlePeriodicTasks() {
 	s.metadata.Store(mutShardMeta)
 }
 
-func (s *shardController) handlePendingDeleteShardNodes(mutShardMeta *model.ShardMetadata) error {
+func (s *shardController) handlePendingDeleteShard(mutShardMeta *model.ShardMetadata) error {
 	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
-		s.log.Info("Deleting shard from removed dataServer", "dataServer", ds)
+		s.log.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
 
 		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
 			Term:      mutShardMeta.Term,
 		}); err != nil {
-			s.log.Warn("Failed to delete shard from removed dataServer", "dataServer", ds, "error", err)
+			s.log.Warn("Failed to delete shard from removed data server", slog.Any("data-server", ds), slog.Any("error", err))
 			return err
 		}
 
-		s.log.Info("Successfully deleted shard from dataServer", "dataServer", ds)
+		s.log.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
 	}
 
 	mutShardMeta.PendingDeleteShardNodes = nil

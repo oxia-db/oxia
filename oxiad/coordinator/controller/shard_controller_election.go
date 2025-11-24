@@ -76,25 +76,25 @@ type ShardElection struct {
 }
 
 func (e *ShardElection) refreshedEnsemble(ensemble []model.Server) []model.Server {
-	refreshedEnsembleNodeAddress := make([]model.Server, len(ensemble))
+	refreshedEnsembleDataServerAddress := make([]model.Server, len(ensemble))
 	for idx, candidate := range ensemble {
 		if refreshedAddress, exist := e.configResource.Node(candidate.GetIdentifier()); exist {
-			refreshedEnsembleNodeAddress[idx] = *refreshedAddress
+			refreshedEnsembleDataServerAddress[idx] = *refreshedAddress
 			continue
 		}
-		refreshedEnsembleNodeAddress[idx] = candidate
+		refreshedEnsembleDataServerAddress[idx] = candidate
 	}
 	if e.Enabled(e.Context, slog.LevelDebug) {
-		if !reflect.DeepEqual(ensemble, refreshedEnsembleNodeAddress) {
+		if !reflect.DeepEqual(ensemble, refreshedEnsembleDataServerAddress) {
 			e.Info("refresh the shard ensemble dataServer address", slog.Any("current-ensemble", ensemble),
-				slog.Any("new-ensemble", refreshedEnsembleNodeAddress))
+				slog.Any("new-ensemble", refreshedEnsembleDataServerAddress))
 		}
 	}
-	return refreshedEnsembleNodeAddress
+	return refreshedEnsembleDataServerAddress
 }
 
-func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, node model.Server) (*proto.EntryId, error) {
-	res, err := e.provider.NewTerm(ctx, node, &proto.NewTermRequest{
+func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer model.Server) (*proto.EntryId, error) {
+	res, err := e.provider.NewTerm(ctx, dataServer, &proto.NewTermRequest{
 		Namespace: e.namespace,
 		Shard:     e.shard,
 		Term:      term,
@@ -112,8 +112,8 @@ func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, node model
 func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, removedCandidates []model.Server) (map[model.Server]*proto.EntryId, error) {
 	fenceQuorumTimer := e.newTermQuorumLatency.Timer()
 
-	fencingNodes := slices.Concat(ensemble, removedCandidates)
-	fencingQuorumSize := len(fencingNodes)
+	fencingDataServers := slices.Concat(ensemble, removedCandidates)
+	fencingQuorumSize := len(fencingDataServers)
 	majority := fencingQuorumSize/2 + 1
 
 	// Use a new context, so we can cancel the pending requests
@@ -132,7 +132,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 		error
 	}, fencingQuorumSize)
 
-	for _, server := range fencingNodes {
+	for _, server := range fencingDataServers {
 		// We need to save the address because it gets modified in the eventLoop
 		pinedServer := server
 		latch.Go(func() {
@@ -170,7 +170,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 		totalResponses++
 		if fencingResponse.error == nil {
 			successResponses++
-			// We don't consider the removed nodes as candidates for leader/followers
+			// We don't consider the removed data servers as candidates for leader/followers
 			if slices.Contains(ensemble, fencingResponse.Server) {
 				res[fencingResponse.Server] = fencingResponse.EntryId
 			}
@@ -182,7 +182,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 		return nil, errors.Wrap(err, "failed to fenceNewTerm shard")
 	}
 	// If we have already reached a quorum of successful responses, we can wait a
-	// tiny bit more, to allow time for all the "healthy" nodes to respond.
+	// tiny bit more, to allow time for all the "healthy" data servers to respond.
 	for err == nil && totalResponses < fencingQuorumSize {
 		select {
 		case r := <-ch:
@@ -333,7 +333,7 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []model.Serv
 		if _, found := successfulFollowers[follower]; found {
 			continue
 		}
-		e.Info("Node has failed in leader election, retrying", slog.Any("follower", follower))
+		e.Info("Data server has failed in leader election, retrying", slog.Any("follower", follower))
 		group.Go(func() {
 			process.DoWithLabels(
 				e.Context,
@@ -383,15 +383,15 @@ func (e *ShardElection) prepareIfChangeEnsemble(mutShardMeta *model.ShardMetadat
 	}
 	// A dataServer might get re-added to the ensemble after it was swapped out and be in
 	// pending delete state. We don't want a background task to attempt deletion anymore
-	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes, func(node model.Server) bool {
-		return node.GetIdentifier() == to.GetIdentifier()
+	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes, func(dataServer model.Server) bool {
+		return dataServer.GetIdentifier() == to.GetIdentifier()
 	})
-	mutShardMeta.Ensemble = append(slices.DeleteFunc(mutShardMeta.Ensemble, func(node model.Server) bool {
-		return node.GetIdentifier() == from.GetIdentifier()
+	mutShardMeta.Ensemble = append(slices.DeleteFunc(mutShardMeta.Ensemble, func(dataServer model.Server) bool {
+		return dataServer.GetIdentifier() == from.GetIdentifier()
 	}), to)
 	e.Info(
 		"Changing ensemble",
-		slog.Any("removed-nodes", mutShardMeta.RemovedNodes),
+		slog.Any("removed-data-servers", mutShardMeta.RemovedNodes),
 		slog.Any("new-ensemble", mutShardMeta.Ensemble),
 		slog.Any("from", from),
 		slog.Any("to", to),
@@ -552,9 +552,9 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 }
 
 func chooseCandidates(candidatesStatus map[model.Server]*proto.EntryId) []model.Server {
-	// Select all the nodes that have the highest term first
+	// Select all the data servers that have the highest term first
 	var currentMaxTerm int64 = -1
-	// Select all the nodes that have the highest entry in the wal
+	// Select all the data servers that have the highest entry in the wal
 	var currentMax int64 = -1
 	var candidates []model.Server
 	for addr, headEntryId := range candidatesStatus {
