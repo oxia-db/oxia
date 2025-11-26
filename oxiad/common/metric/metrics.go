@@ -24,6 +24,7 @@ import (
 	"os"
 	"time"
 
+	metric2 "github.com/oxia-db/oxia/common/metric"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/exporters/prometheus"
@@ -46,33 +47,33 @@ func init() {
 	latencyHistogramView := metric.NewView(
 		metric.Instrument{
 			Kind: metric.InstrumentKindHistogram,
-			Unit: string(Milliseconds),
+			Unit: string(metric2.Milliseconds),
 		},
 		metric.Stream{
 			Aggregation: metric.AggregationExplicitBucketHistogram{
-				Boundaries: latencyBucketsMillis,
+				Boundaries: metric2.latencyBucketsMillis,
 			},
 		},
 	)
 	sizeHistogramView := metric.NewView(
 		metric.Instrument{
 			Kind: metric.InstrumentKindHistogram,
-			Unit: string(Bytes),
+			Unit: string(metric2.Bytes),
 		},
 		metric.Stream{
 			Aggregation: metric.AggregationExplicitBucketHistogram{
-				Boundaries: sizeBucketsBytes,
+				Boundaries: metric2.sizeBucketsBytes,
 			},
 		},
 	)
 	countHistogramView := metric.NewView(
 		metric.Instrument{
 			Kind: metric.InstrumentKindHistogram,
-			Unit: string(Dimensionless),
+			Unit: string(metric2.Dimensionless),
 		},
 		metric.Stream{
 			Aggregation: metric.AggregationExplicitBucketHistogram{
-				Boundaries: sizeBucketsCount,
+				Boundaries: metric2.sizeBucketsCount,
 			},
 		},
 	)
@@ -82,7 +83,7 @@ func init() {
 
 	provider := metric.NewMeterProvider(metric.WithReader(exporter),
 		metric.WithView(latencyHistogramView, sizeHistogramView, countHistogramView, defaultView))
-	meter = provider.Meter("oxia")
+	metric2.meter = provider.Meter("oxia")
 }
 
 type PrometheusMetrics struct {

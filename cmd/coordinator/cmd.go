@@ -29,8 +29,8 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
-	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/entity"
 
 	"github.com/oxia-db/oxia/cmd/flag"
 	"github.com/oxia-db/oxia/common/security"

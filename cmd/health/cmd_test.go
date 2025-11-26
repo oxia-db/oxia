@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/rpc"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -25,8 +26,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
-	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/common/rpc/auth"
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 )
 
 func TestHealthCmd(t *testing.T) {

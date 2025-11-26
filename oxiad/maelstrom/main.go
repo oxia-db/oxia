@@ -32,7 +32,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/logging"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
 )
 
 var (

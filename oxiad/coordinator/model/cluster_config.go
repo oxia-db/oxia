@@ -19,8 +19,8 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/entity"
 	"github.com/oxia-db/oxia/oxiad/coordinator/policy"
 )
 

@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/oxia-db/oxia/oxiad/common/metric"
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
@@ -30,14 +32,13 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
-	"github.com/oxia-db/oxia/common/rpc/auth"
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 
-	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -105,7 +106,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 
-	s.rpc, err = newPublicRpcServer(rpc.Default, config.PublicServiceAddr, s.shardsDirector,
+	s.rpc, err = newPublicRpcServer(rpc2.Default, config.PublicServiceAddr, s.shardsDirector,
 		nil, config.ServerTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err

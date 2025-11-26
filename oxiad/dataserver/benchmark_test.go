@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/cmd/perf"
-	"github.com/oxia-db/oxia/common/logging"
 	"github.com/oxia-db/oxia/oxia"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
 	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 )
 

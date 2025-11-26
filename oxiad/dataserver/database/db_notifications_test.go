@@ -24,8 +24,8 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/logging"
 	time2 "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
 
 	"github.com/oxia-db/oxia/common/proto"
 )

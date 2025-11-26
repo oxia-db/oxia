@@ -32,7 +32,7 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/entity"
+	"github.com/oxia-db/oxia/oxiad/common/entity"
 
 	"github.com/oxia-db/oxia/common/proto"
 )

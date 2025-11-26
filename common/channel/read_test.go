@@ -20,9 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/entity"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/common/entity"
 )
 
 func TestReadAll(t *testing.T) {

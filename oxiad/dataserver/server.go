@@ -18,6 +18,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/oxia-db/oxia/oxiad/common/metric"
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
@@ -28,8 +30,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/rpc"
-
-	"github.com/oxia-db/oxia/common/metric"
 )
 
 type Server struct {
@@ -43,14 +43,14 @@ type Server struct {
 	walFactory                wal.Factory
 	kvFactory                 kvstore.Factory
 
-	healthServer rpc.HealthServer
+	healthServer rpc2.HealthServer
 }
 
 func New(config conf.Config) (*Server, error) {
-	return NewWithGrpcProvider(config, rpc.Default, rpc.NewReplicationRpcProvider(config.PeerTLS))
+	return NewWithGrpcProvider(config, rpc2.Default, rpc.NewReplicationRpcProvider(config.PeerTLS))
 }
 
-func NewWithGrpcProvider(config conf.Config, provider rpc.GrpcProvider, replicationRpcProvider rpc.ReplicationRpcProvider) (*Server, error) {
+func NewWithGrpcProvider(config conf.Config, provider rpc2.GrpcProvider, replicationRpcProvider rpc.ReplicationRpcProvider) (*Server, error) {
 	slog.Info(
 		"Starting Oxia dataserver",
 		slog.Any("config", config),
@@ -75,7 +75,7 @@ func NewWithGrpcProvider(config conf.Config, provider rpc.GrpcProvider, replicat
 			SyncData:    true,
 		}),
 		kvFactory:    kvFactory,
-		healthServer: rpc.NewClosableHealthServer(context.Background()),
+		healthServer: rpc2.NewClosableHealthServer(context.Background()),
 	}
 
 	s.shardsDirector = controller.NewShardsDirector(config, s.walFactory, s.kvFactory, replicationRpcProvider)

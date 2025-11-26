@@ -31,7 +31,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/common/concurrent"
-	"github.com/oxia-db/oxia/common/logging"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
 
 	"github.com/oxia-db/oxia/common/proto"
 )

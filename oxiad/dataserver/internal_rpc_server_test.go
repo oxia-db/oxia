@@ -19,19 +19,18 @@ import (
 	"fmt"
 	"testing"
 
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
-
-	"github.com/oxia-db/oxia/common/rpc"
 )
 
 func TestInternalHealthCheck(t *testing.T) {
-	healthServer := rpc.NewClosableHealthServer(t.Context())
-	server, err := newInternalRpcServer(rpc.Default, "localhost:0", nil,
+	healthServer := rpc2.NewClosableHealthServer(t.Context())
+	server, err := newInternalRpcServer(rpc2.Default, "localhost:0", nil,
 		assignment.NewShardAssignmentDispatcher(healthServer), healthServer, nil)
 	assert.NoError(t, err)
 
