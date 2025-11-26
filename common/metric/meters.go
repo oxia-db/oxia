@@ -18,12 +18,26 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
-var meter metric.Meter
+var (
+	meter metric.Meter
+	once  sync.Once
+)
+
+func GetMeter() metric.Meter {
+	once.Do(func() {
+		meter = otel.GetMeterProvider().Meter(
+			"oxia",
+		)
+	})
+	return meter
+}
 
 func LabelsForShard(namespace string, shard int64) map[string]any {
 	return map[string]any{

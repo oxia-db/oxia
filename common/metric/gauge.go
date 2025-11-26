@@ -44,7 +44,7 @@ func (g *gauge) Unregister() {
 }
 
 func NewGauge(name string, description string, unit Unit, labels map[string]any, callback func() int64) Gauge {
-	g, err := meter.Int64ObservableGauge(name,
+	g, err := GetMeter().Int64ObservableGauge(name,
 		metric.WithUnit(string(unit)),
 		metric.WithDescription(description),
 	)

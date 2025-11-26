@@ -52,7 +52,7 @@ func (t *latencyHistogram) Timer() Timer {
 }
 
 func NewLatencyHistogram(name string, description string, labels map[string]any) LatencyHistogram {
-	h, err := meter.Float64Histogram(
+	h, err := GetMeter().Float64Histogram(
 		name,
 		metric.WithUnit(string(Milliseconds)),
 		metric.WithDescription(description),
