@@ -21,12 +21,13 @@ import (
 	"testing"
 	"time"
 
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
+
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"

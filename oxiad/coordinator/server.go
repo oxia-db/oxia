@@ -19,13 +19,14 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/oxia-db/oxia/oxiad/common/metric"
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/oxia-db/oxia/oxiad/common/metric"
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 

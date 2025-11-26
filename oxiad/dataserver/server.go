@@ -18,9 +18,10 @@ import (
 	"context"
 	"log/slog"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
-	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
