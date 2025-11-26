@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	//grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -189,8 +189,8 @@ func (cp *clientPool) newConnection(target string) (*grpc.ClientConn, error) {
 
 	options := []grpc.DialOption{
 		grpc.WithTransportCredentials(tcs),
-		//grpc.WithStreamInterceptor(grpcprometheus.StreamClientInterceptor),
-		//grpc.WithUnaryInterceptor(grpcprometheus.UnaryClientInterceptor),
+		grpc.WithStreamInterceptor(grpcprometheus.StreamClientInterceptor),
+		grpc.WithUnaryInterceptor(grpcprometheus.UnaryClientInterceptor),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			PermitWithoutStream: defaultGrpcClientPermitWithoutStream,
 			Time:                defaultGrpcClientKeepAliveTime,
