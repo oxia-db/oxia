@@ -33,6 +33,20 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 )
 
+var latencyBucketsMillis = []float64{
+	0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000,
+}
+
+var sizeBucketsBytes = []float64{
+	0x10, 0x20, 0x40, 0x80,
+	0x100, 0x200, 0x400, 0x800,
+	0x1000, 0x2000, 0x4000, 0x8000,
+	0x10000, 0x20000, 0x40000, 0x80000,
+	0x100000, 0x200000, 0x400000, 0x800000,
+}
+
+var sizeBucketsCount = []float64{1, 5, 10, 20, 50, 100, 200, 500, 1000, 10_000, 20_000, 50_000, 100_000, 1_000_000}
+
 func init() {
 	exporter, err := prometheus.New()
 	if err != nil {
@@ -51,7 +65,7 @@ func init() {
 		},
 		metric.Stream{
 			Aggregation: metric.AggregationExplicitBucketHistogram{
-				Boundaries: metric2.latencyBucketsMillis,
+				Boundaries: latencyBucketsMillis,
 			},
 		},
 	)
@@ -62,7 +76,7 @@ func init() {
 		},
 		metric.Stream{
 			Aggregation: metric.AggregationExplicitBucketHistogram{
-				Boundaries: metric2.sizeBucketsBytes,
+				Boundaries: sizeBucketsBytes,
 			},
 		},
 	)
@@ -73,7 +87,7 @@ func init() {
 		},
 		metric.Stream{
 			Aggregation: metric.AggregationExplicitBucketHistogram{
-				Boundaries: metric2.sizeBucketsCount,
+				Boundaries: sizeBucketsCount,
 			},
 		},
 	)
@@ -83,7 +97,7 @@ func init() {
 
 	provider := metric.NewMeterProvider(metric.WithReader(exporter),
 		metric.WithView(latencyHistogramView, sizeHistogramView, countHistogramView, defaultView))
-	metric2.meter = provider.Meter("oxia")
+	metric2.SetMeter(provider.Meter("oxia"))
 }
 
 type PrometheusMetrics struct {

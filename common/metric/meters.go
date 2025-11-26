@@ -25,6 +25,10 @@ import (
 
 var meter metric.Meter
 
+func SetMeter(m metric.Meter) {
+	meter = m
+}
+
 func LabelsForShard(namespace string, shard int64) map[string]any {
 	return map[string]any{
 		"shard":          shard,
