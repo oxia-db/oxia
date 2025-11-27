@@ -18,7 +18,7 @@ import (
 	"crypto/tls"
 	"time"
 
-	"github.com/oxia-db/oxia/common/rpc/auth"
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 )
 
 type Config struct {

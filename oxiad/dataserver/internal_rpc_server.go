@@ -28,10 +28,12 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 
-	"github.com/oxia-db/oxia/common/rpc/auth"
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
@@ -45,13 +47,13 @@ type internalRpcServer struct {
 
 	shardsDirector       controller.ShardsDirector
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
-	grpcServer           rpc.GrpcServer
-	healthServer         rpc.HealthServer
+	grpcServer           rpc2.GrpcServer
+	healthServer         rpc2.HealthServer
 	log                  *slog.Logger
 }
 
-func newInternalRpcServer(grpcProvider rpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
-	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc.HealthServer, tlsConf *tls.Config) (*internalRpcServer, error) {
+func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
+	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc2.HealthServer, tlsConf *tls.Config) (*internalRpcServer, error) {
 	server := &internalRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,

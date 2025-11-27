@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/common/entity"
+	"github.com/oxia-db/oxia/oxiad/common/entity"
 )
 
 func TestReadAll(t *testing.T) {

@@ -17,7 +17,7 @@ package channel
 import (
 	"context"
 
-	"github.com/oxia-db/oxia/common/entity"
+	"github.com/oxia-db/oxia/oxiad/common/entity"
 )
 
 func ReadAll[T any](ctx context.Context, ch chan *entity.TWithError[T]) ([]T, error) {

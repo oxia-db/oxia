@@ -22,8 +22,8 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/automaxprocs/maxprocs"
 
-	"github.com/oxia-db/oxia/common/logging"
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
 
 	"github.com/oxia-db/oxia/cmd/admin"
 	"github.com/oxia-db/oxia/cmd/client"

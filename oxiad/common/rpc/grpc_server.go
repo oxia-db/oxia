@@ -29,7 +29,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/oxia-db/oxia/common/rpc/auth"
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/common/process"
 )

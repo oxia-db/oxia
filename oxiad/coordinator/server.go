@@ -25,14 +25,16 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	"github.com/oxia-db/oxia/common/rpc/auth"
+	"github.com/oxia-db/oxia/oxiad/common/metric"
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -68,8 +70,8 @@ func NewConfig() Config {
 }
 
 type GrpcServer struct {
-	grpcServer   rpc.GrpcServer
-	adminServer  rpc.GrpcServer
+	grpcServer   rpc2.GrpcServer
+	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
 	coordinator  Coordinator
 	clientPool   rpc.ClientPool
@@ -110,7 +112,7 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 
 	healthServer := health.NewServer()
 
-	grpcServer, err := rpc.Default.StartGrpcServer("coordinator", config.InternalServiceAddr, func(registrar grpc.ServiceRegistrar) {
+	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", config.InternalServiceAddr, func(registrar grpc.ServiceRegistrar) {
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, config.ServerTLS, &auth.Disabled)
 
@@ -121,7 +123,7 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 	// Construct the admin server
 	admin := newAdminServer(coordinatorInstance.StatusResource(), config.ClusterConfigProvider)
 	// Start admin grpc server
-	adminGrpcServer, err := rpc.Default.StartGrpcServer("admin", config.AdminServiceAddr, func(registrar grpc.ServiceRegistrar) {
+	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", config.AdminServiceAddr, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaAdminServer(registrar, admin)
 	}, config.ServerTLS, &auth.Disabled)
 

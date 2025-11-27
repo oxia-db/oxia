@@ -18,7 +18,7 @@ package util
 import (
 	"log/slog"
 
-	"github.com/oxia-db/oxia/common/sharding"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 

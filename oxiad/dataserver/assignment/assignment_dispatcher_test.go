@@ -27,6 +27,8 @@ import (
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 
@@ -34,7 +36,7 @@ import (
 )
 
 func TestUninitializedAssignmentDispatcher(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
 	mockClient := rpc.NewMockShardAssignmentClientStream()
 	assert.False(t, dispatcher.Initialized())
 	req := &proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace}
@@ -44,7 +46,7 @@ func TestUninitializedAssignmentDispatcher(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
 	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
 		err := dispatcher.PushShardAssignments(coordinatorStream)
@@ -82,7 +84,7 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
-	healthServer := rpc.NewClosableHealthServer(t.Context())
+	healthServer := rpc2.NewClosableHealthServer(t.Context())
 	dispatcher := NewShardAssignmentDispatcher(healthServer)
 	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
@@ -94,7 +96,7 @@ func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 
 	// Readiness probe should fail while not initialized
 	resp, err := healthServer.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{
-		Service: rpc.ReadinessProbeService,
+		Service: rpc2.ReadinessProbeService,
 	})
 
 	assert.Equal(t, codes.NotFound, status.Code(err))
@@ -116,7 +118,7 @@ func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	resp, err = healthServer.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{
-		Service: rpc.ReadinessProbeService,
+		Service: rpc2.ReadinessProbeService,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.Status)
@@ -129,7 +131,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	shard1InitialAssignment := newShardAssignment(1, "server2", 100, math.MaxUint32)
 	shard1UpdatedAssignment := newShardAssignment(1, "server3", 100, math.MaxUint32)
 
-	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
 
 	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
@@ -209,7 +211,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc.NewClosableHealthServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
 
 	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {

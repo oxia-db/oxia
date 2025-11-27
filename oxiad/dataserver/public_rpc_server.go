@@ -28,11 +28,13 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 
-	"github.com/oxia-db/oxia/common/rpc/auth"
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/common/proto/compat"
 
@@ -59,11 +61,11 @@ type publicRpcServer struct {
 
 	shardsDirector       controller.ShardsDirector
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
-	grpcServer           rpc.GrpcServer
+	grpcServer           rpc2.GrpcServer
 	log                  *slog.Logger
 }
 
-func newPublicRpcServer(provider rpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
+func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
 	tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
 		shardsDirector:       shardsDirector,
