@@ -42,7 +42,7 @@ func NewBytesHistogram(name string, description string, labels map[string]any) H
 }
 
 func newHistogram(name string, unit Unit, description string, labels map[string]any) Histogram {
-	h, err := meter.Int64Histogram(
+	h, err := GetMeter().Int64Histogram(
 		name,
 		metric.WithUnit(string(unit)),
 		metric.WithDescription(description),

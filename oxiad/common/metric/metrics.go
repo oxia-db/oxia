@@ -26,6 +26,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/sdk/metric"
 
@@ -98,7 +99,9 @@ func init() {
 
 	provider := metric.NewMeterProvider(metric.WithReader(exporter),
 		metric.WithView(latencyHistogramView, sizeHistogramView, countHistogramView, defaultView))
-	metric2.SetMeter(provider.Meter("oxia"))
+
+	// Set as the default provider
+	otel.SetMeterProvider(provider)
 }
 
 type PrometheusMetrics struct {

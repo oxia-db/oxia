@@ -40,7 +40,7 @@ func (c *counter) Add(incr int) {
 }
 
 func NewCounter(name string, description string, unit Unit, labels map[string]any) Counter {
-	sc, err := meter.Int64Counter(name,
+	sc, err := GetMeter().Int64Counter(name,
 		metric.WithUnit(string(unit)),
 		metric.WithDescription(description))
 	fatalOnErr(err, name)
@@ -80,7 +80,7 @@ func (c *upDownCounter) Sub(diff int) {
 }
 
 func NewUpDownCounter(name string, description string, unit Unit, labels map[string]any) UpDownCounter {
-	sc, err := meter.Int64UpDownCounter(name,
+	sc, err := GetMeter().Int64UpDownCounter(name,
 		metric.WithUnit(string(unit)),
 		metric.WithDescription(description))
 	fatalOnErr(err, name)
