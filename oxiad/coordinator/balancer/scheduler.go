@@ -391,7 +391,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 			slog.Any("quarantine-shards", r.quarantineShards()),
 		)
 		defer func() {
-			r.Info("end leader rebalance")
+			r.Debug("end leader rebalance")
 		}()
 	}
 
