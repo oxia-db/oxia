@@ -104,7 +104,7 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
 	if r.Enabled(r.ctx, slog.LevelDebug) {
-		r.Info("start shard rebalance",
+		r.Debug("start shard rebalance",
 			slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
 			slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
 			slog.Any("quarantine-nodes", r.quarantineNodes()),
@@ -115,7 +115,7 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	defer func() {
 		swapGroup.Wait()
 		if r.Enabled(r.ctx, slog.LevelDebug) {
-			r.Info("end shard rebalance",
+			r.Debug("end shard rebalance",
 				slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
 				slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
 				slog.Float64("avg-shard-ratio", loadRatios.AvgShardLoadRatio()),
