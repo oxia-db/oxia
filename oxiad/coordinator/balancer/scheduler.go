@@ -103,20 +103,24 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
-	r.Info("start shard rebalance",
-		slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
-		slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
-		slog.Any("quarantine-nodes", r.quarantineNodes()),
-		slog.Float64("avg-shard-ratio", loadRatios.AvgShardLoadRatio()),
-	)
+	if r.Enabled(r.ctx, slog.LevelDebug) {
+		r.Debug("start shard rebalance",
+			slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
+			slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
+			slog.Any("quarantine-nodes", r.quarantineNodes()),
+			slog.Float64("avg-shard-ratio", loadRatios.AvgShardLoadRatio()),
+		)
+	}
 
 	defer func() {
 		swapGroup.Wait()
-		r.Info("end shard rebalance",
-			slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
-			slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
-			slog.Float64("avg-shard-ratio", loadRatios.AvgShardLoadRatio()),
-		)
+		if r.Enabled(r.ctx, slog.LevelDebug) {
+			r.Debug("end shard rebalance",
+				slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
+				slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
+				slog.Float64("avg-shard-ratio", loadRatios.AvgShardLoadRatio()),
+			)
+		}
 	}()
 
 	r.cleanDeletedNode(loadRatios, candidates, metadata, currentStatus, swapGroup)
@@ -381,14 +385,15 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		return
 	}
 
-	r.Info("start leader rebalance",
-		slog.Any("node-leaders", nodeLeaders),
-		slog.Any("quarantine-shards", r.quarantineShards()),
-	)
-
-	defer func() {
-		r.Info("end leader rebalance")
-	}()
+	if r.Enabled(r.ctx, slog.LevelDebug) {
+		r.Debug("start leader rebalance",
+			slog.Any("node-leaders", nodeLeaders),
+			slog.Any("quarantine-shards", r.quarantineShards()),
+		)
+		defer func() {
+			r.Debug("end leader rebalance")
+		}()
+	}
 
 	maxLeadersNodeID, maxLeaders, minLeaders := r.rankLeaders(nodeLeaders)
 
