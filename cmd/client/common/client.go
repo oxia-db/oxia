@@ -30,6 +30,8 @@ type ClientConfig struct {
 	ServiceAddr    string
 	Namespace      string
 	RequestTimeout time.Duration
+	CACertFile     string
+	DisableIPv6    bool
 }
 
 func (ClientConfig) NewClient() (oxia.SyncClient, error) {
@@ -37,8 +39,18 @@ func (ClientConfig) NewClient() (oxia.SyncClient, error) {
 		return MockedClient, nil
 	}
 
-	return oxia.NewSyncClient(Config.ServiceAddr,
+	opts := []oxia.ClientOption{
 		oxia.WithRequestTimeout(Config.RequestTimeout),
 		oxia.WithNamespace(Config.Namespace),
-	)
+	}
+
+	if Config.CACertFile != "" {
+		opts = append(opts, oxia.WithCACertFile(Config.CACertFile))
+	}
+
+	if Config.DisableIPv6 {
+		opts = append(opts, oxia.WithDisableIPv6())
+	}
+
+	return oxia.NewSyncClient(Config.ServiceAddr, opts...)
 }
