@@ -42,6 +42,7 @@ import (
 const DefaultRpcTimeout = 30 * time.Second
 const AddressSchemaTLS = "tls://"
 const (
+	defaultDialTimeout                   = time.Second * 5
 	defaultGrpcClientKeepAliveTime       = time.Second * 10
 	defaultGrpcClientKeepAliveTimeout    = time.Second * 5
 	defaultGrpcClientPermitWithoutStream = true
@@ -307,7 +308,10 @@ func (cp *clientPool) sortIPs(ips []net.IP) []net.IP {
 }
 
 func (cp *clientPool) dialIPs(ctx context.Context, ips []net.IP, port, host string) (net.Conn, error) {
-	d := &net.Dialer{}
+	d := &net.Dialer{
+		Timeout:   defaultDialTimeout,
+		KeepAlive: defaultGrpcClientKeepAliveTime,
+	}
 	var lastErr error
 	for _, ip := range ips {
 		network := "tcp4"

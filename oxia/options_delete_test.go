@@ -170,7 +170,7 @@ func TestWithTLSAndWithCACertFile(t *testing.T) {
 	}
 
 	// First apply WithTLS, then WithCACertFile
-	// WithCACertFile should replace the entire TLS config
+	// WithCACertFile should merge with the existing TLS config
 	options, err := newClientOptions("serviceAddress",
 		WithTLS(initialTLSConfig),
 		WithCACertFile(caCertPath),
@@ -178,25 +178,16 @@ func TestWithTLSAndWithCACertFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, options.tls)
 
-	// Verify that WithCACertFile replaced the TLS config:
-	// 1. RootCAs should be set from the CA cert file
+	// Verify that WithCACertFile merged with the TLS config:
+	// 1. RootCAs should be set and contain the certificate from the file
 	require.NotNil(t, options.tls.RootCAs, "RootCAs should be set from CA cert file")
 
-	// 2. The RootCAs should contain the certificate from the file
-	caCert, err := os.ReadFile(caCertPath)
-	require.NoError(t, err)
-	expectedPool := x509.NewCertPool()
-	require.True(t, expectedPool.AppendCertsFromPEM(caCert), "Failed to parse expected CA cert")
+	// 2. Previous settings from WithTLS should be preserved
+	assert.Equal(t, "example.com", options.tls.ServerName, "ServerName from WithTLS should be preserved")
+	assert.True(t, options.tls.InsecureSkipVerify, "InsecureSkipVerify from WithTLS should be preserved")
+	assert.Equal(t, tls.VersionTLS13, options.tls.MinVersion, "MinVersion from WithTLS should be preserved")
 
-	// Verify the RootCAs contains the expected certificate
+	// 3. Verify the RootCAs contains the expected certificate
 	// We can't directly compare cert pools, but we can verify it's not nil and was set
 	assert.NotNil(t, options.tls.RootCAs)
-
-	// 3. MinVersion should be set to TLS 1.2 (as set by WithCACertFile)
-	assert.Equal(t, tls.VersionTLS12, options.tls.MinVersion, "MinVersion should be TLS 1.2 as set by WithCACertFile")
-
-	// 4. Previous settings from WithTLS should be replaced (ServerName, InsecureSkipVerify)
-	// WithCACertFile creates a new config, so these should not be present
-	assert.Empty(t, options.tls.ServerName, "ServerName from WithTLS should be replaced")
-	assert.False(t, options.tls.InsecureSkipVerify, "InsecureSkipVerify from WithTLS should be replaced")
 }
