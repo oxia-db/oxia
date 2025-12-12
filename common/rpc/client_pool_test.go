@@ -90,9 +90,6 @@ func TestNewClientPoolWithOptions(t *testing.T) {
 }
 
 func TestClientPool_GetHostname(t *testing.T) {
-	pool := NewClientPool(nil, nil)
-	poolInstance := pool.(*clientPool)
-
 	tests := []struct {
 		name     string
 		target   string
@@ -122,7 +119,7 @@ func TestClientPool_GetHostname(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := poolInstance.getHostname(tt.target)
+			result := GetHostname(tt.target)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

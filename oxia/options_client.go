@@ -228,7 +228,8 @@ func WithCACertFile(caCertPath string) ClientOption {
 		}
 
 		tlsConfig := &tls.Config{
-			RootCAs: caCertPool,
+			RootCAs:    caCertPool,
+			MinVersion: tls.VersionTLS12,
 		}
 		options.tls = tlsConfig
 		return options, nil

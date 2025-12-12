@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//nolint:revive // package name conflicts with standard library, but this is an internal package
 package io
 
 import "io"
