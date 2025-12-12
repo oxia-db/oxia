@@ -15,10 +15,13 @@
 package oxia
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewClientConfig(t *testing.T) {
@@ -77,4 +80,76 @@ func TestWithRequestTimeout(t *testing.T) {
 		assert.Equal(t, item.expectedRequestTimeout, options.RequestTimeout())
 		assert.ErrorIs(t, err, item.expectedErr)
 	}
+}
+
+func TestWithCACertFile(t *testing.T) {
+	t.Run("valid CA cert file", func(t *testing.T) {
+		// Use the test CA cert from the security tests
+		caCertPath := filepath.Join("tests", "security", "certs", "ca.crt")
+		if _, err := os.Stat(caCertPath); os.IsNotExist(err) {
+			t.Skip("Test CA certificate not found, skipping test")
+		}
+
+		options, err := newClientOptions("serviceAddress", WithCACertFile(caCertPath))
+		require.NoError(t, err)
+		require.NotNil(t, options.tls)
+		require.NotNil(t, options.tls.RootCAs)
+	})
+
+	t.Run("non-existent file", func(t *testing.T) {
+		options, err := newClientOptions("serviceAddress", WithCACertFile("/nonexistent/ca.crt"))
+		assert.Error(t, err)
+		assert.Nil(t, options.tls)
+		assert.Contains(t, err.Error(), "failed to read CA certificate")
+	})
+
+	t.Run("invalid PEM file", func(t *testing.T) {
+		// Create a temporary file with invalid PEM data
+		tmpFile, err := os.CreateTemp("", "invalid-ca-*.crt")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		_, err = tmpFile.WriteString("not a valid PEM certificate")
+		require.NoError(t, err)
+		tmpFile.Close()
+
+		options, err := newClientOptions("serviceAddress", WithCACertFile(tmpFile.Name()))
+		assert.Error(t, err)
+		assert.Nil(t, options.tls)
+		assert.Contains(t, err.Error(), "failed to parse CA certificate")
+	})
+
+	t.Run("empty file", func(t *testing.T) {
+		tmpFile, err := os.CreateTemp("", "empty-ca-*.crt")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+		tmpFile.Close()
+
+		options, err := newClientOptions("serviceAddress", WithCACertFile(tmpFile.Name()))
+		assert.Error(t, err)
+		assert.Nil(t, options.tls)
+		assert.Contains(t, err.Error(), "failed to parse CA certificate")
+	})
+}
+
+func TestWithDisableIPv6(t *testing.T) {
+	options, err := newClientOptions("serviceAddress", WithDisableIPv6())
+	require.NoError(t, err)
+	assert.True(t, options.disableIPv6)
+}
+
+func TestWithCACertFileAndDisableIPv6(t *testing.T) {
+	caCertPath := filepath.Join("tests", "security", "certs", "ca.crt")
+	if _, err := os.Stat(caCertPath); os.IsNotExist(err) {
+		t.Skip("Test CA certificate not found, skipping test")
+	}
+
+	options, err := newClientOptions("serviceAddress",
+		WithCACertFile(caCertPath),
+		WithDisableIPv6(),
+	)
+	require.NoError(t, err)
+	assert.True(t, options.disableIPv6)
+	require.NotNil(t, options.tls)
+	require.NotNil(t, options.tls.RootCAs)
 }

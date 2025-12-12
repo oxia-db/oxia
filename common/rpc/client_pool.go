@@ -17,8 +17,11 @@ package rpc
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -56,12 +59,19 @@ type ClientPool interface {
 	Clear(target string)
 }
 
+type ClientPoolOptions struct {
+	TLS            *tls.Config
+	Authentication auth.Authentication
+	DisableIPv6    bool
+}
+
 type clientPool struct {
 	sync.RWMutex
 	connections map[string]*grpc.ClientConn
 
 	tls            *tls.Config
 	authentication auth.Authentication
+	disableIPv6    bool
 	log            *slog.Logger
 }
 
@@ -74,10 +84,19 @@ func (cp *clientPool) GetAminRpc(target string) (proto.OxiaAdminClient, error) {
 }
 
 func NewClientPool(tlsConf *tls.Config, authentication auth.Authentication) ClientPool {
+	return NewClientPoolWithOptions(ClientPoolOptions{
+		TLS:            tlsConf,
+		Authentication: authentication,
+		DisableIPv6:    false, // Default: allow IPv6
+	})
+}
+
+func NewClientPoolWithOptions(opts ClientPoolOptions) ClientPool {
 	return &clientPool{
 		connections:    make(map[string]*grpc.ClientConn),
-		tls:            tlsConf,
-		authentication: authentication,
+		tls:            opts.TLS,
+		authentication: opts.Authentication,
+		disableIPv6:    opts.DisableIPv6,
 		log: slog.With(
 			slog.String("component", "client-pool"),
 		),
@@ -196,6 +215,85 @@ func (cp *clientPool) newConnection(target string) (*grpc.ClientConn, error) {
 			Time:                defaultGrpcClientKeepAliveTime,
 			Timeout:             defaultGrpcClientKeepAliveTimeout,
 		}),
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+
+			d := &net.Dialer{}
+			var ips []net.IP
+
+			if cp.disableIPv6 {
+				// Resolve to IPv4 only to avoid IPv6 issues
+				cp.log.Debug("Resolving hostname to IPv4 (IPv6 disabled)", slog.String("host", host))
+				ips, err = net.DefaultResolver.LookupIP(ctx, "ip4", host)
+			} else {
+				// Allow both IPv4 and IPv6
+				cp.log.Debug("Resolving hostname (IPv4 and IPv6)", slog.String("host", host))
+				ips, err = net.DefaultResolver.LookupIP(ctx, "ip", host)
+			}
+
+			if err != nil {
+				cp.log.Debug("DNS resolution failed", slog.String("host", host), slog.Any("error", err))
+				return nil, err
+			}
+			if len(ips) == 0 {
+				networkType := "IP"
+				if cp.disableIPv6 {
+					networkType = "IPv4"
+				}
+				cp.log.Debug("No addresses found", slog.String("host", host), slog.String("networkType", networkType))
+				return nil, errors.Errorf("no %s address found for %s", networkType, host)
+			}
+
+			ipStrings := make([]string, len(ips))
+			for i, ip := range ips {
+				ipStrings[i] = ip.String()
+			}
+			cp.log.Debug("DNS resolution successful",
+				slog.String("host", host),
+				slog.Any("resolvedIPs", ipStrings),
+			)
+
+			// Sort IPs to prefer IPv4 over IPv6 (if not disabled)
+			if !cp.disableIPv6 {
+				ipv4s := make([]net.IP, 0)
+				ipv6s := make([]net.IP, 0)
+				for _, ip := range ips {
+					if ip.To4() != nil {
+						ipv4s = append(ipv4s, ip)
+					} else {
+						ipv6s = append(ipv6s, ip)
+					}
+				}
+				ips = append(ipv4s, ipv6s...)
+				if len(ipv4s) > 0 && len(ipv6s) > 0 {
+					cp.log.Debug("Preferring IPv4 addresses", slog.Int("ipv4Count", len(ipv4s)), slog.Int("ipv6Count", len(ipv6s)))
+				}
+			}
+
+			// Try all resolved IPs until one succeeds
+			var lastErr error
+			for _, ip := range ips {
+				network := "tcp4"
+				if ip.To4() == nil {
+					network = "tcp6"
+				}
+				ipAddr := net.JoinHostPort(ip.String(), port)
+				cp.log.Debug("Attempting connection", slog.String("ip", ip.String()), slog.String("network", network))
+				conn, err := d.DialContext(ctx, network, ipAddr)
+				if err == nil {
+					cp.log.Debug("Connection successful", slog.String("ip", ip.String()))
+					return conn, nil
+				}
+				cp.log.Debug("Connection failed, trying next IP", slog.String("ip", ip.String()), slog.Any("error", err))
+				lastErr = err
+			}
+
+			cp.log.Debug("All connection attempts failed", slog.String("host", host), slog.Any("error", lastErr))
+			return nil, errors.Wrapf(lastErr, "failed to connect to any resolved IP for %s", host)
+		}),
 	}
 	if cp.authentication != nil {
 		options = append(options, grpc.WithPerRPCCredentials(cp.authentication))
@@ -209,23 +307,127 @@ func (cp *clientPool) newConnection(target string) (*grpc.ClientConn, error) {
 }
 
 func (*clientPool) getActualAddress(target string) string {
+	addr := target
 	if strings.HasPrefix(target, AddressSchemaTLS) {
-		after, _ := strings.CutPrefix(target, AddressSchemaTLS)
-		return after
+		addr, _ = strings.CutPrefix(target, AddressSchemaTLS)
 	}
-	return target
+	// Use passthrough to skip gRPC's DNS resolver, we do our own IPv4-only resolution in the dialer
+	if !strings.Contains(addr, "://") {
+		addr = "passthrough:///" + addr
+	}
+	return addr
 }
 
 //nolint:gosec
 func (cp *clientPool) getTransportCredential(target string) credentials.TransportCredentials {
-	tcs := insecure.NewCredentials()
-	if strings.HasPrefix(target, AddressSchemaTLS) {
-		tcs = credentials.NewTLS(&tls.Config{})
+	// Use TLS if address has tls:// prefix OR if TLS config is provided
+	useTLS := strings.HasPrefix(target, AddressSchemaTLS) || cp.tls != nil
+
+	if !useTLS {
+		return insecure.NewCredentials()
 	}
+
+	hostname := cp.getHostname(target)
+
+	// Build TLS config - Go will handle certificate chain and hostname verification automatically
+	tlsConfig := &tls.Config{
+		ServerName: hostname, // Go verifies hostname automatically
+	}
+
+	// Set RootCAs - use custom if provided, otherwise use system cert pool
+	if cp.tls != nil && cp.tls.RootCAs != nil {
+		cp.log.Debug("Using custom RootCAs from TLS config")
+		tlsConfig.RootCAs = cp.tls.RootCAs
+	} else {
+		cp.log.Debug("Loading system certificate pool")
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			cp.log.Warn("Failed to load system cert pool, creating new one", slog.Any("error", err))
+			roots = x509.NewCertPool()
+			tlsConfig.RootCAs = roots
+		} else {
+			// SystemCertPool doesn't expose certificate count directly, but we can log that it was loaded
+			cp.log.Debug("System certificate pool loaded successfully",
+				slog.String("hostname", hostname),
+				slog.Bool("usingSystemCertPool", true),
+			)
+			tlsConfig.RootCAs = roots
+		}
+	}
+
+	// Merge other custom TLS config fields if provided
 	if cp.tls != nil {
-		tcs = credentials.NewTLS(cp.tls)
+		if cp.tls.ServerName != "" {
+			tlsConfig.ServerName = cp.tls.ServerName
+		}
+		if cp.tls.InsecureSkipVerify {
+			tlsConfig.InsecureSkipVerify = true
+		}
+		// Copy other TLS config fields if needed
+		if cp.tls.Certificates != nil {
+			tlsConfig.Certificates = cp.tls.Certificates
+		}
 	}
-	return tcs
+
+	// Add VerifyConnection to log certificate verification details
+	// Note: This is called after the TLS handshake, so we can inspect certificates
+	if !tlsConfig.InsecureSkipVerify {
+		originalVerifyConnection := tlsConfig.VerifyConnection
+		tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) > 0 {
+				cert := cs.PeerCertificates[0]
+				cp.log.Debug("TLS handshake completed, verifying certificate",
+					slog.String("subject", cert.Subject.String()),
+					slog.String("issuer", cert.Issuer.String()),
+					slog.String("commonName", cert.Subject.CommonName),
+					slog.Any("dnsNames", cert.DNSNames),
+					slog.String("serverName", tlsConfig.ServerName),
+					slog.Int("peerCertificates", len(cs.PeerCertificates)),
+					slog.Bool("hasRootCAs", tlsConfig.RootCAs != nil),
+				)
+
+				// Log intermediate certificates if present
+				if len(cs.PeerCertificates) > 1 {
+					intermediates := make([]string, len(cs.PeerCertificates)-1)
+					for i, icert := range cs.PeerCertificates[1:] {
+						intermediates[i] = fmt.Sprintf("issuer=%s,subject=%s", icert.Issuer.String(), icert.Subject.String())
+					}
+					cp.log.Debug("Intermediate certificates in chain", slog.Any("intermediates", intermediates))
+				}
+			}
+
+			// Call standard verification (Go's built-in verification)
+			if originalVerifyConnection != nil {
+				err := originalVerifyConnection(cs)
+				if err != nil {
+					cp.log.Debug("Certificate verification failed",
+						slog.Any("error", err),
+						slog.String("errorType", fmt.Sprintf("%T", err)),
+					)
+				} else {
+					cp.log.Debug("Certificate verification succeeded")
+				}
+				return err
+			}
+			// If no original verification, Go will do standard verification
+			return nil
+		}
+	}
+
+	return credentials.NewTLS(tlsConfig)
+}
+
+func (cp *clientPool) getHostname(target string) string {
+	addr := target
+	if strings.HasPrefix(target, AddressSchemaTLS) {
+		addr, _ = strings.CutPrefix(target, AddressSchemaTLS)
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// If no port, use the address as-is
+		return addr
+	}
+	return host
 }
 
 func GetPeer(ctx context.Context) string {

@@ -16,6 +16,8 @@ package oxia
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,6 +67,7 @@ type clientOptions struct {
 	tls                    *tls.Config
 	authentication         auth.Authentication
 	sessionKeepAliveTicker time.Duration
+	disableIPv6            bool
 }
 
 func defaultIdentity() string {
@@ -206,6 +209,36 @@ func WithTLS(tlsConf *tls.Config) ClientOption {
 			return options, ErrInvalidOptionTLS
 		}
 		options.tls = tlsConf
+		return options, nil
+	})
+}
+
+// WithCACertFile loads a CA certificate from a file and configures the client to trust it.
+// This is useful when connecting to servers with certificates signed by a custom CA.
+func WithCACertFile(caCertPath string) ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		caCert, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return options, errors.Wrapf(err, "failed to read CA certificate from %s", caCertPath)
+		}
+
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return options, errors.Errorf("failed to parse CA certificate from %s", caCertPath)
+		}
+
+		tlsConfig := &tls.Config{
+			RootCAs: caCertPool,
+		}
+		options.tls = tlsConfig
+		return options, nil
+	})
+}
+
+// WithDisableIPv6 disables IPv6 resolution, forcing the client to use only IPv4 addresses.
+func WithDisableIPv6() ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		options.disableIPv6 = true
 		return options, nil
 	})
 }
