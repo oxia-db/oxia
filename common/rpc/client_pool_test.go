@@ -48,10 +48,11 @@ func TestClientPool_GetAminRpc(t *testing.T) {
 	pool := NewClientPool(nil, nil)
 	poolInstance := pool.(*clientPool)
 
-	// This will fail to connect, but we can test that the method exists and returns the right type
-	_, err := poolInstance.GetAminRpc("invalid:1234")
-	// We expect an error since we can't actually connect, but the method should exist
-	assert.Error(t, err)
+	// grpc.NewClient creates a lazy connection, so GetAminRpc won't return an error
+	// until an actual RPC call is made. We just verify the method exists and returns a client.
+	client, err := poolInstance.GetAminRpc("invalid:1234")
+	assert.NoError(t, err)
+	assert.NotNil(t, client)
 }
 
 func TestNewClientPoolWithOptions(t *testing.T) {
