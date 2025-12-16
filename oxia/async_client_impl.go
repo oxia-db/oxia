@@ -66,7 +66,11 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		return nil, err
 	}
 
-	clientPool := rpc.NewClientPool(options.tls, options.authentication)
+	clientPool := rpc.NewClientPoolWithOptions(rpc.ClientPoolOptions{
+		TLS:            options.tls,
+		Authentication: options.authentication,
+		DisableIPv6:    options.disableIPv6,
+	})
 
 	shardManager, err := internal.NewShardManager(internal.NewShardStrategy(), clientPool, serviceAddress,
 		options.namespace, options.requestTimeout)
