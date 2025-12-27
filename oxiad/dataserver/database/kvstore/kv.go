@@ -170,6 +170,8 @@ type Factory interface {
 
 	NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error)
 
+	NewKVWithTrap(namespace string, shardId int64, keySorting proto.KeySortingType, trap *KvTrap) (KV, error)
+
 	NewSnapshotLoader(namespace string, shardId int64) (SnapshotLoader, error)
 }
 

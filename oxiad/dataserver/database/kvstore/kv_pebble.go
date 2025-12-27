@@ -123,7 +123,10 @@ func (p *PebbleFactory) Close() error {
 }
 
 func (p *PebbleFactory) NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error) {
-	return newKVPebble(p, namespace, shardId, keySorting)
+	return newKVPebble(p, namespace, shardId, keySorting, nil)
+}
+func (p *PebbleFactory) NewKVWithTrap(namespace string, shardId int64, keySorting proto.KeySortingType, trap *KvTrap) (KV, error) {
+	return newKVPebble(p, namespace, shardId, keySorting, trap)
 }
 
 func (p *PebbleFactory) NewSnapshotLoader(namespace string, shardId int64) (SnapshotLoader, error) {
@@ -169,9 +172,11 @@ type Pebble struct {
 
 	batchSizeHisto  metric.Histogram
 	batchCountHisto metric.Histogram
+
+	kvTrap *KvTrap
 }
 
-func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error) {
+func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySorting proto.KeySortingType, trap *KvTrap) (KV, error) {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	labels := metric.LabelsForShard(namespace, shardId)
 	pb := &Pebble{
@@ -181,6 +186,7 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		namespace: namespace,
 		shardId:   shardId,
 		dbPath:    factory.getKVPath(namespace, shardId),
+		kvTrap:    trap,
 
 		batchCommitLatency: metric.NewLatencyHistogram("oxia_server_kv_batch_commit_latency",
 			"The latency for committing a batch into the database", labels),
@@ -244,7 +250,7 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		FormatMajorVersion: pebble.FormatVirtualSSTables,
 	}
 
-	pebbleConv := newPebbleDbConversion(log, pb.dbPath)
+	pebbleConv := newPebbleDbConversion(log, pb.dbPath, pb.kvTrap)
 	if err := pebbleConv.checkConvertDB(pb.keyEncoder); err != nil {
 		return nil, errors.Wrap(err, "failed to convert db")
 	}
