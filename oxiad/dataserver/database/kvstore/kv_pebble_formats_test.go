@@ -111,11 +111,11 @@ func TestPebbleDbConversionDataLost(t *testing.T) {
 	assert.NoError(t, oldKV.Close())
 
 	// try to trap the kv
-	kv, err := kvFactory.NewKVWithTrap("default", 0, proto.KeySortingType_HIERARCHICAL, trap)
+	_, err = kvFactory.NewKVWithTrap("default", 0, proto.KeySortingType_HIERARCHICAL, trap)
 	assert.Error(t, err)
 
 	// retry it without trap
-	kv, err = kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	kv, err := kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
 	assert.NoError(t, err)
 
 	// Test scan the new DB
@@ -173,11 +173,11 @@ func TestPebbleDbCleanupExpiredBackup(t *testing.T) {
 	assert.NoError(t, oldKV.Close())
 
 	// try to trap the kv
-	kv, err := kvFactory.NewKVWithTrap("default", 0, proto.KeySortingType_HIERARCHICAL, trap)
+	_, err = kvFactory.NewKVWithTrap("default", 0, proto.KeySortingType_HIERARCHICAL, trap)
 	assert.Error(t, err)
 
 	// retry it without trap
-	kv, err = kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	kv, err := kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
 	assert.NoError(t, err)
 
 	// Test scan the new DB
