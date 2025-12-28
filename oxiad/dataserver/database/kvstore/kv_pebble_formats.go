@@ -272,7 +272,7 @@ func (p *pebbleDbConversion) convertDb(
 
 	// Delete the backup DB
 	if err := os.RemoveAll(oldDbBackupPath); err != nil {
-		return errors.Wrap(err, "failed to remove old database")
+		return errors.Wrap(err, "failed to remove backup database")
 	}
 
 	duration := time.Since(startTime)

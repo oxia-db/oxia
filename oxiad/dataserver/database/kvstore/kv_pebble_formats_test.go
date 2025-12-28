@@ -156,7 +156,7 @@ func TestPebbleDbConversionPreservesDataAfterCrash(t *testing.T) {
 	assert.NoError(t, kv.Close())
 }
 
-func TestPebbleDbCleanupExpiredBackup(t *testing.T) {
+func TestPebbleDbCleanupBackupAfterCrashDuringFinalCleanup(t *testing.T) {
 	// Create DB with natural format and insert some test keys
 	tmpDir := t.TempDir()
 	kvFactory, err := NewPebbleKVFactory(&FactoryOptions{
