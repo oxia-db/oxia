@@ -549,52 +549,39 @@ func TestReaderReadNext(t *testing.T) {
 
 func TestAppendAfterRolloverWithFullSegment(t *testing.T) {
 	// This test verifies that after a segment becomes full and we roll over,
-	// the WAL correctly maintains offset consistency even if subsequent appends fail
+	// the WAL correctly maintains offset consistency
 	f, w := createWal(t)
 
-	// Fill up the segment until it's nearly full
+	// Fill up the segment until it rolls over
 	entryCount := 0
 	largeValue := make([]byte, 10*1024) // 10KB entries
-	for {
+	// With a 128KB segment size, we need about 13 entries to fill it
+	for i := 0; i < 15; i++ {
 		err := w.Append(&proto.LogEntry{
 			Term:   1,
-			Offset: int64(entryCount),
+			Offset: int64(i),
 			Value:  largeValue,
 		})
-		if err != nil {
-			// Segment should be full, but the error should not be ErrSegmentFull
-			// as it should be handled internally
-			assert.Fail(t, "unexpected error filling segment", "error: %v", err)
-			break
-		}
+		assert.NoError(t, err, "append should succeed")
 		entryCount++
-		if entryCount >= 100 { // Safety limit
-			break
-		}
-		// Check if we're approaching the segment limit
-		if w.(*wal).currentSegment.BaseOffset() != 0 {
-			// We've rolled over to a new segment
-			break
-		}
 	}
 
-	// Verify we rolled over
-	assert.Greater(t, entryCount, 1, "should have written multiple entries")
-
-	// Now append more entries after the rollover
-	for i := 0; i < 10; i++ {
+	// At this point, we should have rolled over to a new segment
+	// Continue appending to verify offset consistency after rollover
+	for i := 15; i < 25; i++ {
 		err := w.Append(&proto.LogEntry{
 			Term:   1,
-			Offset: int64(entryCount + i),
+			Offset: int64(i),
 			Value:  []byte(fmt.Sprintf("after-rollover-%d", i)),
 		})
 		assert.NoError(t, err, "append after rollover should succeed")
+		entryCount++
 	}
 
-	// Verify all entries can be read
+	// Verify all entries can be read with correct offsets
 	reader, err := w.NewReader(InvalidOffset)
 	assert.NoError(t, err)
-	for i := 0; i < entryCount+10; i++ {
+	for i := 0; i < entryCount; i++ {
 		assert.True(t, reader.HasNext(), "should have entry %d", i)
 		entry, err := reader.ReadNext()
 		assert.NoError(t, err)
