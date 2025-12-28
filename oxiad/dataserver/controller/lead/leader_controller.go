@@ -993,6 +993,7 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 
 	if !reader.HasNext() {
 		return constant2.InvalidEntryId, nil
