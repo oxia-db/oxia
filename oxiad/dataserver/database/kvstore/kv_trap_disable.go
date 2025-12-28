@@ -21,7 +21,3 @@ type KvTrap struct{}
 func (trap *KvTrap) Trigger(string) error {
 	return nil
 }
-
-func NewKvTrap() *KvTrap {
-	return &KvTrap{}
-}
