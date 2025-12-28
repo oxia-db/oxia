@@ -14,7 +14,7 @@
 
 .PHONY: build
 build:
-	go build -ldflags "-X main.version=$(shell git describe --tags --always | cut -c2-)" -v -o bin/oxia ./cmd
+	go build -tags disable_trap -ldflags "-X main.version=$(shell git describe --tags --always | cut -c2-)" -v -o bin/oxia ./cmd
 
 # Build target: iterate through PLATFORMS and perform cross-compilation for each combination.
 
@@ -35,6 +35,7 @@ distribution:
 		echo "Building $$GOOS/$${GOARCH} to $${OUTPUT_NAME}"; \
 		GOOS=$${GOOS} GOARCH=$${GOARCH} go build \
 			-ldflags "-X main.version=$$(git describe --tags --always | cut -c2-)" \
+			-tags disable_trap \
 			-v \
 			-o $${OUTPUT_NAME} ./cmd; \
 	done
@@ -42,7 +43,7 @@ distribution:
 
 .PHONY: maelstrom
 maelstrom:
-	go build -v -o bin/oxia-maelstrom ./oxiad/maelstrom
+	go build -tags disable_trap -v -o bin/oxia-maelstrom ./oxiad/maelstrom
 
 test: build
 	go test -cover -race\

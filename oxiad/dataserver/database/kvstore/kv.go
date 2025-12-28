@@ -136,6 +136,7 @@ type FactoryOptions struct {
 	CacheSizeMB int64
 	UseWAL      bool
 	SyncData    bool
+	KvTrap      *KvTrap
 }
 
 var DefaultFactoryOptions = &FactoryOptions{
@@ -143,6 +144,7 @@ var DefaultFactoryOptions = &FactoryOptions{
 	CacheSizeMB: 100,
 	UseWAL:      true,
 	SyncData:    true,
+	KvTrap:      nil,
 }
 
 func (fo *FactoryOptions) EnsureDefaults() {
