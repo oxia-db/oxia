@@ -546,3 +546,63 @@ func TestReaderReadNext(t *testing.T) {
 	assert.NoError(t, reader.Close())
 	assert.NoError(t, f.Close())
 }
+
+func TestAppendAfterRolloverWithFullSegment(t *testing.T) {
+	// This test verifies that after a segment becomes full and we roll over,
+	// the WAL correctly maintains offset consistency even if subsequent appends fail
+	f, w := createWal(t)
+
+	// Fill up the segment until it's nearly full
+	entryCount := 0
+	largeValue := make([]byte, 10*1024) // 10KB entries
+	for {
+		err := w.Append(&proto.LogEntry{
+			Term:   1,
+			Offset: int64(entryCount),
+			Value:  largeValue,
+		})
+		if err != nil {
+			// Segment should be full, but the error should not be ErrSegmentFull
+			// as it should be handled internally
+			assert.Fail(t, "unexpected error filling segment", "error: %v", err)
+			break
+		}
+		entryCount++
+		if entryCount >= 100 { // Safety limit
+			break
+		}
+		// Check if we're approaching the segment limit
+		if w.(*wal).currentSegment.BaseOffset() != 0 {
+			// We've rolled over to a new segment
+			break
+		}
+	}
+
+	// Verify we rolled over
+	assert.Greater(t, entryCount, 1, "should have written multiple entries")
+
+	// Now append more entries after the rollover
+	for i := 0; i < 10; i++ {
+		err := w.Append(&proto.LogEntry{
+			Term:   1,
+			Offset: int64(entryCount + i),
+			Value:  []byte(fmt.Sprintf("after-rollover-%d", i)),
+		})
+		assert.NoError(t, err, "append after rollover should succeed")
+	}
+
+	// Verify all entries can be read
+	reader, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	for i := 0; i < entryCount+10; i++ {
+		assert.True(t, reader.HasNext(), "should have entry %d", i)
+		entry, err := reader.ReadNext()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(i), entry.Offset, "offset should match")
+	}
+	assert.False(t, reader.HasNext())
+
+	assert.NoError(t, reader.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}

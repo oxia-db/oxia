@@ -345,16 +345,26 @@ func (t *wal) AppendAndSync(entry *proto.LogEntry, callback func(err error)) {
 
 func (t *wal) rolloverSegment() error {
 	var err error
-	if err = t.currentSegment.Close(); err != nil {
-		return err
-	}
-	lastCrc := t.currentSegment.LastCrc()
-	t.readOnlySegments.AddedNewSegment(t.currentSegment.BaseOffset())
+	oldSegment := t.currentSegment
+	lastCrc := oldSegment.LastCrc()
 
-	if t.currentSegment, err = newReadWriteSegment(t.walPath, t.lastAppendedOffset.Load()+1, t.segmentSize,
+	// Create new segment first, before closing the old one
+	// This ensures we don't leave the WAL in an invalid state if creation fails
+	var newSegment ReadWriteSegment
+	if newSegment, err = newReadWriteSegment(t.walPath, t.lastAppendedOffset.Load()+1, t.segmentSize,
 		lastCrc, t.commitOffsetProvider); err != nil {
 		return err
 	}
+
+	// Only close the old segment after successfully creating the new one
+	if err = oldSegment.Close(); err != nil {
+		// If closing the old segment fails, clean up the new segment
+		_ = newSegment.Close()
+		return err
+	}
+
+	t.readOnlySegments.AddedNewSegment(oldSegment.BaseOffset())
+	t.currentSegment = newSegment
 
 	return nil
 }
