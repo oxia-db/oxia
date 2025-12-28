@@ -18,8 +18,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/oxia-db/oxia/common/proto"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func TestPebbleDbConversion(t *testing.T) {
