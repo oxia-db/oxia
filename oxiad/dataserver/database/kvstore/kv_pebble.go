@@ -123,10 +123,7 @@ func (p *PebbleFactory) Close() error {
 }
 
 func (p *PebbleFactory) NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error) {
-	return newKVPebble(p, namespace, shardId, keySorting, nil)
-}
-func (p *PebbleFactory) NewKVWithTrap(namespace string, shardId int64, keySorting proto.KeySortingType, trap *KvTrap) (KV, error) {
-	return newKVPebble(p, namespace, shardId, keySorting, trap)
+	return newKVPebble(p, namespace, shardId, keySorting, p.options.KvTrap)
 }
 
 func (p *PebbleFactory) NewSnapshotLoader(namespace string, shardId int64) (SnapshotLoader, error) {

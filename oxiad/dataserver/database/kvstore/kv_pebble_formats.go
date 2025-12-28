@@ -108,8 +108,7 @@ func (p *pebbleDbConversion) checkConvertDB(desiredEncoding compare.Encoder) err
 			// no backup, no need to convert DB
 			return nil
 		}
-		p.log.Info("The database backup is being restored;" +
-			" the issue is suspected to be caused by a crash during the post-backup conversion process.")
+		p.log.Info("Database backup found without primary database, indicating crash during conversion")
 		// recover backup and keep going
 		if err := os.Rename(dbBackPath, p.dbPath); err != nil {
 			return err
@@ -119,8 +118,7 @@ func (p *pebbleDbConversion) checkConvertDB(desiredEncoding compare.Encoder) err
 	// DB already exists
 	// Check if we need to clean up the backup, as previous backup cleanup may have failed.
 	if pathExists(dbBackPath) {
-		p.log.Info("The database backup is being deleted;" +
-			" the issue is suspected to be caused by a crash during the post-backup deletion process.")
+		p.log.Info("Database backup found alongside primary database, indicating incomplete cleanup after conversion")
 		if err := os.RemoveAll(dbBackPath); err != nil {
 			return err
 		}

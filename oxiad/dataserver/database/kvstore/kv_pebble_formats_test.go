@@ -18,9 +18,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestPebbleDbConversion(t *testing.T) {
@@ -82,13 +81,27 @@ func TestPebbleDbConversion(t *testing.T) {
 
 func TestPebbleDbConversionPreservesDataAfterCrash(t *testing.T) {
 	// Create DB with natural format and insert some test keys
-	kvFactory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
-	assert.NoError(t, err)
-	trap := NewKvTrap(map[string]func() error{
-		"convertCrashAfterMoveOldDb": func() error {
-			return errors.New("you hit the trap")
-		},
+	tmpDir := t.TempDir()
+	kvFactory, err := NewPebbleKVFactory(&FactoryOptions{
+		DataDir:     tmpDir,
+		CacheSizeMB: 1,
+		UseWAL:      false,
+		SyncData:    false,
 	})
+	assert.NoError(t, err)
+
+	trapKvFactory, err := NewPebbleKVFactory(&FactoryOptions{
+		DataDir:     tmpDir,
+		CacheSizeMB: 1,
+		UseWAL:      false,
+		SyncData:    false,
+		KvTrap: NewKvTrap(map[string]func() error{
+			"convertCrashAfterMoveOldDb": func() error {
+				return errors.New("you hit the trap")
+			},
+		}),
+	})
+	assert.NoError(t, err)
 	oldKV, err := kvFactory.NewKV("default", 0, proto.KeySortingType_NATURAL)
 	assert.NoError(t, err)
 
@@ -111,7 +124,7 @@ func TestPebbleDbConversionPreservesDataAfterCrash(t *testing.T) {
 	assert.NoError(t, oldKV.Close())
 
 	// try to trap the kv
-	_, err = kvFactory.NewKVWithTrap("default", 0, proto.KeySortingType_HIERARCHICAL, trap)
+	_, err = trapKvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
 	assert.Error(t, err)
 
 	// retry it without trap
@@ -144,13 +157,27 @@ func TestPebbleDbConversionPreservesDataAfterCrash(t *testing.T) {
 
 func TestPebbleDbCleanupExpiredBackup(t *testing.T) {
 	// Create DB with natural format and insert some test keys
-	kvFactory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
-	assert.NoError(t, err)
-	trap := NewKvTrap(map[string]func() error{
-		"convertCrashAfterMoveNewDb": func() error {
-			return errors.New("you hit the trap")
-		},
+	tmpDir := t.TempDir()
+	kvFactory, err := NewPebbleKVFactory(&FactoryOptions{
+		DataDir:     tmpDir,
+		CacheSizeMB: 1,
+		UseWAL:      false,
+		SyncData:    false,
 	})
+	assert.NoError(t, err)
+
+	trapKvFactory, err := NewPebbleKVFactory(&FactoryOptions{
+		DataDir:     tmpDir,
+		CacheSizeMB: 1,
+		UseWAL:      false,
+		SyncData:    false,
+		KvTrap: NewKvTrap(map[string]func() error{
+			"convertCrashAfterMoveNewDb": func() error {
+				return errors.New("you hit the trap")
+			},
+		}),
+	})
+	assert.NoError(t, err)
 	oldKV, err := kvFactory.NewKV("default", 0, proto.KeySortingType_NATURAL)
 	assert.NoError(t, err)
 
@@ -173,7 +200,7 @@ func TestPebbleDbCleanupExpiredBackup(t *testing.T) {
 	assert.NoError(t, oldKV.Close())
 
 	// try to trap the kv
-	_, err = kvFactory.NewKVWithTrap("default", 0, proto.KeySortingType_HIERARCHICAL, trap)
+	_, err = trapKvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
 	assert.Error(t, err)
 
 	// retry it without trap
