@@ -513,6 +513,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		)
 		return err
 	}
+	defer r.Close()
 
 	if err = lc.applyAllEntriesIntoDBLoop(r); err != nil {
 		return errors.Wrap(err, "failed to applies wal entries to db")
