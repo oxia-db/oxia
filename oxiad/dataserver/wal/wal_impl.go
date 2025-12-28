@@ -359,7 +359,9 @@ func (t *wal) rolloverSegment() error {
 	// Only close the old segment after successfully creating the new one
 	if err = oldSegment.Close(); err != nil {
 		// If closing the old segment fails, clean up the new segment
-		_ = newSegment.Close()
+		if closeErr := newSegment.Close(); closeErr != nil {
+			err = multierr.Append(err, closeErr)
+		}
 		return err
 	}
 
