@@ -80,7 +80,7 @@ func TestPebbleDbConversion(t *testing.T) {
 	assert.NoError(t, kv.Close())
 }
 
-func TestPebbleDbConversionDataLost(t *testing.T) {
+func TestPebbleDbConversionPreservesDataAfterCrash(t *testing.T) {
 	// Create DB with natural format and insert some test keys
 	kvFactory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
