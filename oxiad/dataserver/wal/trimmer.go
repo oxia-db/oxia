@@ -202,6 +202,7 @@ func (t *trimmer) readAtOffset(offset int64) (timestamp time.Time, err error) {
 	if err != nil {
 		return time.Time{}, errors.Wrap(err, "failed to create reader")
 	}
+	defer reader.Close()
 
 	fe, err := reader.ReadNext()
 	if err != nil {

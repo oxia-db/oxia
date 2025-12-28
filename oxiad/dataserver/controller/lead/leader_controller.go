@@ -513,6 +513,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		)
 		return err
 	}
+	defer r.Close()
 
 	if err = lc.applyAllEntriesIntoDBLoop(r); err != nil {
 		return errors.Wrap(err, "failed to applies wal entries to db")
@@ -993,6 +994,7 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 
 	if !reader.HasNext() {
 		return constant2.InvalidEntryId, nil

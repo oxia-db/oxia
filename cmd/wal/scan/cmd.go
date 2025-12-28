@@ -86,6 +86,7 @@ func exec(*cobra.Command, []string) error {
 	if err != nil {
 		return err
 	}
+	defer reader.Close()
 
 	for reader.HasNext() {
 		le, err := reader.ReadNext()
