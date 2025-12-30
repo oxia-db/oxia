@@ -66,6 +66,7 @@ type shardAssignmentDispatcher struct {
 }
 
 func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmentsRequest, clientStream Client) error {
+	peerObject, _ := peer.FromContext(clientStream.Context())
 	s.Lock()
 
 	if s.assignments == nil {
@@ -115,9 +116,14 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 
 			assignments = filterByNamespace(assignments, namespace)
 			err := clientStream.Send(assignmentsInterceptorFunc(assignments))
+			s.log.Info("Send assignments to the client.",
+				slog.Any("assignments", assignments),
+				slog.Any("peer", peerObject.String()),
+				slog.Any("client", clientId),
+				slog.Any("err", err),
+			)
 			if err != nil {
 				if status.Code(err) != codes.Canceled {
-					peerObject, _ := peer.FromContext(clientStream.Context())
 					s.log.Warn(
 						"Failed to send shard assignment update to client",
 						slog.Any("error", err),
