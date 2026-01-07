@@ -32,20 +32,29 @@ import (
 )
 
 const (
-	markerFileName = "oxia-key-encoding-format"
-
+	markerFileName                          = "oxia-key-encoding-format"
 	keyEncodingFormatOldCompareHierarchical = "old-compare-hierarchical"
 )
+
+func makeDbBackupPath(path string) string {
+	return path + "-backup"
+}
+
+func makeSwapTmpDbPath(path string, encoder compare.Encoder) string {
+	return path + "-tmp-" + encoder.Name()
+}
 
 type pebbleDbConversion struct {
 	dbPath string
 	log    *slog.Logger
+	kvTrap *KvTrap
 }
 
-func newPebbleDbConversion(log *slog.Logger, dbPath string) *pebbleDbConversion {
+func newPebbleDbConversion(log *slog.Logger, dbPath string, kvTrap *KvTrap) *pebbleDbConversion {
 	return &pebbleDbConversion{
 		dbPath: dbPath,
 		log:    log,
+		kvTrap: kvTrap,
 	}
 }
 
@@ -91,18 +100,35 @@ func (p *pebbleDbConversion) configForNewerFormat() *pebble.Options {
 }
 
 func (p *pebbleDbConversion) checkConvertDB(desiredEncoding compare.Encoder) error {
+	dbBackPath := makeDbBackupPath(p.dbPath)
+
 	if !pathExists(p.dbPath) {
-		// No db, nothing to do
-		return nil
+		// No db, check if we need to recover from backup
+		if !pathExists(dbBackPath) {
+			// no backup, no need to convert DB
+			return nil
+		}
+		p.log.Info("Database backup found without primary database, indicating crash during conversion")
+		// recover backup and keep going
+		if err := os.Rename(dbBackPath, p.dbPath); err != nil {
+			return err
+		}
 	}
 
 	// DB already exists
+	// Check if we need to clean up the backup, as previous backup cleanup may have failed.
+	if pathExists(dbBackPath) {
+		p.log.Info("Database backup found alongside primary database, indicating incomplete cleanup after conversion")
+		if err := os.RemoveAll(dbBackPath); err != nil {
+			return err
+		}
+	}
+
 	var keyEncodingMarker string
 	if markerData, err := os.ReadFile(filepath.Join(p.dbPath, markerFileName)); err != nil {
 		if !os.IsNotExist(err) {
 			return err
 		}
-
 		// Older versions were not setting the marker
 		keyEncodingMarker = keyEncodingFormatOldCompareHierarchical
 	} else {
@@ -130,7 +156,6 @@ func (p *pebbleDbConversion) checkConvertDB(desiredEncoding compare.Encoder) err
 		if err != nil {
 			return err
 		}
-
 		return p.convertDb(
 			confOld, oldEncoder,
 			confNew, desiredEncoding)
@@ -199,7 +224,8 @@ func (p *pebbleDbConversion) convertDb(
 		slog.String("newEncodingFormat", newEncoder.Name()),
 		slog.Float64("size-mb", oldDbSizeMB))
 
-	newDbPath := p.dbPath + "-tmp-" + newEncoder.Name()
+	newDbPath := makeSwapTmpDbPath(p.dbPath, newEncoder)
+	oldDbBackupPath := makeDbBackupPath(p.dbPath)
 	if pathExists(newDbPath) {
 		p.log.Info("Removing previous temp conversion db", slog.String("path", newDbPath))
 		if err := os.RemoveAll(newDbPath); err != nil {
@@ -228,13 +254,25 @@ func (p *pebbleDbConversion) convertDb(
 		return errors.Wrap(err, "failed to close new database")
 	}
 
-	// Move the DB in the new place
-	if err := os.RemoveAll(p.dbPath); err != nil {
-		return errors.Wrap(err, "failed to remove old database")
+	if err := os.Rename(p.dbPath, oldDbBackupPath); err != nil {
+		return errors.Wrap(err, "failed to backup old database")
+	}
+
+	if err = p.kvTrap.Trigger("convertCrashAfterMoveOldDb"); err != nil {
+		return err
 	}
 
 	if err := os.Rename(newDbPath, p.dbPath); err != nil {
 		return errors.Wrap(err, "failed to rename new database")
+	}
+
+	if err = p.kvTrap.Trigger("convertCrashAfterMoveNewDb"); err != nil {
+		return err
+	}
+
+	// Delete the backup DB
+	if err := os.RemoveAll(oldDbBackupPath); err != nil {
+		return errors.Wrap(err, "failed to clean up old database backup")
 	}
 
 	duration := time.Since(startTime)
