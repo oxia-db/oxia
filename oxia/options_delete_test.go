@@ -15,10 +15,14 @@
 package oxia
 
 import (
+	"crypto/tls"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewClientConfig(t *testing.T) {
@@ -77,4 +81,112 @@ func TestWithRequestTimeout(t *testing.T) {
 		assert.Equal(t, item.expectedRequestTimeout, options.RequestTimeout())
 		assert.ErrorIs(t, err, item.expectedErr)
 	}
+}
+
+func TestWithCACertFile(t *testing.T) {
+	t.Run("valid CA cert file", func(t *testing.T) {
+		// Use the test CA cert from the security tests
+		caCertPath := filepath.Join("tests", "security", "certs", "ca.crt")
+		if _, err := os.Stat(caCertPath); os.IsNotExist(err) {
+			t.Skip("Test CA certificate not found, skipping test")
+		}
+
+		options, err := newClientOptions("serviceAddress", WithCACertFile(caCertPath))
+		require.NoError(t, err)
+		require.NotNil(t, options.tls)
+		require.NotNil(t, options.tls.RootCAs)
+	})
+
+	t.Run("non-existent file", func(t *testing.T) {
+		options, err := newClientOptions("serviceAddress", WithCACertFile("/nonexistent/ca.crt"))
+		assert.Error(t, err)
+		assert.Nil(t, options.tls)
+		assert.Contains(t, err.Error(), "failed to read CA certificate")
+	})
+
+	t.Run("invalid PEM file", func(t *testing.T) {
+		// Create a temporary file with invalid PEM data
+		tmpFile, err := os.CreateTemp("", "invalid-ca-*.crt")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		_, err = tmpFile.WriteString("not a valid PEM certificate")
+		require.NoError(t, err)
+		tmpFile.Close()
+
+		options, err := newClientOptions("serviceAddress", WithCACertFile(tmpFile.Name()))
+		assert.Error(t, err)
+		assert.Nil(t, options.tls)
+		assert.Contains(t, err.Error(), "failed to parse CA certificate")
+	})
+
+	t.Run("empty file", func(t *testing.T) {
+		tmpFile, err := os.CreateTemp("", "empty-ca-*.crt")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+		tmpFile.Close()
+
+		options, err := newClientOptions("serviceAddress", WithCACertFile(tmpFile.Name()))
+		assert.Error(t, err)
+		assert.Nil(t, options.tls)
+		assert.Contains(t, err.Error(), "failed to parse CA certificate")
+	})
+}
+
+func TestWithDisableIPv6(t *testing.T) {
+	options, err := newClientOptions("serviceAddress", WithDisableIPv6())
+	require.NoError(t, err)
+	assert.True(t, options.disableIPv6)
+}
+
+func TestWithCACertFileAndDisableIPv6(t *testing.T) {
+	caCertPath := filepath.Join("tests", "security", "certs", "ca.crt")
+	if _, err := os.Stat(caCertPath); os.IsNotExist(err) {
+		t.Skip("Test CA certificate not found, skipping test")
+	}
+
+	options, err := newClientOptions("serviceAddress",
+		WithCACertFile(caCertPath),
+		WithDisableIPv6(),
+	)
+	require.NoError(t, err)
+	assert.True(t, options.disableIPv6)
+	require.NotNil(t, options.tls)
+	require.NotNil(t, options.tls.RootCAs)
+}
+
+func TestWithTLSAndWithCACertFile(t *testing.T) {
+	caCertPath := filepath.Join("tests", "security", "certs", "ca.crt")
+	if _, err := os.Stat(caCertPath); os.IsNotExist(err) {
+		t.Skip("Test CA certificate not found, skipping test")
+	}
+
+	// Create an initial TLS config with custom settings
+	initialTLSConfig := &tls.Config{
+		ServerName:         "example.com",
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS13,
+	}
+
+	// First apply WithTLS, then WithCACertFile
+	// WithCACertFile should merge with the existing TLS config
+	options, err := newClientOptions("serviceAddress",
+		WithTLS(initialTLSConfig),
+		WithCACertFile(caCertPath),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, options.tls)
+
+	// Verify that WithCACertFile merged with the TLS config:
+	// 1. RootCAs should be set and contain the certificate from the file
+	require.NotNil(t, options.tls.RootCAs, "RootCAs should be set from CA cert file")
+
+	// 2. Previous settings from WithTLS should be preserved
+	assert.Equal(t, "example.com", options.tls.ServerName, "ServerName from WithTLS should be preserved")
+	assert.True(t, options.tls.InsecureSkipVerify, "InsecureSkipVerify from WithTLS should be preserved")
+	assert.Equal(t, tls.VersionTLS13, options.tls.MinVersion, "MinVersion from WithTLS should be preserved")
+
+	// 3. Verify the RootCAs contains the expected certificate
+	// We can't directly compare cert pools, but we can verify it's not nil and was set
+	assert.NotNil(t, options.tls.RootCAs)
 }
