@@ -58,10 +58,10 @@ var (
 )
 
 func (tls *TLSOptions) IsEnabled() bool {
-	if tls.CertFile != "" {
-		return true
-	}
 	if tls.Enabled == nil {
+		if tls.CertFile != "" {
+			return true
+		}
 		return false
 	}
 	return *tls.Enabled

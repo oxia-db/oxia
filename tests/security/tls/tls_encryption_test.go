@@ -88,6 +88,7 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 	dataServerOption.Server.Public.BindAddress = "localhost:0"
 	dataServerOption.Server.Public.TLS = *option
 	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Server.Internal.TLS = *option
 	dataServerOption.Observability.Metric.BindAddress = "localhost:0"
 	dataServerOption.Replication.TLS = *option
 	dataServerOption.Storage.Database.Dir = t.TempDir()
@@ -292,7 +293,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 
 func TestOnlyEnablePublicTls(t *testing.T) {
 	disableInternalTLS := func(config *dataserveroption.Options) {
-		config.Server.Public.TLS.Enabled = &constant.FlagFalse
+		config.Server.Internal.TLS.Enabled = &constant.FlagFalse
 		config.Replication.TLS.Enabled = &constant.FlagFalse
 	}
 	s1, sa1 := newTLSServerWithInterceptor(t, disableInternalTLS)
