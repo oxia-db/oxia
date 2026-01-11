@@ -84,7 +84,7 @@ func NewWithGrpcProvider(options *option.Options, provider rpc2.GrpcProvider, re
 	s.shardAssignmentDispatcher = assignment.NewShardAssignmentDispatcher(s.healthServer)
 
 	internalServer := options.Server.Internal
-	internalServerTls, err := internalServer.TLS.MakeServerTLSConf()
+	internalServerTls, err := internalServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func NewWithGrpcProvider(options *option.Options, provider rpc2.GrpcProvider, re
 	}
 
 	publicServer := options.Server.Public
-	publicServerTls, err := publicServer.TLS.MakeServerTLSConf()
+	publicServerTls, err := publicServer.TLS.TryIntoServerTLSConf()
 	s.publicRpcServer, err = newPublicRpcServer(provider, publicServer.BindAddress, s.shardsDirector,
 		s.shardAssignmentDispatcher, publicServerTls, &publicServer.Auth)
 	if err != nil {

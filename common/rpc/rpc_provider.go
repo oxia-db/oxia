@@ -49,7 +49,7 @@ type replicationRpcProvider struct {
 }
 
 func NewReplicationRpcProvider(options *option.ReplicationOptions) (ReplicationRpcProvider, error) {
-	tlsConf, err := options.TLS.MakeClientTLSConf()
+	tlsConf, err := options.TLS.TryIntoClientTLSConf()
 	if err != nil {
 		return nil, err
 	}

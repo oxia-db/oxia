@@ -108,7 +108,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 	}
 
 	publicServer := config.DataServerOptions.Server.Public
-	serverTls, err := publicServer.TLS.MakeServerTLSConf()
+	serverTls, err := publicServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}

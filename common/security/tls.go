@@ -58,6 +58,9 @@ var (
 )
 
 func (tls *TLSOptions) IsEnabled() bool {
+	if tls.CertFile != "" {
+		return true
+	}
 	if tls.Enabled == nil {
 		return false
 	}
@@ -115,7 +118,10 @@ func (tls *TLSOptions) trustedCertPool() (*x509.CertPool, error) {
 	return certPool, nil
 }
 
-func (tls *TLSOptions) MakeClientTLSConf() (*libtls.Config, error) {
+func (tls *TLSOptions) TryIntoClientTLSConf() (*libtls.Config, error) {
+	if !tls.IsEnabled() {
+		return nil, nil
+	}
 	tlsConf, err := tls.makeCommonConfig()
 	if err != nil {
 		return nil, err
@@ -136,7 +142,10 @@ func (tls *TLSOptions) MakeClientTLSConf() (*libtls.Config, error) {
 	return tlsConf, nil
 }
 
-func (tls *TLSOptions) MakeServerTLSConf() (*libtls.Config, error) {
+func (tls *TLSOptions) TryIntoServerTLSConf() (*libtls.Config, error) {
+	if !tls.IsEnabled() {
+		return nil, nil
+	}
 	tlsConf, err := tls.makeCommonConfig()
 	if err != nil {
 		return nil, err

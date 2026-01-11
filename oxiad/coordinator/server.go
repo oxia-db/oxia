@@ -144,7 +144,7 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 	}
 
 	controller := &options.Controller
-	controllerTls, err := controller.TLS.MakeClientTLSConf()
+	controllerTls, err := controller.TLS.TryIntoClientTLSConf()
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 	healthServer := health.NewServer()
 
 	internalServer := options.Server.Internal
-	internalServerTls, err := internalServer.TLS.MakeServerTLSConf()
+	internalServerTls, err := internalServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 	}
 
 	adminSv := options.Server.Admin
-	adminSvTls, err := adminSv.TLS.MakeServerTLSConf()
+	adminSvTls, err := adminSv.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}

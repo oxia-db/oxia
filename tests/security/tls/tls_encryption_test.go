@@ -126,7 +126,7 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -156,7 +156,7 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -190,7 +190,7 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -204,7 +204,7 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	// clear the CA file
 	tlsOption.TrustedCaFile = ""
 	assert.NoError(t, err)
-	tlsConf, err = tlsOption.MakeClientTLSConf()
+	tlsConf, err = tlsOption.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithTLS(tlsConf), oxia.WithRequestTimeout(1*time.Second))
 	assert.Error(t, err)
@@ -230,7 +230,7 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -245,7 +245,7 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	tlsOption.TrustedCaFile = ""
 	tlsOption.InsecureSkipVerify = true
 	assert.NoError(t, err)
-	tlsConf, err = tlsOption.MakeClientTLSConf()
+	tlsConf, err = tlsOption.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithTLS(tlsConf))
 	assert.NoError(t, err)
@@ -271,7 +271,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -283,7 +283,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 
 	tlsOption, err := getClientTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err = tlsOption.MakeClientTLSConf()
+	tlsConf, err = tlsOption.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithTLS(tlsConf))
 	assert.NoError(t, err)
@@ -327,7 +327,7 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	// success with cert
 	tlsOption, err := getClientTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := tlsOption.MakeClientTLSConf()
+	tlsConf, err := tlsOption.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 	client, err = oxia.NewSyncClient(sa1.Public, oxia.WithTLS(tlsConf))
 	assert.NoError(t, err)
