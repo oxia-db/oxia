@@ -52,8 +52,8 @@ func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Serv
 func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 	dataServerOption := option.NewDefaultOptions()
-	dataServerOption.Server.Public.BindAddress = "localhost:0"
-	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Server.Public.BindAddress = publicAddress
+	dataServerOption.Server.Internal.BindAddress = internalAddress
 	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption.Storage.Database.Dir = t.TempDir()
 	dataServerOption.Storage.WAL.Dir = t.TempDir()
