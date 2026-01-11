@@ -50,6 +50,8 @@ func init() {
 	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")
 
 	storageWal := &dataServerOptions.Storage.WAL
+	storageWal.Sync = new(bool) // init pointer value
+
 	Cmd.Flags().StringVar(&storageWal.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
 	Cmd.Flags().BoolVar(storageWal.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
 	Cmd.Flags().DurationVar(&storageWal.Retention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
