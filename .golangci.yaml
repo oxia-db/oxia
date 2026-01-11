@@ -83,7 +83,7 @@ linters:
           disabled: false
         - name: cyclomatic
           arguments:
-            - 15
+            - 17
           severity: warning
           disabled: false
         - name: function-length

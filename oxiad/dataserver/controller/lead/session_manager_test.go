@@ -25,8 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
+
 	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
@@ -572,7 +573,11 @@ func createSessionManager(t *testing.T) (kvstore.Factory, wal.Factory, *sessionM
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	walFactory := newTestWalFactory(t)
-	lc, err := NewLeaderController(conf.Config{NotificationsRetentionTime: 10 * time.Second}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	lc, err := NewLeaderController(&option.StorageOptions{
+		Notification: option.NotificationOptions{
+			Retention: 10 * time.Second,
+		},
+	}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
 	assert.NoError(t, err)
 	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
 	assert.NoError(t, err)
@@ -597,7 +602,7 @@ func reopenLeaderController(t *testing.T, kvFactory kvstore.Factory, walFactory 
 	assert.NoError(t, oldlc.Close())
 
 	var err error
-	lc, err := NewLeaderController(conf.Config{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
 	assert.NoError(t, err)
 	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
 	assert.NoError(t, err)

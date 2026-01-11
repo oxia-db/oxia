@@ -23,7 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -38,7 +38,7 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 )
 
-func getPeerTLSOption() (*security.TLSOption, error) {
+func getPeerTLSOption() (*security.TLSOptions, error) {
 	pwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func getPeerTLSOption() (*security.TLSOption, error) {
 	peerCertPath := filepath.Join(parentDir, "certs", "peer.crt")
 	peerKeyPath := filepath.Join(parentDir, "certs", "peer.key")
 
-	peerOption := security.TLSOption{
+	peerOption := security.TLSOptions{
 		CertFile:      peerCertPath,
 		KeyFile:       peerKeyPath,
 		TrustedCaFile: caCertPath,
@@ -56,7 +56,7 @@ func getPeerTLSOption() (*security.TLSOption, error) {
 	return &peerOption, nil
 }
 
-func getClientTLSOption() (*security.TLSOption, error) {
+func getClientTLSOption() (*security.TLSOptions, error) {
 	pwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func getClientTLSOption() (*security.TLSOption, error) {
 	peerCertPath := filepath.Join(parentDir, "certs", "client.crt")
 	peerKeyPath := filepath.Join(parentDir, "certs", "client.key")
 
-	clientOption := security.TLSOption{
+	clientOption := security.TLSOptions{
 		CertFile:      peerCertPath,
 		KeyFile:       peerKeyPath,
 		TrustedCaFile: caCertPath,
@@ -76,36 +76,28 @@ func getClientTLSOption() (*security.TLSOption, error) {
 
 func newTLSServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
-	return newTLSServerWithInterceptor(t, func(config *conf.Config) {
-
+	return newTLSServerWithInterceptor(t, func(config *dataserveroption.Options) {
 	})
 }
 
-func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *conf.Config)) (s *dataserver.Server, addr model.Server) {
+func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserveroption.Options)) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	serverTLSConf, err := option.MakeServerTLSConf()
-	assert.NoError(t, err)
 
-	peerTLSConf, err := option.MakeClientTLSConf()
-	assert.NoError(t, err)
+	dataServerOption := dataserveroption.NewDefaultOptions()
+	dataServerOption.Server.Public.BindAddress = "localhost:0"
+	dataServerOption.Server.Public.TLS = *option
+	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Server.Internal.TLS = *option
+	dataServerOption.Observability.Metric.BindAddress = "localhost:0"
+	dataServerOption.Replication.TLS = *option
+	dataServerOption.Storage.Database.Dir = t.TempDir()
+	dataServerOption.Storage.WAL.Dir = t.TempDir()
 
-	config := conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-		PeerTLS:                    peerTLSConf,
-		ServerTLS:                  serverTLSConf,
-		InternalServerTLS:          serverTLSConf,
-	}
+	interceptor(dataServerOption)
 
-	interceptor(&config)
-
-	s, err = dataserver.New(config)
+	s, err = dataserver.New(dataServerOption)
 
 	assert.NoError(t, err)
 
@@ -136,7 +128,7 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -166,7 +158,7 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -200,7 +192,7 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -214,7 +206,7 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	// clear the CA file
 	tlsOption.TrustedCaFile = ""
 	assert.NoError(t, err)
-	tlsConf, err = tlsOption.MakeClientTLSConf()
+	tlsConf, err = tlsOption.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithTLS(tlsConf), oxia.WithRequestTimeout(1*time.Second))
 	assert.Error(t, err)
@@ -240,7 +232,7 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -255,7 +247,7 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	tlsOption.TrustedCaFile = ""
 	tlsOption.InsecureSkipVerify = true
 	assert.NoError(t, err)
-	tlsConf, err = tlsOption.MakeClientTLSConf()
+	tlsConf, err = tlsOption.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithTLS(tlsConf))
 	assert.NoError(t, err)
@@ -281,7 +273,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	}
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := option.MakeClientTLSConf()
+	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(tlsConf, nil)
@@ -293,7 +285,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 
 	tlsOption, err := getClientTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err = tlsOption.MakeClientTLSConf()
+	tlsConf, err = tlsOption.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithTLS(tlsConf))
 	assert.NoError(t, err)
@@ -301,9 +293,9 @@ func TestClientHandshakeSuccess(t *testing.T) {
 }
 
 func TestOnlyEnablePublicTls(t *testing.T) {
-	disableInternalTLS := func(config *conf.Config) {
-		config.InternalServerTLS = nil
-		config.PeerTLS = nil
+	disableInternalTLS := func(config *dataserveroption.Options) {
+		config.Server.Internal.TLS.Enabled = &constant.FlagFalse
+		config.Replication.TLS.Enabled = &constant.FlagFalse
 	}
 	s1, sa1 := newTLSServerWithInterceptor(t, disableInternalTLS)
 	defer s1.Close()
@@ -337,7 +329,7 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	// success with cert
 	tlsOption, err := getClientTLSOption()
 	assert.NoError(t, err)
-	tlsConf, err := tlsOption.MakeClientTLSConf()
+	tlsConf, err := tlsOption.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 	client, err = oxia.NewSyncClient(sa1.Public, oxia.WithTLS(tlsConf))
 	assert.NoError(t, err)

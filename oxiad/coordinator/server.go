@@ -15,59 +15,33 @@
 package coordinator
 
 import (
-	"crypto/tls"
-	"fmt"
 	"log/slog"
+	"strings"
 
+	"github.com/fsnotify/fsnotify"
+	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
+	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/oxia-db/oxia/oxiad/common/entity"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-
-	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/rpc"
 )
-
-type Config struct {
-	InternalServiceAddr       string
-	AdminServiceAddr          string
-	InternalSecureServiceAddr string
-	PeerTLS                   *tls.Config `json:"-"`
-	ServerTLS                 *tls.Config `json:"-"`
-	MetricsServiceAddr        string
-	MetadataProviderName      string
-	K8SMetadataNamespace      string
-	K8SMetadataConfigMapName  string
-	FileMetadataPath          string
-
-	RaftBootstrapNodes []string
-	RaftAddress        string
-	RaftDataDir        string
-
-	ClusterConfigProvider            func() (model.ClusterConfig, error) `json:"-"`
-	ClusterConfigChangeNotifications chan any                            `json:"-"`
-}
-
-func NewConfig() Config {
-	return Config{
-		InternalServiceAddr:  fmt.Sprintf("localhost:%d", constant.DefaultInternalPort),
-		MetricsServiceAddr:   fmt.Sprintf("localhost:%d", constant.DefaultMetricsPort),
-		AdminServiceAddr:     fmt.Sprintf("localhost:%d", constant.DefaultAdminPort),
-		MetadataProviderName: metadata.ProviderNameFile,
-	}
-}
 
 type GrpcServer struct {
 	grpcServer   rpc2.GrpcServer
@@ -78,23 +52,91 @@ type GrpcServer struct {
 	metrics      *metric.PrometheusMetrics
 }
 
-func NewGrpcServer(config Config) (*GrpcServer, error) {
-	slog.Info("Starting Oxia coordinator", slog.Any("config", config))
+func setConfigPath(cluster *option.ClusterOptions, v *viper.Viper) error {
+	v.SetConfigType("yaml")
+	configPath := cluster.ConfigPath
+
+	if strings.HasPrefix(configPath, "configmap:") {
+		err := v.AddRemoteProvider("configmap", "endpoint", configPath)
+		if err != nil {
+			slog.Error("Failed to add remote provider", slog.Any("error", err))
+			return err
+		}
+		return v.WatchRemoteConfigOnChannel()
+	}
+	if configPath == "" {
+		v.AddConfigPath("/oxia/conf")
+		v.AddConfigPath(".")
+	}
+
+	v.SetConfigFile(configPath)
+	v.WatchConfig()
+	return nil
+}
+
+func loadClusterConfig(cluster *option.ClusterOptions, v *viper.Viper) (model.ClusterConfig, error) {
+	cc := model.ClusterConfig{}
+
+	var err error
+
+	if strings.HasPrefix(cluster.ConfigPath, "configmap:") {
+		err = v.ReadRemoteConfig()
+	} else {
+		err = v.ReadInConfig()
+	}
+
+	if err != nil {
+		return cc, err
+	}
+
+	if err := v.Unmarshal(&cc, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
+		entity.OptBooleanViperHook(),
+		mapstructure.StringToTimeDurationHookFunc(), // default hook
+		mapstructure.StringToSliceHookFunc(","),     // default hook
+	))); err != nil {
+		return cc, errors.Wrap(err, "failed to load cluster config")
+	}
+
+	return cc, nil
+}
+
+func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
+	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
+	v := viper.New()
+
+	clusterConfigChangeNotifications := make(chan any)
+	v.OnConfigChange(func(_ fsnotify.Event) {
+		clusterConfigChangeNotifications <- nil
+	})
+
+	clusterConfigProvider := func() (model.ClusterConfig, error) {
+		return loadClusterConfig(&options.Cluster, v)
+	}
+
+	if err := setConfigPath(&options.Cluster, v); err != nil {
+		return nil, err
+	}
+
+	if _, err := loadClusterConfig(&options.Cluster, v); err != nil {
+		return nil, err
+	}
+
+	meta := &options.Metadata
 
 	var metadataProvider metadata.Provider
-	switch config.MetadataProviderName {
+	switch meta.ProviderName {
 	case metadata.ProviderNameMemory:
 		metadataProvider = metadata.NewMetadataProviderMemory()
 	case metadata.ProviderNameFile:
-		metadataProvider = metadata.NewMetadataProviderFile(config.FileMetadataPath)
+		metadataProvider = metadata.NewMetadataProviderFile(meta.File.Path)
 	case metadata.ProviderNameConfigmap:
 		k8sConfig := metadata.NewK8SClientConfig()
 		metadataProvider = metadata.NewMetadataProviderConfigMap(metadata.NewK8SClientset(k8sConfig),
-			config.K8SMetadataNamespace, config.K8SMetadataConfigMapName)
+			meta.Kubernetes.Namespace, meta.Kubernetes.ConfigMapName)
 	case metadata.ProviderNameRaft:
 		var err error
 		metadataProvider, err = metadata.NewMetadataProviderRaft(
-			config.RaftAddress, config.RaftBootstrapNodes, config.RaftDataDir)
+			meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create raft metadata provider")
 		}
@@ -102,37 +144,54 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 		return nil, errors.New(`must be one of "memory", "configmap" or "file"`)
 	}
 
-	clientPool := rpc.NewClientPool(config.PeerTLS, nil)
+	controller := &options.Controller
+	controllerTLS, err := controller.TLS.TryIntoClientTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, config.ClusterConfigProvider, config.ClusterConfigChangeNotifications, rpcClient)
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient)
 	if err != nil {
 		return nil, err
 	}
 
 	healthServer := health.NewServer()
 
-	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", config.InternalServiceAddr, func(registrar grpc.ServiceRegistrar) {
+	internalServer := options.Server.Internal
+	internalServerTLS, err := internalServer.TLS.TryIntoServerTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) {
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
-	}, config.ServerTLS, &auth.Disabled)
-
+	}, internalServerTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
 
-	// Construct the admin server
-	admin := newAdminServer(coordinatorInstance.StatusResource(), config.ClusterConfigProvider)
-	// Start admin grpc server
-	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", config.AdminServiceAddr, func(registrar grpc.ServiceRegistrar) {
+	adminSv := options.Server.Admin
+	adminSvTLS, err := adminSv.TLS.TryIntoServerTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	admin := newAdminServer(coordinatorInstance.StatusResource(), clusterConfigProvider)
+	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaAdminServer(registrar, admin)
-	}, config.ServerTLS, &auth.Disabled)
-
+	}, adminSvTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
-	metrics, err := metric.Start(config.MetricsServiceAddr)
-	if err != nil {
-		return nil, err
+
+	metrics := options.Observability.Metric
+
+	var metricsServer *metric.PrometheusMetrics
+	if metrics.IsEnabled() {
+		metricsServer, err = metric.Start(metrics.BindAddress)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &GrpcServer{
@@ -141,17 +200,21 @@ func NewGrpcServer(config Config) (*GrpcServer, error) {
 		healthServer: healthServer,
 		clientPool:   clientPool,
 		coordinator:  coordinatorInstance,
-		metrics:      metrics,
+		metrics:      metricsServer,
 	}, nil
 }
 
 func (s *GrpcServer) Close() error {
+	var err error
 	s.healthServer.Shutdown()
-	return multierr.Combine(
+	err = multierr.Combine(
 		s.clientPool.Close(),
 		s.grpcServer.Close(),
 		s.adminServer.Close(),
 		s.coordinator.Close(),
-		s.metrics.Close(),
 	)
+	if s.metrics != nil {
+		err = multierr.Append(err, s.metrics.Close())
+	}
+	return err
 }

@@ -19,6 +19,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/oxia-db/oxia/oxiad/common/option"
+
 	"github.com/oxia-db/oxia/common/constant"
 )
 
@@ -31,7 +33,7 @@ func InternalAddr(cmd *cobra.Command, conf *string) {
 }
 
 func MetricsAddr(cmd *cobra.Command, conf *string) {
-	cmd.Flags().StringVarP(conf, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", constant.DefaultMetricsPort), "Metrics service bind address")
+	cmd.Flags().StringVarP(conf, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", option.DefaultMetricsPort), "Metrics service bind address")
 }
 
 func AdminAddr(cmd *cobra.Command, conf *string) {

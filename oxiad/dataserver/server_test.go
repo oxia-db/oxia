@@ -23,19 +23,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
 )
 
 func TestNewServer(t *testing.T) {
-	config := conf.Config{
-		InternalServiceAddr: "localhost:0",
-		PublicServiceAddr:   "localhost:0",
-		MetricsServiceAddr:  "localhost:0",
-	}
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.BindAddress = "localhost:0"
+	options.Storage.Database.Dir = t.TempDir()
+	options.Storage.WAL.Dir = t.TempDir()
 
-	server, err := New(config)
+	server, err := New(options)
 	assert.NoError(t, err)
 
 	url := fmt.Sprintf("http://localhost:%d/metrics", server.metrics.Port())
@@ -55,13 +56,14 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestNewServerClosableWithHealthWatch(t *testing.T) {
-	config := conf.Config{
-		InternalServiceAddr: "localhost:0",
-		PublicServiceAddr:   "localhost:0",
-		MetricsServiceAddr:  "localhost:0",
-	}
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.BindAddress = "localhost:0"
+	options.Storage.Database.Dir = t.TempDir()
+	options.Storage.WAL.Dir = t.TempDir()
 
-	server, err := New(config)
+	server, err := New(options)
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(nil, nil)

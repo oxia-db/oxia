@@ -32,7 +32,7 @@ var (
 func initExampleServer(serviceAddr string) *dataserver.Standalone {
 	dir, _ := os.MkdirTemp(os.TempDir(), "oxia-test-*")
 	config := dataserver.NewTestConfig(dir)
-	config.PublicServiceAddr = serviceAddr
+	config.DataServerOptions.Server.Public.BindAddress = serviceAddr
 	standaloneServer, err := dataserver.NewStandalone(config)
 	if err != nil {
 		log.Fatal(err)

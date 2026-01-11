@@ -15,189 +15,75 @@
 package coordinator
 
 import (
+	"fmt"
 	"io"
-	"log/slog"
-	"strings"
 
-	"github.com/fsnotify/fsnotify"
-	"github.com/mitchellh/mapstructure"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/oxiad/common/entity"
-
-	"github.com/oxia-db/oxia/cmd/flag"
-	"github.com/oxia-db/oxia/common/security"
+	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	"github.com/oxia-db/oxia/oxiad/coordinator"
+	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
 var (
-	conf       = coordinator.NewConfig()
-	configFile string
-	peerTLS    security.TLSOption
-	serverTLS  security.TLSOption
-
-	Cmd = &cobra.Command{
-		Use:     "coordinator",
-		Short:   "Start a coordinator",
-		Long:    `Start a coordinator`,
-		PreRunE: validate,
-		RunE:    exec,
+	coordinatorOptions = option.NewDefaultOptions()
+	Cmd                = &cobra.Command{
+		Use:   "coordinator",
+		Short: "Start a coordinator",
+		Long:  `Start a coordinator`,
+		Run:   exec,
 	}
 )
 
 func init() {
-	flag.InternalAddr(Cmd, &conf.InternalServiceAddr)
-	flag.MetricsAddr(Cmd, &conf.MetricsServiceAddr)
-	flag.AdminAddr(Cmd, &conf.AdminServiceAddr)
-	Cmd.Flags().StringVar(&conf.MetadataProviderName, "metadata", "file", "Metadata provider implementation: file, configmap, raft or memory")
+	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
+	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Admin.BindAddress, "admin-addr", "a", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Admin service bind address")
 
-	Cmd.Flags().StringVar(&conf.K8SMetadataNamespace, "k8s-namespace", conf.K8SMetadataNamespace, "Kubernetes namespace for oxia config maps")
-	Cmd.Flags().StringVar(&conf.K8SMetadataConfigMapName, "k8s-configmap-name", conf.K8SMetadataConfigMapName, "ConfigMap name for cluster status configmap")
+	observability := &coordinatorOptions.Observability
+	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")
 
-	Cmd.Flags().StringVar(&conf.FileMetadataPath, "file-clusters-status-path", "data/cluster-status.json", "The path where the cluster status is stored when using 'file' provider")
+	meta := &coordinatorOptions.Metadata
+	Cmd.Flags().StringVar(&meta.ProviderName, "metadata", "file", "Metadata provider implementation: file, configmap, raft or memory")
 
-	Cmd.Flags().StringSliceVar(&conf.RaftBootstrapNodes, "raft-bootstrap-nodes", conf.RaftBootstrapNodes, "Raft bootstrap nodes")
-	Cmd.Flags().StringVar(&conf.RaftAddress, "raft-address", "", "Raft address")
-	Cmd.Flags().StringVar(&conf.RaftDataDir, "raft-data-dir", "data/raft", "Raft address")
+	Cmd.Flags().StringVar(&meta.Kubernetes.Namespace, "k8s-namespace", meta.Kubernetes.Namespace, "Kubernetes namespace for oxia config maps")
+	Cmd.Flags().StringVar(&meta.Kubernetes.ConfigMapName, "k8s-configmap-name", meta.Kubernetes.ConfigMapName, "ConfigMap name for cluster status configmap")
 
-	Cmd.Flags().StringVarP(&configFile, "conf", "f", "", "Cluster config file")
+	Cmd.Flags().StringVar(&meta.File.Path, "file-clusters-status-path", "data/cluster-status.json", "The path where the cluster status is stored when using 'file' provider")
 
-	// server TLS section
-	Cmd.Flags().StringVar(&serverTLS.CertFile, "tls-cert-file", "", "Tls certificate file")
-	Cmd.Flags().StringVar(&serverTLS.KeyFile, "tls-key-file", "", "Tls key file")
-	Cmd.Flags().Uint16Var(&serverTLS.MinVersion, "tls-min-version", 0, "Tls minimum version")
-	Cmd.Flags().Uint16Var(&serverTLS.MaxVersion, "tls-max-version", 0, "Tls maximum version")
-	Cmd.Flags().StringVar(&serverTLS.TrustedCaFile, "tls-trusted-ca-file", "", "Tls trusted ca file")
-	Cmd.Flags().BoolVar(&serverTLS.InsecureSkipVerify, "tls-insecure-skip-verify", false, "Tls insecure skip verify")
-	Cmd.Flags().BoolVar(&serverTLS.ClientAuth, "tls-client-auth", false, "Tls client auth")
+	Cmd.Flags().StringSliceVar(&meta.Raft.BootstrapNodes, "raft-bootstrap-nodes", meta.Raft.BootstrapNodes, "Raft bootstrap nodes")
+	Cmd.Flags().StringVar(&meta.Raft.Address, "raft-address", "", "Raft address")
+	Cmd.Flags().StringVar(&meta.Raft.DataDir, "raft-data-dir", "data/raft", "Raft address")
 
-	// peer client TLS section
-	Cmd.Flags().StringVar(&peerTLS.CertFile, "peer-tls-cert-file", "", "Peer tls certificate file")
-	Cmd.Flags().StringVar(&peerTLS.KeyFile, "peer-tls-key-file", "", "Peer tls key file")
-	Cmd.Flags().Uint16Var(&peerTLS.MinVersion, "peer-tls-min-version", 0, "Peer tls minimum version")
-	Cmd.Flags().Uint16Var(&peerTLS.MaxVersion, "peer-tls-max-version", 0, "Peer tls maximum version")
-	Cmd.Flags().StringVar(&peerTLS.TrustedCaFile, "peer-tls-trusted-ca-file", "", "Peer tls trusted ca file")
-	Cmd.Flags().BoolVar(&peerTLS.InsecureSkipVerify, "peer-tls-insecure-skip-verify", false, "Peer tls insecure skip verify")
-	Cmd.Flags().StringVar(&peerTLS.ServerName, "peer-tls-server-name", "", "Peer tls server name")
+	cluster := &coordinatorOptions.Cluster
+	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Cluster config file")
+
+	internalServer := &coordinatorOptions.Server.Internal
+	Cmd.Flags().StringVar(&internalServer.TLS.CertFile, "tls-cert-file", "", "Tls certificate file")
+	Cmd.Flags().StringVar(&internalServer.TLS.KeyFile, "tls-key-file", "", "Tls key file")
+	Cmd.Flags().Uint16Var(&internalServer.TLS.MinVersion, "tls-min-version", 0, "Tls minimum version")
+	Cmd.Flags().Uint16Var(&internalServer.TLS.MaxVersion, "tls-max-version", 0, "Tls maximum version")
+	Cmd.Flags().StringVar(&internalServer.TLS.TrustedCaFile, "tls-trusted-ca-file", "", "Tls trusted ca file")
+	Cmd.Flags().BoolVar(&internalServer.TLS.InsecureSkipVerify, "tls-insecure-skip-verify", false, "Tls insecure skip verify")
+	Cmd.Flags().BoolVar(&internalServer.TLS.ClientAuth, "tls-client-auth", false, "Tls client auth")
+
+	controller := &coordinatorOptions.Controller
+	Cmd.Flags().StringVar(&controller.TLS.CertFile, "peer-tls-cert-file", "", "Peer tls certificate file")
+	Cmd.Flags().StringVar(&controller.TLS.KeyFile, "peer-tls-key-file", "", "Peer tls key file")
+	Cmd.Flags().Uint16Var(&controller.TLS.MinVersion, "peer-tls-min-version", 0, "Peer tls minimum version")
+	Cmd.Flags().Uint16Var(&controller.TLS.MaxVersion, "peer-tls-max-version", 0, "Peer tls maximum version")
+	Cmd.Flags().StringVar(&controller.TLS.TrustedCaFile, "peer-tls-trusted-ca-file", "", "Peer tls trusted ca file")
+	Cmd.Flags().BoolVar(&controller.TLS.InsecureSkipVerify, "peer-tls-insecure-skip-verify", false, "Peer tls insecure skip verify")
+	Cmd.Flags().StringVar(&controller.TLS.ServerName, "peer-tls-server-name", "", "Peer tls server name")
 }
 
-func validate(*cobra.Command, []string) error {
-	switch conf.MetadataProviderName {
-	case metadata.ProviderNameConfigmap:
-		if conf.K8SMetadataNamespace == "" {
-			return errors.New("k8s-namespace must be set with metadata=configmap")
-		}
-		if conf.K8SMetadataConfigMapName == "" {
-			return errors.New("k8s-configmap-name must be set with metadata=configmap")
-		}
-	case metadata.ProviderNameRaft:
-		if conf.RaftAddress == "" {
-			return errors.New("raft-address must be set with metadata=raft")
-		}
-	default:
-		// no-op
-	}
-
-	switch conf.MetadataProviderName {
-	case "memory", "configmap", "raft", "file":
-		return nil
-	default:
-		return errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
-	}
-}
-
-func configIsRemote() bool {
-	return strings.HasPrefix(configFile, "configmap:")
-}
-
-func setConfigPath(v *viper.Viper) error {
-	v.SetConfigType("yaml")
-
-	if configIsRemote() {
-		err := v.AddRemoteProvider("configmap", "endpoint", configFile)
-		if err != nil {
-			slog.Error("Failed to add remote provider", slog.Any("error", err))
-			return err
-		}
-
-		return v.WatchRemoteConfigOnChannel()
-	}
-
-	if configFile == "" {
-		v.AddConfigPath("/oxia/conf")
-		v.AddConfigPath(".")
-	}
-
-	v.SetConfigFile(configFile)
-	v.WatchConfig()
-	return nil
-}
-
-func loadClusterConfig(v *viper.Viper) (model.ClusterConfig, error) {
-	cc := model.ClusterConfig{}
-
-	var err error
-
-	if configIsRemote() {
-		err = v.ReadRemoteConfig()
-	} else {
-		err = v.ReadInConfig()
-	}
-
-	if err != nil {
-		return cc, err
-	}
-
-	if err := v.Unmarshal(&cc, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
-		entity.OptBooleanViperHook(),
-		mapstructure.StringToTimeDurationHookFunc(), // default hook
-		mapstructure.StringToSliceHookFunc(","),     // default hook
-	))); err != nil {
-		return cc, errors.Wrap(err, "failed to load cluster config")
-	}
-
-	return cc, nil
-}
-
-func exec(*cobra.Command, []string) error {
-	v := viper.New()
-
-	conf.ClusterConfigChangeNotifications = make(chan any)
-	conf.ClusterConfigProvider = func() (model.ClusterConfig, error) {
-		return loadClusterConfig(v)
-	}
-
-	v.OnConfigChange(func(_ fsnotify.Event) {
-		conf.ClusterConfigChangeNotifications <- nil
-	})
-
-	if err := setConfigPath(v); err != nil {
-		return err
-	}
-
-	if _, err := loadClusterConfig(v); err != nil {
-		return err
-	}
-
+func exec(*cobra.Command, []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		var err error
-		if serverTLS.IsConfigured() {
-			if conf.ServerTLS, err = serverTLS.MakeServerTLSConf(); err != nil {
-				return nil, err
-			}
+		coordinatorOptions.WithDefault()
+		if err := coordinatorOptions.Validate(); err != nil {
+			return nil, err
 		}
-		if peerTLS.IsConfigured() {
-			if conf.PeerTLS, err = peerTLS.MakeClientTLSConf(); err != nil {
-				return nil, err
-			}
-		}
-		return coordinator.NewGrpcServer(conf)
+		return coordinator.NewGrpcServer(coordinatorOptions)
 	})
-	return nil
 }

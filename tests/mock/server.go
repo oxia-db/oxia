@@ -17,11 +17,11 @@ package mock
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
@@ -29,16 +29,14 @@ import (
 
 func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
-
+	dataServerOption := option.NewDefaultOptions()
+	dataServerOption.Server.Public.BindAddress = "localhost:0"
+	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption.Storage.Database.Dir = t.TempDir()
+	dataServerOption.Storage.WAL.Dir = t.TempDir()
 	var err error
-	s, err = dataserver.New(conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-	})
+	s, err = dataserver.New(dataServerOption)
 
 	assert.NoError(t, err)
 
@@ -54,16 +52,15 @@ func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Serv
 
 func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
+	dataServerOption := option.NewDefaultOptions()
+	dataServerOption.Server.Public.BindAddress = publicAddress
+	dataServerOption.Server.Internal.BindAddress = internalAddress
+	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption.Storage.Database.Dir = t.TempDir()
+	dataServerOption.Storage.WAL.Dir = t.TempDir()
 
 	var err error
-	s, err = dataserver.New(conf.Config{
-		PublicServiceAddr:          publicAddress,
-		InternalServiceAddr:        internalAddress,
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-	})
+	s, err = dataserver.New(dataServerOption)
 
 	assert.NoError(t, err)
 

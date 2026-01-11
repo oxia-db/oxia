@@ -29,7 +29,7 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
@@ -55,46 +55,45 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	jsonParams, err := json.Marshal(options)
 	assert.NoError(t, err)
 	authParams := auth.Options{
-		ProviderName:   auth.ProviderOIDC,
+		Provider:       auth.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
-	s1, err := dataserver.New(conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-		AuthOptions:                authParams,
-	})
+	dataServerOption1 := option.NewDefaultOptions()
+	dataServerOption1.Server.Public.BindAddress = "localhost:0"
+	dataServerOption1.Server.Public.Auth = authParams
+	dataServerOption1.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption1.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption1.Storage.Database.Dir = t.TempDir()
+	dataServerOption1.Storage.WAL.Dir = t.TempDir()
+	s1, err := dataserver.New(dataServerOption1)
 	assert.NoError(t, err)
 	s1Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
-	s2, err := dataserver.New(conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-		AuthOptions:                authParams,
-	})
+	dataServerOption2 := option.NewDefaultOptions()
+	dataServerOption2.Server.Public.BindAddress = "localhost:0"
+	dataServerOption2.Server.Public.Auth = authParams
+	dataServerOption2.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption2.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption2.Storage.Database.Dir = t.TempDir()
+	dataServerOption2.Storage.WAL.Dir = t.TempDir()
+
+	s2, err := dataserver.New(dataServerOption2)
 	assert.NoError(t, err)
 	s2Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
-	s3, err := dataserver.New(conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-		AuthOptions:                authParams,
-	})
+	dataServerOption3 := option.NewDefaultOptions()
+	dataServerOption3.Server.Public.BindAddress = "localhost:0"
+	dataServerOption3.Server.Public.Auth = authParams
+	dataServerOption3.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption3.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption3.Storage.Database.Dir = t.TempDir()
+	dataServerOption3.Storage.WAL.Dir = t.TempDir()
+
+	s3, err := dataserver.New(dataServerOption3)
 	assert.NoError(t, err)
 	s3Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),
