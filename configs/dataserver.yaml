@@ -4,40 +4,40 @@ server:
     auth:
       provider: "oidc"
       providerParams: "{}"
-    tls:
-      certFile: ""
-      keyFile: ""
-      minVersion: 0
-      maxVersion: 0
-      trustedCaFile: ""
-      insecureSkipVerify: false
-      clientAuth: false
+#    tls:
+#      certFile: ""
+#      keyFile: ""
+#      minVersion: 0
+#      maxVersion: 0
+#      trustedCaFile: ""
+#      insecureSkipVerify: false
+#      clientAuth: false
   internal:
     bindAddress: "127.0.0.1:6649"
-    tls:
-      certFile: ""
-      keyFile: ""
-      minVersion: 0
-      maxVersion: 0
-      trustedCaFile: ""
-      insecureSkipVerify: false
-      clientAuth: false
+#    tls:
+#      certFile: ""
+#      keyFile: ""
+#      minVersion: 0
+#      maxVersion: 0
+#      trustedCaFile: ""
+#      insecureSkipVerify: false
+#      clientAuth: false
 replication:
-  tls:
-    certFile: ""
-    keyFile: ""
-    minVersion: 0
-    maxVersion: 0
-    trustedCaFile: ""
-    insecureSkipVerify: false
-    serverName: ""
+#  tls:
+#    certFile: ""
+#    keyFile: ""
+#    minVersion: 0
+#    maxVersion: 0
+#    trustedCaFile: ""
+#    insecureSkipVerify: false
+#    serverName: ""
 storage:
   wal:
-    dir: ./data/wal
+    dir: "./data/wal"
     sync: true
     retention: "1h"
   database:
-    dir: ./data/db
+    dir: "./data/db"
     readCache: "100MiB"
   notification:
     retention: "1h"

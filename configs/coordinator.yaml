@@ -3,37 +3,37 @@ cluster:
 server:
   admin:
     bindAddress: "127.0.0.1:6651"
-    tls:
-      certFile: ""
-      keyFile: ""
-      minVersion: 0
-      maxVersion: 0
-      trustedCaFile: ""
-      insecureSkipVerify: false
-      clientAuth: false
+#    tls:
+#      certFile: ""
+#      keyFile: ""
+#      minVersion: 0
+#      maxVersion: 0
+#      trustedCaFile: ""
+#      insecureSkipVerify: false
+#      clientAuth: false
 controller:
-  tls:
-    certFile: ""
-    keyFile: ""
-    minVersion: 0
-    maxVersion: 0
-    trustedCaFile: ""
-    insecureSkipVerify: false
-    serverName: ""
+#  tls:
+#    certFile: ""
+#    keyFile: ""
+#    minVersion: 0
+#    maxVersion: 0
+#    trustedCaFile: ""
+#    insecureSkipVerify: false
+#    serverName: ""
 metadata:
   providerName: file
-  kubernetes:
-    namespace: "oxia"
-    configMapName: ""
+#  kubernetes:
+#    namespace: "oxia"
+#    configMapName: ""
   file:
     path: "./data/cluster-status.json"
-  raft:
-    bootstrapNodes:
-      - ""
-      - ""
-      - ""
-    bindAddress: ""
-    dataDir: ""
+#  raft:
+#    bootstrapNodes:
+#      - ""
+#      - ""
+#      - ""
+#    bindAddress: ""
+#    dataDir: ""
 observability:
   metric:
     bindAddress: "127.0.0.1:8080"
