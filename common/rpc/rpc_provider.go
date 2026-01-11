@@ -20,8 +20,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"google.golang.org/grpc/metadata"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"

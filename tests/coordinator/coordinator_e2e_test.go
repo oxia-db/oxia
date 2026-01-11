@@ -23,8 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/proto"
 
@@ -757,7 +758,6 @@ func TestCoordinator_KeySorting(t *testing.T) {
 		{"natural"},
 	} {
 		t.Run(test.sorting, func(t *testing.T) {
-
 			dataServerOption := option.NewDefaultOptions()
 			dataServerOption.Server.Public.BindAddress = "localhost:0"
 			dataServerOption.Server.Internal.BindAddress = "localhost:0"

@@ -19,10 +19,11 @@ import (
 	"io"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/oxia-db/oxia/common/constant"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
-	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -65,32 +66,32 @@ func init() {
 	Cmd.Flags().StringVar(&publicAuth.Provider, "auth-provider-name", "", "Authentication provider name. supported: oidc")
 	Cmd.Flags().StringVar(&publicAuth.ProviderParams, "auth-provider-params", "", "Authentication provider params. \n oidc: "+"{\"allowedIssueURLs\":\"required1,required2\",\"allowedAudiences\":\"required1,required2\",\"userNameClaim\":\"optional(default:sub)\"}")
 
-	publicTls := &dataServerOptions.Server.Public.TLS
-	Cmd.Flags().StringVar(&publicTls.CertFile, "tls-cert-file", "", "Tls certificate file")
-	Cmd.Flags().StringVar(&publicTls.KeyFile, "tls-key-file", "", "Tls key file")
-	Cmd.Flags().Uint16Var(&publicTls.MinVersion, "tls-min-version", 0, "Tls minimum version")
-	Cmd.Flags().Uint16Var(&publicTls.MaxVersion, "tls-max-version", 0, "Tls maximum version")
-	Cmd.Flags().StringVar(&publicTls.TrustedCaFile, "tls-trusted-ca-file", "", "Tls trusted ca file")
-	Cmd.Flags().BoolVar(&publicTls.InsecureSkipVerify, "tls-insecure-skip-verify", false, "Tls insecure skip verify")
-	Cmd.Flags().BoolVar(&publicTls.ClientAuth, "tls-client-auth", false, "Tls client auth")
+	publicTLS := &dataServerOptions.Server.Public.TLS
+	Cmd.Flags().StringVar(&publicTLS.CertFile, "tls-cert-file", "", "Tls certificate file")
+	Cmd.Flags().StringVar(&publicTLS.KeyFile, "tls-key-file", "", "Tls key file")
+	Cmd.Flags().Uint16Var(&publicTLS.MinVersion, "tls-min-version", 0, "Tls minimum version")
+	Cmd.Flags().Uint16Var(&publicTLS.MaxVersion, "tls-max-version", 0, "Tls maximum version")
+	Cmd.Flags().StringVar(&publicTLS.TrustedCaFile, "tls-trusted-ca-file", "", "Tls trusted ca file")
+	Cmd.Flags().BoolVar(&publicTLS.InsecureSkipVerify, "tls-insecure-skip-verify", false, "Tls insecure skip verify")
+	Cmd.Flags().BoolVar(&publicTLS.ClientAuth, "tls-client-auth", false, "Tls client auth")
 
-	internalTls := &dataServerOptions.Server.Public.TLS
-	Cmd.Flags().StringVar(&internalTls.CertFile, "internal-tls-cert-file", "", "Internal server tls certificate file")
-	Cmd.Flags().StringVar(&internalTls.KeyFile, "internal-tls-key-file", "", "Internal server tls key file")
-	Cmd.Flags().Uint16Var(&internalTls.MinVersion, "internal-tls-min-version", 0, "Internal server tls minimum version")
-	Cmd.Flags().Uint16Var(&internalTls.MaxVersion, "internal-tls-max-version", 0, "Internal server tls maximum version")
-	Cmd.Flags().StringVar(&internalTls.TrustedCaFile, "internal-tls-trusted-ca-file", "", "Internal server tls trusted ca file")
-	Cmd.Flags().BoolVar(&internalTls.InsecureSkipVerify, "internal-tls-insecure-skip-verify", false, "Internal server tls insecure skip verify")
-	Cmd.Flags().BoolVar(&internalTls.ClientAuth, "internal-tls-client-auth", false, "Internal server tls client auth")
+	internalTLS := &dataServerOptions.Server.Public.TLS
+	Cmd.Flags().StringVar(&internalTLS.CertFile, "internal-tls-cert-file", "", "Internal server tls certificate file")
+	Cmd.Flags().StringVar(&internalTLS.KeyFile, "internal-tls-key-file", "", "Internal server tls key file")
+	Cmd.Flags().Uint16Var(&internalTLS.MinVersion, "internal-tls-min-version", 0, "Internal server tls minimum version")
+	Cmd.Flags().Uint16Var(&internalTLS.MaxVersion, "internal-tls-max-version", 0, "Internal server tls maximum version")
+	Cmd.Flags().StringVar(&internalTLS.TrustedCaFile, "internal-tls-trusted-ca-file", "", "Internal server tls trusted ca file")
+	Cmd.Flags().BoolVar(&internalTLS.InsecureSkipVerify, "internal-tls-insecure-skip-verify", false, "Internal server tls insecure skip verify")
+	Cmd.Flags().BoolVar(&internalTLS.ClientAuth, "internal-tls-client-auth", false, "Internal server tls client auth")
 
-	replicationTls := &dataServerOptions.Replication.TLS
-	Cmd.Flags().StringVar(&replicationTls.CertFile, "peer-tls-cert-file", "", "Peer tls certificate file")
-	Cmd.Flags().StringVar(&replicationTls.KeyFile, "peer-tls-key-file", "", "Peer tls key file")
-	Cmd.Flags().Uint16Var(&replicationTls.MinVersion, "peer-tls-min-version", 0, "Peer tls minimum version")
-	Cmd.Flags().Uint16Var(&replicationTls.MaxVersion, "peer-tls-max-version", 0, "Peer tls maximum version")
-	Cmd.Flags().StringVar(&replicationTls.TrustedCaFile, "peer-tls-trusted-ca-file", "", "Peer tls trusted ca file")
-	Cmd.Flags().BoolVar(&replicationTls.InsecureSkipVerify, "peer-tls-insecure-skip-verify", false, "Peer tls insecure skip verify")
-	Cmd.Flags().StringVar(&replicationTls.ServerName, "peer-tls-server-name", "", "Peer tls server name")
+	replicationTLS := &dataServerOptions.Replication.TLS
+	Cmd.Flags().StringVar(&replicationTLS.CertFile, "peer-tls-cert-file", "", "Peer tls certificate file")
+	Cmd.Flags().StringVar(&replicationTLS.KeyFile, "peer-tls-key-file", "", "Peer tls key file")
+	Cmd.Flags().Uint16Var(&replicationTLS.MinVersion, "peer-tls-min-version", 0, "Peer tls minimum version")
+	Cmd.Flags().Uint16Var(&replicationTLS.MaxVersion, "peer-tls-max-version", 0, "Peer tls maximum version")
+	Cmd.Flags().StringVar(&replicationTLS.TrustedCaFile, "peer-tls-trusted-ca-file", "", "Peer tls trusted ca file")
+	Cmd.Flags().BoolVar(&replicationTLS.InsecureSkipVerify, "peer-tls-insecure-skip-verify", false, "Peer tls insecure skip verify")
+	Cmd.Flags().StringVar(&replicationTLS.ServerName, "peer-tls-server-name", "", "Peer tls server name")
 }
 
 func exec(*cobra.Command, []string) {

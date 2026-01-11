@@ -19,9 +19,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"

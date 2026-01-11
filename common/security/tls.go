@@ -45,10 +45,10 @@ type TLSOptions struct {
 	ClientAuth bool `yaml:"clientAuth,omitempty" json:"clientAuth,omitempty"`
 }
 
-func (tls *TLSOptions) WithDefault() {
+func (*TLSOptions) WithDefault() {
 }
 
-func (tls *TLSOptions) Validate() error {
+func (*TLSOptions) Validate() error {
 	return nil
 }
 
@@ -59,10 +59,7 @@ var (
 
 func (tls *TLSOptions) IsEnabled() bool {
 	if tls.Enabled == nil {
-		if tls.CertFile != "" {
-			return true
-		}
-		return false
+		return tls.CertFile != ""
 	}
 	return *tls.Enabled
 }
@@ -120,7 +117,7 @@ func (tls *TLSOptions) trustedCertPool() (*x509.CertPool, error) {
 
 func (tls *TLSOptions) TryIntoClientTLSConf() (*libtls.Config, error) {
 	if !tls.IsEnabled() {
-		return nil, nil
+		return nil, nil //nolint:nilnil
 	}
 	tlsConf, err := tls.makeCommonConfig()
 	if err != nil {
@@ -144,7 +141,7 @@ func (tls *TLSOptions) TryIntoClientTLSConf() (*libtls.Config, error) {
 
 func (tls *TLSOptions) TryIntoServerTLSConf() (*libtls.Config, error) {
 	if !tls.IsEnabled() {
-		return nil, nil
+		return nil, nil //nolint:nilnil
 	}
 	tlsConf, err := tls.makeCommonConfig()
 	if err != nil {

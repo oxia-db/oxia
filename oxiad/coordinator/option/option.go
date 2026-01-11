@@ -18,11 +18,12 @@ import (
 	"errors"
 	"fmt"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/security"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"go.uber.org/multierr"
 )
 
 type Options struct {
@@ -60,7 +61,7 @@ func (co *ClusterOptions) WithDefault() {
 	}
 }
 
-func (co *ClusterOptions) Validate() error {
+func (*ClusterOptions) Validate() error {
 	return nil
 }
 
@@ -129,8 +130,7 @@ type MetadataOptions struct {
 	Raft         RaftMetadata `yaml:"raft,omitempty" json:"raft,omitempty"`
 }
 
-func (mo *MetadataOptions) WithDefault() {
-
+func (*MetadataOptions) WithDefault() {
 }
 
 func (mo *MetadataOptions) Validate() error {
@@ -146,8 +146,7 @@ func (mo *MetadataOptions) Validate() error {
 		if mo.Raft.Address == "" {
 			return errors.New("raft-address must be set with metadata=raft")
 		}
-	case metadata.ProviderNameFile:
-	case metadata.ProviderNameMemory:
+	case metadata.ProviderNameFile, metadata.ProviderNameMemory:
 	default:
 		return errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
 	}

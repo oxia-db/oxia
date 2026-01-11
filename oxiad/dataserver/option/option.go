@@ -18,11 +18,12 @@ import (
 	"fmt"
 	"time"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/security"
 	"github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
-	"go.uber.org/multierr"
 )
 
 type PublicServerOptions struct {
@@ -119,7 +120,7 @@ func (wo *WALOptions) WithDefault() {
 	}
 }
 
-func (wo *WALOptions) Validate() error {
+func (*WALOptions) Validate() error {
 	return nil
 }
 
@@ -136,7 +137,7 @@ func (do *DatabaseOptions) WithDefault() {
 		do.ReadCacheSizeMB = 100
 	}
 }
-func (do *DatabaseOptions) Validate() error {
+func (*DatabaseOptions) Validate() error {
 	return nil
 }
 
@@ -147,7 +148,7 @@ type NotificationOptions struct {
 func (no *NotificationOptions) WithDefault() {
 	no.Retention = time.Hour * 1
 }
-func (no *NotificationOptions) Validate() error {
+func (*NotificationOptions) Validate() error {
 	return nil
 }
 

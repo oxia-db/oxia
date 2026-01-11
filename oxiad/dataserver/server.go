@@ -18,8 +18,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
@@ -84,20 +85,23 @@ func NewWithGrpcProvider(options *option.Options, provider rpc2.GrpcProvider, re
 	s.shardAssignmentDispatcher = assignment.NewShardAssignmentDispatcher(s.healthServer)
 
 	internalServer := options.Server.Internal
-	internalServerTls, err := internalServer.TLS.TryIntoServerTLSConf()
+	internalServerTLS, err := internalServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
 	s.internalRpcServer, err = newInternalRpcServer(provider, internalServer.BindAddress,
-		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTls)
+		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTLS)
 	if err != nil {
 		return nil, err
 	}
 
 	publicServer := options.Server.Public
-	publicServerTls, err := publicServer.TLS.TryIntoServerTLSConf()
+	publicServerTLS, err := publicServer.TLS.TryIntoServerTLSConf()
+	if err != nil {
+		return nil, err
+	}
 	s.publicRpcServer, err = newPublicRpcServer(provider, publicServer.BindAddress, s.shardsDirector,
-		s.shardAssignmentDispatcher, publicServerTls, &publicServer.Auth)
+		s.shardAssignmentDispatcher, publicServerTLS, &publicServer.Auth)
 	if err != nil {
 		return nil, err
 	}

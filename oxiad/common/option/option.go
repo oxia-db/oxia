@@ -60,7 +60,7 @@ func (mo *MetricOptions) WithDefault() {
 	}
 }
 
-func (mo *MetricOptions) Validate() error {
+func (*MetricOptions) Validate() error {
 	return nil
 }
 
@@ -74,6 +74,6 @@ func (lo *LogOptions) WithDefault() {
 	}
 }
 
-func (lo *LogOptions) Validate() error {
+func (*LogOptions) Validate() error {
 	return nil
 }

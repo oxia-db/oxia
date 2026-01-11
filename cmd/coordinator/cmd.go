@@ -18,12 +18,13 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/spf13/cobra"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
-	oxiadcommon_option "github.com/oxia-db/oxia/oxiad/common/option"
+	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
-	"github.com/spf13/cobra"
 )
 
 var (
@@ -41,7 +42,7 @@ func init() {
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Admin.BindAddress, "admin-addr", "a", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Admin service bind address")
 
 	observability := &coordinatorOptions.Observability
-	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommon_option.DefaultMetricsPort), "Metrics service bind address")
+	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")
 
 	meta := &coordinatorOptions.Metadata
 	Cmd.Flags().StringVar(&meta.ProviderName, "metadata", "file", "Metadata provider implementation: file, configmap, raft or memory")

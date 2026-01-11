@@ -34,10 +34,10 @@ type Options struct {
 	ProviderParams string `yaml:"providerParams" json:"providerParams"`
 }
 
-func (op *Options) WithDefault() {
+func (*Options) WithDefault() {
 }
 
-func (op *Options) Validate() error {
+func (*Options) Validate() error {
 	return nil
 }
 func (op *Options) IsEnabled() bool {

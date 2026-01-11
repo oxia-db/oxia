@@ -20,15 +20,16 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
-	"github.com/oxia-db/oxia/oxiad/common/entity"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/oxia-db/oxia/oxiad/common/entity"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
@@ -144,11 +145,11 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 	}
 
 	controller := &options.Controller
-	controllerTls, err := controller.TLS.TryIntoClientTLSConf()
+	controllerTLS, err := controller.TLS.TryIntoClientTLSConf()
 	if err != nil {
 		return nil, err
 	}
-	clientPool := rpc.NewClientPool(controllerTls, nil)
+	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
 	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient)
@@ -159,26 +160,26 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 	healthServer := health.NewServer()
 
 	internalServer := options.Server.Internal
-	internalServerTls, err := internalServer.TLS.TryIntoServerTLSConf()
+	internalServerTLS, err := internalServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
 	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) {
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
-	}, internalServerTls, &auth.Disabled)
+	}, internalServerTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
 
 	adminSv := options.Server.Admin
-	adminSvTls, err := adminSv.TLS.TryIntoServerTLSConf()
+	adminSvTLS, err := adminSv.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
 	admin := newAdminServer(coordinatorInstance.StatusResource(), clusterConfigProvider)
 	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaAdminServer(registrar, admin)
-	}, adminSvTls, &auth.Disabled)
+	}, adminSvTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}

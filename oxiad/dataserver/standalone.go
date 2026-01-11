@@ -20,9 +20,10 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
-	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
@@ -108,12 +109,12 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 	}
 
 	publicServer := config.DataServerOptions.Server.Public
-	serverTls, err := publicServer.TLS.TryIntoServerTLSConf()
+	serverTLS, err := publicServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
 	s.rpc, err = newPublicRpcServer(rpc2.Default, publicServer.BindAddress, s.shardsDirector,
-		nil, serverTls, &auth.Disabled)
+		nil, serverTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
