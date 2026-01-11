@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -38,7 +38,7 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 )
 
-func getPeerTLSOption() (*security.TLSOption, error) {
+func getPeerTLSOption() (*security.TLSOptions, error) {
 	pwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func getPeerTLSOption() (*security.TLSOption, error) {
 	peerCertPath := filepath.Join(parentDir, "certs", "peer.crt")
 	peerKeyPath := filepath.Join(parentDir, "certs", "peer.key")
 
-	peerOption := security.TLSOption{
+	peerOption := security.TLSOptions{
 		CertFile:      peerCertPath,
 		KeyFile:       peerKeyPath,
 		TrustedCaFile: caCertPath,
@@ -56,7 +56,7 @@ func getPeerTLSOption() (*security.TLSOption, error) {
 	return &peerOption, nil
 }
 
-func getClientTLSOption() (*security.TLSOption, error) {
+func getClientTLSOption() (*security.TLSOptions, error) {
 	pwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func getClientTLSOption() (*security.TLSOption, error) {
 	peerCertPath := filepath.Join(parentDir, "certs", "client.crt")
 	peerKeyPath := filepath.Join(parentDir, "certs", "client.key")
 
-	clientOption := security.TLSOption{
+	clientOption := security.TLSOptions{
 		CertFile:      peerCertPath,
 		KeyFile:       peerKeyPath,
 		TrustedCaFile: caCertPath,
@@ -76,36 +76,49 @@ func getClientTLSOption() (*security.TLSOption, error) {
 
 func newTLSServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
-	return newTLSServerWithInterceptor(t, func(config *conf.Config) {
-
+	return newTLSServerWithInterceptor(t, func(config *dataserveroption.Options) {
 	})
 }
 
-func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *conf.Config)) (s *dataserver.Server, addr model.Server) {
+func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserveroption.Options)) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
-	serverTLSConf, err := option.MakeServerTLSConf()
-	assert.NoError(t, err)
 
-	peerTLSConf, err := option.MakeClientTLSConf()
-	assert.NoError(t, err)
-
-	config := conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-		PeerTLS:                    peerTLSConf,
-		ServerTLS:                  serverTLSConf,
-		InternalServerTLS:          serverTLSConf,
+	flagFalse := false
+	options := &dataserveroption.Options{
+		Server: dataserveroption.ServerOptions{
+			Public: dataserveroption.PublicServerOptions{
+				BindAddress: "localhost:0",
+			},
+			Internal: dataserveroption.InternalServerOptions{
+				BindAddress: "localhost:0",
+				TLS:         *option,
+			},
+		},
+		Observability: commonoption.ObservabilityOptions{
+			Metric: commonoption.MetricOptions{
+				Enabled: &flagFalse,
+			},
+		},
+		Replication: dataserveroption.ReplicationOptions{
+			TLS: *option,
+		},
+		Storage: dataserveroption.StorageOptions{
+			Database: dataserveroption.DatabaseOptions{
+				Dir: t.TempDir(),
+			},
+			WAL: dataserveroption.WALOptions{
+				Dir: t.TempDir(),
+			},
+			Notification: dataserveroption.NotificationOptions{
+				Retention: 1 * time.Minute,
+			},
+		},
 	}
+	interceptor(options)
 
-	interceptor(&config)
-
-	s, err = dataserver.New(config)
+	s, err = dataserver.New(options)
 
 	assert.NoError(t, err)
 
@@ -301,9 +314,10 @@ func TestClientHandshakeSuccess(t *testing.T) {
 }
 
 func TestOnlyEnablePublicTls(t *testing.T) {
-	disableInternalTLS := func(config *conf.Config) {
-		config.InternalServerTLS = nil
-		config.PeerTLS = nil
+	flagFalse := false
+	disableInternalTLS := func(config *dataserveroption.Options) {
+		config.Server.Public.TLS.Enabled = &flagFalse
+		config.Replication.TLS.Enabled = &flagFalse
 	}
 	s1, sa1 := newTLSServerWithInterceptor(t, disableInternalTLS)
 	defer s1.Close()

@@ -27,7 +27,8 @@ import (
 	"github.com/oxia-db/oxia/cmd/perf"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 )
 
 func BenchmarkServer(b *testing.B) {
@@ -38,12 +39,31 @@ func BenchmarkServer(b *testing.B) {
 
 	standaloneConf := StandaloneConfig{
 		NumShards: 1,
-		Config: conf.Config{
-			InternalServiceAddr: "localhost:0",
-			PublicServiceAddr:   "localhost:0",
-			MetricsServiceAddr:  "localhost:0",
-			DataDir:             fmt.Sprintf("%s/db", tmp),
-			WalDir:              fmt.Sprintf("%s/wal", tmp),
+		DataServerOptions: option.Options{
+			Server: option.ServerOptions{
+				Public: option.PublicServerOptions{
+					BindAddress: "localhost:0",
+				},
+				Internal: option.InternalServerOptions{
+					BindAddress: "localhost:0",
+				},
+			},
+			Observability: commonoption.ObservabilityOptions{
+				Metric: commonoption.MetricOptions{
+					BindAddress: "localhost:0",
+				},
+			},
+			Storage: option.StorageOptions{
+				Database: option.DatabaseOptions{
+					Dir: fmt.Sprintf("%s/db", tmp),
+				},
+				WAL: option.WALOptions{
+					Dir: fmt.Sprintf("%s/wal", tmp),
+				},
+				Notification: option.NotificationOptions{
+					Retention: 1 * time.Minute,
+				},
+			},
 		},
 	}
 

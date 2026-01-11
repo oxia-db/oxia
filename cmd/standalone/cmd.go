@@ -15,17 +15,18 @@
 package standalone
 
 import (
+	"fmt"
 	"io"
 	"time"
 
+	"github.com/oxia-db/oxia/common/constant"
+	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
-
-	"github.com/oxia-db/oxia/cmd/flag"
 )
 
 var (
@@ -40,21 +41,26 @@ var (
 )
 
 func init() {
-	flag.PublicAddr(Cmd, &conf.PublicServiceAddr)
-	flag.MetricsAddr(Cmd, &conf.MetricsServiceAddr)
-	Cmd.Flags().Uint32VarP(&conf.NumShards, "shards", "s", 1, "Number of shards")
-	Cmd.Flags().StringVar(&conf.DataDir, "data-dir", "./data/db", "Directory where to store data")
-	Cmd.Flags().StringVar(&conf.WalDir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
-	Cmd.Flags().DurationVar(&conf.WalRetentionTime, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
-	Cmd.Flags().BoolVar(&conf.WalSyncData, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
+	dataServerOptions := conf.DataServerOptions
+	Cmd.Flags().StringVarP(&dataServerOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultPublicPort), "Public service bind address")
+	observability := &dataServerOptions.Observability
+	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")
 
 	Cmd.Flags().BoolVar(&conf.NotificationsEnabled, "notifications-enabled", true, "Whether notifications are enabled")
-	Cmd.Flags().DurationVar(&conf.NotificationsRetentionTime, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
-
 	Cmd.Flags().Var(&conf.KeySorting, "key-sorting", `Key sorting. allowed: "hierarchical", "natural". Default: "hierarchical"`)
 	_ = Cmd.RegisterFlagCompletionFunc("key-sorting", keySortingCompletion)
 
-	Cmd.Flags().Int64Var(&conf.DbBlockCacheMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
+	Cmd.Flags().Uint32VarP(&conf.NumShards, "shards", "s", 1, "Number of shards")
+
+	storageOptions := &dataServerOptions.Storage
+	Cmd.Flags().StringVar(&storageOptions.WAL.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
+	Cmd.Flags().DurationVar(&storageOptions.WAL.Retention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
+	Cmd.Flags().BoolVar(&storageOptions.WAL.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
+
+	Cmd.Flags().DurationVar(&storageOptions.Notification.Retention, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
+
+	Cmd.Flags().StringVar(&storageOptions.Database.Dir, "data-dir", "./data/db", "Directory where to store data")
+	Cmd.Flags().Int64Var(&storageOptions.Database.ReadCacheSizeMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
 }
 

@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 
 	"github.com/oxia-db/oxia/common/proto"
 
@@ -43,14 +43,34 @@ import (
 func newServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 
+	flagFalse := false
+
 	var err error
-	s, err = dataserver.New(conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
+	s, err = dataserver.New(&option.Options{
+		Server: option.ServerOptions{
+			Public: option.PublicServerOptions{
+				BindAddress: "localhost:0",
+			},
+			Internal: option.InternalServerOptions{
+				BindAddress: "localhost:0",
+			},
+		},
+		Observability: commonoption.ObservabilityOptions{
+			Metric: commonoption.MetricOptions{
+				Enabled: &flagFalse,
+			},
+		},
+		Storage: option.StorageOptions{
+			Database: option.DatabaseOptions{
+				Dir: t.TempDir(),
+			},
+			WAL: option.WALOptions{
+				Dir: t.TempDir(),
+			},
+			Notification: option.NotificationOptions{
+				Retention: 1 * time.Minute,
+			},
+		},
 	})
 
 	assert.NoError(t, err)
@@ -758,11 +778,33 @@ func TestCoordinator_KeySorting(t *testing.T) {
 		{"natural"},
 	} {
 		t.Run(test.sorting, func(t *testing.T) {
-			s1, err := dataserver.New(conf.Config{
-				PublicServiceAddr:   "localhost:0",
-				InternalServiceAddr: "localhost:0",
-				DataDir:             t.TempDir(),
-				WalDir:              t.TempDir(),
+
+			flagFalse := false
+			s1, err := dataserver.New(&option.Options{
+				Server: option.ServerOptions{
+					Public: option.PublicServerOptions{
+						BindAddress: "localhost:0",
+					},
+					Internal: option.InternalServerOptions{
+						BindAddress: "localhost:0",
+					},
+				},
+				Observability: commonoption.ObservabilityOptions{
+					Metric: commonoption.MetricOptions{
+						Enabled: &flagFalse,
+					},
+				},
+				Storage: option.StorageOptions{
+					Database: option.DatabaseOptions{
+						Dir: t.TempDir(),
+					},
+					WAL: option.WALOptions{
+						Dir: t.TempDir(),
+					},
+					Notification: option.NotificationOptions{
+						Retention: 1 * time.Minute,
+					},
+				},
 			})
 			assert.NoError(t, err)
 

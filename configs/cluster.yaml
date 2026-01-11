@@ -1,0 +1,30 @@
+namespaces:
+  - name: default
+    initialShardCount: 1
+    replicationFactor: 3
+#    notificationEnabled: "true"
+#    keySort: "hierarchical"
+#    policy:
+#      antiAffinities:
+#        mode: Strict # Relaxed
+#        labels: [""]
+servers:
+  - name: "sev-1"
+    public: "localhost:6648"
+    internal: "localhost:6649"
+  - name: "sev-2"
+    public: "localhost:6650"
+    internal: "localhost:6651"
+  - name: "sev-3"
+    public: "localhost:6652"
+    internal: "localhost:6653"
+#serverMetadata:
+#  sev-1:
+#    labels: [ "" ]
+#  sev-2:
+#    labels: [ "" ]
+#  sev-3:
+#    labels: [ "" ]
+#loadBalancer:
+#  scheduleInterval: "30s"
+#  quarantineTime: "5m"

@@ -22,12 +22,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
@@ -113,16 +113,16 @@ type followerController struct {
 	applyEntriesDone chan any
 	closeStreamWg    concurrent.WaitGroup
 	log              *slog.Logger
-	config           conf.Config
+	storageOptions   *option.StorageOptions
 
 	writeLatencyHisto metric.LatencyHistogram
 }
 
-func NewFollowerController(config conf.Config, namespace string, shardId int64, wf wal.Factory, kvFactory kvstore.Factory,
+func NewFollowerController(storageOptions *option.StorageOptions, namespace string, shardId int64, wf wal.Factory, kvFactory kvstore.Factory,
 	newTermOptions *proto.NewTermOptions,
 ) (FollowerController, error) {
 	fc := &followerController{
-		config:           config,
+		storageOptions:   storageOptions,
 		namespace:        namespace,
 		shardId:          shardId,
 		kvFactory:        kvFactory,
@@ -149,7 +149,7 @@ func NewFollowerController(config conf.Config, namespace string, shardId int64, 
 	}
 
 	if fc.db, err = database.NewDB(namespace, shardId, kvFactory,
-		keySorting, config.NotificationsRetentionTime, time.SystemClock); err != nil {
+		keySorting, storageOptions.Notification.Retention, time.SystemClock); err != nil {
 		return nil, err
 	}
 
@@ -290,7 +290,7 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	if fc.db == nil {
 		var err error
 		if fc.db, err = database.NewDB(fc.namespace, fc.shardId, fc.kvFactory,
-			req.Options.KeySorting, fc.config.NotificationsRetentionTime, time.SystemClock); err != nil {
+			req.Options.KeySorting, fc.storageOptions.Notification.Retention, time.SystemClock); err != nil {
 			return nil, errors.Wrapf(err, "failed to reopen database")
 		}
 	}
@@ -704,7 +704,7 @@ func (fc *followerController) handleSnapshot(stream proto.OxiaLogReplication_Sen
 	// We have received all the files for the database
 	loader.Complete()
 
-	newDb, err := database.NewDB(fc.namespace, fc.shardId, fc.kvFactory, proto.KeySortingType_UNKNOWN, fc.config.NotificationsRetentionTime, time.SystemClock)
+	newDb, err := database.NewDB(fc.namespace, fc.shardId, fc.kvFactory, proto.KeySortingType_UNKNOWN, fc.storageOptions.Notification.Retention, time.SystemClock)
 	if err != nil {
 		fc.closeStreamNoMutex(errors.Wrap(err, "failed to open database after loading snapshot"))
 		return

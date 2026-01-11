@@ -23,13 +23,13 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/oauth2-proxy/mockoidc"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
-
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
@@ -55,45 +55,101 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	jsonParams, err := json.Marshal(options)
 	assert.NoError(t, err)
 	authParams := auth.Options{
-		ProviderName:   auth.ProviderOIDC,
+		Provider:       auth.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
-	s1, err := dataserver.New(conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-		AuthOptions:                authParams,
-	})
+	flagFalse := false
+	s1, err := dataserver.New(
+		&option.Options{
+			Server: option.ServerOptions{
+				Public: option.PublicServerOptions{
+					BindAddress: "localhost:0",
+					Auth:        authParams,
+				},
+				Internal: option.InternalServerOptions{
+					BindAddress: "localhost:0",
+				},
+			},
+			Observability: commonoption.ObservabilityOptions{
+				Metric: commonoption.MetricOptions{
+					Enabled: &flagFalse,
+				},
+			},
+			Storage: option.StorageOptions{
+				Database: option.DatabaseOptions{
+					Dir: t.TempDir(),
+				},
+				WAL: option.WALOptions{
+					Dir: t.TempDir(),
+				},
+				Notification: option.NotificationOptions{
+					Retention: 1 * time.Minute,
+				},
+			},
+		})
 	assert.NoError(t, err)
 	s1Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
-	s2, err := dataserver.New(conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-		AuthOptions:                authParams,
+	s2, err := dataserver.New(&option.Options{
+		Server: option.ServerOptions{
+			Public: option.PublicServerOptions{
+				BindAddress: "localhost:0",
+				Auth:        authParams,
+			},
+			Internal: option.InternalServerOptions{
+				BindAddress: "localhost:0",
+			},
+		},
+		Observability: commonoption.ObservabilityOptions{
+			Metric: commonoption.MetricOptions{
+				Enabled: &flagFalse,
+			},
+		},
+		Storage: option.StorageOptions{
+			Database: option.DatabaseOptions{
+				Dir: t.TempDir(),
+			},
+			WAL: option.WALOptions{
+				Dir: t.TempDir(),
+			},
+			Notification: option.NotificationOptions{
+				Retention: 1 * time.Minute,
+			},
+		},
 	})
 	assert.NoError(t, err)
 	s2Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
-	s3, err := dataserver.New(conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-		AuthOptions:                authParams,
+	s3, err := dataserver.New(&option.Options{
+		Server: option.ServerOptions{
+			Public: option.PublicServerOptions{
+				BindAddress: "localhost:0",
+				Auth:        authParams,
+			},
+			Internal: option.InternalServerOptions{
+				BindAddress: "localhost:0",
+			},
+		},
+		Observability: commonoption.ObservabilityOptions{
+			Metric: commonoption.MetricOptions{
+				Enabled: &flagFalse,
+			},
+		},
+		Storage: option.StorageOptions{
+			Database: option.DatabaseOptions{
+				Dir: t.TempDir(),
+			},
+			WAL: option.WALOptions{
+				Dir: t.TempDir(),
+			},
+			Notification: option.NotificationOptions{
+				Retention: 1 * time.Minute,
+			},
+		},
 	})
 	assert.NoError(t, err)
 	s3Addr := model.Server{

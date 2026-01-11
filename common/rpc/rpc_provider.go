@@ -16,11 +16,11 @@ package rpc
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -48,10 +48,14 @@ type replicationRpcProvider struct {
 	pool ClientPool
 }
 
-func NewReplicationRpcProvider(tlsConf *tls.Config) ReplicationRpcProvider {
+func NewReplicationRpcProvider(options *option.ReplicationOptions) (ReplicationRpcProvider, error) {
+	tlsConf, err := options.TLS.MakeClientTLSConf()
+	if err != nil {
+		return nil, err
+	}
 	return &replicationRpcProvider{
 		pool: NewClientPool(tlsConf, nil),
-	}
+	}, nil
 }
 
 func (r *replicationRpcProvider) GetReplicateStream(ctx context.Context, follower string, namespace string, shard int64, term int64) (

@@ -23,25 +23,26 @@ import (
 	"github.com/pkg/errors"
 )
 
-type TLSOption struct {
+type TLSOptions struct {
+	Enabled *bool `yaml:"enabled" json:"enabled"`
 	// CertFile is the path to the server certificate file.
-	CertFile string
+	CertFile string `yaml:"certFile" json:"certFile"`
 	// KeyFile is the path to the private key file.
-	KeyFile string
+	KeyFile string `yaml:"keyFile" json:"keyFile"`
 	// CipherSuites is a list of supported cipher suites.
-	CipherSuites []uint16
+	CipherSuites []uint16 `yaml:"cipherSuites" json:"cipherSuites"`
 	// MinVersion is the minimum TLS version supported.
-	MinVersion uint16
+	MinVersion uint16 `yaml:"minVersion" json:"minVersion"`
 	// MaxVersion is the maximum TLS version supported.
-	MaxVersion uint16
+	MaxVersion uint16 `yaml:"maxVersion" json:"maxVersion"`
 	// TrustedCaFile is the path to the CA certificate.
-	TrustedCaFile string
+	TrustedCaFile string `yaml:"trustedCaFile" json:"trustedCaFile"`
 	// InsecureSkipVerify controls whether it verifies the certificate chain and host name.
-	InsecureSkipVerify bool
+	InsecureSkipVerify bool `yaml:"insecureSkipVerify" json:"insecureSkipVerify"`
 	// ServerName is the expected server name (for SNI) used when connecting to the server.
-	ServerName string
+	ServerName string `yaml:"serverName,omitempty" json:"serverName,omitempty"`
 	// ClientAuth controls whether the server requires clients to authenticate with a certificate.
-	ClientAuth bool
+	ClientAuth bool `yaml:"clientAuth,omitempty" json:"clientAuth,omitempty"`
 }
 
 var (
@@ -49,11 +50,11 @@ var (
 	ErrInvalidTLSKeyFile  = errors.New("tls key file path can not be empty")
 )
 
-func (tls *TLSOption) IsConfigured() bool {
+func (tls *TLSOptions) IsConfigured() bool {
 	return tls.CertFile != ""
 }
 
-func (tls *TLSOption) makeCommonConfig() (*libtls.Config, error) {
+func (tls *TLSOptions) makeCommonConfig() (*libtls.Config, error) {
 	if tls.CertFile == "" {
 		return nil, ErrInvalidTLSCertFile
 	}
@@ -86,7 +87,7 @@ func (tls *TLSOption) makeCommonConfig() (*libtls.Config, error) {
 	return &tlsConf, nil
 }
 
-func (tls *TLSOption) trustedCertPool() (*x509.CertPool, error) {
+func (tls *TLSOptions) trustedCertPool() (*x509.CertPool, error) {
 	certPool := x509.NewCertPool()
 	bPem, err := os.ReadFile(tls.TrustedCaFile)
 	if err != nil {
@@ -104,7 +105,7 @@ func (tls *TLSOption) trustedCertPool() (*x509.CertPool, error) {
 	return certPool, nil
 }
 
-func (tls *TLSOption) MakeClientTLSConf() (*libtls.Config, error) {
+func (tls *TLSOptions) MakeClientTLSConf() (*libtls.Config, error) {
 	tlsConf, err := tls.makeCommonConfig()
 	if err != nil {
 		return nil, err
@@ -125,7 +126,7 @@ func (tls *TLSOption) MakeClientTLSConf() (*libtls.Config, error) {
 	return tlsConf, nil
 }
 
-func (tls *TLSOption) MakeServerTLSConf() (*libtls.Config, error) {
+func (tls *TLSOptions) MakeServerTLSConf() (*libtls.Config, error) {
 	tlsConf, err := tls.makeCommonConfig()
 	if err != nil {
 		return nil, err

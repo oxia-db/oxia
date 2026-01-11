@@ -22,12 +22,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -118,7 +118,7 @@ type leaderController struct {
 	followerAckOffsetGauges map[string]metric.Gauge
 }
 
-func NewLeaderController(config conf.Config, namespace string, shardId int64,
+func NewLeaderController(storageOptions *option.StorageOptions, namespace string, shardId int64,
 	rpcClient rpc.ReplicationRpcProvider,
 	walFactory wal.Factory, kvFactory kvstore.Factory,
 	newTermOptions *proto.NewTermOptions,
@@ -170,7 +170,7 @@ func NewLeaderController(config conf.Config, namespace string, shardId int64,
 		keySorting = newTermOptions.KeySorting
 	}
 
-	if lc.db, err = database.NewDB(namespace, shardId, kvFactory, keySorting, config.NotificationsRetentionTime, time2.SystemClock); err != nil {
+	if lc.db, err = database.NewDB(namespace, shardId, kvFactory, keySorting, storageOptions.Notification.Retention, time2.SystemClock); err != nil {
 		return nil, err
 	}
 
