@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/cmd/perf"
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 )
 
@@ -37,34 +37,16 @@ func BenchmarkServer(b *testing.B) {
 
 	tmp := b.TempDir()
 
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.Enabled = &constant.FlagFalse
+	options.Storage.Database.Dir = fmt.Sprintf("%s/db", tmp)
+	options.Storage.WAL.Dir = fmt.Sprintf("%s/wal", tmp)
+
 	standaloneConf := StandaloneConfig{
-		NumShards: 1,
-		DataServerOptions: option.Options{
-			Server: option.ServerOptions{
-				Public: option.PublicServerOptions{
-					BindAddress: "localhost:0",
-				},
-				Internal: option.InternalServerOptions{
-					BindAddress: "localhost:0",
-				},
-			},
-			Observability: commonoption.ObservabilityOptions{
-				Metric: commonoption.MetricOptions{
-					BindAddress: "localhost:0",
-				},
-			},
-			Storage: option.StorageOptions{
-				Database: option.DatabaseOptions{
-					Dir: fmt.Sprintf("%s/db", tmp),
-				},
-				WAL: option.WALOptions{
-					Dir: fmt.Sprintf("%s/wal", tmp),
-				},
-				Notification: option.NotificationOptions{
-					Retention: 1 * time.Minute,
-				},
-			},
-		},
+		NumShards:         1,
+		DataServerOptions: *options,
 	}
 
 	standalone, err := NewStandalone(standaloneConf)

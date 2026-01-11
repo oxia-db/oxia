@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"testing"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -29,21 +28,12 @@ import (
 )
 
 func TestNewServer(t *testing.T) {
-	options := &option.Options{
-		Server: option.ServerOptions{
-			Public: option.PublicServerOptions{
-				BindAddress: "localhost:0",
-			},
-			Internal: option.InternalServerOptions{
-				BindAddress: "localhost:0",
-			},
-		},
-		Observability: commonoption.ObservabilityOptions{
-			Metric: commonoption.MetricOptions{
-				BindAddress: "localhost:0",
-			},
-		},
-	}
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.BindAddress = "localhost:0"
+	options.Storage.Database.Dir = t.TempDir()
+	options.Storage.WAL.Dir = t.TempDir()
 
 	server, err := New(options)
 	assert.NoError(t, err)
@@ -65,21 +55,12 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestNewServerClosableWithHealthWatch(t *testing.T) {
-	options := &option.Options{
-		Server: option.ServerOptions{
-			Public: option.PublicServerOptions{
-				BindAddress: "localhost:0",
-			},
-			Internal: option.InternalServerOptions{
-				BindAddress: "localhost:0",
-			},
-		},
-		Observability: commonoption.ObservabilityOptions{
-			Metric: commonoption.MetricOptions{
-				BindAddress: "localhost:0",
-			},
-		},
-	}
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.BindAddress = "localhost:0"
+	options.Storage.Database.Dir = t.TempDir()
+	options.Storage.WAL.Dir = t.TempDir()
 
 	server, err := New(options)
 	assert.NoError(t, err)

@@ -179,3 +179,9 @@ func (op *Options) Validate() error {
 		op.Observability.Validate(),
 	)
 }
+
+func NewDefaultOptions() *Options {
+	options := Options{}
+	options.WithDefault()
+	return &options
+}

@@ -21,7 +21,6 @@ import (
 	"os"
 	"path/filepath"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -189,21 +188,11 @@ func main() {
 		}
 	} else {
 		// Any other node will be a storage node
-		_, err := dataserver.NewWithGrpcProvider(&option.Options{
-			Observability: commonoption.ObservabilityOptions{
-				Metric: commonoption.MetricOptions{
-					Enabled: &constant.FlagFalse,
-				},
-			},
-			Storage: option.StorageOptions{
-				Database: option.DatabaseOptions{
-					Dir: filepath.Join(dataDir, thisNode, "db"),
-				},
-				WAL: option.WALOptions{
-					Dir: filepath.Join(dataDir, thisNode, "wal"),
-				},
-			},
-		}, grpcProvider, replicationGrpcProvider)
+		dataServerOption := option.NewDefaultOptions()
+		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
+		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
+		dataServerOption.Storage.WAL.Dir = filepath.Join(dataDir, thisNode, "wal")
+		_, err := dataserver.NewWithGrpcProvider(dataServerOption, grpcProvider, replicationGrpcProvider)
 		if err != nil {
 			return
 		}

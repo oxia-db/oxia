@@ -55,7 +55,7 @@ func init() {
 	storageOptions := &dataServerOptions.Storage
 	Cmd.Flags().StringVar(&storageOptions.WAL.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
 	Cmd.Flags().DurationVar(&storageOptions.WAL.Retention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
-	Cmd.Flags().BoolVar(&storageOptions.WAL.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
+	Cmd.Flags().BoolVar(storageOptions.WAL.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
 
 	Cmd.Flags().DurationVar(&storageOptions.Notification.Retention, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
 

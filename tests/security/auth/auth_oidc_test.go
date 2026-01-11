@@ -23,7 +23,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/oauth2-proxy/mockoidc"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -58,98 +57,42 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Provider:       auth.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
-	s1, err := dataserver.New(
-		&option.Options{
-			Server: option.ServerOptions{
-				Public: option.PublicServerOptions{
-					BindAddress: "localhost:0",
-					Auth:        authParams,
-				},
-				Internal: option.InternalServerOptions{
-					BindAddress: "localhost:0",
-				},
-			},
-			Observability: commonoption.ObservabilityOptions{
-				Metric: commonoption.MetricOptions{
-					Enabled: &constant.FlagFalse,
-				},
-			},
-			Storage: option.StorageOptions{
-				Database: option.DatabaseOptions{
-					Dir: t.TempDir(),
-				},
-				WAL: option.WALOptions{
-					Dir: t.TempDir(),
-				},
-				Notification: option.NotificationOptions{
-					Retention: 1 * time.Minute,
-				},
-			},
-		})
+	dataServerOption1 := option.NewDefaultOptions()
+	dataServerOption1.Server.Public.BindAddress = "localhost:0"
+	dataServerOption1.Server.Public.Auth = authParams
+	dataServerOption1.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption1.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption1.Storage.Database.Dir = t.TempDir()
+	dataServerOption1.Storage.WAL.Dir = t.TempDir()
+	s1, err := dataserver.New(dataServerOption1)
 	assert.NoError(t, err)
 	s1Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
-	s2, err := dataserver.New(&option.Options{
-		Server: option.ServerOptions{
-			Public: option.PublicServerOptions{
-				BindAddress: "localhost:0",
-				Auth:        authParams,
-			},
-			Internal: option.InternalServerOptions{
-				BindAddress: "localhost:0",
-			},
-		},
-		Observability: commonoption.ObservabilityOptions{
-			Metric: commonoption.MetricOptions{
-				Enabled: &constant.FlagFalse,
-			},
-		},
-		Storage: option.StorageOptions{
-			Database: option.DatabaseOptions{
-				Dir: t.TempDir(),
-			},
-			WAL: option.WALOptions{
-				Dir: t.TempDir(),
-			},
-			Notification: option.NotificationOptions{
-				Retention: 1 * time.Minute,
-			},
-		},
-	})
+	dataServerOption2 := option.NewDefaultOptions()
+	dataServerOption2.Server.Public.BindAddress = "localhost:0"
+	dataServerOption2.Server.Public.Auth = authParams
+	dataServerOption2.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption2.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption2.Storage.Database.Dir = t.TempDir()
+	dataServerOption2.Storage.WAL.Dir = t.TempDir()
+
+	s2, err := dataserver.New(dataServerOption2)
 	assert.NoError(t, err)
 	s2Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
-	s3, err := dataserver.New(&option.Options{
-		Server: option.ServerOptions{
-			Public: option.PublicServerOptions{
-				BindAddress: "localhost:0",
-				Auth:        authParams,
-			},
-			Internal: option.InternalServerOptions{
-				BindAddress: "localhost:0",
-			},
-		},
-		Observability: commonoption.ObservabilityOptions{
-			Metric: commonoption.MetricOptions{
-				Enabled: &constant.FlagFalse,
-			},
-		},
-		Storage: option.StorageOptions{
-			Database: option.DatabaseOptions{
-				Dir: t.TempDir(),
-			},
-			WAL: option.WALOptions{
-				Dir: t.TempDir(),
-			},
-			Notification: option.NotificationOptions{
-				Retention: 1 * time.Minute,
-			},
-		},
-	})
+	dataServerOption3 := option.NewDefaultOptions()
+	dataServerOption3.Server.Public.BindAddress = "localhost:0"
+	dataServerOption3.Server.Public.Auth = authParams
+	dataServerOption3.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption3.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption3.Storage.Database.Dir = t.TempDir()
+	dataServerOption3.Storage.WAL.Dir = t.TempDir()
+
+	s3, err := dataserver.New(dataServerOption3)
 	assert.NoError(t, err)
 	s3Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),

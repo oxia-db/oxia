@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/stretchr/testify/assert"
 
@@ -85,39 +84,18 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 
-	options := &dataserveroption.Options{
-		Server: dataserveroption.ServerOptions{
-			Public: dataserveroption.PublicServerOptions{
-				BindAddress: "localhost:0",
-			},
-			Internal: dataserveroption.InternalServerOptions{
-				BindAddress: "localhost:0",
-				TLS:         *option,
-			},
-		},
-		Observability: commonoption.ObservabilityOptions{
-			Metric: commonoption.MetricOptions{
-				Enabled: &constant.FlagFalse,
-			},
-		},
-		Replication: dataserveroption.ReplicationOptions{
-			TLS: *option,
-		},
-		Storage: dataserveroption.StorageOptions{
-			Database: dataserveroption.DatabaseOptions{
-				Dir: t.TempDir(),
-			},
-			WAL: dataserveroption.WALOptions{
-				Dir: t.TempDir(),
-			},
-			Notification: dataserveroption.NotificationOptions{
-				Retention: 1 * time.Minute,
-			},
-		},
-	}
-	interceptor(options)
+	dataServerOption := dataserveroption.NewDefaultOptions()
+	dataServerOption.Server.Public.BindAddress = "localhost:0"
+	dataServerOption.Server.Public.TLS = *option
+	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Observability.Metric.BindAddress = "localhost:0"
+	dataServerOption.Replication.TLS = *option
+	dataServerOption.Storage.Database.Dir = t.TempDir()
+	dataServerOption.Storage.WAL.Dir = t.TempDir()
 
-	s, err = dataserver.New(options)
+	interceptor(dataServerOption)
+
+	s, err = dataserver.New(dataServerOption)
 
 	assert.NoError(t, err)
 

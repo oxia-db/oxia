@@ -17,10 +17,8 @@ package mock
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/oxia-db/oxia/common/constant"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/stretchr/testify/assert"
 
@@ -30,33 +28,14 @@ import (
 
 func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
+	dataServerOption := option.NewDefaultOptions()
+	dataServerOption.Server.Public.BindAddress = "localhost:0"
+	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption.Storage.Database.Dir = t.TempDir()
+	dataServerOption.Storage.WAL.Dir = t.TempDir()
 	var err error
-	s, err = dataserver.New(&option.Options{
-		Server: option.ServerOptions{
-			Public: option.PublicServerOptions{
-				BindAddress: "localhost:0",
-			},
-			Internal: option.InternalServerOptions{
-				BindAddress: "localhost:0",
-			},
-		},
-		Observability: commonoption.ObservabilityOptions{
-			Metric: commonoption.MetricOptions{
-				Enabled: &constant.FlagFalse,
-			},
-		},
-		Storage: option.StorageOptions{
-			Database: option.DatabaseOptions{
-				Dir: t.TempDir(),
-			},
-			WAL: option.WALOptions{
-				Dir: t.TempDir(),
-			},
-			Notification: option.NotificationOptions{
-				Retention: 1 * time.Minute,
-			},
-		},
-	})
+	s, err = dataserver.New(dataServerOption)
 
 	assert.NoError(t, err)
 
@@ -72,34 +51,15 @@ func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Serv
 
 func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
+	dataServerOption := option.NewDefaultOptions()
+	dataServerOption.Server.Public.BindAddress = "localhost:0"
+	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption.Storage.Database.Dir = t.TempDir()
+	dataServerOption.Storage.WAL.Dir = t.TempDir()
 
 	var err error
-	s, err = dataserver.New(&option.Options{
-		Server: option.ServerOptions{
-			Public: option.PublicServerOptions{
-				BindAddress: "localhost:0",
-			},
-			Internal: option.InternalServerOptions{
-				BindAddress: "localhost:0",
-			},
-		},
-		Observability: commonoption.ObservabilityOptions{
-			Metric: commonoption.MetricOptions{
-				Enabled: &constant.FlagFalse,
-			},
-		},
-		Storage: option.StorageOptions{
-			Database: option.DatabaseOptions{
-				Dir: t.TempDir(),
-			},
-			WAL: option.WALOptions{
-				Dir: t.TempDir(),
-			},
-			Notification: option.NotificationOptions{
-				Retention: 1 * time.Minute,
-			},
-		},
-	})
+	s, err = dataserver.New(dataServerOption)
 
 	assert.NoError(t, err)
 

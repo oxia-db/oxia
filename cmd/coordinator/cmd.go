@@ -27,7 +27,7 @@ import (
 )
 
 var (
-	coordinatorOptions = &option.Options{}
+	coordinatorOptions = option.NewDefaultOptions()
 	Cmd                = &cobra.Command{
 		Use:   "coordinator",
 		Short: "Start a coordinator",

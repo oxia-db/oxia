@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/common/constant"
-	oxiadcommon_option "github.com/oxia-db/oxia/oxiad/common/option"
+	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/spf13/cobra"
 
@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	dataServerOptions = &option.Options{}
+	dataServerOptions = option.NewDefaultOptions()
 	Cmd               = &cobra.Command{
 		Use:   "server",
 		Short: "Start a server",
@@ -46,7 +46,7 @@ func init() {
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultPublicPort), "Public service bind address")
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
 	observability := &dataServerOptions.Observability
-	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommon_option.DefaultMetricsPort), "Metrics service bind address")
+	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")
 
 	storageWal := &dataServerOptions.Storage.WAL
 	Cmd.Flags().StringVar(&storageWal.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")

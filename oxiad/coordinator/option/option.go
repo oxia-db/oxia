@@ -154,3 +154,9 @@ type RaftMetadata struct {
 	Address        string   `yaml:"address" json:"address"`
 	DataDir        string   `yaml:"dataDir" json:"dataDir"`
 }
+
+func NewDefaultOptions() *Options {
+	options := Options{}
+	options.WithDefault()
+	return &options
+}

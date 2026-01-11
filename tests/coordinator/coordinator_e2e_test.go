@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/stretchr/testify/assert"
 
@@ -43,33 +42,15 @@ import (
 func newServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.Enabled = &constant.FlagFalse
+	options.Storage.Database.Dir = t.TempDir()
+	options.Storage.WAL.Dir = t.TempDir()
+
 	var err error
-	s, err = dataserver.New(&option.Options{
-		Server: option.ServerOptions{
-			Public: option.PublicServerOptions{
-				BindAddress: "localhost:0",
-			},
-			Internal: option.InternalServerOptions{
-				BindAddress: "localhost:0",
-			},
-		},
-		Observability: commonoption.ObservabilityOptions{
-			Metric: commonoption.MetricOptions{
-				Enabled: &constant.FlagFalse,
-			},
-		},
-		Storage: option.StorageOptions{
-			Database: option.DatabaseOptions{
-				Dir: t.TempDir(),
-			},
-			WAL: option.WALOptions{
-				Dir: t.TempDir(),
-			},
-			Notification: option.NotificationOptions{
-				Retention: 1 * time.Minute,
-			},
-		},
-	})
+	s, err = dataserver.New(options)
 
 	assert.NoError(t, err)
 
@@ -777,32 +758,13 @@ func TestCoordinator_KeySorting(t *testing.T) {
 	} {
 		t.Run(test.sorting, func(t *testing.T) {
 
-			s1, err := dataserver.New(&option.Options{
-				Server: option.ServerOptions{
-					Public: option.PublicServerOptions{
-						BindAddress: "localhost:0",
-					},
-					Internal: option.InternalServerOptions{
-						BindAddress: "localhost:0",
-					},
-				},
-				Observability: commonoption.ObservabilityOptions{
-					Metric: commonoption.MetricOptions{
-						Enabled: &constant.FlagFalse,
-					},
-				},
-				Storage: option.StorageOptions{
-					Database: option.DatabaseOptions{
-						Dir: t.TempDir(),
-					},
-					WAL: option.WALOptions{
-						Dir: t.TempDir(),
-					},
-					Notification: option.NotificationOptions{
-						Retention: 1 * time.Minute,
-					},
-				},
-			})
+			dataServerOption := option.NewDefaultOptions()
+			dataServerOption.Server.Public.BindAddress = "localhost:0"
+			dataServerOption.Server.Internal.BindAddress = "localhost:0"
+			dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
+			dataServerOption.Storage.Database.Dir = t.TempDir()
+			dataServerOption.Storage.WAL.Dir = t.TempDir()
+			s1, err := dataserver.New(dataServerOption)
 			assert.NoError(t, err)
 
 			sa1 := model.Server{

@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"go.uber.org/multierr"
@@ -63,30 +62,14 @@ type Standalone struct {
 }
 
 func NewTestConfig(dir string) StandaloneConfig {
+	dataServerOption := dataserveroption.NewDefaultOptions()
+	dataServerOption.Server.Public.BindAddress = "localhost:0"
+	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption.Storage.Database.Dir = filepath.Join(dir, "db")
+	dataServerOption.Storage.WAL.Dir = filepath.Join(dir, "wal")
 	return StandaloneConfig{
-		DataServerOptions: dataserveroption.Options{
-			Server: dataserveroption.ServerOptions{
-				Public: dataserveroption.PublicServerOptions{
-					BindAddress: "localhost:0",
-				},
-				Internal: dataserveroption.InternalServerOptions{
-					BindAddress: "localhost:0",
-				},
-			},
-			Storage: dataserveroption.StorageOptions{
-				Database: dataserveroption.DatabaseOptions{
-					Dir: filepath.Join(dir, "db"),
-				},
-				WAL: dataserveroption.WALOptions{
-					Dir: filepath.Join(dir, "wal"),
-				},
-			},
-			Observability: commonoption.ObservabilityOptions{
-				Metric: commonoption.MetricOptions{
-					Enabled: &constant.FlagFalse,
-				},
-			},
-		},
+		DataServerOptions:    *dataServerOption,
 		NumShards:            1,
 		NotificationsEnabled: true,
 	}
@@ -111,7 +94,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		BaseWalDir:  storageOptions.WAL.Dir,
 		Retention:   storageOptions.WAL.Retention,
 		SegmentSize: wal.DefaultFactoryOptions.SegmentSize,
-		SyncData:    storageOptions.WAL.Sync,
+		SyncData:    storageOptions.WAL.IsSyncEnabled(),
 	})
 	var err error
 	if s.kvFactory, err = kvstore.NewPebbleKVFactory(&kvOptions); err != nil {
