@@ -2,7 +2,9 @@ package option
 
 import (
 	"errors"
+	"fmt"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/security"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -18,15 +20,34 @@ type Options struct {
 }
 
 func (op *Options) WithDefault() {
+	op.Cluster.WithDefault()
+	op.Server.WithDefault()
+	op.Controller.WithDefault()
 	op.Metadata.WithDefault()
+	op.Observability.WithDefault()
 }
 
 func (op *Options) Validate() error {
-	return multierr.Combine(op.Metadata.Validate())
+	return multierr.Combine(
+		op.Cluster.Validate(),
+		op.Server.Validate(),
+		op.Controller.Validate(),
+		op.Metadata.Validate(),
+		op.Observability.Validate())
 }
 
 type ClusterOptions struct {
 	ConfigPath string `yaml:"configPath" json:"configPath"`
+}
+
+func (co *ClusterOptions) WithDefault() {
+	if co.ConfigPath == "" {
+		co.ConfigPath = "./configs/cluster.yaml"
+	}
+}
+
+func (co *ClusterOptions) Validate() error {
+	return nil
 }
 
 type ServerOptions struct {
@@ -34,9 +55,29 @@ type ServerOptions struct {
 	Internal InternalServerOptions `yaml:"internal" json:"internal"`
 }
 
+func (so *ServerOptions) WithDefault() {
+	so.Admin.WithDefault()
+	so.Internal.WithDefault()
+}
+
+func (so *ServerOptions) Validate() error {
+	return multierr.Combine(so.Admin.Validate(), so.Internal.Validate())
+}
+
 type InternalServerOptions struct {
 	BindAddress string              `yaml:"bindAddress" json:"bindAddress"`
 	TLS         security.TLSOptions `yaml:"tls" json:"tls"`
+}
+
+func (iso *InternalServerOptions) WithDefault() {
+	if iso.BindAddress == "" {
+		iso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort)
+	}
+	iso.TLS.WithDefault()
+}
+
+func (iso *InternalServerOptions) Validate() error {
+	return iso.TLS.Validate()
 }
 
 type AdminServerOptions struct {
@@ -44,8 +85,27 @@ type AdminServerOptions struct {
 	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty"`
 }
 
+func (aso *AdminServerOptions) WithDefault() {
+	if aso.BindAddress == "" {
+		aso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort)
+	}
+	aso.TLS.WithDefault()
+}
+
+func (aso *AdminServerOptions) Validate() error {
+	return aso.TLS.Validate()
+}
+
 type ControllerOptions struct {
 	TLS security.TLSOptions `yaml:"tls" json:"tls"`
+}
+
+func (co *ControllerOptions) WithDefault() {
+	co.TLS.WithDefault()
+}
+
+func (co *ControllerOptions) Validate() error {
+	return co.TLS.Validate()
 }
 
 type MetadataOptions struct {

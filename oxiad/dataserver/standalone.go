@@ -63,7 +63,6 @@ type Standalone struct {
 }
 
 func NewTestConfig(dir string) StandaloneConfig {
-	flagFalse := false
 	return StandaloneConfig{
 		DataServerOptions: dataserveroption.Options{
 			Server: dataserveroption.ServerOptions{
@@ -84,7 +83,7 @@ func NewTestConfig(dir string) StandaloneConfig {
 			},
 			Observability: commonoption.ObservabilityOptions{
 				Metric: commonoption.MetricOptions{
-					Enabled: &flagFalse,
+					Enabled: &constant.FlagFalse,
 				},
 			},
 		},

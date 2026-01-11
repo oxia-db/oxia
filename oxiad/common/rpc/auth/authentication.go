@@ -35,16 +35,15 @@ type Options struct {
 }
 
 func (op *Options) WithDefault() {
-	flagTrue := true
-	if op.Provider != "" {
-		op.Enabled = &flagTrue
-	}
 }
 
 func (op *Options) Validate() error {
 	return nil
 }
 func (op *Options) IsEnabled() bool {
+	if op.Provider != "" {
+		return true
+	}
 	if op.Enabled == nil {
 		return false
 	}

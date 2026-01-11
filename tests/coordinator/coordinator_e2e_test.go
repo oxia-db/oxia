@@ -43,8 +43,6 @@ import (
 func newServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 
-	flagFalse := false
-
 	var err error
 	s, err = dataserver.New(&option.Options{
 		Server: option.ServerOptions{
@@ -57,7 +55,7 @@ func newServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 		},
 		Observability: commonoption.ObservabilityOptions{
 			Metric: commonoption.MetricOptions{
-				Enabled: &flagFalse,
+				Enabled: &constant.FlagFalse,
 			},
 		},
 		Storage: option.StorageOptions{
@@ -779,7 +777,6 @@ func TestCoordinator_KeySorting(t *testing.T) {
 	} {
 		t.Run(test.sorting, func(t *testing.T) {
 
-			flagFalse := false
 			s1, err := dataserver.New(&option.Options{
 				Server: option.ServerOptions{
 					Public: option.PublicServerOptions{
@@ -791,7 +788,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				},
 				Observability: commonoption.ObservabilityOptions{
 					Metric: commonoption.MetricOptions{
-						Enabled: &flagFalse,
+						Enabled: &constant.FlagFalse,
 					},
 				},
 				Storage: option.StorageOptions{

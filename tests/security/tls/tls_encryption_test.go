@@ -85,7 +85,6 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 
-	flagFalse := false
 	options := &dataserveroption.Options{
 		Server: dataserveroption.ServerOptions{
 			Public: dataserveroption.PublicServerOptions{
@@ -98,7 +97,7 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 		},
 		Observability: commonoption.ObservabilityOptions{
 			Metric: commonoption.MetricOptions{
-				Enabled: &flagFalse,
+				Enabled: &constant.FlagFalse,
 			},
 		},
 		Replication: dataserveroption.ReplicationOptions{
@@ -314,10 +313,9 @@ func TestClientHandshakeSuccess(t *testing.T) {
 }
 
 func TestOnlyEnablePublicTls(t *testing.T) {
-	flagFalse := false
 	disableInternalTLS := func(config *dataserveroption.Options) {
-		config.Server.Public.TLS.Enabled = &flagFalse
-		config.Replication.TLS.Enabled = &flagFalse
+		config.Server.Public.TLS.Enabled = &constant.FlagFalse
+		config.Replication.TLS.Enabled = &constant.FlagFalse
 	}
 	s1, sa1 := newTLSServerWithInterceptor(t, disableInternalTLS)
 	defer s1.Close()

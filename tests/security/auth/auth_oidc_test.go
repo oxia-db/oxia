@@ -58,7 +58,6 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Provider:       auth.ProviderOIDC,
 		ProviderParams: string(jsonParams),
 	}
-	flagFalse := false
 	s1, err := dataserver.New(
 		&option.Options{
 			Server: option.ServerOptions{
@@ -72,7 +71,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 			},
 			Observability: commonoption.ObservabilityOptions{
 				Metric: commonoption.MetricOptions{
-					Enabled: &flagFalse,
+					Enabled: &constant.FlagFalse,
 				},
 			},
 			Storage: option.StorageOptions{
@@ -104,7 +103,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		},
 		Observability: commonoption.ObservabilityOptions{
 			Metric: commonoption.MetricOptions{
-				Enabled: &flagFalse,
+				Enabled: &constant.FlagFalse,
 			},
 		},
 		Storage: option.StorageOptions{
@@ -136,7 +135,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		},
 		Observability: commonoption.ObservabilityOptions{
 			Metric: commonoption.MetricOptions{
-				Enabled: &flagFalse,
+				Enabled: &constant.FlagFalse,
 			},
 		},
 		Storage: option.StorageOptions{

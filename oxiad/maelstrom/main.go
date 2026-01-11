@@ -188,12 +188,11 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		flagFalse := false
 		// Any other node will be a storage node
 		_, err := dataserver.NewWithGrpcProvider(&option.Options{
 			Observability: commonoption.ObservabilityOptions{
 				Metric: commonoption.MetricOptions{
-					Enabled: &flagFalse,
+					Enabled: &constant.FlagFalse,
 				},
 			},
 			Storage: option.StorageOptions{

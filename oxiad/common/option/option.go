@@ -2,6 +2,8 @@ package option
 
 import (
 	"fmt"
+
+	"go.uber.org/multierr"
 )
 
 const (
@@ -20,13 +22,9 @@ func (ob *ObservabilityOptions) WithDefault() {
 }
 
 func (ob *ObservabilityOptions) Validate() error {
-	if err := ob.Metric.Validate(); err != nil {
-		return err
-	}
-	if err := ob.Log.Validate(); err != nil {
-		return err
-	}
-	return nil
+	return multierr.Combine(
+		ob.Metric.Validate(),
+		ob.Log.Validate())
 }
 
 type MetricOptions struct {
@@ -53,8 +51,7 @@ func (mo *MetricOptions) Validate() error {
 }
 
 type LogOptions struct {
-	Enabled *bool  `yaml:"enabled" json:"enabled"`
-	Level   string `yaml:"level" json:"level"`
+	Level string `yaml:"level" json:"level"`
 }
 
 func (lo *LogOptions) WithDefault() {

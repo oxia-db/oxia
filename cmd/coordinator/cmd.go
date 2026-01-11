@@ -79,6 +79,10 @@ func init() {
 
 func exec(*cobra.Command, []string) {
 	process.RunProcess(func() (io.Closer, error) {
+		coordinatorOptions.WithDefault()
+		if err := coordinatorOptions.Validate(); err != nil {
+			return nil, err
+		}
 		return coordinator.NewGrpcServer(coordinatorOptions)
 	})
 }

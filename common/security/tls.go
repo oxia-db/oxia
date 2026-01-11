@@ -45,13 +45,23 @@ type TLSOptions struct {
 	ClientAuth bool `yaml:"clientAuth,omitempty" json:"clientAuth,omitempty"`
 }
 
+func (tls *TLSOptions) WithDefault() {
+}
+
+func (tls *TLSOptions) Validate() error {
+	return nil
+}
+
 var (
 	ErrInvalidTLSCertFile = errors.New("tls cert file path can not be empty")
 	ErrInvalidTLSKeyFile  = errors.New("tls key file path can not be empty")
 )
 
-func (tls *TLSOptions) IsConfigured() bool {
-	return tls.CertFile != ""
+func (tls *TLSOptions) IsEnabled() bool {
+	if tls.Enabled == nil {
+		return false
+	}
+	return *tls.Enabled
 }
 
 func (tls *TLSOptions) makeCommonConfig() (*libtls.Config, error) {

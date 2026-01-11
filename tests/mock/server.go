@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/common/constant"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/stretchr/testify/assert"
@@ -29,8 +30,6 @@ import (
 
 func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
-	flagFalse := false
-
 	var err error
 	s, err = dataserver.New(&option.Options{
 		Server: option.ServerOptions{
@@ -43,7 +42,7 @@ func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Serv
 		},
 		Observability: commonoption.ObservabilityOptions{
 			Metric: commonoption.MetricOptions{
-				Enabled: &flagFalse,
+				Enabled: &constant.FlagFalse,
 			},
 		},
 		Storage: option.StorageOptions{
@@ -74,7 +73,6 @@ func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Serv
 func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 
-	flagFalse := false
 	var err error
 	s, err = dataserver.New(&option.Options{
 		Server: option.ServerOptions{
@@ -87,7 +85,7 @@ func NewServerWithAddress(t *testing.T, name string, publicAddress string, inter
 		},
 		Observability: commonoption.ObservabilityOptions{
 			Metric: commonoption.MetricOptions{
-				Enabled: &flagFalse,
+				Enabled: &constant.FlagFalse,
 			},
 		},
 		Storage: option.StorageOptions{
