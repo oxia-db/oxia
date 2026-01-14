@@ -77,7 +77,7 @@ func init() {
 	Cmd.Flags().BoolVar(&publicTLS.InsecureSkipVerify, "tls-insecure-skip-verify", false, "Tls insecure skip verify")
 	Cmd.Flags().BoolVar(&publicTLS.ClientAuth, "tls-client-auth", false, "Tls client auth")
 
-	internalTLS := &dataServerOptions.Server.Public.TLS
+	internalTLS := &dataServerOptions.Server.Internal.TLS
 	Cmd.Flags().StringVar(&internalTLS.CertFile, "internal-tls-cert-file", "", "Internal server tls certificate file")
 	Cmd.Flags().StringVar(&internalTLS.KeyFile, "internal-tls-key-file", "", "Internal server tls key file")
 	Cmd.Flags().Uint16Var(&internalTLS.MinVersion, "internal-tls-min-version", 0, "Internal server tls minimum version")

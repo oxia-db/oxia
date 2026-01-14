@@ -146,7 +146,9 @@ type NotificationOptions struct {
 }
 
 func (no *NotificationOptions) WithDefault() {
-	no.Retention = time.Hour * 1
+	if no.Retention == 0 {
+		no.Retention = time.Hour * 1
+	}
 }
 func (*NotificationOptions) Validate() error {
 	return nil
