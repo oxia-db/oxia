@@ -22,16 +22,16 @@ import (
 
 	"go.uber.org/multierr"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
+
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
-
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
@@ -44,7 +44,7 @@ import (
 )
 
 type StandaloneConfig struct {
-	conf.Config
+	DataServerOptions dataserveroption.Options
 
 	NumShards            uint32
 	NotificationsEnabled bool
@@ -63,14 +63,14 @@ type Standalone struct {
 }
 
 func NewTestConfig(dir string) StandaloneConfig {
+	dataServerOption := dataserveroption.NewDefaultOptions()
+	dataServerOption.Server.Public.BindAddress = "localhost:0"
+	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption.Storage.Database.Dir = filepath.Join(dir, "db")
+	dataServerOption.Storage.WAL.Dir = filepath.Join(dir, "wal")
 	return StandaloneConfig{
-		Config: conf.Config{
-			DataDir:             filepath.Join(dir, "db"),
-			WalDir:              filepath.Join(dir, "wal"),
-			InternalServiceAddr: "localhost:0",
-			PublicServiceAddr:   "localhost:0",
-			MetricsServiceAddr:  "",
-		},
+		DataServerOptions:    *dataServerOption,
 		NumShards:            1,
 		NotificationsEnabled: true,
 	}
@@ -84,41 +84,46 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 
 	s := &Standalone{config: config}
 
+	storageOptions := config.DataServerOptions.Storage
 	kvOptions := kvstore.FactoryOptions{
-		DataDir:     config.DataDir,
+		DataDir:     storageOptions.Database.Dir,
 		UseWAL:      false, // WAL is kept outside the KV store
 		SyncData:    false, // WAL is kept outside the KV store
-		CacheSizeMB: config.DbBlockCacheMB,
+		CacheSizeMB: storageOptions.Database.ReadCacheSizeMB,
 	}
 	s.walFactory = wal.NewWalFactory(&wal.FactoryOptions{
-		BaseWalDir:  config.WalDir,
-		Retention:   config.WalRetentionTime,
+		BaseWalDir:  storageOptions.WAL.Dir,
+		Retention:   storageOptions.WAL.Retention,
 		SegmentSize: wal.DefaultFactoryOptions.SegmentSize,
-		SyncData:    config.WalSyncData,
+		SyncData:    storageOptions.WAL.IsSyncEnabled(),
 	})
 	var err error
 	if s.kvFactory, err = kvstore.NewPebbleKVFactory(&kvOptions); err != nil {
 		return nil, err
 	}
 
-	s.shardsDirector = controller.NewShardsDirector(config.Config, s.walFactory, s.kvFactory, newNoOpReplicationRpcProvider())
+	s.shardsDirector = controller.NewShardsDirector(&storageOptions, s.walFactory, s.kvFactory, newNoOpReplicationRpcProvider())
 
 	if err := s.initializeShards(config.NumShards); err != nil {
 		return nil, err
 	}
 
-	s.rpc, err = newPublicRpcServer(rpc2.Default, config.PublicServiceAddr, s.shardsDirector,
-		nil, config.ServerTLS, &auth.Disabled)
+	publicServer := config.DataServerOptions.Server.Public
+	serverTLS, err := publicServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
-
+	s.rpc, err = newPublicRpcServer(rpc2.Default, publicServer.BindAddress, s.shardsDirector,
+		nil, serverTLS, &auth.Disabled)
+	if err != nil {
+		return nil, err
+	}
 	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards)
-
 	s.rpc.assignmentDispatcher = s.shardAssignmentDispatcher
 
-	if config.MetricsServiceAddr != "" {
-		s.metrics, err = metric.Start(config.MetricsServiceAddr)
+	metricOptions := config.DataServerOptions.Observability.Metric
+	if metricOptions.IsEnabled() {
+		s.metrics, err = metric.Start(metricOptions.BindAddress)
 	}
 	if err != nil {
 		return nil, err

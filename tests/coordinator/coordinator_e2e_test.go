@@ -25,7 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/proto"
 
@@ -43,15 +43,15 @@ import (
 func newServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.Enabled = &constant.FlagFalse
+	options.Storage.Database.Dir = t.TempDir()
+	options.Storage.WAL.Dir = t.TempDir()
+
 	var err error
-	s, err = dataserver.New(conf.Config{
-		PublicServiceAddr:          "localhost:0",
-		InternalServiceAddr:        "localhost:0",
-		MetricsServiceAddr:         "", // Disable metrics to avoid conflict
-		DataDir:                    t.TempDir(),
-		WalDir:                     t.TempDir(),
-		NotificationsRetentionTime: 1 * time.Minute,
-	})
+	s, err = dataserver.New(options)
 
 	assert.NoError(t, err)
 
@@ -758,12 +758,13 @@ func TestCoordinator_KeySorting(t *testing.T) {
 		{"natural"},
 	} {
 		t.Run(test.sorting, func(t *testing.T) {
-			s1, err := dataserver.New(conf.Config{
-				PublicServiceAddr:   "localhost:0",
-				InternalServiceAddr: "localhost:0",
-				DataDir:             t.TempDir(),
-				WalDir:              t.TempDir(),
-			})
+			dataServerOption := option.NewDefaultOptions()
+			dataServerOption.Server.Public.BindAddress = "localhost:0"
+			dataServerOption.Server.Internal.BindAddress = "localhost:0"
+			dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
+			dataServerOption.Storage.Database.Dir = t.TempDir()
+			dataServerOption.Storage.WAL.Dir = t.TempDir()
+			s1, err := dataserver.New(dataServerOption)
 			assert.NoError(t, err)
 
 			sa1 := model.Server{
