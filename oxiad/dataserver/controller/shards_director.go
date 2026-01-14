@@ -22,8 +22,9 @@ import (
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
+
 	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -50,24 +51,24 @@ type ShardsDirector interface {
 
 type shardsDirector struct {
 	sync.RWMutex
-
-	config    conf.Config
-	leaders   map[int64]lead.LeaderController
-	followers map[int64]follow.FollowerController
-
 	kvFactory              kvstore.Factory
 	walFactory             wal.Factory
 	replicationRpcProvider rpc.ReplicationRpcProvider
-	closed                 bool
+	storageOptions         *option.StorageOptions
 	log                    *slog.Logger
+
+	closed bool
+
+	leaders   map[int64]lead.LeaderController
+	followers map[int64]follow.FollowerController
 
 	leadersCounter   metric.UpDownCounter
 	followersCounter metric.UpDownCounter
 }
 
-func NewShardsDirector(config conf.Config, walFactory wal.Factory, kvFactory kvstore.Factory, provider rpc.ReplicationRpcProvider) ShardsDirector {
+func NewShardsDirector(storageOptions *option.StorageOptions, walFactory wal.Factory, kvFactory kvstore.Factory, provider rpc.ReplicationRpcProvider) ShardsDirector {
 	sd := &shardsDirector{
-		config:                 config,
+		storageOptions:         storageOptions,
 		walFactory:             walFactory,
 		kvFactory:              kvFactory,
 		leaders:                make(map[int64]lead.LeaderController),
@@ -152,7 +153,7 @@ func (s *shardsDirector) GetOrCreateLeader(namespace string, shardId int64, newT
 	}
 
 	// Create new leader controller
-	lc, err := lead.NewLeaderController(s.config, namespace, shardId, s.replicationRpcProvider, s.walFactory, s.kvFactory, newTermOptions)
+	lc, err := lead.NewLeaderController(s.storageOptions, namespace, shardId, s.replicationRpcProvider, s.walFactory, s.kvFactory, newTermOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +193,7 @@ func (s *shardsDirector) GetOrCreateFollower(namespace string, shardId int64, te
 	}
 
 	// Create new follower controller
-	fc, err := follow.NewFollowerController(s.config, namespace, shardId, s.walFactory, s.kvFactory, newTermOptions)
+	fc, err := follow.NewFollowerController(s.storageOptions, namespace, shardId, s.walFactory, s.kvFactory, newTermOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +229,7 @@ func (s *shardsDirector) DeleteShard(req *proto.DeleteShardRequest) (*proto.Dele
 		return resp, nil
 	}
 
-	fc, err := follow.NewFollowerController(s.config, req.Namespace, req.Shard, s.walFactory, s.kvFactory, nil)
+	fc, err := follow.NewFollowerController(s.storageOptions, req.Namespace, req.Shard, s.walFactory, s.kvFactory, nil)
 	if err != nil {
 		return nil, err
 	}

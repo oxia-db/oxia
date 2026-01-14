@@ -20,8 +20,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
+
 	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
@@ -45,7 +46,7 @@ func TestShardsDirector_DeleteShardLeader(t *testing.T) {
 	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	walFactory := newTestWalFactory(t)
 
-	sd := NewShardsDirector(conf.Config{}, walFactory, kvFactory, rpc.NewMockRpcClient())
+	sd := NewShardsDirector(&option.StorageOptions{}, walFactory, kvFactory, rpc.NewMockRpcClient())
 
 	lc, _ := sd.GetOrCreateLeader(constant.DefaultNamespace, shard, nil)
 	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
@@ -83,7 +84,7 @@ func TestShardsDirector_GetOrCreateFollower(t *testing.T) {
 	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	walFactory := newTestWalFactory(t)
 
-	sd := NewShardsDirector(conf.Config{}, walFactory, kvFactory, rpc.NewMockRpcClient())
+	sd := NewShardsDirector(&option.StorageOptions{}, walFactory, kvFactory, rpc.NewMockRpcClient())
 
 	lc, _ := sd.GetOrCreateLeader(constant.DefaultNamespace, shard, nil)
 	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})

@@ -112,9 +112,6 @@ func (*cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.Re
 					Value: []byte(cm.Data[filePath]),
 					Error: nil,
 				}
-
-				// Also notifies directly the oxia coordinator
-				conf.ClusterConfigChangeNotifications <- nil
 			default:
 				ch <- &viper.RemoteResponse{
 					Value: nil,

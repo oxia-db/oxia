@@ -20,11 +20,12 @@ import (
 
 	"go.uber.org/multierr"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
+
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
-	"github.com/oxia-db/oxia/oxiad/dataserver/conf"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -47,31 +48,32 @@ type Server struct {
 	healthServer rpc2.HealthServer
 }
 
-func New(config conf.Config) (*Server, error) {
-	return NewWithGrpcProvider(config, rpc2.Default, rpc.NewReplicationRpcProvider(config.PeerTLS))
+func New(options *option.Options) (*Server, error) {
+	provider, err := rpc.NewReplicationRpcProvider(&options.Replication)
+	if err != nil {
+		return nil, err
+	}
+	return NewWithGrpcProvider(options, rpc2.Default, provider)
 }
 
-func NewWithGrpcProvider(config conf.Config, provider rpc2.GrpcProvider, replicationRpcProvider rpc.ReplicationRpcProvider) (*Server, error) {
-	slog.Info(
-		"Starting Oxia dataserver",
-		slog.Any("config", config),
-	)
+func NewWithGrpcProvider(options *option.Options, provider rpc2.GrpcProvider, replicationRpcProvider rpc.ReplicationRpcProvider) (*Server, error) {
+	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
+	storage := &options.Storage
 	kvFactory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
-		DataDir:     config.DataDir,
-		CacheSizeMB: config.DbBlockCacheMB,
+		DataDir:     storage.Database.Dir,
+		CacheSizeMB: storage.Database.ReadCacheSizeMB,
 		UseWAL:      false, // WAL is kept outside the KV store
 		SyncData:    false, // WAL is kept outside the KV store
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	s := &Server{
 		replicationRpcProvider: replicationRpcProvider,
 		walFactory: wal.NewWalFactory(&wal.FactoryOptions{
-			BaseWalDir:  config.WalDir,
-			Retention:   config.WalRetentionTime,
+			BaseWalDir:  storage.WAL.Dir,
+			Retention:   storage.WAL.Retention,
 			SegmentSize: wal.DefaultFactoryOptions.SegmentSize,
 			SyncData:    config.WalSyncData,
 		}),
@@ -79,23 +81,34 @@ func NewWithGrpcProvider(config conf.Config, provider rpc2.GrpcProvider, replica
 		healthServer: rpc2.NewClosableHealthServer(context.Background()),
 	}
 
-	s.shardsDirector = controller.NewShardsDirector(config, s.walFactory, s.kvFactory, replicationRpcProvider)
+	s.shardsDirector = controller.NewShardsDirector(storage, s.walFactory, s.kvFactory, replicationRpcProvider)
 	s.shardAssignmentDispatcher = assignment.NewShardAssignmentDispatcher(s.healthServer)
 
-	s.internalRpcServer, err = newInternalRpcServer(provider, config.InternalServiceAddr,
-		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, config.InternalServerTLS)
+	internalServer := options.Server.Internal
+	internalServerTLS, err := internalServer.TLS.TryIntoServerTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	s.internalRpcServer, err = newInternalRpcServer(provider, internalServer.BindAddress,
+		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTLS)
 	if err != nil {
 		return nil, err
 	}
 
-	s.publicRpcServer, err = newPublicRpcServer(provider, config.PublicServiceAddr, s.shardsDirector,
-		s.shardAssignmentDispatcher, config.ServerTLS, &config.AuthOptions)
+	publicServer := options.Server.Public
+	publicServerTLS, err := publicServer.TLS.TryIntoServerTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	s.publicRpcServer, err = newPublicRpcServer(provider, publicServer.BindAddress, s.shardsDirector,
+		s.shardAssignmentDispatcher, publicServerTLS, &publicServer.Auth)
 	if err != nil {
 		return nil, err
 	}
 
-	if config.MetricsServiceAddr != "" {
-		s.metrics, err = metric.Start(config.MetricsServiceAddr)
+	observability := options.Observability
+	if observability.Metric.IsEnabled() {
+		s.metrics, err = metric.Start(observability.Metric.BindAddress)
 		if err != nil {
 			return nil, err
 		}

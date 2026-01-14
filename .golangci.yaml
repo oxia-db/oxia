@@ -48,6 +48,8 @@ linters:
     - usestdlibvars
     - wastedassign
   settings:
+    goconst:
+      ignore-strings: "localhost:0"
     gosec:
       excludes:
         - G115
@@ -83,7 +85,7 @@ linters:
           disabled: false
         - name: cyclomatic
           arguments:
-            - 15
+            - 17
           severity: warning
           disabled: false
         - name: function-length
