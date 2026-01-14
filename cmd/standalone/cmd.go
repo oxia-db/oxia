@@ -54,7 +54,7 @@ func init() {
 	Cmd.Flags().Uint32VarP(&conf.NumShards, "shards", "s", 1, "Number of shards")
 
 	storageOptions := &dataServerOptions.Storage
-	storageOptions.WAL.Sync = new(bool) // init the pointer value
+	storageOptions.WAL.Sync = &constant.FlagTrue
 
 	Cmd.Flags().StringVar(&storageOptions.WAL.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
 	Cmd.Flags().DurationVar(&storageOptions.WAL.Retention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
