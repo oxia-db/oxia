@@ -927,7 +927,7 @@ func TestGetWithoutValue(t *testing.T) {
 
 	key := "stream"
 
-	var keys []string
+	keys := make([]string, 0, 2)
 
 	putResult := <-client.Put(key, []byte("0"), PartitionKey(key), SequenceKeysDeltas(1))
 	assert.NotNil(t, putResult.Key)

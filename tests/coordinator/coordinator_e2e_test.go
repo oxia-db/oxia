@@ -713,7 +713,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// change the localhost to 127.0.0.1
-	clusterServer := make([]model.Server, 0)
+	clusterServer := make([]model.Server, 0, len(clusterConfig.Servers))
 	for _, sv := range clusterConfig.Servers {
 		clusterServer = append(clusterServer, model.Server{
 			Public:   strings.ReplaceAll(sv.Public, "localhost", "127.0.0.1"),
