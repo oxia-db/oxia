@@ -73,7 +73,7 @@ func NewWithGrpcProvider(config conf.Config, provider rpc2.GrpcProvider, replica
 			BaseWalDir:  config.WalDir,
 			Retention:   config.WalRetentionTime,
 			SegmentSize: wal.DefaultFactoryOptions.SegmentSize,
-			SyncData:    true,
+			SyncData:    config.WalSyncData,
 		}),
 		kvFactory:    kvFactory,
 		healthServer: rpc2.NewClosableHealthServer(context.Background()),
