@@ -42,7 +42,7 @@ var (
 )
 
 func init() {
-	dataServerOptions := conf.DataServerOptions
+	dataServerOptions := &conf.DataServerOptions
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultPublicPort), "Public service bind address")
 	observability := &dataServerOptions.Observability
 	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")
