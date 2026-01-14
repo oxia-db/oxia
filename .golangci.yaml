@@ -161,7 +161,7 @@ linters:
         text: blank-imports
       - linters:
           - revive
-        path: common/(hash|io|time)/
+        path: common\/(hash|io|time)\/
         text: var-naming.*avoid package names that conflict with Go standard library
       - linters:
           - goconst
