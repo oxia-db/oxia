@@ -75,7 +75,7 @@ func NewWithGrpcProvider(options *option.Options, provider rpc2.GrpcProvider, re
 			BaseWalDir:  storage.WAL.Dir,
 			Retention:   storage.WAL.Retention,
 			SegmentSize: wal.DefaultFactoryOptions.SegmentSize,
-			SyncData:    config.WalSyncData,
+			SyncData:    storage.WAL.IsSyncEnabled(),
 		}),
 		kvFactory:    kvFactory,
 		healthServer: rpc2.NewClosableHealthServer(context.Background()),
