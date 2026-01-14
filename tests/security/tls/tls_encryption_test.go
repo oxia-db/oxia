@@ -86,11 +86,11 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 	assert.NoError(t, err)
 
 	dataServerOption := dataserveroption.NewDefaultOptions()
-	dataServerOption.Server.Public.BindAddress = "localhost:0"
+	dataServerOption.Server.Public.BindAddress = constant.LocalhostAnyPort
 	dataServerOption.Server.Public.TLS = *option
-	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Server.Internal.BindAddress = constant.LocalhostAnyPort
 	dataServerOption.Server.Internal.TLS = *option
-	dataServerOption.Observability.Metric.BindAddress = "localhost:0"
+	dataServerOption.Observability.Metric.BindAddress = constant.LocalhostAnyPort
 	dataServerOption.Replication.TLS = *option
 	dataServerOption.Storage.Database.Dir = t.TempDir()
 	dataServerOption.Storage.WAL.Dir = t.TempDir()

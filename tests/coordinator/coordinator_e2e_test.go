@@ -44,8 +44,8 @@ func newServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 
 	options := option.NewDefaultOptions()
-	options.Server.Public.BindAddress = "localhost:0"
-	options.Server.Internal.BindAddress = "localhost:0"
+	options.Server.Public.BindAddress = constant.LocalhostAnyPort
+	options.Server.Internal.BindAddress = constant.LocalhostAnyPort
 	options.Observability.Metric.Enabled = &constant.FlagFalse
 	options.Storage.Database.Dir = t.TempDir()
 	options.Storage.WAL.Dir = t.TempDir()
@@ -759,8 +759,8 @@ func TestCoordinator_KeySorting(t *testing.T) {
 	} {
 		t.Run(test.sorting, func(t *testing.T) {
 			dataServerOption := option.NewDefaultOptions()
-			dataServerOption.Server.Public.BindAddress = "localhost:0"
-			dataServerOption.Server.Internal.BindAddress = "localhost:0"
+			dataServerOption.Server.Public.BindAddress = constant.LocalhostAnyPort
+			dataServerOption.Server.Internal.BindAddress = constant.LocalhostAnyPort
 			dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 			dataServerOption.Storage.Database.Dir = t.TempDir()
 			dataServerOption.Storage.WAL.Dir = t.TempDir()

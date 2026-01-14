@@ -28,4 +28,7 @@ const (
 
 	MaxSessionTimeout = 5 * time.Minute
 	MinSessionTimeout = 2 * time.Second
+
+	// LocalhostAnyPort is used for testing to bind to any available port
+	LocalhostAnyPort = "localhost:0"
 )

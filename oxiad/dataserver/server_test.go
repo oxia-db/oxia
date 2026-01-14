@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -30,9 +31,9 @@ import (
 
 func TestNewServer(t *testing.T) {
 	options := option.NewDefaultOptions()
-	options.Server.Public.BindAddress = "localhost:0"
-	options.Server.Internal.BindAddress = "localhost:0"
-	options.Observability.Metric.BindAddress = "localhost:0"
+	options.Server.Public.BindAddress = constant.LocalhostAnyPort
+	options.Server.Internal.BindAddress = constant.LocalhostAnyPort
+	options.Observability.Metric.BindAddress = constant.LocalhostAnyPort
 	options.Storage.Database.Dir = t.TempDir()
 	options.Storage.WAL.Dir = t.TempDir()
 
@@ -57,9 +58,9 @@ func TestNewServer(t *testing.T) {
 
 func TestNewServerClosableWithHealthWatch(t *testing.T) {
 	options := option.NewDefaultOptions()
-	options.Server.Public.BindAddress = "localhost:0"
-	options.Server.Internal.BindAddress = "localhost:0"
-	options.Observability.Metric.BindAddress = "localhost:0"
+	options.Server.Public.BindAddress = constant.LocalhostAnyPort
+	options.Server.Internal.BindAddress = constant.LocalhostAnyPort
+	options.Observability.Metric.BindAddress = constant.LocalhostAnyPort
 	options.Storage.Database.Dir = t.TempDir()
 	options.Storage.WAL.Dir = t.TempDir()
 

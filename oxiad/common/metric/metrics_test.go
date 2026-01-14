@@ -21,10 +21,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/common/constant"
 )
 
 func TestPrometheusMetrics(t *testing.T) {
-	metrics, err := Start("localhost:0")
+	metrics, err := Start(constant.LocalhostAnyPort)
 	assert.NoError(t, err)
 
 	url := fmt.Sprintf("http://localhost:%d/metrics", metrics.Port())

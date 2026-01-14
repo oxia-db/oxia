@@ -59,9 +59,9 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		ProviderParams: string(jsonParams),
 	}
 	dataServerOption1 := option.NewDefaultOptions()
-	dataServerOption1.Server.Public.BindAddress = "localhost:0"
+	dataServerOption1.Server.Public.BindAddress = constant.LocalhostAnyPort
 	dataServerOption1.Server.Public.Auth = authParams
-	dataServerOption1.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption1.Server.Internal.BindAddress = constant.LocalhostAnyPort
 	dataServerOption1.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption1.Storage.Database.Dir = t.TempDir()
 	dataServerOption1.Storage.WAL.Dir = t.TempDir()
@@ -72,9 +72,9 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
 	dataServerOption2 := option.NewDefaultOptions()
-	dataServerOption2.Server.Public.BindAddress = "localhost:0"
+	dataServerOption2.Server.Public.BindAddress = constant.LocalhostAnyPort
 	dataServerOption2.Server.Public.Auth = authParams
-	dataServerOption2.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption2.Server.Internal.BindAddress = constant.LocalhostAnyPort
 	dataServerOption2.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption2.Storage.Database.Dir = t.TempDir()
 	dataServerOption2.Storage.WAL.Dir = t.TempDir()
@@ -86,9 +86,9 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
 	dataServerOption3 := option.NewDefaultOptions()
-	dataServerOption3.Server.Public.BindAddress = "localhost:0"
+	dataServerOption3.Server.Public.BindAddress = constant.LocalhostAnyPort
 	dataServerOption3.Server.Public.Auth = authParams
-	dataServerOption3.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption3.Server.Internal.BindAddress = constant.LocalhostAnyPort
 	dataServerOption3.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption3.Storage.Database.Dir = t.TempDir()
 	dataServerOption3.Storage.WAL.Dir = t.TempDir()

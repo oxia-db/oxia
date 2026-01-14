@@ -38,8 +38,8 @@ func BenchmarkServer(b *testing.B) {
 	tmp := b.TempDir()
 
 	options := option.NewDefaultOptions()
-	options.Server.Public.BindAddress = "localhost:0"
-	options.Server.Internal.BindAddress = "localhost:0"
+	options.Server.Public.BindAddress = constant.LocalhostAnyPort
+	options.Server.Internal.BindAddress = constant.LocalhostAnyPort
 	options.Observability.Metric.Enabled = &constant.FlagFalse
 	options.Storage.Database.Dir = fmt.Sprintf("%s/db", tmp)
 	options.Storage.WAL.Dir = fmt.Sprintf("%s/wal", tmp)

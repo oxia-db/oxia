@@ -64,8 +64,8 @@ type Standalone struct {
 
 func NewTestConfig(dir string) StandaloneConfig {
 	dataServerOption := dataserveroption.NewDefaultOptions()
-	dataServerOption.Server.Public.BindAddress = "localhost:0"
-	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Server.Public.BindAddress = constant.LocalhostAnyPort
+	dataServerOption.Server.Internal.BindAddress = constant.LocalhostAnyPort
 	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption.Storage.Database.Dir = filepath.Join(dir, "db")
 	dataServerOption.Storage.WAL.Dir = filepath.Join(dir, "wal")

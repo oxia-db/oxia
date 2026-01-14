@@ -30,8 +30,8 @@ import (
 func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 	dataServerOption := option.NewDefaultOptions()
-	dataServerOption.Server.Public.BindAddress = "localhost:0"
-	dataServerOption.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption.Server.Public.BindAddress = constant.LocalhostAnyPort
+	dataServerOption.Server.Internal.BindAddress = constant.LocalhostAnyPort
 	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption.Storage.Database.Dir = t.TempDir()
 	dataServerOption.Storage.WAL.Dir = t.TempDir()

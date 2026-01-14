@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
@@ -32,7 +33,7 @@ import (
 
 func TestHealthCmd(t *testing.T) {
 	_health := health.NewServer()
-	server, err := rpc.Default.StartGrpcServer("health", "localhost:0", func(registrar grpc.ServiceRegistrar) {
+	server, err := rpc.Default.StartGrpcServer("health", constant.LocalhostAnyPort, func(registrar grpc.ServiceRegistrar) {
 		grpc_health_v1.RegisterHealthServer(registrar, _health)
 	}, nil, &auth.Options{})
 	assert.NoError(t, err)
