@@ -84,9 +84,9 @@ func init() {
 	Cmd.Flags().StringVar(&controller.TLS.ServerName, "peer-tls-server-name", "", "Peer tls server name")
 }
 
-func exec(*cobra.Command, []string) {
+func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		if Cmd.Flags().Changed("conf") {
+		if cmd.Flags().Changed("conf") {
 			if err := codec.TryReadAndInitConf(confFile, coordinatorOptions); err != nil {
 				return nil, err
 			}
