@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/oxia-db/oxia/oxiad/dataserver/option/options",
+  "$ref": "#/$defs/Options",
+  "$defs": {
+    "DatabaseOptions": {
+      "properties": {
+        "dir": {
+          "type": "string"
+        },
+        "readCacheSizeMB": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "dir",
+        "readCacheSizeMB"
+      ]
+    },
+    "InternalServerOptions": {
+      "properties": {
+        "bindAddress": {
+          "type": "string"
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bindAddress",
+        "tls"
+      ]
+    },
+    "LogOptions": {
+      "properties": {
+        "level": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "level"
+      ]
+    },
+    "MetricOptions": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "bindAddress": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "enabled",
+        "bindAddress"
+      ]
+    },
+    "NotificationOptions": {
+      "properties": {
+        "retention": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "retention"
+      ]
+    },
+    "ObservabilityOptions": {
+      "properties": {
+        "metric": {
+          "$ref": "#/$defs/MetricOptions"
+        },
+        "log": {
+          "$ref": "#/$defs/LogOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "metric",
+        "log"
+      ]
+    },
+    "Options": {
+      "properties": {
+        "server": {
+          "$ref": "#/$defs/ServerOptions"
+        },
+        "replication": {
+          "$ref": "#/$defs/ReplicationOptions"
+        },
+        "storage": {
+          "$ref": "#/$defs/StorageOptions"
+        },
+        "observability": {
+          "$ref": "#/$defs/ObservabilityOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "server",
+        "replication",
+        "storage",
+        "observability"
+      ]
+    },
+    "PublicServerOptions": {
+      "properties": {
+        "bindAddress": {
+          "type": "string"
+        },
+        "auth": {
+          "$ref": "#/$defs/Options"
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bindAddress",
+        "auth",
+        "tls"
+      ]
+    },
+    "ReplicationOptions": {
+      "properties": {
+        "tls": {
+          "$ref": "#/$defs/TLSOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "tls"
+      ]
+    },
+    "ServerOptions": {
+      "properties": {
+        "public": {
+          "$ref": "#/$defs/PublicServerOptions"
+        },
+        "internal": {
+          "$ref": "#/$defs/InternalServerOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "public",
+        "internal"
+      ]
+    },
+    "StorageOptions": {
+      "properties": {
+        "wal": {
+          "$ref": "#/$defs/WALOptions"
+        },
+        "database": {
+          "$ref": "#/$defs/DatabaseOptions"
+        },
+        "notification": {
+          "$ref": "#/$defs/NotificationOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "wal",
+        "database",
+        "notification"
+      ]
+    },
+    "TLSOptions": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "certFile": {
+          "type": "string"
+        },
+        "keyFile": {
+          "type": "string"
+        },
+        "cipherSuites": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "minVersion": {
+          "type": "integer"
+        },
+        "maxVersion": {
+          "type": "integer"
+        },
+        "trustedCaFile": {
+          "type": "string"
+        },
+        "insecureSkipVerify": {
+          "type": "boolean"
+        },
+        "serverName": {
+          "type": "string"
+        },
+        "clientAuth": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "enabled",
+        "certFile",
+        "keyFile",
+        "cipherSuites",
+        "minVersion",
+        "maxVersion",
+        "trustedCaFile",
+        "insecureSkipVerify"
+      ]
+    },
+    "WALOptions": {
+      "properties": {
+        "dir": {
+          "type": "string"
+        },
+        "sync": {
+          "type": "boolean"
+        },
+        "retention": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "dir",
+        "sync",
+        "retention"
+      ]
+    }
+  }
+}

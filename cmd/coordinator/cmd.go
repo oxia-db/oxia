@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/oxia-db/oxia/common/codec"
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -28,8 +29,10 @@ import (
 )
 
 var (
+	confFile           string
 	coordinatorOptions = option.NewDefaultOptions()
-	Cmd                = &cobra.Command{
+
+	Cmd = &cobra.Command{
 		Use:   "coordinator",
 		Short: "Start a coordinator",
 		Long:  `Start a coordinator`,
@@ -38,6 +41,8 @@ var (
 )
 
 func init() {
+	Cmd.Flags().StringVarP(&confFile, "conf", "c", "", "config file")
+
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Admin.BindAddress, "admin-addr", "a", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Admin service bind address")
 
@@ -57,7 +62,7 @@ func init() {
 	Cmd.Flags().StringVar(&meta.Raft.DataDir, "raft-data-dir", "data/raft", "Raft address")
 
 	cluster := &coordinatorOptions.Cluster
-	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Cluster config file")
+	Cmd.Flags().StringVarP(&cluster.ConfigPath, "cluster-conf", "f", "", "Cluster config file")
 
 	internalServer := &coordinatorOptions.Server.Internal
 	Cmd.Flags().StringVar(&internalServer.TLS.CertFile, "tls-cert-file", "", "Tls certificate file")
@@ -80,9 +85,10 @@ func init() {
 
 func exec(*cobra.Command, []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		coordinatorOptions.WithDefault()
-		if err := coordinatorOptions.Validate(); err != nil {
-			return nil, err
+		if confFile != "" {
+			if err := codec.ReadConf(confFile, coordinatorOptions); err != nil {
+				return nil, err
+			}
 		}
 		return coordinator.NewGrpcServer(coordinatorOptions)
 	})

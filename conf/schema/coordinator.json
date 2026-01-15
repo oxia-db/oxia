@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/oxia-db/oxia/oxiad/coordinator/option/options",
+  "$ref": "#/$defs/Options",
+  "$defs": {
+    "AdminServerOptions": {
+      "properties": {
+        "bindAddress": {
+          "type": "string"
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bindAddress"
+      ]
+    },
+    "ClusterOptions": {
+      "properties": {
+        "configPath": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "configPath"
+      ]
+    },
+    "ControllerOptions": {
+      "properties": {
+        "tls": {
+          "$ref": "#/$defs/TLSOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "tls"
+      ]
+    },
+    "FileMetadata": {
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path"
+      ]
+    },
+    "InternalServerOptions": {
+      "properties": {
+        "bindAddress": {
+          "type": "string"
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bindAddress",
+        "tls"
+      ]
+    },
+    "K8sMetadata": {
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "configMapName": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "namespace",
+        "configMapName"
+      ]
+    },
+    "LogOptions": {
+      "properties": {
+        "level": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "level"
+      ]
+    },
+    "MetadataOptions": {
+      "properties": {
+        "providerName": {
+          "type": "string"
+        },
+        "kubernetes": {
+          "$ref": "#/$defs/K8sMetadata"
+        },
+        "file": {
+          "$ref": "#/$defs/FileMetadata"
+        },
+        "raft": {
+          "$ref": "#/$defs/RaftMetadata"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "providerName"
+      ]
+    },
+    "MetricOptions": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "bindAddress": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "enabled",
+        "bindAddress"
+      ]
+    },
+    "ObservabilityOptions": {
+      "properties": {
+        "metric": {
+          "$ref": "#/$defs/MetricOptions"
+        },
+        "log": {
+          "$ref": "#/$defs/LogOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "metric",
+        "log"
+      ]
+    },
+    "Options": {
+      "properties": {
+        "cluster": {
+          "$ref": "#/$defs/ClusterOptions"
+        },
+        "server": {
+          "$ref": "#/$defs/ServerOptions"
+        },
+        "controller": {
+          "$ref": "#/$defs/ControllerOptions"
+        },
+        "metadata": {
+          "$ref": "#/$defs/MetadataOptions"
+        },
+        "observability": {
+          "$ref": "#/$defs/ObservabilityOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cluster",
+        "server",
+        "controller",
+        "metadata",
+        "observability"
+      ]
+    },
+    "RaftMetadata": {
+      "properties": {
+        "bootstrapNodes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "address": {
+          "type": "string"
+        },
+        "dataDir": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bootstrapNodes",
+        "address",
+        "dataDir"
+      ]
+    },
+    "ServerOptions": {
+      "properties": {
+        "admin": {
+          "$ref": "#/$defs/AdminServerOptions"
+        },
+        "internal": {
+          "$ref": "#/$defs/InternalServerOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "admin",
+        "internal"
+      ]
+    },
+    "TLSOptions": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "certFile": {
+          "type": "string"
+        },
+        "keyFile": {
+          "type": "string"
+        },
+        "cipherSuites": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "minVersion": {
+          "type": "integer"
+        },
+        "maxVersion": {
+          "type": "integer"
+        },
+        "trustedCaFile": {
+          "type": "string"
+        },
+        "insecureSkipVerify": {
+          "type": "boolean"
+        },
+        "serverName": {
+          "type": "string"
+        },
+        "clientAuth": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "enabled",
+        "certFile",
+        "keyFile",
+        "cipherSuites",
+        "minVersion",
+        "maxVersion",
+        "trustedCaFile",
+        "insecureSkipVerify"
+      ]
+    }
+  }
+}

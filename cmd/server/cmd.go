@@ -19,6 +19,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/oxia-db/oxia/common/codec"
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -32,6 +33,7 @@ import (
 )
 
 var (
+	confFile          string
 	dataServerOptions = option.NewDefaultOptions()
 	Cmd               = &cobra.Command{
 		Use:   "server",
@@ -43,6 +45,8 @@ var (
 
 func init() {
 	Cmd.Flags().SortFlags = false
+
+	Cmd.Flags().StringVarP(&confFile, "conf", "c", "", "config file")
 
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultPublicPort), "Public service bind address")
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
@@ -98,9 +102,10 @@ func init() {
 
 func exec(*cobra.Command, []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		dataServerOptions.WithDefault()
-		if err := dataServerOptions.Validate(); err != nil {
-			return nil, err
+		if confFile != "" {
+			if err := codec.ReadConf(confFile, dataServerOptions); err != nil {
+				return nil, err
+			}
 		}
 		return dataserver.New(dataServerOptions)
 	})
