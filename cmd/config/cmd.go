@@ -15,8 +15,9 @@
 package config
 
 import (
-	"github.com/oxia-db/oxia/cmd/config/createschema"
 	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/cmd/config/createschema"
 )
 
 var (

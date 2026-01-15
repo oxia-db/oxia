@@ -62,8 +62,7 @@ func parseThenWrite(reflect *jsonschema.Schema, name string) error {
 	if err != nil {
 		return err
 	}
-	println(string(marshal))
-	if err = os.WriteFile(path.Join(outputDir, fmt.Sprintf("%s.json", name)), marshal, os.ModePerm); err != nil {
+	if err = os.WriteFile(path.Join(outputDir, fmt.Sprintf("%s.json", name)), marshal, 0644); err != nil {
 		return err
 	}
 	return nil

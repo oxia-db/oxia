@@ -19,8 +19,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/oxia-db/oxia/common/codec"
 	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/common/codec"
 
 	"github.com/oxia-db/oxia/common/constant"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"

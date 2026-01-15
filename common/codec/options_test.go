@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestConfig is a mock implementation of ConfigurableOptions for testing
+// TestConfig is a mock implementation of ConfigurableOptions for testing.
 type TestConfig struct {
 	Name     string `yaml:"name"`
 	Port     int    `yaml:"port"`
@@ -161,7 +161,7 @@ func TestConfigurableOptions_Interface(t *testing.T) {
 	var _ ConfigurableOptions = (*TestConfig)(nil)
 }
 
-// TestReadConf_NilConfig tests that ReadConf handles nil pointer gracefully
+// TestReadConf_NilConfig tests that ReadConf handles nil pointer gracefully.
 func TestReadConf_NilConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")

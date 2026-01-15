@@ -19,9 +19,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/oxia-db/oxia/cmd/config"
 	"github.com/spf13/cobra"
 	"go.uber.org/automaxprocs/maxprocs"
+
+	"github.com/oxia-db/oxia/cmd/config"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"

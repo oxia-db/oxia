@@ -52,8 +52,5 @@ func ReadConf(path string, configurationOptions ConfigurableOptions) error {
 		return err
 	}
 	configurationOptions.WithDefault()
-	if err = configurationOptions.Validate(); err != nil {
-		return err
-	}
-	return nil
+	return configurationOptions.Validate()
 }
