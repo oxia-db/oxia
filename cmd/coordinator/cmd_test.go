@@ -73,7 +73,7 @@ observability:
 	opts := option.NewDefaultOptions()
 
 	// Load configuration using the same function as the cmd
-	err = codec.ReadConf(configPath, opts)
+	err = codec.TryReadAndInitConf(configPath, opts)
 	require.NoError(t, err)
 
 	// Verify that config was loaded correctly
@@ -119,7 +119,7 @@ metadata:
 	opts := option.NewDefaultOptions()
 
 	// Load configuration
-	err = codec.ReadConf(configPath, opts)
+	err = codec.TryReadAndInitConf(configPath, opts)
 	require.NoError(t, err)
 
 	// Verify that partial config overrides defaults but other values use defaults
@@ -194,7 +194,7 @@ metadata:
 			opts := option.NewDefaultOptions()
 
 			// Load configuration
-			err = codec.ReadConf(configPath, opts)
+			err = codec.TryReadAndInitConf(configPath, opts)
 			require.NoError(t, err)
 
 			// Verify provider is set correctly
@@ -232,7 +232,7 @@ func TestCoordinator_ConfigFileNotFound(t *testing.T) {
 	opts := option.NewDefaultOptions()
 
 	// Should fail when config file doesn't exist
-	err := codec.ReadConf("/nonexistent/config.yaml", opts)
+	err := codec.TryReadAndInitConf("/nonexistent/config.yaml", opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no such file")
 }
@@ -253,7 +253,7 @@ cluster:
 	opts := option.NewDefaultOptions()
 
 	// Should fail with invalid YAML
-	err = codec.ReadConf(configPath, opts)
+	err = codec.TryReadAndInitConf(configPath, opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "yaml")
 }
@@ -273,7 +273,7 @@ func TestCoordinator_EmptyConfigFile(t *testing.T) {
 	opts.Metadata.ProviderName = "file"
 
 	// Should work with empty config (defaults should be applied)
-	err = codec.ReadConf(configPath, opts)
+	err = codec.TryReadAndInitConf(configPath, opts)
 	assert.NoError(t, err)
 
 	// Verify defaults are still applied
@@ -319,7 +319,7 @@ metadata:
 	opts := option.NewDefaultOptions()
 
 	// Load configuration
-	err = codec.ReadConf(configPath, opts)
+	err = codec.TryReadAndInitConf(configPath, opts)
 	require.NoError(t, err)
 
 	// Verify TLS settings for internal server
@@ -374,7 +374,7 @@ metadata:
 
 	// Test configuration loading via the command pattern
 	confFile = configPath
-	err = codec.ReadConf(confFile, coordinatorOptions)
+	err = codec.TryReadAndInitConf(confFile, coordinatorOptions)
 	require.NoError(t, err)
 
 	// Verify config file values were loaded

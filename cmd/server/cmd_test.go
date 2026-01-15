@@ -75,7 +75,7 @@ observability:
 	opts := option.NewDefaultOptions()
 
 	// Load configuration using the same function as the cmd
-	err = codec.ReadConf(configPath, opts)
+	err = codec.TryReadAndInitConf(configPath, opts)
 	require.NoError(t, err)
 
 	// Verify that config was loaded correctly
@@ -126,7 +126,7 @@ storage:
 	opts := option.NewDefaultOptions()
 
 	// Load configuration
-	err = codec.ReadConf(configPath, opts)
+	err = codec.TryReadAndInitConf(configPath, opts)
 	require.NoError(t, err)
 
 	// Verify that partial config overrides defaults but other values use defaults
@@ -158,7 +158,7 @@ func TestServer_ConfigFileNotFound(t *testing.T) {
 	opts := option.NewDefaultOptions()
 
 	// Should fail when config file doesn't exist
-	err := codec.ReadConf("/nonexistent/config.yaml", opts)
+	err := codec.TryReadAndInitConf("/nonexistent/config.yaml", opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no such file")
 }
@@ -180,7 +180,7 @@ server:
 	opts := option.NewDefaultOptions()
 
 	// Should fail with invalid YAML
-	err = codec.ReadConf(configPath, opts)
+	err = codec.TryReadAndInitConf(configPath, opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "yaml")
 }
@@ -196,7 +196,7 @@ func TestServer_EmptyConfigFile(t *testing.T) {
 	opts := option.NewDefaultOptions()
 
 	// Should work with empty config (defaults should be applied)
-	err = codec.ReadConf(configPath, opts)
+	err = codec.TryReadAndInitConf(configPath, opts)
 	assert.NoError(t, err)
 
 	// Verify defaults are still applied
@@ -232,7 +232,7 @@ observability:
 
 	// Test configuration loading via the command pattern
 	confFile = configPath
-	err = codec.ReadConf(confFile, dataServerOptions)
+	err = codec.TryReadAndInitConf(confFile, dataServerOptions)
 	require.NoError(t, err)
 
 	// Verify config file values were loaded

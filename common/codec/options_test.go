@@ -69,7 +69,7 @@ required: "value"
 
 	// Test reading the configuration
 	var config TestConfig
-	err = ReadConf(configPath, &config)
+	err = TryReadAndInitConf(configPath, &config)
 
 	assert.NoError(t, err)
 	assert.Equal(t, "test-service", config.Name)
@@ -94,7 +94,7 @@ required: "value"
 
 	// Test reading the configuration
 	var config TestConfig
-	err = ReadConf(configPath, &config)
+	err = TryReadAndInitConf(configPath, &config)
 
 	assert.NoError(t, err)
 	assert.Equal(t, "default", config.Name) // Should get default value
@@ -106,7 +106,7 @@ required: "value"
 
 func TestReadConf_FileNotFound(t *testing.T) {
 	var config TestConfig
-	err := ReadConf("/nonexistent/path/config.yaml", &config)
+	err := TryReadAndInitConf("/nonexistent/path/config.yaml", &config)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no such file or directory")
@@ -128,7 +128,7 @@ port: [invalid yaml syntax
 	require.NoError(t, err)
 
 	var config TestConfig
-	err = ReadConf(configPath, &config)
+	err = TryReadAndInitConf(configPath, &config)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "yaml")
@@ -150,7 +150,7 @@ port: 9000
 	require.NoError(t, err)
 
 	var config TestConfig
-	err = ReadConf(configPath, &config)
+	err = TryReadAndInitConf(configPath, &config)
 
 	assert.Error(t, err)
 	assert.True(t, config.defaultsApplied) // Defaults should still be applied
@@ -161,7 +161,7 @@ func TestConfigurableOptions_Interface(t *testing.T) {
 	var _ ConfigurableOptions = (*TestConfig)(nil)
 }
 
-// TestReadConf_NilConfig tests that ReadConf handles nil pointer gracefully.
+// TestReadConf_NilConfig tests that TryReadAndInitConf handles nil pointer gracefully.
 func TestReadConf_NilConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -173,7 +173,7 @@ name: "test"
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
 	require.NoError(t, err)
 
-	err = ReadConf(configPath, nil)
+	err = TryReadAndInitConf(configPath, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "configuration options cannot be nil")
 }

@@ -36,14 +36,12 @@ type ConfigurableOptions interface {
 	Validate() error
 }
 
-// ReadConf reads a YAML configuration file from the given path and populates
-// the provided ConfigurableOptions. After loading the configuration,
-// it applies default values and validates the configuration.
-func ReadConf(path string, configurationOptions ConfigurableOptions) error {
+// TryReadAndInitConf reads a YAML configuration file from the given path and populates
+// the provided ConfigurableOptions.
+func TryReadAndInitConf(path string, configurationOptions ConfigurableOptions) error {
 	if configurationOptions == nil {
 		return errors.New("configuration options cannot be nil")
 	}
-
 	file, err := os.ReadFile(path)
 	if err != nil {
 		return err

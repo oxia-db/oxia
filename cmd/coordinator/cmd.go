@@ -42,7 +42,7 @@ var (
 )
 
 func init() {
-	Cmd.Flags().StringVarP(&confFile, "conf", "c", "", "config file")
+	Cmd.Flags().StringVarP(&confFile, "conf", "c", "", "config file path")
 
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Admin.BindAddress, "admin-addr", "a", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Admin service bind address")
@@ -86,8 +86,13 @@ func init() {
 
 func exec(*cobra.Command, []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		if confFile != "" {
-			if err := codec.ReadConf(confFile, coordinatorOptions); err != nil {
+		if Cmd.Flags().Changed("conf") {
+			if err := codec.TryReadAndInitConf(confFile, coordinatorOptions); err != nil {
+				return nil, err
+			}
+		} else {
+			coordinatorOptions.WithDefault()
+			if err := coordinatorOptions.Validate(); err != nil {
 				return nil, err
 			}
 		}
