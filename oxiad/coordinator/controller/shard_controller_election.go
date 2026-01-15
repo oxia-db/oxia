@@ -350,11 +350,14 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []model.Serv
 							// If we're receiving invalid term error, it would mean
 							// there's already a new term generated, and we don't have
 							// to keep trying with this old term
-							e.Warn(
-								"Failed to fenceNewTermAndAddFollower, invalid term. Stop trying",
-								slog.Any("follower", follower),
-								slog.Int64("term", term),
-							)
+							// Only log if the context is not cancelled (i.e., not due to a new election)
+							if e.Context.Err() == nil {
+								e.Warn(
+									"Failed to fenceNewTermAndAddFollower, invalid term. Stop trying",
+									slog.Any("follower", follower),
+									slog.Int64("term", term),
+								)
+							}
 							return nil
 						}
 						return err
