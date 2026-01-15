@@ -22,9 +22,10 @@ import (
 	"path"
 
 	"github.com/invopop/jsonschema"
+	"github.com/spf13/cobra"
+
 	coordinatoroption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
-	"github.com/spf13/cobra"
 )
 
 var (
@@ -62,8 +63,5 @@ func parseThenWrite(reflect *jsonschema.Schema, name string) error {
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(path.Join(outputDir, fmt.Sprintf("%s.json", name)), marshal, 0644); err != nil {
-		return err
-	}
-	return nil
+	return os.WriteFile(path.Join(outputDir, fmt.Sprintf("%s.json", name)), marshal, 0600)
 }
