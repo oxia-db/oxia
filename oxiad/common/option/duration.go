@@ -53,7 +53,7 @@ func (Duration) JSONSchema() *jsonschema.Schema {
 		Type:        "string",
 		Title:       "Duration",
 		Description: "Duration string in Go duration format (e.g., \"1h\", \"30m\", \"5s\")",
-		Pattern:     "^[0-9]+[smh]$",
+		Pattern:     "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
 		Examples: []any{
 			"1h",
 			"30m",
