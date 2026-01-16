@@ -26,8 +26,8 @@ const (
 )
 
 type ObservabilityOptions struct {
-	Metric MetricOptions `yaml:"metric" json:"metric"`
-	Log    LogOptions    `yaml:"log" json:"log"`
+	Metric MetricOptions `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"description=Metric configuration for observability"`
+	Log    LogOptions    `yaml:"log,omitempty" json:"log,omitempty" jsonschema:"description=Log configuration for observability"`
 }
 
 func (ob *ObservabilityOptions) WithDefault() {
@@ -42,8 +42,8 @@ func (ob *ObservabilityOptions) Validate() error {
 }
 
 type MetricOptions struct {
-	Enabled     *bool  `yaml:"enabled" json:"enabled"`
-	BindAddress string `yaml:"bindAddress" json:"bindAddress"`
+	Enabled     *bool  `yaml:"enabled" json:"enabled" jsonschema:"description=Enable metrics collection,default=true"`
+	BindAddress string `yaml:"bindAddress,omitempty" json:"bindAddress,omitempty" jsonschema:"description=Bind address for metrics server,example=0.0.0.0:8080,format=hostname"`
 }
 
 func (mo *MetricOptions) IsEnabled() bool {
@@ -65,7 +65,7 @@ func (*MetricOptions) Validate() error {
 }
 
 type LogOptions struct {
-	Level string `yaml:"level" json:"level"`
+	Level string `yaml:"level,omitempty" json:"level,omitempty" jsonschema:"description=Log level,example=info,default=info"`
 }
 
 func (lo *LogOptions) WithDefault() {

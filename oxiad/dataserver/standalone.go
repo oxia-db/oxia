@@ -93,7 +93,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 	}
 	s.walFactory = wal.NewWalFactory(&wal.FactoryOptions{
 		BaseWalDir:  storageOptions.WAL.Dir,
-		Retention:   storageOptions.WAL.Retention,
+		Retention:   storageOptions.WAL.Retention.ToDuration(),
 		SegmentSize: wal.DefaultFactoryOptions.SegmentSize,
 		SyncData:    storageOptions.WAL.IsSyncEnabled(),
 	})

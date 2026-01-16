@@ -29,9 +29,9 @@ const (
 var Disabled = Options{}
 
 type Options struct {
-	Enabled        *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Provider       string `yaml:"provider" json:"provider"`
-	ProviderParams string `yaml:"providerParams" json:"providerParams"`
+	Enabled        *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty" jsonschema:"description=Enable authentication,default=false"`
+	Provider       string `yaml:"provider,omitempty" json:"provider,omitempty" jsonschema:"description=Authentication provider type,example=oidc"`
+	ProviderParams string `yaml:"providerParams,omitempty" json:"providerParams,omitempty" jsonschema:"description=Provider-specific parameters in JSON format"`
 }
 
 func (*Options) WithDefault() {

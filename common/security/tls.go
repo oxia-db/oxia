@@ -24,25 +24,25 @@ import (
 )
 
 type TLSOptions struct {
-	Enabled *bool `yaml:"enabled" json:"enabled"`
+	Enabled *bool `yaml:"enabled" json:"enabled" jsonschema:"description=Enable TLS"`
 	// CertFile is the path to the server certificate file.
-	CertFile string `yaml:"certFile" json:"certFile"`
+	CertFile string `yaml:"certFile,omitempty" json:"certFile,omitempty" jsonschema:"description=Path to TLS certificate file"`
 	// KeyFile is the path to the private key file.
-	KeyFile string `yaml:"keyFile" json:"keyFile"`
+	KeyFile string `yaml:"keyFile,omitempty" json:"keyFile,omitempty" jsonschema:"description=Path to TLS private key file"`
 	// CipherSuites is a list of supported cipher suites.
-	CipherSuites []uint16 `yaml:"cipherSuites" json:"cipherSuites"`
+	CipherSuites []uint16 `yaml:"cipherSuites,omitempty" json:"cipherSuites,omitempty" jsonschema:"description=List of supported TLS cipher suites"`
 	// MinVersion is the minimum TLS version supported.
-	MinVersion uint16 `yaml:"minVersion" json:"minVersion"`
+	MinVersion uint16 `yaml:"minVersion,omitempty" json:"minVersion,omitempty" jsonschema:"description=Minimum TLS version"`
 	// MaxVersion is the maximum TLS version supported.
-	MaxVersion uint16 `yaml:"maxVersion" json:"maxVersion"`
+	MaxVersion uint16 `yaml:"maxVersion,omitempty" json:"maxVersion,omitempty" jsonschema:"description=Maximum TLS version"`
 	// TrustedCaFile is the path to the CA certificate.
-	TrustedCaFile string `yaml:"trustedCaFile" json:"trustedCaFile"`
+	TrustedCaFile string `yaml:"trustedCaFile,omitempty" json:"trustedCaFile,omitempty" jsonschema:"description=Path to trusted CA certificate file"`
 	// InsecureSkipVerify controls whether it verifies the certificate chain and host name.
-	InsecureSkipVerify bool `yaml:"insecureSkipVerify" json:"insecureSkipVerify"`
+	InsecureSkipVerify bool `yaml:"insecureSkipVerify,omitempty" json:"insecureSkipVerify,omitempty" jsonschema:"description=Skip TLS certificate verification"`
 	// ServerName is the expected server name (for SNI) used when connecting to the server.
-	ServerName string `yaml:"serverName,omitempty" json:"serverName,omitempty"`
+	ServerName string `yaml:"serverName,omitempty" json:"serverName,omitempty" jsonschema:"description=Expected server name for SNI"`
 	// ClientAuth controls whether the server requires clients to authenticate with a certificate.
-	ClientAuth bool `yaml:"clientAuth,omitempty" json:"clientAuth,omitempty"`
+	ClientAuth bool `yaml:"clientAuth,omitempty" json:"clientAuth,omitempty" jsonschema:"description=Require client certificate authentication"`
 }
 
 func (*TLSOptions) WithDefault() {

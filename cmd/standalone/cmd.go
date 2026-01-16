@@ -56,15 +56,24 @@ func init() {
 	storageOptions := &dataServerOptions.Storage
 	storageOptions.WAL.Sync = &constant.FlagTrue
 
-	Cmd.Flags().StringVar(&storageOptions.WAL.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
-	Cmd.Flags().DurationVar(&storageOptions.WAL.Retention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
-	Cmd.Flags().BoolVar(storageOptions.WAL.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
+	var walRetention = 1 * time.Hour
+	var notificationRetention = 1 * time.Hour
 
-	Cmd.Flags().DurationVar(&storageOptions.Notification.Retention, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
+	Cmd.Flags().StringVar(&storageOptions.WAL.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
+	Cmd.Flags().DurationVar(&walRetention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
+	Cmd.Flags().BoolVar(storageOptions.WAL.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-logs")
+
+	Cmd.Flags().DurationVar(&notificationRetention, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
 
 	Cmd.Flags().StringVar(&storageOptions.Database.Dir, "data-dir", "./data/db", "Directory where to store data")
 	Cmd.Flags().Int64Var(&storageOptions.Database.ReadCacheSizeMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
+
+	// Convert time.Duration to option.Duration after flag parsing
+	Cmd.PreRun = func(*cobra.Command, []string) {
+		storageOptions.WAL.Retention = oxiadcommonoption.Duration(walRetention)
+		storageOptions.Notification.Retention = oxiadcommonoption.Duration(notificationRetention)
+	}
 }
 
 func exec(*cobra.Command, []string) {

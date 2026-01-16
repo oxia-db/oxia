@@ -150,7 +150,7 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 	}
 
 	if fc.db, err = database.NewDB(namespace, shardId, kvFactory,
-		keySorting, storageOptions.Notification.Retention, time.SystemClock); err != nil {
+		keySorting, storageOptions.Notification.Retention.ToDuration(), time.SystemClock); err != nil {
 		return nil, err
 	}
 
@@ -291,7 +291,7 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	if fc.db == nil {
 		var err error
 		if fc.db, err = database.NewDB(fc.namespace, fc.shardId, fc.kvFactory,
-			req.Options.KeySorting, fc.storageOptions.Notification.Retention, time.SystemClock); err != nil {
+			req.Options.KeySorting, fc.storageOptions.Notification.Retention.ToDuration(), time.SystemClock); err != nil {
 			return nil, errors.Wrapf(err, "failed to reopen database")
 		}
 	}
@@ -705,7 +705,8 @@ func (fc *followerController) handleSnapshot(stream proto.OxiaLogReplication_Sen
 	// We have received all the files for the database
 	loader.Complete()
 
-	newDb, err := database.NewDB(fc.namespace, fc.shardId, fc.kvFactory, proto.KeySortingType_UNKNOWN, fc.storageOptions.Notification.Retention, time.SystemClock)
+	newDb, err := database.NewDB(fc.namespace, fc.shardId, fc.kvFactory, proto.KeySortingType_UNKNOWN,
+		fc.storageOptions.Notification.Retention.ToDuration(), time.SystemClock)
 	if err != nil {
 		fc.closeStreamNoMutex(errors.Wrap(err, "failed to open database after loading snapshot"))
 		return

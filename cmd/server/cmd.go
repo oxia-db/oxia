@@ -57,12 +57,14 @@ func init() {
 	storageWal := &dataServerOptions.Storage.WAL
 	storageWal.Sync = &constant.FlagTrue
 
+	var walRetention = 1 * time.Hour
+	var notificationRetention = 1 * time.Hour
+
 	Cmd.Flags().StringVar(&storageWal.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
 	Cmd.Flags().BoolVar(storageWal.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
-	Cmd.Flags().DurationVar(&storageWal.Retention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
+	Cmd.Flags().DurationVar(&walRetention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
 
-	notification := &dataServerOptions.Storage.Notification
-	Cmd.Flags().DurationVar(&notification.Retention, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
+	Cmd.Flags().DurationVar(&notificationRetention, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
 
 	storageDatabase := &dataServerOptions.Storage.Database
 	Cmd.Flags().StringVar(&storageDatabase.Dir, "data-dir", "./data/db", "Directory where to store data")
@@ -99,6 +101,12 @@ func init() {
 	Cmd.Flags().StringVar(&replicationTLS.TrustedCaFile, "peer-tls-trusted-ca-file", "", "Peer tls trusted ca file")
 	Cmd.Flags().BoolVar(&replicationTLS.InsecureSkipVerify, "peer-tls-insecure-skip-verify", false, "Peer tls insecure skip verify")
 	Cmd.Flags().StringVar(&replicationTLS.ServerName, "peer-tls-server-name", "", "Peer tls server name")
+
+	// Convert time.Duration to option.Duration after flag parsing
+	Cmd.PreRun = func(*cobra.Command, []string) {
+		storageWal.Retention = oxiadcommonoption.Duration(walRetention)
+		dataServerOptions.Storage.Notification.Retention = oxiadcommonoption.Duration(notificationRetention)
+	}
 }
 
 func exec(cmd *cobra.Command, _ []string) {

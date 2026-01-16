@@ -6,67 +6,98 @@
     "DatabaseOptions": {
       "properties": {
         "dir": {
-          "type": "string"
+          "type": "string",
+          "description": "Directory path for storing database files",
+          "examples": [
+            "./data/db"
+          ]
         },
         "readCacheSizeMB": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 1,
+          "description": "Size of read cache in megabytes for performance optimization",
+          "default": 100
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "dir",
-        "readCacheSizeMB"
+        "dir"
+      ]
+    },
+    "Duration": {
+      "type": "string",
+      "pattern": "^[0-9]+[smh]$",
+      "title": "Duration",
+      "description": "Duration string in Go duration format (e.g., \"1h\", \"30m\", \"5s\")",
+      "examples": [
+        "1h",
+        "30m",
+        "5s"
       ]
     },
     "InternalServerOptions": {
       "properties": {
         "bindAddress": {
-          "type": "string"
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for internal server-to-server communication",
+          "examples": [
+            "0.0.0.0:6649"
+          ]
         },
         "tls": {
-          "$ref": "#/$defs/TLSOptions"
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing internal cluster communication"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "bindAddress",
-        "tls"
+        "bindAddress"
       ]
     },
     "LogOptions": {
       "properties": {
         "level": {
-          "type": "string"
+          "type": "string",
+          "description": "Log level",
+          "default": "info",
+          "examples": [
+            "info"
+          ]
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "level"
-      ]
+      "type": "object"
     },
     "MetricOptions": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable metrics collection",
+          "default": true
         },
         "bindAddress": {
-          "type": "string"
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for metrics server",
+          "examples": [
+            "0.0.0.0:8080"
+          ]
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "enabled",
-        "bindAddress"
+        "enabled"
       ]
     },
     "NotificationOptions": {
       "properties": {
         "retention": {
-          "type": "integer"
+          "$ref": "#/$defs/Duration",
+          "description": "Duration to retain notifications before cleanup"
         }
       },
       "additionalProperties": false,
@@ -78,39 +109,40 @@
     "ObservabilityOptions": {
       "properties": {
         "metric": {
-          "$ref": "#/$defs/MetricOptions"
+          "$ref": "#/$defs/MetricOptions",
+          "description": "Metric configuration for observability"
         },
         "log": {
-          "$ref": "#/$defs/LogOptions"
+          "$ref": "#/$defs/LogOptions",
+          "description": "Log configuration for observability"
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "metric",
-        "log"
-      ]
+      "type": "object"
     },
     "Options": {
       "properties": {
         "server": {
-          "$ref": "#/$defs/ServerOptions"
+          "$ref": "#/$defs/ServerOptions",
+          "description": "Server configuration for public and internal endpoints"
         },
         "replication": {
-          "$ref": "#/$defs/ReplicationOptions"
+          "$ref": "#/$defs/ReplicationOptions",
+          "description": "Replication configuration for data consistency"
         },
         "storage": {
-          "$ref": "#/$defs/StorageOptions"
+          "$ref": "#/$defs/StorageOptions",
+          "description": "Storage configuration for WAL"
         },
         "observability": {
-          "$ref": "#/$defs/ObservabilityOptions"
+          "$ref": "#/$defs/ObservabilityOptions",
+          "description": "Observability configuration for metrics and tracing"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
         "server",
-        "replication",
         "storage",
         "observability"
       ]
@@ -118,42 +150,47 @@
     "PublicServerOptions": {
       "properties": {
         "bindAddress": {
-          "type": "string"
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for the public API server",
+          "examples": [
+            "0.0.0.0:6648"
+          ]
         },
         "auth": {
-          "$ref": "#/$defs/Options"
+          "$ref": "#/$defs/Options",
+          "description": "Authentication configuration for the public API"
         },
         "tls": {
-          "$ref": "#/$defs/TLSOptions"
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing public API connections"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "bindAddress",
-        "auth",
-        "tls"
+        "bindAddress"
       ]
     },
     "ReplicationOptions": {
       "properties": {
         "tls": {
-          "$ref": "#/$defs/TLSOptions"
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing replication traffic between data servers"
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "tls"
-      ]
+      "type": "object"
     },
     "ServerOptions": {
       "properties": {
         "public": {
-          "$ref": "#/$defs/PublicServerOptions"
+          "$ref": "#/$defs/PublicServerOptions",
+          "description": "Public server configuration for client-facing API endpoints"
         },
         "internal": {
-          "$ref": "#/$defs/InternalServerOptions"
+          "$ref": "#/$defs/InternalServerOptions",
+          "description": "Internal server configuration for cluster communication"
         }
       },
       "additionalProperties": false,
@@ -166,13 +203,16 @@
     "StorageOptions": {
       "properties": {
         "wal": {
-          "$ref": "#/$defs/WALOptions"
+          "$ref": "#/$defs/WALOptions",
+          "description": "Write-Ahead Log configuration for durability and recovery"
         },
         "database": {
-          "$ref": "#/$defs/DatabaseOptions"
+          "$ref": "#/$defs/DatabaseOptions",
+          "description": "Database storage configuration for persistent data"
         },
         "notification": {
-          "$ref": "#/$defs/NotificationOptions"
+          "$ref": "#/$defs/NotificationOptions",
+          "description": "Notification system configuration for change events"
         }
       },
       "additionalProperties": false,
@@ -186,69 +226,78 @@
     "TLSOptions": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable TLS"
         },
         "certFile": {
-          "type": "string"
+          "type": "string",
+          "description": "Path to TLS certificate file"
         },
         "keyFile": {
-          "type": "string"
+          "type": "string",
+          "description": "Path to TLS private key file"
         },
         "cipherSuites": {
           "items": {
             "type": "integer"
           },
-          "type": "array"
+          "type": "array",
+          "description": "List of supported TLS cipher suites"
         },
         "minVersion": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Minimum TLS version"
         },
         "maxVersion": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Maximum TLS version"
         },
         "trustedCaFile": {
-          "type": "string"
+          "type": "string",
+          "description": "Path to trusted CA certificate file"
         },
         "insecureSkipVerify": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Skip TLS certificate verification"
         },
         "serverName": {
-          "type": "string"
+          "type": "string",
+          "description": "Expected server name for SNI"
         },
         "clientAuth": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Require client certificate authentication"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "enabled",
-        "certFile",
-        "keyFile",
-        "cipherSuites",
-        "minVersion",
-        "maxVersion",
-        "trustedCaFile",
-        "insecureSkipVerify"
+        "enabled"
       ]
     },
     "WALOptions": {
       "properties": {
         "dir": {
-          "type": "string"
+          "type": "string",
+          "description": "Directory path for storing WAL files",
+          "examples": [
+            "./data/wal"
+          ]
         },
         "sync": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable synchronous WAL writes for durability",
+          "default": true
         },
         "retention": {
-          "type": "integer"
+          "$ref": "#/$defs/Duration",
+          "description": "Duration to retain WAL entries before cleanup"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
         "dir",
-        "sync",
         "retention"
       ]
     }

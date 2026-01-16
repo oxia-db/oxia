@@ -6,10 +6,16 @@
     "AdminServerOptions": {
       "properties": {
         "bindAddress": {
-          "type": "string"
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for the admin API server",
+          "examples": [
+            "0.0.0.0:6650"
+          ]
         },
         "tls": {
-          "$ref": "#/$defs/TLSOptions"
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing admin API connections"
         }
       },
       "additionalProperties": false,
@@ -21,7 +27,11 @@
     "ClusterOptions": {
       "properties": {
         "configPath": {
-          "type": "string"
+          "type": "string",
+          "description": "Path to the cluster configuration file",
+          "examples": [
+            "./configs/cluster.yaml"
+          ]
         }
       },
       "additionalProperties": false,
@@ -33,19 +43,21 @@
     "ControllerOptions": {
       "properties": {
         "tls": {
-          "$ref": "#/$defs/TLSOptions"
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing controller communication"
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "tls"
-      ]
+      "type": "object"
     },
     "FileMetadata": {
       "properties": {
         "path": {
-          "type": "string"
+          "type": "string",
+          "description": "File system path for metadata storage",
+          "examples": [
+            "./metadata/cluster.json"
+          ]
         }
       },
       "additionalProperties": false,
@@ -57,26 +69,39 @@
     "InternalServerOptions": {
       "properties": {
         "bindAddress": {
-          "type": "string"
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for internal server-to-server communication",
+          "examples": [
+            "0.0.0.0:6649"
+          ]
         },
         "tls": {
-          "$ref": "#/$defs/TLSOptions"
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing internal cluster communication"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "bindAddress",
-        "tls"
+        "bindAddress"
       ]
     },
     "K8sMetadata": {
       "properties": {
         "namespace": {
-          "type": "string"
+          "type": "string",
+          "description": "Kubernetes namespace for ConfigMap storage",
+          "examples": [
+            "default"
+          ]
         },
         "configMapName": {
-          "type": "string"
+          "type": "string",
+          "description": "Name of the ConfigMap for metadata storage",
+          "examples": [
+            "oxia-cluster-metadata"
+          ]
         }
       },
       "additionalProperties": false,
@@ -89,28 +114,37 @@
     "LogOptions": {
       "properties": {
         "level": {
-          "type": "string"
+          "type": "string",
+          "description": "Log level",
+          "default": "info",
+          "examples": [
+            "info"
+          ]
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "level"
-      ]
+      "type": "object"
     },
     "MetadataOptions": {
       "properties": {
         "providerName": {
-          "type": "string"
+          "type": "string",
+          "description": "Metadata provider type (memory",
+          "examples": [
+            "configmap"
+          ]
         },
         "kubernetes": {
-          "$ref": "#/$defs/K8sMetadata"
+          "$ref": "#/$defs/K8sMetadata",
+          "description": "Kubernetes ConfigMap metadata configuration"
         },
         "file": {
-          "$ref": "#/$defs/FileMetadata"
+          "$ref": "#/$defs/FileMetadata",
+          "description": "File-based metadata configuration"
         },
         "raft": {
-          "$ref": "#/$defs/RaftMetadata"
+          "$ref": "#/$defs/RaftMetadata",
+          "description": "Raft-based metadata configuration"
         }
       },
       "additionalProperties": false,
@@ -122,51 +156,60 @@
     "MetricOptions": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable metrics collection",
+          "default": true
         },
         "bindAddress": {
-          "type": "string"
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for metrics server",
+          "examples": [
+            "0.0.0.0:8080"
+          ]
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "enabled",
-        "bindAddress"
+        "enabled"
       ]
     },
     "ObservabilityOptions": {
       "properties": {
         "metric": {
-          "$ref": "#/$defs/MetricOptions"
+          "$ref": "#/$defs/MetricOptions",
+          "description": "Metric configuration for observability"
         },
         "log": {
-          "$ref": "#/$defs/LogOptions"
+          "$ref": "#/$defs/LogOptions",
+          "description": "Log configuration for observability"
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "metric",
-        "log"
-      ]
+      "type": "object"
     },
     "Options": {
       "properties": {
         "cluster": {
-          "$ref": "#/$defs/ClusterOptions"
+          "$ref": "#/$defs/ClusterOptions",
+          "description": "Cluster configuration settings"
         },
         "server": {
-          "$ref": "#/$defs/ServerOptions"
+          "$ref": "#/$defs/ServerOptions",
+          "description": "Server configuration for admin and internal endpoints"
         },
         "controller": {
-          "$ref": "#/$defs/ControllerOptions"
+          "$ref": "#/$defs/ControllerOptions",
+          "description": "Controller configuration for cluster management"
         },
         "metadata": {
-          "$ref": "#/$defs/MetadataOptions"
+          "$ref": "#/$defs/MetadataOptions",
+          "description": "Metadata provider configuration"
         },
         "observability": {
-          "$ref": "#/$defs/ObservabilityOptions"
+          "$ref": "#/$defs/ObservabilityOptions",
+          "description": "Observability configuration for metrics and tracing"
         }
       },
       "additionalProperties": false,
@@ -174,7 +217,6 @@
       "required": [
         "cluster",
         "server",
-        "controller",
         "metadata",
         "observability"
       ]
@@ -185,13 +227,22 @@
           "items": {
             "type": "string"
           },
-          "type": "array"
+          "type": "array",
+          "description": "List of bootstrap nodes for Raft cluster initialization"
         },
         "address": {
-          "type": "string"
+          "type": "string",
+          "description": "Address of this node in the Raft cluster",
+          "examples": [
+            "localhost:8080"
+          ]
         },
         "dataDir": {
-          "type": "string"
+          "type": "string",
+          "description": "Directory for Raft metadata storage",
+          "examples": [
+            "./data/raft"
+          ]
         }
       },
       "additionalProperties": false,
@@ -205,10 +256,12 @@
     "ServerOptions": {
       "properties": {
         "admin": {
-          "$ref": "#/$defs/AdminServerOptions"
+          "$ref": "#/$defs/AdminServerOptions",
+          "description": "Admin server configuration for management API endpoints"
         },
         "internal": {
-          "$ref": "#/$defs/InternalServerOptions"
+          "$ref": "#/$defs/InternalServerOptions",
+          "description": "Internal server configuration for cluster communication"
         }
       },
       "additionalProperties": false,
@@ -221,50 +274,53 @@
     "TLSOptions": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable TLS"
         },
         "certFile": {
-          "type": "string"
+          "type": "string",
+          "description": "Path to TLS certificate file"
         },
         "keyFile": {
-          "type": "string"
+          "type": "string",
+          "description": "Path to TLS private key file"
         },
         "cipherSuites": {
           "items": {
             "type": "integer"
           },
-          "type": "array"
+          "type": "array",
+          "description": "List of supported TLS cipher suites"
         },
         "minVersion": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Minimum TLS version"
         },
         "maxVersion": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Maximum TLS version"
         },
         "trustedCaFile": {
-          "type": "string"
+          "type": "string",
+          "description": "Path to trusted CA certificate file"
         },
         "insecureSkipVerify": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Skip TLS certificate verification"
         },
         "serverName": {
-          "type": "string"
+          "type": "string",
+          "description": "Expected server name for SNI"
         },
         "clientAuth": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Require client certificate authentication"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "enabled",
-        "certFile",
-        "keyFile",
-        "cipherSuites",
-        "minVersion",
-        "maxVersion",
-        "trustedCaFile",
-        "insecureSkipVerify"
+        "enabled"
       ]
     }
   }
