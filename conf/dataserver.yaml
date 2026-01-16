@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=./schema/dataserver.json
+
+server:
+  public:
+    bindAddress: "0.0.0.0:6648"
+  internal:
+    bindAddress: "0.0.0.0:6649"
+storage:
+  wal:
+    dir: "./data/wal"
+    sync: true
+    retention: "1h"
+  database:
+    dir: "./data/db"
+    readCacheSizeMB: 100
+  notification:
+    retention: "1h"
+observability:
+  metric:
+    enabled: true
+    bindAddress: "0.0.0.0:8080"
+  log:
+    level: "info"

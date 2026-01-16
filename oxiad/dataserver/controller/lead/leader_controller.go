@@ -171,7 +171,7 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 		keySorting = newTermOptions.KeySorting
 	}
 
-	if lc.db, err = database.NewDB(namespace, shardId, kvFactory, keySorting, storageOptions.Notification.Retention, time2.SystemClock); err != nil {
+	if lc.db, err = database.NewDB(namespace, shardId, kvFactory, keySorting, storageOptions.Notification.Retention.ToDuration(), time2.SystemClock); err != nil {
 		return nil, err
 	}
 

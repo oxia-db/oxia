@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -575,7 +577,7 @@ func createSessionManager(t *testing.T) (kvstore.Factory, wal.Factory, *sessionM
 	walFactory := newTestWalFactory(t)
 	lc, err := NewLeaderController(&option.StorageOptions{
 		Notification: option.NotificationOptions{
-			Retention: 10 * time.Second,
+			Retention: commonoption.Duration(10 * time.Second),
 		},
 	}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
 	assert.NoError(t, err)

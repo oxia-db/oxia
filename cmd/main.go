@@ -22,6 +22,8 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/automaxprocs/maxprocs"
 
+	"github.com/oxia-db/oxia/cmd/config"
+
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 
@@ -70,6 +72,7 @@ func init() {
 	rootCmd.AddCommand(pebble.Cmd)
 	rootCmd.AddCommand(wal.Cmd)
 	rootCmd.AddCommand(admin.Cmd)
+	rootCmd.AddCommand(config.Cmd)
 }
 
 func configureLogLevel(_ *cobra.Command, _ []string) error {

@@ -73,7 +73,7 @@ func NewWithGrpcProvider(options *option.Options, provider rpc2.GrpcProvider, re
 		replicationRpcProvider: replicationRpcProvider,
 		walFactory: wal.NewWalFactory(&wal.FactoryOptions{
 			BaseWalDir:  storage.WAL.Dir,
-			Retention:   storage.WAL.Retention,
+			Retention:   storage.WAL.Retention.ToDuration(),
 			SegmentSize: wal.DefaultFactoryOptions.SegmentSize,
 			SyncData:    storage.WAL.IsSyncEnabled(),
 		}),

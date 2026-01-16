@@ -34,6 +34,8 @@ RUN apk upgrade --no-cache
 WORKDIR /oxia
 
 COPY --from=build /src/oxia/bin/oxia /oxia/bin/oxia
+COPY --from=build /src/oxia/conf/coordinator.yaml /oxia/conf/coordinator.yaml
+COPY --from=build /src/oxia/conf/dataserver.yaml /oxia/conf/dataserver.yaml
 ENV PATH=$PATH:/oxia/bin
 
 RUN oxia completion bash > ~/.bashrc

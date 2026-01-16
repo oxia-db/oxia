@@ -27,11 +27,11 @@ import (
 )
 
 type Options struct {
-	Cluster       ClusterOptions                    `yaml:"cluster" json:"cluster"`
-	Server        ServerOptions                     `yaml:"server" json:"server"`
-	Controller    ControllerOptions                 `yaml:"controller" json:"controller"`
-	Metadata      MetadataOptions                   `yaml:"metadata" json:"metadata"`
-	Observability commonoption.ObservabilityOptions `yaml:"observability" json:"observability"`
+	Cluster       ClusterOptions                    `yaml:"cluster" json:"cluster" jsonschema:"description=Cluster configuration settings"`
+	Server        ServerOptions                     `yaml:"server" json:"server" jsonschema:"description=Server configuration for admin and internal endpoints"`
+	Controller    ControllerOptions                 `yaml:"controller,omitempty" json:"controller,omitempty" jsonschema:"description=Controller configuration for cluster management"`
+	Metadata      MetadataOptions                   `yaml:"metadata" json:"metadata" jsonschema:"description=Metadata provider configuration"`
+	Observability commonoption.ObservabilityOptions `yaml:"observability" json:"observability" jsonschema:"description=Observability configuration for metrics and tracing"`
 }
 
 func (op *Options) WithDefault() {
@@ -52,7 +52,7 @@ func (op *Options) Validate() error {
 }
 
 type ClusterOptions struct {
-	ConfigPath string `yaml:"configPath" json:"configPath"`
+	ConfigPath string `yaml:"configPath" json:"configPath" jsonschema:"description=Path to the cluster configuration file,example=./configs/cluster.yaml"`
 }
 
 func (co *ClusterOptions) WithDefault() {
@@ -66,8 +66,8 @@ func (*ClusterOptions) Validate() error {
 }
 
 type ServerOptions struct {
-	Admin    AdminServerOptions    `yaml:"admin" json:"admin"`
-	Internal InternalServerOptions `yaml:"internal" json:"internal"`
+	Admin    AdminServerOptions    `yaml:"admin" json:"admin" jsonschema:"description=Admin server configuration for management API endpoints"`
+	Internal InternalServerOptions `yaml:"internal" json:"internal" jsonschema:"description=Internal server configuration for cluster communication"`
 }
 
 func (so *ServerOptions) WithDefault() {
@@ -80,8 +80,8 @@ func (so *ServerOptions) Validate() error {
 }
 
 type InternalServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress"`
-	TLS         security.TLSOptions `yaml:"tls" json:"tls"`
+	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for internal server-to-server communication,example=0.0.0.0:6649,format=hostname"`
+	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing internal cluster communication"`
 }
 
 func (iso *InternalServerOptions) WithDefault() {
@@ -96,8 +96,8 @@ func (iso *InternalServerOptions) Validate() error {
 }
 
 type AdminServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress"`
-	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty"`
+	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the admin API server,example=0.0.0.0:6650,format=hostname"`
+	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing admin API connections"`
 }
 
 func (aso *AdminServerOptions) WithDefault() {
@@ -112,7 +112,7 @@ func (aso *AdminServerOptions) Validate() error {
 }
 
 type ControllerOptions struct {
-	TLS security.TLSOptions `yaml:"tls" json:"tls"`
+	TLS security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing controller communication"`
 }
 
 func (co *ControllerOptions) WithDefault() {
@@ -124,10 +124,10 @@ func (co *ControllerOptions) Validate() error {
 }
 
 type MetadataOptions struct {
-	ProviderName string       `yaml:"providerName" json:"providerName"`
-	Kubernetes   K8sMetadata  `yaml:"kubernetes,omitempty" json:"kubernetes,omitempty"`
-	File         FileMetadata `yaml:"file,omitempty" json:"file,omitempty"`
-	Raft         RaftMetadata `yaml:"raft,omitempty" json:"raft,omitempty"`
+	ProviderName string       `yaml:"providerName" json:"providerName" jsonschema:"description=Metadata provider type (memory, configmap, file, or raft),example=configmap"`
+	Kubernetes   K8sMetadata  `yaml:"kubernetes,omitempty" json:"kubernetes,omitempty" jsonschema:"description=Kubernetes ConfigMap metadata configuration"`
+	File         FileMetadata `yaml:"file,omitempty" json:"file,omitempty" jsonschema:"description=File-based metadata configuration"`
+	Raft         RaftMetadata `yaml:"raft,omitempty" json:"raft,omitempty" jsonschema:"description=Raft-based metadata configuration"`
 }
 
 func (*MetadataOptions) WithDefault() {
@@ -154,18 +154,18 @@ func (mo *MetadataOptions) Validate() error {
 }
 
 type K8sMetadata struct {
-	Namespace     string `yaml:"namespace" json:"namespace"`
-	ConfigMapName string `yaml:"configMapName" json:"configMapName"`
+	Namespace     string `yaml:"namespace" json:"namespace" jsonschema:"description=Kubernetes namespace for ConfigMap storage,example=default"`
+	ConfigMapName string `yaml:"configMapName" json:"configMapName" jsonschema:"description=Name of the ConfigMap for metadata storage,example=oxia-cluster-metadata"`
 }
 
 type FileMetadata struct {
-	Path string `yaml:"path" json:"path"`
+	Path string `yaml:"path" json:"path" jsonschema:"description=File system path for metadata storage,example=./metadata/cluster.json"`
 }
 
 type RaftMetadata struct {
-	BootstrapNodes []string `yaml:"bootstrapNodes" json:"bootstrapNodes"`
-	Address        string   `yaml:"address" json:"address"`
-	DataDir        string   `yaml:"dataDir" json:"dataDir"`
+	BootstrapNodes []string `yaml:"bootstrapNodes" json:"bootstrapNodes" jsonschema:"description=List of bootstrap nodes for Raft cluster initialization"`
+	Address        string   `yaml:"address" json:"address" jsonschema:"description=Address of this node in the Raft cluster,example=localhost:8080"`
+	DataDir        string   `yaml:"dataDir" json:"dataDir" jsonschema:"description=Directory for Raft metadata storage,example=./data/raft"`
 }
 
 func NewDefaultOptions() *Options {

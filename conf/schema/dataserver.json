@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/oxia-db/oxia/oxiad/dataserver/option/options",
+  "$ref": "#/$defs/Options",
+  "$defs": {
+    "DatabaseOptions": {
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Directory path for storing database files",
+          "examples": [
+            "./data/db"
+          ]
+        },
+        "readCacheSizeMB": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Size of read cache in megabytes for performance optimization",
+          "default": 100
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "dir"
+      ]
+    },
+    "Duration": {
+      "type": "string",
+      "pattern": "^[0-9]+[smh]$",
+      "title": "Duration",
+      "description": "Duration string in Go duration format (e.g., \"1h\", \"30m\", \"5s\")",
+      "examples": [
+        "1h",
+        "30m",
+        "5s"
+      ]
+    },
+    "InternalServerOptions": {
+      "properties": {
+        "bindAddress": {
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for internal server-to-server communication",
+          "examples": [
+            "0.0.0.0:6649"
+          ]
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing internal cluster communication"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bindAddress"
+      ]
+    },
+    "LogOptions": {
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "Log level",
+          "default": "info",
+          "examples": [
+            "info"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "MetricOptions": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable metrics collection",
+          "default": true
+        },
+        "bindAddress": {
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for metrics server",
+          "examples": [
+            "0.0.0.0:8080"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "enabled"
+      ]
+    },
+    "NotificationOptions": {
+      "properties": {
+        "retention": {
+          "$ref": "#/$defs/Duration",
+          "description": "Duration to retain notifications before cleanup"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "retention"
+      ]
+    },
+    "ObservabilityOptions": {
+      "properties": {
+        "metric": {
+          "$ref": "#/$defs/MetricOptions",
+          "description": "Metric configuration for observability"
+        },
+        "log": {
+          "$ref": "#/$defs/LogOptions",
+          "description": "Log configuration for observability"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Options": {
+      "properties": {
+        "server": {
+          "$ref": "#/$defs/ServerOptions",
+          "description": "Server configuration for public and internal endpoints"
+        },
+        "replication": {
+          "$ref": "#/$defs/ReplicationOptions",
+          "description": "Replication configuration for data consistency"
+        },
+        "storage": {
+          "$ref": "#/$defs/StorageOptions",
+          "description": "Storage configuration for WAL, database, and notifications"
+        },
+        "observability": {
+          "$ref": "#/$defs/ObservabilityOptions",
+          "description": "Observability configuration for metrics and tracing"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "server",
+        "storage",
+        "observability"
+      ]
+    },
+    "PublicServerOptions": {
+      "properties": {
+        "bindAddress": {
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for the public API server",
+          "examples": [
+            "0.0.0.0:6648"
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/Options",
+          "description": "Authentication configuration for the public API"
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing public API connections"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bindAddress"
+      ]
+    },
+    "ReplicationOptions": {
+      "properties": {
+        "tls": {
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing replication traffic between data servers"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ServerOptions": {
+      "properties": {
+        "public": {
+          "$ref": "#/$defs/PublicServerOptions",
+          "description": "Public server configuration for client-facing API endpoints"
+        },
+        "internal": {
+          "$ref": "#/$defs/InternalServerOptions",
+          "description": "Internal server configuration for cluster communication"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "public",
+        "internal"
+      ]
+    },
+    "StorageOptions": {
+      "properties": {
+        "wal": {
+          "$ref": "#/$defs/WALOptions",
+          "description": "Write-Ahead Log configuration for durability and recovery"
+        },
+        "database": {
+          "$ref": "#/$defs/DatabaseOptions",
+          "description": "Database storage configuration for persistent data"
+        },
+        "notification": {
+          "$ref": "#/$defs/NotificationOptions",
+          "description": "Notification system configuration for change events"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "wal",
+        "database",
+        "notification"
+      ]
+    },
+    "TLSOptions": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable TLS"
+        },
+        "certFile": {
+          "type": "string",
+          "description": "Path to TLS certificate file"
+        },
+        "keyFile": {
+          "type": "string",
+          "description": "Path to TLS private key file"
+        },
+        "cipherSuites": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array",
+          "description": "List of supported TLS cipher suites"
+        },
+        "minVersion": {
+          "type": "integer",
+          "description": "Minimum TLS version"
+        },
+        "maxVersion": {
+          "type": "integer",
+          "description": "Maximum TLS version"
+        },
+        "trustedCaFile": {
+          "type": "string",
+          "description": "Path to trusted CA certificate file"
+        },
+        "insecureSkipVerify": {
+          "type": "boolean",
+          "description": "Skip TLS certificate verification"
+        },
+        "serverName": {
+          "type": "string",
+          "description": "Expected server name for SNI"
+        },
+        "clientAuth": {
+          "type": "boolean",
+          "description": "Require client certificate authentication"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "enabled"
+      ]
+    },
+    "WALOptions": {
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Directory path for storing WAL files",
+          "examples": [
+            "./data/wal"
+          ]
+        },
+        "sync": {
+          "type": "boolean",
+          "description": "Enable synchronous WAL writes for durability",
+          "default": true
+        },
+        "retention": {
+          "$ref": "#/$defs/Duration",
+          "description": "Duration to retain WAL entries before cleanup"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "dir",
+        "retention"
+      ]
+    }
+  }
+}

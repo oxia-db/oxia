@@ -27,9 +27,9 @@ import (
 )
 
 type PublicServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress"`
-	Auth        auth.Options        `yaml:"auth" json:"auth"`
-	TLS         security.TLSOptions `yaml:"tls" json:"tls"`
+	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public API server,example=0.0.0.0:6648,format=hostname"`
+	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public API"`
+	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public API connections"`
 }
 
 func (pso *PublicServerOptions) WithDefault() {
@@ -48,8 +48,8 @@ func (pso *PublicServerOptions) Validate() error {
 }
 
 type InternalServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress"`
-	TLS         security.TLSOptions `yaml:"tls" json:"tls"`
+	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for internal server-to-server communication,example=0.0.0.0:6649,format=hostname"`
+	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing internal cluster communication"`
 }
 
 func (iso *InternalServerOptions) WithDefault() {
@@ -66,8 +66,8 @@ func (iso *InternalServerOptions) Validate() error {
 }
 
 type ServerOptions struct {
-	Public   PublicServerOptions   `yaml:"public" json:"public"`
-	Internal InternalServerOptions `yaml:"internal" json:"internal"`
+	Public   PublicServerOptions   `yaml:"public" json:"public" jsonschema:"description=Public server configuration for client-facing API endpoints"`
+	Internal InternalServerOptions `yaml:"internal" json:"internal" jsonschema:"description=Internal server configuration for cluster communication"`
 }
 
 func (so *ServerOptions) WithDefault() {
@@ -83,7 +83,7 @@ func (so *ServerOptions) Validate() error {
 }
 
 type ReplicationOptions struct {
-	TLS security.TLSOptions `yaml:"tls" json:"tls"`
+	TLS security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing replication traffic between data servers"`
 }
 
 func (ro *ReplicationOptions) WithDefault() {
@@ -95,9 +95,9 @@ func (ro *ReplicationOptions) Validate() error {
 }
 
 type WALOptions struct {
-	Dir       string        `yaml:"dir" json:"dir"`
-	Sync      *bool         `yaml:"sync" json:"sync"`
-	Retention time.Duration `yaml:"retention" json:"retention"`
+	Dir       string          `yaml:"dir" json:"dir" jsonschema:"description=Directory path for storing WAL files,example=./data/wal"`
+	Sync      *bool           `yaml:"sync,omitempty" json:"sync,omitempty" jsonschema:"description=Enable synchronous WAL writes for durability,default=true"`
+	Retention option.Duration `yaml:"retention" json:"retention" jsonschema:"description=Duration to retain WAL entries before cleanup,example=1h,format=duration"`
 }
 
 func (wo *WALOptions) IsSyncEnabled() bool {
@@ -116,7 +116,7 @@ func (wo *WALOptions) WithDefault() {
 	}
 
 	if wo.Retention == 0 {
-		wo.Retention = time.Hour * 1
+		wo.Retention = option.Duration(time.Hour * 1)
 	}
 }
 
@@ -125,8 +125,8 @@ func (*WALOptions) Validate() error {
 }
 
 type DatabaseOptions struct {
-	Dir             string `yaml:"dir" json:"dir"`
-	ReadCacheSizeMB int64  `yaml:"readCacheSizeMB" json:"readCacheSizeMB"`
+	Dir             string `yaml:"dir" json:"dir" jsonschema:"description=Directory path for storing database files,example=./data/db"`
+	ReadCacheSizeMB int64  `yaml:"readCacheSizeMB,omitempty" json:"readCacheSizeMB,omitempty" jsonschema:"description=Size of read cache in megabytes for performance optimization,default=100,minimum=1"`
 }
 
 func (do *DatabaseOptions) WithDefault() {
@@ -142,12 +142,12 @@ func (*DatabaseOptions) Validate() error {
 }
 
 type NotificationOptions struct {
-	Retention time.Duration `yaml:"retention" json:"retention"`
+	Retention option.Duration `yaml:"retention" json:"retention" jsonschema:"description=Duration to retain notifications before cleanup,example=1h,format=duration"`
 }
 
 func (no *NotificationOptions) WithDefault() {
 	if no.Retention == 0 {
-		no.Retention = time.Hour * 1
+		no.Retention = option.Duration(time.Hour * 1)
 	}
 }
 func (*NotificationOptions) Validate() error {
@@ -155,9 +155,9 @@ func (*NotificationOptions) Validate() error {
 }
 
 type StorageOptions struct {
-	WAL          WALOptions          `yaml:"wal" json:"wal"`
-	Database     DatabaseOptions     `yaml:"database" json:"database"`
-	Notification NotificationOptions `yaml:"notification" json:"notification"`
+	WAL          WALOptions          `yaml:"wal" json:"wal" jsonschema:"description=Write-Ahead Log configuration for durability and recovery"`
+	Database     DatabaseOptions     `yaml:"database" json:"database" jsonschema:"description=Database storage configuration for persistent data"`
+	Notification NotificationOptions `yaml:"notification" json:"notification" jsonschema:"description=Notification system configuration for change events"`
 }
 
 func (so *StorageOptions) WithDefault() {
@@ -175,10 +175,10 @@ func (so *StorageOptions) Validate() error {
 }
 
 type Options struct {
-	Server        ServerOptions               `yaml:"server" json:"server"`
-	Replication   ReplicationOptions          `yaml:"replication" json:"replication"`
-	Storage       StorageOptions              `yaml:"storage" json:"storage"`
-	Observability option.ObservabilityOptions `yaml:"observability" json:"observability"`
+	Server        ServerOptions               `yaml:"server" json:"server" jsonschema:"description=Server configuration for public and internal endpoints"`
+	Replication   ReplicationOptions          `yaml:"replication,omitempty" json:"replication,omitempty" jsonschema:"description=Replication configuration for data consistency"`
+	Storage       StorageOptions              `yaml:"storage" json:"storage" jsonschema:"description=Storage configuration for WAL, database, and notifications"`
+	Observability option.ObservabilityOptions `yaml:"observability" json:"observability" jsonschema:"description=Observability configuration for metrics and tracing"`
 }
 
 func (op *Options) WithDefault() {

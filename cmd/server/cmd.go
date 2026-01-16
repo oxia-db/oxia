@@ -21,6 +21,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/oxia-db/oxia/common/codec"
+
 	"github.com/oxia-db/oxia/common/constant"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -32,6 +34,7 @@ import (
 )
 
 var (
+	confFile          string
 	dataServerOptions = option.NewDefaultOptions()
 	Cmd               = &cobra.Command{
 		Use:   "server",
@@ -44,6 +47,8 @@ var (
 func init() {
 	Cmd.Flags().SortFlags = false
 
+	Cmd.Flags().StringVarP(&confFile, "conf", "c", "", "config file path")
+
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultPublicPort), "Public service bind address")
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
 	observability := &dataServerOptions.Observability
@@ -52,12 +57,14 @@ func init() {
 	storageWal := &dataServerOptions.Storage.WAL
 	storageWal.Sync = &constant.FlagTrue
 
+	var walRetention = 1 * time.Hour
+	var notificationRetention = 1 * time.Hour
+
 	Cmd.Flags().StringVar(&storageWal.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
 	Cmd.Flags().BoolVar(storageWal.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
-	Cmd.Flags().DurationVar(&storageWal.Retention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
+	Cmd.Flags().DurationVar(&walRetention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
 
-	notification := &dataServerOptions.Storage.Notification
-	Cmd.Flags().DurationVar(&notification.Retention, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
+	Cmd.Flags().DurationVar(&notificationRetention, "notifications-retention-time", 1*time.Hour, "Retention time for the db notifications to clients")
 
 	storageDatabase := &dataServerOptions.Storage.Database
 	Cmd.Flags().StringVar(&storageDatabase.Dir, "data-dir", "./data/db", "Directory where to store data")
@@ -94,13 +101,26 @@ func init() {
 	Cmd.Flags().StringVar(&replicationTLS.TrustedCaFile, "peer-tls-trusted-ca-file", "", "Peer tls trusted ca file")
 	Cmd.Flags().BoolVar(&replicationTLS.InsecureSkipVerify, "peer-tls-insecure-skip-verify", false, "Peer tls insecure skip verify")
 	Cmd.Flags().StringVar(&replicationTLS.ServerName, "peer-tls-server-name", "", "Peer tls server name")
+
+	// Convert time.Duration to option.Duration after flag parsing
+	Cmd.PreRun = func(*cobra.Command, []string) {
+		storageWal.Retention = oxiadcommonoption.Duration(walRetention)
+		dataServerOptions.Storage.Notification.Retention = oxiadcommonoption.Duration(notificationRetention)
+	}
 }
 
-func exec(*cobra.Command, []string) {
+func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		dataServerOptions.WithDefault()
-		if err := dataServerOptions.Validate(); err != nil {
-			return nil, err
+		switch {
+		case cmd.Flags().Changed("conf"):
+			if err := codec.TryReadAndInitConf(confFile, dataServerOptions); err != nil {
+				return nil, err
+			}
+		default:
+			dataServerOptions.WithDefault()
+			if err := dataServerOptions.Validate(); err != nil {
+				return nil, err
+			}
 		}
 		return dataserver.New(dataServerOptions)
 	})
