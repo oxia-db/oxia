@@ -132,7 +132,7 @@
         },
         "storage": {
           "$ref": "#/$defs/StorageOptions",
-          "description": "Storage configuration for WAL"
+          "description": "Storage configuration for WAL, database, and notifications"
         },
         "observability": {
           "$ref": "#/$defs/ObservabilityOptions",
