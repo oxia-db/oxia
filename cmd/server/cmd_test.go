@@ -94,12 +94,12 @@ observability:
 
 	assert.Equal(t, "/tmp/wal", opts.Storage.WAL.Dir)
 	assert.True(t, *opts.Storage.WAL.Sync)
-	assert.Equal(t, 2*time.Hour, opts.Storage.WAL.Retention)
+	assert.Equal(t, 2*time.Hour, opts.Storage.WAL.Retention.ToDuration())
 
 	assert.Equal(t, "/tmp/db", opts.Storage.Database.Dir)
 	assert.Equal(t, int64(512), opts.Storage.Database.ReadCacheSizeMB)
 
-	assert.Equal(t, 30*time.Minute, opts.Storage.Notification.Retention)
+	assert.Equal(t, 30*time.Minute, opts.Storage.Notification.Retention.ToDuration())
 
 	assert.Equal(t, "0.0.0.0:9090", opts.Observability.Metric.BindAddress)
 	assert.Equal(t, "debug", opts.Observability.Log.Level)
