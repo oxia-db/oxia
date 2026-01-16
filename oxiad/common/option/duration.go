@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/invopop/jsonschema"
-	"go.yaml.in/yaml/v3"
+	"gopkg.in/yaml.v3"
 )
 
 // Duration is a wrapper around time.Duration that supports YAML unmarshaling from string format (e.g., "1h", "30m").
@@ -38,8 +38,8 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	*d = Duration(duration)
 	return nil
 }
-func (d *Duration) MarshalYAML() (any, error) {
-	return time.Duration(*d).String(), nil
+func (d Duration) MarshalYAML() (any, error) {
+	return time.Duration(d).String(), nil
 }
 
 func (d *Duration) ToDuration() time.Duration {

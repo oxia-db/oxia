@@ -134,10 +134,10 @@ storage:
 	assert.Equal(t, "/custom/wal", opts.Storage.WAL.Dir)            // From config
 
 	// Verify defaults are applied to unset values
-	assert.NotEmpty(t, opts.Server.Internal.BindAddress)      // Default
-	assert.NotEmpty(t, opts.Observability.Metric.BindAddress) // Default
-	assert.Equal(t, 1*time.Hour, opts.Storage.WAL.Retention)  // Default
-	assert.True(t, *opts.Storage.WAL.Sync)                    // Default
+	assert.NotEmpty(t, opts.Server.Internal.BindAddress)                  // Default
+	assert.NotEmpty(t, opts.Observability.Metric.BindAddress)             // Default
+	assert.Equal(t, 1*time.Hour, opts.Storage.WAL.Retention.ToDuration()) // Default
+	assert.True(t, *opts.Storage.WAL.Sync)                                // Default
 }
 
 func TestServer_ConfigurationValidation(t *testing.T) {
