@@ -21,7 +21,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Duration is a wrapper around time.Duration that supports YAML unmarshaling from string format (e.g., "1h", "30m")
+// Duration is a wrapper around time.Duration that supports YAML unmarshaling from string format (e.g., "1h", "30m").
 type Duration time.Duration
 
 func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
@@ -38,7 +38,7 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	*d = Duration(duration)
 	return nil
 }
-func (d *Duration) MarshalYAML() (interface{}, error) {
+func (d *Duration) MarshalYAML() (any, error) {
 	return time.Duration(*d).String(), nil
 }
 
@@ -46,14 +46,15 @@ func (d *Duration) ToDuration() time.Duration {
 	return time.Duration(*d)
 }
 
-// JSONSchema implements the jsonschema.ReflectType interface
+// JSONSchema implements the jsonschema.ReflectType interface.
+// Notice: We have no choice but to use the value receiver here.
 func (Duration) JSONSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type:        "string",
 		Title:       "Duration",
 		Description: "Duration string in Go duration format (e.g., \"1h\", \"30m\", \"5s\")",
 		Pattern:     "^[0-9]+[smh]$",
-		Examples: []interface{}{
+		Examples: []any{
 			"1h",
 			"30m",
 			"5s",

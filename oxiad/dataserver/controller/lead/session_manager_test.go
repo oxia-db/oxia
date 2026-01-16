@@ -22,9 +22,10 @@ import (
 	"testing"
 	"time"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
+
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
