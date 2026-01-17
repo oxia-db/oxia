@@ -104,10 +104,11 @@ func TestWaitConcurrent(t *testing.T) {
 	}, 5)
 
 	for i := 0; i < 5; i++ {
+		fi := i
 		wg.Go(func() {
 			value, version, err := w.Wait(context.Background(), 0)
 			assert.NoError(t, err)
-			results[i] = struct {
+			results[fi] = struct {
 				value   int
 				version uint64
 			}{value: value, version: version}
@@ -258,9 +259,10 @@ func TestWatchConcurrentLoadAndNotify(t *testing.T) {
 
 			// Concurrent notifiers
 			for i := 0; i < tt.numNotifiers; i++ {
+				fi := i
 				wg.Go(func() {
 					for j := 0; j < tt.notifiesPerNotifier; j++ {
-						w.Notify(i*100 + j)
+						w.Notify(fi*100 + j)
 					}
 				})
 			}
