@@ -15,6 +15,7 @@
 package option
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestNewWatch verifies that a new Watch is properly initialized with the initial value and version 0
 func TestNewWatch(t *testing.T) {
 	w := NewWatch("initial")
 
@@ -64,7 +66,8 @@ func TestWaitWithNewerVersion(t *testing.T) {
 
 	w.Notify("updated")
 
-	value, version := w.Wait(0)
+	value, version, err := w.Wait(context.Background(), 0)
+	assert.NoError(t, err)
 	assert.Equal(t, "updated", value)
 	assert.Equal(t, uint64(1), version)
 }
@@ -75,7 +78,8 @@ func TestWaitWithSameVersion(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		value, version := w.Wait(0)
+		value, version, err := w.Wait(context.Background(), 0)
+		assert.NoError(t, err)
 		assert.Equal(t, "updated", value)
 		assert.Equal(t, uint64(1), version)
 	}()
@@ -103,7 +107,8 @@ func TestWaitConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			value, version := w.Wait(0)
+			value, version, err := w.Wait(context.Background(), 0)
+			assert.NoError(t, err)
 			results[idx] = struct {
 				value   int
 				version uint64
@@ -128,7 +133,8 @@ func TestWaitMultipleNotification(t *testing.T) {
 	done1 := make(chan struct{})
 	go func() {
 		defer close(done1)
-		value, version := w.Wait(0)
+		value, version, err := w.Wait(context.Background(), 0)
+		assert.NoError(t, err)
 		assert.Equal(t, 100, value)
 		assert.Equal(t, uint64(1), version)
 	}()
@@ -145,7 +151,8 @@ func TestWaitMultipleNotification(t *testing.T) {
 	done2 := make(chan struct{})
 	go func() {
 		defer close(done2)
-		value, version := w.Wait(1)
+		value, version, err := w.Wait(context.Background(), 1)
+		assert.NoError(t, err)
 		assert.Equal(t, 200, value)
 		assert.Equal(t, uint64(2), version)
 	}()
@@ -181,36 +188,122 @@ func TestWatchWithStruct(t *testing.T) {
 	assert.Equal(t, uint64(1), version)
 }
 
-func TestWatchConcurrentLoadAndNotify(t *testing.T) {
+func TestWatchWithNilValues(t *testing.T) {
+	w := NewWatch[*string](nil)
+
+	value, version := w.Load()
+	assert.Nil(t, value)
+	assert.Equal(t, uint64(0), version)
+
+	str := "test"
+	w.Notify(&str)
+
+	value, version = w.Load()
+	assert.NotNil(t, value)
+	assert.Equal(t, "test", *value)
+	assert.Equal(t, uint64(1), version)
+}
+
+func TestWatchChannelReplacement(t *testing.T) {
 	w := NewWatch[int](0)
-	var wg sync.WaitGroup
 
-	// Concurrent loaders
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				w.Load()
-			}
-		}()
+	// Get initial notify channel
+	w.mu.RLock()
+	initialNotify := w.notify
+	w.mu.RUnlock()
+
+	// Notify should replace the channel
+	w.Notify(1)
+
+	w.mu.RLock()
+	newNotify := w.notify
+	w.mu.RUnlock()
+
+	// Old channel should be closed, new channel should be different
+	assert.NotEqual(t, initialNotify, newNotify)
+
+	// Reading from old channel should not block
+	select {
+	case <-initialNotify:
+		// Expected
+	default:
+		t.Error("Old notify channel should have been closed")
+	}
+}
+
+func TestWatchRapidNotifications(t *testing.T) {
+	w := NewWatch[int](0)
+
+	// Rapid successive notifications
+	for i := 1; i <= 1000; i++ {
+		w.Notify(i)
 	}
 
-	// Concurrent notifiers
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			for j := 0; j < 10; j++ {
-				w.Notify(idx*100 + j)
-			}
-		}(i)
+	value, version := w.Load()
+	assert.Equal(t, 1000, value)
+	assert.Equal(t, uint64(1000), version)
+}
+
+func TestWatchConcurrentLoadAndNotify(t *testing.T) {
+	tests := []struct {
+		name                string
+		numLoaders          int
+		loadsPerLoader      int
+		numNotifiers        int
+		notifiesPerNotifier int
+		minExpectedVersion  uint64
+	}{
+		{
+			name:                "small_concurrent",
+			numLoaders:          5,
+			loadsPerLoader:      10,
+			numNotifiers:        2,
+			notifiesPerNotifier: 5,
+			minExpectedVersion:  10,
+		},
+		{
+			name:                "medium_concurrent",
+			numLoaders:          10,
+			loadsPerLoader:      100,
+			numNotifiers:        5,
+			notifiesPerNotifier: 10,
+			minExpectedVersion:  50,
+		},
 	}
 
-	wg.Wait()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := NewWatch[int](0)
+			var wg sync.WaitGroup
 
-	_, finalVersion := w.Load()
-	assert.GreaterOrEqual(t, finalVersion, uint64(50))
+			// Concurrent loaders
+			for i := 0; i < tt.numLoaders; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for j := 0; j < tt.loadsPerLoader; j++ {
+						w.Load()
+					}
+				}()
+			}
+
+			// Concurrent notifiers
+			for i := 0; i < tt.numNotifiers; i++ {
+				wg.Add(1)
+				go func(idx int) {
+					defer wg.Done()
+					for j := 0; j < tt.notifiesPerNotifier; j++ {
+						w.Notify(idx*100 + j)
+					}
+				}(i)
+			}
+
+			wg.Wait()
+
+			_, finalVersion := w.Load()
+			assert.GreaterOrEqual(t, finalVersion, tt.minExpectedVersion)
+		})
+	}
 }
 
 func TestWaitRaceCondition(t *testing.T) {
@@ -224,7 +317,8 @@ func TestWaitRaceCondition(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			value, version := w.Wait(0)
+			value, version, err := w.Wait(context.Background(), 0)
+			assert.NoError(t, err)
 			if value == 999 && version == 1 {
 				done <- true
 			}
@@ -255,6 +349,29 @@ func TestWatchVersionIncrement(t *testing.T) {
 	assert.Equal(t, uint64(3), getVersion(w))
 }
 
+func TestWaitContextCancellation(t *testing.T) {
+	w := NewWatch[int](0)
+
+	// Test cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, _, err := w.Wait(ctx, 1)
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+}
+
+func TestWaitTimeout(t *testing.T) {
+	w := NewWatch[int](0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	_, _, err := w.Wait(ctx, 1)
+	assert.Error(t, err)
+	assert.Equal(t, context.DeadlineExceeded, err)
+}
+
 func TestWatchWithNilInterface(t *testing.T) {
 	var w *Watch[string]
 
@@ -263,7 +380,7 @@ func TestWatchWithNilInterface(t *testing.T) {
 	})
 
 	assert.Panics(t, func() {
-		w.Wait(0)
+		w.Wait(context.Background(), 0)
 	})
 
 	assert.Panics(t, func() {
@@ -300,6 +417,6 @@ func BenchmarkWatchWaitImmediate(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		w.Wait(0)
+		w.Wait(context.Background(), 0)
 	}
 }

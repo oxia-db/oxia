@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/stretchr/testify/assert"
 
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -97,7 +98,7 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 
 	interceptor(dataServerOption)
 
-	s, err = dataserver.New(dataServerOption)
+	s, err = dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
 
 	assert.NoError(t, err)
 

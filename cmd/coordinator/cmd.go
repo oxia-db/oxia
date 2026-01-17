@@ -103,7 +103,7 @@ func exec(cmd *cobra.Command, _ []string) {
 			v.OnConfigChange(func(fsnotify.Event) {
 				temporaryOptions := option.NewDefaultOptions()
 				if err := codec.TryReadAndInitConf(confFile, temporaryOptions); err != nil {
-					slog.Info("parse updated configuration file failed", slog.Any("err", err))
+					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
 					return
 				}
 				previous, _ := watchableOptions.Load()

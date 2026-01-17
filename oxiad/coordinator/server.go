@@ -233,15 +233,12 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 func (s *GrpcServer) backgroundHandleConfChange() {
 	var coordinatorOptions *option.Options
 	var ver uint64 = 0
+	var err error
 	for {
-		select {
-		case <-s.ctx.Done():
-			{
-				s.logger.Warn("exit background configuration watch goroutine due to context canceled")
-				return
-			}
-		default:
-			coordinatorOptions, ver = s.watchableOptions.Wait(ver)
+		coordinatorOptions, ver, err = s.watchableOptions.Wait(s.ctx, ver)
+		if err != nil {
+			s.logger.Warn("exit background configuration watch goroutine due to an error", slog.Any("error", err))
+			return
 		}
 
 		s.logger.Info("configuration options has changed. processing the dynamic updates.")

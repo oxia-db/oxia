@@ -23,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/oauth2-proxy/mockoidc"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
@@ -65,7 +66,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	dataServerOption1.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption1.Storage.Database.Dir = t.TempDir()
 	dataServerOption1.Storage.WAL.Dir = t.TempDir()
-	s1, err := dataserver.New(dataServerOption1)
+	s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption1))
 	assert.NoError(t, err)
 	s1Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
@@ -79,7 +80,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	dataServerOption2.Storage.Database.Dir = t.TempDir()
 	dataServerOption2.Storage.WAL.Dir = t.TempDir()
 
-	s2, err := dataserver.New(dataServerOption2)
+	s2, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption2))
 	assert.NoError(t, err)
 	s2Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
@@ -93,7 +94,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	dataServerOption3.Storage.Database.Dir = t.TempDir()
 	dataServerOption3.Storage.WAL.Dir = t.TempDir()
 
-	s3, err := dataserver.New(dataServerOption3)
+	s3, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption3))
 	assert.NoError(t, err)
 	s3Addr := model.Server{
 		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),

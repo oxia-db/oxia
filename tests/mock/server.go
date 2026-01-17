@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -36,7 +37,7 @@ func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Serv
 	dataServerOption.Storage.Database.Dir = t.TempDir()
 	dataServerOption.Storage.WAL.Dir = t.TempDir()
 	var err error
-	s, err = dataserver.New(dataServerOption)
+	s, err = dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
 
 	assert.NoError(t, err)
 
@@ -60,7 +61,7 @@ func NewServerWithAddress(t *testing.T, name string, publicAddress string, inter
 	dataServerOption.Storage.WAL.Dir = t.TempDir()
 
 	var err error
-	s, err = dataserver.New(dataServerOption)
+	s, err = dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
 
 	assert.NoError(t, err)
 

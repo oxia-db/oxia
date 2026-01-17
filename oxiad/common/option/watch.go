@@ -1,6 +1,7 @@
 package option
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 )
@@ -22,19 +23,23 @@ func (w *Watch[T]) Load() (T, uint64) {
 	return snapshot.v, snapshot.ver
 }
 
-func (w *Watch[T]) Wait(waitVer uint64) (T, uint64) {
+func (w *Watch[T]) Wait(ctx context.Context, waitVer uint64) (T, uint64, error) {
 	snapshot := w.v.Load()
 	if snapshot.ver > waitVer {
-		return snapshot.v, snapshot.ver
+		return snapshot.v, snapshot.ver, nil
 	}
 
 	w.mu.RLock()
 	notify := w.notify
 	w.mu.RUnlock()
-	<-notify
-
-	notified := w.v.Load()
-	return notified.v, notified.ver
+	select {
+	case <-ctx.Done():
+		notified := w.v.Load()
+		return notified.v, notified.ver, ctx.Err()
+	case <-notify:
+		notified := w.v.Load()
+		return notified.v, notified.ver, nil
+	}
 }
 
 func (w *Watch[T]) Notify(value T) {

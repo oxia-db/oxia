@@ -15,6 +15,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -127,7 +128,7 @@ func exec(cmd *cobra.Command, _ []string) {
 			v.OnConfigChange(func(e fsnotify.Event) {
 				temporaryOptions := option.NewDefaultOptions()
 				if err := codec.TryReadAndInitConf(confFile, temporaryOptions); err != nil {
-					slog.Info("parse updated configuration file failed", slog.Any("err", err))
+					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
 					return
 				}
 				previous, _ := watchableOptions.Load()
@@ -144,6 +145,6 @@ func exec(cmd *cobra.Command, _ []string) {
 			}
 		}
 
-		return dataserver.New(watchableOptions)
+		return dataserver.New(context.Background(), watchableOptions)
 	})
 }
