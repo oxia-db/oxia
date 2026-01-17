@@ -23,6 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -36,7 +38,7 @@ func TestNewServer(t *testing.T) {
 	options.Storage.Database.Dir = t.TempDir()
 	options.Storage.WAL.Dir = t.TempDir()
 
-	server, err := New(options)
+	server, err := New(t.Context(), commonoption.NewWatch(options))
 	assert.NoError(t, err)
 
 	url := fmt.Sprintf("http://localhost:%d/metrics", server.metrics.Port())
@@ -63,7 +65,7 @@ func TestNewServerClosableWithHealthWatch(t *testing.T) {
 	options.Storage.Database.Dir = t.TempDir()
 	options.Storage.WAL.Dir = t.TempDir()
 
-	server, err := New(options)
+	server, err := New(t.Context(), commonoption.NewWatch(options))
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(nil, nil)

@@ -25,6 +25,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -51,7 +53,7 @@ func newServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
 	options.Storage.WAL.Dir = t.TempDir()
 
 	var err error
-	s, err = dataserver.New(options)
+	s, err = dataserver.New(t.Context(), commonoption.NewWatch(options))
 
 	assert.NoError(t, err)
 
@@ -764,7 +766,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 			dataServerOption.Storage.Database.Dir = t.TempDir()
 			dataServerOption.Storage.WAL.Dir = t.TempDir()
-			s1, err := dataserver.New(dataServerOption)
+			s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
 			assert.NoError(t, err)
 
 			sa1 := model.Server{

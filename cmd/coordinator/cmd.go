@@ -15,10 +15,14 @@
 package coordinator
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/oxia-db/oxia/common/codec"
 
@@ -86,16 +90,35 @@ func init() {
 
 func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
+		watchableOptions := oxiadcommonoption.NewWatch(coordinatorOptions)
+		// configure the options
 		if cmd.Flags().Changed("conf") {
+			// init options
 			if err := codec.TryReadAndInitConf(confFile, coordinatorOptions); err != nil {
 				return nil, err
 			}
+			// start listener
+			v := viper.New()
+			v.SetConfigFile(confFile)
+			v.OnConfigChange(func(fsnotify.Event) {
+				temporaryOptions := option.NewDefaultOptions()
+				if err := codec.TryReadAndInitConf(confFile, temporaryOptions); err != nil {
+					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
+					return
+				}
+				previous, _ := watchableOptions.Load()
+				slog.Info("configuration file has changed.",
+					slog.Any("previous", previous),
+					slog.Any("current", temporaryOptions))
+				watchableOptions.Notify(temporaryOptions)
+			})
+			v.WatchConfig()
 		} else {
 			coordinatorOptions.WithDefault()
 			if err := coordinatorOptions.Validate(); err != nil {
 				return nil, err
 			}
 		}
-		return coordinator.NewGrpcServer(coordinatorOptions)
+		return coordinator.NewGrpcServer(context.Background(), watchableOptions)
 	})
 }

@@ -16,6 +16,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,6 +24,8 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -193,7 +196,7 @@ func main() {
 		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
 		dataServerOption.Storage.WAL.Dir = filepath.Join(dataDir, thisNode, "wal")
-		_, err := dataserver.NewWithGrpcProvider(dataServerOption, grpcProvider, replicationGrpcProvider)
+		_, err := dataserver.NewWithGrpcProvider(context.Background(), commonoption.NewWatch(dataServerOption), grpcProvider, replicationGrpcProvider)
 		if err != nil {
 			return
 		}

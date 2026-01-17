@@ -15,8 +15,10 @@
 package coordinator
 
 import (
+	"context"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
@@ -26,6 +28,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/entity"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -44,6 +50,13 @@ import (
 )
 
 type GrpcServer struct {
+	// concurrent control
+	ctx              context.Context
+	ctxCancel        context.CancelFunc
+	wg               sync.WaitGroup
+	logger           *slog.Logger
+	watchableOptions *commonoption.Watch[*option.Options]
+
 	grpcServer   rpc2.GrpcServer
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
@@ -100,8 +113,10 @@ func loadClusterConfig(cluster *option.ClusterOptions, v *viper.Viper) (model.Cl
 	return cc, nil
 }
 
-func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
+func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[*option.Options]) (*GrpcServer, error) {
+	options, _ := watchableOptions.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
+
 	v := viper.New()
 
 	clusterConfigChangeNotifications := make(chan any)
@@ -152,7 +167,7 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient)
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +179,7 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) {
+	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, internalServerTLS, &auth.Disabled)
 	if err != nil {
@@ -177,7 +192,7 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 		return nil, err
 	}
 	admin := newAdminServer(coordinatorInstance.StatusResource(), clusterConfigProvider)
-	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) {
+	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, admin)
 	}, adminSvTLS, &auth.Disabled)
 	if err != nil {
@@ -188,23 +203,58 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 
 	var metricsServer *metric.PrometheusMetrics
 	if metrics.IsEnabled() {
-		metricsServer, err = metric.Start(metrics.BindAddress)
+		metricsServer, err = metric.Start(metrics.BindAddress) //nolint:contextcheck
 		if err != nil {
 			return nil, err
 		}
 	}
+	ctx, cancel := context.WithCancel(parent)
+	server := GrpcServer{
+		ctx:              ctx,
+		ctxCancel:        cancel,
+		wg:               sync.WaitGroup{},
+		logger:           slog.With(slog.String("component", "grpc-server")),
+		watchableOptions: watchableOptions,
+		grpcServer:       grpcServer,
+		adminServer:      adminGrpcServer,
+		healthServer:     healthServer,
+		clientPool:       clientPool,
+		coordinator:      coordinatorInstance,
+		metrics:          metricsServer,
+	}
+	server.wg.Go(func() {
+		process.DoWithLabels(ctx, map[string]string{
+			"component": "configuration-watcher",
+		}, server.backgroundHandleConfChange)
+	})
 
-	return &GrpcServer{
-		grpcServer:   grpcServer,
-		adminServer:  adminGrpcServer,
-		healthServer: healthServer,
-		clientPool:   clientPool,
-		coordinator:  coordinatorInstance,
-		metrics:      metricsServer,
-	}, nil
+	return &server, nil
+}
+
+func (s *GrpcServer) backgroundHandleConfChange() {
+	var coordinatorOptions *option.Options
+	var ver uint64
+	var err error
+	for {
+		coordinatorOptions, ver, err = s.watchableOptions.Wait(s.ctx, ver)
+		if err != nil {
+			s.logger.Warn("exit background configuration watch goroutine due to an error", slog.Any("error", err))
+			return
+		}
+
+		s.logger.Info("configuration options has changed. processing the dynamic updates.")
+		logOptions := &coordinatorOptions.Observability.Log
+		if logging.ReconfigureLogger(logOptions) {
+			s.logger.Info("reconfigured log options", slog.Any("options", logOptions))
+		}
+	}
 }
 
 func (s *GrpcServer) Close() error {
+	// sync close the background task first
+	s.ctxCancel()
+	s.wg.Wait()
+
 	var err error
 	s.healthServer.Shutdown()
 	err = multierr.Combine(
