@@ -17,7 +17,11 @@ package dataserver
 import (
 	"context"
 	"log/slog"
+	"sync"
 
+	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -38,6 +42,13 @@ type Server struct {
 	*internalRpcServer
 	*publicRpcServer
 
+	// concurrent control
+	ctx              context.Context
+	ctxCancel        context.CancelFunc
+	wg               sync.WaitGroup
+	logger           *slog.Logger
+	watchableOptions *commonoption.Watch[*option.Options]
+
 	replicationRpcProvider    rpc.ReplicationRpcProvider
 	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
 	shardsDirector            controller.ShardsDirector
@@ -48,15 +59,18 @@ type Server struct {
 	healthServer rpc2.HealthServer
 }
 
-func New(options *option.Options) (*Server, error) {
+func New(parent context.Context, watchableOption *commonoption.Watch[*option.Options]) (*Server, error) {
+	options, _ := watchableOption.Load()
 	provider, err := rpc.NewReplicationRpcProvider(&options.Replication)
 	if err != nil {
 		return nil, err
 	}
-	return NewWithGrpcProvider(options, rpc2.Default, provider)
+	grpcProvider, err := NewWithGrpcProvider(parent, watchableOption, rpc2.Default, provider)
+	return grpcProvider, err
 }
 
-func NewWithGrpcProvider(options *option.Options, provider rpc2.GrpcProvider, replicationRpcProvider rpc.ReplicationRpcProvider) (*Server, error) {
+func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.Watch[*option.Options], provider rpc2.GrpcProvider, replicationRpcProvider rpc.ReplicationRpcProvider) (*Server, error) {
+	options, _ := watchableOption.Load()
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
 	storage := &options.Storage
@@ -69,7 +83,14 @@ func NewWithGrpcProvider(options *option.Options, provider rpc2.GrpcProvider, re
 	if err != nil {
 		return nil, err
 	}
+
+	ctx, cancel := context.WithCancel(parent)
 	s := &Server{
+		ctx:                    ctx,
+		ctxCancel:              cancel,
+		wg:                     sync.WaitGroup{},
+		logger:                 slog.With(slog.String("component", "grpc-server")),
+		watchableOptions:       watchableOption,
 		replicationRpcProvider: replicationRpcProvider,
 		walFactory: wal.NewWalFactory(&wal.FactoryOptions{
 			BaseWalDir:  storage.WAL.Dir,
@@ -80,6 +101,12 @@ func NewWithGrpcProvider(options *option.Options, provider rpc2.GrpcProvider, re
 		kvFactory:    kvFactory,
 		healthServer: rpc2.NewClosableHealthServer(context.Background()),
 	}
+
+	s.wg.Go(func() {
+		process.DoWithLabels(ctx, map[string]string{
+			"component": "configuration-watcher",
+		}, s.backgroundHandleConfChange)
+	})
 
 	s.shardsDirector = controller.NewShardsDirector(storage, s.walFactory, s.kvFactory, replicationRpcProvider)
 	s.shardAssignmentDispatcher = assignment.NewShardAssignmentDispatcher(s.healthServer)
@@ -124,7 +151,33 @@ func (s *Server) InternalPort() int {
 	return s.internalRpcServer.grpcServer.Port()
 }
 
+func (s *Server) backgroundHandleConfChange() {
+	var dataServerOptions *option.Options
+	var ver uint64 = 0
+	for {
+		select {
+		case <-s.ctx.Done():
+			{
+				s.logger.Warn("exit background configuration watch goroutine due to context canceled")
+				return
+			}
+		default:
+			dataServerOptions, ver = s.watchableOptions.Wait(ver)
+		}
+
+		s.logger.Info("configuration options has changed. processing the dynamic updates.")
+		logOptions := &dataServerOptions.Observability.Log
+		if logging.ReconfigureLogger(logOptions) {
+			s.logger.Info("reconfigured log options", slog.Any("options", logOptions))
+		}
+	}
+}
+
 func (s *Server) Close() error {
+	// sync close the background task first
+	s.ctxCancel()
+	s.wg.Wait()
+
 	err := multierr.Combine(
 		s.healthServer.Close(),
 		s.shardAssignmentDispatcher.Close(),

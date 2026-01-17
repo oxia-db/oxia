@@ -52,3 +52,7 @@ func TryReadAndInitConf(path string, configurationOptions ConfigurableOptions) e
 	configurationOptions.WithDefault()
 	return configurationOptions.Validate()
 }
+
+func WatchFileOptions(path string) {
+
+}

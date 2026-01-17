@@ -17,9 +17,12 @@ package server
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/oxia-db/oxia/common/codec"
 
@@ -111,17 +114,36 @@ func init() {
 
 func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
+		watchableOptions := oxiadcommonoption.NewWatch(dataServerOptions)
 		switch {
 		case cmd.Flags().Changed("conf"):
+			// init options
 			if err := codec.TryReadAndInitConf(confFile, dataServerOptions); err != nil {
 				return nil, err
 			}
+			// start listener
+			v := viper.New()
+			v.SetConfigFile(confFile)
+			v.OnConfigChange(func(e fsnotify.Event) {
+				temporaryOptions := option.NewDefaultOptions()
+				if err := codec.TryReadAndInitConf(confFile, temporaryOptions); err != nil {
+					slog.Info("parse updated configuration file failed", slog.Any("err", err))
+					return
+				}
+				previous, _ := watchableOptions.Load()
+				slog.Info("configuration file has changed.",
+					slog.Any("previous", previous),
+					slog.Any("current", temporaryOptions))
+				watchableOptions.Notify(temporaryOptions)
+			})
+			v.WatchConfig()
 		default:
 			dataServerOptions.WithDefault()
 			if err := dataServerOptions.Validate(); err != nil {
 				return nil, err
 			}
 		}
-		return dataserver.New(dataServerOptions)
+
+		return dataserver.New(watchableOptions)
 	})
 }

@@ -15,11 +15,16 @@
 package coordinator
 
 import (
+	"context"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
+	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/multierr"
@@ -44,6 +49,13 @@ import (
 )
 
 type GrpcServer struct {
+	// concurrent control
+	ctx              context.Context
+	ctxCancel        context.CancelFunc
+	wg               sync.WaitGroup
+	logger           *slog.Logger
+	watchableOptions *commonoption.Watch[*option.Options]
+
 	grpcServer   rpc2.GrpcServer
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
@@ -100,8 +112,10 @@ func loadClusterConfig(cluster *option.ClusterOptions, v *viper.Viper) (model.Cl
 	return cc, nil
 }
 
-func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
+func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[*option.Options]) (*GrpcServer, error) {
+	options, _ := watchableOptions.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
+
 	v := viper.New()
 
 	clusterConfigChangeNotifications := make(chan any)
@@ -193,18 +207,56 @@ func NewGrpcServer(options *option.Options) (*GrpcServer, error) {
 			return nil, err
 		}
 	}
+	ctx, cancel := context.WithCancel(parent)
+	server := GrpcServer{
+		ctx:              ctx,
+		ctxCancel:        cancel,
+		wg:               sync.WaitGroup{},
+		logger:           slog.With(slog.String("component", "grpc-server")),
+		watchableOptions: watchableOptions,
+		grpcServer:       grpcServer,
+		adminServer:      adminGrpcServer,
+		healthServer:     healthServer,
+		clientPool:       clientPool,
+		coordinator:      coordinatorInstance,
+		metrics:          metricsServer,
+	}
+	server.wg.Go(func() {
+		process.DoWithLabels(ctx, map[string]string{
+			"component": "configuration-watcher",
+		}, server.backgroundHandleConfChange)
+	})
 
-	return &GrpcServer{
-		grpcServer:   grpcServer,
-		adminServer:  adminGrpcServer,
-		healthServer: healthServer,
-		clientPool:   clientPool,
-		coordinator:  coordinatorInstance,
-		metrics:      metricsServer,
-	}, nil
+	return &server, nil
+}
+
+func (s *GrpcServer) backgroundHandleConfChange() {
+	var coordinatorOptions *option.Options
+	var ver uint64 = 0
+	for {
+		select {
+		case <-s.ctx.Done():
+			{
+				s.logger.Warn("exit background configuration watch goroutine due to context canceled")
+				return
+			}
+		default:
+			coordinatorOptions, ver = s.watchableOptions.Wait(ver)
+		}
+
+		s.logger.Info("configuration options has changed. processing the dynamic updates.")
+		logOptions := &coordinatorOptions.Observability.Log
+		if logging.ReconfigureLogger(logOptions) {
+			s.logger.Info("reconfigured log options", slog.Any("options", logOptions))
+		}
+	}
 }
 
 func (s *GrpcServer) Close() error {
+	// sync close the background task first
+	s.ctxCancel()
+	s.wg.Wait()
+
 	var err error
 	s.healthServer.Shutdown()
 	err = multierr.Combine(

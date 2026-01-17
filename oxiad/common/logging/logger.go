@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
@@ -53,6 +54,20 @@ func ParseLogLevel(levelStr string) (slog.Level, error) {
 	}
 
 	return slog.LevelInfo, fmt.Errorf("unknown level string: '%s', defaulting to LevelInfo", levelStr)
+}
+
+func ReconfigureLogger(option *option.LogOptions) bool {
+	expectLevel, _ := ParseLogLevel(option.Level)
+	needReconfigure := false
+	if expectLevel != LogLevel {
+		needReconfigure = true
+		LogLevel = expectLevel
+	}
+	if needReconfigure {
+		ConfigureLogger()
+		return true
+	}
+	return false
 }
 
 func ConfigureLogger() {
