@@ -22,9 +22,10 @@ import (
 	"os"
 	"path/filepath"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 

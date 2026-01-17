@@ -22,13 +22,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
 	slogzerolog "github.com/samber/slog-zerolog/v2"
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/common/option"
 )
 
 const DefaultLogLevel = slog.LevelInfo
@@ -56,8 +57,8 @@ func ParseLogLevel(levelStr string) (slog.Level, error) {
 	return slog.LevelInfo, fmt.Errorf("unknown level string: '%s', defaulting to LevelInfo", levelStr)
 }
 
-func ReconfigureLogger(option *option.LogOptions) bool {
-	expectLevel, _ := ParseLogLevel(option.Level)
+func ReconfigureLogger(logOption *option.LogOptions) bool {
+	expectLevel, _ := ParseLogLevel(logOption.Level)
 	needReconfigure := false
 	if expectLevel != LogLevel {
 		needReconfigure = true

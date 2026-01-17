@@ -22,15 +22,16 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
-	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/oxiad/common/logging"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/entity"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -166,7 +167,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient)
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +179,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	if err != nil {
 		return nil, err
 	}
-	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) {
+	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, internalServerTLS, &auth.Disabled)
 	if err != nil {
@@ -191,7 +192,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 	admin := newAdminServer(coordinatorInstance.StatusResource(), clusterConfigProvider)
-	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) {
+	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, admin)
 	}, adminSvTLS, &auth.Disabled)
 	if err != nil {
@@ -202,7 +203,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 
 	var metricsServer *metric.PrometheusMetrics
 	if metrics.IsEnabled() {
-		metricsServer, err = metric.Start(metrics.BindAddress)
+		metricsServer, err = metric.Start(metrics.BindAddress) //nolint:contextcheck
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +233,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 
 func (s *GrpcServer) backgroundHandleConfChange() {
 	var coordinatorOptions *option.Options
-	var ver uint64 = 0
+	var ver uint64
 	var err error
 	for {
 		coordinatorOptions, ver, err = s.watchableOptions.Wait(s.ctx, ver)

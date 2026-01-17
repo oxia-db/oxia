@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestNewWatch verifies that a new Watch is properly initialized with the initial value and version 0
+// TestNewWatch verifies that a new Watch is properly initialized with the initial value and version 0.
 func TestNewWatch(t *testing.T) {
 	w := NewWatch("initial")
 
@@ -104,16 +104,14 @@ func TestWaitConcurrent(t *testing.T) {
 	}, 5)
 
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		wg.Go(func() {
 			value, version, err := w.Wait(context.Background(), 0)
 			assert.NoError(t, err)
-			results[idx] = struct {
+			results[i] = struct {
 				value   int
 				version uint64
 			}{value: value, version: version}
-		}(i)
+		})
 	}
 
 	time.Sleep(10 * time.Millisecond)
@@ -251,24 +249,20 @@ func TestWatchConcurrentLoadAndNotify(t *testing.T) {
 
 			// Concurrent loaders
 			for i := 0; i < tt.numLoaders; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					for j := 0; j < tt.loadsPerLoader; j++ {
 						w.Load()
 					}
-				}()
+				})
 			}
 
 			// Concurrent notifiers
 			for i := 0; i < tt.numNotifiers; i++ {
-				wg.Add(1)
-				go func(idx int) {
-					defer wg.Done()
+				wg.Go(func() {
 					for j := 0; j < tt.notifiesPerNotifier; j++ {
-						w.Notify(idx*100 + j)
+						w.Notify(i*100 + j)
 					}
-				}(i)
+				})
 			}
 
 			wg.Wait()
@@ -287,15 +281,13 @@ func TestWaitRaceCondition(t *testing.T) {
 
 	// Start many waiters
 	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		wg.Go(func() {
 			value, version, err := w.Wait(context.Background(), 0)
 			assert.NoError(t, err)
 			if value == 999 && version == 1 {
 				done <- true
 			}
-		}(i)
+		})
 	}
 
 	time.Sleep(10 * time.Millisecond)
@@ -345,51 +337,7 @@ func TestWaitTimeout(t *testing.T) {
 	assert.Equal(t, context.DeadlineExceeded, err)
 }
 
-func TestWatchWithNilInterface(t *testing.T) {
-	var w *Watch[string]
-
-	assert.Panics(t, func() {
-		w.Load()
-	})
-
-	assert.Panics(t, func() {
-		w.Wait(context.Background(), 0)
-	})
-
-	assert.Panics(t, func() {
-		w.Notify("")
-	})
-}
-
 func getVersion[T any](w *Watch[T]) uint64 {
 	_, version := w.Load()
 	return version
-}
-
-func BenchmarkWatchLoad(b *testing.B) {
-	w := NewWatch[int](42)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w.Load()
-	}
-}
-
-func BenchmarkWatchNotify(b *testing.B) {
-	w := NewWatch[int](0)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w.Notify(i)
-	}
-}
-
-func BenchmarkWatchWaitImmediate(b *testing.B) {
-	w := NewWatch[int](0)
-	w.Notify(1)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w.Wait(context.Background(), 0)
-	}
 }

@@ -20,9 +20,10 @@ import (
 	"net/http"
 	"testing"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 

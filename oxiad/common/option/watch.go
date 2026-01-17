@@ -25,7 +25,7 @@ type ValueWithVersion[T any] struct {
 	notify chan struct{}
 }
 
-// Watch provides a generic watch primitive for observing value changes
+// Watch provides a generic watch primitive for observing value changes.
 type Watch[T any] struct {
 	v atomic.Pointer[ValueWithVersion[T]] // current value with version
 }

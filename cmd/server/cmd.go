@@ -125,7 +125,7 @@ func exec(cmd *cobra.Command, _ []string) {
 			// start listener
 			v := viper.New()
 			v.SetConfigFile(confFile)
-			v.OnConfigChange(func(e fsnotify.Event) {
+			v.OnConfigChange(func(fsnotify.Event) {
 				temporaryOptions := option.NewDefaultOptions()
 				if err := codec.TryReadAndInitConf(confFile, temporaryOptions); err != nil {
 					slog.Warn("parse updated configuration file failed", slog.Any("err", err))

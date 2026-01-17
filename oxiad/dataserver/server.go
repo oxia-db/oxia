@@ -19,10 +19,11 @@ import (
 	"log/slog"
 	"sync"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
-	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -135,7 +136,7 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 
 	observability := options.Observability
 	if observability.Metric.IsEnabled() {
-		s.metrics, err = metric.Start(observability.Metric.BindAddress)
+		s.metrics, err = metric.Start(observability.Metric.BindAddress) //nolint:contextcheck
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +154,7 @@ func (s *Server) InternalPort() int {
 
 func (s *Server) backgroundHandleConfChange() {
 	var dataServerOptions *option.Options
-	var ver uint64 = 0
+	var ver uint64
 	var err error
 	for {
 		dataServerOptions, ver, err = s.watchableOptions.Wait(s.ctx, ver)

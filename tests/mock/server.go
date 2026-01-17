@@ -18,8 +18,9 @@ import (
 	"fmt"
 	"testing"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/stretchr/testify/assert"
+
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
