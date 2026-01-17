@@ -26,7 +26,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc"
-
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 )
 
@@ -45,18 +44,19 @@ func TestHealthCmd(t *testing.T) {
 	_health.SetServingStatus("unknown", grpc_health_v1.HealthCheckResponse_UNKNOWN)
 
 	portArg := fmt.Sprintf("--port=%d", server.Port())
+	hostArg := "--host=localhost"
 
 	for _, test := range []struct {
 		name         string
 		args         []string
 		expectedCode codes.Code
 	}{
-		{"happy path", []string{"health", portArg}, codes.OK},
-		{"incorrect port", []string{"health", "--port=1"}, codes.Unavailable},
-		{"serving", []string{"health", portArg, "--service=serving"}, codes.OK},
-		{"not-serving", []string{"health", portArg, "--service=not-serving"}, codes.Unknown},
-		{"unknown", []string{"health", portArg, "--service=unknown"}, codes.Unknown},
-		{"invalid", []string{"health", portArg, "--service=invalid"}, codes.NotFound},
+		{"happy path", []string{"health", hostArg, portArg}, codes.OK},
+		{"incorrect port", []string{"health", hostArg, "--port=1"}, codes.Unavailable},
+		{"serving", []string{"health", hostArg, portArg, "--service=serving"}, codes.OK},
+		{"not-serving", []string{"health", hostArg, portArg, "--service=not-serving"}, codes.Unknown},
+		{"unknown", []string{"health", hostArg, portArg, "--service=unknown"}, codes.Unknown},
+		{"invalid", []string{"health", hostArg, portArg, "--service=invalid"}, codes.NotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			config = NewConfig()
