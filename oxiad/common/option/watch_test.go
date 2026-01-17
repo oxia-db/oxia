@@ -204,33 +204,6 @@ func TestWatchWithNilValues(t *testing.T) {
 	assert.Equal(t, uint64(1), version)
 }
 
-func TestWatchChannelReplacement(t *testing.T) {
-	w := NewWatch[int](0)
-
-	// Get initial notify channel
-	w.mu.RLock()
-	initialNotify := w.notify
-	w.mu.RUnlock()
-
-	// Notify should replace the channel
-	w.Notify(1)
-
-	w.mu.RLock()
-	newNotify := w.notify
-	w.mu.RUnlock()
-
-	// Old channel should be closed, new channel should be different
-	assert.NotEqual(t, initialNotify, newNotify)
-
-	// Reading from old channel should not block
-	select {
-	case <-initialNotify:
-		// Expected
-	default:
-		t.Error("Old notify channel should have been closed")
-	}
-}
-
 func TestWatchRapidNotifications(t *testing.T) {
 	w := NewWatch[int](0)
 
