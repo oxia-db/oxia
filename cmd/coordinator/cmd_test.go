@@ -344,8 +344,8 @@ metadata:
 
 func TestCoordinator_CommandLineFlags(t *testing.T) {
 	// Test that command line flags work correctly
-	originalConfFile := confFile
-	defer func() { confFile = originalConfFile }()
+	originalConfFile := sconfFile
+	defer func() { sconfFile = originalConfFile }()
 
 	// Reset the global options
 	coordinatorOptions = option.NewDefaultOptions()
@@ -373,8 +373,8 @@ metadata:
 	require.NoError(t, err)
 
 	// Test configuration loading via the command pattern
-	confFile = configPath
-	err = codec.TryReadAndInitConf(confFile, coordinatorOptions)
+	sconfFile = configPath
+	err = codec.TryReadAndInitConf(sconfFile, coordinatorOptions)
 	require.NoError(t, err)
 
 	// Verify config file values were loaded
