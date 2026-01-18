@@ -56,9 +56,6 @@ type ClusterOptions struct {
 }
 
 func (co *ClusterOptions) WithDefault() {
-	if co.ConfigPath == "" {
-		co.ConfigPath = "./configs/cluster.yaml"
-	}
 }
 
 func (*ClusterOptions) Validate() error {
