@@ -34,7 +34,7 @@ import (
 )
 
 var (
-	confFile           string
+	sconfFile          string
 	coordinatorOptions = option.NewDefaultOptions()
 
 	Cmd = &cobra.Command{
@@ -46,7 +46,7 @@ var (
 )
 
 func init() {
-	Cmd.Flags().StringVarP(&confFile, "conf", "c", "", "config file path")
+	Cmd.Flags().StringVar(&sconfFile, "sconfig", "", "server config file path")
 
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Admin.BindAddress, "admin-addr", "a", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Admin service bind address")
@@ -67,7 +67,9 @@ func init() {
 	Cmd.Flags().StringVar(&meta.Raft.DataDir, "raft-data-dir", "data/raft", "Raft address")
 
 	cluster := &coordinatorOptions.Cluster
-	Cmd.Flags().StringVarP(&cluster.ConfigPath, "cluster-conf", "f", "", "Cluster config file")
+	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Cluster config file path")
+	_ = Cmd.Flags().MarkDeprecated("conf", "--conf and its short form -f are deprecated; please use --cconfig instead (no short form)")
+	Cmd.Flags().StringVar(&cluster.ConfigPath, "cconfig", "", "Cluster config file path")
 
 	internalServer := &coordinatorOptions.Server.Internal
 	Cmd.Flags().StringVar(&internalServer.TLS.CertFile, "tls-cert-file", "", "Tls certificate file")
@@ -92,17 +94,17 @@ func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
 		watchableOptions := oxiadcommonoption.NewWatch(coordinatorOptions)
 		// configure the options
-		if cmd.Flags().Changed("conf") {
+		if cmd.Flags().Changed("sconfig") {
 			// init options
-			if err := codec.TryReadAndInitConf(confFile, coordinatorOptions); err != nil {
+			if err := codec.TryReadAndInitConf(sconfFile, coordinatorOptions); err != nil {
 				return nil, err
 			}
 			// start listener
 			v := viper.New()
-			v.SetConfigFile(confFile)
+			v.SetConfigFile(sconfFile)
 			v.OnConfigChange(func(fsnotify.Event) {
 				temporaryOptions := option.NewDefaultOptions()
-				if err := codec.TryReadAndInitConf(confFile, temporaryOptions); err != nil {
+				if err := codec.TryReadAndInitConf(sconfFile, temporaryOptions); err != nil {
 					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
 					return
 				}

@@ -206,8 +206,8 @@ func TestServer_EmptyConfigFile(t *testing.T) {
 
 func TestServer_CommandLineFlags(t *testing.T) {
 	// Test that command line flags work correctly
-	originalConfFile := confFile
-	defer func() { confFile = originalConfFile }()
+	originalConfFile := sconfFile
+	defer func() { sconfFile = originalConfFile }()
 
 	// Reset the global options
 	dataServerOptions = option.NewDefaultOptions()
@@ -231,8 +231,8 @@ observability:
 	require.NoError(t, err)
 
 	// Test configuration loading via the command pattern
-	confFile = configPath
-	err = codec.TryReadAndInitConf(confFile, dataServerOptions)
+	sconfFile = configPath
+	err = codec.TryReadAndInitConf(sconfFile, dataServerOptions)
 	require.NoError(t, err)
 
 	// Verify config file values were loaded

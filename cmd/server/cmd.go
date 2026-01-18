@@ -38,7 +38,7 @@ import (
 )
 
 var (
-	confFile          string
+	sconfFile         string
 	dataServerOptions = option.NewDefaultOptions()
 	Cmd               = &cobra.Command{
 		Use:   "server",
@@ -50,8 +50,7 @@ var (
 
 func init() {
 	Cmd.Flags().SortFlags = false
-
-	Cmd.Flags().StringVarP(&confFile, "conf", "c", "", "config file path")
+	Cmd.Flags().StringVar(&sconfFile, "sconfig", "", "server config file path")
 
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultPublicPort), "Public service bind address")
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
@@ -117,17 +116,17 @@ func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
 		watchableOptions := oxiadcommonoption.NewWatch(dataServerOptions)
 		switch {
-		case cmd.Flags().Changed("conf"):
+		case cmd.Flags().Changed("sconfig"):
 			// init options
-			if err := codec.TryReadAndInitConf(confFile, dataServerOptions); err != nil {
+			if err := codec.TryReadAndInitConf(sconfFile, dataServerOptions); err != nil {
 				return nil, err
 			}
 			// start listener
 			v := viper.New()
-			v.SetConfigFile(confFile)
+			v.SetConfigFile(sconfFile)
 			v.OnConfigChange(func(fsnotify.Event) {
 				temporaryOptions := option.NewDefaultOptions()
-				if err := codec.TryReadAndInitConf(confFile, temporaryOptions); err != nil {
+				if err := codec.TryReadAndInitConf(sconfFile, temporaryOptions); err != nil {
 					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
 					return
 				}
