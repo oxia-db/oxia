@@ -116,7 +116,7 @@ func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
 		watchableOptions := oxiadcommonoption.NewWatch(dataServerOptions)
 		switch {
-		case cmd.Flags().Changed("conf"):
+		case cmd.Flags().Changed("sconfig"):
 			// init options
 			if err := codec.TryReadAndInitConf(sconfFile, dataServerOptions); err != nil {
 				return nil, err

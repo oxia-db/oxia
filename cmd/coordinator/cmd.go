@@ -94,7 +94,7 @@ func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
 		watchableOptions := oxiadcommonoption.NewWatch(coordinatorOptions)
 		// configure the options
-		if cmd.Flags().Changed("conf") {
+		if cmd.Flags().Changed("sconfig") {
 			// init options
 			if err := codec.TryReadAndInitConf(confFile, coordinatorOptions); err != nil {
 				return nil, err
