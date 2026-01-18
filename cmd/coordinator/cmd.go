@@ -67,9 +67,9 @@ func init() {
 	Cmd.Flags().StringVar(&meta.Raft.DataDir, "raft-data-dir", "data/raft", "Raft address")
 
 	cluster := &coordinatorOptions.Cluster
-	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Cluster config file")
+	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Cluster config file path")
 	_ = Cmd.Flags().MarkDeprecated("conf", "--conf and its short form -f are deprecated; please use --cconfig instead (no short form)")
-	Cmd.Flags().StringVar(&cluster.ConfigPath, "cconfig", "", "Cluster config file")
+	Cmd.Flags().StringVar(&cluster.ConfigPath, "cconfig", "", "Cluster config file path")
 
 	internalServer := &coordinatorOptions.Server.Internal
 	Cmd.Flags().StringVar(&internalServer.TLS.CertFile, "tls-cert-file", "", "Tls certificate file")
