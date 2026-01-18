@@ -225,9 +225,13 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	s.Lock()
 	defer s.Unlock()
 
-	s.log.Info("Update shares assignments.",
-		slog.Any("previous", s.assignments),
-		slog.Any("current", assignments))
+	if s.log.Enabled(s.ctx, slog.LevelDebug) {
+		s.log.Debug("Update shares assignments.",
+			slog.Any("previous", s.assignments),
+			slog.Any("current", assignments))
+	} else {
+		s.log.Info("Update shares assignments.")
+	}
 
 	s.assignments = assignments
 
