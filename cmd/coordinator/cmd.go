@@ -68,7 +68,7 @@ func init() {
 
 	cluster := &coordinatorOptions.Cluster
 	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Cluster config file")
-	_ = Cmd.Flags().MarkDeprecated("conf", "please use --cconfig instead")
+	_ = Cmd.Flags().MarkDeprecated("conf", "--conf and its short form -f are deprecated; please use --cconfig instead (no short form)")
 	Cmd.Flags().StringVar(&cluster.ConfigPath, "cconfig", "", "Cluster config file")
 
 	internalServer := &coordinatorOptions.Server.Internal
