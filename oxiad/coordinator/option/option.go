@@ -55,7 +55,7 @@ type ClusterOptions struct {
 	ConfigPath string `yaml:"configPath" json:"configPath" jsonschema:"description=Path to the cluster configuration file,example=./configs/cluster.yaml"`
 }
 
-func (co *ClusterOptions) WithDefault() {
+func (*ClusterOptions) WithDefault() {
 }
 
 func (*ClusterOptions) Validate() error {
