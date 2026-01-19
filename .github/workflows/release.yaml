@@ -100,15 +100,12 @@ jobs:
           cache-dependency-path: "go.work.sum"
 
       - name: Build binary with config
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
         run: |
-          VERSION=$(git describe --tags --always | cut -c2-)
-          mkdir -p dist/oxia/bin dist/oxia/conf
-          go build -tags disable_trap -ldflags "-X main.version=${VERSION}" -v -o dist/oxia/bin/oxia${{ matrix.suffix }} ./cmd
-          cp conf/dataserver.yaml dist/oxia/conf/
-          cp conf/coordinator.yaml dist/oxia/conf/
+          make release-build \
+            OUTPUT_DIR=dist/oxia \
+            OUTPUT_NAME=oxia${{ matrix.suffix }} \
+            GOOS=${{ matrix.goos }} \
+            GOARCH=${{ matrix.goarch }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
