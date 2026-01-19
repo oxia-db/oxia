@@ -105,7 +105,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p dist/oxia/bin dist/oxia/conf
-          go build -o dist/oxia/bin/oxia${{ matrix.suffix }} ./cmd/oxia
+          go build -o dist/oxia/bin/oxia${{ matrix.suffix }} ./cmd
           cp conf/dataserver.yaml dist/oxia/conf/
           cp conf/coordinator.yaml dist/oxia/conf/
 
