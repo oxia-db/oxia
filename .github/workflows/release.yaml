@@ -188,16 +188,6 @@ jobs:
             cd ..
           done
 
-      - name: Generate release notes
-        id: release_notes
-        run: |
-          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            # Get the previous tag for comparison
-            PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-            if [ -n "$PREVIOUS_TAG" ]; then
-              echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
-            fi
-          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
