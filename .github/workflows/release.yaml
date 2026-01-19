@@ -1,0 +1,263 @@
+# Copyright 2023-2025 The Oxia Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  
+  # Publish nightly builds
+  schedule:
+    - cron: '0 0 * * *' # run at midnight UTC
+
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build and test to ensure release is stable
+  build-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: 'go.work'
+          cache: 'true'
+          cache-dependency-path: "go.work.sum"
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Installing Go dependencies
+        run: |
+          go install github.com/palantir/go-license@latest
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.2
+
+      - run: make license-check
+      - name: Build
+        run: make build
+      - name: golangci-lint
+        run: make lint
+      - name: Test
+        run: make test
+
+  # Build cross-platform binaries
+  build-binaries:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    needs: build-test
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: ""
+          - goos: linux
+            goarch: arm64
+            suffix: ""
+          - goos: darwin
+            goarch: amd64
+            suffix: ""
+          - goos: darwin
+            goarch: arm64
+            suffix: ""
+          - goos: windows
+            goarch: amd64
+            suffix: .exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: 'go.work'
+
+      - name: Build binary with config
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist/oxia/bin dist/oxia/conf
+          go build -o dist/oxia/bin/oxia${{ matrix.suffix }} ./cmd/oxia
+          cp conf/dataserver.yaml dist/oxia/conf/
+          cp conf/coordinator.yaml dist/oxia/conf/
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxia-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/oxia/
+          retention-days: 7
+
+  # Build and publish Docker image
+  publish-docker:
+    name: Publish Docker Image
+    runs-on: ubuntu-latest
+    needs: build-test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: oxia/oxia
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          platforms: linux/x86_64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Create GitHub release with binaries and notes
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-binaries, publish-docker]
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          cd artifacts
+          for dir in */; do
+            cd "$dir"
+            PLATFORM=${dir%/}
+            if [[ $PLATFORM == windows* ]]; then
+              zip -r "../../release-assets/oxia-${PLATFORM}.zip" *
+            else
+              tar -czf "../../release-assets/oxia-${PLATFORM}.tar.gz" *
+            fi
+            cd ..
+          done
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # Get the previous tag for comparison
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            if [ -n "$PREVIOUS_TAG" ]; then
+              echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+          files: |
+            release-assets/*
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Nightly release (special handling for scheduled builds)
+  nightly-release:
+    name: Nightly Release
+    runs-on: ubuntu-latest
+    needs: [build-binaries, publish-docker]
+    if: github.event_name == 'schedule'
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare nightly assets
+        run: |
+          mkdir -p nightly-assets
+          cd artifacts
+          for dir in */; do
+            cd "$dir"
+            PLATFORM=${dir%/}
+            if [[ $PLATFORM == windows* ]]; then
+              zip -r "../../nightly-assets/oxia-${PLATFORM}.zip" *
+            else
+              tar -czf "../../nightly-assets/oxia-${PLATFORM}.tar.gz" *
+            fi
+            cd ..
+          done
+
+      - name: Create Nightly Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: nightly-${{ github.run_number }}
+          name: "Nightly Build ${{ github.run_number }}"
+          body: |
+            ## Nightly Build 🌙
+            
+            This is an automated nightly build from ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}.
+            
+            **⚠️ This is not a stable release and may contain bugs. Use at your own risk.**
+            
+            ### Changes since last nightly
+            Changes can be viewed in the [commit history](${{ github.server_url }}/${{ github.repository }}/commits/main).
+          files: |
+            nightly-assets/*
+          prerelease: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
