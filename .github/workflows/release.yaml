@@ -96,6 +96,8 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version-file: 'go.work'
+          cache: 'true'
+          cache-dependency-path: "go.work.sum"
 
       - name: Build binary with config
         env:
