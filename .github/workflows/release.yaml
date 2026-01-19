@@ -43,7 +43,7 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version-file: 'go.work'
-          cache: 'true'
+          cache: true
           cache-dependency-path: "go.work.sum"
 
       - name: Install protoc
