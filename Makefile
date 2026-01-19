@@ -45,6 +45,10 @@ distribution:
 # Usage: make release-build OUTPUT_DIR=dist/oxia OUTPUT_NAME=oxia GOOS=linux GOARCH=amd64
 .PHONY: release-build
 release-build:
+	@test -n "$(OUTPUT_DIR)" || (echo "ERROR: OUTPUT_DIR is required" && exit 1)
+	@test -n "$(OUTPUT_NAME)" || (echo "ERROR: OUTPUT_NAME is required" && exit 1)
+	@test -n "$(GOOS)" || (echo "ERROR: GOOS is required" && exit 1)
+	@test -n "$(GOARCH)" || (echo "ERROR: GOARCH is required" && exit 1)
 	@mkdir -p $(OUTPUT_DIR)/bin $(OUTPUT_DIR)/conf
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 		-tags disable_trap \
