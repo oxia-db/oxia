@@ -183,7 +183,7 @@ jobs:
             if [[ $PLATFORM == windows* ]]; then
               zip -r "../../release-assets/oxia-${PLATFORM}.zip" *
             else
-              tar -czf "../../release-assets/oxia-${PLATFORM}.tar.gz" *
+              tar --mode=a+x -czf "../../release-assets/oxia-${PLATFORM}.tar.gz" *
             fi
             cd ..
           done
