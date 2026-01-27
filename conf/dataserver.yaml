@@ -13,7 +13,7 @@ storage:
   database:
     dir: "./data/db"
     readCacheSizeMB: 100
-    writeCacheSize: "200"
+    writeCacheSize: "32MiB"
   notification:
     retention: "1h"
 observability:

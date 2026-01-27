@@ -3,6 +3,17 @@
   "$id": "https://github.com/oxia-db/oxia/oxiad/dataserver/option/options",
   "$ref": "#/$defs/Options",
   "$defs": {
+    "BytesSize": {
+      "type": "string",
+      "pattern": "^([0-9]+(\\.[0-9]+)?(B|KB|K|MB|M|GB|G|TB|T|PB|P|KiB|MiB|GiB|TiB|PiB))+$",
+      "title": "Bytes Size",
+      "description": "Bytes size string in human-readable format (e.g., \"1KiB\", \"100MiB\", \"2GiB\")",
+      "examples": [
+        "1KiB",
+        "100MiB",
+        "2GiB"
+      ]
+    },
     "DatabaseOptions": {
       "properties": {
         "dir": {
@@ -19,7 +30,7 @@
           "default": 100
         },
         "writeCacheSize": {
-          "type": "integer",
+          "$ref": "#/$defs/BytesSize",
           "description": "Size of write cache for performance optimization"
         }
       },
