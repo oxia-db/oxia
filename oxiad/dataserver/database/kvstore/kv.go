@@ -18,6 +18,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -132,19 +133,21 @@ type KV interface {
 	Delete() error
 }
 type FactoryOptions struct {
-	DataDir     string
-	CacheSizeMB int64
-	UseWAL      bool
-	SyncData    bool
-	KvTrap      *KvTrap
+	DataDir        string
+	CacheSizeMB    int64
+	UseWAL         bool
+	SyncData       bool
+	KvTrap         *KvTrap
+	WriteCacheSize option.BytesSize
 }
 
 var DefaultFactoryOptions = &FactoryOptions{
-	DataDir:     "data",
-	CacheSizeMB: 100,
-	UseWAL:      true,
-	SyncData:    true,
-	KvTrap:      nil,
+	DataDir:        "data",
+	CacheSizeMB:    100,
+	UseWAL:         true,
+	SyncData:       true,
+	KvTrap:         nil,
+	WriteCacheSize: option.BytesSize(32 * 1024 * 1024),
 }
 
 func (fo *FactoryOptions) EnsureDefaults() {
@@ -154,6 +157,10 @@ func (fo *FactoryOptions) EnsureDefaults() {
 
 	if fo.CacheSizeMB == 0 {
 		fo.CacheSizeMB = DefaultFactoryOptions.CacheSizeMB
+	}
+
+	if fo.WriteCacheSize == 0 {
+		fo.WriteCacheSize = DefaultFactoryOptions.WriteCacheSize
 	}
 }
 

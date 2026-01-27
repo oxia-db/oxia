@@ -238,7 +238,7 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 	)
 	pbOptions := &pebble.Options{
 		Cache:        factory.cache,
-		MemTableSize: 32 * 1024 * 1024,
+		MemTableSize: uint64(factory.options.WriteCacheSize),
 		Levels:       levelOptions,
 		FS:           vfs.Default,
 		DisableWAL:   !factory.options.UseWAL,

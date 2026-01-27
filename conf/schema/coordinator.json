@@ -129,7 +129,7 @@
       "properties": {
         "providerName": {
           "type": "string",
-          "description": "Metadata provider type (memory, configmap, file, or raft)",
+          "description": "Metadata provider type (memory",
           "examples": [
             "configmap"
           ]
