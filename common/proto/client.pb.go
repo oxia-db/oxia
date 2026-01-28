@@ -884,8 +884,12 @@ type PutRequest struct {
 	// based on adding the delta to the current highest key with the same prefix
 	SequenceKeyDelta []uint64          `protobuf:"varint,7,rep,packed,name=sequence_key_delta,json=sequenceKeyDelta,proto3" json:"sequence_key_delta,omitempty"`
 	SecondaryIndexes []*SecondaryIndex `protobuf:"bytes,8,rep,name=secondary_indexes,json=secondaryIndexes,proto3" json:"secondary_indexes,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Optional overrides for version metadata, used during data migration.
+	// When set, the server will use these values instead of auto-generating them.
+	OverrideVersionId          *int64 `protobuf:"varint,9,opt,name=override_version_id,json=overrideVersionId,proto3,oneof" json:"override_version_id,omitempty"`
+	OverrideModificationsCount *int64 `protobuf:"varint,10,opt,name=override_modifications_count,json=overrideModificationsCount,proto3,oneof" json:"override_modifications_count,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *PutRequest) Reset() {
@@ -972,6 +976,20 @@ func (x *PutRequest) GetSecondaryIndexes() []*SecondaryIndex {
 		return x.SecondaryIndexes
 	}
 	return nil
+}
+
+func (x *PutRequest) GetOverrideVersionId() int64 {
+	if x != nil && x.OverrideVersionId != nil {
+		return *x.OverrideVersionId
+	}
+	return 0
+}
+
+func (x *PutRequest) GetOverrideModificationsCount() int64 {
+	if x != nil && x.OverrideModificationsCount != nil {
+		return *x.OverrideModificationsCount
+	}
+	return 0
 }
 
 // *
@@ -2354,7 +2372,7 @@ const file_client_proto_rawDesc = "" +
 	"\x0eSecondaryIndex\x12\x1d\n" +
 	"\n" +
 	"index_name\x18\x01 \x01(\tR\tindexName\x12#\n" +
-	"\rsecondary_key\x18\x02 \x01(\tR\fsecondaryKey\"\xaf\x03\n" +
+	"\rsecondary_key\x18\x02 \x01(\tR\fsecondaryKey\"\xe4\x04\n" +
 	"\n" +
 	"PutRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
@@ -2365,11 +2383,16 @@ const file_client_proto_rawDesc = "" +
 	"\x0fclient_identity\x18\x05 \x01(\tH\x02R\x0eclientIdentity\x88\x01\x01\x12(\n" +
 	"\rpartition_key\x18\x06 \x01(\tH\x03R\fpartitionKey\x88\x01\x01\x12,\n" +
 	"\x12sequence_key_delta\x18\a \x03(\x04R\x10sequenceKeyDelta\x12M\n" +
-	"\x11secondary_indexes\x18\b \x03(\v2 .io.oxia.proto.v1.SecondaryIndexR\x10secondaryIndexesB\x16\n" +
+	"\x11secondary_indexes\x18\b \x03(\v2 .io.oxia.proto.v1.SecondaryIndexR\x10secondaryIndexes\x123\n" +
+	"\x13override_version_id\x18\t \x01(\x03H\x04R\x11overrideVersionId\x88\x01\x01\x12E\n" +
+	"\x1coverride_modifications_count\x18\n" +
+	" \x01(\x03H\x05R\x1aoverrideModificationsCount\x88\x01\x01B\x16\n" +
 	"\x14_expected_version_idB\r\n" +
 	"\v_session_idB\x12\n" +
 	"\x10_client_identityB\x10\n" +
-	"\x0e_partition_key\"\x93\x01\n" +
+	"\x0e_partition_keyB\x16\n" +
+	"\x14_override_version_idB\x1f\n" +
+	"\x1d_override_modifications_count\"\x93\x01\n" +
 	"\vPutResponse\x120\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x18.io.oxia.proto.v1.StatusR\x06status\x123\n" +
 	"\aversion\x18\x02 \x01(\v2\x19.io.oxia.proto.v1.VersionR\aversion\x12\x15\n" +

@@ -565,7 +565,11 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 				Status: status,
 			}, nil
 		}
-		versionId = baseVersionId.Add(1)
+		if putReq.OverrideVersionId != nil {
+			versionId = *putReq.OverrideVersionId
+		} else {
+			versionId = baseVersionId.Add(1)
+		}
 	}
 
 	if se == nil {
@@ -586,6 +590,10 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 		se.SessionId = putReq.SessionId
 		se.ClientIdentity = putReq.ClientIdentity
 		se.PartitionKey = putReq.PartitionKey
+	}
+
+	if putReq.OverrideModificationsCount != nil {
+		se.ModificationsCount = *putReq.OverrideModificationsCount
 	}
 
 	se.SecondaryIndexes = putReq.SecondaryIndexes
