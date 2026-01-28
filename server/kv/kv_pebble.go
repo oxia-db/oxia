@@ -198,9 +198,8 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64) (KV, e
 	}
 
 	pbOptions := &pebble.Options{
-		Cache:        factory.cache,
-		Comparer:     OxiaSlashSpanComparer,
-		MemTableSize: 32 * 1024 * 1024,
+		Cache:    factory.cache,
+		Comparer: OxiaSlashSpanComparer,
 		Levels: []pebble.LevelOptions{
 			{
 				BlockSize:      64 * 1024,
