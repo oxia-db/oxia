@@ -1066,6 +1066,93 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDB_OverrideVersionId(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	// Put with overridden version id and modifications count
+	res, err := db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{
+				Key:                        "a",
+				Value:                      []byte("v0"),
+				OverrideVersionId:          pb.Int64(100),
+				OverrideModificationsCount: pb.Int64(5),
+			},
+		},
+	}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	assert.Equal(t, 1, len(res.Puts))
+	r0 := res.Puts[0]
+	assert.Equal(t, proto.Status_OK, r0.Status)
+	assert.EqualValues(t, 100, r0.Version.VersionId)
+	assert.EqualValues(t, 5, r0.Version.ModificationsCount)
+
+	// Verify via Get
+	getRes, err := db.Get(&proto.GetRequest{Key: "a", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, getRes.Status)
+	assert.EqualValues(t, 100, getRes.Version.VersionId)
+	assert.EqualValues(t, 5, getRes.Version.ModificationsCount)
+	assert.Equal(t, "v0", string(getRes.Value))
+
+	// Next auto-generated version should be past the overridden value
+	res, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{
+				Key:   "b",
+				Value: []byte("v1"),
+			},
+		},
+	}, 1, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	r1 := res.Puts[0]
+	assert.Equal(t, proto.Status_OK, r1.Status)
+	assert.EqualValues(t, 0, r1.Version.VersionId)
+
+	// Conditional write on overridden version should work
+	res, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{
+				Key:               "a",
+				Value:             []byte("v2"),
+				ExpectedVersionId: pb.Int64(100),
+			},
+		},
+	}, 2, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	r2 := res.Puts[0]
+	assert.Equal(t, proto.Status_OK, r2.Status)
+	assert.EqualValues(t, 1, r2.Version.VersionId)
+	// modifications_count should be 6 (overridden 5 + 1 increment)
+	assert.EqualValues(t, 6, r2.Version.ModificationsCount)
+
+	// Override only version_id without modifications_count
+	res, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{
+				Key:               "c",
+				Value:             []byte("v3"),
+				OverrideVersionId: pb.Int64(200),
+			},
+		},
+	}, 3, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	r3 := res.Puts[0]
+	assert.Equal(t, proto.Status_OK, r3.Status)
+	assert.EqualValues(t, 200, r3.Version.VersionId)
+	assert.EqualValues(t, 0, r3.Version.ModificationsCount) // New key, default 0
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestDB_ShowInternalKeys(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
