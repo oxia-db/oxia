@@ -216,7 +216,7 @@ func generateRandomStr(t *testing.T) string {
 	return random.String()
 }
 
-// TestOIDCWithPerIssuerConfig tests the new per-issuer configuration format
+// TestOIDCWithPerIssuerConfig tests the new per-issuer configuration format.
 func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	mockOIDC1, err := mockoidc.Run()
 	assert.NoError(t, err)
@@ -377,7 +377,7 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	assert.Equal(t, codes.Unauthenticated, status.Code(errors.Unwrap(err)))
 }
 
-// TestOIDCWithStaticKeyFile tests static key file support
+// TestOIDCWithStaticKeyFile tests static key file support.
 func TestOIDCWithStaticKeyFile(t *testing.T) {
 	mockOIDC, err := mockoidc.Run()
 	assert.NoError(t, err)
