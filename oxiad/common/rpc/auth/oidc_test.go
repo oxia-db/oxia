@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestOIDCOptions_Validate tests validation of OIDC options
+// TestOIDCOptions_Validate tests validation of OIDC options.
 func TestOIDCOptions_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -104,7 +104,7 @@ func TestOIDCOptions_Validate(t *testing.T) {
 	}
 }
 
-// TestOIDCOptions_WithDefault tests default value application
+// TestOIDCOptions_WithDefault tests default value application.
 func TestOIDCOptions_WithDefault(t *testing.T) {
 	t.Run("apply default to legacy config", func(t *testing.T) {
 		opts := &OIDCOptions{
@@ -141,7 +141,7 @@ func TestOIDCOptions_WithDefault(t *testing.T) {
 	})
 }
 
-// TestNewOIDCProvider_LegacyConfiguration tests backward compatibility with legacy config
+// TestNewOIDCProvider_LegacyConfiguration tests backward compatibility with legacy config.
 func TestNewOIDCProvider_LegacyConfiguration(t *testing.T) {
 	mockOIDC, err := mockoidc.Run()
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestNewOIDCProvider_LegacyConfiguration(t *testing.T) {
 	assert.Len(t, oidcProvider.providers, 1)
 }
 
-// TestNewOIDCProvider_NewConfiguration tests new per-issuer configuration
+// TestNewOIDCProvider_NewConfiguration tests new per-issuer configuration.
 func TestNewOIDCProvider_NewConfiguration(t *testing.T) {
 	mockOIDC1, err := mockoidc.Run()
 	require.NoError(t, err)
@@ -219,7 +219,7 @@ func TestNewOIDCProvider_NewConfiguration(t *testing.T) {
 	assert.Contains(t, providerWithVerifier2.allowedAudiences, "audience2")
 }
 
-// TestNewOIDCProvider_WithStaticKeyFile tests static key file support
+// TestNewOIDCProvider_WithStaticKeyFile tests static key file support.
 func TestNewOIDCProvider_WithStaticKeyFile(t *testing.T) {
 	// Generate a test RSA key
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -267,7 +267,7 @@ func TestNewOIDCProvider_WithStaticKeyFile(t *testing.T) {
 	assert.NotNil(t, providerWithVerifier.verifier)
 }
 
-// TestOIDCProvider_Authenticate_Legacy tests authentication with legacy configuration
+// TestOIDCProvider_Authenticate_Legacy tests authentication with legacy configuration.
 func TestOIDCProvider_Authenticate_Legacy(t *testing.T) {
 	mockOIDC, err := mockoidc.Run()
 	require.NoError(t, err)
@@ -306,7 +306,7 @@ func TestOIDCProvider_Authenticate_Legacy(t *testing.T) {
 	assert.Equal(t, subject, userName)
 }
 
-// TestOIDCProvider_Authenticate_PerIssuer tests authentication with per-issuer configuration
+// TestOIDCProvider_Authenticate_PerIssuer tests authentication with per-issuer configuration.
 func TestOIDCProvider_Authenticate_PerIssuer(t *testing.T) {
 	mockOIDC1, err := mockoidc.Run()
 	require.NoError(t, err)
@@ -386,7 +386,7 @@ func TestOIDCProvider_Authenticate_PerIssuer(t *testing.T) {
 	})
 }
 
-// TestOIDCProvider_Authenticate_Errors tests authentication error cases
+// TestOIDCProvider_Authenticate_Errors tests authentication error cases.
 func TestOIDCProvider_Authenticate_Errors(t *testing.T) {
 	mockOIDC, err := mockoidc.Run()
 	require.NoError(t, err)
@@ -433,7 +433,7 @@ func TestOIDCProvider_Authenticate_Errors(t *testing.T) {
 	})
 }
 
-// TestLoadPublicKeysFromFile tests loading public keys from PEM files
+// TestLoadPublicKeysFromFile tests loading public keys from PEM files.
 func TestLoadPublicKeysFromFile(t *testing.T) {
 	t.Run("load RSA public key", func(t *testing.T) {
 		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)

@@ -44,7 +44,7 @@ var (
 	ErrNoPublicKeysFound     = errors.New("no public keys found in file")
 )
 
-// IssuerConfig holds per-issuer OIDC configuration
+// IssuerConfig holds per-issuer OIDC configuration.
 type IssuerConfig struct {
 	AllowedAudiences string `json:"allowedAudiences,omitempty"`
 	UserNameClaim    string `json:"userNameClaim,omitempty"`
@@ -242,6 +242,112 @@ func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
 	return publicKeys, nil
 }
 
+// parseAllowedAudiences converts a comma-separated string of audiences into a map.
+func parseAllowedAudiences(audiences string) map[string]string {
+	allowedAudienceMap := map[string]string{}
+	allowedAudienceArr := strings.Split(audiences, ",")
+	for i := range allowedAudienceArr {
+		allowedAudience := strings.TrimSpace(allowedAudienceArr[i])
+		allowedAudienceMap[allowedAudience] = AllowedAudienceDefaultValue
+	}
+	return allowedAudienceMap
+}
+
+// createStaticKeyVerifier creates a verifier using static keys from a file.
+func createStaticKeyVerifier(issuerURL, keyFile string) (*oidc.IDTokenVerifier, error) {
+	publicKeys, err := loadPublicKeysFromFile(keyFile)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to load static key file for issuer %s", issuerURL)
+	}
+
+	staticKeySet := &oidc.StaticKeySet{PublicKeys: publicKeys}
+	config := &oidc.Config{
+		SkipClientIDCheck: true,
+		Now:               time.Now,
+	}
+
+	return oidc.NewVerifier(issuerURL, staticKeySet, config), nil
+}
+
+// createRemoteVerifier creates a verifier using remote JWKS.
+func createRemoteVerifier(ctx context.Context, issuerURL string) (*oidc.Provider, *oidc.IDTokenVerifier, error) {
+	provider, err := oidc.NewProvider(ctx, issuerURL)
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "failed to create OIDC provider for issuer %s", issuerURL)
+	}
+
+	config := &oidc.Config{
+		SkipClientIDCheck: true,
+		Now:               time.Now,
+	}
+	verifier := provider.Verifier(config)
+
+	return provider, verifier, nil
+}
+
+// setupPerIssuerProviders configures providers using per-issuer configuration.
+func setupPerIssuerProviders(ctx context.Context, oidcProvider *OIDCProvider, issuers map[string]IssuerConfig) error {
+	for issuerURL, issuerConfig := range issuers {
+		issuerURL = strings.TrimSpace(issuerURL)
+
+		allowedAudienceMap := parseAllowedAudiences(issuerConfig.AllowedAudiences)
+
+		userNameClaim := issuerConfig.UserNameClaim
+		if userNameClaim == "" {
+			userNameClaim = DefaultUserNameCalm
+		}
+
+		if issuerConfig.StaticKeyFile != "" {
+			verifier, err := createStaticKeyVerifier(issuerURL, issuerConfig.StaticKeyFile)
+			if err != nil {
+				return err
+			}
+
+			oidcProvider.providers[issuerURL] = &ProviderWithVerifier{
+				provider:         nil, // No provider when using static keys
+				verifier:         verifier,
+				userNameClaim:    userNameClaim,
+				allowedAudiences: allowedAudienceMap,
+			}
+		} else {
+			provider, verifier, err := createRemoteVerifier(ctx, issuerURL)
+			if err != nil {
+				return err
+			}
+
+			oidcProvider.providers[issuerURL] = &ProviderWithVerifier{
+				provider:         provider,
+				verifier:         verifier,
+				userNameClaim:    userNameClaim,
+				allowedAudiences: allowedAudienceMap,
+			}
+		}
+	}
+	return nil
+}
+
+// setupLegacyProviders configures providers using legacy configuration for backward compatibility.
+func setupLegacyProviders(ctx context.Context, oidcProvider *OIDCProvider, oidcParams *OIDCOptions) error {
+	allowedAudienceMap := parseAllowedAudiences(oidcParams.AllowedAudiences)
+	oidcProvider.userNameClaim = oidcParams.UserNameClaim
+	oidcProvider.allowedAudiences = allowedAudienceMap
+
+	urlArr := strings.Split(oidcParams.AllowedIssueURLs, ",")
+	for i := 0; i < len(urlArr); i++ {
+		issueURL := strings.TrimSpace(urlArr[i])
+		provider, verifier, err := createRemoteVerifier(ctx, issueURL)
+		if err != nil {
+			return err
+		}
+
+		oidcProvider.providers[issueURL] = &ProviderWithVerifier{
+			provider: provider,
+			verifier: verifier,
+		}
+	}
+	return nil
+}
+
 func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvider, error) {
 	oidcParams := &OIDCOptions{}
 	if err := json.Unmarshal([]byte(jsonParam), oidcParams); err != nil {
@@ -258,91 +364,14 @@ func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvi
 
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 30 * time.Second})
 
-	// Handle new per-issuer configuration
+	// Handle new per-issuer configuration or legacy configuration
 	if len(oidcParams.Issuers) > 0 {
-		for issuerURL, issuerConfig := range oidcParams.Issuers {
-			issuerURL = strings.TrimSpace(issuerURL)
-
-			// Parse allowed audiences for this issuer
-			allowedAudienceMap := map[string]string{}
-			allowedAudienceArr := strings.Split(issuerConfig.AllowedAudiences, ",")
-			for i := range allowedAudienceArr {
-				allowedAudience := strings.TrimSpace(allowedAudienceArr[i])
-				allowedAudienceMap[allowedAudience] = AllowedAudienceDefaultValue
-			}
-
-			userNameClaim := issuerConfig.UserNameClaim
-			if userNameClaim == "" {
-				userNameClaim = DefaultUserNameCalm
-			}
-
-			// Check if there's a static key file for this issuer
-			if issuerConfig.StaticKeyFile != "" {
-				// Load static keys for this issuer
-				publicKeys, err := loadPublicKeysFromFile(issuerConfig.StaticKeyFile)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed to load static key file for issuer %s", issuerURL)
-				}
-
-				staticKeySet := &oidc.StaticKeySet{PublicKeys: publicKeys}
-				config := &oidc.Config{
-					SkipClientIDCheck: true,
-					Now:               time.Now,
-				}
-
-				verifier := oidc.NewVerifier(issuerURL, staticKeySet, config)
-				oidcProvider.providers[issuerURL] = &ProviderWithVerifier{
-					provider:         nil, // No provider when using static keys
-					verifier:         verifier,
-					userNameClaim:    userNameClaim,
-					allowedAudiences: allowedAudienceMap,
-				}
-			} else {
-				// Use remote JWKS
-				provider, err := oidc.NewProvider(ctx, issuerURL)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed to create OIDC provider for issuer %s", issuerURL)
-				}
-				config := &oidc.Config{
-					SkipClientIDCheck: true,
-					Now:               time.Now,
-				}
-				verifier := provider.Verifier(config)
-				oidcProvider.providers[issuerURL] = &ProviderWithVerifier{
-					provider:         provider,
-					verifier:         verifier,
-					userNameClaim:    userNameClaim,
-					allowedAudiences: allowedAudienceMap,
-				}
-			}
+		if err := setupPerIssuerProviders(ctx, oidcProvider, oidcParams.Issuers); err != nil {
+			return nil, err
 		}
 	} else {
-		// Handle legacy configuration for backward compatibility
-		allowedAudienceMap := map[string]string{}
-		allowedAudienceArr := strings.Split(oidcParams.AllowedAudiences, ",")
-		for i := range allowedAudienceArr {
-			allowedAudience := strings.TrimSpace(allowedAudienceArr[i])
-			allowedAudienceMap[allowedAudience] = AllowedAudienceDefaultValue
-		}
-		oidcProvider.userNameClaim = oidcParams.UserNameClaim
-		oidcProvider.allowedAudiences = allowedAudienceMap
-
-		urlArr := strings.Split(oidcParams.AllowedIssueURLs, ",")
-		for i := 0; i < len(urlArr); i++ {
-			issueURL := strings.TrimSpace(urlArr[i])
-			provider, err := oidc.NewProvider(ctx, issueURL)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to create OIDC provider for issuer %s", issueURL)
-			}
-			config := &oidc.Config{
-				SkipClientIDCheck: true,
-				Now:               time.Now,
-			}
-			verifier := provider.Verifier(config)
-			oidcProvider.providers[issueURL] = &ProviderWithVerifier{
-				provider: provider,
-				verifier: verifier,
-			}
+		if err := setupLegacyProviders(ctx, oidcProvider, oidcParams); err != nil {
+			return nil, err
 		}
 	}
 
