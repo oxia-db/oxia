@@ -45,10 +45,10 @@ var (
 )
 
 type OIDCOptions struct {
-	AllowedIssueURLs string `json:"allowedIssueURLs,omitempty"`
-	AllowedAudiences string `json:"allowedAudiences,omitempty"`
-	UserNameClaim    string `json:"userNameClaim,omitempty"`
-	StaticKeyFile    string `json:"staticKeyFile,omitempty"`
+	AllowedIssueURLs string            `json:"allowedIssueURLs,omitempty"`
+	AllowedAudiences string            `json:"allowedAudiences,omitempty"`
+	UserNameClaim    string            `json:"userNameClaim,omitempty"`
+	StaticKeyFiles   map[string]string `json:"staticKeyFiles,omitempty"`
 }
 
 func (op *OIDCOptions) Validate() error {
@@ -220,31 +220,33 @@ func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvi
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 30 * time.Second})
 	urlArr := strings.Split(oidcParams.AllowedIssueURLs, ",")
 
-	// If a static key file is provided, use it for all issuers
-	if oidcParams.StaticKeyFile != "" {
-		publicKeys, err := loadPublicKeysFromFile(oidcParams.StaticKeyFile)
-		if err != nil {
-			return nil, err
-		}
+	// Initialize providers for each issuer
+	for i := 0; i < len(urlArr); i++ {
+		issueURL := strings.TrimSpace(urlArr[i])
+		
+		// Check if there's a static key file for this specific issuer
+		staticKeyFile, hasStaticKey := oidcParams.StaticKeyFiles[issueURL]
+		
+		if hasStaticKey && staticKeyFile != "" {
+			// Load static keys for this issuer
+			publicKeys, err := loadPublicKeysFromFile(staticKeyFile)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to load static key file for issuer %s", issueURL)
+			}
 
-		staticKeySet := &oidc.StaticKeySet{PublicKeys: publicKeys}
-		config := &oidc.Config{
-			SkipClientIDCheck: true,
-			Now:               time.Now,
-		}
+			staticKeySet := &oidc.StaticKeySet{PublicKeys: publicKeys}
+			config := &oidc.Config{
+				SkipClientIDCheck: true,
+				Now:               time.Now,
+			}
 
-		for i := 0; i < len(urlArr); i++ {
-			issueURL := strings.TrimSpace(urlArr[i])
 			verifier := oidc.NewVerifier(issueURL, staticKeySet, config)
 			oidcProvider.providers[issueURL] = &ProviderWithVerifier{
 				provider: nil, // No provider when using static keys
 				verifier: verifier,
 			}
-		}
-	} else {
-		// Use remote JWKS (existing behavior)
-		for i := 0; i < len(urlArr); i++ {
-			issueURL := strings.TrimSpace(urlArr[i])
+		} else {
+			// Use remote JWKS (existing behavior)
 			provider, err := oidc.NewProvider(ctx, issueURL)
 			if err != nil {
 				return nil, err

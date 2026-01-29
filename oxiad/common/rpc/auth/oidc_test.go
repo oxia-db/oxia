@@ -216,12 +216,15 @@ func TestNewOIDCProviderWithStaticKeyFile(t *testing.T) {
 	err = os.WriteFile(keyFile, pem.EncodeToMemory(pemBlock), 0600)
 	require.NoError(t, err)
 
-	t.Run("With Static Key File", func(t *testing.T) {
+	t.Run("With Static Key Files", func(t *testing.T) {
+		issuer := "https://example.com"
 		options := OIDCOptions{
-			AllowedIssueURLs: "https://example.com",
+			AllowedIssueURLs: issuer,
 			AllowedAudiences: "test-audience",
 			UserNameClaim:    "sub",
-			StaticKeyFile:    keyFile,
+			StaticKeyFiles: map[string]string{
+				issuer: keyFile,
+			},
 		}
 		jsonParams, err := json.Marshal(options)
 		require.NoError(t, err)
@@ -234,7 +237,72 @@ func TestNewOIDCProviderWithStaticKeyFile(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "sub", oidcProvider.userNameClaim)
 		assert.Contains(t, oidcProvider.allowedAudiences, "test-audience")
-		assert.Contains(t, oidcProvider.providers, "https://example.com")
+		assert.Contains(t, oidcProvider.providers, issuer)
+	})
+
+	t.Run("With Multiple Issuers and Different Key Files", func(t *testing.T) {
+		// Create a second key file
+		privateKey2, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+
+		keyFile2 := filepath.Join(tmpDir, "public2.pem")
+		publicKeyBytes2, err := x509.MarshalPKIXPublicKey(&privateKey2.PublicKey)
+		require.NoError(t, err)
+
+		pemBlock2 := &pem.Block{
+			Type:  "PUBLIC KEY",
+			Bytes: publicKeyBytes2,
+		}
+
+		err = os.WriteFile(keyFile2, pem.EncodeToMemory(pemBlock2), 0600)
+		require.NoError(t, err)
+
+		issuer1 := "https://issuer1.example.com"
+		issuer2 := "https://issuer2.example.com"
+		
+		options := OIDCOptions{
+			AllowedIssueURLs: issuer1 + "," + issuer2,
+			AllowedAudiences: "test-audience",
+			UserNameClaim:    "sub",
+			StaticKeyFiles: map[string]string{
+				issuer1: keyFile,
+				issuer2: keyFile2,
+			},
+		}
+		jsonParams, err := json.Marshal(options)
+		require.NoError(t, err)
+
+		provider, err := NewOIDCProvider(context.Background(), string(jsonParams))
+		assert.NoError(t, err)
+		assert.NotNil(t, provider)
+
+		oidcProvider, ok := provider.(*OIDCProvider)
+		require.True(t, ok)
+		assert.Contains(t, oidcProvider.providers, issuer1)
+		assert.Contains(t, oidcProvider.providers, issuer2)
+	})
+
+	t.Run("Mixed: One Issuer with Static Key, One with Remote JWKS", func(t *testing.T) {
+		issuer1 := "https://static.example.com"
+		issuer2 := "https://remote.example.com"
+		
+		options := OIDCOptions{
+			AllowedIssueURLs: issuer1 + "," + issuer2,
+			AllowedAudiences: "test-audience",
+			UserNameClaim:    "sub",
+			StaticKeyFiles: map[string]string{
+				issuer1: keyFile,
+				// issuer2 intentionally omitted - should use remote JWKS
+			},
+		}
+		jsonParams, err := json.Marshal(options)
+		require.NoError(t, err)
+
+		// This will partially fail because issuer2 can't be reached
+		// But issuer1 should be initialized with static keys
+		_, err = NewOIDCProvider(context.Background(), string(jsonParams))
+		assert.Error(t, err) // Expected to fail because issuer2 can't use remote JWKS
+		assert.Contains(t, err.Error(), "remote.example.com")
 	})
 
 	t.Run("Without Static Key File (Backward Compatibility)", func(t *testing.T) {
@@ -256,10 +324,13 @@ func TestNewOIDCProviderWithStaticKeyFile(t *testing.T) {
 	})
 
 	t.Run("With Invalid Key File", func(t *testing.T) {
+		issuer := "https://example.com"
 		options := OIDCOptions{
-			AllowedIssueURLs: "https://example.com",
+			AllowedIssueURLs: issuer,
 			AllowedAudiences: "test-audience",
-			StaticKeyFile:    "/nonexistent/file.pem",
+			StaticKeyFiles: map[string]string{
+				issuer: "/nonexistent/file.pem",
+			},
 		}
 		jsonParams, err := json.Marshal(options)
 		require.NoError(t, err)
@@ -297,7 +368,9 @@ func TestOIDCProviderAuthenticateWithStaticKeys(t *testing.T) {
 		AllowedIssueURLs: issuer,
 		AllowedAudiences: audience,
 		UserNameClaim:    "sub",
-		StaticKeyFile:    keyFile,
+		StaticKeyFiles: map[string]string{
+			issuer: keyFile,
+		},
 	}
 	jsonParams, err := json.Marshal(options)
 	require.NoError(t, err)
