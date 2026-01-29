@@ -16,13 +16,9 @@ package auth
 
 import (
 	"context"
-	"crypto"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -41,14 +37,12 @@ var (
 	ErrUnknownIssuer         = errors.New("unknown issuer")
 	ErrUserNameNotFound      = errors.New("username not found")
 	ErrForbiddenAudience     = errors.New("forbidden audience")
-	ErrNoPublicKeysFound     = errors.New("no public keys found in file")
 )
 
 type OIDCOptions struct {
-	AllowedIssueURLs string            `json:"allowedIssueURLs,omitempty"`
-	AllowedAudiences string            `json:"allowedAudiences,omitempty"`
-	UserNameClaim    string            `json:"userNameClaim,omitempty"`
-	StaticKeyFiles   map[string]string `json:"staticKeyFiles,omitempty"`
+	AllowedIssueURLs string `json:"allowedIssueURLs,omitempty"`
+	AllowedAudiences string `json:"allowedAudiences,omitempty"`
+	UserNameClaim    string `json:"userNameClaim,omitempty"`
 }
 
 func (op *OIDCOptions) Validate() error {
@@ -138,66 +132,6 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	return userName, nil
 }
 
-// loadPublicKeysFromFile loads public keys from a PEM-encoded file.
-// The file can contain multiple PEM blocks with public keys or certificates.
-func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to read key file")
-	}
-
-	var publicKeys []crypto.PublicKey
-	rest := data
-
-	for {
-		block, remaining := pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		rest = remaining
-
-		// Try to parse based on block type
-		switch block.Type {
-		case "PUBLIC KEY":
-			// Standard PKIX format (works for RSA, ECDSA, Ed25519)
-			key, err := x509.ParsePKIXPublicKey(block.Bytes)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to parse PUBLIC KEY block")
-			}
-			publicKeys = append(publicKeys, key)
-		case "RSA PUBLIC KEY":
-			// PKCS#1 RSA public key
-			key, err := x509.ParsePKCS1PublicKey(block.Bytes)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to parse RSA PUBLIC KEY block")
-			}
-			publicKeys = append(publicKeys, key)
-		case "EC PUBLIC KEY":
-			// Try PKIX first for EC keys
-			key, err := x509.ParsePKIXPublicKey(block.Bytes)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to parse EC PUBLIC KEY block")
-			}
-			publicKeys = append(publicKeys, key)
-		case "CERTIFICATE":
-			// Extract public key from certificate
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to parse CERTIFICATE block")
-			}
-			publicKeys = append(publicKeys, cert.PublicKey)
-		default:
-			// Skip unrecognized block types silently
-		}
-	}
-
-	if len(publicKeys) == 0 {
-		return nil, ErrNoPublicKeysFound
-	}
-
-	return publicKeys, nil
-}
-
 func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvider, error) {
 	oidcParams := &OIDCOptions{}
 	if err := json.Unmarshal([]byte(jsonParam), oidcParams); err != nil {
@@ -210,7 +144,7 @@ func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvi
 	allowedAudienceMap := map[string]string{}
 	allowedAudienceArr := strings.Split(oidcParams.AllowedAudiences, ",")
 	for i := range allowedAudienceArr {
-		allowedAudience := strings.TrimSpace(allowedAudienceArr[i])
+		allowedAudience := allowedAudienceArr[i]
 		allowedAudienceMap[allowedAudience] = AllowedAudienceDefaultValue
 	}
 	oidcProvider := &OIDCProvider{
@@ -221,47 +155,20 @@ func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvi
 
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 30 * time.Second})
 	urlArr := strings.Split(oidcParams.AllowedIssueURLs, ",")
-
-	// Initialize providers for each issuer
 	for i := 0; i < len(urlArr); i++ {
-		issueURL := strings.TrimSpace(urlArr[i])
-
-		// Check if there's a static key file for this specific issuer
-		staticKeyFile, hasStaticKey := oidcParams.StaticKeyFiles[issueURL]
-
-		if hasStaticKey && staticKeyFile != "" {
-			// Load static keys for this issuer
-			publicKeys, err := loadPublicKeysFromFile(staticKeyFile)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to load static key file for issuer %s", issueURL)
-			}
-
-			staticKeySet := &oidc.StaticKeySet{PublicKeys: publicKeys}
-			config := &oidc.Config{
-				SkipClientIDCheck: true,
-				Now:               time.Now,
-			}
-
-			verifier := oidc.NewVerifier(issueURL, staticKeySet, config)
-			oidcProvider.providers[issueURL] = &ProviderWithVerifier{
-				provider: nil, // No provider when using static keys
-				verifier: verifier,
-			}
-		} else {
-			// Use remote JWKS (existing behavior)
-			provider, err := oidc.NewProvider(ctx, issueURL)
-			if err != nil {
-				return nil, err
-			}
-			config := &oidc.Config{
-				SkipClientIDCheck: true,
-				Now:               time.Now,
-			}
-			verifier := provider.Verifier(config)
-			oidcProvider.providers[issueURL] = &ProviderWithVerifier{
-				provider: provider,
-				verifier: verifier,
-			}
+		issueURL := urlArr[i]
+		provider, err := oidc.NewProvider(ctx, issueURL)
+		if err != nil {
+			return nil, err
+		}
+		config := &oidc.Config{
+			SkipClientIDCheck: true,
+			Now:               time.Now,
+		}
+		verifier := provider.Verifier(config)
+		oidcProvider.providers[issueURL] = &ProviderWithVerifier{
+			provider: provider,
+			verifier: verifier,
 		}
 	}
 	return oidcProvider, nil
