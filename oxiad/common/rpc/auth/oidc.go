@@ -16,9 +16,13 @@ package auth
 
 import (
 	"context"
+	"crypto"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -37,12 +41,15 @@ var (
 	ErrUnknownIssuer         = errors.New("unknown issuer")
 	ErrUserNameNotFound      = errors.New("username not found")
 	ErrForbiddenAudience     = errors.New("forbidden audience")
+	ErrInvalidKeyFile        = errors.New("invalid key file")
+	ErrNoPublicKeysFound     = errors.New("no public keys found in file")
 )
 
 type OIDCOptions struct {
 	AllowedIssueURLs string `json:"allowedIssueURLs,omitempty"`
 	AllowedAudiences string `json:"allowedAudiences,omitempty"`
 	UserNameClaim    string `json:"userNameClaim,omitempty"`
+	StaticKeyFile    string `json:"staticKeyFile,omitempty"`
 }
 
 func (op *OIDCOptions) Validate() error {
@@ -132,6 +139,52 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	return userName, nil
 }
 
+// loadPublicKeysFromFile loads public keys from a PEM-encoded file.
+// The file can contain multiple PEM blocks with public keys.
+func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read key file")
+	}
+
+	var publicKeys []crypto.PublicKey
+	rest := data
+
+	for {
+		block, remaining := pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		rest = remaining
+
+		// Try to parse as public key
+		if block.Type == "PUBLIC KEY" || block.Type == "RSA PUBLIC KEY" || block.Type == "EC PUBLIC KEY" {
+			key, err := x509.ParsePKIXPublicKey(block.Bytes)
+			if err != nil {
+				// Try parsing as PKCS1 RSA public key
+				key, err = x509.ParsePKCS1PublicKey(block.Bytes)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to parse public key")
+				}
+			}
+			publicKeys = append(publicKeys, key)
+		} else if block.Type == "CERTIFICATE" {
+			// Extract public key from certificate
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to parse certificate")
+			}
+			publicKeys = append(publicKeys, cert.PublicKey)
+		}
+	}
+
+	if len(publicKeys) == 0 {
+		return nil, ErrNoPublicKeysFound
+	}
+
+	return publicKeys, nil
+}
+
 func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvider, error) {
 	oidcParams := &OIDCOptions{}
 	if err := json.Unmarshal([]byte(jsonParam), oidcParams); err != nil {
@@ -155,20 +208,45 @@ func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvi
 
 	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 30 * time.Second})
 	urlArr := strings.Split(oidcParams.AllowedIssueURLs, ",")
-	for i := 0; i < len(urlArr); i++ {
-		issueURL := urlArr[i]
-		provider, err := oidc.NewProvider(ctx, issueURL)
+
+	// If a static key file is provided, use it for all issuers
+	if oidcParams.StaticKeyFile != "" {
+		publicKeys, err := loadPublicKeysFromFile(oidcParams.StaticKeyFile)
 		if err != nil {
 			return nil, err
 		}
+
+		staticKeySet := &oidc.StaticKeySet{PublicKeys: publicKeys}
 		config := &oidc.Config{
 			SkipClientIDCheck: true,
 			Now:               time.Now,
 		}
-		verifier := provider.Verifier(config)
-		oidcProvider.providers[issueURL] = &ProviderWithVerifier{
-			provider: provider,
-			verifier: verifier,
+
+		for i := 0; i < len(urlArr); i++ {
+			issueURL := urlArr[i]
+			verifier := oidc.NewVerifier(issueURL, staticKeySet, config)
+			oidcProvider.providers[issueURL] = &ProviderWithVerifier{
+				provider: nil, // No provider when using static keys
+				verifier: verifier,
+			}
+		}
+	} else {
+		// Use remote JWKS (existing behavior)
+		for i := 0; i < len(urlArr); i++ {
+			issueURL := urlArr[i]
+			provider, err := oidc.NewProvider(ctx, issueURL)
+			if err != nil {
+				return nil, err
+			}
+			config := &oidc.Config{
+				SkipClientIDCheck: true,
+				Now:               time.Now,
+			}
+			verifier := provider.Verifier(config)
+			oidcProvider.providers[issueURL] = &ProviderWithVerifier{
+				provider: provider,
+				verifier: verifier,
+			}
 		}
 	}
 	return oidcProvider, nil

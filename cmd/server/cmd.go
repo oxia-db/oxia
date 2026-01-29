@@ -76,7 +76,7 @@ func init() {
 
 	publicAuth := &dataServerOptions.Server.Public.Auth
 	Cmd.Flags().StringVar(&publicAuth.Provider, "auth-provider-name", "", "Authentication provider name. supported: oidc")
-	Cmd.Flags().StringVar(&publicAuth.ProviderParams, "auth-provider-params", "", "Authentication provider params. \n oidc: "+"{\"allowedIssueURLs\":\"required1,required2\",\"allowedAudiences\":\"required1,required2\",\"userNameClaim\":\"optional(default:sub)\"}")
+	Cmd.Flags().StringVar(&publicAuth.ProviderParams, "auth-provider-params", "", "Authentication provider params. \n oidc: "+"{\"allowedIssueURLs\":\"required1,required2\",\"allowedAudiences\":\"required1,required2\",\"userNameClaim\":\"optional(default:sub)\",\"staticKeyFile\":\"optional(path to PEM file)\"}")
 
 	publicTLS := &dataServerOptions.Server.Public.TLS
 	Cmd.Flags().StringVar(&publicTLS.CertFile, "tls-cert-file", "", "Tls certificate file")
