@@ -320,6 +320,14 @@ func (m *PutRequest) CloneVT() *PutRequest {
 		}
 		r.SecondaryIndexes = tmpContainer
 	}
+	if rhs := m.OverrideVersionId; rhs != nil {
+		tmpVal := *rhs
+		r.OverrideVersionId = &tmpVal
+	}
+	if rhs := m.OverrideModificationsCount; rhs != nil {
+		tmpVal := *rhs
+		r.OverrideModificationsCount = &tmpVal
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -1266,6 +1274,12 @@ func (this *PutRequest) EqualVT(that *PutRequest) bool {
 				return false
 			}
 		}
+	}
+	if p, q := this.OverrideVersionId, that.OverrideVersionId; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
+	}
+	if p, q := this.OverrideModificationsCount, that.OverrideModificationsCount; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -2427,6 +2441,16 @@ func (m *PutRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.OverrideModificationsCount != nil {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.OverrideModificationsCount))
+		i--
+		dAtA[i] = 0x50
+	}
+	if m.OverrideVersionId != nil {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.OverrideVersionId))
+		i--
+		dAtA[i] = 0x48
 	}
 	if len(m.SecondaryIndexes) > 0 {
 		for iNdEx := len(m.SecondaryIndexes) - 1; iNdEx >= 0; iNdEx-- {
@@ -3892,6 +3916,12 @@ func (m *PutRequest) SizeVT() (n int) {
 			l = e.SizeVT()
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
+	}
+	if m.OverrideVersionId != nil {
+		n += 1 + protohelpers.SizeOfVarint(uint64(*m.OverrideVersionId))
+	}
+	if m.OverrideModificationsCount != nil {
+		n += 1 + protohelpers.SizeOfVarint(uint64(*m.OverrideModificationsCount))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -5856,6 +5886,46 @@ func (m *PutRequest) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 9:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OverrideVersionId", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OverrideVersionId = &v
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OverrideModificationsCount", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OverrideModificationsCount = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -10091,6 +10161,46 @@ func (m *PutRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 9:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OverrideVersionId", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OverrideVersionId = &v
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OverrideModificationsCount", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OverrideModificationsCount = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
