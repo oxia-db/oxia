@@ -16,11 +16,15 @@ package auth
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -100,6 +104,75 @@ func TestLoadPublicKeysFromFile(t *testing.T) {
 		_, err := loadPublicKeysFromFile("/nonexistent/file.pem")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to read key file")
+	})
+
+	t.Run("ECDSA Public Key", func(t *testing.T) {
+		// Generate ECDSA key pair
+		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+
+		// Create temporary file with ECDSA public key
+		tmpDir := t.TempDir()
+		keyFile := filepath.Join(tmpDir, "ec_public.pem")
+
+		publicKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+		require.NoError(t, err)
+
+		pemBlock := &pem.Block{
+			Type:  "PUBLIC KEY",
+			Bytes: publicKeyBytes,
+		}
+
+		err = os.WriteFile(keyFile, pem.EncodeToMemory(pemBlock), 0600)
+		require.NoError(t, err)
+
+		// Test loading
+		keys, err := loadPublicKeysFromFile(keyFile)
+		assert.NoError(t, err)
+		assert.Len(t, keys, 1)
+		_, ok := keys[0].(*ecdsa.PublicKey)
+		assert.True(t, ok, "Expected ECDSA public key")
+	})
+
+	t.Run("Certificate with Public Key", func(t *testing.T) {
+		// Generate RSA key pair
+		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+
+		// Create a self-signed certificate
+		template := x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject: pkix.Name{
+				Organization: []string{"Test Org"},
+			},
+			NotBefore:             time.Now(),
+			NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+			KeyUsage:              x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			BasicConstraintsValid: true,
+		}
+
+		certBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+		require.NoError(t, err)
+
+		// Create temporary file with certificate
+		tmpDir := t.TempDir()
+		keyFile := filepath.Join(tmpDir, "cert.pem")
+
+		pemBlock := &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: certBytes,
+		}
+
+		err = os.WriteFile(keyFile, pem.EncodeToMemory(pemBlock), 0600)
+		require.NoError(t, err)
+
+		// Test loading
+		keys, err := loadPublicKeysFromFile(keyFile)
+		assert.NoError(t, err)
+		assert.Len(t, keys, 1)
+		_, ok := keys[0].(*rsa.PublicKey)
+		assert.True(t, ok, "Expected RSA public key from certificate")
 	})
 
 	t.Run("Empty File", func(t *testing.T) {

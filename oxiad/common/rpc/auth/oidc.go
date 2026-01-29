@@ -41,7 +41,6 @@ var (
 	ErrUnknownIssuer         = errors.New("unknown issuer")
 	ErrUserNameNotFound      = errors.New("username not found")
 	ErrForbiddenAudience     = errors.New("forbidden audience")
-	ErrInvalidKeyFile        = errors.New("invalid key file")
 	ErrNoPublicKeysFound     = errors.New("no public keys found in file")
 )
 
@@ -140,7 +139,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 }
 
 // loadPublicKeysFromFile loads public keys from a PEM-encoded file.
-// The file can contain multiple PEM blocks with public keys.
+// The file can contain multiple PEM blocks with public keys or certificates.
 func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -157,25 +156,37 @@ func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
 		}
 		rest = remaining
 
-		// Try to parse as public key
-		if block.Type == "PUBLIC KEY" || block.Type == "RSA PUBLIC KEY" || block.Type == "EC PUBLIC KEY" {
+		// Try to parse based on block type
+		if block.Type == "PUBLIC KEY" {
+			// Standard PKIX format (works for RSA, ECDSA, Ed25519)
 			key, err := x509.ParsePKIXPublicKey(block.Bytes)
 			if err != nil {
-				// Try parsing as PKCS1 RSA public key
-				key, err = x509.ParsePKCS1PublicKey(block.Bytes)
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to parse public key")
-				}
+				return nil, errors.Wrapf(err, "failed to parse PUBLIC KEY block")
+			}
+			publicKeys = append(publicKeys, key)
+		} else if block.Type == "RSA PUBLIC KEY" {
+			// PKCS#1 RSA public key
+			key, err := x509.ParsePKCS1PublicKey(block.Bytes)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to parse RSA PUBLIC KEY block")
+			}
+			publicKeys = append(publicKeys, key)
+		} else if block.Type == "EC PUBLIC KEY" {
+			// Try PKIX first for EC keys
+			key, err := x509.ParsePKIXPublicKey(block.Bytes)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to parse EC PUBLIC KEY block")
 			}
 			publicKeys = append(publicKeys, key)
 		} else if block.Type == "CERTIFICATE" {
 			// Extract public key from certificate
 			cert, err := x509.ParseCertificate(block.Bytes)
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to parse certificate")
+				return nil, errors.Wrapf(err, "failed to parse CERTIFICATE block")
 			}
 			publicKeys = append(publicKeys, cert.PublicKey)
 		}
+		// Skip unrecognized block types silently
 	}
 
 	if len(publicKeys) == 0 {
@@ -197,7 +208,7 @@ func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvi
 	allowedAudienceMap := map[string]string{}
 	allowedAudienceArr := strings.Split(oidcParams.AllowedAudiences, ",")
 	for i := range allowedAudienceArr {
-		allowedAudience := allowedAudienceArr[i]
+		allowedAudience := strings.TrimSpace(allowedAudienceArr[i])
 		allowedAudienceMap[allowedAudience] = AllowedAudienceDefaultValue
 	}
 	oidcProvider := &OIDCProvider{
@@ -223,7 +234,7 @@ func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvi
 		}
 
 		for i := 0; i < len(urlArr); i++ {
-			issueURL := urlArr[i]
+			issueURL := strings.TrimSpace(urlArr[i])
 			verifier := oidc.NewVerifier(issueURL, staticKeySet, config)
 			oidcProvider.providers[issueURL] = &ProviderWithVerifier{
 				provider: nil, // No provider when using static keys
@@ -233,7 +244,7 @@ func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvi
 	} else {
 		// Use remote JWKS (existing behavior)
 		for i := 0; i < len(urlArr); i++ {
-			issueURL := urlArr[i]
+			issueURL := strings.TrimSpace(urlArr[i])
 			provider, err := oidc.NewProvider(ctx, issueURL)
 			if err != nil {
 				return nil, err
