@@ -16,7 +16,10 @@ package auth
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -211,6 +214,303 @@ func generateRandomStr(t *testing.T) string {
 	random, err := uuid.NewRandom()
 	assert.NoError(t, err)
 	return random.String()
+}
+
+// TestOIDCWithPerIssuerConfig tests the new per-issuer configuration format.
+func TestOIDCWithPerIssuerConfig(t *testing.T) {
+	mockOIDC1, err := mockoidc.Run()
+	assert.NoError(t, err)
+	defer func() {
+		_ = mockOIDC1.Shutdown()
+	}()
+
+	mockOIDC2, err := mockoidc.Run()
+	assert.NoError(t, err)
+	defer func() {
+		_ = mockOIDC2.Shutdown()
+	}()
+
+	audience1 := generateRandomStr(t)
+	audience2 := generateRandomStr(t)
+	subject1 := generateRandomStr(t)
+	subject2 := generateRandomStr(t)
+
+	// Configure cluster with per-issuer settings
+	options := auth.OIDCOptions{
+		Issuers: map[string]auth.IssuerConfig{
+			mockOIDC1.Issuer(): {
+				AllowedAudiences: audience1,
+				UserNameClaim:    "sub",
+			},
+			mockOIDC2.Issuer(): {
+				AllowedAudiences: audience2,
+				UserNameClaim:    "sub",
+			},
+		},
+	}
+	jsonParams, err := json.Marshal(options)
+	assert.NoError(t, err)
+
+	authParams := auth.Options{
+		Provider:       auth.ProviderOIDC,
+		ProviderParams: string(jsonParams),
+	}
+
+	dataServerOption1 := option.NewDefaultOptions()
+	dataServerOption1.Server.Public.BindAddress = "localhost:0"
+	dataServerOption1.Server.Public.Auth = authParams
+	dataServerOption1.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption1.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption1.Storage.Database.Dir = t.TempDir()
+	dataServerOption1.Storage.WAL.Dir = t.TempDir()
+	s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption1))
+	assert.NoError(t, err)
+	defer s1.Close()
+
+	s1Addr := model.Server{
+		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
+		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
+	}
+
+	dataServerOption2 := option.NewDefaultOptions()
+	dataServerOption2.Server.Public.BindAddress = "localhost:0"
+	dataServerOption2.Server.Public.Auth = authParams
+	dataServerOption2.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption2.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption2.Storage.Database.Dir = t.TempDir()
+	dataServerOption2.Storage.WAL.Dir = t.TempDir()
+	s2, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption2))
+	assert.NoError(t, err)
+	defer s2.Close()
+
+	s2Addr := model.Server{
+		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
+		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
+	}
+
+	dataServerOption3 := option.NewDefaultOptions()
+	dataServerOption3.Server.Public.BindAddress = "localhost:0"
+	dataServerOption3.Server.Public.Auth = authParams
+	dataServerOption3.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption3.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption3.Storage.Database.Dir = t.TempDir()
+	dataServerOption3.Storage.WAL.Dir = t.TempDir()
+	s3, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption3))
+	assert.NoError(t, err)
+	defer s3.Close()
+
+	s3Addr := model.Server{
+		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),
+		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
+	}
+
+	metadataProvider := metadata.NewMetadataProviderMemory()
+	clusterConfig := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 3,
+			InitialShardCount: 1,
+		}},
+		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
+	}
+
+	clientPool := rpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
+
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
+		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		nil, rpc2.NewRpcProvider(clientPool))
+	assert.NoError(t, err)
+	defer coordinatorInstance.Close()
+
+	// Test authentication with issuer 1
+	token1, err := mockOIDC1.Keypair.SignJWT(&jwt.RegisteredClaims{
+		Audience:  jwt.ClaimStrings{audience1},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+		Issuer:    mockOIDC1.Issuer(),
+		Subject:   subject1,
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	})
+	assert.NoError(t, err)
+
+	client1, err := oxia.NewSyncClient(s1Addr.Public,
+		oxia.WithAuthentication(clientauth.NewTokenAuthenticationWithToken(token1, false)))
+	assert.NoError(t, err)
+	defer client1.Close()
+
+	// Perform operations with client 1
+	ctx := context.Background()
+	_, _, err = client1.Put(ctx, "key1", []byte("value1"))
+	assert.NoError(t, err)
+
+	// Test authentication with issuer 2
+	token2, err := mockOIDC2.Keypair.SignJWT(&jwt.RegisteredClaims{
+		Audience:  jwt.ClaimStrings{audience2},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+		Issuer:    mockOIDC2.Issuer(),
+		Subject:   subject2,
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	})
+	assert.NoError(t, err)
+
+	client2, err := oxia.NewSyncClient(s1Addr.Public,
+		oxia.WithAuthentication(clientauth.NewTokenAuthenticationWithToken(token2, false)))
+	assert.NoError(t, err)
+	defer client2.Close()
+
+	// Perform operations with client 2
+	_, _, err = client2.Put(ctx, "key2", []byte("value2"))
+	assert.NoError(t, err)
+
+	// Test that issuer 1 token with wrong audience fails
+	wrongAudienceToken, err := mockOIDC1.Keypair.SignJWT(&jwt.RegisteredClaims{
+		Audience:  jwt.ClaimStrings{audience2}, // Wrong audience
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+		Issuer:    mockOIDC1.Issuer(),
+		Subject:   subject1,
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	})
+	assert.NoError(t, err)
+
+	_, err = oxia.NewSyncClient(s1Addr.Public,
+		oxia.WithAuthentication(clientauth.NewTokenAuthenticationWithToken(wrongAudienceToken, false)))
+	assert.Equal(t, codes.Unauthenticated, status.Code(errors.Unwrap(err)))
+}
+
+// TestOIDCWithStaticKeyFile tests static key file support.
+func TestOIDCWithStaticKeyFile(t *testing.T) {
+	mockOIDC, err := mockoidc.Run()
+	assert.NoError(t, err)
+	defer func() {
+		_ = mockOIDC.Shutdown()
+	}()
+
+	// Export public key to a temporary file
+	keyFile := t.TempDir() + "/public-key.pem"
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(mockOIDC.Keypair.PublicKey)
+	assert.NoError(t, err)
+	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubKeyBytes,
+	})
+	err = os.WriteFile(keyFile, pubKeyPEM, 0600)
+	assert.NoError(t, err)
+
+	audience := generateRandomStr(t)
+	subject := generateRandomStr(t)
+
+	// Configure cluster with static key file
+	options := auth.OIDCOptions{
+		Issuers: map[string]auth.IssuerConfig{
+			mockOIDC.Issuer(): {
+				AllowedAudiences: audience,
+				UserNameClaim:    "sub",
+				StaticKeyFile:    keyFile,
+			},
+		},
+	}
+	jsonParams, err := json.Marshal(options)
+	assert.NoError(t, err)
+
+	authParams := auth.Options{
+		Provider:       auth.ProviderOIDC,
+		ProviderParams: string(jsonParams),
+	}
+
+	dataServerOption1 := option.NewDefaultOptions()
+	dataServerOption1.Server.Public.BindAddress = "localhost:0"
+	dataServerOption1.Server.Public.Auth = authParams
+	dataServerOption1.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption1.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption1.Storage.Database.Dir = t.TempDir()
+	dataServerOption1.Storage.WAL.Dir = t.TempDir()
+	s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption1))
+	assert.NoError(t, err)
+	defer s1.Close()
+
+	s1Addr := model.Server{
+		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
+		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
+	}
+
+	dataServerOption2 := option.NewDefaultOptions()
+	dataServerOption2.Server.Public.BindAddress = "localhost:0"
+	dataServerOption2.Server.Public.Auth = authParams
+	dataServerOption2.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption2.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption2.Storage.Database.Dir = t.TempDir()
+	dataServerOption2.Storage.WAL.Dir = t.TempDir()
+	s2, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption2))
+	assert.NoError(t, err)
+	defer s2.Close()
+
+	s2Addr := model.Server{
+		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
+		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
+	}
+
+	dataServerOption3 := option.NewDefaultOptions()
+	dataServerOption3.Server.Public.BindAddress = "localhost:0"
+	dataServerOption3.Server.Public.Auth = authParams
+	dataServerOption3.Server.Internal.BindAddress = "localhost:0"
+	dataServerOption3.Observability.Metric.Enabled = &constant.FlagFalse
+	dataServerOption3.Storage.Database.Dir = t.TempDir()
+	dataServerOption3.Storage.WAL.Dir = t.TempDir()
+	s3, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption3))
+	assert.NoError(t, err)
+	defer s3.Close()
+
+	s3Addr := model.Server{
+		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),
+		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
+	}
+
+	metadataProvider := metadata.NewMetadataProviderMemory()
+	clusterConfig := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 3,
+			InitialShardCount: 1,
+		}},
+		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
+	}
+
+	clientPool := rpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
+
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
+		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		nil, rpc2.NewRpcProvider(clientPool))
+	assert.NoError(t, err)
+	defer coordinatorInstance.Close()
+
+	// Create a valid token
+	token, err := mockOIDC.Keypair.SignJWT(&jwt.RegisteredClaims{
+		Audience:  jwt.ClaimStrings{audience},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+		Issuer:    mockOIDC.Issuer(),
+		Subject:   subject,
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	})
+	assert.NoError(t, err)
+
+	// Test authentication with static key file
+	client, err := oxia.NewSyncClient(s1Addr.Public,
+		oxia.WithAuthentication(clientauth.NewTokenAuthenticationWithToken(token, false)))
+	assert.NoError(t, err)
+	defer client.Close()
+
+	// Perform operations
+	ctx := context.Background()
+	key := "test-key"
+	value := []byte("test-value")
+	_, pVersion, err := client.Put(ctx, key, value)
+	assert.NoError(t, err)
+
+	_, gValue, gVersion, err := client.Get(ctx, key)
+	assert.NoError(t, err)
+	assert.Equal(t, pVersion, gVersion)
+	assert.Equal(t, value, gValue)
 }
 
 const (
