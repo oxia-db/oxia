@@ -157,36 +157,38 @@ func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
 		rest = remaining
 
 		// Try to parse based on block type
-		if block.Type == "PUBLIC KEY" {
+		switch block.Type {
+		case "PUBLIC KEY":
 			// Standard PKIX format (works for RSA, ECDSA, Ed25519)
 			key, err := x509.ParsePKIXPublicKey(block.Bytes)
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to parse PUBLIC KEY block")
 			}
 			publicKeys = append(publicKeys, key)
-		} else if block.Type == "RSA PUBLIC KEY" {
+		case "RSA PUBLIC KEY":
 			// PKCS#1 RSA public key
 			key, err := x509.ParsePKCS1PublicKey(block.Bytes)
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to parse RSA PUBLIC KEY block")
 			}
 			publicKeys = append(publicKeys, key)
-		} else if block.Type == "EC PUBLIC KEY" {
+		case "EC PUBLIC KEY":
 			// Try PKIX first for EC keys
 			key, err := x509.ParsePKIXPublicKey(block.Bytes)
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to parse EC PUBLIC KEY block")
 			}
 			publicKeys = append(publicKeys, key)
-		} else if block.Type == "CERTIFICATE" {
+		case "CERTIFICATE":
 			// Extract public key from certificate
 			cert, err := x509.ParseCertificate(block.Bytes)
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to parse CERTIFICATE block")
 			}
 			publicKeys = append(publicKeys, cert.PublicKey)
+		default:
+			// Skip unrecognized block types silently
 		}
-		// Skip unrecognized block types silently
 	}
 
 	if len(publicKeys) == 0 {
@@ -223,10 +225,10 @@ func NewOIDCProvider(ctx context.Context, jsonParam string) (AuthenticationProvi
 	// Initialize providers for each issuer
 	for i := 0; i < len(urlArr); i++ {
 		issueURL := strings.TrimSpace(urlArr[i])
-		
+
 		// Check if there's a static key file for this specific issuer
 		staticKeyFile, hasStaticKey := oidcParams.StaticKeyFiles[issueURL]
-		
+
 		if hasStaticKey && staticKeyFile != "" {
 			// Load static keys for this issuer
 			publicKeys, err := loadPublicKeysFromFile(staticKeyFile)

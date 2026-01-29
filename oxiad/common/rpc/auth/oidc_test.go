@@ -87,9 +87,11 @@ func TestLoadPublicKeysFromFile(t *testing.T) {
 			Bytes: publicKeyBytes2,
 		}
 
-		var pemData []byte
-		pemData = append(pemData, pem.EncodeToMemory(pemBlock1)...)
-		pemData = append(pemData, pem.EncodeToMemory(pemBlock2)...)
+		pem1 := pem.EncodeToMemory(pemBlock1)
+		pem2 := pem.EncodeToMemory(pemBlock2)
+		pemData := make([]byte, 0, len(pem1)+len(pem2))
+		pemData = append(pemData, pem1...)
+		pemData = append(pemData, pem2...)
 
 		err = os.WriteFile(keyFile, pemData, 0600)
 		require.NoError(t, err)
@@ -259,7 +261,7 @@ func TestNewOIDCProviderWithStaticKeyFile(t *testing.T) {
 
 		issuer1 := "https://issuer1.example.com"
 		issuer2 := "https://issuer2.example.com"
-		
+
 		options := OIDCOptions{
 			AllowedIssueURLs: issuer1 + "," + issuer2,
 			AllowedAudiences: "test-audience",
@@ -285,7 +287,7 @@ func TestNewOIDCProviderWithStaticKeyFile(t *testing.T) {
 	t.Run("Mixed: One Issuer with Static Key, One with Remote JWKS", func(t *testing.T) {
 		issuer1 := "https://static.example.com"
 		issuer2 := "https://remote.example.com"
-		
+
 		options := OIDCOptions{
 			AllowedIssueURLs: issuer1 + "," + issuer2,
 			AllowedAudiences: "test-audience",
