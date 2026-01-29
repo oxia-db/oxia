@@ -5,11 +5,10 @@ go 1.25
 require (
 	github.com/bmizerany/perks v0.0.0-20230307044200-03f9df79da1e
 	github.com/cockroachdb/pebble/v2 v2.1.0
-	github.com/fsnotify/fsnotify v1.4.7
 	github.com/invopop/jsonschema v0.13.0
 	github.com/oxia-db/oxia/common v0.0.0
 	github.com/oxia-db/oxia/oxia v0.0.0
-	github.com/oxia-db/oxia/oxiad v0.0.0-20260120093939-8da5685c7da4
+	github.com/oxia-db/oxia/oxiad v0.0.0-20251121170122-7c84f6e6bbc3
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.22.0
 	github.com/spf13/cobra v1.10.1
@@ -47,6 +46,7 @@ require (
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/emirpasic/gods/v2 v2.0.0-alpha // indirect
 	github.com/fatih/color v1.18.0 // indirect
+	github.com/fsnotify/fsnotify v1.4.7 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/getsentry/sentry-go v0.32.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
@@ -56,7 +56,6 @@ require (
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
