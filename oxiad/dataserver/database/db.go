@@ -16,6 +16,7 @@ package database
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,6 +54,7 @@ const (
 	commitLastVersionIdKey = constant.InternalKeyPrefix + "last-version-id"
 	termKey                = constant.InternalKeyPrefix + "term"
 	termOptionsKey         = termKey + "-options"
+	dbFingerprintKey       = constant.InternalKeyPrefix + "fingerprint"
 )
 
 type UpdateOperationCallback interface {
@@ -155,7 +157,22 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	}
 	db.committedVersionId.Store(lastVersionId)
 
+	// Initialize DB fingerprint
+	currentFingerprint, err := db.readDbFingerprint()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read DB fingerprint")
+	}
+	db.currentDbFingerprint.Store(currentFingerprint)
+
 	db.notificationsTracker = newNotificationsTracker(namespace, shardId, commitOffset, kv, notificationRetentionTime, clock)
+
+	// Initialize DB fingerprint gauge
+	db.dbFingerprintGauge = metric.NewGauge("oxia_server_db_fingerprint",
+		"The cumulative DB CRC captured precisely at commit_offset",
+		metric.Dimensionless, labels, func() int64 {
+			return int64(db.currentDbFingerprint.Load())
+		})
+
 	return db, nil
 }
 
@@ -179,6 +196,10 @@ type db struct {
 	batchWriteLatencyHisto metric.LatencyHistogram
 	getLatencyHisto        metric.LatencyHistogram
 	listLatencyHisto       metric.LatencyHistogram
+
+	// DB fingerprint tracking
+	currentDbFingerprint atomic.Uint64
+	dbFingerprintGauge   metric.Gauge
 }
 
 func (d *db) Snapshot() (kvstore.Snapshot, error) {
@@ -203,6 +224,42 @@ func (d *db) Delete() error {
 		d.notificationsTracker.Close(),
 		d.kv.Delete(),
 	)
+}
+
+// readDbFingerprint reads the current DB fingerprint from storage
+func (d *db) readDbFingerprint() (uint64, error) {
+	_, value, closer, err := d.kv.Get(dbFingerprintKey, kvstore.ComparisonEqual, kvstore.IteratorOpts{})
+	if err != nil {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer closer.Close()
+
+	if len(value) < 8 {
+		return 0, nil
+	}
+
+	fp := DBFingerprintFromBytes(value)
+	return uint64(fp), nil
+}
+
+// writeDbFingerprint writes the DB fingerprint to storage
+func (d *db) writeDbFingerprint(batch kvstore.WriteBatch, fingerprint uint64) error {
+	fpBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(fpBytes, fingerprint)
+	return batch.Put(dbFingerprintKey, fpBytes)
+}
+
+// getCurrentDbFingerprint returns the current database fingerprint
+func (d *db) getCurrentDbFingerprint() uint64 {
+	return d.currentDbFingerprint.Load()
+}
+
+// updateDbFingerprint atomically updates the current database fingerprint
+func (d *db) updateDbFingerprint(newFingerprint uint64) {
+	d.currentDbFingerprint.Store(newFingerprint)
 }
 
 func now() uint64 {
@@ -257,6 +314,12 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	baseVersionId := &atomic.Int64{}
 	baseVersionId.Store(d.committedVersionId.Load())
 
+	// Serialize the WriteRequest for DB CRC calculation
+	writeReqBytes, err := b.MarshalVT()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to serialize WriteRequest for DB CRC calculation")
+	}
+
 	batch := d.kv.NewWriteBatch()
 	notifications, res, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp, updateOperationCallback)
 	if err != nil {
@@ -278,12 +341,20 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 			return nil, err
 		}
 	}
-
+	// Calculate and store the new DB fingerprint
+	currentFingerprint := d.currentDbFingerprint.Load()
+	newFingerprint := NewDBFingerprint(DBFingerprint(currentFingerprint), writeReqBytes)
+	if err := d.writeDbFingerprint(batch, uint64(newFingerprint)); err != nil {
+		return nil, errors.Wrap(err, "failed to write DB fingerprint")
+	}
 	if err := batch.Commit(); err != nil {
 		return nil, err
 	}
 	// update the db local cache of version_id after commit success
 	d.committedVersionId.Store(uncommitedVersionId)
+
+	// Update the in-memory fingerprint after successful commit
+	d.updateDbFingerprint(uint64(newFingerprint))
 
 	if notifications != nil {
 		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
