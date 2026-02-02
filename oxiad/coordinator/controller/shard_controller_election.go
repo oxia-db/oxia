@@ -38,6 +38,7 @@ import (
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/selector/leader"
 
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/feature"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
@@ -93,7 +94,7 @@ func (e *ShardElection) refreshedEnsemble(ensemble []model.Server) []model.Serve
 	return refreshedEnsembleDataServerAddress
 }
 
-func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer model.Server) (*proto.EntryId, error) {
+func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer model.Server) (*proto.NewTermResponse, error) {
 	res, err := e.provider.NewTerm(ctx, dataServer, &proto.NewTermRequest{
 		Namespace: e.namespace,
 		Shard:     e.shard,
@@ -104,12 +105,25 @@ func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer
 		return nil, err
 	}
 
-	return res.HeadEntryId, nil
+	return res, nil
+}
+
+// newTermResult holds the result of a NewTerm RPC call including entry ID and supported features.
+type newTermResult struct {
+	entryId  *proto.EntryId
+	features []proto.Feature
+}
+
+// fenceNewTermQuorumResult holds the results of fencing a quorum including
+// candidate status and negotiated features.
+type fenceNewTermQuorumResult struct {
+	candidatesStatus   map[model.Server]*proto.EntryId
+	negotiatedFeatures []proto.Feature
 }
 
 // Send NewTerm to all the ensemble members in parallel and wait for
 // a majority of them to reply successfully.
-func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, removedCandidates []model.Server) (map[model.Server]*proto.EntryId, error) {
+func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, removedCandidates []model.Server) (*fenceNewTermQuorumResult, error) {
 	fenceQuorumTimer := e.newTermQuorumLatency.Timer()
 
 	fencingDataServers := slices.Concat(ensemble, removedCandidates)
@@ -128,7 +142,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 	// Channel to receive responses or errors from each server
 	ch := make(chan struct {
 		model.Server
-		*proto.EntryId
+		*newTermResult
 		error
 	}, fencingQuorumSize)
 
@@ -143,17 +157,22 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 					"shard":       fmt.Sprintf("%d", e.shard),
 					"data-server": pinedServer.GetIdentifier(),
 				}, func() {
-					entryId, err := e.fenceNewTerm(fencingContext, term, pinedServer)
+					resp, err := e.fenceNewTerm(fencingContext, term, pinedServer)
+					var result *newTermResult
 					if err != nil {
 						e.Warn("Failed to fenceNewTerm data server", slog.Any("error", err), slog.Any("data-server", pinedServer))
 					} else {
-						e.Info("Processed fenceNewTerm response", slog.Any("data-server", pinedServer), slog.Any("entry-id", entryId))
+						result = &newTermResult{
+							entryId:  resp.HeadEntryId,
+							features: resp.FeaturesSupported,
+						}
+						e.Info("Processed fenceNewTerm response", slog.Any("data-server", pinedServer), slog.Any("entry-id", result.entryId))
 					}
 					ch <- struct {
 						model.Server
-						*proto.EntryId
+						*newTermResult
 						error
-					}{pinedServer, entryId, err}
+					}{pinedServer, result, err}
 				},
 			)
 		})
@@ -161,7 +180,8 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 	successResponses := 0
 	totalResponses := 0
 
-	res := make(map[model.Server]*proto.EntryId)
+	candidatesStatus := make(map[model.Server]*proto.EntryId)
+	nodeFeatures := make(map[string][]proto.Feature)
 	var err error
 	// Wait for a majority to respond
 	for successResponses < majority && totalResponses < fencingQuorumSize {
@@ -172,7 +192,8 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 			successResponses++
 			// We don't consider the removed data servers as candidates for leader/followers
 			if slices.Contains(ensemble, fencingResponse.Server) {
-				res[fencingResponse.Server] = fencingResponse.EntryId
+				candidatesStatus[fencingResponse.Server] = fencingResponse.newTermResult.entryId
+				nodeFeatures[fencingResponse.Server.GetIdentifier()] = fencingResponse.newTermResult.features
 			}
 		} else {
 			err = multierr.Append(err, fencingResponse.error)
@@ -188,16 +209,23 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 		case r := <-ch:
 			totalResponses++
 			if r.error == nil {
-				res[r.Server] = r.EntryId
+				candidatesStatus[r.Server] = r.newTermResult.entryId
+				nodeFeatures[r.Server.GetIdentifier()] = r.newTermResult.features
 			} else {
 				err = multierr.Append(err, r.error)
 			}
 
 		case <-time.After(quorumFencingGracePeriod):
-			return res, nil
+			return &fenceNewTermQuorumResult{
+				candidatesStatus:   candidatesStatus,
+				negotiatedFeatures: feature.Negotiate(nodeFeatures),
+			}, nil
 		}
 	}
-	return res, nil
+	return &fenceNewTermQuorumResult{
+		candidatesStatus:   candidatesStatus,
+		negotiatedFeatures: feature.Negotiate(nodeFeatures),
+	}, nil
 }
 
 func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto.EntryId) (
@@ -217,7 +245,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto
 	return leader, followers
 }
 
-func (e *ShardElection) becomeLeader(term int64, leader model.Server, followers map[model.Server]*proto.EntryId, replicationFactor uint32) error {
+func (e *ShardElection) becomeLeader(term int64, leader model.Server, followers map[model.Server]*proto.EntryId, replicationFactor uint32, negotiatedFeatures []proto.Feature) error {
 	becomeLeaderTimer := e.becomeLeaderLatency.Timer()
 
 	followersMap := make(map[string]*proto.EntryId)
@@ -230,6 +258,7 @@ func (e *ShardElection) becomeLeader(term int64, leader model.Server, followers 
 		Term:              term,
 		ReplicationFactor: replicationFactor,
 		FollowerMaps:      followersMap,
+		FeaturesSupported: negotiatedFeatures,
 	}); err != nil {
 		return err
 	}
@@ -299,8 +328,8 @@ func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int
 		Term:         term,
 		FollowerName: follower.Internal,
 		FollowerHeadEntryId: &proto.EntryId{
-			Term:   fr.Term,
-			Offset: fr.Offset,
+			Term:   fr.HeadEntryId.Term,
+			Offset: fr.HeadEntryId.Offset,
 		},
 	}); err != nil {
 		return err
@@ -309,7 +338,7 @@ func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int
 	e.Info(
 		"Successfully rejoined the quorum",
 		slog.Any("follower", follower),
-		slog.Int64("term", fr.Term),
+		slog.Int64("term", fr.HeadEntryId.Term),
 	)
 	return nil
 }
@@ -415,11 +444,11 @@ func (e *ShardElection) start() (model.Server, error) {
 	}
 
 	// Send NewTerm to all the ensemble members
-	candidatesStatus, err := e.fenceNewTermQuorum(mutShardMeta.Term, mutShardMeta.Ensemble, mutShardMeta.RemovedNodes)
+	quorumResult, err := e.fenceNewTermQuorum(mutShardMeta.Term, mutShardMeta.Ensemble, mutShardMeta.RemovedNodes)
 	if err != nil {
 		return model.Server{}, err
 	}
-	newLeader, followers := e.selectNewLeader(candidatesStatus)
+	newLeader, followers := e.selectNewLeader(quorumResult.candidatesStatus)
 	if e.Enabled(context.Background(), slog.LevelInfo) {
 		f := make([]struct {
 			ServerAddress model.Server   `json:"server-address"`
@@ -436,9 +465,10 @@ func (e *ShardElection) start() (model.Server, error) {
 			slog.Int64("term", mutShardMeta.Term),
 			slog.Any("new-leader", newLeader),
 			slog.Any("followers", f),
+			slog.Any("negotiated-features", quorumResult.negotiatedFeatures),
 		)
 	}
-	if err = e.becomeLeader(mutShardMeta.Term, newLeader, followers, uint32(len(mutShardMeta.Ensemble))); err != nil {
+	if err = e.becomeLeader(mutShardMeta.Term, newLeader, followers, uint32(len(mutShardMeta.Ensemble)), quorumResult.negotiatedFeatures); err != nil {
 		return model.Server{}, err
 	}
 	mutShardMeta.Status = model.ShardStatusSteadyState
@@ -449,7 +479,7 @@ func (e *ShardElection) start() (model.Server, error) {
 	term := mutShardMeta.Term
 	ensemble := mutShardMeta.Ensemble
 	leader := mutShardMeta.Leader
-	leaderEntry := candidatesStatus[*leader]
+	leaderEntry := quorumResult.candidatesStatus[*leader]
 
 	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
 	e.meta.Store(mutShardMeta)

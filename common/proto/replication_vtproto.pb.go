@@ -148,6 +148,11 @@ func (m *NewTermResponse) CloneVT() *NewTermResponse {
 	}
 	r := new(NewTermResponse)
 	r.HeadEntryId = m.HeadEntryId.CloneVT()
+	if rhs := m.FeaturesSupported; rhs != nil {
+		tmpContainer := make([]Feature, len(rhs))
+		copy(tmpContainer, rhs)
+		r.FeaturesSupported = tmpContainer
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -174,6 +179,11 @@ func (m *BecomeLeaderRequest) CloneVT() *BecomeLeaderRequest {
 			tmpContainer[k] = v.CloneVT()
 		}
 		r.FollowerMaps = tmpContainer
+	}
+	if rhs := m.FeaturesSupported; rhs != nil {
+		tmpContainer := make([]Feature, len(rhs))
+		copy(tmpContainer, rhs)
+		r.FeaturesSupported = tmpContainer
 	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -557,6 +567,15 @@ func (this *NewTermResponse) EqualVT(that *NewTermResponse) bool {
 	if !this.HeadEntryId.EqualVT(that.HeadEntryId) {
 		return false
 	}
+	if len(this.FeaturesSupported) != len(that.FeaturesSupported) {
+		return false
+	}
+	for i, vx := range this.FeaturesSupported {
+		vy := that.FeaturesSupported[i]
+		if vx != vy {
+			return false
+		}
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
@@ -603,6 +622,15 @@ func (this *BecomeLeaderRequest) EqualVT(that *BecomeLeaderRequest) bool {
 			if !p.EqualVT(q) {
 				return false
 			}
+		}
+	}
+	if len(this.FeaturesSupported) != len(that.FeaturesSupported) {
+		return false
+	}
+	for i, vx := range this.FeaturesSupported {
+		vy := that.FeaturesSupported[i]
+		if vx != vy {
+			return false
 		}
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1208,6 +1236,27 @@ func (m *NewTermResponse) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.FeaturesSupported) > 0 {
+		var pksize2 int
+		for _, num := range m.FeaturesSupported {
+			pksize2 += protohelpers.SizeOfVarint(uint64(num))
+		}
+		i -= pksize2
+		j1 := i
+		for _, num1 := range m.FeaturesSupported {
+			num := uint64(num1)
+			for num >= 1<<7 {
+				dAtA[j1] = uint8(uint64(num)&0x7f | 0x80)
+				num >>= 7
+				j1++
+			}
+			dAtA[j1] = uint8(num)
+			j1++
+		}
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(pksize2))
+		i--
+		dAtA[i] = 0x12
+	}
 	if m.HeadEntryId != nil {
 		size, err := m.HeadEntryId.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
@@ -1250,6 +1299,27 @@ func (m *BecomeLeaderRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.FeaturesSupported) > 0 {
+		var pksize2 int
+		for _, num := range m.FeaturesSupported {
+			pksize2 += protohelpers.SizeOfVarint(uint64(num))
+		}
+		i -= pksize2
+		j1 := i
+		for _, num1 := range m.FeaturesSupported {
+			num := uint64(num1)
+			for num >= 1<<7 {
+				dAtA[j1] = uint8(uint64(num)&0x7f | 0x80)
+				num >>= 7
+				j1++
+			}
+			dAtA[j1] = uint8(num)
+			j1++
+		}
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(pksize2))
+		i--
+		dAtA[i] = 0x32
 	}
 	if len(m.FollowerMaps) > 0 {
 		for k := range m.FollowerMaps {
@@ -1963,6 +2033,13 @@ func (m *NewTermResponse) SizeVT() (n int) {
 		l = m.HeadEntryId.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
+	if len(m.FeaturesSupported) > 0 {
+		l = 0
+		for _, e := range m.FeaturesSupported {
+			l += protohelpers.SizeOfVarint(uint64(e))
+		}
+		n += 1 + protohelpers.SizeOfVarint(uint64(l)) + l
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -1998,6 +2075,13 @@ func (m *BecomeLeaderRequest) SizeVT() (n int) {
 			mapEntrySize := 1 + len(k) + protohelpers.SizeOfVarint(uint64(len(k))) + l
 			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
 		}
+	}
+	if len(m.FeaturesSupported) > 0 {
+		l = 0
+		for _, e := range m.FeaturesSupported {
+			l += protohelpers.SizeOfVarint(uint64(e))
+		}
+		n += 1 + protohelpers.SizeOfVarint(uint64(l)) + l
 	}
 	n += len(m.unknownFields)
 	return n
@@ -2959,6 +3043,75 @@ func (m *NewTermResponse) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 2:
+			if wireType == 0 {
+				var v Feature
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protohelpers.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= Feature(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				m.FeaturesSupported = append(m.FeaturesSupported, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protohelpers.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
+				}
+				for iNdEx < postIndex {
+					var v Feature
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protohelpers.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= Feature(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.FeaturesSupported = append(m.FeaturesSupported, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field FeaturesSupported", wireType)
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -3228,6 +3381,75 @@ func (m *BecomeLeaderRequest) UnmarshalVT(dAtA []byte) error {
 			}
 			m.FollowerMaps[mapkey] = mapvalue
 			iNdEx = postIndex
+		case 6:
+			if wireType == 0 {
+				var v Feature
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protohelpers.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= Feature(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				m.FeaturesSupported = append(m.FeaturesSupported, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protohelpers.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
+				}
+				for iNdEx < postIndex {
+					var v Feature
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protohelpers.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= Feature(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.FeaturesSupported = append(m.FeaturesSupported, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field FeaturesSupported", wireType)
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -5180,6 +5402,75 @@ func (m *NewTermResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 2:
+			if wireType == 0 {
+				var v Feature
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protohelpers.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= Feature(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				m.FeaturesSupported = append(m.FeaturesSupported, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protohelpers.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
+				}
+				for iNdEx < postIndex {
+					var v Feature
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protohelpers.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= Feature(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.FeaturesSupported = append(m.FeaturesSupported, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field FeaturesSupported", wireType)
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -5457,6 +5748,75 @@ func (m *BecomeLeaderRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 			}
 			m.FollowerMaps[mapkey] = mapvalue
 			iNdEx = postIndex
+		case 6:
+			if wireType == 0 {
+				var v Feature
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protohelpers.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= Feature(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				m.FeaturesSupported = append(m.FeaturesSupported, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protohelpers.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
+				}
+				for iNdEx < postIndex {
+					var v Feature
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protohelpers.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= Feature(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.FeaturesSupported = append(m.FeaturesSupported, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field FeaturesSupported", wireType)
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

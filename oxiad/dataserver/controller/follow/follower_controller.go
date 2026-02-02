@@ -38,6 +38,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/feature"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/time"
 
@@ -323,7 +324,10 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		"Follower successfully initialized in new term",
 		slog.Any("last-entry", lastEntryId),
 	)
-	return &proto.NewTermResponse{HeadEntryId: lastEntryId}, nil
+	return &proto.NewTermResponse{
+		HeadEntryId:       lastEntryId,
+		FeaturesSupported: feature.SupportedFeatures(),
+	}, nil
 }
 
 func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error) {

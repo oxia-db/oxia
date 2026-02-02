@@ -68,6 +68,13 @@ enum KeySortingType {
   HIERARCHICAL = 2;
 }
 
+// Feature represents a capability that can be negotiated during leader election.
+// This enables safe rolling upgrades where new and old nodes can coexist.
+enum Feature {
+  FEATURE_UNKNOWN = 0;
+  FEATURE_FINGERPRINT = 1;
+}
+
 message NewTermOptions {
   bool enable_notifications = 1;
   KeySortingType key_sorting = 2;
@@ -83,6 +90,11 @@ message NewTermRequest {
 
 message NewTermResponse {
   EntryId head_entry_id = 1;
+
+  // features_supported contains the list of features supported by this node.
+  // The coordinator will compute the intersection of features supported by all
+  // quorum members and send the result to the leader.
+  repeated Feature features_supported = 2;
 }
 
 message BecomeLeaderRequest {
@@ -92,6 +104,11 @@ message BecomeLeaderRequest {
   int64 term = 3;
   uint32 replication_factor = 4;
   map<string, EntryId> follower_maps = 5;
+
+  // features_supported contains the list of features that all members of the
+  // quorum support. This enables feature negotiation during leader election
+  // to support safe rolling upgrades where new and old nodes can coexist.
+  repeated Feature features_supported = 6;
 }
 
 message AddFollowerRequest {

@@ -37,6 +37,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/feature"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
@@ -83,6 +84,11 @@ type LeaderController interface {
 	Namespace() string
 	ShardID() int64
 
+	// IsFeatureEnabled checks if a specific feature is enabled for this term.
+	// Features are negotiated during leader election based on what all quorum
+	// members support.
+	IsFeatureEnabled(feature proto.Feature) bool
+
 	CreateSession(*proto.CreateSessionRequest) (*proto.CreateSessionResponse, error)
 	KeepAlive(sessionId int64) error
 	CloseSession(*proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
@@ -98,6 +104,11 @@ type leaderController struct {
 	replicationFactor uint32
 	quorumAckTracker  QuorumAckTracker
 	followers         map[string]FollowerCursor
+
+	// negotiatedFeatures contains the features that all members of the quorum
+	// support. This is set during BecomeLeader and used to determine which
+	// features can be enabled for this term.
+	negotiatedFeatures []proto.Feature
 
 	// This represents the last entry in the WAL at the time this node
 	// became leader. It's used in the logic for deciding where to
@@ -226,6 +237,15 @@ func (lc *leaderController) Term() int64 {
 	return lc.term
 }
 
+// IsFeatureEnabled checks if a specific feature is enabled for this term.
+// Features are negotiated during leader election based on what all quorum
+// members support.
+func (lc *leaderController) IsFeatureEnabled(f proto.Feature) bool {
+	lc.RLock()
+	defer lc.RUnlock()
+	return feature.Contains(lc.negotiatedFeatures, f)
+}
+
 // NewTerm
 //
 // # Node handles a new term request
@@ -310,7 +330,8 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	)
 
 	return &proto.NewTermResponse{
-		HeadEntryId: headEntryId,
+		HeadEntryId:       headEntryId,
+		FeaturesSupported: feature.SupportedFeatures(),
 	}, nil
 }
 
@@ -357,6 +378,7 @@ func (lc *leaderController) BecomeLeader(ctx context.Context, req *proto.BecomeL
 
 	lc.replicationFactor = req.GetReplicationFactor()
 	lc.followers = make(map[string]FollowerCursor)
+	lc.negotiatedFeatures = req.GetFeaturesSupported()
 
 	var err error
 	lc.leaderElectionHeadEntryId, err = getLastEntryIdInWal(lc.wal)
@@ -394,6 +416,7 @@ func (lc *leaderController) BecomeLeader(ctx context.Context, req *proto.BecomeL
 		"Started leading the shard",
 		slog.Int64("term", lc.term),
 		slog.Int64("head-offset", lc.leaderElectionHeadEntryId.Offset),
+		slog.Any("negotiated-features", lc.negotiatedFeatures),
 	)
 
 	lc.status = proto.ServingStatus_LEADER
