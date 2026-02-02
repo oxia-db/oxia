@@ -20,16 +20,16 @@ import (
 )
 
 const (
-	// ISO polynomial for CRC64 - commonly used for data integrity
+	// ISO polynomial for CRC64 - commonly used for data integrity.
 	crc64Polynomial = 0xD800000000000000
 )
 
 var crc64Table = crc64.MakeTable(crc64Polynomial)
 
-// DBFingerprint represents a cumulative CRC64 checksum for database state
+// DBFingerprint represents a cumulative CRC64 checksum for database state.
 type DBFingerprint uint64
 
-// NewDBFingerprint creates a new DB fingerprint from data and previous fingerprint
+// NewDBFingerprint creates a new DB fingerprint from data and previous fingerprint.
 func NewDBFingerprint(prev DBFingerprint, data []byte) DBFingerprint {
 	// XOR the previous fingerprint with the new data CRC as per proposal
 	prevCRC := uint64(prev)
@@ -41,14 +41,14 @@ func NewDBFingerprint(prev DBFingerprint, data []byte) DBFingerprint {
 	return DBFingerprint(result)
 }
 
-// Bytes returns the 8-byte representation of the fingerprint
+// Bytes returns the 8-byte representation of the fingerprint.
 func (f DBFingerprint) Bytes() []byte {
 	b := make([]byte, 8)
 	binary.LittleEndian.PutUint64(b, uint64(f))
 	return b
 }
 
-// DBFingerprintFromBytes creates a DB fingerprint from bytes
+// DBFingerprintFromBytes creates a DB fingerprint from bytes.
 func DBFingerprintFromBytes(b []byte) DBFingerprint {
 	if len(b) < 8 {
 		return 0
@@ -56,7 +56,7 @@ func DBFingerprintFromBytes(b []byte) DBFingerprint {
 	return DBFingerprint(binary.LittleEndian.Uint64(b))
 }
 
-// Uint64 returns the uint64 value of the fingerprint
+// Uint64 returns the uint64 value of the fingerprint.
 func (f DBFingerprint) Uint64() uint64 {
 	return uint64(f)
 }

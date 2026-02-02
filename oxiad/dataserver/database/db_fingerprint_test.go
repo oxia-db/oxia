@@ -15,7 +15,7 @@
 package database
 
 import (
-	"fmt"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +27,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 )
 
-// Helper function to access private methods for testing
+// Helper function to access private methods for testing.
 func getDbFingerprint(database DB) (current uint64, stored uint64, err error) {
 	// Access the internal db struct through unsafe type assertion for testing
 	if dbImpl, ok := database.(*db); ok {
@@ -35,7 +35,7 @@ func getDbFingerprint(database DB) (current uint64, stored uint64, err error) {
 		stored, err := dbImpl.readDbFingerprint()
 		return current, stored, err
 	}
-	return 0, 0, fmt.Errorf("unexpected db type")
+	return 0, 0, errors.New("unexpected db type")
 }
 
 func TestDB_FingerprintConsistency(t *testing.T) {

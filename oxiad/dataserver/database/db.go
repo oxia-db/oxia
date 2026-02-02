@@ -226,7 +226,7 @@ func (d *db) Delete() error {
 	)
 }
 
-// readDbFingerprint reads the current DB fingerprint from storage
+// readDbFingerprint reads the current DB fingerprint from storage.
 func (d *db) readDbFingerprint() (uint64, error) {
 	_, value, closer, err := d.kv.Get(dbFingerprintKey, kvstore.ComparisonEqual, kvstore.IteratorOpts{})
 	if err != nil {
@@ -245,19 +245,19 @@ func (d *db) readDbFingerprint() (uint64, error) {
 	return uint64(fp), nil
 }
 
-// writeDbFingerprint writes the DB fingerprint to storage
-func (d *db) writeDbFingerprint(batch kvstore.WriteBatch, fingerprint uint64) error {
+// writeDbFingerprint writes the DB fingerprint to storage.
+func (*db) writeDbFingerprint(batch kvstore.WriteBatch, fingerprint uint64) error {
 	fpBytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(fpBytes, fingerprint)
 	return batch.Put(dbFingerprintKey, fpBytes)
 }
 
-// getCurrentDbFingerprint returns the current database fingerprint
+// getCurrentDbFingerprint returns the current database fingerprint.
 func (d *db) getCurrentDbFingerprint() uint64 {
 	return d.currentDbFingerprint.Load()
 }
 
-// updateDbFingerprint atomically updates the current database fingerprint
+// updateDbFingerprint atomically updates the current database fingerprint.
 func (d *db) updateDbFingerprint(newFingerprint uint64) {
 	d.currentDbFingerprint.Store(newFingerprint)
 }
