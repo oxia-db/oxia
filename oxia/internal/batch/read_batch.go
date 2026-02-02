@@ -32,34 +32,37 @@ import (
 )
 
 type readBatchFactory struct {
-	namespace      string
-	execute        func(context.Context, *proto.ReadRequest) (proto.OxiaClient_ReadClient, error)
-	metrics        *metrics.Metrics
-	requestTimeout time.Duration
+	namespace       string
+	execute         func(context.Context, *proto.ReadRequest) (proto.OxiaClient_ReadClient, error)
+	metrics         *metrics.Metrics
+	requestTimeout  time.Duration
+	redirectHandler RedirectHandler
 }
 
 func (b readBatchFactory) newBatch(shardId *int64) batch.Batch {
 	return &readBatch{
-		namespace:      b.namespace,
-		shardId:        shardId,
-		execute:        b.execute,
-		gets:           make([]model.GetCall, 0),
-		start:          time.Now(),
-		metrics:        b.metrics,
-		callback:       b.metrics.ReadCallback(),
-		requestTimeout: b.requestTimeout,
+		namespace:       b.namespace,
+		shardId:         shardId,
+		execute:         b.execute,
+		gets:            make([]model.GetCall, 0),
+		start:           time.Now(),
+		metrics:         b.metrics,
+		callback:        b.metrics.ReadCallback(),
+		requestTimeout:  b.requestTimeout,
+		redirectHandler: b.redirectHandler,
 	}
 }
 
 type readBatch struct {
-	namespace      string
-	shardId        *int64
-	execute        func(context.Context, *proto.ReadRequest) (proto.OxiaClient_ReadClient, error)
-	gets           []model.GetCall
-	start          time.Time
-	requestTimeout time.Duration
-	metrics        *metrics.Metrics
-	callback       func(time.Time, *proto.ReadRequest, *proto.ReadResponse, error)
+	namespace       string
+	shardId         *int64
+	execute         func(context.Context, *proto.ReadRequest) (proto.OxiaClient_ReadClient, error)
+	gets            []model.GetCall
+	start           time.Time
+	requestTimeout  time.Duration
+	metrics         *metrics.Metrics
+	callback        func(time.Time, *proto.ReadRequest, *proto.ReadResponse, error)
+	redirectHandler RedirectHandler
 }
 
 func (*readBatch) CanAdd(_ any) bool {
@@ -102,6 +105,8 @@ func (b *readBatch) doRequestWithRetries(request *proto.ReadRequest) (response *
 		if !isRetriable(err) {
 			return backoff.Permanent(err)
 		}
+		// Handle redirect - update shard manager with new leader if available
+		handleRedirect(err, b.redirectHandler)
 		return err
 	}, backOff, func(err error, duration time.Duration) {
 		slog.Debug(

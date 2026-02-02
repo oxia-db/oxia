@@ -47,6 +47,9 @@ type ShardAssignmentsDispatcher interface {
 	Initialized() bool
 	PushShardAssignments(stream proto.OxiaCoordination_PushShardAssignmentsServer) error
 	RegisterForUpdates(req *proto.ShardAssignmentsRequest, client Client) error
+	// GetLeaderAddress returns the leader address for a given shard if known.
+	// Returns empty string if the shard is not found or leader is unknown.
+	GetLeaderAddress(shardId int64) string
 }
 
 type shardAssignmentDispatcher struct {
@@ -200,6 +203,25 @@ func (s *shardAssignmentDispatcher) Initialized() bool {
 	s.Lock()
 	defer s.Unlock()
 	return s.assignments != nil
+}
+
+func (s *shardAssignmentDispatcher) GetLeaderAddress(shardId int64) string {
+	s.Lock()
+	defer s.Unlock()
+
+	if s.assignments == nil {
+		return ""
+	}
+
+	// Search through all namespaces for the shard
+	for _, nsa := range s.assignments.Namespaces {
+		for _, assignment := range nsa.Assignments {
+			if assignment.Shard == shardId {
+				return assignment.Leader
+			}
+		}
+	}
+	return ""
 }
 
 func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordination_PushShardAssignmentsServer) error {

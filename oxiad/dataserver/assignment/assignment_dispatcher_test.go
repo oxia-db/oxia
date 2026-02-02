@@ -328,3 +328,105 @@ func newShardAssignment(id int64, leader string, minHashInclusive uint32, maxHas
 		},
 	}
 }
+
+func TestShardAssignmentDispatcher_GetLeaderAddress(t *testing.T) {
+	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
+
+	// Before initialization, should return empty string
+	assert.Equal(t, "", dispatcher.GetLeaderAddress(0))
+	assert.Equal(t, "", dispatcher.GetLeaderAddress(1))
+
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
+	go func() {
+		err := dispatcher.PushShardAssignments(coordinatorStream)
+		assert.NoError(t, err)
+	}()
+
+	// Push initial assignments
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{
+					newShardAssignment(0, "server1:6650", 0, 100),
+					newShardAssignment(1, "server2:6650", 100, math.MaxUint32),
+				},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+	})
+
+	// Wait for initialization
+	assert.Eventually(t, func() bool {
+		return dispatcher.Initialized()
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Test GetLeaderAddress for known shards
+	assert.Equal(t, "server1:6650", dispatcher.GetLeaderAddress(0))
+	assert.Equal(t, "server2:6650", dispatcher.GetLeaderAddress(1))
+
+	// Test GetLeaderAddress for unknown shard
+	assert.Equal(t, "", dispatcher.GetLeaderAddress(99))
+
+	// Push updated assignments with new leader
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{
+					newShardAssignment(0, "server3:6650", 0, 100),
+					newShardAssignment(1, "server2:6650", 100, math.MaxUint32),
+				},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+	})
+
+	// Wait for update to be processed
+	assert.Eventually(t, func() bool {
+		return dispatcher.GetLeaderAddress(0) == "server3:6650"
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Verify updated leader
+	assert.Equal(t, "server3:6650", dispatcher.GetLeaderAddress(0))
+	assert.Equal(t, "server2:6650", dispatcher.GetLeaderAddress(1))
+
+	assert.NoError(t, dispatcher.Close())
+}
+
+func TestShardAssignmentDispatcher_GetLeaderAddressMultipleNamespaces(t *testing.T) {
+	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
+
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
+	go func() {
+		err := dispatcher.PushShardAssignments(coordinatorStream)
+		assert.NoError(t, err)
+	}()
+
+	// Push assignments with multiple namespaces
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			"default": {
+				Assignments: []*proto.ShardAssignment{
+					newShardAssignment(0, "default-leader:6650", 0, math.MaxUint32),
+				},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+			"other-ns": {
+				Assignments: []*proto.ShardAssignment{
+					newShardAssignment(1, "other-leader:6650", 0, math.MaxUint32),
+				},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+	})
+
+	// Wait for initialization
+	assert.Eventually(t, func() bool {
+		return dispatcher.Initialized()
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Should find leaders from all namespaces
+	assert.Equal(t, "default-leader:6650", dispatcher.GetLeaderAddress(0))
+	assert.Equal(t, "other-leader:6650", dispatcher.GetLeaderAddress(1))
+
+	assert.NoError(t, dispatcher.Close())
+}

@@ -33,41 +33,44 @@ import (
 var ErrRequestTooLarge = errors.New("put request is too large")
 
 type writeBatchFactory struct {
-	namespace      string
-	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
-	metrics        *metrics.Metrics
-	requestTimeout time.Duration
-	maxByteSize    int
+	namespace       string
+	execute         func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
+	metrics         *metrics.Metrics
+	requestTimeout  time.Duration
+	maxByteSize     int
+	redirectHandler RedirectHandler
 }
 
 func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 	return &writeBatch{
-		namespace:      b.namespace,
-		shardId:        shardId,
-		execute:        b.execute,
-		puts:           make([]model.PutCall, 0),
-		deletes:        make([]model.DeleteCall, 0),
-		deleteRanges:   make([]model.DeleteRangeCall, 0),
-		requestTimeout: b.requestTimeout,
-		metrics:        b.metrics,
-		callback:       b.metrics.WriteCallback(),
-		maxByteSize:    b.maxByteSize,
-		byteSize:       0,
+		namespace:       b.namespace,
+		shardId:         shardId,
+		execute:         b.execute,
+		puts:            make([]model.PutCall, 0),
+		deletes:         make([]model.DeleteCall, 0),
+		deleteRanges:    make([]model.DeleteRangeCall, 0),
+		requestTimeout:  b.requestTimeout,
+		metrics:         b.metrics,
+		callback:        b.metrics.WriteCallback(),
+		maxByteSize:     b.maxByteSize,
+		byteSize:        0,
+		redirectHandler: b.redirectHandler,
 	}
 }
 
 type writeBatch struct {
-	namespace      string
-	shardId        *int64
-	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
-	puts           []model.PutCall
-	deletes        []model.DeleteCall
-	deleteRanges   []model.DeleteRangeCall
-	metrics        *metrics.Metrics
-	requestTimeout time.Duration
-	callback       func(time.Time, *proto.WriteRequest, *proto.WriteResponse, error)
-	maxByteSize    int
-	byteSize       int
+	namespace       string
+	shardId         *int64
+	execute         func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
+	puts            []model.PutCall
+	deletes         []model.DeleteCall
+	deleteRanges    []model.DeleteRangeCall
+	metrics         *metrics.Metrics
+	requestTimeout  time.Duration
+	callback        func(time.Time, *proto.WriteRequest, *proto.WriteResponse, error)
+	maxByteSize     int
+	byteSize        int
+	redirectHandler RedirectHandler
 }
 
 func (b *writeBatch) CanAdd(call any) bool {
@@ -122,6 +125,8 @@ func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response
 		if !isRetriable(err) {
 			return backoff.Permanent(err)
 		}
+		// Handle redirect - update shard manager with new leader if available
+		handleRedirect(err, b.redirectHandler)
 		return err
 	}, backOff, func(err error, duration time.Duration) {
 		slog.Debug(

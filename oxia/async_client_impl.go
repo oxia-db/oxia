@@ -82,7 +82,8 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		options.batchLinger,
 		options.maxRequestsPerBatch,
 		metrics.NewMetrics(options.meterProvider),
-		options.requestTimeout)
+		options.requestTimeout,
+		shardManager.UpdateLeader)
 	c := &clientImpl{
 		options:      options,
 		clientPool:   clientPool,

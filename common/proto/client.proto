@@ -515,3 +515,16 @@ message Notification {
 
   optional string key_range_last = 3;
 }
+
+/**
+ * ServerRedirect is used as error details when the server receiving
+ * the request is not the leader for the requested shard. The client
+ * can use the leader address to retry the request directly to the
+ * correct server.
+ */
+message ServerRedirect {
+  // The shard id for which this redirect applies
+  int64 shard = 1;
+  // The address of the current leader for this shard (e.g. "host:port")
+  string leader_address = 2;
+}

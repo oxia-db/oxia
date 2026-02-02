@@ -40,6 +40,10 @@ type ShardManager interface {
 	Get(key string) int64
 	GetAll() []int64
 	Leader(shardId int64) string
+	// UpdateLeader updates the leader address for a specific shard.
+	// This is typically called when receiving a redirect response from a server
+	// that indicates a different leader for the shard.
+	UpdateLeader(shardId int64, leaderAddress string)
 }
 
 type shardManagerImpl struct {
@@ -137,6 +141,28 @@ func (s *shardManagerImpl) Leader(shardId int64) string {
 		return shard.Leader
 	}
 	panic("shard not found")
+}
+
+func (s *shardManagerImpl) UpdateLeader(shardId int64, leaderAddress string) {
+	if leaderAddress == "" {
+		return
+	}
+
+	s.Lock()
+	defer s.Unlock()
+
+	if shard, ok := s.shards[shardId]; ok {
+		if shard.Leader != leaderAddress {
+			s.logger.Debug(
+				"Updating leader from redirect",
+				slog.Int64("shard", shardId),
+				slog.String("old-leader", shard.Leader),
+				slog.String("new-leader", leaderAddress),
+			)
+			shard.Leader = leaderAddress
+			s.shards[shardId] = shard
+		}
+	}
 }
 
 func (s *shardManagerImpl) isClosed() bool {

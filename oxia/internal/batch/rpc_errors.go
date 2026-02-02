@@ -35,3 +35,19 @@ func isRetriable(err error) bool {
 		return false
 	}
 }
+
+// RedirectHandler is a callback function that is called when a redirect response
+// is received from the server. It receives the shard ID and the new leader address.
+type RedirectHandler func(shardId int64, leaderAddress string)
+
+// handleRedirect extracts redirect information from an error and calls the handler
+// if a redirect is detected with a non-empty leader address.
+func handleRedirect(err error, handler RedirectHandler) {
+	if handler == nil {
+		return
+	}
+	redirect := constant.ExtractServerRedirect(err)
+	if redirect != nil && redirect.LeaderAddress != "" {
+		handler(redirect.Shard, redirect.LeaderAddress)
+	}
+}

@@ -474,12 +474,15 @@ func (s *publicRpcServer) getLeader(shardId *int64) (lead.LeaderController, erro
 	}
 	lc, err := s.shardsDirector.GetLeader(*shardId)
 	if err != nil {
-		if status.Code(err) != constant.CodeNodeIsNotLeader {
-			s.log.Warn(
-				"Failed to get the leader controller",
-				slog.Any("error", err),
-			)
+		if status.Code(err) == constant.CodeNodeIsNotLeader {
+			// Try to get the leader address from assignments to include in redirect
+			leaderAddress := s.assignmentDispatcher.GetLeaderAddress(*shardId)
+			return nil, constant.NewNotLeaderError(*shardId, leaderAddress)
 		}
+		s.log.Warn(
+			"Failed to get the leader controller",
+			slog.Any("error", err),
+		)
 		return nil, err
 	}
 	return lc, nil

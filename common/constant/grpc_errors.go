@@ -15,8 +15,12 @@
 package constant
 
 import (
+	"fmt"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const (
@@ -46,3 +50,38 @@ var (
 	ErrNamespaceNotFound       = status.Error(CodeNamespaceNotFound, "oxia: namespace not found")
 	ErrNotificationsNotEnabled = status.Error(CodeNotificationsNotEnabled, "oxia: notifications not enabled on namespace")
 )
+
+// NewNotLeaderError creates a gRPC error with CodeNodeIsNotLeader and embeds
+// the leader address in the error details so clients can retry directly to the
+// correct leader.
+func NewNotLeaderError(shardId int64, leaderAddress string) error {
+	st := status.New(CodeNodeIsNotLeader, fmt.Sprintf("node is not leader for shard %d", shardId))
+	if leaderAddress != "" {
+		redirect := &proto.ServerRedirect{
+			Shard:         shardId,
+			LeaderAddress: leaderAddress,
+		}
+		stWithDetails, err := st.WithDetails(redirect)
+		if err != nil {
+			// If we fail to add details, return the original error
+			return st.Err()
+		}
+		return stWithDetails.Err()
+	}
+	return st.Err()
+}
+
+// ExtractServerRedirect extracts the ServerRedirect details from a gRPC error
+// if present. Returns nil if the error doesn't contain redirect info.
+func ExtractServerRedirect(err error) *proto.ServerRedirect {
+	st := status.Convert(err)
+	if st == nil {
+		return nil
+	}
+	for _, detail := range st.Details() {
+		if redirect, ok := detail.(*proto.ServerRedirect); ok {
+			return redirect
+		}
+	}
+	return nil
+}

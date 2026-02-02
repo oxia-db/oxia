@@ -25,10 +25,11 @@ import (
 
 type BatcherFactory struct {
 	batch2.BatcherFactory
-	Namespace      string
-	Executor       internal.Executor
-	RequestTimeout time.Duration
-	Metrics        *metrics.Metrics
+	Namespace       string
+	Executor        internal.Executor
+	RequestTimeout  time.Duration
+	Metrics         *metrics.Metrics
+	RedirectHandler RedirectHandler
 }
 
 func NewBatcherFactory(
@@ -37,7 +38,8 @@ func NewBatcherFactory(
 	batchLinger time.Duration,
 	maxRequestsPerBatch int,
 	metric *metrics.Metrics,
-	requestTimeout time.Duration) *BatcherFactory {
+	requestTimeout time.Duration,
+	redirectHandler RedirectHandler) *BatcherFactory {
 	return &BatcherFactory{
 		Namespace: namespace,
 		Executor:  executor,
@@ -45,25 +47,28 @@ func NewBatcherFactory(
 			Linger:              batchLinger,
 			MaxRequestsPerBatch: maxRequestsPerBatch,
 		},
-		Metrics:        metric,
-		RequestTimeout: requestTimeout,
+		Metrics:         metric,
+		RequestTimeout:  requestTimeout,
+		RedirectHandler: redirectHandler,
 	}
 }
 
 func (b *BatcherFactory) NewWriteBatcher(ctx context.Context, shardId *int64, maxWriteBatchSize int) batch2.Batcher {
 	return b.newBatcher(ctx, shardId, "write", writeBatchFactory{
-		execute:        b.Executor.ExecuteWrite,
-		metrics:        b.Metrics,
-		requestTimeout: b.RequestTimeout,
-		maxByteSize:    maxWriteBatchSize,
+		execute:         b.Executor.ExecuteWrite,
+		metrics:         b.Metrics,
+		requestTimeout:  b.RequestTimeout,
+		maxByteSize:     maxWriteBatchSize,
+		redirectHandler: b.RedirectHandler,
 	}.newBatch)
 }
 
 func (b *BatcherFactory) NewReadBatcher(ctx context.Context, shardId *int64) batch2.Batcher {
 	return b.newBatcher(ctx, shardId, "read", readBatchFactory{
-		execute:        b.Executor.ExecuteRead,
-		metrics:        b.Metrics,
-		requestTimeout: b.RequestTimeout,
+		execute:         b.Executor.ExecuteRead,
+		metrics:         b.Metrics,
+		requestTimeout:  b.RequestTimeout,
+		redirectHandler: b.RedirectHandler,
 	}.newBatch)
 }
 
