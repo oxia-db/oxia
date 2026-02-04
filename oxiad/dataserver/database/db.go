@@ -451,21 +451,21 @@ func (d *db) KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error) 
 }
 
 func (d *db) ReadCommitOffset() (int64, error) {
-	return d.readASCIILong(commitOffsetKey)
+	return d.readASCIILongOrDefault(commitOffsetKey, constant.I64NegativeOne)
 }
 
 func (d *db) readLastVersionId() (int64, error) {
-	return d.readASCIILong(commitLastVersionIdKey)
+	return d.readASCIILongOrDefault(commitLastVersionIdKey, constant.I64NegativeOne)
 }
 func (d *db) readLastChecksum() (crc.Checksum, error) {
-	cs, err := d.readASCIILong(commitChecksumKey)
+	cs, err := d.readASCIILongOrDefault(commitChecksumKey, constant.I64Zero)
 	if err != nil {
 		return 0, err
 	}
 	return crc.Checksum(uint32(cs)), nil
 }
 
-func (d *db) readASCIILong(key string) (int64, error) {
+func (d *db) readASCIILongOrDefault(key string, defaultValue int64) (int64, error) {
 	kv := d.kv
 
 	getReq := &proto.GetRequest{
@@ -474,15 +474,15 @@ func (d *db) readASCIILong(key string) (int64, error) {
 	}
 	gr, err := applyGet(kv, getReq)
 	if err != nil {
-		return wal.InvalidOffset, err
+		return 0, err
 	}
 	if gr.Status == proto.Status_KEY_NOT_FOUND {
-		return wal.InvalidOffset, nil
+		return defaultValue, nil
 	}
 
 	var res int64
 	if _, err = fmt.Sscanf(string(gr.Value), "%d", &res); err != nil {
-		return wal.InvalidOffset, err
+		return 0, err
 	}
 	return res, nil
 }

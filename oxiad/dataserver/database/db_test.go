@@ -1159,7 +1159,7 @@ func TestDB_ChecksumPersistence(t *testing.T) {
 	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
 
-	// When no checksum is stored, readASCIILong returns -1 (wal.InvalidOffset),
+	// When no checksum is stored, readASCIILongOrDefault returns -1 (wal.InvalidOffset),
 	// which becomes 0xffffffff when converted to uint32
 	initialChecksum := testDB.(*db).committedChecksum.Load()
 	assert.NotNil(t, initialChecksum)
