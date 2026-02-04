@@ -120,7 +120,7 @@ func TestShardController(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -203,7 +203,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 		Term:     1,
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, shard)
 	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
@@ -240,7 +240,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	timeStart := time.Now()
 
@@ -293,7 +293,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// s3 is failing, though we can still elect a leader
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -354,7 +354,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 		Term:     4,
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, 5)
 	n1.GetStatusResponse(4, proto.ServingStatus_LEADER, 0, 0)
@@ -405,7 +405,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -445,7 +445,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -539,7 +539,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, 1*time.Second)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -653,7 +653,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, 1*time.Second)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)

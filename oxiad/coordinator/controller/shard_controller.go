@@ -69,6 +69,10 @@ type ShardController interface {
 
 type DataServerSupportedFeaturesSupplier = func(dataServers []model.Server) map[string][]proto.Feature
 
+func NoOpSupportedFeaturesSupplier([]model.Server) map[string][]proto.Feature {
+	return map[string][]proto.Feature{}
+}
+
 type shardController struct {
 	namespace       string
 	shard           int64

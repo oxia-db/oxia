@@ -28,6 +28,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/feature"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/common/concurrent"
@@ -314,6 +316,11 @@ func (r *mockRpcProvider) FailNode(node model.Server, err error) {
 
 	n := r.getNode(node)
 	n.err = err
+}
+func (r *mockRpcProvider) GetInfo(context.Context, model.Server, *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+	return &proto.GetInfoResponse{
+		FeaturesSupported: feature.SupportedFeatures(),
+	}, nil
 }
 
 func (r *mockRpcProvider) RecoverNode(node model.Server) {

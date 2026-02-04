@@ -24,6 +24,7 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
@@ -40,8 +41,6 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
-	"github.com/oxia-db/oxia/oxiad/common/feature"
-
 	"github.com/oxia-db/oxia/oxiad/common/entity"
 
 	"github.com/oxia-db/oxia/common/channel"
@@ -243,7 +242,7 @@ func (lc *leaderController) Term() int64 {
 func (lc *leaderController) IsFeatureEnabled(f proto.Feature) bool {
 	lc.RLock()
 	defer lc.RUnlock()
-	return feature.Contains(lc.negotiatedFeatures, f)
+	return slices.Contains(lc.negotiatedFeatures, f)
 }
 
 // NewTerm
