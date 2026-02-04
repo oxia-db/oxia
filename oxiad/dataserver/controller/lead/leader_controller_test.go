@@ -1492,3 +1492,78 @@ func newTestWalFactory(t *testing.T) wal.Factory {
 		SegmentSize: 128 * 1024,
 	})
 }
+
+func TestLeaderController_IsFeatureEnabled(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// Before becoming leader, no features should be enabled
+	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_FINGERPRINT))
+
+	// Fence first
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  1,
+	})
+	assert.NoError(t, err)
+
+	// Become leader with FINGERPRINT feature
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+		FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_FINGERPRINT},
+	})
+	assert.NoError(t, err)
+
+	// Now FINGERPRINT should be enabled
+	assert.True(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_FINGERPRINT))
+	// Unknown feature should not be enabled
+	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_UNKNOWN))
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestLeaderController_IsFeatureEnabled_NoFeatures(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// Fence first
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  1,
+	})
+	assert.NoError(t, err)
+
+	// Become leader without any features (simulating old coordinator)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+		FeaturesSupported: nil,
+	})
+	assert.NoError(t, err)
+
+	// No features should be enabled
+	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_FINGERPRINT))
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
