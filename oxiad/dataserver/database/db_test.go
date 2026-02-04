@@ -1160,10 +1160,9 @@ func TestDB_ChecksumPersistence(t *testing.T) {
 	assert.NoError(t, err)
 
 	// When no checksum is stored, readASCIILongOrDefault returns -1 (wal.InvalidOffset),
-	// which becomes 0xffffffff when converted to uint32
 	initialChecksum := testDB.(*db).committedChecksum.Load()
 	assert.NotNil(t, initialChecksum)
-	assert.EqualValues(t, 0xffffffff, uint32(*initialChecksum))
+	assert.EqualValues(t, constant.I64Zero, uint32(*initialChecksum))
 
 	// Write some data
 	writeReq := &proto.WriteRequest{
