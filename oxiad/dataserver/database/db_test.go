@@ -1153,6 +1153,123 @@ func TestDB_OverrideVersionId(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDB_ChecksumPersistence(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	// When no checksum is stored, readASCIILong returns -1 (wal.InvalidOffset),
+	// which becomes 0xffffffff when converted to uint32
+	initialChecksum := testDB.(*db).committedChecksum.Load()
+	assert.NotNil(t, initialChecksum)
+	assert.EqualValues(t, 0xffffffff, uint32(*initialChecksum))
+
+	// Write some data
+	writeReq := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{{
+			Key:   "a",
+			Value: []byte("value-a"),
+		}},
+	}
+	_, err = testDB.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	// Checksum should have changed
+	checksum1 := testDB.(*db).committedChecksum.Load()
+	assert.NotNil(t, checksum1)
+	assert.NotEqual(t, *initialChecksum, *checksum1)
+
+	// Close and reopen the database
+	assert.NoError(t, testDB.Close())
+
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	// Checksum should be restored
+	restoredChecksum := testDB.(*db).committedChecksum.Load()
+	assert.NotNil(t, restoredChecksum)
+	assert.Equal(t, *checksum1, *restoredChecksum)
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_ChecksumUpdatesOnWrite(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	checksums := make([]uint32, 0)
+	checksums = append(checksums, uint32(*testDB.(*db).committedChecksum.Load()))
+
+	// Perform multiple writes and track checksums
+	for i := 0; i < 5; i++ {
+		writeReq := &proto.WriteRequest{
+			Puts: []*proto.PutRequest{{
+				Key:   fmt.Sprintf("key-%d", i),
+				Value: []byte(fmt.Sprintf("value-%d", i)),
+			}},
+		}
+		_, err = testDB.ProcessWrite(writeReq, int64(i), 0, NoOpCallback)
+		assert.NoError(t, err)
+
+		cs := testDB.(*db).committedChecksum.Load()
+		checksums = append(checksums, uint32(*cs))
+	}
+
+	// All checksums should be different
+	for i := 0; i < len(checksums); i++ {
+		for j := i + 1; j < len(checksums); j++ {
+			assert.NotEqual(t, checksums[i], checksums[j],
+				"checksum at index %d should differ from checksum at index %d", i, j)
+		}
+	}
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_ChecksumDeterministic(t *testing.T) {
+	// Create two databases and perform the same operations
+	// They should end up with the same checksum
+
+	factory1, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db1, err := NewDB(constant.DefaultNamespace, 1, factory1, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	factory2, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db2, err := NewDB(constant.DefaultNamespace, 1, factory2, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	// Perform same writes on both databases
+	writeReq := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{Key: "a", Value: []byte("1")},
+			{Key: "b", Value: []byte("2")},
+			{Key: "c", Value: []byte("3")},
+		},
+	}
+
+	_, err = db1.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	_, err = db2.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	cs1 := db1.(*db).committedChecksum.Load()
+	cs2 := db2.(*db).committedChecksum.Load()
+
+	assert.Equal(t, *cs1, *cs2, "same operations should produce same checksum")
+
+	assert.NoError(t, db1.Close())
+	assert.NoError(t, db2.Close())
+	assert.NoError(t, factory1.Close())
+	assert.NoError(t, factory2.Close())
+}
+
 func TestDB_ShowInternalKeys(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)

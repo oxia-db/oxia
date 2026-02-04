@@ -24,11 +24,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/common/proto"
-
 	"github.com/oxia-db/oxia/common/compare"
-
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 )
 
 func TestPebbbleSimple(t *testing.T) {
@@ -1074,6 +1073,90 @@ func TestPebbleHierarchicalScanStop(t *testing.T) {
 
 	it, _ = kv.KeyRangeScan("/b/", "/b//", NoInternalKeys)
 	assert.Equal(t, []string{"/b/c"}, toList(it))
+
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestPebbleBatchChecksum(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	assert.NoError(t, err)
+
+	// Test that checksum is computed from batch content
+	wb1 := kv.NewWriteBatch()
+	assert.NoError(t, wb1.Put("key1", []byte("value1")))
+
+	wb2 := kv.NewWriteBatch()
+	assert.NoError(t, wb2.Put("key1", []byte("value1")))
+
+	// Same content should produce same checksum
+	cs1 := wb1.Checksum(crc.Checksum(0))
+	cs2 := wb2.Checksum(crc.Checksum(0))
+	assert.Equal(t, cs1, cs2, "identical batches should produce same checksum")
+
+	// Different content should produce different checksum
+	wb3 := kv.NewWriteBatch()
+	assert.NoError(t, wb3.Put("key1", []byte("value2")))
+
+	cs3 := wb3.Checksum(crc.Checksum(0))
+	assert.NotEqual(t, cs1, cs3, "different content should produce different checksum")
+
+	// Additional operations should change checksum
+	assert.NoError(t, wb1.Put("key2", []byte("value2")))
+	cs4 := wb1.Checksum(crc.Checksum(0))
+	assert.NotEqual(t, cs1, cs4, "additional operations should change checksum")
+
+	// Test that initial checksum affects result
+	cs5 := wb2.Checksum(crc.Checksum(100))
+	assert.NotEqual(t, cs2, cs5, "different initial checksum should produce different result")
+
+	assert.NoError(t, wb1.Close())
+	assert.NoError(t, wb2.Close())
+	assert.NoError(t, wb3.Close())
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestPebbleBatchChecksumChaining(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	assert.NoError(t, err)
+
+	// Simulate chaining checksums across batches (like the database fingerprint feature)
+	var runningChecksum crc.Checksum = 0
+
+	wb1 := kv.NewWriteBatch()
+	assert.NoError(t, wb1.Put("a", []byte("1")))
+	cs1 := wb1.Checksum(runningChecksum)
+	runningChecksum = cs1
+	assert.NoError(t, wb1.Commit())
+	assert.NoError(t, wb1.Close())
+
+	wb2 := kv.NewWriteBatch()
+	assert.NoError(t, wb2.Put("b", []byte("2")))
+	cs2 := wb2.Checksum(runningChecksum)
+	runningChecksum = cs2
+	assert.NoError(t, wb2.Commit())
+	assert.NoError(t, wb2.Close())
+
+	// Repeat the same sequence and verify we get the same final checksum
+	var runningChecksum2 crc.Checksum = 0
+
+	wb3 := kv.NewWriteBatch()
+	assert.NoError(t, wb3.Put("a", []byte("1")))
+	cs3 := wb3.Checksum(runningChecksum2)
+	runningChecksum2 = cs3
+	assert.NoError(t, wb3.Close())
+
+	wb4 := kv.NewWriteBatch()
+	assert.NoError(t, wb4.Put("b", []byte("2")))
+	cs4 := wb4.Checksum(runningChecksum2)
+	assert.NoError(t, wb4.Close())
+
+	assert.Equal(t, cs2, cs4, "same sequence of operations should produce same final checksum")
 
 	assert.NoError(t, kv.Close())
 	assert.NoError(t, factory.Close())
