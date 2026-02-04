@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxia"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -82,4 +83,32 @@ func TestWriteClientClose(t *testing.T) {
 	t.Logf("resp %v err %v", resp, err)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestPutThenDeleteThenPut(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(1*time.Second), oxia.WithMaxRequestsPerBatch(1000))
+	assert.NoError(t, err)
+
+	defer client.Close()
+
+	putResult := client.Put("test-key", []byte("test-value"))
+	deleteResult := client.Delete("test-key")
+	putResult2 := client.Put("test-key", []byte("test-value2"))
+
+	r1 := <-putResult
+	r2 := <-deleteResult
+	r3 := <-putResult2
+
+	assert.NoError(t, r1.Err)
+	assert.NoError(t, r2)
+	assert.NoError(t, r3.Err)
+
+	v := <-client.Get("test-key")
+	assert.NoError(t, v.Err)
+
+	assert.Equal(t, []byte("test-value2"), v.Value)
 }
