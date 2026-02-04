@@ -362,7 +362,7 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 		rpc:                      rpcProvider,
 		statusLock:               sync.RWMutex{},
 		status:                   Running,
-		supportedFeatures:        make([]proto.Feature, 0),
+		supportedFeatures:        atomic.Value{},
 		Logger: slog.With(
 			slog.String("component", "data-server-controller"),
 			slog.Any("data-server", dataServerID),

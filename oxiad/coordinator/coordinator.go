@@ -177,7 +177,8 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
 			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
-				shardMetadata.Clone(), c.configResource, c.statusResource, c, c.rpc, controller.DefaultPeriodicTasksInterval)
+				shardMetadata.Clone(), c.configResource, c.statusResource, c.findDataServerFeatures,
+				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
 		}
@@ -190,6 +191,23 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 
 	c.computeNewAssignments()
 	c.loadBalancer.Trigger()
+}
+
+func (c *coordinator) findDataServerFeatures(dataServers []model.Server) map[string][]proto.Feature {
+	features := make(map[string][]proto.Feature)
+	for _, dataServer := range dataServers {
+		dataServerID := dataServer.GetIdentifier()
+		if serverController, exist := c.nodeControllers[dataServerID]; exist {
+			features[dataServerID] = serverController.SupportedFeatures()
+			continue
+		}
+		// fallback to draining node if alive not found
+		if serverController, exist := c.drainingNodes[dataServerID]; exist {
+			features[dataServerID] = serverController.SupportedFeatures()
+			continue
+		}
+	}
+	return features
 }
 
 func (c *coordinator) waitForAllNodesToBeAvailable() {
@@ -496,7 +514,8 @@ func NewCoordinator(meta metadata.Provider,
 				nsConfig = &model.NamespaceConfig{}
 			}
 			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
-				shardMetadata, c.configResource, c.statusResource, c, c.rpc, controller.DefaultPeriodicTasksInterval)
+				shardMetadata, c.configResource, c.statusResource, c.findDataServerFeatures,
+				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		}
 	}
 

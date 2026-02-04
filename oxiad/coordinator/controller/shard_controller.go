@@ -321,7 +321,7 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		termOptions.KeySorting = nsConfig.KeySorting.ToProto()
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
-		s.statusResource, s.configResource, s.leaderSelector,
+		s.statusResource, s.configResource, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
 		s.rpc, &s.metadata, s.namespace, s.shard, changeEnsembleAction,
 		termOptions,
 		s.leaderElectionLatency,
