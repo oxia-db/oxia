@@ -1126,7 +1126,7 @@ func TestPebbleBatchChecksumChaining(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Simulate chaining checksums across batches (like the database fingerprint feature)
-	var runningChecksum crc.Checksum = 0
+	var runningChecksum crc.Checksum
 
 	wb1 := kv.NewWriteBatch()
 	assert.NoError(t, wb1.Put("a", []byte("1")))
@@ -1138,12 +1138,11 @@ func TestPebbleBatchChecksumChaining(t *testing.T) {
 	wb2 := kv.NewWriteBatch()
 	assert.NoError(t, wb2.Put("b", []byte("2")))
 	cs2 := wb2.Checksum(runningChecksum)
-	runningChecksum = cs2
 	assert.NoError(t, wb2.Commit())
 	assert.NoError(t, wb2.Close())
 
 	// Repeat the same sequence and verify we get the same final checksum
-	var runningChecksum2 crc.Checksum = 0
+	var runningChecksum2 crc.Checksum
 
 	wb3 := kv.NewWriteBatch()
 	assert.NoError(t, wb3.Put("a", []byte("1")))

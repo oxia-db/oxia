@@ -16,7 +16,6 @@ package database
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,10 +25,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 

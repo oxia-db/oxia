@@ -18,8 +18,9 @@ import (
 	"io"
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/pkg/errors"
+
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
