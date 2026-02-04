@@ -169,14 +169,14 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 		fencingResponse := <-ch
 
 		totalResponses++
-		if fencingResponse.error == nil {
-			successResponses++
-			// We don't consider the removed data servers as candidates for leader/followers
-			if slices.Contains(ensemble, fencingResponse.Server) {
-				res[fencingResponse.Server] = fencingResponse.EntryId
-			}
-		} else {
+		if fencingResponse.error != nil {
 			err = multierr.Append(err, fencingResponse.error)
+			continue
+		}
+		successResponses++
+		// We don't consider the removed data servers as candidates for leader/followers
+		if slices.Contains(ensemble, fencingResponse.Server) {
+			res[fencingResponse.Server] = fencingResponse.EntryId
 		}
 	}
 	if successResponses < majority {
@@ -188,12 +188,13 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 		select {
 		case r := <-ch:
 			totalResponses++
-			if r.error == nil {
-				res[r.Server] = r.EntryId
-			} else {
+			if r.error != nil {
 				err = multierr.Append(err, r.error)
+				continue
 			}
-
+			if slices.Contains(ensemble, r.Server) {
+				res[r.Server] = r.EntryId
+			}
 		case <-time.After(quorumFencingGracePeriod):
 			return res, nil
 		}
