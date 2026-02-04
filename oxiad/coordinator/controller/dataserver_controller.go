@@ -105,7 +105,7 @@ func (n *dataServerController) Status() DataServerStatus {
 }
 
 func (n *dataServerController) SupportedFeatures() []proto.Feature {
-	return n.supportedFeatures.Load().([]proto.Feature)
+	return n.supportedFeatures.Load().([]proto.Feature) //nolint: revive
 }
 
 func (n *dataServerController) SetStatus(status DataServerStatus) {

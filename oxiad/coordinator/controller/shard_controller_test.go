@@ -732,8 +732,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	assert.EqualValues(t, metaSnap.Ensemble, []model.Server{s1, s2, s3})
 }
 
-
-// Test feature negotiation with all nodes supporting the same features
+// Test feature negotiation with all nodes supporting the same features.
 func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
@@ -794,7 +793,7 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	sc.Close()
 }
 
-// Test feature negotiation with mixed node versions (one old node)
+// Test feature negotiation with mixed node versions (one old node).
 func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
@@ -854,4 +853,3 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 
 	sc.Close()
 }
-
