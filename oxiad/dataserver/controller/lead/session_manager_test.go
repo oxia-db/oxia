@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/crc"
+
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -58,6 +60,10 @@ func TestSessionKey(t *testing.T) {
 }
 
 type mockWriteBatch map[string]any
+
+func (m mockWriteBatch) Checksum(init crc.Checksum) crc.Checksum {
+	return init
+}
 
 func (m mockWriteBatch) Count() int {
 	return 0

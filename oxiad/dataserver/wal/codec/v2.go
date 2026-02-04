@@ -22,6 +22,8 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 )
 
 // Txn File:
@@ -128,7 +130,7 @@ func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 	payloadStartFileOffset := startFileOffset + headerOffset
 	payloadSlice := buf[payloadStartFileOffset : payloadStartFileOffset+payloadSize]
 
-	if expectedCrc := Checksum(previousCrc).Update(payloadSlice).Value(); expectedCrc != payloadCrc {
+	if expectedCrc := crc.Checksum(previousCrc).Update(payloadSlice).Value(); expectedCrc != payloadCrc {
 		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(ErrDataCorrupted,
 			" expected crc: %d; actual crc: %d", expectedCrc, payloadCrc)
 	}
@@ -145,7 +147,7 @@ func (*V2) WriteRecord(buf []byte, startOffset uint32, previousCrc uint32, paylo
 
 	binary.BigEndian.PutUint32(buf[startOffset+headerOffset:], previousCrc)
 	headerOffset += v2PreviousCrcLen
-	payloadCrc = Checksum(previousCrc).Update(payload).Value()
+	payloadCrc = crc.Checksum(previousCrc).Update(payload).Value()
 	binary.BigEndian.PutUint32(buf[startOffset+headerOffset:], payloadCrc)
 	headerOffset += v2PayloadCrcLen
 
@@ -159,7 +161,7 @@ func (v *V2) WriteIndex(path string, index []byte) error {
 		return errors.Wrapf(err, "failed to open index file %s", path)
 	}
 	buf := make([]byte, uint32(len(index))+v.GetIndexHeaderSize())
-	indexCrc := Checksum(0).Update(index).Value()
+	indexCrc := crc.Checksum(0).Update(index).Value()
 	binary.BigEndian.PutUint32(buf[0:], indexCrc)
 	copy(buf[v.GetIndexHeaderSize():], index)
 	if _, err = idxFile.Write(buf); err != nil {
@@ -184,7 +186,7 @@ func (v *V2) ReadIndex(path string) ([]byte, error) {
 		return nil, errors.Wrapf(err, "failed to close segment index file %s", path)
 	}
 	expectedCrc := ReadInt(indexBuf, 0)
-	actualCrc := Checksum(0).Update(indexBuf[v.GetIndexHeaderSize():]).Value()
+	actualCrc := crc.Checksum(0).Update(indexBuf[v.GetIndexHeaderSize():]).Value()
 	if expectedCrc != actualCrc {
 		return nil, errors.Wrapf(ErrDataCorrupted,
 			" expected crc: %d; actual crc: %d", expectedCrc, actualCrc)
