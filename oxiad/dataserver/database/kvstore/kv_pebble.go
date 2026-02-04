@@ -30,6 +30,7 @@ import (
 	"github.com/cockroachdb/pebble/v2/bloom"
 	"github.com/cockroachdb/pebble/v2/sstable"
 	"github.com/cockroachdb/pebble/v2/vfs"
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -665,6 +666,10 @@ func (b *PebbleBatch) FindLower(key string) (lowerKey string, err error) {
 
 	lowerKey = b.p.keyEncoder.Decode(it.Key())
 	return lowerKey, it.Close()
+}
+
+func (b *PebbleBatch) Checksum(init crc.Checksum) crc.Checksum {
+	return init.Update(b.b.Repr())
 }
 
 func (b *PebbleBatch) Commit() error {

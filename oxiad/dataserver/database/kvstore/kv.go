@@ -18,6 +18,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -48,6 +49,8 @@ type WriteBatch interface {
 	Size() int
 
 	Commit() error
+
+	Checksum(init crc.Checksum) crc.Checksum
 }
 
 type KeyIterator interface {

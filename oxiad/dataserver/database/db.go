@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
@@ -52,9 +53,9 @@ var (
 const (
 	commitOffsetKey        = constant.InternalKeyPrefix + "commit-offset"
 	commitLastVersionIdKey = constant.InternalKeyPrefix + "last-version-id"
+	commitChecksumKey      = constant.InternalKeyPrefix + "checksum"
 	termKey                = constant.InternalKeyPrefix + "term"
 	termOptionsKey         = termKey + "-options"
-	dbFingerprintKey       = constant.InternalKeyPrefix + "fingerprint"
 )
 
 type UpdateOperationCallback interface {
@@ -157,22 +158,13 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	}
 	db.committedVersionId.Store(lastVersionId)
 
-	// Initialize DB fingerprint
-	currentFingerprint, err := db.readDbFingerprint()
+	lastChecksum, err := db.readLastChecksum()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to read DB fingerprint")
+		return nil, err
 	}
-	db.currentDbFingerprint.Store(currentFingerprint)
+	db.committedChecksum.Store(&lastChecksum)
 
 	db.notificationsTracker = newNotificationsTracker(namespace, shardId, commitOffset, kv, notificationRetentionTime, clock)
-
-	// Initialize DB fingerprint gauge
-	db.dbFingerprintGauge = metric.NewGauge("oxia_server_db_fingerprint",
-		"The cumulative DB CRC captured precisely at commit_offset",
-		metric.Dimensionless, labels, func() int64 {
-			return int64(db.currentDbFingerprint.Load())
-		})
-
 	return db, nil
 }
 
@@ -180,6 +172,7 @@ type db struct {
 	kv                    kvstore.KV
 	shardId               int64
 	committedVersionId    atomic.Int64
+	committedChecksum     atomic.Pointer[crc.Checksum]
 	notificationsTracker  *notificationsTracker
 	log                   *slog.Logger
 	notificationsEnabled  bool
@@ -196,10 +189,6 @@ type db struct {
 	batchWriteLatencyHisto metric.LatencyHistogram
 	getLatencyHisto        metric.LatencyHistogram
 	listLatencyHisto       metric.LatencyHistogram
-
-	// DB fingerprint tracking
-	currentDbFingerprint atomic.Uint64
-	dbFingerprintGauge   metric.Gauge
 }
 
 func (d *db) Snapshot() (kvstore.Snapshot, error) {
@@ -226,40 +215,11 @@ func (d *db) Delete() error {
 	)
 }
 
-// readDbFingerprint reads the current DB fingerprint from storage.
-func (d *db) readDbFingerprint() (uint64, error) {
-	_, value, closer, err := d.kv.Get(dbFingerprintKey, kvstore.ComparisonEqual, kvstore.IteratorOpts{})
-	if err != nil {
-		if errors.Is(err, kvstore.ErrKeyNotFound) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	defer closer.Close()
-
-	if len(value) < 8 {
-		return 0, nil
-	}
-
-	fp := DBFingerprintFromBytes(value)
-	return uint64(fp), nil
-}
-
 // writeDbFingerprint writes the DB fingerprint to storage.
 func (*db) writeDbFingerprint(batch kvstore.WriteBatch, fingerprint uint64) error {
 	fpBytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(fpBytes, fingerprint)
-	return batch.Put(dbFingerprintKey, fpBytes)
-}
-
-// getCurrentDbFingerprint returns the current database fingerprint.
-func (d *db) getCurrentDbFingerprint() uint64 {
-	return d.currentDbFingerprint.Load()
-}
-
-// updateDbFingerprint atomically updates the current database fingerprint.
-func (d *db) updateDbFingerprint(newFingerprint uint64) {
-	d.currentDbFingerprint.Store(newFingerprint)
+	return batch.Put(commitChecksumKey, fpBytes)
 }
 
 func now() uint64 {
@@ -314,12 +274,6 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	baseVersionId := &atomic.Int64{}
 	baseVersionId.Store(d.committedVersionId.Load())
 
-	// Serialize the WriteRequest for DB CRC calculation
-	writeReqBytes, err := b.MarshalVT()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to serialize WriteRequest for DB CRC calculation")
-	}
-
 	batch := d.kv.NewWriteBatch()
 	notifications, res, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp, updateOperationCallback)
 	if err != nil {
@@ -341,20 +295,20 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 			return nil, err
 		}
 	}
-	// Calculate and store the new DB fingerprint
-	currentFingerprint := d.currentDbFingerprint.Load()
-	newFingerprint := NewDBFingerprint(DBFingerprint(currentFingerprint), writeReqBytes)
-	if err := d.writeDbFingerprint(batch, uint64(newFingerprint)); err != nil {
-		return nil, errors.Wrap(err, "failed to write DB fingerprint")
+
+	previousChecksum := d.committedChecksum.Load()
+	committedChecksum := batch.Checksum(*previousChecksum) // we need to copy this value
+
+	if err := d.addASCIILong(commitChecksumKey, int64(committedChecksum), batch, timestamp); err != nil {
+		return nil, err
 	}
 	if err := batch.Commit(); err != nil {
 		return nil, err
 	}
 	// update the db local cache of version_id after commit success
 	d.committedVersionId.Store(uncommitedVersionId)
-
-	// Update the in-memory fingerprint after successful commit
-	d.updateDbFingerprint(uint64(newFingerprint))
+	// update the db local cache of committed_checksum after commit success
+	d.committedChecksum.Store(&committedChecksum)
 
 	if notifications != nil {
 		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
@@ -509,6 +463,13 @@ func (d *db) ReadCommitOffset() (int64, error) {
 
 func (d *db) readLastVersionId() (int64, error) {
 	return d.readASCIILong(commitLastVersionIdKey)
+}
+func (d *db) readLastChecksum() (crc.Checksum, error) {
+	cs, err := d.readASCIILong(commitChecksumKey)
+	if err != nil {
+		return 0, err
+	}
+	return crc.Checksum(uint32(cs)), nil
 }
 
 func (d *db) readASCIILong(key string) (int64, error) {
