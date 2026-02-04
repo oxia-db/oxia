@@ -354,6 +354,10 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 	dataServerCtx, cancel := context.WithCancel(ctx)
 	dataServerID := dataServer.GetIdentifier()
 	labels := map[string]any{"data-server": dataServerID}
+
+	supportedFeatures := atomic.Value{}
+	supportedFeatures.Store(make([]proto.Feature, 0))
+
 	nc := &dataServerController{
 		ctx:                      dataServerCtx,
 		cancel:                   cancel,
@@ -363,7 +367,7 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 		rpc:                      rpcProvider,
 		statusLock:               sync.RWMutex{},
 		status:                   Running,
-		supportedFeatures:        atomic.Value{},
+		supportedFeatures:        supportedFeatures,
 		Logger: slog.With(
 			slog.String("component", "data-server-controller"),
 			slog.Any("data-server", dataServerID),
