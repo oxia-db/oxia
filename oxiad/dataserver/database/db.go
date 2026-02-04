@@ -215,13 +215,6 @@ func (d *db) Delete() error {
 	)
 }
 
-// writeDbFingerprint writes the DB fingerprint to storage.
-func (*db) writeDbFingerprint(batch kvstore.WriteBatch, fingerprint uint64) error {
-	fpBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(fpBytes, fingerprint)
-	return batch.Put(commitChecksumKey, fpBytes)
-}
-
 func now() uint64 {
 	return uint64(time.Now().UnixMilli())
 }
