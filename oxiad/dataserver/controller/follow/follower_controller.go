@@ -323,9 +323,7 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		"Follower successfully initialized in new term",
 		slog.Any("last-entry", lastEntryId),
 	)
-	return &proto.NewTermResponse{
-		HeadEntryId: lastEntryId,
-	}, nil
+	return &proto.NewTermResponse{HeadEntryId: lastEntryId}, nil
 }
 
 func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
