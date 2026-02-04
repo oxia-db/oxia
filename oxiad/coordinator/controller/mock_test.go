@@ -130,6 +130,10 @@ type mockPerNodeChannels struct {
 	shardAssignmentsStream *mockShardAssignmentClient
 	healthClient           *mockHealthClient
 	err                    error
+
+	// Feature negotiation support
+	supportedFeatures []proto.Feature
+	getInfoErr        error
 }
 
 const defaultTimeout = 10 * time.Second
@@ -148,6 +152,23 @@ func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int6
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
 	assert.Equal(t, replicationFactor, r.ReplicationFactor)
+}
+
+// expectBecomeLeaderRequestWithFeatures verifies the BecomeLeader request includes expected negotiated features.
+func (m *mockPerNodeChannels) expectBecomeLeaderRequestWithFeatures(t *testing.T, shard int64, term int64, replicationFactor uint32, expectedFeatures []proto.Feature) {
+	t.Helper()
+
+	var r *proto.BecomeLeaderRequest
+	select {
+	case r = <-m.becomeLeaderRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive BecomeLeader request in time")
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	assert.Equal(t, replicationFactor, r.ReplicationFactor)
+	assert.ElementsMatch(t, expectedFeatures, r.FeaturesSupported, "negotiated features should match")
 }
 
 func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, term int64, notificationsEnabled bool) {
@@ -293,7 +314,19 @@ func newMockPerNodeChannels() *mockPerNodeChannels {
 		}, 100),
 		shardAssignmentsStream: newMockShardAssignmentClient(),
 		healthClient:           newMockHealthClient(),
+		supportedFeatures:      feature.SupportedFeatures(), // Default to current version
 	}
+}
+
+// SetNodeFeatures sets the features supported by this node (simulates a specific version).
+func (m *mockPerNodeChannels) SetNodeFeatures(features []proto.Feature) {
+	m.supportedFeatures = features
+}
+
+// SetOldNode simulates an old node that doesn't support the GetInfo RPC.
+func (m *mockPerNodeChannels) SetOldNode() {
+	m.getInfoErr = ErrNotImplement
+	m.supportedFeatures = nil
 }
 
 type mockRpcProvider struct {
@@ -317,9 +350,16 @@ func (r *mockRpcProvider) FailNode(node model.Server, err error) {
 	n := r.getNode(node)
 	n.err = err
 }
-func (r *mockRpcProvider) GetInfo(context.Context, model.Server, *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+func (r *mockRpcProvider) GetInfo(_ context.Context, node model.Server, _ *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+	r.Lock()
+	defer r.Unlock()
+
+	n := r.getNode(node)
+	if n.getInfoErr != nil {
+		return nil, n.getInfoErr
+	}
 	return &proto.GetInfoResponse{
-		FeaturesSupported: feature.SupportedFeatures(),
+		FeaturesSupported: n.supportedFeatures,
 	}, nil
 }
 

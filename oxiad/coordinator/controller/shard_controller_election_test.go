@@ -115,3 +115,24 @@ func TestNoOpSupportedFeaturesSupplier(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.Empty(t, result)
 }
+
+func TestNegotiate_MixedVersions_RollingUpgrade(t *testing.T) {
+	// Simulate a rolling upgrade scenario:
+	// - 2 new nodes support FINGERPRINT
+	// - 1 old node supports nothing
+
+	nodeFeatures := map[string][]proto.Feature{
+		"new-node-1": {proto.Feature_FEATURE_FINGERPRINT},
+		"new-node-2": {proto.Feature_FEATURE_FINGERPRINT},
+		"old-node":   {}, // Old node reports empty features
+	}
+
+	result := negotiate(nodeFeatures)
+	assert.Empty(t, result, "features should not be enabled until all nodes are upgraded")
+
+	// After upgrading the old node
+	nodeFeatures["old-node"] = []proto.Feature{proto.Feature_FEATURE_FINGERPRINT}
+
+	result = negotiate(nodeFeatures)
+	assert.Contains(t, result, proto.Feature_FEATURE_FINGERPRINT, "feature should be enabled after all nodes are upgraded")
+}
