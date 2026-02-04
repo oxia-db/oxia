@@ -37,6 +37,7 @@ type Provider interface {
 	AddFollower(ctx context.Context, node model.Server, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error)
 	GetStatus(ctx context.Context, node model.Server, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
 	DeleteShard(ctx context.Context, node model.Server, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
+	GetInfo(ctx context.Context, node model.Server, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error)
 
 	GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, io.Closer, error)
 
@@ -106,6 +107,18 @@ func (r *rpcProvider) GetStatus(ctx context.Context, node model.Server, req *pro
 	defer cancel()
 
 	return client.GetStatus(ctx, req)
+}
+
+func (r *rpcProvider) GetInfo(ctx context.Context, node model.Server, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+	client, err := r.pool.GetCoordinationRpc(node.Internal)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
+
+	return client.GetInfo(ctx, req)
 }
 
 func (r *rpcProvider) DeleteShard(ctx context.Context, node model.Server, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {

@@ -67,6 +67,12 @@ type ShardController interface {
 	ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction)
 }
 
+type DataServerSupportedFeaturesSupplier = func(dataServers []model.Server) map[string][]proto.Feature
+
+func NoOpSupportedFeaturesSupplier([]model.Server) map[string][]proto.Feature {
+	return map[string][]proto.Feature{}
+}
+
 type shardController struct {
 	namespace       string
 	shard           int64
@@ -76,9 +82,10 @@ type shardController struct {
 
 	leaderSelector selector.Selector[*leaderselector.Context, model.Server]
 
-	eventListener  ShardEventListener
-	configResource resource.ClusterConfigResource
-	statusResource resource.StatusResource
+	eventListener                       ShardEventListener
+	configResource                      resource.ClusterConfigResource
+	statusResource                      resource.StatusResource
+	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 
 	electionOp          chan *action.ElectionAction
 	deleteOp            chan any
@@ -116,24 +123,26 @@ func NewShardController(
 	shardMetadata model.ShardMetadata,
 	configResource resource.ClusterConfigResource,
 	statusResource resource.StatusResource,
+	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	eventListener ShardEventListener,
 	rpcProvider rpc.Provider,
 	periodTasksInterval time.Duration) ShardController {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &shardController{
-		namespace:           namespace,
-		shard:               shard,
-		namespaceConfig:     nc,
-		metadata:            NewMetadata(shardMetadata),
-		rpc:                 rpcProvider,
-		configResource:      configResource,
-		statusResource:      statusResource,
-		eventListener:       eventListener,
-		leaderSelector:      leaderselector.NewSelector(),
-		electionOp:          make(chan *action.ElectionAction, chanBufferSize),
-		deleteOp:            make(chan any, chanBufferSize),
-		dataServerFailureOp: make(chan model.Server, chanBufferSize),
-		changeEnsembleOp:    make(chan *action.ChangeEnsembleAction, chanBufferSize),
+		namespace:                           namespace,
+		shard:                               shard,
+		namespaceConfig:                     nc,
+		metadata:                            NewMetadata(shardMetadata),
+		rpc:                                 rpcProvider,
+		configResource:                      configResource,
+		statusResource:                      statusResource,
+		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
+		eventListener:                       eventListener,
+		leaderSelector:                      leaderselector.NewSelector(),
+		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
+		deleteOp:                            make(chan any, chanBufferSize),
+		dataServerFailureOp:                 make(chan model.Server, chanBufferSize),
+		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
 
 		periodicTasksInterval: periodTasksInterval,
 		log: slog.With(
@@ -316,7 +325,7 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		termOptions.KeySorting = nsConfig.KeySorting.ToProto()
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
-		s.statusResource, s.configResource, s.leaderSelector,
+		s.statusResource, s.configResource, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
 		s.rpc, &s.metadata, s.namespace, s.shard, changeEnsembleAction,
 		termOptions,
 		s.leaderElectionLatency,
