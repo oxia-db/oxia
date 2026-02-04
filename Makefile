@@ -92,13 +92,13 @@ proto:
 	protoc \
 		--go_out=. \
 		--go_opt paths=source_relative \
-		--plugin protoc-gen-go="${GOPATH}/bin/protoc-gen-go" \
+		--plugin protoc-gen-go="${GOBIN}/protoc-gen-go" \
     	--go-grpc_out=. \
     	--go-grpc_opt paths=source_relative \
-    	--plugin protoc-gen-go-grpc="${GOPATH}/bin/protoc-gen-go-grpc" \
+    	--plugin protoc-gen-go-grpc="${GOBIN}/protoc-gen-go-grpc" \
       	--go-vtproto_out=. \
       	--go-vtproto_opt paths=source_relative \
-      	--plugin protoc-gen-go-vtproto="${GOPATH}/bin/protoc-gen-go-vtproto" \
+      	--plugin protoc-gen-go-vtproto="${GOBIN}/protoc-gen-go-vtproto" \
       	--go-vtproto_opt=features=marshal+unmarshal+unmarshal_unsafe+size+pool+equal+clone \
 	    *.proto compat/*.proto
 

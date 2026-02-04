@@ -37,10 +37,10 @@ import (
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/feature"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/oxiad/common/entity"
 
@@ -105,7 +105,7 @@ type leaderController struct {
 	quorumAckTracker  QuorumAckTracker
 	followers         map[string]FollowerCursor
 
-	// negotiatedFeatures contains the features that all members of the quorum
+	// negotiatedFeatures contains the features that all members of the ensemble
 	// support. This is set during BecomeLeader and used to determine which
 	// features can be enabled for this term.
 	negotiatedFeatures []proto.Feature
@@ -330,8 +330,7 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	)
 
 	return &proto.NewTermResponse{
-		HeadEntryId:       headEntryId,
-		FeaturesSupported: feature.SupportedFeatures(),
+		HeadEntryId: headEntryId,
 	}, nil
 }
 

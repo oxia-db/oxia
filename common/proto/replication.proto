@@ -31,6 +31,7 @@ service OxiaCoordination {
 
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
   rpc DeleteShard(DeleteShardRequest) returns (DeleteShardResponse);
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
 }
 
 // node (leader) -> node (follower)
@@ -38,6 +39,22 @@ service OxiaLogReplication {
   rpc Truncate(TruncateRequest) returns (TruncateResponse);
   rpc Replicate(stream Append) returns (stream Ack);
   rpc SendSnapshot(stream SnapshotChunk) returns (SnapshotResponse);
+}
+
+
+// Feature represents a capability that can be negotiated during leader election.
+// This enables safe rolling upgrades where new and old nodes can coexist.
+enum Feature {
+  FEATURE_UNKNOWN = 0;
+  FEATURE_FINGERPRINT = 1;
+}
+
+message GetInfoRequest {
+
+}
+
+message GetInfoResponse {
+    repeated Feature features_supported = 1;
 }
 
 message CoordinationShardAssignmentsResponse {}
@@ -68,13 +85,6 @@ enum KeySortingType {
   HIERARCHICAL = 2;
 }
 
-// Feature represents a capability that can be negotiated during leader election.
-// This enables safe rolling upgrades where new and old nodes can coexist.
-enum Feature {
-  FEATURE_UNKNOWN = 0;
-  FEATURE_FINGERPRINT = 1;
-}
-
 message NewTermOptions {
   bool enable_notifications = 1;
   KeySortingType key_sorting = 2;
@@ -90,11 +100,6 @@ message NewTermRequest {
 
 message NewTermResponse {
   EntryId head_entry_id = 1;
-
-  // features_supported contains the list of features supported by this node.
-  // The coordinator will compute the intersection of features supported by all
-  // quorum members and send the result to the leader.
-  repeated Feature features_supported = 2;
 }
 
 message BecomeLeaderRequest {

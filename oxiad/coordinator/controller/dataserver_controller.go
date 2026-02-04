@@ -23,13 +23,12 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	grpcstatus "google.golang.org/grpc/status"
-
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	commonio "github.com/oxia-db/oxia/common/io"
 
@@ -50,6 +49,7 @@ const (
 const (
 	healthCheckProbeInterval   = 2 * time.Second
 	healthCheckProbeTimeout    = 2 * time.Second
+	getInfoTimeout             = 10 * time.Second
 	defaultInitialRetryBackoff = 10 * time.Second
 )
 
@@ -63,6 +63,8 @@ type DataServerController interface {
 	io.Closer
 
 	Status() DataServerStatus
+
+	SupportedFeatures() []proto.Feature
 
 	SetStatus(status DataServerStatus)
 }
@@ -79,8 +81,9 @@ type dataServerController struct {
 	rpc        rpc.Provider
 	closed     atomic.Bool
 
-	statusLock sync.RWMutex
-	status     DataServerStatus
+	statusLock        sync.RWMutex
+	status            DataServerStatus
+	supportedFeatures atomic.Value
 
 	healthClientOnce   sync.Once
 	healthClient       grpc_health_v1.HealthClient
@@ -98,6 +101,10 @@ func (n *dataServerController) Status() DataServerStatus {
 	n.statusLock.RLock()
 	defer n.statusLock.RUnlock()
 	return n.status
+}
+
+func (n *dataServerController) SupportedFeatures() []proto.Feature {
+	return n.supportedFeatures.Load().([]proto.Feature)
 }
 
 func (n *dataServerController) SetStatus(status DataServerStatus) {
@@ -273,17 +280,7 @@ func (n *dataServerController) becomeUnavailable() {
 	n.BecameUnavailable(n.dataServer)
 }
 
-func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
-	if err != nil {
-		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
-			n.Warn("Data server health check failed", slog.Any("error", err))
-		}
-		return err
-	}
-	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
-		return errors.New("Data server is not actively serving")
-	}
-
+func (n *dataServerController) becomeAvailable() {
 	n.statusLock.Lock()
 	if n.status == NotRunning {
 		n.Info("Storage data server is back online")
@@ -296,6 +293,48 @@ func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.Healt
 	}
 	n.status = Running
 	n.statusLock.Unlock()
+
+	// sync the latest info
+	bo := commontime.NewBackOffWithInitialInterval(n.ctx, defaultInitialRetryBackoff)
+	_ = backoff.RetryNotify(func() error {
+		return n.syncDataServerInfo()
+	}, bo, func(err error, duration time.Duration) {
+		n.Warn("Failed to get data server info",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+		n.becomeUnavailable()
+	})
+}
+
+func (n *dataServerController) syncDataServerInfo() error {
+	ctx, cancelFunc := context.WithTimeout(n.ctx, getInfoTimeout)
+	info, err := n.rpc.GetInfo(ctx, n.dataServer, &proto.GetInfoRequest{})
+	cancelFunc()
+	if err != nil {
+		code := grpcstatus.Code(err)
+		if code == codes.Unimplemented {
+			// The old data server might not have this endpoint, we should treat it as success.
+			n.Warn("the storage data server is too old without info endpoint.")
+			return nil
+		}
+		return err
+	}
+	n.supportedFeatures.Store(info.FeaturesSupported)
+	return nil
+}
+
+func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
+	if err != nil {
+		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
+			n.Warn("Data server health check failed", slog.Any("error", err))
+		}
+		return err
+	}
+	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
+		return errors.New("Data server is not actively serving")
+	}
+	n.becomeAvailable()
 	return nil
 }
 
@@ -323,6 +362,7 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 		rpc:                      rpcProvider,
 		statusLock:               sync.RWMutex{},
 		status:                   Running,
+		supportedFeatures:        make([]proto.Feature, 0),
 		Logger: slog.With(
 			slog.String("component", "data-server-controller"),
 			slog.Any("data-server", dataServerID),

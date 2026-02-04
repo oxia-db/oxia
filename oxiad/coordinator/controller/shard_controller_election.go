@@ -38,7 +38,6 @@ import (
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/selector/leader"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/feature"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
@@ -60,12 +59,13 @@ type ShardElection struct {
 	becomeLeaderLatency   metric.LatencyHistogram
 	leaderElectionsFailed metric.Counter
 	// borrowed resource
-	statusResource resource.StatusResource
-	configResource resource.ClusterConfigResource
-	leaderSelector selector.Selector[*leaderselector.Context, model.Server]
-	eventListener  ShardEventListener
-	provider       rpc.Provider
-	meta           *Metadata
+	statusResource                      resource.StatusResource
+	configResource                      resource.ClusterConfigResource
+	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
+	leaderSelector                      selector.Selector[*leaderselector.Context, model.Server]
+	eventListener                       ShardEventListener
+	provider                            rpc.Provider
+	meta                                *Metadata
 	// owned status
 	namespace            string
 	shard                int64
@@ -94,7 +94,7 @@ func (e *ShardElection) refreshedEnsemble(ensemble []model.Server) []model.Serve
 	return refreshedEnsembleDataServerAddress
 }
 
-func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer model.Server) (*proto.NewTermResponse, error) {
+func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer model.Server) (*proto.EntryId, error) {
 	res, err := e.provider.NewTerm(ctx, dataServer, &proto.NewTermRequest{
 		Namespace: e.namespace,
 		Shard:     e.shard,
@@ -105,25 +105,12 @@ func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer
 		return nil, err
 	}
 
-	return res, nil
-}
-
-// newTermResult holds the result of a NewTerm RPC call including entry ID and supported features.
-type newTermResult struct {
-	entryId  *proto.EntryId
-	features []proto.Feature
-}
-
-// fenceNewTermQuorumResult holds the results of fencing a quorum including
-// candidate status and negotiated features.
-type fenceNewTermQuorumResult struct {
-	candidatesStatus   map[model.Server]*proto.EntryId
-	negotiatedFeatures []proto.Feature
+	return res.HeadEntryId, nil
 }
 
 // Send NewTerm to all the ensemble members in parallel and wait for
 // a majority of them to reply successfully.
-func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, removedCandidates []model.Server) (*fenceNewTermQuorumResult, error) {
+func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, removedCandidates []model.Server) (map[model.Server]*proto.EntryId, error) {
 	fenceQuorumTimer := e.newTermQuorumLatency.Timer()
 
 	fencingDataServers := slices.Concat(ensemble, removedCandidates)
@@ -142,7 +129,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 	// Channel to receive responses or errors from each server
 	ch := make(chan struct {
 		model.Server
-		*newTermResult
+		*proto.EntryId
 		error
 	}, fencingQuorumSize)
 
@@ -157,22 +144,17 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 					"shard":       fmt.Sprintf("%d", e.shard),
 					"data-server": pinedServer.GetIdentifier(),
 				}, func() {
-					resp, err := e.fenceNewTerm(fencingContext, term, pinedServer)
-					var result *newTermResult
+					entryId, err := e.fenceNewTerm(fencingContext, term, pinedServer)
 					if err != nil {
 						e.Warn("Failed to fenceNewTerm data server", slog.Any("error", err), slog.Any("data-server", pinedServer))
 					} else {
-						result = &newTermResult{
-							entryId:  resp.HeadEntryId,
-							features: resp.FeaturesSupported,
-						}
-						e.Info("Processed fenceNewTerm response", slog.Any("data-server", pinedServer), slog.Any("entry-id", result.entryId))
+						e.Info("Processed fenceNewTerm response", slog.Any("data-server", pinedServer), slog.Any("entry-id", entryId))
 					}
 					ch <- struct {
 						model.Server
-						*newTermResult
+						*proto.EntryId
 						error
-					}{pinedServer, result, err}
+					}{pinedServer, entryId, err}
 				},
 			)
 		})
@@ -180,8 +162,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 	successResponses := 0
 	totalResponses := 0
 
-	candidatesStatus := make(map[model.Server]*proto.EntryId)
-	nodeFeatures := make(map[string][]proto.Feature)
+	res := make(map[model.Server]*proto.EntryId)
 	var err error
 	// Wait for a majority to respond
 	for successResponses < majority && totalResponses < fencingQuorumSize {
@@ -192,8 +173,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 			successResponses++
 			// We don't consider the removed data servers as candidates for leader/followers
 			if slices.Contains(ensemble, fencingResponse.Server) {
-				candidatesStatus[fencingResponse.Server] = fencingResponse.newTermResult.entryId
-				nodeFeatures[fencingResponse.Server.GetIdentifier()] = fencingResponse.newTermResult.features
+				res[fencingResponse.Server] = fencingResponse.EntryId
 			}
 		} else {
 			err = multierr.Append(err, fencingResponse.error)
@@ -209,23 +189,16 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 		case r := <-ch:
 			totalResponses++
 			if r.error == nil {
-				candidatesStatus[r.Server] = r.newTermResult.entryId
-				nodeFeatures[r.Server.GetIdentifier()] = r.newTermResult.features
+				res[r.Server] = r.EntryId
 			} else {
 				err = multierr.Append(err, r.error)
 			}
 
 		case <-time.After(quorumFencingGracePeriod):
-			return &fenceNewTermQuorumResult{
-				candidatesStatus:   candidatesStatus,
-				negotiatedFeatures: feature.Negotiate(nodeFeatures),
-			}, nil
+			return res, nil
 		}
 	}
-	return &fenceNewTermQuorumResult{
-		candidatesStatus:   candidatesStatus,
-		negotiatedFeatures: feature.Negotiate(nodeFeatures),
-	}, nil
+	return res, nil
 }
 
 func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto.EntryId) (
@@ -245,7 +218,8 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto
 	return leader, followers
 }
 
-func (e *ShardElection) becomeLeader(term int64, leader model.Server, followers map[model.Server]*proto.EntryId, replicationFactor uint32, negotiatedFeatures []proto.Feature) error {
+func (e *ShardElection) becomeLeader(term int64, leader model.Server, followers map[model.Server]*proto.EntryId,
+	replicationFactor uint32, negotiateFeatures []proto.Feature) error {
 	becomeLeaderTimer := e.becomeLeaderLatency.Timer()
 
 	followersMap := make(map[string]*proto.EntryId)
@@ -258,7 +232,7 @@ func (e *ShardElection) becomeLeader(term int64, leader model.Server, followers 
 		Term:              term,
 		ReplicationFactor: replicationFactor,
 		FollowerMaps:      followersMap,
-		FeaturesSupported: negotiatedFeatures,
+		FeaturesSupported: negotiateFeatures,
 	}); err != nil {
 		return err
 	}
@@ -328,8 +302,8 @@ func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int
 		Term:         term,
 		FollowerName: follower.Internal,
 		FollowerHeadEntryId: &proto.EntryId{
-			Term:   fr.HeadEntryId.Term,
-			Offset: fr.HeadEntryId.Offset,
+			Term:   fr.Term,
+			Offset: fr.Offset,
 		},
 	}); err != nil {
 		return err
@@ -338,7 +312,7 @@ func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int
 	e.Info(
 		"Successfully rejoined the quorum",
 		slog.Any("follower", follower),
-		slog.Int64("term", fr.HeadEntryId.Term),
+		slog.Int64("term", fr.Term),
 	)
 	return nil
 }
@@ -444,11 +418,11 @@ func (e *ShardElection) start() (model.Server, error) {
 	}
 
 	// Send NewTerm to all the ensemble members
-	quorumResult, err := e.fenceNewTermQuorum(mutShardMeta.Term, mutShardMeta.Ensemble, mutShardMeta.RemovedNodes)
+	candidatesStatus, err := e.fenceNewTermQuorum(mutShardMeta.Term, mutShardMeta.Ensemble, mutShardMeta.RemovedNodes)
 	if err != nil {
 		return model.Server{}, err
 	}
-	newLeader, followers := e.selectNewLeader(quorumResult.candidatesStatus)
+	newLeader, followers := e.selectNewLeader(candidatesStatus)
 	if e.Enabled(context.Background(), slog.LevelInfo) {
 		f := make([]struct {
 			ServerAddress model.Server   `json:"server-address"`
@@ -465,10 +439,13 @@ func (e *ShardElection) start() (model.Server, error) {
 			slog.Int64("term", mutShardMeta.Term),
 			slog.Any("new-leader", newLeader),
 			slog.Any("followers", f),
-			slog.Any("negotiated-features", quorumResult.negotiatedFeatures),
 		)
 	}
-	if err = e.becomeLeader(mutShardMeta.Term, newLeader, followers, uint32(len(mutShardMeta.Ensemble)), quorumResult.negotiatedFeatures); err != nil {
+	features := e.dataServerSupportedFeaturesSupplier(mutShardMeta.Ensemble)
+	negotiatedFeatures := negotiate(features)
+
+	if err = e.becomeLeader(mutShardMeta.Term, newLeader, followers,
+		uint32(len(mutShardMeta.Ensemble)), negotiatedFeatures); err != nil {
 		return model.Server{}, err
 	}
 	mutShardMeta.Status = model.ShardStatusSteadyState
@@ -479,7 +456,7 @@ func (e *ShardElection) start() (model.Server, error) {
 	term := mutShardMeta.Term
 	ensemble := mutShardMeta.Ensemble
 	leader := mutShardMeta.Leader
-	leaderEntry := quorumResult.candidatesStatus[*leader]
+	leaderEntry := candidatesStatus[*leader]
 
 	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
 	e.meta.Store(mutShardMeta)
@@ -522,6 +499,40 @@ func (e *ShardElection) start() (model.Server, error) {
 	return newLeader, nil
 }
 
+func negotiate(nodeFeatures map[string][]proto.Feature) []proto.Feature {
+	if len(nodeFeatures) == 0 {
+		return nil
+	}
+
+	// Start with all supported features
+	featureCount := make(map[proto.Feature]int)
+	nodeCount := len(nodeFeatures)
+
+	for _, features := range nodeFeatures {
+		// Track unique features per node to handle duplicates
+		seen := make(map[proto.Feature]bool)
+		for _, f := range features {
+			if f == proto.Feature_FEATURE_UNKNOWN {
+				continue
+			}
+			if !seen[f] {
+				seen[f] = true
+				featureCount[f]++
+			}
+		}
+	}
+
+	// Only include features supported by ALL nodes
+	var negotiated []proto.Feature
+	for feature, count := range featureCount {
+		if count == nodeCount {
+			negotiated = append(negotiated, feature)
+		}
+	}
+
+	return negotiated
+}
+
 func (e *ShardElection) IsReadyForChangeEnsemble() bool {
 	return e.followerCaughtUp.Load()
 }
@@ -553,6 +564,7 @@ func (e *ShardElection) Stop() {
 //nolint:revive
 func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener ShardEventListener,
 	statusResource resource.StatusResource, configResource resource.ClusterConfigResource,
+	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	leaderSelector selector.Selector[*leaderselector.Context, model.Server],
 	provider rpc.Provider, metadata *Metadata, namespace string, shard int64,
 	changeEnsembleAction *action.ChangeEnsembleAction, termOptions *proto.NewTermOptions,
@@ -560,24 +572,25 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 	becomeLeaderLatency metric.LatencyHistogram, leaderElectionsFailed metric.Counter) *ShardElection {
 	current, cancelFunc := context.WithCancel(ctx)
 	return &ShardElection{
-		Logger:                logger,
-		WaitGroup:             sync.WaitGroup{},
-		Context:               current,
-		CancelFunc:            cancelFunc,
-		statusResource:        statusResource,
-		configResource:        configResource,
-		eventListener:         eventListener,
-		leaderSelector:        leaderSelector,
-		meta:                  metadata,
-		provider:              provider,
-		namespace:             namespace,
-		shard:                 shard,
-		termOptions:           termOptions,
-		changeEnsembleAction:  changeEnsembleAction,
-		leaderElectionLatency: leaderElectionLatency,
-		newTermQuorumLatency:  newTermQuorumLatency,
-		becomeLeaderLatency:   becomeLeaderLatency,
-		leaderElectionsFailed: leaderElectionsFailed,
+		Logger:                              logger,
+		WaitGroup:                           sync.WaitGroup{},
+		Context:                             current,
+		CancelFunc:                          cancelFunc,
+		statusResource:                      statusResource,
+		configResource:                      configResource,
+		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
+		eventListener:                       eventListener,
+		leaderSelector:                      leaderSelector,
+		meta:                                metadata,
+		provider:                            provider,
+		namespace:                           namespace,
+		shard:                               shard,
+		termOptions:                         termOptions,
+		changeEnsembleAction:                changeEnsembleAction,
+		leaderElectionLatency:               leaderElectionLatency,
+		newTermQuorumLatency:                newTermQuorumLatency,
+		becomeLeaderLatency:                 becomeLeaderLatency,
+		leaderElectionsFailed:               leaderElectionsFailed,
 	}
 }
 

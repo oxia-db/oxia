@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -214,6 +215,18 @@ func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowe
 		)
 	}
 	return res, err
+}
+
+func (s *internalRpcServer) GetInfo(c context.Context, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+	log := s.log.With(
+		slog.Any("request", req),
+		slog.String("peer", rpc.GetPeer(c)),
+	)
+	log.Info("Received GetInfo request")
+	features := feature.SupportedFeatures()
+	return &proto.GetInfoResponse{
+		FeaturesSupported: features,
+	}, nil
 }
 
 func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
