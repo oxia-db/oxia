@@ -163,7 +163,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 	if err != nil {
 		return nil, err
 	}
-	e.waitForGracePeriod(ch, totalResponses, fencingQuorumSize, ensemble, candidatesResponse)
+	e.waitForGracePeriod(ch, fencingQuorumSize, ensemble, totalResponses, candidatesResponse)
 	return candidatesResponse, nil
 }
 
@@ -171,7 +171,7 @@ func (e *ShardElection) waitForGracePeriod(ch chan struct {
 	model.Server
 	*proto.EntryId
 	error
-}, fencingQuorumSize int, totalResponses int, ensemble []model.Server, candidatesResponse map[model.Server]*proto.EntryId) {
+}, fencingQuorumSize int, ensemble []model.Server, totalResponses int, candidatesResponse map[model.Server]*proto.EntryId) {
 	// If we have already reached a quorum of successful responses, we can wait a
 	// tiny bit more, to allow time for all the "healthy" data servers to respond.
 	for totalResponses < fencingQuorumSize {
