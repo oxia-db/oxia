@@ -146,7 +146,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 				}, func() {
 					entryId, err := e.fenceNewTerm(fencingContext, term, pinedServer)
 					if err != nil {
-						e.Warn("Failed to fenceNewTerm data server", slog.Any("error", err), slog.Any("data-server", pinedServer))
+						e.Warn("FenceNewTerm failed", slog.Any("error", err), slog.Any("data-server", pinedServer))
 					} else {
 						e.Info("Processed fenceNewTerm response", slog.Any("data-server", pinedServer), slog.Any("entry-id", entryId))
 					}
@@ -159,46 +159,66 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 			)
 		})
 	}
+	candidatesResponse, totalResponses, err := e.waitForMajority(ch, fencingQuorumSize, majority, ensemble)
+	if err != nil {
+		return nil, err
+	}
+	e.waitForGracePeriod(ch, fencingQuorumSize, ensemble, totalResponses, candidatesResponse)
+	return candidatesResponse, nil
+}
+
+func (*ShardElection) waitForGracePeriod(ch chan struct {
+	model.Server
+	*proto.EntryId
+	error
+}, fencingQuorumSize int, ensemble []model.Server, totalResponses int, candidatesResponse map[model.Server]*proto.EntryId) {
+	// If we have already reached a quorum of successful responses, we can wait a
+	// tiny bit more, to allow time for all the "healthy" data servers to respond.
+	for totalResponses < fencingQuorumSize {
+		select {
+		case r := <-ch:
+			totalResponses++
+			if r.error != nil {
+				// rpc has already printed the logs
+				continue
+			}
+			if slices.Contains(ensemble, r.Server) {
+				candidatesResponse[r.Server] = r.EntryId
+			}
+		case <-time.After(quorumFencingGracePeriod):
+			return
+		}
+	}
+}
+
+func (*ShardElection) waitForMajority(ch chan struct {
+	model.Server
+	*proto.EntryId
+	error
+}, fencingQuorumSize int, majority int, ensemble []model.Server) (map[model.Server]*proto.EntryId, int, error) {
+	res := make(map[model.Server]*proto.EntryId)
 	successResponses := 0
 	totalResponses := 0
-
-	res := make(map[model.Server]*proto.EntryId)
 	var err error
 	// Wait for a majority to respond
 	for successResponses < majority && totalResponses < fencingQuorumSize {
 		fencingResponse := <-ch
 
 		totalResponses++
-		if fencingResponse.error == nil {
-			successResponses++
-			// We don't consider the removed data servers as candidates for leader/followers
-			if slices.Contains(ensemble, fencingResponse.Server) {
-				res[fencingResponse.Server] = fencingResponse.EntryId
-			}
-		} else {
+		if fencingResponse.error != nil {
 			err = multierr.Append(err, fencingResponse.error)
+			continue
+		}
+		successResponses++
+		// We don't consider the removed data servers as candidates for leader/followers
+		if slices.Contains(ensemble, fencingResponse.Server) {
+			res[fencingResponse.Server] = fencingResponse.EntryId
 		}
 	}
 	if successResponses < majority {
-		return nil, errors.Wrap(err, "failed to fenceNewTerm shard")
+		return nil, totalResponses, errors.Wrap(err, "election failed: quorum not reached")
 	}
-	// If we have already reached a quorum of successful responses, we can wait a
-	// tiny bit more, to allow time for all the "healthy" data servers to respond.
-	for err == nil && totalResponses < fencingQuorumSize {
-		select {
-		case r := <-ch:
-			totalResponses++
-			if r.error == nil {
-				res[r.Server] = r.EntryId
-			} else {
-				err = multierr.Append(err, r.error)
-			}
-
-		case <-time.After(quorumFencingGracePeriod):
-			return res, nil
-		}
-	}
-	return res, nil
+	return res, totalResponses, nil
 }
 
 func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto.EntryId) (
