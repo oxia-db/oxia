@@ -29,6 +29,8 @@ import (
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/crc"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
@@ -51,6 +53,7 @@ var (
 const (
 	commitOffsetKey        = constant.InternalKeyPrefix + "commit-offset"
 	commitLastVersionIdKey = constant.InternalKeyPrefix + "last-version-id"
+	commitChecksumKey      = constant.InternalKeyPrefix + "checksum"
 	termKey                = constant.InternalKeyPrefix + "term"
 	termOptionsKey         = termKey + "-options"
 )
@@ -155,6 +158,12 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	}
 	db.committedVersionId.Store(lastVersionId)
 
+	lastChecksum, err := db.readLastChecksum()
+	if err != nil {
+		return nil, err
+	}
+	db.committedChecksum.Store(&lastChecksum)
+
 	db.notificationsTracker = newNotificationsTracker(namespace, shardId, commitOffset, kv, notificationRetentionTime, clock)
 	return db, nil
 }
@@ -163,6 +172,7 @@ type db struct {
 	kv                    kvstore.KV
 	shardId               int64
 	committedVersionId    atomic.Int64
+	committedChecksum     atomic.Pointer[crc.Checksum]
 	notificationsTracker  *notificationsTracker
 	log                   *slog.Logger
 	notificationsEnabled  bool
@@ -279,11 +289,19 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 		}
 	}
 
+	previousChecksum := d.committedChecksum.Load()
+	committedChecksum := batch.Checksum(*previousChecksum) // we need to copy this value
+
+	if err := d.addASCIILong(commitChecksumKey, int64(committedChecksum), batch, timestamp); err != nil {
+		return nil, err
+	}
 	if err := batch.Commit(); err != nil {
 		return nil, err
 	}
 	// update the db local cache of version_id after commit success
 	d.committedVersionId.Store(uncommitedVersionId)
+	// update the db local cache of committed_checksum after commit success
+	d.committedChecksum.Store(&committedChecksum)
 
 	if notifications != nil {
 		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
@@ -433,14 +451,21 @@ func (d *db) KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error) 
 }
 
 func (d *db) ReadCommitOffset() (int64, error) {
-	return d.readASCIILong(commitOffsetKey)
+	return d.readASCIILongOrDefault(commitOffsetKey, constant.I64NegativeOne)
 }
 
 func (d *db) readLastVersionId() (int64, error) {
-	return d.readASCIILong(commitLastVersionIdKey)
+	return d.readASCIILongOrDefault(commitLastVersionIdKey, constant.I64NegativeOne)
+}
+func (d *db) readLastChecksum() (crc.Checksum, error) {
+	cs, err := d.readASCIILongOrDefault(commitChecksumKey, constant.I64Zero)
+	if err != nil {
+		return 0, err
+	}
+	return crc.Checksum(uint32(cs)), nil
 }
 
-func (d *db) readASCIILong(key string) (int64, error) {
+func (d *db) readASCIILongOrDefault(key string, defaultValue int64) (int64, error) {
 	kv := d.kv
 
 	getReq := &proto.GetRequest{
@@ -449,15 +474,15 @@ func (d *db) readASCIILong(key string) (int64, error) {
 	}
 	gr, err := applyGet(kv, getReq)
 	if err != nil {
-		return wal.InvalidOffset, err
+		return 0, err
 	}
 	if gr.Status == proto.Status_KEY_NOT_FOUND {
-		return wal.InvalidOffset, nil
+		return defaultValue, nil
 	}
 
 	var res int64
 	if _, err = fmt.Sscanf(string(gr.Value), "%d", &res); err != nil {
-		return wal.InvalidOffset, err
+		return 0, err
 	}
 	return res, nil
 }

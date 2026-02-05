@@ -12,23 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package constant
+package crc
 
-import "time"
-
-const I64NegativeOne int64 = -1
-const I64Zero int64 = 0
-
-const (
-	MetadataTerm      = "term"
-	MetadataNamespace = "namespace"
-	MetadataShardId   = "shard-id"
-	DefaultNamespace  = "default"
-
-	DefaultPublicPort   = 6648
-	DefaultInternalPort = 6649
-	DefaultAdminPort    = 6651
-
-	MaxSessionTimeout = 5 * time.Minute
-	MinSessionTimeout = 2 * time.Second
+import (
+	"hash/crc32"
 )
+
+const MagicNumber uint32 = 0xa282ead8
+
+var table = crc32.MakeTable(crc32.Castagnoli)
+
+type Checksum uint32
+
+func (c Checksum) Update(b []byte) Checksum {
+	return Checksum(crc32.Update(uint32(c), table, b))
+}
+func (c Checksum) Value() uint32 {
+	return uint32(c>>15|c<<17) + MagicNumber
+}

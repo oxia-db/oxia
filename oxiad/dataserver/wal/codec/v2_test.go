@@ -23,6 +23,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 )
 
 func TestV2_GetHeaderSize(t *testing.T) {
@@ -40,7 +42,7 @@ func TestV2_Codec(t *testing.T) {
 	payloadSize, previousCrc, payloadCrc, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, previousCrc, 0)
-	expectedPayloadCrc := Checksum(0).Update(payload).Value()
+	expectedPayloadCrc := crc.Checksum(0).Update(payload).Value()
 	assert.EqualValues(t, expectedPayloadCrc, payloadCrc)
 	assert.EqualValues(t, recordSize-(v2PayloadSizeLen+v2PreviousCrcLen+v2PayloadCrcLen), payloadSize)
 
@@ -69,7 +71,7 @@ func TestV2_Crc(t *testing.T) {
 		_, previousCrc, payloadCrc, err := v2.ReadHeaderWithValidation(buf, startFOffset)
 		assert.NoError(t, err)
 		assert.EqualValues(t, expectedChecksum, previousCrc)
-		expectedPayloadChecksum := Checksum(expectedChecksum).Update([]byte{byte(index)}).Value()
+		expectedPayloadChecksum := crc.Checksum(expectedChecksum).Update([]byte{byte(index)}).Value()
 		assert.EqualValues(t, expectedPayloadChecksum, payloadCrc)
 		expectedChecksum = expectedPayloadChecksum
 	}

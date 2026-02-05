@@ -12,21 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package codec
+// Package feature provides feature negotiation capabilities for Oxia.
+// It enables safe rolling upgrades where new and old nodes can coexist
+// by negotiating which features are supported by all members of a quorum.
+package feature
 
 import (
-	"hash/crc32"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
-const MagicNumber uint32 = 0xa282ead8
-
-var table = crc32.MakeTable(crc32.Castagnoli)
-
-type Checksum uint32
-
-func (c Checksum) Update(b []byte) Checksum {
-	return Checksum(crc32.Update(uint32(c), table, b))
-}
-func (c Checksum) Value() uint32 {
-	return uint32(c>>15|c<<17) + MagicNumber
+// SupportedFeatures returns the list of features supported by this node.
+// This list should be updated whenever new features are added that require
+// negotiation during leader election.
+func SupportedFeatures() []proto.Feature {
+	return []proto.Feature{
+		proto.Feature_FEATURE_FINGERPRINT,
+	}
 }

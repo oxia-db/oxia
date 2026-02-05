@@ -33,6 +33,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/entity"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -120,7 +121,7 @@ func TestShardController(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -203,7 +204,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 		Term:     1,
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, shard)
 	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
@@ -240,7 +241,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	timeStart := time.Now()
 
@@ -293,7 +294,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// s3 is failing, though we can still elect a leader
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -354,7 +355,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 		Term:     4,
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, 5)
 	n1.GetStatusResponse(4, proto.ServingStatus_LEADER, 0, 0)
@@ -405,7 +406,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -445,7 +446,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -539,7 +540,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, 1*time.Second)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -653,7 +654,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, nil, rpc, 1*time.Second)
+	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -729,4 +730,126 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 
 	metaSnap = sc.Metadata().Load()
 	assert.EqualValues(t, metaSnap.Ensemble, []model.Server{s1, s2, s3})
+}
+
+// Test feature negotiation with all nodes supporting the same features.
+func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
+	var shard int64 = 5
+	rpc := newMockRpcProvider()
+
+	s1 := model.Server{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
+
+	// All nodes support FINGERPRINT feature
+	rpc.GetNode(s1).SetNodeFeatures(feature.SupportedFeatures())
+	rpc.GetNode(s2).SetNodeFeatures(feature.SupportedFeatures())
+	rpc.GetNode(s3).SetNodeFeatures(feature.SupportedFeatures())
+
+	meta := metadata.NewMetadataProviderMemory()
+	defer meta.Close()
+	statusResource := resource.NewStatusResource(meta)
+	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
+		return model.ClusterConfig{}, nil
+	}, nil, nil)
+	defer configResource.Close()
+
+	// Create a feature supplier that queries the mock RPC
+	featureSupplier := func(servers []model.Server) map[string][]proto.Feature {
+		result := make(map[string][]proto.Feature)
+		for _, server := range servers {
+			info, err := rpc.GetInfo(context.Background(), server, &proto.GetInfoRequest{})
+			if err == nil {
+				result[server.Internal] = info.FeaturesSupported
+			}
+		}
+		return result
+	}
+
+	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+		Status:   model.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []model.Server{s1, s2, s3},
+	}, configResource, statusResource, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	rpc.GetNode(s1).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).expectNewTermRequest(t, shard, 2, true)
+
+	// Verify BecomeLeader includes the FINGERPRINT feature
+	rpc.GetNode(s1).expectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, []proto.Feature{proto.Feature_FEATURE_FINGERPRINT})
+
+	assert.Eventually(t, func() bool {
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+
+	sc.Close()
+}
+
+// Test feature negotiation with mixed node versions (one old node).
+func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
+	var shard int64 = 5
+	rpc := newMockRpcProvider()
+
+	s1 := model.Server{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
+
+	// s1 and s2 are new nodes with FINGERPRINT support
+	rpc.GetNode(s1).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_FINGERPRINT})
+	rpc.GetNode(s2).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_FINGERPRINT})
+	// s3 is an old node without feature support
+	rpc.GetNode(s3).SetNodeFeatures([]proto.Feature{})
+
+	meta := metadata.NewMetadataProviderMemory()
+	defer meta.Close()
+	statusResource := resource.NewStatusResource(meta)
+	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
+		return model.ClusterConfig{}, nil
+	}, nil, nil)
+	defer configResource.Close()
+
+	featureSupplier := func(servers []model.Server) map[string][]proto.Feature {
+		result := make(map[string][]proto.Feature)
+		for _, server := range servers {
+			info, err := rpc.GetInfo(context.Background(), server, &proto.GetInfoRequest{})
+			if err == nil {
+				result[server.Internal] = info.FeaturesSupported
+			}
+		}
+		return result
+	}
+
+	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
+		Status:   model.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []model.Server{s1, s2, s3},
+	}, configResource, statusResource, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	rpc.GetNode(s1).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).expectNewTermRequest(t, shard, 2, true)
+
+	// No features should be negotiated because s3 does not support FINGERPRINT
+	rpc.GetNode(s1).expectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, []proto.Feature{})
+
+	assert.Eventually(t, func() bool {
+		return sc.Metadata().Status() == model.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+
+	sc.Close()
 }
