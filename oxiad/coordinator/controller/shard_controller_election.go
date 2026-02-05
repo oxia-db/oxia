@@ -167,7 +167,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 	return candidatesResponse, nil
 }
 
-func (e *ShardElection) waitForGracePeriod(ch chan struct {
+func (*ShardElection) waitForGracePeriod(ch chan struct {
 	model.Server
 	*proto.EntryId
 	error
