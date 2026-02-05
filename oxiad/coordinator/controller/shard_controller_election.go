@@ -184,12 +184,14 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []model.Server, 
 	}
 	// If we have already reached a quorum of successful responses, we can wait a
 	// tiny bit more, to allow time for all the "healthy" data servers to respond.
-	for err == nil && totalResponses < fencingQuorumSize {
+	for totalResponses < fencingQuorumSize {
 		select {
 		case r := <-ch:
 			totalResponses++
 			if r.error != nil {
-				err = multierr.Append(err, r.error)
+				e.Warn("Failed to fence new term on data server after reaching quorum. Election will continue to retry in the background.",
+					slog.Any("error", err),
+					slog.Any("data-server", r.Server.GetIdentifier()))
 				continue
 			}
 			if slices.Contains(ensemble, r.Server) {
