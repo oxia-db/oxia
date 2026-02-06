@@ -258,3 +258,85 @@ func TestCache_ConcurrentUpdate(t *testing.T) {
 	assert.NoError(t, cache2.Close())
 	assert.NoError(t, client2.Close())
 }
+
+// TestCache_GetNotFoundTwice verifies that calling Get() twice on a non-existing
+// key does not panic. This is a regression test for a bug where the negative cache
+// entry was stored with a double-wrapped optional type (*optional[Optional[...]]),
+// causing a type assertion panic on the second Get() when the entry was served from
+// the ristretto cache.
+func TestCache_GetNotFoundTwice(t *testing.T) {
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
+	assert.NoError(t, err)
+
+	cache, err := NewCache[testStruct](client, json.Marshal, json.Unmarshal)
+	assert.NoError(t, err)
+
+	key := "/non-existing-key-twice"
+
+	// First Get: triggers load(), which stores a negative cache entry
+	value, version, err := cache.Get(context.Background(), key)
+	assert.ErrorIs(t, ErrKeyNotFound, err)
+	assert.Equal(t, Version{}, version)
+	assert.Equal(t, testStruct{}, value)
+
+	// Wait for ristretto to commit the async Set
+	cacheInternal := cache.(*cacheImpl[testStruct])
+	cacheInternal.valueCache.Wait()
+
+	// Second Get: served from ristretto cache. Before the fix, this panicked with:
+	//   interface conversion: *oxia.optional[cachedResult[...]] is not cachedResult[...]:
+	//   missing method Get
+	assert.NotPanics(t, func() {
+		value, version, err = cache.Get(context.Background(), key)
+	})
+	assert.ErrorIs(t, ErrKeyNotFound, err)
+	assert.Equal(t, Version{}, version)
+	assert.Equal(t, testStruct{}, value)
+
+	assert.NoError(t, cache.Close())
+	assert.NoError(t, client.Close())
+}
+
+// TestCache_GetNotFoundThenPut verifies that a key can transition from "not found"
+// (negative cache entry) to a valid value without type assertion issues.
+func TestCache_GetNotFoundThenPut(t *testing.T) {
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := NewSyncClient(standaloneServer.ServiceAddr())
+	assert.NoError(t, err)
+
+	cache, err := NewCache[testStruct](client, json.Marshal, json.Unmarshal)
+	assert.NoError(t, err)
+
+	key := newKey()
+
+	// Get non-existing key to populate negative cache entry
+	_, _, err = cache.Get(context.Background(), key)
+	assert.ErrorIs(t, ErrKeyNotFound, err)
+
+	cacheInternal := cache.(*cacheImpl[testStruct])
+	cacheInternal.valueCache.Wait()
+
+	// Verify it's still not found from the cache
+	_, _, err = cache.Get(context.Background(), key)
+	assert.ErrorIs(t, ErrKeyNotFound, err)
+
+	// Now put a value for this key
+	v := testStruct{"hello", 42}
+	_, _, err = cache.Put(context.Background(), key, v)
+	assert.NoError(t, err)
+
+	// Get should now return the value (Put invalidates the cache, so load() is called)
+	value, _, err := cache.Get(context.Background(), key)
+	assert.NoError(t, err)
+	assert.Equal(t, v, value)
+
+	assert.NoError(t, cache.Close())
+	assert.NoError(t, client.Close())
+}

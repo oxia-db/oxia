@@ -267,11 +267,7 @@ func (c *cacheImpl[Value]) Get(ctx context.Context, key string) (value Value, ve
 func (c *cacheImpl[Value]) load(ctx context.Context, key string) (value Value, version Version, err error) {
 	_, data, existingVersion, err := c.client.Get(ctx, key)
 	if errors.Is(err, ErrKeyNotFound) {
-		// Use valueVersion[Value] instead of cachedResult[Value] to ensure
-		// type consistency with the non-empty case below. cachedResult[Value]
-		// is an alias for Optional[valueVersion[Value]], so using it here would
-		// create a double-wrapped type *optional[Optional[valueVersion[Value]]]
-		// which causes type assertion panics in Get().
+		// Use valueVersion[Value] instead of cachedResult[Value] to avoid double-wrapping.
 		cr := empty[valueVersion[Value]]()
 		c.valueCache.Set(key, cr, 0)
 		return value, version, err
