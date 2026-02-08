@@ -1504,7 +1504,7 @@ func TestLeaderController_IsFeatureEnabled(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Before becoming leader, no features should be enabled
-	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_FINGERPRINT))
+	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 
 	// Fence first
 	_, err = lc.NewTerm(&proto.NewTermRequest{
@@ -1519,12 +1519,12 @@ func TestLeaderController_IsFeatureEnabled(t *testing.T) {
 		Term:              1,
 		ReplicationFactor: 1,
 		FollowerMaps:      nil,
-		FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_FINGERPRINT},
+		FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 	})
 	assert.NoError(t, err)
 
 	// Now FINGERPRINT should be enabled
-	assert.True(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_FINGERPRINT))
+	assert.True(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 	// Unknown feature should not be enabled
 	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_UNKNOWN))
 
@@ -1561,7 +1561,7 @@ func TestLeaderController_IsFeatureEnabled_NoFeatures(t *testing.T) {
 	assert.NoError(t, err)
 
 	// No features should be enabled
-	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_FINGERPRINT))
+	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())

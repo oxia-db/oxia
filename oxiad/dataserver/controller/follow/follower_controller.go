@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
 	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -393,67 +394,6 @@ func (fc *followerController) stateApplier() {
 	}
 }
 
-func (fc *followerController) processCommitRequest(entry *proto.LogEntry, logEntryValue *proto.LogEntryValue) error {
-	fc.rwMutex.RLock()
-	defer fc.rwMutex.RUnlock()
-
-	for _, br := range logEntryValue.GetRequests().Writes {
-		_, err := fc.db.ProcessWrite(br, entry.Offset, entry.Timestamp, lead.WrapperUpdateOperationCallback)
-		if err != nil {
-			fc.log.Error(
-				"Error applying committed entry",
-				slog.Any("error", err),
-			)
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, maxInclusive int64) error {
-	logEntryValue := proto.LogEntryValueFromVTPool()
-	defer logEntryValue.ReturnToVTPool()
-
-	for reader.HasNext() {
-		entry, err := reader.ReadNext()
-
-		if errors.Is(err, wal.ErrReaderClosed) {
-			fc.log.Info("Stopped reading committed entries")
-			return err
-		} else if err != nil {
-			fc.log.Error("Error reading committed entry", slog.Any("error", err))
-			return err
-		}
-
-		fc.log.Debug(
-			"Reading entry",
-			slog.Int64("offset", entry.Offset),
-		)
-
-		if entry.Offset > maxInclusive {
-			// We read up to the max point
-			return nil
-		}
-
-		logEntryValue.ResetVT()
-		if err := logEntryValue.UnmarshalVT(entry.Value); err != nil {
-			fc.log.Error(
-				"Error unmarshalling committed entry",
-				slog.Any("error", err),
-			)
-			return err
-		}
-		if err := fc.processCommitRequest(entry, logEntryValue); err != nil {
-			return err
-		}
-
-		fc.commitOffset.Store(entry.Offset)
-	}
-
-	return nil
-}
-
 func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	fc.log.Debug(
 		"Apply committed entries",
@@ -483,7 +423,34 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 		}
 	}()
 
-	return fc.processCommittedEntriesLoop(reader, maxInclusive)
+	for reader.HasNext() {
+		entry, err := reader.ReadNext()
+
+		if errors.Is(err, wal.ErrReaderClosed) {
+			fc.log.Info("Stopped reading committed entries")
+			return err
+		} else if err != nil {
+			fc.log.Error("Error reading committed entry", slog.Any("error", err))
+			return err
+		}
+
+		fc.log.Debug(
+			"Reading entry",
+			slog.Int64("offset", entry.Offset),
+		)
+
+		if entry.Offset > maxInclusive {
+			// We read up to the max point
+			return nil
+		}
+		if err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback); err != nil {
+			return err
+		}
+
+		fc.commitOffset.Store(entry.Offset)
+	}
+
+	return nil
 }
 
 func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error { //nolint:revive // cyclomatic complexity justified by sequential error handling

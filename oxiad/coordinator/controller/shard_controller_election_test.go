@@ -36,29 +36,29 @@ func TestNegotiate_EmptyInput(t *testing.T) {
 
 func TestNegotiate_SingleNode(t *testing.T) {
 	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_FINGERPRINT},
+		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
 	result := negotiate(nodeFeatures)
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_FINGERPRINT}, result)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
 }
 
 func TestNegotiate_AllNodesSupport(t *testing.T) {
 	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_FINGERPRINT},
-		"node2": {proto.Feature_FEATURE_FINGERPRINT},
-		"node3": {proto.Feature_FEATURE_FINGERPRINT},
+		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"node3": {proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
 	result := negotiate(nodeFeatures)
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_FINGERPRINT}, result)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
 }
 
 func TestNegotiate_PartialSupport(t *testing.T) {
 	// Only node1 and node2 support FINGERPRINT, node3 doesn't
 	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_FINGERPRINT},
-		"node2": {proto.Feature_FEATURE_FINGERPRINT},
+		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
 		"node3": {},
 	}
 
@@ -68,31 +68,31 @@ func TestNegotiate_PartialSupport(t *testing.T) {
 
 func TestNegotiate_IgnoresUnknownFeature(t *testing.T) {
 	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_UNKNOWN, proto.Feature_FEATURE_FINGERPRINT},
-		"node2": {proto.Feature_FEATURE_UNKNOWN, proto.Feature_FEATURE_FINGERPRINT},
+		"node1": {proto.Feature_FEATURE_UNKNOWN, proto.Feature_FEATURE_DB_CHECKSUM},
+		"node2": {proto.Feature_FEATURE_UNKNOWN, proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
 	result := negotiate(nodeFeatures)
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_FINGERPRINT}, result)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
 	assert.NotContains(t, result, proto.Feature_FEATURE_UNKNOWN)
 }
 
 func TestNegotiate_HandlesDuplicates(t *testing.T) {
 	// Node1 has FINGERPRINT listed twice
 	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_FINGERPRINT, proto.Feature_FEATURE_FINGERPRINT},
-		"node2": {proto.Feature_FEATURE_FINGERPRINT},
+		"node1": {proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_DB_CHECKSUM},
+		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
 	result := negotiate(nodeFeatures)
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_FINGERPRINT}, result)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
 }
 
 func TestNegotiate_NoCommonFeatures(t *testing.T) {
 	// Simulate a scenario where nodes have no features in common
 	// (using empty lists to represent old nodes)
 	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_FINGERPRINT},
+		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
 		"node2": {},
 		"node3": {},
 	}
@@ -105,8 +105,8 @@ func TestNegotiate_OldNodeWithNoFeatures(t *testing.T) {
 	// Simulates rolling upgrade scenario where some nodes are old
 	// and report no features (or empty features)
 	nodeFeatures := map[string][]proto.Feature{
-		"new-node-1": {proto.Feature_FEATURE_FINGERPRINT},
-		"new-node-2": {proto.Feature_FEATURE_FINGERPRINT},
+		"new-node-1": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"new-node-2": {proto.Feature_FEATURE_DB_CHECKSUM},
 		"old-node":   nil, // Old node doesn't report any features
 	}
 
@@ -126,8 +126,8 @@ func TestNegotiate_MixedVersions_RollingUpgrade(t *testing.T) {
 	// - 1 old node supports nothing
 
 	nodeFeatures := map[string][]proto.Feature{
-		"new-node-1": {proto.Feature_FEATURE_FINGERPRINT},
-		"new-node-2": {proto.Feature_FEATURE_FINGERPRINT},
+		"new-node-1": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"new-node-2": {proto.Feature_FEATURE_DB_CHECKSUM},
 		"old-node":   {}, // Old node reports empty features
 	}
 
@@ -135,10 +135,10 @@ func TestNegotiate_MixedVersions_RollingUpgrade(t *testing.T) {
 	assert.Empty(t, result, "features should not be enabled until all nodes are upgraded")
 
 	// After upgrading the old node
-	nodeFeatures["old-node"] = []proto.Feature{proto.Feature_FEATURE_FINGERPRINT}
+	nodeFeatures["old-node"] = []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
 
 	result = negotiate(nodeFeatures)
-	assert.Contains(t, result, proto.Feature_FEATURE_FINGERPRINT, "feature should be enabled after all nodes are upgraded")
+	assert.Contains(t, result, proto.Feature_FEATURE_DB_CHECKSUM, "feature should be enabled after all nodes are upgraded")
 }
 
 func TestWaitForMajority_Success(t *testing.T) {

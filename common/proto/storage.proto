@@ -19,6 +19,7 @@ package proto;
 option go_package = "github.com/oxia-db/oxia/common/proto";
 
 import "client.proto";
+import "replication.proto";
 import "google/protobuf/descriptor.proto";
 
 extend google.protobuf.MessageOptions {
@@ -53,9 +54,20 @@ message LogEntryValue {
   option (mempool) = true;
   oneof value {
     WriteRequests requests = 1;
+    ControlRequest control_request = 2;
   }
 }
 
 message WriteRequests {
   repeated io.oxia.proto.v1.WriteRequest writes = 1;
+}
+
+message ControlRequest {
+  oneof value {
+    FeatureEnableRequest feature_enable = 1;
+  }
+}
+
+message FeatureEnableRequest {
+  repeated replication.Feature features = 1;
 }
