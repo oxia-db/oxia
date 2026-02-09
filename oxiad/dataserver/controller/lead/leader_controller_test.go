@@ -1524,7 +1524,10 @@ func TestLeaderController_IsFeatureEnabled(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Now Feature_FEATURE_DB_CHECKSUM should be enabled
-	assert.True(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+	assert.Eventually(t, func() bool {
+		return lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
+	}, 5*time.Second, 50*time.Millisecond)
+
 	// Unknown feature should not be enabled
 	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_UNKNOWN))
 

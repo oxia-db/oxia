@@ -23,7 +23,6 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
@@ -323,7 +322,7 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	}, nil
 }
 
-func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
+func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) ([]proto.Feature, error) {
 	lc.Lock()
 	defer lc.Unlock()
 
@@ -381,19 +380,14 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	)
 
 	lc.status = proto.ServingStatus_LEADER
-	return &proto.BecomeLeaderResponse{}, nil
-}
 
-// postBecomeLeader performs critical initialization and state reconciliation
-// immediately after winning a leader election.
-//
-// This method is executed synchronously as part of the promotion process.
-// While it must not contain indefinite blocking operations that would hang
-// the election, it ensures all required leader-side preconditions are met.
-func (lc *leaderController) postBecomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) {
-	if slices.Contains(req.FeaturesSupported, proto.Feature_FEATURE_DB_CHECKSUM) && !lc.db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM) {
-		lc.proposeFeaturesEnable(ctx, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	proposeEnabledFeature := make([]proto.Feature, 0)
+	for _, feature := range req.FeaturesSupported {
+		if !lc.db.IsFeatureEnabled(feature) {
+			proposeEnabledFeature = append(proposeEnabledFeature, feature)
+		}
 	}
+	return proposeEnabledFeature, nil
 }
 
 // BecomeLeader : Node handles a Become Leader request
@@ -422,12 +416,13 @@ func (lc *leaderController) postBecomeLeader(ctx context.Context, req *proto.Bec
 //     possible that their head entry id is higher than the leader and
 //     therefore need truncating.
 func (lc *leaderController) BecomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
-	response, err := lc.becomeLeader(ctx, req)
+	proposeEnabledFeature, err := lc.becomeLeader(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	lc.postBecomeLeader(ctx, req)
-	return response, nil
+	// post become leader without the lock
+	lc.proposeFeaturesEnable(ctx, proposeEnabledFeature)
+	return &proto.BecomeLeaderResponse{}, nil
 }
 
 func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {

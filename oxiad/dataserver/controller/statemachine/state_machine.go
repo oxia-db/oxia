@@ -56,6 +56,8 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 				return err
 			}
 		}
+	default:
+		return errors.New("unknown proposal type")
 	}
 	return nil
 }
