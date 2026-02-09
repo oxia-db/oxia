@@ -123,11 +123,6 @@ type leaderController struct {
 	followerAckOffsetGauges map[string]metric.Gauge
 }
 
-func (lc *leaderController) GetDBChecksum() uint32 {
-	//TODO implement me
-	panic("implement me")
-}
-
 func NewLeaderController(storageOptions *option.StorageOptions, namespace string, shardId int64,
 	rpcClient rpc.ReplicationRpcProvider,
 	walFactory wal.Factory, kvFactory kvstore.Factory,
