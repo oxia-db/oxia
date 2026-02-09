@@ -84,12 +84,12 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		if targetId == leader.GetIdentifier() {
 			lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
 			assert.NoError(t, err)
-			lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
+			assert.True(t, lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 			continue
 		}
 		follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
 		assert.NoError(t, err)
-		follow.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
+		assert.True(t, follow.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 	}
 
 	// Write some entries

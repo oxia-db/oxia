@@ -523,6 +523,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		)
 		return err
 	}
+	defer r.Close()
 
 	for r.HasNext() {
 		entry, err := r.ReadNext()

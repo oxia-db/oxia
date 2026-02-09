@@ -1513,7 +1513,7 @@ func TestLeaderController_IsFeatureEnabled(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	// Become leader with FINGERPRINT feature
+	// Become leader with Feature_FEATURE_DB_CHECKSUM feature
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
 		Term:              1,
@@ -1523,7 +1523,7 @@ func TestLeaderController_IsFeatureEnabled(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	// Now FINGERPRINT should be enabled
+	// Now Feature_FEATURE_DB_CHECKSUM should be enabled
 	assert.True(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 	// Unknown feature should not be enabled
 	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_UNKNOWN))

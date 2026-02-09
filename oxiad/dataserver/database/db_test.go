@@ -1158,6 +1158,7 @@ func TestDB_ChecksumPersistence(t *testing.T) {
 	assert.NoError(t, err)
 	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
+	testDB.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
 
 	// When no checksum is stored, readASCIILongOrDefault returns -1 (wal.InvalidOffset),
 	initialChecksum := testDB.(*db).committedChecksum.Load()
@@ -1199,6 +1200,7 @@ func TestDB_ChecksumUpdatesOnWrite(t *testing.T) {
 	assert.NoError(t, err)
 	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
+	testDB.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
 
 	checksums := make([]uint32, 0)
 	checksums = append(checksums, uint32(*testDB.(*db).committedChecksum.Load()))
