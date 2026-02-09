@@ -421,7 +421,9 @@ func (lc *leaderController) BecomeLeader(ctx context.Context, req *proto.BecomeL
 		return nil, err
 	}
 	// post become leader without the lock
-	lc.proposeFeaturesEnable(ctx, proposeEnabledFeature)
+	if len(proposeEnabledFeature) > 0 {
+		lc.proposeFeaturesEnable(ctx, proposeEnabledFeature)
+	}
 	return &proto.BecomeLeaderResponse{}, nil
 }
 
