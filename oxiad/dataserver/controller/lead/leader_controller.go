@@ -806,32 +806,22 @@ func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.Write
 }
 
 func (lc *leaderController) Write(ctx context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
-	deferPropose := concurrent.NewOnce(func(proposal Proposal) {
-		var wr *proto.WriteResponse
-		var err error
-		wr, err = lc.db.ProcessWrite(proposal.GetContent().WriteRequest, proposal.GetOffset(), proposal.GetTimestamp(), WrapperUpdateOperationCallback)
-		if err != nil {
-			cb.OnCompleteError(err)
-			return
-		}
-		cb.OnComplete(wr)
-	}, func(err error) {
-		cb.OnCompleteError(err)
-	})
-	lc.propose(ctx, func(offset int64) Proposal { return NewWriteProposal(offset, request) }, deferPropose)
+	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
+		cb.OnComplete(response.WriteResponse)
+	}, cb.OnCompleteError)
+	lc.propose(ctx, func(offset int64) statemachine.Proposal { return statemachine.NewWriteProposal(offset, request) }, deferPropose)
 }
 
 func (lc *leaderController) writeBlock(ctx context.Context, requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
 	res := make(chan *entity.TWithError[*proto.WriteResponse], 1)
-	deferPropose := concurrent.NewOnce(func(proposal Proposal) {
-		var wr *proto.WriteResponse
-		var err error
-		wr, err = lc.db.ProcessWrite(proposal.GetContent().WriteRequest, proposal.GetOffset(), proposal.GetTimestamp(), WrapperUpdateOperationCallback)
-		res <- &entity.TWithError[*proto.WriteResponse]{Err: err, T: wr}
+	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
+		res <- &entity.TWithError[*proto.WriteResponse]{Err: nil, T: response.WriteResponse}
 	}, func(err error) {
 		res <- &entity.TWithError[*proto.WriteResponse]{Err: err, T: nil}
 	})
-	lc.propose(ctx, func(offset int64) Proposal { return NewWriteProposal(offset, requestSupplier(offset)) }, deferPropose)
+	lc.propose(ctx, func(offset int64) statemachine.Proposal {
+		return statemachine.NewWriteProposal(offset, requestSupplier(offset))
+	}, deferPropose)
 	response := <-res
 	return response.T, response.Err
 }
@@ -843,13 +833,13 @@ func (lc *leaderController) writeBlock(ctx context.Context, requestSupplier func
 // As a result, the underlying State Machine must handle these requests
 // idempotently to ensure consistency across retries or leader transitions.
 func (lc *leaderController) proposeFeaturesEnable(ctx context.Context, features []proto.Feature) {
-	deferPropose := concurrent.NewOnce(func(Proposal) {
+	deferPropose := concurrent.NewOnce(func(statemachine.ApplyResponse) {
 		lc.log.Info("Proposed feature enable", slog.Any("features", features))
 	}, func(err error) {
-		lc.log.Info("Failed to propose feature enable", slog.Any("features", features), slog.Any("error", err))
+		lc.log.Error("Failed to propose feature enable", slog.Any("features", features), slog.Any("error", err))
 	})
-	lc.propose(ctx, func(offset int64) Proposal {
-		return NewControlProposal(offset, &proto.ControlRequest{
+	lc.propose(ctx, func(offset int64) statemachine.Proposal {
+		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
 			Value: &proto.ControlRequest_FeatureEnable{
 				FeatureEnable: &proto.FeatureEnableRequest{
 					Features: features,
@@ -859,7 +849,7 @@ func (lc *leaderController) proposeFeaturesEnable(ctx context.Context, features 
 	}, deferPropose)
 }
 
-func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64) Proposal, cb concurrent.Callback[Proposal]) {
+func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
 	timer := lc.writeLatencyHisto.Timer()
 	lc.Lock()
 	if err := checkStatusIsLeader(lc.status); err != nil {
@@ -878,6 +868,8 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 	entryValue := proto.LogEntryValueFromVTPool()
 	defer entryValue.ReturnToVTPool()
 
+	proposal.ToLogEntry(entryValue)
+
 	value, err := entryValue.MarshalVT()
 	if err != nil {
 		lc.Unlock()
@@ -895,7 +887,12 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
 			func(_ any) {
 				defer timer.DoneCtx(ctx)
-				cb.OnComplete(proposal)
+				response, err := statemachine.ApplyProposal(lc.db, proposal, WrapperUpdateOperationCallback)
+				if err != nil {
+					cb.OnCompleteError(err)
+					return
+				}
+				cb.OnComplete(response)
 			}, func(err error) {
 				timer.DoneCtx(ctx)
 				cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package lead
+package statemachine
 
 import (
 	"time"
@@ -20,17 +20,10 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-type ProposalContent struct {
-	WriteRequest    *proto.WriteRequest
-	ControlRequests *proto.ControlRequest
-}
-
 type Proposal interface {
 	GetOffset() int64
 
 	GetTimestamp() uint64
-
-	GetContent() *ProposalContent
 
 	ToLogEntry(vtEntry *proto.LogEntryValue)
 }
@@ -41,10 +34,6 @@ type WriteProposal struct {
 	offset    int64
 	timestamp uint64
 	request   *proto.WriteRequest
-}
-
-func (wp *WriteProposal) GetContent() *ProposalContent {
-	return &ProposalContent{WriteRequest: wp.request}
 }
 
 func (wp *WriteProposal) GetTimestamp() uint64 {
@@ -72,7 +61,7 @@ var _ Proposal = &ControlProposal{}
 type ControlProposal struct {
 	offset    int64
 	timestamp uint64
-	requests  *proto.ControlRequest
+	request   *proto.ControlRequest
 }
 
 func (c *ControlProposal) GetOffset() int64 {
@@ -83,18 +72,14 @@ func (c *ControlProposal) GetTimestamp() uint64 {
 	return c.timestamp
 }
 
-func (c *ControlProposal) GetContent() *ProposalContent {
-	return &ProposalContent{ControlRequests: c.requests}
-}
-
 func (c *ControlProposal) ToLogEntry(vtEntry *proto.LogEntryValue) {
-	vtEntry.Value = &proto.LogEntryValue_ControlRequest{ControlRequest: c.requests}
+	vtEntry.Value = &proto.LogEntryValue_ControlRequest{ControlRequest: c.request}
 }
 
-func NewControlProposal(offset int64, requests *proto.ControlRequest) Proposal {
+func NewControlProposal(offset int64, request *proto.ControlRequest) Proposal {
 	return &ControlProposal{
 		offset:    offset,
-		requests:  requests,
+		request:   request,
 		timestamp: uint64(time.Now().UnixMilli()),
 	}
 }
