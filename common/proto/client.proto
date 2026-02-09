@@ -515,3 +515,9 @@ message Notification {
 
   optional string key_range_last = 3;
 }
+
+
+message LeaderHint {
+  int64 shard = 1;
+  string leader_address = 2;
+}

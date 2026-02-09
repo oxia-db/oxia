@@ -92,7 +92,7 @@ func TestReadBatchComplete(t *testing.T) {
 			nil,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.ReadRequest) (proto.OxiaClient_ReadClient, error) {
+		execute := func(ctx context.Context, request *proto.ReadRequest, _ *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
 			assert.Equal(t, &proto.ReadRequest{
 				Shard: &shardId,
 				Gets: []*proto.GetRequest{{

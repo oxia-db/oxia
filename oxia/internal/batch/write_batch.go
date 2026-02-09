@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/oxia-db/oxia/common/constant"
 
 	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxia/batch"
@@ -34,7 +35,7 @@ var ErrRequestTooLarge = errors.New("put request is too large")
 
 type writeBatchFactory struct {
 	namespace      string
-	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
+	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
 	maxByteSize    int
@@ -59,7 +60,7 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 type writeBatch struct {
 	namespace      string
 	shardId        *int64
-	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
+	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
 	deleteRanges   []model.DeleteRangeCall
@@ -117,8 +118,9 @@ func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response
 
 	backOff := time2.NewBackOff(ctx)
 
+	var hint *proto.LeaderHint
 	err = backoff.RetryNotify(func() error {
-		response, err = b.execute(ctx, request)
+		response, err = b.execute(ctx, request, hint)
 		if !isRetriable(err) {
 			return backoff.Permanent(err)
 		}
@@ -131,6 +133,9 @@ func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response
 			slog.Int64("shard", *b.shardId),
 			slog.Duration("retry-after", duration),
 		)
+		if leaderHint := constant.FindLeaderHint(err); leaderHint != nil {
+			hint = leaderHint
+		}
 	})
 
 	return response, err

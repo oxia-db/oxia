@@ -28,10 +28,10 @@ import (
 )
 
 type Executor interface {
-	ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error)
-	ExecuteRead(ctx context.Context, request *proto.ReadRequest) (proto.OxiaClient_ReadClient, error)
-	ExecuteList(ctx context.Context, request *proto.ListRequest) (proto.OxiaClient_ListClient, error)
-	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest) (proto.OxiaClient_RangeScanClient, error)
+	ExecuteWrite(ctx context.Context, request *proto.WriteRequest, leaderHint *proto.LeaderHint) (*proto.WriteResponse, error)
+	ExecuteRead(ctx context.Context, request *proto.ReadRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)
+	ExecuteList(ctx context.Context, request *proto.ListRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ListClient, error)
+	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_RangeScanClient, error)
 }
 
 type executorImpl struct {
@@ -60,8 +60,8 @@ func NewExecutor(ctx context.Context, namespace string, pool rpc.ClientPool, man
 	return e
 }
 
-func (e *executorImpl) ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
-	sw, err := e.writeStream(request.Shard) //nolint:contextcheck
+func (e *executorImpl) ExecuteWrite(ctx context.Context, request *proto.WriteRequest, leaderHint *proto.LeaderHint) (*proto.WriteResponse, error) {
+	sw, err := e.writeStream(request.Shard, leaderHint) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -69,8 +69,8 @@ func (e *executorImpl) ExecuteWrite(ctx context.Context, request *proto.WriteReq
 	return sw.Send(ctx, request)
 }
 
-func (e *executorImpl) ExecuteRead(ctx context.Context, request *proto.ReadRequest) (proto.OxiaClient_ReadClient, error) {
-	client, err := e.rpc(request.Shard)
+func (e *executorImpl) ExecuteRead(ctx context.Context, request *proto.ReadRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
+	client, err := e.rpc(request.Shard, leaderHint)
 	if err != nil {
 		return nil, err
 	}
@@ -78,8 +78,8 @@ func (e *executorImpl) ExecuteRead(ctx context.Context, request *proto.ReadReque
 	return client.Read(ctx, request)
 }
 
-func (e *executorImpl) ExecuteList(ctx context.Context, request *proto.ListRequest) (proto.OxiaClient_ListClient, error) {
-	client, err := e.rpc(request.Shard)
+func (e *executorImpl) ExecuteList(ctx context.Context, request *proto.ListRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ListClient, error) {
+	client, err := e.rpc(request.Shard, leaderHint)
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +87,8 @@ func (e *executorImpl) ExecuteList(ctx context.Context, request *proto.ListReque
 	return client.List(ctx, request)
 }
 
-func (e *executorImpl) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest) (proto.OxiaClient_RangeScanClient, error) {
-	client, err := e.rpc(request.Shard)
+func (e *executorImpl) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_RangeScanClient, error) {
+	client, err := e.rpc(request.Shard, leaderHint)
 	if err != nil {
 		return nil, err
 	}
@@ -96,12 +96,16 @@ func (e *executorImpl) ExecuteRangeScan(ctx context.Context, request *proto.Rang
 	return client.RangeScan(ctx, request)
 }
 
-func (e *executorImpl) rpc(shardId *int64) (proto.OxiaClientClient, error) {
+func (e *executorImpl) rpc(shardId *int64, hint *proto.LeaderHint) (proto.OxiaClientClient, error) {
 	var target string
-	if shardId != nil {
-		target = e.ShardManager.Leader(*shardId)
+	if hint.GetLeaderAddress() != "" {
+		target = hint.GetLeaderAddress()
 	} else {
-		target = e.ServiceAddress
+		if shardId != nil {
+			target = e.ShardManager.Leader(*shardId)
+		} else {
+			target = e.ServiceAddress
+		}
 	}
 
 	client, err := e.ClientPool.GetClientRpc(target)
@@ -111,7 +115,7 @@ func (e *executorImpl) rpc(shardId *int64) (proto.OxiaClientClient, error) {
 	return client, nil
 }
 
-func (e *executorImpl) writeStream(shardId *int64) (*streamWrapper, error) {
+func (e *executorImpl) writeStream(shardId *int64, leaderHint *proto.LeaderHint) (*streamWrapper, error) {
 	e.RLock()
 
 	sw, ok := e.writeStreams[*shardId]
@@ -122,7 +126,7 @@ func (e *executorImpl) writeStream(shardId *int64) (*streamWrapper, error) {
 
 	e.RUnlock()
 
-	client, err := e.rpc(shardId)
+	client, err := e.rpc(shardId, leaderHint)
 	if err != nil {
 		return nil, err
 	}

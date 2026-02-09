@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/emirpasic/gods/v2/trees/redblacktree"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
@@ -47,11 +48,14 @@ type ShardAssignmentsDispatcher interface {
 	Initialized() bool
 	PushShardAssignments(stream proto.OxiaCoordination_PushShardAssignmentsServer) error
 	RegisterForUpdates(req *proto.ShardAssignmentsRequest, client Client) error
+	GetLeader(shard int64) string
 }
 
 type shardAssignmentDispatcher struct {
 	sync.Mutex
-	assignments  *proto.ShardAssignments
+	assignments           *proto.ShardAssignments
+	shardAssignmentsIndex *redblacktree.Tree[int64, *proto.ShardAssignment]
+
 	clients      map[int64]chan *proto.ShardAssignments
 	nextClientId int64
 	standalone   bool
@@ -235,6 +239,14 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 
 	s.assignments = assignments
 
+	shardIndex := redblacktree.New[int64, *proto.ShardAssignment]()
+	for _, namespace := range assignments.Namespaces {
+		for idx, shardAssignment := range namespace.Assignments {
+			shardIndex.Put(shardAssignment.GetShard(), namespace.Assignments[idx])
+		}
+	}
+	s.shardAssignmentsIndex = shardIndex
+
 	// Update all the clients, without getting stuck if any client is not responsive
 	for id, clientCh := range s.clients {
 		select {
@@ -249,6 +261,14 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	}
 
 	return nil
+}
+
+func (s *shardAssignmentDispatcher) GetLeader(shardId int64) string {
+	shard, found := s.shardAssignmentsIndex.Get(shardId)
+	if !found {
+		return ""
+	}
+	return shard.GetLeader()
 }
 
 func NewShardAssignmentDispatcher(healthServer rpc2.HealthServer) ShardAssignmentsDispatcher {
