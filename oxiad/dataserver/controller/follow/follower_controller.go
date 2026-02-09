@@ -22,9 +22,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
 	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"

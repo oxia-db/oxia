@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/oxia-db/oxia/common/proto"
 	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
@@ -14,7 +16,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/oxia-db/oxia/tests/mock"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestControlRequestFeatureEnabled(t *testing.T) {
@@ -107,7 +108,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		followCommitOffset = append(followCommitOffset, follow.CommitOffset())
 	}
 
-	//todo: The follower is always one step behind the leader.
+	// todo: The follower is always one step behind the leader.
 	for _, offset := range followCommitOffset {
 		assert.EqualValues(t, 1, leadCommitOffset-offset)
 	}
