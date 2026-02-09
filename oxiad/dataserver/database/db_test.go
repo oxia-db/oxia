@@ -18,10 +18,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
