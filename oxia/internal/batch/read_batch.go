@@ -104,7 +104,7 @@ func (b *readBatch) doRequestWithRetries(request *proto.ReadRequest) (response *
 		}
 		return err
 	}, backOff, func(err error, duration time.Duration) {
-		slog.Debug(
+		slog.Warn(
 			"Failed to perform request, retrying later",
 			slog.Any("error", err),
 			slog.String("namespace", b.namespace),
