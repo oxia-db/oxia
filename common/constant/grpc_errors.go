@@ -17,9 +17,10 @@ package constant
 import (
 	"fmt"
 
-	"github.com/oxia-db/oxia/common/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const (
