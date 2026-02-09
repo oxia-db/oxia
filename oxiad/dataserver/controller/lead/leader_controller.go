@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/slices"
@@ -76,19 +77,19 @@ type LeaderController interface {
 	Context() context.Context
 	// Term The current term of the leader
 	Term() int64
+	CommitOffset() int64
 	// Status The Status of the leader
 	Status() proto.ServingStatus
 	Namespace() string
 	ShardID() int64
 
-	// IsFeatureEnabled checks if a specific feature is enabled for this term.
-	// Features are negotiated during leader election based on what all quorum
-	// members support.
-	IsFeatureEnabled(feature proto.Feature) bool
+	Checksum() crc.Checksum
 
 	CreateSession(*proto.CreateSessionRequest) (*proto.CreateSessionResponse, error)
 	KeepAlive(sessionId int64) error
 	CloseSession(*proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
+
+	IsFeatureEnabled(feature proto.Feature) bool
 }
 
 type leaderController struct {
@@ -101,11 +102,6 @@ type leaderController struct {
 	replicationFactor uint32
 	quorumAckTracker  QuorumAckTracker
 	followers         map[string]FollowerCursor
-
-	// negotiatedFeatures contains the features that all members of the ensemble
-	// support. This is set during BecomeLeader and used to determine which
-	// features can be enabled for this term.
-	negotiatedFeatures []proto.Feature
 
 	// This represents the last entry in the WAL at the time this node
 	// became leader. It's used in the logic for deciding where to
@@ -125,6 +121,11 @@ type leaderController struct {
 	headOffsetGauge         metric.Gauge
 	commitOffsetGauge       metric.Gauge
 	followerAckOffsetGauges map[string]metric.Gauge
+}
+
+func (lc *leaderController) GetDBChecksum() uint32 {
+	//TODO implement me
+	panic("implement me")
 }
 
 func NewLeaderController(storageOptions *option.StorageOptions, namespace string, shardId int64,
@@ -234,13 +235,8 @@ func (lc *leaderController) Term() int64 {
 	return lc.term
 }
 
-// IsFeatureEnabled checks if a specific feature is enabled for this term.
-// Features are negotiated during leader election based on what all quorum
-// members support.
-func (lc *leaderController) IsFeatureEnabled(f proto.Feature) bool {
-	lc.RLock()
-	defer lc.RUnlock()
-	return slices.Contains(lc.negotiatedFeatures, f)
+func (lc *leaderController) IsFeatureEnabled(feature proto.Feature) bool {
+	return lc.db.IsFeatureEnabled(feature)
 }
 
 // NewTerm
@@ -349,7 +345,6 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 
 	lc.replicationFactor = req.GetReplicationFactor()
 	lc.followers = make(map[string]FollowerCursor)
-	lc.negotiatedFeatures = req.GetFeaturesSupported()
 
 	var err error
 	lc.leaderElectionHeadEntryId, err = getLastEntryIdInWal(lc.wal)
@@ -387,7 +382,6 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 		"Started leading the shard",
 		slog.Int64("term", lc.term),
 		slog.Int64("head-offset", lc.leaderElectionHeadEntryId.Offset),
-		slog.Any("negotiated-features", lc.negotiatedFeatures),
 	)
 
 	lc.status = proto.ServingStatus_LEADER
@@ -400,8 +394,8 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 // This method is executed synchronously as part of the promotion process.
 // While it must not contain indefinite blocking operations that would hang
 // the election, it ensures all required leader-side preconditions are met.
-func (lc *leaderController) postBecomeLeader(ctx context.Context, _ *proto.BecomeLeaderRequest) {
-	if !lc.db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM) {
+func (lc *leaderController) postBecomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) {
+	if slices.Contains(req.FeaturesSupported, proto.Feature_FEATURE_DB_CHECKSUM) && !lc.db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM) {
 		lc.proposeFeaturesEnable(ctx, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
 	}
 }
@@ -1125,6 +1119,10 @@ func (lc *leaderController) KeepAlive(sessionId int64) error {
 
 func (lc *leaderController) CloseSession(request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
 	return lc.sessionManager.CloseSession(request)
+}
+
+func (lc *leaderController) Checksum() crc.Checksum {
+	return lc.db.ReadChecksum()
 }
 
 func checkStatusIsLeader(actual proto.ServingStatus) error {

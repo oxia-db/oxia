@@ -144,6 +144,10 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 	return s, nil
 }
 
+func (s *Server) GetShardDirector() controller.ShardsDirector {
+	return s.shardsDirector
+}
+
 func (s *Server) PublicPort() int {
 	return s.publicRpcServer.grpcServer.Port()
 }

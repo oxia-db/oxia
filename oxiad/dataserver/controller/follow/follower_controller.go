@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -48,10 +49,6 @@ import (
 type FollowerController interface {
 	io.Closer
 
-	Term() int64
-	CommitOffset() int64
-	Status() proto.ServingStatus
-	GetStatus(request *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
 	// NewTerm
 	//
 	// Node handles a new term request
@@ -74,9 +71,20 @@ type FollowerController interface {
 	// to the indicates entry id, updates its term and changes
 	// to a Follower.
 	Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error)
-	Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
-	AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error
-	InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
+
+	Replicate(stream proto.OxiaLogReplication_ReplicateServer) error
+
+	SendSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
+
+	GetStatus(request *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
+	DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
+
+	Term() int64
+	CommitOffset() int64
+	Status() proto.ServingStatus
+
+	IsFeatureEnabled(feature proto.Feature) bool
+	Checksum() crc.Checksum
 }
 
 type followerController struct {
@@ -637,6 +645,14 @@ func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.
 		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "delete follower failed")
 	}
 	return &proto.DeleteShardResponse{}, nil
+}
+
+func (fc *followerController) IsFeatureEnabled(feature proto.Feature) bool {
+	return fc.db.IsFeatureEnabled(feature)
+}
+
+func (fc *followerController) Checksum() crc.Checksum {
+	return fc.db.ReadChecksum()
 }
 
 func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {

@@ -85,8 +85,8 @@ type DB interface {
 	EnableNotifications(enable bool)
 
 	EnableFeature(feature proto.Feature)
-
 	IsFeatureEnabled(feature proto.Feature) bool
+	ReadChecksum() crc.Checksum
 
 	ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error)
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
@@ -208,6 +208,9 @@ func (d *db) Snapshot() (kvstore.Snapshot, error) {
 
 func (d *db) EnableNotifications(enabled bool) {
 	d.notificationsEnabled = enabled
+}
+func (d *db) ReadChecksum() crc.Checksum {
+	return *d.committedChecksum.Load()
 }
 
 func (d *db) Close() error {
