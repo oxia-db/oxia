@@ -96,6 +96,7 @@ func newClientOptions(serviceAddress string, opts ...ClientOption) (clientOption
 		meterProvider:       noop.NewMeterProvider(),
 		sessionTimeout:      DefaultSessionTimeout,
 		identity:            defaultIdentity(),
+		failureInjection:    hashset.New[Failure](),
 	}
 	var errs error
 	var err error
