@@ -52,7 +52,7 @@ type ShardAssignmentsDispatcher interface {
 }
 
 type shardAssignmentDispatcher struct {
-	sync.Mutex
+	sync.RWMutex
 	assignments           *proto.ShardAssignments
 	shardAssignmentsIndex *redblacktree.Tree[int64, *proto.ShardAssignment]
 
@@ -264,6 +264,9 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 }
 
 func (s *shardAssignmentDispatcher) GetLeader(shardId int64) string {
+	s.RLock()
+	defer s.RUnlock()
+
 	shard, found := s.shardAssignmentsIndex.Get(shardId)
 	if !found {
 		return ""
