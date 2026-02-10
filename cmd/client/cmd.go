@@ -46,6 +46,8 @@ func init() {
 	Cmd.PersistentFlags().StringVarP(&common.Config.ServiceAddr, "service-address", "a", defaultServiceAddress, "Service address")
 	Cmd.PersistentFlags().StringVarP(&common.Config.Namespace, "namespace", "n", oxia.DefaultNamespace, "The Oxia namespace to use")
 	Cmd.PersistentFlags().DurationVar(&common.Config.RequestTimeout, "request-timeout", oxia.DefaultRequestTimeout, "Requests timeout")
+	Cmd.PersistentFlags().StringVar(&common.Config.CACertFile, "ca-cert-file", "", "Path to CA certificate file for TLS verification")
+	Cmd.PersistentFlags().BoolVar(&common.Config.DisableIPv6, "disable-ipv6", false, "Disable IPv6 resolution, use only IPv4 addresses")
 
 	Cmd.AddCommand(put.Cmd)
 	Cmd.AddCommand(del.Cmd)

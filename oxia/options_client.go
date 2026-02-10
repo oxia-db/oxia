@@ -16,6 +16,8 @@ package oxia
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,6 +67,7 @@ type clientOptions struct {
 	tls                    *tls.Config
 	authentication         auth.Authentication
 	sessionKeepAliveTicker time.Duration
+	disableIPv6            bool
 }
 
 func defaultIdentity() string {
@@ -206,6 +209,75 @@ func WithTLS(tlsConf *tls.Config) ClientOption {
 			return options, ErrInvalidOptionTLS
 		}
 		options.tls = tlsConf
+		return options, nil
+	})
+}
+
+// WithCACertFile loads a CA certificate from a file and adds it to the client's trusted CA pool.
+// This is useful when connecting to servers with certificates signed by a custom CA.
+// If a TLS config already exists (e.g., from WithTLS), the CA cert will be merged into the existing
+// RootCAs pool. If no TLS config exists, a new one will be created with the CA cert.
+func WithCACertFile(caCertPath string) ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		caCert, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return options, errors.Wrapf(err, "failed to read CA certificate from %s", caCertPath)
+		}
+
+		// Parse the CA certificate
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return options, errors.Errorf("failed to parse CA certificate from %s", caCertPath)
+		}
+
+		// Merge with existing TLS config if present
+		if options.tls != nil {
+			// Clone the existing TLS config
+			tlsConfig := options.tls.Clone()
+
+			// Merge the CA cert into the existing RootCAs pool
+			if tlsConfig.RootCAs != nil {
+				// Append to existing pool
+				if !tlsConfig.RootCAs.AppendCertsFromPEM(caCert) {
+					return options, errors.Errorf("failed to add CA certificate to existing RootCAs pool")
+				}
+			} else {
+				// No existing RootCAs, try to get system cert pool and add our cert
+				systemPool, err := x509.SystemCertPool()
+				if err != nil {
+					// Fallback to new pool if system pool unavailable
+					tlsConfig.RootCAs = caCertPool
+				} else {
+					// Add to system pool
+					if !systemPool.AppendCertsFromPEM(caCert) {
+						return options, errors.Errorf("failed to add CA certificate to system cert pool")
+					}
+					tlsConfig.RootCAs = systemPool
+				}
+			}
+
+			// Ensure MinVersion is set if not already specified
+			if tlsConfig.MinVersion == 0 {
+				tlsConfig.MinVersion = tls.VersionTLS12
+			}
+
+			options.tls = tlsConfig
+		} else {
+			// No existing TLS config, create a new one
+			options.tls = &tls.Config{
+				RootCAs:    caCertPool,
+				MinVersion: tls.VersionTLS12,
+			}
+		}
+
+		return options, nil
+	})
+}
+
+// WithDisableIPv6 disables IPv6 resolution, forcing the client to use only IPv4 addresses.
+func WithDisableIPv6() ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		options.disableIPv6 = true
 		return options, nil
 	})
 }
