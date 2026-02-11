@@ -649,10 +649,14 @@ func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.
 }
 
 func (fc *followerController) IsFeatureEnabled(feature proto.Feature) bool {
+	fc.Lock()
+	defer fc.Unlock()
 	return fc.db.IsFeatureEnabled(feature)
 }
 
 func (fc *followerController) Checksum() crc.Checksum {
+	fc.Lock()
+	defer fc.Unlock()
 	return fc.db.ReadChecksum()
 }
 

@@ -231,6 +231,8 @@ func (lc *leaderController) Term() int64 {
 }
 
 func (lc *leaderController) IsFeatureEnabled(feature proto.Feature) bool {
+	lc.RLock()
+	defer lc.RUnlock()
 	return lc.db.IsFeatureEnabled(feature)
 }
 
@@ -1116,6 +1118,8 @@ func (lc *leaderController) CloseSession(request *proto.CloseSessionRequest) (*p
 }
 
 func (lc *leaderController) Checksum() crc.Checksum {
+	lc.Lock()
+	defer lc.Unlock()
 	return lc.db.ReadChecksum()
 }
 
