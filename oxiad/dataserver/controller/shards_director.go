@@ -219,7 +219,7 @@ func (s *shardsDirector) DeleteShard(req *proto.DeleteShardRequest) (*proto.Dele
 	}
 
 	if follower, ok := s.followers[req.Shard]; ok {
-		resp, err := follower.DeleteShard(req)
+		resp, err := follower.Delete(req)
 		if err != nil {
 			return nil, err
 		}
@@ -233,7 +233,7 @@ func (s *shardsDirector) DeleteShard(req *proto.DeleteShardRequest) (*proto.Dele
 	if err != nil {
 		return nil, err
 	}
-	return fc.DeleteShard(req)
+	return fc.Delete(req)
 }
 
 func (s *shardsDirector) Close() error {

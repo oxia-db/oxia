@@ -297,7 +297,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 		return err
 	}
 
-	err = follower.Replicate(srv)
+	err = follower.AppendEntries(srv)
 	if err != nil && !errors.Is(err, io.EOF) {
 		log.Warn(
 			"Replicate failed",
@@ -349,7 +349,7 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 		return err
 	}
 
-	err = follower.SendSnapshot(srv)
+	err = follower.InstallSnapshot(srv)
 	if err != nil {
 		s.log.Warn(
 			"SendSnapshot failed",

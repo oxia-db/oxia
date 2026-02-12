@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -34,6 +35,18 @@ const (
 
 type CommitOffsetProvider interface {
 	CommitOffset() int64
+}
+
+type CommitOffsetObserver struct {
+	commitOffset *atomic.Int64
+}
+
+func (o *CommitOffsetObserver) CommitOffset() int64 {
+	return o.commitOffset.Load()
+}
+
+func NewCommitOffsetObserver(offset *atomic.Int64) CommitOffsetProvider {
+	return &CommitOffsetObserver{commitOffset: offset}
 }
 
 type Trimmer interface {
