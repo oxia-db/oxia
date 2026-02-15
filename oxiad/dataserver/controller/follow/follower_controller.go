@@ -78,6 +78,7 @@ type FollowerController interface {
 }
 
 type followerController struct {
+	closed    atomic.Bool
 	rwMutex   sync.RWMutex
 	waitGroup sync.WaitGroup
 	log       *slog.Logger
@@ -188,6 +189,7 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 		wal:                    writeAheadLog,
 		db:                     db,
 		status:                 memberStatus,
+		stateApplierCond:       make(chan struct{}),
 		writeLatencyHisto: metric.NewLatencyHistogram("oxia_server_follower_write_latency",
 			"Latency for write operations in the follower", metric.LabelsForShard(namespace, shardId)),
 	}
@@ -209,6 +211,9 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 }
 
 func (fc *followerController) Close() error {
+	if !fc.closed.CompareAndSwap(false, true) {
+		return nil
+	}
 	fc.log.Info("Closing follower controller")
 	var err error
 	defer func() {
@@ -259,7 +264,7 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 		if fc.logSynchronizer.IsValid() {
 			return nil, dserror.ErrResourceConflict
 		}
-		fc.logSynchronizer = NewLogSynchronizer(fc.log, fc.namespace, fc.shardId, fc.stateApplierCond, stream, func() {
+		fc.logSynchronizer = NewLogSynchronizer(fc.log, fc.namespace, fc.shardId, fc.term.Load(), fc.wal, fc.advertisedCommitOffset, fc.lastAppendedOffset, fc.writeLatencyHisto, fc.stateApplierCond, stream, func() {
 			fc.rwMutex.Lock()
 			defer fc.rwMutex.Unlock()
 			fc.status = proto.ServingStatus_FOLLOWER
@@ -271,16 +276,22 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 	return synchronizer.Sync()
 }
 func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+	if fc.closed.Load() {
+		return nil, constant.ErrAlreadyClosed
+	}
 	var err error
-	// todo: consider closing check?
 	newTerm := req.GetTerm()
 	newTermOptions := req.GetOptions()
-	if newTerm < fc.term.Load() {
+	if newTerm <= fc.term.Load() {
 		fc.log.Warn("Failed to fence with invalid term", slog.Int64("new-term", newTerm))
 		return nil, dserror.ErrInvalidTerm
 	}
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
+
+	if fc.closed.Load() {
+		return nil, constant.ErrAlreadyClosed
+	}
 
 	if fc.logSynchronizer.IsValid() {
 		if err := fc.logSynchronizer.Close(); err != nil {
@@ -306,10 +317,8 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 }
 
 func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
-	// todo: consider closing check?
-	newTerm := req.GetTerm()
-	if newTerm != fc.term.Load() {
-		return nil, dserror.ErrInvalidTerm
+	if fc.closed.Load() {
+		return nil, constant.ErrAlreadyClosed
 	}
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
@@ -319,7 +328,12 @@ func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.Trunc
 	}
 
 	if fc.status != proto.ServingStatus_FENCED {
-		return nil, errors.Wrapf(dserror.ErrInvalidStatus, "persistent term failed")
+		return nil, constant.ErrInvalidStatus
+	}
+
+	newTerm := req.GetTerm()
+	if newTerm != fc.term.Load() {
+		return nil, constant.ErrInvalidTerm
 	}
 	fc.status = proto.ServingStatus_FOLLOWER
 	headOffset, err := fc.wal.TruncateLog(req.HeadEntryId.Offset)
@@ -458,6 +472,27 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 		err = dserror.ErrResourceConflict
 		return err
 	}
+
+	// Read the first chunk to validate the term before performing any
+	// destructive operations (WAL clear, DB close). This ensures the
+	// follower remains usable if the snapshot has a wrong term.
+	term := fc.term.Load()
+	firstChunk, err := stream.Recv()
+	switch {
+	case err != nil:
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to read first snapshot chunk")
+	case firstChunk == nil:
+		return nil
+	case term != constant.I64NegativeOne && term != firstChunk.Term:
+		// The follower could be left with term=-1 by a previous failed
+		// attempt at sending the snapshot. It's ok to proceed in that case.
+		err = constant.ErrInvalidTerm
+		return err
+	}
+
 	if err = fc.wal.Clear(); err != nil {
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to clear WAL")
 	}
@@ -473,8 +508,19 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 		_ = loader.Close()
 	}()
 
-	term := fc.term.Load()
-	totalSize := int64(0)
+	// Process the first chunk
+	fc.log.Info(
+		"Applying snapshot chunk",
+		slog.String("chunk-name", firstChunk.Name),
+		slog.Int("chunk-size", len(firstChunk.Content)),
+		slog.String("chunk-progress", fmt.Sprintf("%d/%d", firstChunk.ChunkIndex, firstChunk.ChunkCount)),
+	)
+	if err = loader.AddChunk(firstChunk.Name, firstChunk.ChunkIndex, firstChunk.ChunkCount, firstChunk.Content); err != nil {
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to add snapshot chunk")
+	}
+	totalSize := int64(len(firstChunk.Content))
+
+	// Process remaining chunks
 readChunkLoop:
 	for {
 		var snapChunk *proto.SnapshotChunk
@@ -487,11 +533,6 @@ readChunkLoop:
 			return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to read snapshot chunk")
 		case snapChunk == nil:
 			break readChunkLoop
-		case term != constant.I64NegativeOne && term != snapChunk.Term:
-			// The follower could be left with term=-1 by a previous failed
-			// attempt at sending the snapshot. It's ok to proceed in that case.
-			err = dserror.ErrInvalidTerm
-			return err
 		}
 		fc.log.Info(
 			"Applying snapshot chunk",
@@ -519,7 +560,14 @@ readChunkLoop:
 	}
 
 	fc.db = db
-	fc.term.Store(term)
+
+	// The snapshot DB may not have a term stored. Use the snapshot's term
+	// (from the chunks) and persist it so it survives restarts.
+	snapshotTerm := firstChunk.Term
+	if err = fc.db.UpdateTerm(snapshotTerm, database.TermOptions{}); err != nil {
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to persist snapshot term")
+	}
+	fc.term.Store(snapshotTerm)
 	fc.commitOffset.Store(rawCommitOffset)
 	fc.lastAppendedOffset.Store(rawCommitOffset)
 	fc.advertisedCommitOffset.Store(rawCommitOffset)
@@ -551,7 +599,7 @@ func (fc *followerController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetSt
 
 func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	if request.Term < fc.term.Load() {
-		return nil, dserror.ErrInvalidTerm
+		return nil, constant.ErrInvalidTerm
 	}
 	var err error
 	fc.log.Info("Deleting shard")

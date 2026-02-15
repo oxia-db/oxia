@@ -22,9 +22,10 @@ type LogSynchronizer struct {
 	waitGroup sync.WaitGroup
 	log       *slog.Logger
 	ctx       context.Context
+	cancel    context.CancelFunc
 	term      int64
 	wal       wal.Wal
-	cond      chan error
+	finish    chan error
 	closed    atomic.Bool
 
 	advertisedCommitOffset *atomic.Int64
@@ -34,8 +35,10 @@ type LogSynchronizer struct {
 }
 
 func (ls *LogSynchronizer) Sync() error {
-	err := <-ls.cond
+	err := <-ls.finish
 	ls.closed.Store(true)
+	ls.cancel()
+	ls.waitGroup.Wait()
 	return err
 }
 
@@ -47,7 +50,7 @@ func (ls *LogSynchronizer) Close() error {
 	if !ls.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	channel.PushNoBlock(ls.cond, context.Canceled)
+	channel.PushNoBlock(ls.finish, context.Canceled)
 
 	ls.waitGroup.Wait()
 	return nil
@@ -112,7 +115,7 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 	ls.advertisedCommitOffset.Store(req.CommitOffset)
 	ls.lastAppendedOffset.Store(req.Entry.Offset)
 
-	syncCond <- struct{}{}
+	channel.PushNoBlock(syncCond, struct{}{})
 	return nil
 }
 
@@ -133,19 +136,25 @@ func (ls *LogSynchronizer) bgSyncer(stream proto.OxiaLogReplication_ReplicateSer
 					return err
 				}
 			}
-			stateApplierCond <- struct{}{}
+			channel.PushNoBlock(stateApplierCond, struct{}{})
 		}
 	}
 }
 
-func NewLogSynchronizer(log *slog.Logger, namespace string, shardId int64, stateApplierCond chan struct{}, stream proto.OxiaLogReplication_ReplicateServer, becomeFollower func()) *LogSynchronizer {
-	ctx := stream.Context()
+func NewLogSynchronizer(log *slog.Logger, namespace string, shardId int64, term int64, wal wal.Wal, advertisedCommitOffset *atomic.Int64, lastAppendedOffset *atomic.Int64, writeLatencyHisto metric.LatencyHistogram, stateApplierCond chan struct{}, stream proto.OxiaLogReplication_ReplicateServer, becomeFollower func()) *LogSynchronizer {
+	ctx, cancel := context.WithCancel(stream.Context())
 
 	ls := &LogSynchronizer{
-		log:       log,
-		waitGroup: sync.WaitGroup{},
-		ctx:       ctx,
-		cond:      make(chan error, 1),
+		log:                    log,
+		waitGroup:              sync.WaitGroup{},
+		ctx:                    ctx,
+		cancel:                 cancel,
+		term:                   term,
+		wal:                    wal,
+		advertisedCommitOffset: advertisedCommitOffset,
+		lastAppendedOffset:     lastAppendedOffset,
+		writeLatencyHisto:      writeLatencyHisto,
+		finish:                 make(chan error, 1),
 	}
 
 	syncCond := make(chan struct{})
@@ -158,20 +167,20 @@ func NewLogSynchronizer(log *slog.Logger, namespace string, shardId int64, state
 				"shard":     fmt.Sprintf("%d", shardId),
 			},
 			func() {
-				channel.PushNoBlock(ls.cond, ls.bgAppender(stream, syncCond, becomeFollower))
+				channel.PushNoBlock(ls.finish, ls.bgAppender(stream, syncCond, becomeFollower))
 			},
 		)
 	})
 
 	ls.waitGroup.Go(func() {
-		go process.DoWithLabels(
+		process.DoWithLabels(
 			ctx,
 			map[string]string{
 				"oxia":      "follower-log-synchronizer-syncer",
 				"namespace": namespace,
 				"shard":     fmt.Sprintf("%d", shardId),
 			},
-			func() { channel.PushNoBlock(ls.cond, ls.bgSyncer(stream, syncCond, stateApplierCond)) },
+			func() { channel.PushNoBlock(ls.finish, ls.bgSyncer(stream, syncCond, stateApplierCond)) },
 		)
 	})
 	return ls

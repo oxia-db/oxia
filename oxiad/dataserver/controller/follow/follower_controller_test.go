@@ -375,7 +375,8 @@ func TestFollower_DuplicateNewTermInFollowerState(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
-		assert.NoError(t, fc.AppendEntries(stream))
+		// cancelled due to fc.Close() below
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 10))
@@ -584,21 +585,25 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 
-	// If we send an entry of same term, it will be accepted
-	stream.AddRequest(createAddRequest(t, 5, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
+	// If we send an entry of same term, it will be accepted.
+	// Use a new stream because the old recv goroutine from the previous
+	// LogSynchronizer is still blocking on stream.Recv() and would steal
+	// entries from the old stream. In production each leader connection
+	// uses a different gRPC stream.
+	stream2 := rpc.NewMockServerReplicateStream()
+	stream2.AddRequest(createAddRequest(t, 5, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
 
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream2), context.Canceled)
 	}()
 
 	// Wait for acks
-	r1 := stream.GetResponse()
+	r1 := stream2.GetResponse()
 
 	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
 	assert.EqualValues(t, 0, r1.Offset)
 	assert.NoError(t, fc.Close())
-	close(stream.Requests)
 
 	// A higher term will also be rejected
 	fc, err = NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
@@ -811,7 +816,10 @@ func TestFollower_DisconnectLeader(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 
-	go func() { assert.NoError(t, fc.AppendEntries(stream)) }()
+	go func() {
+		// cancelled due to NewTerm(2) below which closes the logSynchronizer
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+	}()
 
 	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
 
