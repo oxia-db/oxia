@@ -2,6 +2,7 @@ package follow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -62,6 +63,9 @@ func (ls *LogSynchronizer) bgAppender(stream proto.OxiaLogReplication_ReplicateS
 	for {
 		req, err := stream.Recv()
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
 			return err
 		}
 		if req == nil {
