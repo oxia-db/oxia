@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
+	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/stretchr/testify/assert"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
 
@@ -93,6 +93,7 @@ func TestFollower(t *testing.T) {
 
 	go func() {
 		_ = fc.AppendEntries(stream)
+		stream.Cancel()
 		wg.Done()
 	}()
 
@@ -144,6 +145,7 @@ func TestFollower(t *testing.T) {
 	go func() {
 		err := fc.AppendEntries(stream)
 		assert.ErrorIs(t, err, context.Canceled)
+		stream.Cancel()
 		wg2.Done()
 	}()
 	stream.AddRequest(createAddRequest(t, 2, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -218,6 +220,7 @@ func TestReadingUpToCommitOffset(t *testing.T) {
 	go func() {
 		// cancelled due to fc.Close() below
 		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -307,6 +310,7 @@ func TestFollower_AdvanceCommitOffsetToHead(t *testing.T) {
 	go func() {
 		// cancelled due to fc.Close() below
 		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 10))
@@ -342,7 +346,7 @@ func TestFollower_NewTerm(t *testing.T) {
 	// We cannot fence with earlier term
 	fr, err := fc.NewTerm(&proto.NewTermRequest{Term: 0})
 	assert.Nil(t, fr)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 1, fc.Term())
 
@@ -377,6 +381,7 @@ func TestFollower_DuplicateNewTermInFollowerState(t *testing.T) {
 	go func() {
 		// cancelled due to fc.Close() below
 		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 10))
@@ -395,6 +400,13 @@ func TestFollower_DuplicateNewTermInFollowerState(t *testing.T) {
 	assert.NotNil(t, r)
 	assert.EqualValues(t, r1.Offset, r.HeadEntryId.Offset)
 	assert.EqualValues(t, 1, r.HeadEntryId.Term)
+
+	stream = rpc.NewMockServerReplicateStream()
+	go func() {
+		// cancelled due to fc.Close() below
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
+	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 1, map[string]string{"a": "1", "b": "2"}, 11))
 
@@ -434,7 +446,7 @@ func TestFollower_TruncateAfterRestart(t *testing.T) {
 		},
 	})
 
-	assert.Equal(t, constant.CodeInvalidStatus, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidStatus, err)
 	assert.Nil(t, tr)
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, fc.Status())
 
@@ -520,6 +532,7 @@ func TestFollower_CommitOffsetLastEntry(t *testing.T) {
 	go func() {
 		// cancelled due to fc.Close() below
 		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 0))
@@ -581,25 +594,23 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	// Follower will reject the entry because it's from an earlier term
 	err = fc.AppendEntries(stream)
 	assert.Error(t, err)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
+	stream.Cancel()
 
-	// If we send an entry of same term, it will be accepted.
-	// Use a new stream because the old recv goroutine from the previous
-	// LogSynchronizer is still blocking on stream.Recv() and would steal
-	// entries from the old stream. In production each leader connection
-	// uses a different gRPC stream.
-	stream2 := rpc.NewMockServerReplicateStream()
-	stream2.AddRequest(createAddRequest(t, 5, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
+	stream = rpc.NewMockServerReplicateStream()
+	// If we send an entry of same term, it will be accepted
+	stream.AddRequest(createAddRequest(t, 5, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
 
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream2), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	// Wait for acks
-	r1 := stream2.GetResponse()
+	r1 := stream.GetResponse()
 
 	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
 	assert.EqualValues(t, 0, r1.Offset)
@@ -612,7 +623,8 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	stream.AddRequest(createAddRequest(t, 6, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
 	err = fc.AppendEntries(stream)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err), "Unexpected error: %s", err)
+	stream.Cancel()
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 
@@ -648,7 +660,7 @@ func TestFollower_RejectTruncateInvalidTerm(t *testing.T) {
 		},
 	})
 	assert.Nil(t, truncateResp)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 
@@ -661,7 +673,7 @@ func TestFollower_RejectTruncateInvalidTerm(t *testing.T) {
 		},
 	})
 	assert.Nil(t, truncateResp)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 }
@@ -707,7 +719,10 @@ func TestFollower_HandleSnapshot(t *testing.T) {
 	assert.EqualValues(t, 1, fc.Term())
 
 	stream := rpc.NewMockServerReplicateStream()
-	go func() { assert.NoError(t, fc.AppendEntries(stream)) }()
+	go func() {
+		assert.NoError(t, fc.AppendEntries(stream))
+		stream.Cancel()
+	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 0))
 
@@ -819,12 +834,13 @@ func TestFollower_DisconnectLeader(t *testing.T) {
 	go func() {
 		// cancelled due to NewTerm(2) below which closes the logSynchronizer
 		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
 
 	// It's not possible to add a new leader stream
-	assert.ErrorIs(t, fc.AppendEntries(stream), constant.ErrLeaderAlreadyConnected)
+	assert.ErrorIs(t, fc.AppendEntries(stream), dserror.ErrResourceConflict)
 
 	// When we fence again, the leader should have been cutoff
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
@@ -856,6 +872,7 @@ func TestFollower_DupEntries(t *testing.T) {
 	go func() {
 		// cancelled due to fc.Close() below
 		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -895,6 +912,7 @@ func TestFollowerController_DeleteShard(t *testing.T) {
 	go func() {
 		// cancelled due to fc.Close() below
 		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -930,7 +948,7 @@ func TestFollowerController_DeleteShard_WrongTerm(t *testing.T) {
 		Term:      1,
 	})
 
-	assert.ErrorIs(t, err, constant.ErrInvalidTerm)
+	assert.ErrorIs(t, err, dserror.ErrInvalidTerm)
 }
 
 func TestFollowerController_Closed(t *testing.T) {
@@ -954,7 +972,7 @@ func TestFollowerController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res)
-	assert.Equal(t, constant.CodeAlreadyClosed, status.Code(err))
+	assert.Equal(t, dserror.ErrResourceConflict, err)
 
 	res2, err := fc.Truncate(&proto.TruncateRequest{
 		Shard: shard,
@@ -966,7 +984,7 @@ func TestFollowerController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res2)
-	assert.Equal(t, constant.CodeAlreadyClosed, status.Code(err))
+	assert.Equal(t, dserror.ErrResourceConflict, err)
 
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
@@ -984,6 +1002,7 @@ func TestFollower_GetStatus(t *testing.T) {
 	go func() {
 		// cancelled due to fc.Close() below
 		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 2, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -1034,7 +1053,10 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	assert.EqualValues(t, 1, fc.Term())
 
 	stream := rpc.NewMockServerReplicateStream()
-	go func() { assert.NoError(t, fc.AppendEntries(stream)) }()
+	go func() {
+		assert.NoError(t, fc.AppendEntries(stream))
+		stream.Cancel()
+	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 0))
 
@@ -1076,7 +1098,7 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	close(snapshotStream.Chunks)
 
 	// The snapshot sending should fail because the term is invalid
-	assert.ErrorIs(t, constant.ErrInvalidTerm, wg.Wait(context.Background()))
+	assert.ErrorIs(t, dserror.ErrInvalidTerm, wg.Wait(context.Background()))
 
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 5, Options: &proto.NewTermOptions{
 		EnableNotifications: true,

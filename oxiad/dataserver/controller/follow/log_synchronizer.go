@@ -14,6 +14,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
+	"go.uber.org/multierr"
 )
 
 type LogSynchronizer struct {
@@ -35,11 +36,11 @@ type LogSynchronizer struct {
 }
 
 func (ls *LogSynchronizer) Sync() error {
-	err := <-ls.finish
-	ls.closed.Store(true)
-	ls.cancel()
-	ls.waitGroup.Wait()
-	return err
+	return <-ls.finish
+}
+
+func (ls *LogSynchronizer) SyncAndClose() error {
+	return multierr.Combine(ls.Sync(), ls.Close())
 }
 
 func (ls *LogSynchronizer) IsValid() bool {
@@ -50,6 +51,7 @@ func (ls *LogSynchronizer) Close() error {
 	if !ls.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	ls.cancel()
 	channel.PushNoBlock(ls.finish, context.Canceled)
 
 	ls.waitGroup.Wait()

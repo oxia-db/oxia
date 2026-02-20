@@ -253,11 +253,19 @@ func (fc *followerController) CommitOffset() int64 {
 }
 
 func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error {
+	if fc.closed.Load() {
+		return dserror.ErrResourceConflict
+	}
 	var synchronizer *LogSynchronizer
 	var err error
 	if synchronizer, err = func() (*LogSynchronizer, error) {
 		fc.rwMutex.Lock()
 		defer fc.rwMutex.Unlock()
+
+		if fc.closed.Load() { // double-check
+			return nil, dserror.ErrResourceConflict
+		}
+
 		if fc.status != proto.ServingStatus_FENCED && fc.status != proto.ServingStatus_FOLLOWER {
 			return nil, dserror.ErrInvalidStatus
 		}
@@ -273,24 +281,24 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 	}(); err != nil {
 		return err
 	}
-	return synchronizer.Sync()
+	return synchronizer.SyncAndClose()
 }
 func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	if fc.closed.Load() {
-		return nil, constant.ErrAlreadyClosed
+		return nil, dserror.ErrResourceConflict
 	}
 	var err error
 	newTerm := req.GetTerm()
 	newTermOptions := req.GetOptions()
-	if newTerm <= fc.term.Load() {
+	if newTerm < fc.term.Load() { // Allowing idempotency during negotiations
 		fc.log.Warn("Failed to fence with invalid term", slog.Int64("new-term", newTerm))
 		return nil, dserror.ErrInvalidTerm
 	}
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
 
-	if fc.closed.Load() {
-		return nil, constant.ErrAlreadyClosed
+	if fc.closed.Load() { // double-check
+		return nil, dserror.ErrResourceConflict
 	}
 
 	if fc.logSynchronizer.IsValid() {
@@ -318,22 +326,26 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 
 func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
 	if fc.closed.Load() {
-		return nil, constant.ErrAlreadyClosed
+		return nil, dserror.ErrResourceConflict
 	}
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
+
+	if fc.closed.Load() { // double-check
+		return nil, dserror.ErrResourceConflict
+	}
 
 	if fc.logSynchronizer.IsValid() {
 		return nil, dserror.ErrResourceConflict
 	}
 
 	if fc.status != proto.ServingStatus_FENCED {
-		return nil, constant.ErrInvalidStatus
+		return nil, dserror.ErrInvalidStatus
 	}
 
 	newTerm := req.GetTerm()
 	if newTerm != fc.term.Load() {
-		return nil, constant.ErrInvalidTerm
+		return nil, dserror.ErrInvalidTerm
 	}
 	fc.status = proto.ServingStatus_FOLLOWER
 	headOffset, err := fc.wal.TruncateLog(req.HeadEntryId.Offset)
@@ -456,6 +468,9 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 }
 
 func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error {
+	if fc.closed.Load() {
+		return dserror.ErrResourceConflict
+	}
 	fc.log.Info("Installing snapshot...")
 	var err error
 	defer func() {
@@ -467,6 +482,10 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
+
+	if fc.closed.Load() { // double check
+		return dserror.ErrResourceConflict
+	}
 
 	if fc.logSynchronizer.IsValid() {
 		err = dserror.ErrResourceConflict
@@ -489,7 +508,7 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	case term != constant.I64NegativeOne && term != firstChunk.Term:
 		// The follower could be left with term=-1 by a previous failed
 		// attempt at sending the snapshot. It's ok to proceed in that case.
-		err = constant.ErrInvalidTerm
+		err = dserror.ErrInvalidTerm
 		return err
 	}
 
@@ -552,14 +571,13 @@ readChunkLoop:
 	if term, _, rawCommitOffset, db, err = initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); err != nil {
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to initialize database")
 	}
+	fc.db = db
 
 	if err = stream.SendAndClose(&proto.SnapshotResponse{
 		AckOffset: rawCommitOffset,
 	}); err != nil {
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to send snapshot response")
 	}
-
-	fc.db = db
 
 	// The snapshot DB may not have a term stored. Use the snapshot's term
 	// (from the chunks) and persist it so it survives restarts.
@@ -581,8 +599,16 @@ readChunkLoop:
 }
 
 func (fc *followerController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	if fc.closed.Load() {
+		return nil, dserror.ErrResourceConflict
+	}
+
 	fc.rwMutex.RLock()
 	defer fc.rwMutex.RUnlock()
+
+	if fc.closed.Load() { // double-check
+		return nil, dserror.ErrResourceConflict
+	}
 
 	status := fc.status
 	term := fc.term.Load()
@@ -598,8 +624,11 @@ func (fc *followerController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetSt
 }
 
 func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
+	if fc.closed.Load() {
+		return nil, dserror.ErrResourceConflict
+	}
 	if request.Term < fc.term.Load() {
-		return nil, constant.ErrInvalidTerm
+		return nil, dserror.ErrInvalidTerm
 	}
 	var err error
 	fc.log.Info("Deleting shard")
