@@ -97,7 +97,7 @@ type followerController struct {
 	// resource variables
 	wal             wal.Wal
 	db              database.DB
-	status          proto.ServingStatus
+	status          atomic.Int32
 	logSynchronizer *LogSynchronizer
 
 	// events
@@ -153,10 +153,6 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 	lastAppendedOffset := &atomic.Int64{}
 	lastAppendedOffset.Store(writeAheadLog.LastOffset())
 
-	memberStatus := proto.ServingStatus_NOT_MEMBER
-	if rawTerm != constant.I64NegativeOne {
-		memberStatus = proto.ServingStatus_FENCED
-	}
 	if lastAppendedOffset.Load() == constant.I64NegativeOne {
 		lastAppendedOffset.Store(rawCommitOffset)
 	}
@@ -188,10 +184,15 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 		lastAppendedOffset:     lastAppendedOffset,
 		wal:                    writeAheadLog,
 		db:                     db,
-		status:                 memberStatus,
 		stateApplierCond:       make(chan struct{}),
 		writeLatencyHisto: metric.NewLatencyHistogram("oxia_server_follower_write_latency",
 			"Latency for write operations in the follower", metric.LabelsForShard(namespace, shardId)),
+	}
+
+	if rawTerm != constant.I64NegativeOne {
+		fc.status.Store(int32(proto.ServingStatus_FENCED))
+	} else {
+		fc.status.Store(int32(proto.ServingStatus_NOT_MEMBER))
 	}
 
 	fc.waitGroup.Go(func() {
@@ -239,9 +240,7 @@ func (fc *followerController) Close() error {
 }
 
 func (fc *followerController) Status() proto.ServingStatus {
-	fc.rwMutex.RLock()
-	defer fc.rwMutex.RUnlock()
-	return fc.status
+	return proto.ServingStatus(fc.status.Load())
 }
 
 func (fc *followerController) Term() int64 {
@@ -266,16 +265,14 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 			return nil, dserror.ErrResourceConflict
 		}
 
-		if fc.status != proto.ServingStatus_FENCED && fc.status != proto.ServingStatus_FOLLOWER {
+		if s := proto.ServingStatus(fc.status.Load()); s != proto.ServingStatus_FENCED && s != proto.ServingStatus_FOLLOWER {
 			return nil, dserror.ErrInvalidStatus
 		}
 		if fc.logSynchronizer.IsValid() {
 			return nil, dserror.ErrResourceConflict
 		}
 		fc.logSynchronizer = NewLogSynchronizer(fc.log, fc.namespace, fc.shardId, fc.term.Load(), fc.wal, fc.advertisedCommitOffset, fc.lastAppendedOffset, fc.writeLatencyHisto, fc.stateApplierCond, stream, func() {
-			fc.rwMutex.Lock()
-			defer fc.rwMutex.Unlock()
-			fc.status = proto.ServingStatus_FOLLOWER
+			fc.status.Store(int32(proto.ServingStatus_FOLLOWER))
 		})
 		return fc.logSynchronizer, nil
 	}(); err != nil {
@@ -314,7 +311,7 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "persistent term failed")
 	}
 	fc.term.Store(newTerm)
-	fc.status = proto.ServingStatus_FENCED
+	fc.status.Store(int32(proto.ServingStatus_FENCED))
 	lastEntryId, err := getLastEntryIdInWal(fc.wal) // todo: consider support it in the WAL directly
 	if err != nil {
 		fc.log.Warn("Failed to get last entry from WAL", slog.Any("error", err), slog.Int64("new-term", req.Term))
@@ -339,7 +336,7 @@ func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.Trunc
 		return nil, dserror.ErrResourceConflict
 	}
 
-	if fc.status != proto.ServingStatus_FENCED {
+	if proto.ServingStatus(fc.status.Load()) != proto.ServingStatus_FENCED {
 		return nil, dserror.ErrInvalidStatus
 	}
 
@@ -347,7 +344,7 @@ func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.Trunc
 	if newTerm != fc.term.Load() {
 		return nil, dserror.ErrInvalidTerm
 	}
-	fc.status = proto.ServingStatus_FOLLOWER
+	fc.status.Store(int32(proto.ServingStatus_FOLLOWER))
 	headOffset, err := fc.wal.TruncateLog(req.HeadEntryId.Offset)
 	if err != nil {
 		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err),
@@ -603,23 +600,11 @@ func (fc *followerController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetSt
 		return nil, dserror.ErrResourceConflict
 	}
 
-	fc.rwMutex.RLock()
-	defer fc.rwMutex.RUnlock()
-
-	if fc.closed.Load() { // double-check
-		return nil, dserror.ErrResourceConflict
-	}
-
-	status := fc.status
-	term := fc.term.Load()
-	headOffset := fc.lastAppendedOffset.Load()
-	commitOffset := fc.commitOffset.Load()
-
 	return &proto.GetStatusResponse{
-		Term:         term,
-		Status:       status,
-		HeadOffset:   headOffset,
-		CommitOffset: commitOffset,
+		Term:         fc.term.Load(),
+		Status:       proto.ServingStatus(fc.status.Load()),
+		HeadOffset:   fc.lastAppendedOffset.Load(),
+		CommitOffset: fc.commitOffset.Load(),
 	}, nil
 }
 

@@ -59,7 +59,7 @@ func (ls *LogSynchronizer) Close() error {
 	return nil
 }
 
-func (ls *LogSynchronizer) bgAppender(stream proto.OxiaLogReplication_ReplicateServer, syncCond chan struct{}, becomeFollower func()) error {
+func (ls *LogSynchronizer) bgAppender(stream proto.OxiaLogReplication_ReplicateServer, syncCond chan struct{}, onAppend func()) error {
 	for {
 		req, err := stream.Recv()
 		if err != nil {
@@ -71,13 +71,13 @@ func (ls *LogSynchronizer) bgAppender(stream proto.OxiaLogReplication_ReplicateS
 		if req == nil {
 			return nil
 		}
-		if err = ls.append0(stream, syncCond, becomeFollower, req); err != nil {
+		if err = ls.append0(stream, syncCond, onAppend, req); err != nil {
 			return err
 		}
 	}
 }
 
-func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServer, syncCond chan struct{}, becomeFollower func(), req *proto.Append) error {
+func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServer, syncCond chan struct{}, onAppend func(), req *proto.Append) error {
 	timer := ls.writeLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -96,7 +96,7 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 	// The follower adds the entry to its log, sets the head offset
 	// and updates its commit offset with the commit offset of
 	// the request.
-	becomeFollower()
+	onAppend()
 
 	lastAppendedOffset := ls.lastAppendedOffset.Load()
 	if req.Entry.Offset <= lastAppendedOffset {
@@ -147,7 +147,7 @@ func (ls *LogSynchronizer) bgSyncer(stream proto.OxiaLogReplication_ReplicateSer
 	}
 }
 
-func NewLogSynchronizer(log *slog.Logger, namespace string, shardId int64, term int64, wal wal.Wal, advertisedCommitOffset *atomic.Int64, lastAppendedOffset *atomic.Int64, writeLatencyHisto metric.LatencyHistogram, stateApplierCond chan struct{}, stream proto.OxiaLogReplication_ReplicateServer, becomeFollower func()) *LogSynchronizer {
+func NewLogSynchronizer(log *slog.Logger, namespace string, shardId int64, term int64, wal wal.Wal, advertisedCommitOffset *atomic.Int64, lastAppendedOffset *atomic.Int64, writeLatencyHisto metric.LatencyHistogram, stateApplierCond chan struct{}, stream proto.OxiaLogReplication_ReplicateServer, onAppend func()) *LogSynchronizer {
 	ctx, cancel := context.WithCancel(stream.Context())
 
 	ls := &LogSynchronizer{
@@ -173,7 +173,7 @@ func NewLogSynchronizer(log *slog.Logger, namespace string, shardId int64, term 
 				"shard":     fmt.Sprintf("%d", shardId),
 			},
 			func() {
-				channel.PushNoBlock(ls.finish, ls.bgAppender(stream, syncCond, becomeFollower))
+				channel.PushNoBlock(ls.finish, ls.bgAppender(stream, syncCond, onAppend))
 			},
 		)
 	})
