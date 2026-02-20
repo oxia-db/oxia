@@ -78,7 +78,6 @@ type FollowerController interface {
 }
 
 type followerController struct {
-	closed    atomic.Bool
 	rwMutex   sync.RWMutex
 	waitGroup sync.WaitGroup
 	log       *slog.Logger
@@ -90,6 +89,7 @@ type followerController struct {
 	kvFactory      kvstore.Factory
 	storageOptions *option.StorageOptions
 	// state variables
+	closed                 atomic.Bool
 	term                   *atomic.Int64
 	commitOffset           *atomic.Int64 // The commit offset already applied in the database
 	advertisedCommitOffset *atomic.Int64 // The highest commit offset advertised by the leader
@@ -296,6 +296,10 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 
 	if fc.closed.Load() { // double-check
 		return nil, dserror.ErrResourceConflict
+	}
+
+	if newTerm < fc.term.Load() { // double-check after lock
+		return nil, dserror.ErrInvalidTerm
 	}
 
 	if fc.logSynchronizer.IsValid() {
