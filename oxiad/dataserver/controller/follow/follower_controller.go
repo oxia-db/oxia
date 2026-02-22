@@ -567,18 +567,12 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	loader.Complete()
 
 	var db database.DB
-	var rawCommitOffset int64
-	if _, rawCommitOffset, db, err = initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); err != nil {
+	var rawTerm, rawCommitOffset int64
+	if rawTerm, rawCommitOffset, db, err = initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); err != nil {
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to initialize database")
 	}
 	fc.db = db
-	// The snapshot DB may not have a term stored. Use the snapshot's term
-	// (from the chunks) and persist it so it survives restarts.
-	snapshotTerm := firstChunk.Term
-	if err = fc.db.UpdateTerm(snapshotTerm, database.TermOptions{}); err != nil {
-		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to persist snapshot term")
-	}
-	fc.term.Store(snapshotTerm)
+	fc.term.Store(rawTerm)
 	fc.commitOffset.Store(rawCommitOffset)
 	fc.lastAppendedOffset.Store(rawCommitOffset)
 	fc.advertisedCommitOffset.Store(rawCommitOffset)
