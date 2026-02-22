@@ -1118,8 +1118,8 @@ func (lc *leaderController) CloseSession(request *proto.CloseSessionRequest) (*p
 }
 
 func (lc *leaderController) Checksum() crc.Checksum {
-	lc.Lock()
-	defer lc.Unlock()
+	lc.RLock()
+	defer lc.RUnlock()
 	return lc.db.ReadChecksum()
 }
 
