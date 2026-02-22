@@ -70,13 +70,24 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	assert.NoError(t, err)
 	shardID := int64(0)
 
-	stream, err := clientRpc.Read(t.Context(), &proto.ReadRequest{Shard: &shardID})
-	assert.NoError(t, err)
-	_, err = stream.Recv()
-	assert.NotNil(t, err)
-	hint := constant.FindLeaderHint(err)
-	assert.NotNil(t, hint)
-	assert.Equal(t, shard.Leader.Public, hint.LeaderAddress)
+	// The assignment dispatcher on the non-leader may not have received
+	// the shard assignments yet, so retry until the leader hint is present.
+	assert.Eventually(t, func() bool {
+		stream, err := clientRpc.Read(t.Context(), &proto.ReadRequest{Shard: &shardID})
+		if err != nil {
+			return false
+		}
+		_, err = stream.Recv()
+		if err == nil {
+			return false
+		}
+		hint := constant.FindLeaderHint(err)
+		if hint == nil {
+			return false
+		}
+		assert.Equal(t, shard.Leader.Public, hint.LeaderAddress)
+		return true
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 func TestLeaderHintWithClient(t *testing.T) {
