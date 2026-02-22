@@ -853,7 +853,10 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 	term := lc.term
 	proposal := proposalSupplier(newOffset)
 
-	lc.log.Debug("propose a proposal", slog.Any("proposal", proposal))
+	lc.log.Debug("Appending proposal to WAL",
+		slog.Int64("offset", newOffset),
+		slog.Uint64("timestamp", proposal.GetTimestamp()),
+	)
 
 	entryValue := proto.LogEntryValueFromVTPool()
 	defer entryValue.ReturnToVTPool()
