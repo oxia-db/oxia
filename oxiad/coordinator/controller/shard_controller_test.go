@@ -783,8 +783,8 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	rpc.GetNode(s2).expectNewTermRequest(t, shard, 2, true)
 	rpc.GetNode(s3).expectNewTermRequest(t, shard, 2, true)
 
-	// Verify BecomeLeader includes the FINGERPRINT feature
-	rpc.GetNode(s1).expectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, []proto.Feature{proto.Feature_FEATURE_FINGERPRINT})
+	// Verify BecomeLeader includes the DB Checksum feature
+	rpc.GetNode(s1).expectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
 
 	assert.Eventually(t, func() bool {
 		return sc.Metadata().Status() == model.ShardStatusSteadyState
@@ -802,9 +802,9 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	// s1 and s2 are new nodes with FINGERPRINT support
-	rpc.GetNode(s1).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_FINGERPRINT})
-	rpc.GetNode(s2).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_FINGERPRINT})
+	// s1 and s2 are new nodes with DB checksum support
+	rpc.GetNode(s1).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	rpc.GetNode(s2).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
 	// s3 is an old node without feature support
 	rpc.GetNode(s3).SetNodeFeatures([]proto.Feature{})
 

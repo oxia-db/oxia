@@ -25,6 +25,9 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/oxia-db/oxia/oxiad/common/crc"
+
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
 	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -76,6 +79,9 @@ type FollowerController interface {
 	Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
 	AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error
 	InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
+
+	IsFeatureEnabled(feature proto.Feature) bool
+	Checksum() crc.Checksum
 }
 
 type followerController struct {
@@ -393,28 +399,7 @@ func (fc *followerController) stateApplier() {
 	}
 }
 
-func (fc *followerController) processCommitRequest(entry *proto.LogEntry, logEntryValue *proto.LogEntryValue) error {
-	fc.rwMutex.RLock()
-	defer fc.rwMutex.RUnlock()
-
-	for _, br := range logEntryValue.GetRequests().Writes {
-		_, err := fc.db.ProcessWrite(br, entry.Offset, entry.Timestamp, lead.WrapperUpdateOperationCallback)
-		if err != nil {
-			fc.log.Error(
-				"Error applying committed entry",
-				slog.Any("error", err),
-			)
-			return err
-		}
-	}
-
-	return nil
-}
-
 func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, maxInclusive int64) error {
-	logEntryValue := proto.LogEntryValueFromVTPool()
-	defer logEntryValue.ReturnToVTPool()
-
 	for reader.HasNext() {
 		entry, err := reader.ReadNext()
 
@@ -436,15 +421,10 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 			return nil
 		}
 
-		logEntryValue.ResetVT()
-		if err := logEntryValue.UnmarshalVT(entry.Value); err != nil {
-			fc.log.Error(
-				"Error unmarshalling committed entry",
-				slog.Any("error", err),
-			)
-			return err
-		}
-		if err := fc.processCommitRequest(entry, logEntryValue); err != nil {
+		fc.rwMutex.RLock()
+		err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
+		fc.rwMutex.RUnlock()
+		if err != nil {
 			return err
 		}
 
@@ -670,6 +650,18 @@ func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.
 		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "delete follower failed")
 	}
 	return &proto.DeleteShardResponse{}, nil
+}
+
+func (fc *followerController) IsFeatureEnabled(feature proto.Feature) bool {
+	fc.rwMutex.RLock()
+	defer fc.rwMutex.RUnlock()
+	return fc.db.IsFeatureEnabled(feature)
+}
+
+func (fc *followerController) Checksum() crc.Checksum {
+	fc.rwMutex.RLock()
+	defer fc.rwMutex.RUnlock()
+	return fc.db.ReadChecksum()
 }
 
 func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {

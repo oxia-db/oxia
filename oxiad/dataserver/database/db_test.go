@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/crc"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
@@ -1158,11 +1160,11 @@ func TestDB_ChecksumPersistence(t *testing.T) {
 	assert.NoError(t, err)
 	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
+	testDB.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
 
-	// When no checksum is stored, readASCIILongOrDefault returns -1 (wal.InvalidOffset),
-	initialChecksum := testDB.(*db).committedChecksum.Load()
+	initialChecksum := testDB.(*db).committedChecksum.Load().Value()
 	assert.NotNil(t, initialChecksum)
-	assert.EqualValues(t, constant.I64Zero, uint32(*initialChecksum))
+	assert.EqualValues(t, crc.Checksum(0).Value(), initialChecksum)
 
 	// Write some data
 	writeReq := &proto.WriteRequest{
@@ -1175,9 +1177,9 @@ func TestDB_ChecksumPersistence(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Checksum should have changed
-	checksum1 := testDB.(*db).committedChecksum.Load()
+	checksum1 := testDB.(*db).committedChecksum.Load().Value()
 	assert.NotNil(t, checksum1)
-	assert.NotEqual(t, *initialChecksum, *checksum1)
+	assert.NotEqual(t, initialChecksum, checksum1)
 
 	// Close and reopen the database
 	assert.NoError(t, testDB.Close())
@@ -1186,9 +1188,9 @@ func TestDB_ChecksumPersistence(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Checksum should be restored
-	restoredChecksum := testDB.(*db).committedChecksum.Load()
+	restoredChecksum := testDB.(*db).committedChecksum.Load().Value()
 	assert.NotNil(t, restoredChecksum)
-	assert.Equal(t, *checksum1, *restoredChecksum)
+	assert.Equal(t, checksum1, restoredChecksum)
 
 	assert.NoError(t, testDB.Close())
 	assert.NoError(t, factory.Close())
@@ -1199,9 +1201,10 @@ func TestDB_ChecksumUpdatesOnWrite(t *testing.T) {
 	assert.NoError(t, err)
 	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
+	testDB.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
 
 	checksums := make([]uint32, 0)
-	checksums = append(checksums, uint32(*testDB.(*db).committedChecksum.Load()))
+	checksums = append(checksums, testDB.(*db).committedChecksum.Load().Value())
 
 	// Perform multiple writes and track checksums
 	for i := 0; i < 5; i++ {
@@ -1215,7 +1218,7 @@ func TestDB_ChecksumUpdatesOnWrite(t *testing.T) {
 		assert.NoError(t, err)
 
 		cs := testDB.(*db).committedChecksum.Load()
-		checksums = append(checksums, uint32(*cs))
+		checksums = append(checksums, cs.Value())
 	}
 
 	// All checksums should be different
@@ -1238,11 +1241,13 @@ func TestDB_ChecksumDeterministic(t *testing.T) {
 	assert.NoError(t, err)
 	db1, err := NewDB(constant.DefaultNamespace, 1, factory1, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
+	db1.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
 
 	factory2, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db2, err := NewDB(constant.DefaultNamespace, 1, factory2, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
+	db2.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
 
 	// Perform same writes on both databases
 	writeReq := &proto.WriteRequest{
@@ -1258,10 +1263,10 @@ func TestDB_ChecksumDeterministic(t *testing.T) {
 	_, err = db2.ProcessWrite(writeReq, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
-	cs1 := db1.(*db).committedChecksum.Load()
-	cs2 := db2.(*db).committedChecksum.Load()
+	cs1 := db1.(*db).committedChecksum.Load().Value()
+	cs2 := db2.(*db).committedChecksum.Load().Value()
 
-	assert.Equal(t, *cs1, *cs2, "same operations should produce same checksum")
+	assert.Equal(t, cs1, cs2, "same operations should produce same checksum")
 
 	assert.NoError(t, db1.Close())
 	assert.NoError(t, db2.Close())

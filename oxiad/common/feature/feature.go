@@ -21,11 +21,8 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// SupportedFeatures returns the list of features supported by this node.
-// This list should be updated whenever new features are added that require
-// negotiation during leader election.
 func SupportedFeatures() []proto.Feature {
 	return []proto.Feature{
-		proto.Feature_FEATURE_FINGERPRINT,
+		proto.Feature_FEATURE_DB_CHECKSUM,
 	}
 }

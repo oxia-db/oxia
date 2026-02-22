@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -83,6 +84,10 @@ type DB interface {
 
 	EnableNotifications(enable bool)
 
+	EnableFeature(feature proto.Feature)
+	IsFeatureEnabled(feature proto.Feature) bool
+	ReadChecksum() crc.Checksum
+
 	ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error)
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
 	List(request *proto.ListRequest) (kvstore.KeyIterator, error)
@@ -118,6 +123,7 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		kv:                    kv,
 		shardId:               shardId,
 		notificationsEnabled:  true,
+		enabledFeatures:       sync.Map{},
 		sequenceWaiterTracker: NewSequencesWaitTracker(),
 		log: slog.With(
 			slog.String("component", "db"),
@@ -158,9 +164,13 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	}
 	db.committedVersionId.Store(lastVersionId)
 
+	// init the DB checksum
 	lastChecksum, err := db.readLastChecksum()
 	if err != nil {
 		return nil, err
+	}
+	if !lastChecksum.IsZero() {
+		db.enabledFeatures.Store(proto.Feature_FEATURE_DB_CHECKSUM, true)
 	}
 	db.committedChecksum.Store(&lastChecksum)
 
@@ -176,6 +186,7 @@ type db struct {
 	notificationsTracker  *notificationsTracker
 	log                   *slog.Logger
 	notificationsEnabled  bool
+	enabledFeatures       sync.Map
 	sequenceWaiterTracker SequenceWaiterTracker
 
 	putCounter                metric.Counter
@@ -197,6 +208,9 @@ func (d *db) Snapshot() (kvstore.Snapshot, error) {
 
 func (d *db) EnableNotifications(enabled bool) {
 	d.notificationsEnabled = enabled
+}
+func (d *db) ReadChecksum() crc.Checksum {
+	return *d.committedChecksum.Load()
 }
 
 func (d *db) Close() error {
@@ -260,6 +274,15 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	return notifications, res, nil
 }
 
+func (d *db) IsFeatureEnabled(feature proto.Feature) bool {
+	_, ok := d.enabledFeatures.Load(feature)
+	return ok
+}
+
+func (d *db) EnableFeature(feature proto.Feature) {
+	d.enabledFeatures.Store(feature, true)
+}
+
 func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error) {
 	timer := d.batchWriteLatencyHisto.Timer()
 	defer timer.Done()
@@ -289,12 +312,15 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 		}
 	}
 
-	previousChecksum := d.committedChecksum.Load()
-	committedChecksum := batch.Checksum(*previousChecksum) // we need to copy this value
-
-	if err := d.addASCIILong(commitChecksumKey, int64(committedChecksum), batch, timestamp); err != nil {
-		return nil, err
+	previousChecksum := *d.committedChecksum.Load()
+	committedChecksum := previousChecksum
+	if !previousChecksum.IsZero() || d.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM) {
+		committedChecksum = batch.Checksum(previousChecksum)
+		if err := d.addASCIILong(commitChecksumKey, int64(committedChecksum), batch, timestamp); err != nil {
+			return nil, err
+		}
 	}
+
 	if err := batch.Commit(); err != nil {
 		return nil, err
 	}

@@ -46,7 +46,7 @@ service OxiaLogReplication {
 // This enables safe rolling upgrades where new and old nodes can coexist.
 enum Feature {
   FEATURE_UNKNOWN = 0;
-  FEATURE_FINGERPRINT = 1;
+  FEATURE_DB_CHECKSUM = 1;
 }
 
 message GetInfoRequest {

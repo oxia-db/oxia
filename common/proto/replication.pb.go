@@ -41,18 +41,18 @@ type Feature int32
 
 const (
 	Feature_FEATURE_UNKNOWN     Feature = 0
-	Feature_FEATURE_FINGERPRINT Feature = 1
+	Feature_FEATURE_DB_CHECKSUM Feature = 1
 )
 
 // Enum value maps for Feature.
 var (
 	Feature_name = map[int32]string{
 		0: "FEATURE_UNKNOWN",
-		1: "FEATURE_FINGERPRINT",
+		1: "FEATURE_DB_CHECKSUM",
 	}
 	Feature_value = map[string]int32{
 		"FEATURE_UNKNOWN":     0,
-		"FEATURE_FINGERPRINT": 1,
+		"FEATURE_DB_CHECKSUM": 1,
 	}
 )
 
@@ -1448,7 +1448,7 @@ const file_replication_proto_rawDesc = "" +
 	"\rcommit_offset\x18\x04 \x01(\x03R\fcommitOffset*7\n" +
 	"\aFeature\x12\x13\n" +
 	"\x0fFEATURE_UNKNOWN\x10\x00\x12\x17\n" +
-	"\x13FEATURE_FINGERPRINT\x10\x01*<\n" +
+	"\x13FEATURE_DB_CHECKSUM\x10\x01*<\n" +
 	"\x0eKeySortingType\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
 	"\aNATURAL\x10\x01\x12\x10\n" +

@@ -27,6 +27,11 @@ type Checksum uint32
 func (c Checksum) Update(b []byte) Checksum {
 	return Checksum(crc32.Update(uint32(c), table, b))
 }
+
+func (c Checksum) IsZero() bool {
+	return c == 0
+}
+
 func (c Checksum) Value() uint32 {
 	return uint32(c>>15|c<<17) + MagicNumber
 }

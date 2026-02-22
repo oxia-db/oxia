@@ -20,19 +20,18 @@ import (
 	"io"
 	"log/slog"
 	"sync"
-	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/status"
-	pb "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/option"
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
@@ -78,19 +77,19 @@ type LeaderController interface {
 	Context() context.Context
 	// Term The current term of the leader
 	Term() int64
+	CommitOffset() int64
 	// Status The Status of the leader
 	Status() proto.ServingStatus
 	Namespace() string
 	ShardID() int64
 
-	// IsFeatureEnabled checks if a specific feature is enabled for this term.
-	// Features are negotiated during leader election based on what all quorum
-	// members support.
-	IsFeatureEnabled(feature proto.Feature) bool
+	Checksum() crc.Checksum
 
 	CreateSession(*proto.CreateSessionRequest) (*proto.CreateSessionResponse, error)
 	KeepAlive(sessionId int64) error
 	CloseSession(*proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
+
+	IsFeatureEnabled(feature proto.Feature) bool
 }
 
 type leaderController struct {
@@ -103,11 +102,6 @@ type leaderController struct {
 	replicationFactor uint32
 	quorumAckTracker  QuorumAckTracker
 	followers         map[string]FollowerCursor
-
-	// negotiatedFeatures contains the features that all members of the ensemble
-	// support. This is set during BecomeLeader and used to determine which
-	// features can be enabled for this term.
-	negotiatedFeatures []proto.Feature
 
 	// This represents the last entry in the WAL at the time this node
 	// became leader. It's used in the logic for deciding where to
@@ -236,13 +230,10 @@ func (lc *leaderController) Term() int64 {
 	return lc.term
 }
 
-// IsFeatureEnabled checks if a specific feature is enabled for this term.
-// Features are negotiated during leader election based on what all quorum
-// members support.
-func (lc *leaderController) IsFeatureEnabled(f proto.Feature) bool {
+func (lc *leaderController) IsFeatureEnabled(feature proto.Feature) bool {
 	lc.RLock()
 	defer lc.RUnlock()
-	return slices.Contains(lc.negotiatedFeatures, f)
+	return lc.db.IsFeatureEnabled(feature)
 }
 
 // NewTerm
@@ -333,6 +324,74 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	}, nil
 }
 
+func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) ([]proto.Feature, error) {
+	lc.Lock()
+	defer lc.Unlock()
+
+	if lc.isClosed() {
+		return nil, constant.ErrAlreadyClosed
+	}
+
+	if lc.status != proto.ServingStatus_FENCED {
+		return nil, constant.ErrInvalidStatus
+	}
+
+	if req.Term != lc.term {
+		return nil, constant.ErrInvalidTerm
+	}
+
+	lc.replicationFactor = req.GetReplicationFactor()
+	lc.followers = make(map[string]FollowerCursor)
+
+	var err error
+	lc.leaderElectionHeadEntryId, err = getLastEntryIdInWal(lc.wal)
+	if err != nil {
+		return nil, err
+	}
+
+	leaderCommitOffset, err := lc.db.ReadCommitOffset()
+	if err != nil {
+		return nil, err
+	}
+
+	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
+	lc.sessionManager = NewSessionManager(lc.ctx, lc.namespace, lc.shardId, lc)
+
+	for follower, followerHeadEntryId := range req.FollowerMaps {
+		if err := lc.addFollower(follower, followerHeadEntryId); err != nil { //nolint:contextcheck
+			return nil, err
+		}
+	}
+
+	// We must wait until all the entries in the leader WAL are fully
+	// committed in the quorum, to avoid missing any entries in the DB
+	// by the moment we make the leader controller accepting new propose/read
+	// requests
+	if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, lc.leaderElectionHeadEntryId.Offset); err != nil {
+		return nil, err
+	}
+
+	if err = lc.applyAllEntriesIntoDB(); err != nil {
+		return nil, err
+	}
+
+	lc.log.Info(
+		"Started leading the shard",
+		slog.Int64("term", lc.term),
+		slog.Int64("head-offset", lc.leaderElectionHeadEntryId.Offset),
+	)
+
+	lc.status = proto.ServingStatus_LEADER
+
+	proposeEnabledFeature := make([]proto.Feature, 0)
+	for _, feature := range req.FeaturesSupported {
+		if !lc.db.IsFeatureEnabled(feature) {
+			proposeEnabledFeature = append(proposeEnabledFeature, feature)
+		}
+	}
+	return proposeEnabledFeature, nil
+}
+
 // BecomeLeader : Node handles a Become Leader request
 //
 // The node inspects the head offset of each follower and
@@ -359,65 +418,14 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 //     possible that their head entry id is higher than the leader and
 //     therefore need truncating.
 func (lc *leaderController) BecomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
-	lc.Lock()
-	defer lc.Unlock()
-
-	if lc.isClosed() {
-		return nil, constant.ErrAlreadyClosed
-	}
-
-	if lc.status != proto.ServingStatus_FENCED {
-		return nil, constant.ErrInvalidStatus
-	}
-
-	if req.Term != lc.term {
-		return nil, constant.ErrInvalidTerm
-	}
-
-	lc.replicationFactor = req.GetReplicationFactor()
-	lc.followers = make(map[string]FollowerCursor)
-	lc.negotiatedFeatures = req.GetFeaturesSupported()
-
-	var err error
-	lc.leaderElectionHeadEntryId, err = getLastEntryIdInWal(lc.wal)
+	proposeEnabledFeature, err := lc.becomeLeader(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-
-	leaderCommitOffset, err := lc.db.ReadCommitOffset()
-	if err != nil {
-		return nil, err
+	// post become leader without the lock
+	if len(proposeEnabledFeature) > 0 {
+		lc.proposeFeaturesEnable(ctx, proposeEnabledFeature)
 	}
-
-	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
-	lc.sessionManager = NewSessionManager(lc.ctx, lc.namespace, lc.shardId, lc)
-
-	for follower, followerHeadEntryId := range req.FollowerMaps {
-		if err := lc.addFollower(follower, followerHeadEntryId); err != nil { //nolint:contextcheck
-			return nil, err
-		}
-	}
-
-	// We must wait until all the entries in the leader WAL are fully
-	// committed in the quorum, to avoid missing any entries in the DB
-	// by the moment we make the leader controller accepting new write/read
-	// requests
-	if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, lc.leaderElectionHeadEntryId.Offset); err != nil {
-		return nil, err
-	}
-
-	if err = lc.applyAllEntriesIntoDB(); err != nil {
-		return nil, err
-	}
-
-	lc.log.Info(
-		"Started leading the shard",
-		slog.Int64("term", lc.term),
-		slog.Int64("head-offset", lc.leaderElectionHeadEntryId.Offset),
-		slog.Any("negotiated-features", lc.negotiatedFeatures),
-	)
-
-	lc.status = proto.ServingStatus_LEADER
 	return &proto.BecomeLeaderResponse{}, nil
 }
 
@@ -492,27 +500,6 @@ func (lc *leaderController) addFollower(follower string, followerHeadEntryId *pr
 	return nil
 }
 
-func (lc *leaderController) applyAllEntriesIntoDBLoop(r wal.Reader) error {
-	for r.HasNext() {
-		entry, err := r.ReadNext()
-		if err != nil {
-			return err
-		}
-
-		logEntryValue := &proto.LogEntryValue{}
-		if err = pb.Unmarshal(entry.Value, logEntryValue); err != nil {
-			return err
-		}
-		for _, writeRequest := range logEntryValue.GetRequests().Writes {
-			if _, err = lc.db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, WrapperUpdateOperationCallback); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
 func (lc *leaderController) applyAllEntriesIntoDB() error {
 	dbCommitOffset, err := lc.db.ReadCommitOffset()
 	if err != nil {
@@ -535,9 +522,16 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		)
 		return err
 	}
+	defer r.Close()
 
-	if err = lc.applyAllEntriesIntoDBLoop(r); err != nil {
-		return errors.Wrap(err, "failed to applies wal entries to db")
+	for r.HasNext() {
+		entry, err := r.ReadNext()
+		if err != nil {
+			return errors.Wrap(err, "failed to applies wal entries to db")
+		}
+		if err = statemachine.ApplyLogEntry(lc.db, entry, WrapperUpdateOperationCallback); err != nil {
+			return errors.Wrap(err, "failed to applies wal entries to db")
+		}
 	}
 
 	if err = lc.sessionManager.Initialize(); err != nil {
@@ -802,27 +796,50 @@ func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.Write
 }
 
 func (lc *leaderController) Write(ctx context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
-	lc.write(ctx, func(_ int64) *proto.WriteRequest { return request }, cb)
+	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
+		cb.OnComplete(response.WriteResponse)
+	}, cb.OnCompleteError)
+	lc.propose(ctx, func(offset int64) statemachine.Proposal { return statemachine.NewWriteProposal(offset, request) }, deferPropose)
 }
 
 func (lc *leaderController) writeBlock(ctx context.Context, requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
 	res := make(chan *entity.TWithError[*proto.WriteResponse], 1)
-	lc.write(ctx, requestSupplier, concurrent.NewOnce(func(t *proto.WriteResponse) {
-		res <- &entity.TWithError[*proto.WriteResponse]{
-			Err: nil,
-			T:   t,
-		}
+	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
+		res <- &entity.TWithError[*proto.WriteResponse]{Err: nil, T: response.WriteResponse}
 	}, func(err error) {
-		res <- &entity.TWithError[*proto.WriteResponse]{
-			Err: err,
-			T:   nil,
-		}
-	}))
+		res <- &entity.TWithError[*proto.WriteResponse]{Err: err, T: nil}
+	})
+	lc.propose(ctx, func(offset int64) statemachine.Proposal {
+		return statemachine.NewWriteProposal(offset, requestSupplier(offset))
+	}, deferPropose)
 	response := <-res
 	return response.T, response.Err
 }
 
-func (lc *leaderController) write(ctx context.Context, requestSupplier func(offset int64) *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
+// proposeFeaturesEnable broadcasts a control command to all replicas to enable
+// specific protocol features.
+//
+// This proposal will be replicated to all the replicas, but we will not wait for log sync.
+// As a result, the underlying State Machine must handle these requests
+// idempotently to ensure consistency across retries or leader transitions.
+func (lc *leaderController) proposeFeaturesEnable(ctx context.Context, features []proto.Feature) {
+	deferPropose := concurrent.NewOnce(func(statemachine.ApplyResponse) {
+		lc.log.Info("Proposed feature enable", slog.Any("features", features))
+	}, func(err error) {
+		lc.log.Error("Failed to propose feature enable", slog.Any("features", features), slog.Any("error", err))
+	})
+	lc.propose(ctx, func(offset int64) statemachine.Proposal {
+		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
+			Value: &proto.ControlRequest_FeatureEnable{
+				FeatureEnable: &proto.FeatureEnableRequest{
+					Features: features,
+				},
+			},
+		})
+	}, deferPropose)
+}
+
+func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
 	timer := lc.writeLatencyHisto.Timer()
 	lc.Lock()
 	if err := checkStatusIsLeader(lc.status); err != nil {
@@ -834,16 +851,19 @@ func (lc *leaderController) write(ctx context.Context, requestSupplier func(offs
 	walLog := lc.wal
 	tracker := lc.quorumAckTracker
 	term := lc.term
-	request := requestSupplier(newOffset)
+	proposal := proposalSupplier(newOffset)
 
-	lc.log.Debug("Append operation", slog.Any("req", request))
+	lc.log.Debug("Appending proposal to WAL",
+		slog.Int64("offset", newOffset),
+		slog.Uint64("timestamp", proposal.GetTimestamp()),
+	)
 
-	timestamp := uint64(time.Now().UnixMilli())
-	logEntryValue := proto.LogEntryValueFromVTPool()
-	defer logEntryValue.ReturnToVTPool()
+	entryValue := proto.LogEntryValueFromVTPool()
+	defer entryValue.ReturnToVTPool()
 
-	logEntryValue.Value = &proto.LogEntryValue_Requests{Requests: &proto.WriteRequests{Writes: []*proto.WriteRequest{request}}}
-	value, err := logEntryValue.MarshalVT()
+	proposal.ToLogEntry(entryValue)
+
+	value, err := entryValue.MarshalVT()
 	if err != nil {
 		lc.Unlock()
 		cb.OnCompleteError(err)
@@ -860,18 +880,18 @@ func (lc *leaderController) write(ctx context.Context, requestSupplier func(offs
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
 			func(_ any) {
 				defer timer.DoneCtx(ctx)
-				var wr *proto.WriteResponse
-				if wr, err = lc.db.ProcessWrite(request, newOffset, timestamp, WrapperUpdateOperationCallback); err != nil {
+				response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
+				if err != nil {
 					cb.OnCompleteError(err)
 					return
 				}
-				cb.OnComplete(wr)
+				cb.OnComplete(response)
 			}, func(err error) {
 				timer.DoneCtx(ctx)
 				cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
 			}))
 	}
-	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: timestamp}, deferDbWrite)
+	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: proposal.GetTimestamp()}, deferDbWrite)
 	lc.Unlock()
 }
 
@@ -1098,6 +1118,12 @@ func (lc *leaderController) KeepAlive(sessionId int64) error {
 
 func (lc *leaderController) CloseSession(request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
 	return lc.sessionManager.CloseSession(request)
+}
+
+func (lc *leaderController) Checksum() crc.Checksum {
+	lc.RLock()
+	defer lc.RUnlock()
+	return lc.db.ReadChecksum()
 }
 
 func checkStatusIsLeader(actual proto.ServingStatus) error {
