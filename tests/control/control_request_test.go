@@ -17,6 +17,7 @@ package control
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
 	"github.com/stretchr/testify/assert"
@@ -82,14 +83,16 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
 		if targetId == leader.GetIdentifier() {
-			lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
-			assert.NoError(t, err)
-			assert.True(t, lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+			assert.Eventually(t, func() bool {
+				lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
+				return err == nil && lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
+			}, 10*time.Second, 100*time.Millisecond)
 			continue
 		}
-		follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-		assert.NoError(t, err)
-		assert.True(t, follow.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+		assert.Eventually(t, func() bool {
+			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
+			return err == nil && follow.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
+		}, 10*time.Second, 100*time.Millisecond)
 	}
 
 	// Write some entries
