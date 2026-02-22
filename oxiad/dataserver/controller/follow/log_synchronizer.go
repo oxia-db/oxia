@@ -184,7 +184,7 @@ func NewLogSynchronizer(params LogSynchronizerParams) *LogSynchronizer {
 		finish:                 make(chan error, 1),
 	}
 
-	syncCond := make(chan struct{})
+	syncCond := make(chan struct{}, 1)
 	ls.waitGroup.Go(func() {
 		process.DoWithLabels(
 			ctx,
