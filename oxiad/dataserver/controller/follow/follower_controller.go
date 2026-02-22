@@ -188,7 +188,7 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 		lastAppendedOffset:     lastAppendedOffset,
 		wal:                    writeAheadLog,
 		db:                     db,
-		stateApplierCond:       make(chan struct{}),
+		stateApplierCond:       make(chan struct{}, 1),
 		writeLatencyHisto: metric.NewLatencyHistogram("oxia_server_follower_write_latency",
 			"Latency for write operations in the follower", metric.LabelsForShard(namespace, shardId)),
 	}

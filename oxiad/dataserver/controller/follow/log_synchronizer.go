@@ -120,11 +120,6 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 		slog.Int64("offset", req.Entry.Offset),
 	)
 
-	// A follower node confirms an entry to the leader
-	//
-	// The follower adds the entry to its log, sets the head offset
-	// and updates its commit offset with the commit offset of
-	// the request.
 	onAppend()
 
 	lastAppendedOffset := ls.lastAppendedOffset.Load()

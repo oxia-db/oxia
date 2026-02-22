@@ -1116,7 +1116,10 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 
 func closeChanIsNotNil(fc FollowerController) func() bool {
 	return func() bool {
-		return fc.(*followerController).logSynchronizer.IsValid()
+		fci := fc.(*followerController)
+		fci.rwMutex.RLock()
+		defer fci.rwMutex.RUnlock()
+		return fci.logSynchronizer.IsValid()
 	}
 }
 
