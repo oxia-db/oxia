@@ -276,9 +276,10 @@ func (s *shardAssignmentDispatcher) GetLeader(shardId int64) string {
 
 func NewShardAssignmentDispatcher(healthServer rpc2.HealthServer) ShardAssignmentsDispatcher {
 	s := &shardAssignmentDispatcher{
-		assignments:  nil,
-		healthServer: healthServer,
-		clients:      make(map[int64]chan *proto.ShardAssignments),
+		assignments:           nil,
+		shardAssignmentsIndex: redblacktree.New[int64, *proto.ShardAssignment](),
+		healthServer:          healthServer,
+		clients:               make(map[int64]chan *proto.ShardAssignments),
 		log: slog.With(
 			slog.String("component", "shard-assignment-dispatcher"),
 		),
