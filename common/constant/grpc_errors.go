@@ -15,8 +15,12 @@
 package constant
 
 import (
+	"fmt"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const (
@@ -46,3 +50,32 @@ var (
 	ErrNamespaceNotFound       = status.Error(CodeNamespaceNotFound, "oxia: namespace not found")
 	ErrNotificationsNotEnabled = status.Error(CodeNotificationsNotEnabled, "oxia: notifications not enabled on namespace")
 )
+
+func NewNodeIsNotLeaderWithHint(shard int64, leader string) error {
+	st := status.New(CodeNodeIsNotLeader, fmt.Sprintf("node is not leader for shard %d", shard))
+	if leader != "" {
+		redirect := &proto.LeaderHint{
+			Shard:         shard,
+			LeaderAddress: leader,
+		}
+		stWithDetails, err := st.WithDetails(redirect)
+		if err != nil {
+			return st.Err()
+		}
+		return stWithDetails.Err()
+	}
+	return st.Err()
+}
+
+func FindLeaderHint(err error) *proto.LeaderHint {
+	st := status.Convert(err)
+	if st == nil {
+		return nil
+	}
+	for _, detail := range st.Details() {
+		if redirect, ok := detail.(*proto.LeaderHint); ok {
+			return redirect
+		}
+	}
+	return nil
+}

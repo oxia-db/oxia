@@ -136,7 +136,7 @@ func (s *shardManagerImpl) Leader(shardId int64) string {
 	if shard, ok := s.shards[shardId]; ok {
 		return shard.Leader
 	}
-	panic("shard not found")
+	return s.serviceAddress
 }
 
 func (s *shardManagerImpl) isClosed() bool {

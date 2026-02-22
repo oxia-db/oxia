@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/emirpasic/gods/v2/sets/hashset"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel"
@@ -65,6 +66,7 @@ type clientOptions struct {
 	tls                    *tls.Config
 	authentication         auth.Authentication
 	sessionKeepAliveTicker time.Duration
+	failureInjection       *hashset.Set[Failure]
 }
 
 func defaultIdentity() string {
@@ -94,6 +96,7 @@ func newClientOptions(serviceAddress string, opts ...ClientOption) (clientOption
 		meterProvider:       noop.NewMeterProvider(),
 		sessionTimeout:      DefaultSessionTimeout,
 		identity:            defaultIdentity(),
+		failureInjection:    hashset.New[Failure](),
 	}
 	var errs error
 	var err error
@@ -216,6 +219,13 @@ func WithAuthentication(authentication auth.Authentication) ClientOption {
 			return options, ErrInvalidOptionAuthentication
 		}
 		options.authentication = authentication
+		return options, nil
+	})
+}
+
+func WithFailureInjection(failures []Failure) ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		options.failureInjection = hashset.New(failures...)
 		return options, nil
 	})
 }

@@ -133,7 +133,7 @@ func TestWriteBatchComplete(t *testing.T) {
 			io.EOF,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
+		execute := func(ctx context.Context, request *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
 			assert.Equal(t, &proto.WriteRequest{
 				Shard: &shardId,
 				Puts: []*proto.PutRequest{{

@@ -61,6 +61,7 @@ type clientImpl struct {
 //
 //	client, err := oxia.NewAsyncClient("my-oxia-service:6648", oxia.WithBatchLinger(10*time.Milliseconds))
 func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, error) {
+	var err error
 	options, err := newClientOptions(serviceAddress, opts...)
 	if err != nil {
 		return nil, err
@@ -68,8 +69,14 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 
 	clientPool := rpc.NewClientPool(options.tls, options.authentication)
 
-	shardManager, err := internal.NewShardManager(internal.NewShardStrategy(), clientPool, serviceAddress,
-		options.namespace, options.requestTimeout)
+	var shardManager internal.ShardManager
+	if options.failureInjection.Contains(DizzyShardManager) {
+		shardManager, err = internal.NewDizzyShardManager(internal.NewShardStrategy(), clientPool, serviceAddress,
+			options.namespace, options.requestTimeout)
+	} else {
+		shardManager, err = internal.NewShardManager(internal.NewShardStrategy(), clientPool, serviceAddress,
+			options.namespace, options.requestTimeout)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +375,7 @@ func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, 
 		IncludeInternalKeys: showInternalKeys,
 	}
 
-	client, err := c.executor.ExecuteList(ctx, request)
+	client, err := c.executor.ExecuteList(ctx, request, nil)
 	if err != nil {
 		ch <- ListResult{Err: err}
 		return
@@ -433,7 +440,7 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 		IncludeInternalKeys: includeInternalKeys,
 	}
 
-	client, err := c.executor.ExecuteRangeScan(ctx, request)
+	client, err := c.executor.ExecuteRangeScan(ctx, request, nil)
 	if err != nil {
 		ch <- GetResult{Err: err}
 		return
