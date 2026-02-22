@@ -21,10 +21,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
-type ApplyResponse struct {
-	WriteResponse *proto.WriteResponse
-}
-
 func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallback database.UpdateOperationCallback) error {
 	logEntryValue := proto.LogEntryValueFromVTPool()
 	defer logEntryValue.ReturnToVTPool()
@@ -35,7 +31,11 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 
 	switch logEntryValue.Value.(type) {
 	case *proto.LogEntryValue_ControlRequest:
-		applyControlRequest(db, logEntryValue.GetControlRequest())
+		if featureEnable := logEntryValue.GetControlRequest().GetFeatureEnable(); featureEnable != nil {
+			for _, feature := range featureEnable.GetFeatures() {
+				db.EnableFeature(feature)
+			}
+		}
 	case *proto.LogEntryValue_Requests:
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
 			if _, err := db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil {
@@ -46,13 +46,5 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 		return errors.New("unknown proposal type")
 	}
 	return nil
-}
-
-func applyControlRequest(db database.DB, request *proto.ControlRequest) {
-	if featureEnable := request.GetFeatureEnable(); featureEnable != nil {
-		for _, feature := range featureEnable.GetFeatures() {
-			db.EnableFeature(feature)
-		}
-	}
 }
 

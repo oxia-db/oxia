@@ -31,6 +31,10 @@ type Proposal interface {
 	Apply(db database.DB, callback database.UpdateOperationCallback) (ApplyResponse, error)
 }
 
+type ApplyResponse struct {
+	WriteResponse *proto.WriteResponse
+}
+
 var _ Proposal = &WriteProposal{}
 
 type WriteProposal struct {
@@ -85,7 +89,11 @@ func (c *ControlProposal) ToLogEntry(vtEntry *proto.LogEntryValue) {
 }
 
 func (c *ControlProposal) Apply(db database.DB, _ database.UpdateOperationCallback) (ApplyResponse, error) {
-	applyControlRequest(db, c.request)
+	if featureEnable := c.request.GetFeatureEnable(); featureEnable != nil {
+		for _, feature := range featureEnable.GetFeatures() {
+			db.EnableFeature(feature)
+		}
+	}
 	return ApplyResponse{}, nil
 }
 
