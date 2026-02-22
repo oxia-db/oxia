@@ -48,8 +48,6 @@ type LogSynchronizerParams struct {
 }
 
 type LogSynchronizer struct {
-	io.Closer
-
 	waitGroup sync.WaitGroup
 	log       *slog.Logger
 	ctx       context.Context

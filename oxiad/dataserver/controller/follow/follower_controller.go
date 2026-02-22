@@ -386,6 +386,7 @@ func (fc *followerController) stateApplier() {
 			// todo: support retry logic
 			maxInclusive := fc.advertisedCommitOffset.Load()
 			if err := fc.applyCommittedEntries(maxInclusive); err != nil {
+				fc.log.Error("State applier failed", slog.Any("error", err))
 				return
 			}
 		}
