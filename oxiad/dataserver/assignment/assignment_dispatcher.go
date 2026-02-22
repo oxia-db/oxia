@@ -201,8 +201,8 @@ func (s *shardAssignmentDispatcher) Close() error {
 }
 
 func (s *shardAssignmentDispatcher) Initialized() bool {
-	s.Lock()
-	defer s.Unlock()
+	s.RLock()
+	defer s.RUnlock()
 	return s.assignments != nil
 }
 

@@ -17,6 +17,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"google.golang.org/grpc/metadata"
@@ -119,7 +120,9 @@ func (e *executorImpl) writeStream(shardId *int64, leaderHint *proto.LeaderHint)
 	e.RLock()
 
 	sw, ok := e.writeStreams[*shardId]
-	if ok && !sw.failed.Load() {
+	// When a leader hint is provided, invalidate the cached stream so we
+	// connect to the hinted leader instead of reusing a stale connection.
+	if ok && !sw.failed.Load() && leaderHint.GetLeaderAddress() == "" {
 		e.RUnlock()
 		return sw, nil
 	}
@@ -144,6 +147,15 @@ func (e *executorImpl) writeStream(shardId *int64, leaderHint *proto.LeaderHint)
 	e.Lock()
 	defer e.Unlock()
 
+	if old, ok := e.writeStreams[*shardId]; ok {
+		old.failed.Store(true)
+		if err := old.stream.CloseSend(); err != nil {
+			slog.Warn("failed to close old write stream",
+				slog.Int64("shard", *shardId),
+				slog.Any("error", err),
+			)
+		}
+	}
 	e.writeStreams[*shardId] = sw
 	return sw, nil
 }

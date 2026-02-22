@@ -53,6 +53,7 @@ func (sw *streamWrapper) Send(ctx context.Context, req *proto.WriteRequest) (*pr
 	sw.Lock()
 	sw.pendingRequests = append(sw.pendingRequests, f)
 	if err := sw.stream.Send(req); err != nil {
+		sw.pendingRequests = sw.pendingRequests[:len(sw.pendingRequests)-1]
 		sw.failed.Store(true)
 		sw.Unlock()
 		return nil, err

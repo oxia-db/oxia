@@ -115,6 +115,7 @@ func TestLeaderHintWithClient(t *testing.T) {
 
 	client, err := oxia.NewSyncClient(target, oxia.WithNamespace("default"), oxia.WithFailureInjection([]oxia.Failure{oxia.DizzyShardManager}))
 	assert.NoError(t, err)
+	defer client.Close()
 
 	_, _, err = client.Put(t.Context(), "/key1", []byte("value"))
 	assert.NoError(t, err)
