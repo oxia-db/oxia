@@ -83,26 +83,28 @@ type followerController struct {
 	log       *slog.Logger
 	ctx       context.Context
 	cancel    context.CancelFunc
-	// invariants
+
+	// Invariants: set once at construction, never modified.
 	namespace      string
 	shardId        int64
 	kvFactory      kvstore.Factory
 	storageOptions *option.StorageOptions
-	// state variables
+
+	// Atomic state: lock-free reads and writes.
 	closed                 atomic.Bool
-	term                   *atomic.Int64
-	commitOffset           *atomic.Int64 // The commit offset already applied in the database
-	advertisedCommitOffset *atomic.Int64 // The highest commit offset advertised by the leader
-	lastAppendedOffset     *atomic.Int64 // The offset of the last entry appended and not fully synced yet on the wal
-	// resource variables
+	status                 atomic.Int32
+	term                   *atomic.Int64 // Writes MUST hold rwMutex to prevent term regression.
+	commitOffset           *atomic.Int64 // The commit offset already applied in the database.
+	advertisedCommitOffset *atomic.Int64 // The highest commit offset advertised by the leader.
+	lastAppendedOffset     *atomic.Int64 // The offset of the last entry appended and not fully synced yet on the WAL.
+
+	// Guarded resources: all access MUST hold rwMutex (RLock for reads, Lock for mutations).
+	// db may be nil during InstallSnapshot; it is recovered on failure.
 	wal             wal.Wal
 	db              database.DB
-	status          atomic.Int32
 	logSynchronizer *LogSynchronizer
 
-	// events
-	stateApplierCond chan struct{}
-	// metrics
+	stateApplierCond  chan struct{}
 	writeLatencyHisto metric.LatencyHistogram
 }
 
@@ -123,6 +125,9 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 		return constant.I64NegativeOne, database.TermOptions{}, constant.I64NegativeOne, nil, err
 	}
 	term, dbTermOptions, err := db.ReadTerm()
+	if err != nil {
+		return constant.I64NegativeOne, database.TermOptions{}, constant.I64NegativeOne, db, err
+	}
 	if newTermOptions == nil {
 		to = &dbTermOptions
 	}
@@ -379,6 +384,9 @@ func (fc *followerController) stateApplier() {
 }
 
 func (fc *followerController) processCommitRequest(entry *proto.LogEntry, logEntryValue *proto.LogEntryValue) error {
+	fc.rwMutex.RLock()
+	defer fc.rwMutex.RUnlock()
+
 	for _, br := range logEntryValue.GetRequests().Writes {
 		_, err := fc.db.ProcessWrite(br, entry.Offset, entry.Timestamp, lead.WrapperUpdateOperationCallback)
 		if err != nil {
@@ -516,9 +524,23 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	if err = fc.wal.Clear(); err != nil {
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to clear WAL")
 	}
-	if err = fc.db.Close(); err != nil {
+	oldDb := fc.db
+	fc.db = nil
+	if err = oldDb.Close(); err != nil {
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to close Database")
 	}
+	// If anything below fails, recover by re-opening the database from disk
+	// so the follower controller remains usable for retries.
+	defer func() {
+		if err != nil && fc.db == nil {
+			fc.log.Warn("Recovering database after failed snapshot install", slog.Any("error", err))
+			if _, _, _, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); initErr == nil {
+				fc.db = db
+			} else {
+				fc.log.Error("Failed to recover database, follower is in a broken state", slog.Any("error", initErr))
+			}
+		}
+	}()
 	var loader kvstore.SnapshotLoader
 	loader, err = fc.kvFactory.NewSnapshotLoader(fc.namespace, fc.shardId)
 	if err != nil {
