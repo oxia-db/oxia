@@ -315,7 +315,9 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 }
 
 func (*db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
-	value, err := notifications.batch.MarshalVT()
+	// Use deterministic marshaling to ensure consistent serialization order
+	// for the Notifications map, which is critical for checksum reproducibility.
+	value, err := pb.MarshalOptions{Deterministic: true}.Marshal(&notifications.batch)
 	if err != nil {
 		return err
 	}
