@@ -25,20 +25,6 @@ type ApplyResponse struct {
 	WriteResponse *proto.WriteResponse
 }
 
-func ApplyProposal(db database.DB, proposal Proposal, updateOperationCallback database.UpdateOperationCallback) (ApplyResponse, error) {
-	response := ApplyResponse{}
-	var err error
-	switch p := proposal.(type) {
-	case *ControlProposal:
-		applyControlRequest(db, p.request)
-	case *WriteProposal:
-		response.WriteResponse, err = applyWriteRequest(db, p.request, p.offset, p.timestamp, updateOperationCallback)
-	default:
-		return response, errors.New("unknown proposal type")
-	}
-	return response, err
-}
-
 func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallback database.UpdateOperationCallback) error {
 	logEntryValue := proto.LogEntryValueFromVTPool()
 	defer logEntryValue.ReturnToVTPool()
@@ -52,7 +38,7 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 		applyControlRequest(db, logEntryValue.GetControlRequest())
 	case *proto.LogEntryValue_Requests:
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
-			if _, err := applyWriteRequest(db, writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil {
+			if _, err := db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil {
 				return err
 			}
 		}
@@ -70,7 +56,3 @@ func applyControlRequest(db database.DB, request *proto.ControlRequest) {
 	}
 }
 
-func applyWriteRequest(db database.DB, request *proto.WriteRequest, offset int64, timestamp uint64,
-	updateOperationCallback database.UpdateOperationCallback) (*proto.WriteResponse, error) {
-	return db.ProcessWrite(request, offset, timestamp, updateOperationCallback)
-}

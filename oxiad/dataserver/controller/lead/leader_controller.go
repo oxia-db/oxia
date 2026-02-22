@@ -877,7 +877,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
 			func(_ any) {
 				defer timer.DoneCtx(ctx)
-				response, err := statemachine.ApplyProposal(lc.db, proposal, WrapperUpdateOperationCallback)
+				response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
 				if err != nil {
 					cb.OnCompleteError(err)
 					return

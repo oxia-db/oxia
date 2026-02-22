@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
 type Proposal interface {
@@ -26,6 +27,8 @@ type Proposal interface {
 	GetTimestamp() uint64
 
 	ToLogEntry(vtEntry *proto.LogEntryValue)
+
+	Apply(db database.DB, callback database.UpdateOperationCallback) (ApplyResponse, error)
 }
 
 var _ Proposal = &WriteProposal{}
@@ -46,6 +49,11 @@ func (wp *WriteProposal) GetOffset() int64 {
 
 func (wp *WriteProposal) ToLogEntry(vtEntry *proto.LogEntryValue) {
 	vtEntry.Value = &proto.LogEntryValue_Requests{Requests: &proto.WriteRequests{Writes: []*proto.WriteRequest{wp.request}}}
+}
+
+func (wp *WriteProposal) Apply(db database.DB, callback database.UpdateOperationCallback) (ApplyResponse, error) {
+	resp, err := db.ProcessWrite(wp.request, wp.offset, wp.timestamp, callback)
+	return ApplyResponse{WriteResponse: resp}, err
 }
 
 func NewWriteProposal(offset int64, request *proto.WriteRequest) Proposal {
@@ -74,6 +82,11 @@ func (c *ControlProposal) GetTimestamp() uint64 {
 
 func (c *ControlProposal) ToLogEntry(vtEntry *proto.LogEntryValue) {
 	vtEntry.Value = &proto.LogEntryValue_ControlRequest{ControlRequest: c.request}
+}
+
+func (c *ControlProposal) Apply(db database.DB, _ database.UpdateOperationCallback) (ApplyResponse, error) {
+	applyControlRequest(db, c.request)
+	return ApplyResponse{}, nil
 }
 
 func NewControlProposal(offset int64, request *proto.ControlRequest) Proposal {

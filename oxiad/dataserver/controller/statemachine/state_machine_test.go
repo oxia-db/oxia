@@ -60,7 +60,7 @@ func TestApplyProposal_Write(t *testing.T) {
 		},
 	})
 
-	response, err := ApplyProposal(db, proposal, database.NoOpCallback)
+	response, err := proposal.Apply(db, database.NoOpCallback)
 	assert.NoError(t, err)
 	assert.NotNil(t, response.WriteResponse)
 	assert.Equal(t, 1, len(response.WriteResponse.Puts))
@@ -86,7 +86,7 @@ func TestApplyProposal_Control_FeatureEnable(t *testing.T) {
 		},
 	})
 
-	response, err := ApplyProposal(db, proposal, database.NoOpCallback)
+	response, err := proposal.Apply(db, database.NoOpCallback)
 	assert.NoError(t, err)
 	assert.Nil(t, response.WriteResponse)
 
@@ -97,15 +97,15 @@ func TestApplyProposal_Write_MultipleKeys(t *testing.T) {
 	db := newTestDB(t)
 
 	// First write key "a"
-	_, err := ApplyProposal(db, NewWriteProposal(0, &proto.WriteRequest{
+	_, err := NewWriteProposal(0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
 			{Key: "a", Value: []byte("v1")},
 		},
-	}), database.NoOpCallback)
+	}).Apply(db, database.NoOpCallback)
 	assert.NoError(t, err)
 
 	// Second write: put "b", delete non-existing "c", delete existing "a"
-	response, err := ApplyProposal(db, NewWriteProposal(1, &proto.WriteRequest{
+	response, err := NewWriteProposal(1, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
 			{Key: "b", Value: []byte("v2"), ExpectedVersionId: pb.Int64(-1)},
 		},
@@ -113,7 +113,7 @@ func TestApplyProposal_Write_MultipleKeys(t *testing.T) {
 			{Key: "c", ExpectedVersionId: pb.Int64(-1)}, // should fail: key doesn't exist
 			{Key: "a"}, // should succeed
 		},
-	}), database.NoOpCallback)
+	}).Apply(db, database.NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 1, len(response.WriteResponse.Puts))
@@ -203,7 +203,7 @@ func TestApplyProposal_ThenApplyLogEntry(t *testing.T) {
 		},
 	})
 
-	_, err := ApplyProposal(leaderDB, proposal, database.NoOpCallback)
+	_, err := proposal.Apply(leaderDB, database.NoOpCallback)
 	assert.NoError(t, err)
 
 	// Follower replays the same entry from the WAL
