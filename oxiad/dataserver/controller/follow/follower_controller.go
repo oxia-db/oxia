@@ -50,6 +50,10 @@ import (
 type FollowerController interface {
 	io.Closer
 
+	Term() int64
+	CommitOffset() int64
+	Status() proto.ServingStatus
+	GetStatus(request *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
 	// NewTerm
 	//
 	// Node handles a new term request
@@ -72,17 +76,9 @@ type FollowerController interface {
 	// to the indicates entry id, updates its term and changes
 	// to a Follower.
 	Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error)
-
-	Replicate(stream proto.OxiaLogReplication_ReplicateServer) error
-
-	SendSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
-
-	GetStatus(request *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
-	DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
-
-	Term() int64
-	CommitOffset() int64
-	Status() proto.ServingStatus
+	Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
+	AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error
+	InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
 
 	IsFeatureEnabled(feature proto.Feature) bool
 	Checksum() crc.Checksum
@@ -403,6 +399,38 @@ func (fc *followerController) stateApplier() {
 	}
 }
 
+func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, maxInclusive int64) error {
+	for reader.HasNext() {
+		entry, err := reader.ReadNext()
+
+		if errors.Is(err, wal.ErrReaderClosed) {
+			fc.log.Info("Stopped reading committed entries")
+			return err
+		} else if err != nil {
+			fc.log.Error("Error reading committed entry", slog.Any("error", err))
+			return err
+		}
+
+		fc.log.Debug(
+			"Reading entry",
+			slog.Int64("offset", entry.Offset),
+		)
+
+		if entry.Offset > maxInclusive {
+			// We read up to the max point
+			return nil
+		}
+
+		if err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback); err != nil {
+			return err
+		}
+
+		fc.commitOffset.Store(entry.Offset)
+	}
+
+	return nil
+}
+
 func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	fc.log.Debug(
 		"Apply committed entries",
@@ -432,34 +460,7 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 		}
 	}()
 
-	for reader.HasNext() {
-		entry, err := reader.ReadNext()
-
-		if errors.Is(err, wal.ErrReaderClosed) {
-			fc.log.Info("Stopped reading committed entries")
-			return err
-		} else if err != nil {
-			fc.log.Error("Error reading committed entry", slog.Any("error", err))
-			return err
-		}
-
-		fc.log.Debug(
-			"Reading entry",
-			slog.Int64("offset", entry.Offset),
-		)
-
-		if entry.Offset > maxInclusive {
-			// We read up to the max point
-			return nil
-		}
-		if err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback); err != nil {
-			return err
-		}
-
-		fc.commitOffset.Store(entry.Offset)
-	}
-
-	return nil
+	return fc.processCommittedEntriesLoop(reader, maxInclusive)
 }
 
 func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error { //nolint:revive // cyclomatic complexity justified by sequential error handling
@@ -649,14 +650,14 @@ func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.
 }
 
 func (fc *followerController) IsFeatureEnabled(feature proto.Feature) bool {
-	fc.Lock()
-	defer fc.Unlock()
+	fc.rwMutex.RLock()
+	defer fc.rwMutex.RUnlock()
 	return fc.db.IsFeatureEnabled(feature)
 }
 
 func (fc *followerController) Checksum() crc.Checksum {
-	fc.Lock()
-	defer fc.Unlock()
+	fc.rwMutex.RLock()
+	defer fc.rwMutex.RUnlock()
 	return fc.db.ReadChecksum()
 }
 
