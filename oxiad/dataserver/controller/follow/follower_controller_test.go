@@ -679,7 +679,7 @@ func TestFollower_RejectTruncateInvalidTerm(t *testing.T) {
 	assert.EqualValues(t, 5, fc.Term())
 }
 
-func prepareTestDb(t *testing.T) kvstore.Snapshot {
+func prepareTestDb(t *testing.T, term int64) kvstore.Snapshot {
 	t.Helper()
 
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -696,6 +696,7 @@ func prepareTestDb(t *testing.T) kvstore.Snapshot {
 		}, int64(i), 0, database.NoOpCallback)
 		assert.NoError(t, err)
 	}
+	assert.NoError(t, db.UpdateTerm(term, database.TermOptions{}))
 
 	snapshot, err := db.Snapshot()
 	assert.NoError(t, err)
@@ -734,7 +735,7 @@ func TestFollower_HandleSnapshot(t *testing.T) {
 	close(stream.Requests)
 
 	// Load snapshot into follower
-	snapshot := prepareTestDb(t)
+	snapshot := prepareTestDb(t, 1)
 
 	snapshotStream := rpc.NewMockServerSendSnapshotStream()
 	wg := sync.WaitGroup{}
@@ -1068,7 +1069,7 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	close(stream.Requests)
 
 	// Load snapshot into follower
-	snapshot := prepareTestDb(t)
+	snapshot := prepareTestDb(t, 2)
 
 	snapshotStream := rpc.NewMockServerSendSnapshotStream()
 
