@@ -16,6 +16,7 @@ package rpc
 
 import (
 	"context"
+	"io"
 
 	"google.golang.org/grpc/metadata"
 
@@ -23,16 +24,23 @@ import (
 )
 
 func NewMockServerReplicateStream() *MockServerReplicateStream {
-	return &MockServerReplicateStream{
+	m := &MockServerReplicateStream{
 		Requests:  make(chan *proto.Append, 1000),
 		Responses: make(chan *proto.Ack, 1000),
 	}
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	return m
 }
 
 type MockServerReplicateStream struct {
 	MockBase
 	Requests  chan *proto.Append
 	Responses chan *proto.Ack
+	cancel    context.CancelFunc
+}
+
+func (m *MockServerReplicateStream) Cancel() {
+	m.cancel()
 }
 
 func (m *MockServerReplicateStream) AddRequest(request *proto.Append) {
@@ -44,13 +52,24 @@ func (m *MockServerReplicateStream) GetResponse() *proto.Ack {
 }
 
 func (m *MockServerReplicateStream) Send(response *proto.Ack) error {
-	m.Responses <- response
-	return nil
+	select {
+	case <-m.ctx.Done():
+		return m.ctx.Err()
+	case m.Responses <- response:
+		return nil
+	}
 }
 
 func (m *MockServerReplicateStream) Recv() (*proto.Append, error) {
-	request := <-m.Requests
-	return request, nil
+	select {
+	case <-m.ctx.Done():
+		return nil, m.ctx.Err()
+	case request, ok := <-m.Requests:
+		if !ok {
+			return nil, io.EOF
+		}
+		return request, nil
+	}
 }
 
 // Mock of the client side handler

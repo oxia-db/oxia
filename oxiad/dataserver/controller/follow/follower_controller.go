@@ -24,9 +24,8 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
+	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
@@ -36,7 +35,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
-	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/time"
@@ -49,6 +47,10 @@ import (
 type FollowerController interface {
 	io.Closer
 
+	Term() int64
+	CommitOffset() int64
+	Status() proto.ServingStatus
+	GetStatus(request *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
 	// NewTerm
 	//
 	// Node handles a new term request
@@ -64,7 +66,6 @@ type FollowerController interface {
 	// Any existing follow cursors are destroyed as is any state
 	// regarding reconfigurations.
 	NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error)
-
 	// Truncate
 	//
 	// A node that receives a truncate request knows that it
@@ -72,284 +73,302 @@ type FollowerController interface {
 	// to the indicates entry id, updates its term and changes
 	// to a Follower.
 	Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error)
-
-	Replicate(stream proto.OxiaLogReplication_ReplicateServer) error
-
-	SendSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
-
-	GetStatus(request *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
-	DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
-
-	Term() int64
-	CommitOffset() int64
-	Status() proto.ServingStatus
+	Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
+	AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error
+	InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
 }
 
 type followerController struct {
-	sync.Mutex
+	rwMutex   sync.RWMutex
+	waitGroup sync.WaitGroup
+	log       *slog.Logger
+	ctx       context.Context
+	cancel    context.CancelFunc
 
-	namespace string
-	shardId   int64
-	term      int64
+	// Invariants: set once at construction, never modified.
+	namespace      string
+	shardId        int64
+	kvFactory      kvstore.Factory
+	storageOptions *option.StorageOptions
 
-	// The highest commit offset advertised by the leader
-	advertisedCommitOffset atomic.Int64
+	// Atomic state: lock-free reads and writes.
+	closed                 atomic.Bool
+	status                 atomic.Int32
+	term                   *atomic.Int64 // Writes MUST hold rwMutex to prevent term regression.
+	commitOffset           *atomic.Int64 // The commit offset already applied in the database.
+	advertisedCommitOffset *atomic.Int64 // The highest commit offset advertised by the leader.
+	lastAppendedOffset     *atomic.Int64 // The offset of the last entry appended and not fully synced yet on the WAL.
 
-	// The commit offset already applied in the database
-	commitOffset atomic.Int64
+	// Guarded resources: all access MUST hold rwMutex (RLock for reads, Lock for mutations).
+	// db may be nil during InstallSnapshot; it is recovered on failure.
+	wal             wal.Wal
+	db              database.DB
+	logSynchronizer *LogSynchronizer
 
-	// Offset of the last entry appended and not fully synced yet on the wal
-	lastAppendedOffset int64
-
-	status      proto.ServingStatus
-	wal         wal.Wal
-	kvFactory   kvstore.Factory
-	db          database.DB
-	termOptions database.TermOptions
-
-	ctx              context.Context
-	cancel           context.CancelFunc
-	syncCond         concurrent.ConditionContext
-	applyEntriesCond concurrent.ConditionContext
-	applyEntriesDone chan any
-	closeStreamWg    concurrent.WaitGroup
-	log              *slog.Logger
-	storageOptions   *option.StorageOptions
-
+	stateApplierCond  chan struct{}
 	writeLatencyHisto metric.LatencyHistogram
+}
+
+func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTermOptions, storageOptions *option.StorageOptions,
+	factory kvstore.Factory) (term int64, commitOffset int64, db database.DB, err error) {
+	var to *database.TermOptions
+	if newTermOptions != nil {
+		tmpTo := database.ToDbOption(newTermOptions)
+		to = &tmpTo
+	}
+	keySorting := proto.KeySortingType_UNKNOWN
+	if to != nil {
+		keySorting = to.KeySorting
+	}
+	db, err = database.NewDB(namespace, shardId, factory, keySorting, storageOptions.Notification.Retention.ToDuration(), time.SystemClock)
+	if err != nil {
+		return constant.I64NegativeOne, constant.I64NegativeOne, nil, err
+	}
+	term, dbTermOptions, err := db.ReadTerm()
+	if err != nil {
+		return constant.I64NegativeOne, constant.I64NegativeOne, db, err
+	}
+	if newTermOptions == nil {
+		to = &dbTermOptions
+	}
+	db.EnableNotifications(to.NotificationsEnabled)
+
+	commitOffset, err = db.ReadCommitOffset()
+	if err != nil {
+		return constant.I64NegativeOne, constant.I64NegativeOne, db, err
+	}
+	return term, commitOffset, db, nil
 }
 
 func NewFollowerController(storageOptions *option.StorageOptions, namespace string, shardId int64, wf wal.Factory, kvFactory kvstore.Factory,
 	newTermOptions *proto.NewTermOptions,
 ) (FollowerController, error) {
-	fc := &followerController{
-		storageOptions:   storageOptions,
-		namespace:        namespace,
-		shardId:          shardId,
-		kvFactory:        kvFactory,
-		status:           proto.ServingStatus_NOT_MEMBER,
-		closeStreamWg:    nil,
-		applyEntriesDone: make(chan any),
-		writeLatencyHisto: metric.NewLatencyHistogram("oxia_server_follower_write_latency",
-			"Latency for write operations in the follower", metric.LabelsForShard(namespace, shardId)),
-	}
-	fc.ctx, fc.cancel = context.WithCancel(context.Background())
-	fc.syncCond = concurrent.NewConditionContext(fc)
-	fc.applyEntriesCond = concurrent.NewConditionContext(fc)
-
-	var err error
-	if fc.wal, err = wf.NewWal(namespace, shardId, fc); err != nil {
-		return nil, err
-	}
-
-	fc.lastAppendedOffset = fc.wal.LastOffset()
-
-	keySorting := proto.KeySortingType_UNKNOWN
-	if newTermOptions != nil {
-		keySorting = newTermOptions.KeySorting
-	}
-
-	if fc.db, err = database.NewDB(namespace, shardId, kvFactory,
-		keySorting, storageOptions.Notification.Retention.ToDuration(), time.SystemClock); err != nil {
-		return nil, err
-	}
-
-	if fc.term, fc.termOptions, err = fc.db.ReadTerm(); err != nil {
-		return nil, err
-	}
-
-	if fc.term != wal.InvalidTerm {
-		fc.status = proto.ServingStatus_FENCED
-	}
-
-	fc.db.EnableNotifications(fc.termOptions.NotificationsEnabled)
-
-	commitOffset, err := fc.db.ReadCommitOffset()
+	rawTerm, rawCommitOffset, db, err := initDatabase(namespace, shardId, newTermOptions, storageOptions, kvFactory)
 	if err != nil {
 		return nil, err
 	}
-	fc.commitOffset.Store(commitOffset)
+	commitOffset := &atomic.Int64{}
+	commitOffset.Store(rawCommitOffset)
 
-	if fc.lastAppendedOffset == wal.InvalidOffset {
-		// The wal is empty, though we have restored from snapshot
-		fc.lastAppendedOffset = commitOffset
+	writeAheadLog, err := wf.NewWal(namespace, shardId, wal.NewCommitOffsetObserver(commitOffset))
+	if err != nil {
+		return nil, err
+	}
+	lastAppendedOffset := &atomic.Int64{}
+	lastAppendedOffset.Store(writeAheadLog.LastOffset())
+
+	if lastAppendedOffset.Load() == constant.I64NegativeOne {
+		lastAppendedOffset.Store(rawCommitOffset)
+	}
+	advertisedCommitOffset := &atomic.Int64{}
+	advertisedCommitOffset.Store(rawCommitOffset)
+
+	term := &atomic.Int64{}
+	term.Store(rawTerm)
+
+	ctx, cancel := context.WithCancel(context.Background()) // todo: add parent context
+	fc := &followerController{
+		rwMutex:   sync.RWMutex{},
+		waitGroup: sync.WaitGroup{},
+		ctx:       ctx,
+		cancel:    cancel,
+		log: slog.With(
+			slog.String("component", "follower-controller"),
+			slog.String("namespace", namespace),
+			slog.Int64("shard", shardId),
+			slog.Any("term", term),
+		),
+		storageOptions:         storageOptions,
+		namespace:              namespace,
+		shardId:                shardId,
+		kvFactory:              kvFactory,
+		term:                   term,
+		commitOffset:           commitOffset,
+		advertisedCommitOffset: advertisedCommitOffset,
+		lastAppendedOffset:     lastAppendedOffset,
+		wal:                    writeAheadLog,
+		db:                     db,
+		stateApplierCond:       make(chan struct{}, 1),
+		writeLatencyHisto: metric.NewLatencyHistogram("oxia_server_follower_write_latency",
+			"Latency for write operations in the follower", metric.LabelsForShard(namespace, shardId)),
 	}
 
-	fc.setLogger()
+	if rawTerm != constant.I64NegativeOne {
+		fc.status.Store(int32(proto.ServingStatus_FENCED))
+	} else {
+		fc.status.Store(int32(proto.ServingStatus_NOT_MEMBER))
+	}
 
-	go process.DoWithLabels(
-		fc.ctx,
-		map[string]string{
-			"oxia":  "follower-apply-committed-entries",
-			"shard": fmt.Sprintf("%d", fc.shardId),
-		},
-		fc.applyAllCommittedEntries,
-	)
+	fc.waitGroup.Go(func() {
+		process.DoWithLabels(
+			fc.ctx,
+			map[string]string{
+				"oxia":      "follower-state-applier",
+				"namespace": namespace,
+				"shard":     fmt.Sprintf("%d", fc.shardId),
+			},
+			fc.stateApplier,
+		)
+	})
 
-	fc.log.Info(
-		"Created follower",
-		slog.Int64("head-offset", fc.lastAppendedOffset),
-		slog.Int64("commit-offset", commitOffset),
-	)
+	fc.log.Info("Created follower", slog.Int64("head-offset", fc.lastAppendedOffset.Load()), slog.Int64("commit-offset", commitOffset.Load()))
 	return fc, nil
 }
 
-func (fc *followerController) setLogger() {
-	fc.log = slog.With(
-		slog.String("component", "follower-controller"),
-		slog.String("namespace", fc.namespace),
-		slog.Int64("shard", fc.shardId),
-		slog.Int64("term", fc.term),
+func (fc *followerController) Close() error {
+	if !fc.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	fc.log.Info("Closing follower controller")
+	var err error
+	defer func() {
+		if err != nil {
+			fc.log.Error("Follower controller closed with error", slog.Any("error", err))
+			return
+		}
+		fc.log.Info("Follower controller closed")
+	}()
+	fc.cancel()
+	fc.waitGroup.Wait()
+
+	fc.rwMutex.Lock()
+	defer fc.rwMutex.Unlock()
+	if fc.logSynchronizer.IsValid() {
+		err = multierr.Append(err, fc.logSynchronizer.Close())
+	}
+	return multierr.Combine(
+		err,
+		fc.wal.Close(),
+		fc.db.Close(),
 	)
 }
 
-func (fc *followerController) isClosed() bool {
-	return fc.ctx.Err() != nil
-}
-
-func (fc *followerController) Close() error {
-	fc.cancel()
-
-	<-fc.applyEntriesDone
-
-	fc.Lock()
-	defer fc.Unlock()
-
-	fc.log.Debug("Closing follower controller")
-	return fc.close()
-}
-
-func (fc *followerController) close() error {
-	var err error
-
-	if fc.wal != nil {
-		err = multierr.Append(err, fc.wal.Close())
-		fc.wal = nil
-	}
-
-	if fc.db != nil {
-		err = multierr.Append(err, fc.db.Close())
-		fc.db = nil
-	}
-	return err
-}
-
-func (fc *followerController) closeStream(err error) {
-	fc.Lock()
-	defer fc.Unlock()
-
-	fc.closeStreamNoMutex(err)
-}
-
-func (fc *followerController) closeStreamNoMutex(err error) {
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && status.Code(err) != codes.Canceled {
-		fc.log.Warn(
-			"Error in handle Replicate stream",
-			slog.Any("error", err),
-		)
-	}
-
-	if fc.closeStreamWg != nil {
-		fc.closeStreamWg.Fail(err)
-		fc.closeStreamWg = nil
-	}
-}
-
 func (fc *followerController) Status() proto.ServingStatus {
-	fc.Lock()
-	defer fc.Unlock()
-	return fc.status
+	return proto.ServingStatus(fc.status.Load())
 }
 
 func (fc *followerController) Term() int64 {
-	fc.Lock()
-	defer fc.Unlock()
-	return fc.term
+	return fc.term.Load()
 }
 
 func (fc *followerController) CommitOffset() int64 {
 	return fc.commitOffset.Load()
 }
 
-func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
-	fc.Lock()
-	defer fc.Unlock()
-
-	if fc.isClosed() {
-		return nil, constant.ErrAlreadyClosed
+func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error {
+	if fc.closed.Load() {
+		return dserror.ErrResourceConflict
 	}
+	var synchronizer *LogSynchronizer
+	var err error
+	if synchronizer, err = func() (*LogSynchronizer, error) {
+		fc.rwMutex.Lock()
+		defer fc.rwMutex.Unlock()
 
-	if req.Term < fc.term {
-		fc.log.Warn(
-			"Failed to fence with invalid term",
-			slog.Int64("follower-term", fc.term),
-			slog.Int64("new-term", req.Term),
-		)
-		return nil, constant.ErrInvalidTerm
-	}
-
-	if fc.db == nil {
-		var err error
-		if fc.db, err = database.NewDB(fc.namespace, fc.shardId, fc.kvFactory,
-			req.Options.KeySorting, fc.storageOptions.Notification.Retention.ToDuration(), time.SystemClock); err != nil {
-			return nil, errors.Wrapf(err, "failed to reopen database")
+		if fc.closed.Load() { // double-check
+			return nil, dserror.ErrResourceConflict
 		}
+
+		if s := proto.ServingStatus(fc.status.Load()); s != proto.ServingStatus_FENCED && s != proto.ServingStatus_FOLLOWER {
+			return nil, dserror.ErrInvalidStatus
+		}
+		if fc.logSynchronizer.IsValid() {
+			return nil, dserror.ErrResourceConflict
+		}
+		fc.logSynchronizer = NewLogSynchronizer(LogSynchronizerParams{
+			Log:                    fc.log,
+			Namespace:              fc.namespace,
+			ShardId:                fc.shardId,
+			Term:                   fc.term.Load(),
+			Wal:                    fc.wal,
+			AdvertisedCommitOffset: fc.advertisedCommitOffset,
+			LastAppendedOffset:     fc.lastAppendedOffset,
+			WriteLatencyHisto:      fc.writeLatencyHisto,
+			StateApplierCond:       fc.stateApplierCond,
+			Stream:                 stream,
+			OnAppend:               func() { fc.status.Store(int32(proto.ServingStatus_FOLLOWER)) },
+		})
+		return fc.logSynchronizer, nil
+	}(); err != nil {
+		return err
+	}
+	return synchronizer.SyncAndClose()
+}
+func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+	if fc.closed.Load() {
+		return nil, dserror.ErrResourceConflict
+	}
+	var err error
+	newTerm := req.GetTerm()
+	newTermOptions := req.GetOptions()
+	if newTerm < fc.term.Load() { // Allowing idempotency during negotiations
+		fc.log.Warn("Failed to fence with invalid term", slog.Int64("new-term", newTerm))
+		return nil, dserror.ErrInvalidTerm
+	}
+	fc.rwMutex.Lock()
+	defer fc.rwMutex.Unlock()
+
+	if fc.closed.Load() { // double-check
+		return nil, dserror.ErrResourceConflict
 	}
 
-	fc.termOptions = database.ToDbOption(req.Options)
-	if err := fc.db.UpdateTerm(req.Term, fc.termOptions); err != nil {
-		return nil, err
+	if newTerm < fc.term.Load() { // double-check after lock
+		return nil, dserror.ErrInvalidTerm
 	}
 
-	fc.db.EnableNotifications(fc.termOptions.NotificationsEnabled)
+	if fc.logSynchronizer.IsValid() {
+		if err := fc.logSynchronizer.Close(); err != nil {
+			return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to close log synchronizer")
+		}
+		fc.logSynchronizer = nil
+	}
 
-	fc.term = req.Term
-	fc.setLogger()
-	fc.status = proto.ServingStatus_FENCED
-	fc.closeStreamNoMutex(nil)
-
-	lastEntryId, err := getLastEntryIdInWal(fc.wal)
+	dbOption := database.ToDbOption(newTermOptions)
+	fc.db.EnableNotifications(dbOption.NotificationsEnabled)
+	if err = fc.db.UpdateTerm(req.Term, dbOption); err != nil {
+		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "persistent term failed")
+	}
+	fc.term.Store(newTerm)
+	fc.status.Store(int32(proto.ServingStatus_FENCED))
+	lastEntryId, err := getLastEntryIdInWal(fc.wal) // todo: consider support it in the WAL directly
 	if err != nil {
-		fc.log.Warn(
-			"Failed to get last",
-			slog.Any("error", err),
-			slog.Int64("follower-term", fc.term),
-			slog.Int64("new-term", req.Term),
-		)
-		return nil, err
+		fc.log.Warn("Failed to get last entry from WAL", slog.Any("error", err), slog.Int64("new-term", req.Term))
+		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "get last entry from WAL failed")
 	}
-
-	fc.log.Info(
-		"Follower successfully initialized in new term",
-		slog.Any("last-entry", lastEntryId),
-	)
+	fc.log.Info("Follower successfully initialized in new term", slog.Any("last-entry", lastEntryId))
 	return &proto.NewTermResponse{HeadEntryId: lastEntryId}, nil
 }
 
 func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
-	fc.Lock()
-	defer fc.Unlock()
+	if fc.closed.Load() {
+		return nil, dserror.ErrResourceConflict
+	}
+	fc.rwMutex.Lock()
+	defer fc.rwMutex.Unlock()
 
-	if fc.isClosed() {
-		return nil, constant.ErrAlreadyClosed
+	if fc.closed.Load() { // double-check
+		return nil, dserror.ErrResourceConflict
 	}
 
-	if fc.status != proto.ServingStatus_FENCED {
-		return nil, constant.ErrInvalidStatus
+	if fc.logSynchronizer.IsValid() {
+		return nil, dserror.ErrResourceConflict
 	}
 
-	if req.Term != fc.term {
-		return nil, constant.ErrInvalidTerm
+	if proto.ServingStatus(fc.status.Load()) != proto.ServingStatus_FENCED {
+		return nil, dserror.ErrInvalidStatus
 	}
 
-	fc.status = proto.ServingStatus_FOLLOWER
+	newTerm := req.GetTerm()
+	if newTerm != fc.term.Load() {
+		return nil, dserror.ErrInvalidTerm
+	}
+	fc.status.Store(int32(proto.ServingStatus_FOLLOWER))
 	headOffset, err := fc.wal.TruncateLog(req.HeadEntryId.Offset)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to truncate wal. truncate-offset: %d - wal-last-offset: %d",
-			req.HeadEntryId.Offset, fc.wal.LastOffset())
+		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err),
+			"failed to truncate wal. truncate-offset: %d - wal-last-offset: %d", req.HeadEntryId.Offset, fc.wal.LastOffset())
 	}
-	fc.lastAppendedOffset = headOffset
-
+	fc.lastAppendedOffset.Store(headOffset)
 	return &proto.TruncateResponse{
 		HeadEntryId: &proto.EntryId{
 			Term:   req.Term,
@@ -358,159 +377,26 @@ func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.Trunc
 	}, nil
 }
 
-func (fc *followerController) Replicate(stream proto.OxiaLogReplication_ReplicateServer) error {
-	fc.Lock()
-	if fc.status != proto.ServingStatus_FENCED && fc.status != proto.ServingStatus_FOLLOWER {
-		fc.Unlock()
-		return constant.ErrInvalidStatus
-	}
-
-	if fc.closeStreamWg != nil {
-		fc.Unlock()
-		return constant.ErrLeaderAlreadyConnected
-	}
-
-	closeStreamWg := concurrent.NewWaitGroup(1)
-	fc.closeStreamWg = closeStreamWg
-	fc.Unlock()
-
-	go process.DoWithLabels(
-		stream.Context(),
-		map[string]string{
-			"oxia":  "add-entries",
-			"shard": fmt.Sprintf("%d", fc.shardId),
-		},
-		func() { fc.handleServerStream(stream) },
-	)
-
-	go process.DoWithLabels(
-		stream.Context(),
-		map[string]string{
-			"oxia":  "add-entries-sync",
-			"shard": fmt.Sprintf("%d", fc.shardId),
-		},
-		func() { fc.handleReplicateSync(stream) },
-	)
-
-	return closeStreamWg.Wait(fc.ctx)
-}
-
-func (fc *followerController) handleServerStream(stream proto.OxiaLogReplication_ReplicateServer) {
+func (fc *followerController) stateApplier() {
 	for {
-		if req, err := stream.Recv(); err != nil {
-			fc.closeStream(err)
+		select {
+		case <-fc.ctx.Done():
 			return
-		} else if req == nil {
-			fc.closeStream(nil)
-			return
-		} else if err := fc.append(req, stream); err != nil {
-			fc.closeStream(err)
-			return
-		}
-	}
-}
-
-func (fc *followerController) append(req *proto.Append, stream proto.OxiaLogReplication_ReplicateServer) error {
-	timer := fc.writeLatencyHisto.Timer()
-	defer timer.Done()
-
-	fc.Lock()
-	defer fc.Unlock()
-
-	if req.Term != fc.term {
-		return constant.ErrInvalidTerm
-	}
-
-	fc.log.Debug(
-		"Add entry",
-		slog.Int64("commit-offset", req.CommitOffset),
-		slog.Int64("offset", req.Entry.Offset),
-	)
-
-	// A follower node confirms an entry to the leader
-	//
-	// The follower adds the entry to its log, sets the head offset
-	// and updates its commit offset with the commit offset of
-	// the request.
-	fc.status = proto.ServingStatus_FOLLOWER
-
-	if req.Entry.Offset <= fc.lastAppendedOffset {
-		// This was a duplicated request. We already have this entry
-		fc.log.Debug(
-			"Ignoring duplicated entry",
-			slog.Int64("commit-offset", req.CommitOffset),
-			slog.Int64("offset", req.Entry.Offset),
-		)
-		if err := stream.Send(&proto.Ack{Offset: req.Entry.Offset}); err != nil {
-			fc.closeStreamNoMutex(err)
-		}
-		return nil
-	}
-
-	// Append the entry asynchronously. We'll sync it in a group from the "sync" routine,
-	// where the ack is then sent back
-	if err := fc.wal.AppendAsync(req.GetEntry()); err != nil {
-		return err
-	}
-
-	fc.advertisedCommitOffset.Store(req.CommitOffset)
-	fc.lastAppendedOffset = req.Entry.Offset
-
-	// Trigger the sync
-	fc.syncCond.Signal()
-	return nil
-}
-
-func (fc *followerController) handleReplicateSync(stream proto.OxiaLogReplication_ReplicateServer) {
-	for {
-		fc.Lock()
-		if err := fc.syncCond.Wait(stream.Context()); err != nil {
-			fc.Unlock()
-			fc.closeStream(err)
-			return
-		}
-		fc.Unlock()
-
-		oldHeadOffset := fc.wal.LastOffset()
-
-		if err := fc.wal.Sync(stream.Context()); err != nil {
-			fc.closeStream(err)
-			return
-		}
-
-		// Ack all the entries that were synced in the last round
-		newHeadOffset := fc.wal.LastOffset()
-		for offset := oldHeadOffset + 1; offset <= newHeadOffset; offset++ {
-			if err := stream.Send(&proto.Ack{Offset: offset}); err != nil {
-				fc.closeStream(err)
+		case <-fc.stateApplierCond:
+			// todo: support retry logic
+			maxInclusive := fc.advertisedCommitOffset.Load()
+			if err := fc.applyCommittedEntries(maxInclusive); err != nil {
+				fc.log.Error("State applier failed", slog.Any("error", err))
 				return
 			}
-		}
-
-		fc.applyEntriesCond.Signal()
-	}
-}
-
-func (fc *followerController) applyAllCommittedEntries() {
-	for {
-		fc.Lock()
-		if err := fc.applyEntriesCond.Wait(fc.ctx); err != nil {
-			close(fc.applyEntriesDone)
-			fc.Unlock()
-			return
-		}
-		fc.Unlock()
-
-		maxInclusive := fc.advertisedCommitOffset.Load()
-		if err := fc.processCommittedEntries(maxInclusive); err != nil {
-			fc.closeStream(err)
-			close(fc.applyEntriesDone)
-			return
 		}
 	}
 }
 
 func (fc *followerController) processCommitRequest(entry *proto.LogEntry, logEntryValue *proto.LogEntryValue) error {
+	fc.rwMutex.RLock()
+	defer fc.rwMutex.RUnlock()
+
 	for _, br := range logEntryValue.GetRequests().Writes {
 		_, err := fc.db.ProcessWrite(br, entry.Offset, entry.Timestamp, lead.WrapperUpdateOperationCallback)
 		if err != nil {
@@ -568,9 +454,9 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 	return nil
 }
 
-func (fc *followerController) processCommittedEntries(maxInclusive int64) error {
+func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	fc.log.Debug(
-		"Process committed entries",
+		"Apply committed entries",
 		slog.Int64("min-exclusive", fc.commitOffset.Load()),
 		slog.Int64("max-inclusive", maxInclusive),
 		slog.Int64("head-offset", fc.wal.LastOffset()),
@@ -600,36 +486,121 @@ func (fc *followerController) processCommittedEntries(maxInclusive int64) error 
 	return fc.processCommittedEntriesLoop(reader, maxInclusive)
 }
 
-type MessageWithTerm interface {
-	GetTerm() int64
-}
+func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error { //nolint:revive // cyclomatic complexity justified by sequential error handling
+	if fc.closed.Load() {
+		return dserror.ErrResourceConflict
+	}
+	fc.log.Info("Installing snapshot...")
+	var err error
+	defer func() {
+		if err != nil {
+			fc.log.Error("Follower controller installed snapshot with error", slog.Any("error", err))
+			return
+		}
+	}()
 
-func (fc *followerController) SendSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error {
-	fc.Lock()
+	fc.rwMutex.Lock()
+	defer fc.rwMutex.Unlock()
 
-	if fc.closeStreamWg != nil {
-		fc.Unlock()
-		return constant.ErrLeaderAlreadyConnected
+	if fc.closed.Load() { // double check
+		return dserror.ErrResourceConflict
 	}
 
-	closeStreamWg := concurrent.NewWaitGroup(1)
-	fc.closeStreamWg = closeStreamWg
-	fc.Unlock()
+	if fc.logSynchronizer.IsValid() {
+		err = dserror.ErrResourceConflict
+		return err
+	}
 
-	go process.DoWithLabels(
-		stream.Context(),
-		map[string]string{
-			"oxia":  "receive-snapshot",
-			"shard": fmt.Sprintf("%d", fc.shardId),
-		},
-		func() { fc.handleSnapshot(stream) },
+	// Read the first chunk to validate the term before performing any
+	// destructive operations (WAL clear, DB close). This ensures the
+	// follower remains usable if the snapshot has a wrong term.
+	term := fc.term.Load()
+	firstChunk, err := stream.Recv()
+	switch {
+	case err != nil:
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to read first snapshot chunk")
+	case firstChunk == nil:
+		return nil
+	case term != constant.I64NegativeOne && term != firstChunk.Term:
+		// The follower could be left with term=-1 by a previous failed
+		// attempt at sending the snapshot. It's ok to proceed in that case.
+		err = dserror.ErrInvalidTerm
+		return err
+	}
+
+	if err = fc.wal.Clear(); err != nil {
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to clear WAL")
+	}
+	oldDb := fc.db
+	fc.db = nil
+	if err = oldDb.Close(); err != nil {
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to close Database")
+	}
+	// If anything below fails, recover by re-opening the database from disk
+	// so the follower controller remains usable for retries.
+	defer func() {
+		if err != nil && fc.db == nil {
+			fc.log.Warn("Recovering database after failed snapshot install", slog.Any("error", err))
+			if _, _, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); initErr == nil {
+				fc.db = db
+			} else {
+				fc.log.Error("Failed to recover database, follower is in a broken state", slog.Any("error", initErr))
+			}
+		}
+	}()
+	var loader kvstore.SnapshotLoader
+	loader, err = fc.kvFactory.NewSnapshotLoader(fc.namespace, fc.shardId)
+	if err != nil {
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to create snapshot loader")
+	}
+	defer func() {
+		_ = loader.Close()
+	}()
+
+	totalSize, err := fc.loadSnapshotChunks(loader, firstChunk, stream)
+	if err != nil {
+		return err
+	}
+	loader.Complete()
+
+	var db database.DB
+	var rawTerm, rawCommitOffset int64
+	if rawTerm, rawCommitOffset, db, err = initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); err != nil {
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to initialize database")
+	}
+	fc.db = db
+	fc.term.Store(rawTerm)
+	fc.commitOffset.Store(rawCommitOffset)
+	fc.lastAppendedOffset.Store(rawCommitOffset)
+	fc.advertisedCommitOffset.Store(rawCommitOffset)
+
+	if err = stream.SendAndClose(&proto.SnapshotResponse{
+		AckOffset: rawCommitOffset,
+	}); err != nil {
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to send snapshot response")
+	}
+	fc.log.Info(
+		"Successfully installed snapshot",
+		slog.Int64("snapshot-size", totalSize),
+		slog.Int64("commit-offset", rawCommitOffset),
 	)
-
-	return closeStreamWg.Wait(fc.ctx)
+	return nil
 }
 
-func (fc *followerController) readSnapshotStream(stream proto.OxiaLogReplication_SendSnapshotServer, loader kvstore.SnapshotLoader) (int64, error) {
-	var totalSize int64
+func (fc *followerController) loadSnapshotChunks(loader kvstore.SnapshotLoader, firstChunk *proto.SnapshotChunk, stream proto.OxiaLogReplication_SendSnapshotServer) (int64, error) {
+	fc.log.Info(
+		"Applying snapshot chunk",
+		slog.String("chunk-name", firstChunk.Name),
+		slog.Int("chunk-size", len(firstChunk.Content)),
+		slog.String("chunk-progress", fmt.Sprintf("%d/%d", firstChunk.ChunkIndex, firstChunk.ChunkCount)),
+	)
+	if err := loader.AddChunk(firstChunk.Name, firstChunk.ChunkIndex, firstChunk.ChunkCount, firstChunk.Content); err != nil {
+		return 0, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to add snapshot chunk")
+	}
+	totalSize := int64(len(firstChunk.Content))
 
 	for {
 		snapChunk, err := stream.Recv()
@@ -638,156 +609,66 @@ func (fc *followerController) readSnapshotStream(stream proto.OxiaLogReplication
 			if errors.Is(err, io.EOF) {
 				return totalSize, nil
 			}
-
-			fc.closeStreamNoMutex(err)
-			return totalSize, err
+			return 0, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to read snapshot chunk")
 		case snapChunk == nil:
 			return totalSize, nil
-		case fc.term != wal.InvalidTerm && snapChunk.Term != fc.term:
-			// The follower could be left with term=-1 by a previous failed
-			// attempt at sending the snapshot. It's ok to proceed in that case.
-			fc.closeStreamNoMutex(constant.ErrInvalidTerm)
-			return totalSize, constant.ErrInvalidTerm
 		}
-
-		fc.term = snapChunk.Term
-
-		fc.log.Debug(
+		fc.log.Info(
 			"Applying snapshot chunk",
 			slog.String("chunk-name", snapChunk.Name),
 			slog.Int("chunk-size", len(snapChunk.Content)),
 			slog.String("chunk-progress", fmt.Sprintf("%d/%d", snapChunk.ChunkIndex, snapChunk.ChunkCount)),
-			slog.Int64("term", fc.term),
 		)
 		if err = loader.AddChunk(snapChunk.Name, snapChunk.ChunkIndex, snapChunk.ChunkCount, snapChunk.Content); err != nil {
-			fc.closeStream(err)
-			return totalSize, err
+			return 0, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to add snapshot chunk")
 		}
-
 		totalSize += int64(len(snapChunk.Content))
 	}
 }
 
-func (fc *followerController) handleSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) {
-	fc.Lock()
-	defer fc.Unlock()
-
-	// Wipe out both WAL and DB contents
-	err := fc.wal.Clear()
-	if err != nil {
-		fc.closeStreamNoMutex(err)
-		return
-	}
-
-	if fc.db != nil {
-		err = fc.db.Close()
-		if err != nil {
-			fc.closeStreamNoMutex(err)
-			return
-		}
-
-		fc.db = nil
-	}
-
-	loader, err := fc.kvFactory.NewSnapshotLoader(fc.namespace, fc.shardId)
-	if err != nil {
-		fc.closeStreamNoMutex(err)
-		return
-	}
-
-	defer loader.Close()
-
-	totalSize, err := fc.readSnapshotStream(stream, loader)
-	if err != nil {
-		return
-	}
-
-	// We have received all the files for the database
-	loader.Complete()
-
-	newDb, err := database.NewDB(fc.namespace, fc.shardId, fc.kvFactory, proto.KeySortingType_UNKNOWN,
-		fc.storageOptions.Notification.Retention.ToDuration(), time.SystemClock)
-	if err != nil {
-		fc.closeStreamNoMutex(errors.Wrap(err, "failed to open database after loading snapshot"))
-		return
-	}
-
-	// The new term must be persisted, to avoid rolling it back
-	if err = newDb.UpdateTerm(fc.term, fc.termOptions); err != nil {
-		fc.closeStreamNoMutex(errors.Wrap(err, "Failed to update term in db"))
-	}
-
-	commitOffset, err := newDb.ReadCommitOffset()
-	if err != nil {
-		fc.closeStreamNoMutex(errors.Wrap(err, "Failed to read committed offset in the new snapshot"))
-		return
-	}
-
-	if err = stream.SendAndClose(&proto.SnapshotResponse{
-		AckOffset: commitOffset,
-	}); err != nil {
-		fc.closeStreamNoMutex(errors.Wrap(err, "Failed to send response after processing snapshot"))
-		return
-	}
-
-	fc.db = newDb
-	fc.commitOffset.Store(commitOffset)
-	fc.lastAppendedOffset = commitOffset
-	fc.closeStreamNoMutex(nil)
-
-	fc.log.Info(
-		"Successfully applied snapshot",
-		slog.Int64("term", fc.term),
-		slog.Int64("snapshot-size", totalSize),
-		slog.Int64("commit-offset", commitOffset),
-	)
-}
-
 func (fc *followerController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
-	fc.Lock()
-	defer fc.Unlock()
+	if fc.closed.Load() {
+		return nil, dserror.ErrResourceConflict
+	}
 
 	return &proto.GetStatusResponse{
-		Term:         fc.term,
-		Status:       fc.status,
-		HeadOffset:   fc.lastAppendedOffset,
-		CommitOffset: fc.CommitOffset(),
+		Term:         fc.term.Load(),
+		Status:       proto.ServingStatus(fc.status.Load()),
+		HeadOffset:   fc.lastAppendedOffset.Load(),
+		CommitOffset: fc.commitOffset.Load(),
 	}, nil
 }
 
-func (fc *followerController) DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
-	fc.cancel()
-	<-fc.applyEntriesDone
-
-	fc.Lock()
-	defer fc.Unlock()
-
-	if request.Term < fc.term {
-		fc.log.Warn("Invalid term when deleting shard",
-			slog.Int64("follower-term", fc.term),
-			slog.Int64("new-term", request.Term))
-		_ = fc.close()
-		return nil, constant.ErrInvalidTerm
+func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
+	if fc.closed.Load() {
+		return nil, dserror.ErrResourceConflict
 	}
-
+	if request.Term < fc.term.Load() {
+		return nil, dserror.ErrInvalidTerm
+	}
+	var err error
 	fc.log.Info("Deleting shard")
+	defer func() {
+		if err != nil {
+			fc.log.Error("Follower controller deleted with error", slog.Any("error", err))
+			return
+		}
+		fc.log.Info("Follower controller deleted")
+	}()
 
-	deleteWal := fc.wal
-	deleteDb := fc.db
-
-	// close the fc first
-	if err := fc.close(); err != nil {
-		return nil, err
+	if err = fc.Close(); err != nil {
+		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "delete follower failed")
 	}
 
-	// Wipe out both WAL and DB contents
-	if err := multierr.Combine(
-		deleteWal.Delete(),
-		deleteDb.Delete(),
+	fc.rwMutex.Lock()
+	defer fc.rwMutex.Unlock()
+
+	if err = multierr.Combine(
+		fc.wal.Delete(),
+		fc.db.Delete(),
 	); err != nil {
-		return nil, err
+		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "delete follower failed")
 	}
-
 	return &proto.DeleteShardResponse{}, nil
 }
 
