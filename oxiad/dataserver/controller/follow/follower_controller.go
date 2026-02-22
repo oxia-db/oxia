@@ -572,13 +572,6 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to initialize database")
 	}
 	fc.db = db
-
-	if err = stream.SendAndClose(&proto.SnapshotResponse{
-		AckOffset: rawCommitOffset,
-	}); err != nil {
-		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to send snapshot response")
-	}
-
 	// The snapshot DB may not have a term stored. Use the snapshot's term
 	// (from the chunks) and persist it so it survives restarts.
 	snapshotTerm := firstChunk.Term
@@ -590,6 +583,11 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	fc.lastAppendedOffset.Store(rawCommitOffset)
 	fc.advertisedCommitOffset.Store(rawCommitOffset)
 
+	if err = stream.SendAndClose(&proto.SnapshotResponse{
+		AckOffset: rawCommitOffset,
+	}); err != nil {
+		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to send snapshot response")
+	}
 	fc.log.Info(
 		"Successfully installed snapshot",
 		slog.Int64("snapshot-size", totalSize),
