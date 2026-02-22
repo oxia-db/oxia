@@ -47,4 +47,3 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 	}
 	return nil
 }
-
