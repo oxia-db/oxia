@@ -421,7 +421,10 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 			return nil
 		}
 
-		if err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback); err != nil {
+		fc.rwMutex.RLock()
+		err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
+		fc.rwMutex.RUnlock()
+		if err != nil {
 			return err
 		}
 
