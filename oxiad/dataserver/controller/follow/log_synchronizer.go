@@ -1,3 +1,17 @@
+// Copyright 2023-2025 The Oxia Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package follow
 
 import (
@@ -9,14 +23,29 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
-	"go.uber.org/multierr"
 )
+
+type LogSynchronizerParams struct {
+	Log                    *slog.Logger
+	Namespace              string
+	ShardId                int64
+	Term                   int64
+	Wal                    wal.Wal
+	AdvertisedCommitOffset *atomic.Int64
+	LastAppendedOffset     *atomic.Int64
+	WriteLatencyHisto      metric.LatencyHistogram
+	StateApplierCond       chan struct{}
+	Stream                 proto.OxiaLogReplication_ReplicateServer
+	OnAppend               func()
+}
 
 type LogSynchronizer struct {
 	io.Closer
@@ -106,10 +135,7 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 			slog.Int64("commit-offset", req.CommitOffset),
 			slog.Int64("offset", req.Entry.Offset),
 		)
-		if err := stream.Send(&proto.Ack{Offset: req.Entry.Offset}); err != nil {
-			return err
-		}
-		return nil
+		return stream.Send(&proto.Ack{Offset: req.Entry.Offset})
 	}
 
 	// Append the entry asynchronously. We'll sync it in a group from the "sync" routine,
@@ -147,19 +173,19 @@ func (ls *LogSynchronizer) bgSyncer(stream proto.OxiaLogReplication_ReplicateSer
 	}
 }
 
-func NewLogSynchronizer(log *slog.Logger, namespace string, shardId int64, term int64, wal wal.Wal, advertisedCommitOffset *atomic.Int64, lastAppendedOffset *atomic.Int64, writeLatencyHisto metric.LatencyHistogram, stateApplierCond chan struct{}, stream proto.OxiaLogReplication_ReplicateServer, onAppend func()) *LogSynchronizer {
-	ctx, cancel := context.WithCancel(stream.Context())
+func NewLogSynchronizer(params LogSynchronizerParams) *LogSynchronizer {
+	ctx, cancel := context.WithCancel(params.Stream.Context())
 
 	ls := &LogSynchronizer{
-		log:                    log,
+		log:                    params.Log,
 		waitGroup:              sync.WaitGroup{},
 		ctx:                    ctx,
 		cancel:                 cancel,
-		term:                   term,
-		wal:                    wal,
-		advertisedCommitOffset: advertisedCommitOffset,
-		lastAppendedOffset:     lastAppendedOffset,
-		writeLatencyHisto:      writeLatencyHisto,
+		term:                   params.Term,
+		wal:                    params.Wal,
+		advertisedCommitOffset: params.AdvertisedCommitOffset,
+		lastAppendedOffset:     params.LastAppendedOffset,
+		writeLatencyHisto:      params.WriteLatencyHisto,
 		finish:                 make(chan error, 1),
 	}
 
@@ -169,11 +195,11 @@ func NewLogSynchronizer(log *slog.Logger, namespace string, shardId int64, term 
 			ctx,
 			map[string]string{
 				"oxia":      "follower-log-synchronizer-appender",
-				"namespace": namespace,
-				"shard":     fmt.Sprintf("%d", shardId),
+				"namespace": params.Namespace,
+				"shard":     fmt.Sprintf("%d", params.ShardId),
 			},
-			func() {
-				channel.PushNoBlock(ls.finish, ls.bgAppender(stream, syncCond, onAppend))
+			func() { //nolint:contextcheck
+				channel.PushNoBlock(ls.finish, ls.bgAppender(params.Stream, syncCond, params.OnAppend))
 			},
 		)
 	})
@@ -183,10 +209,10 @@ func NewLogSynchronizer(log *slog.Logger, namespace string, shardId int64, term 
 			ctx,
 			map[string]string{
 				"oxia":      "follower-log-synchronizer-syncer",
-				"namespace": namespace,
-				"shard":     fmt.Sprintf("%d", shardId),
+				"namespace": params.Namespace,
+				"shard":     fmt.Sprintf("%d", params.ShardId),
 			},
-			func() { channel.PushNoBlock(ls.finish, ls.bgSyncer(stream, syncCond, stateApplierCond)) },
+			func() { channel.PushNoBlock(ls.finish, ls.bgSyncer(params.Stream, syncCond, params.StateApplierCond)) },
 		)
 	})
 	return ls

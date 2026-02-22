@@ -21,10 +21,11 @@ import (
 	"testing"
 	"time"
 
-	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
+
+	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -846,11 +847,11 @@ func TestFollower_DisconnectLeader(t *testing.T) {
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
 	assert.NoError(t, err)
 
-	//assert.Nil(t, fc.(*followerController).closeStreamWg)
-
+	stream = rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
 		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
@@ -1115,11 +1116,7 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 
 func closeChanIsNotNil(fc FollowerController) func() bool {
 	return func() bool {
-		//_fc := fc.(*followerController)
-		//_fc.Lock()
-		//defer _fc.Unlock()
-		//return _fc.closeStreamWg != nil
-		return true
+		return fc.(*followerController).logSynchronizer.IsValid()
 	}
 }
 

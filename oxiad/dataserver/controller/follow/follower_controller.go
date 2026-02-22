@@ -22,10 +22,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
-	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
+	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
@@ -109,8 +110,7 @@ type followerController struct {
 }
 
 func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTermOptions, storageOptions *option.StorageOptions,
-	factory kvstore.Factory) (term int64, termOptions database.TermOptions, commitOffset int64, db database.DB, err error) {
-
+	factory kvstore.Factory) (term int64, commitOffset int64, db database.DB, err error) {
 	var to *database.TermOptions
 	if newTermOptions != nil {
 		tmpTo := database.ToDbOption(newTermOptions)
@@ -122,11 +122,11 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 	}
 	db, err = database.NewDB(namespace, shardId, factory, keySorting, storageOptions.Notification.Retention.ToDuration(), time.SystemClock)
 	if err != nil {
-		return constant.I64NegativeOne, database.TermOptions{}, constant.I64NegativeOne, nil, err
+		return constant.I64NegativeOne, constant.I64NegativeOne, nil, err
 	}
 	term, dbTermOptions, err := db.ReadTerm()
 	if err != nil {
-		return constant.I64NegativeOne, database.TermOptions{}, constant.I64NegativeOne, db, err
+		return constant.I64NegativeOne, constant.I64NegativeOne, db, err
 	}
 	if newTermOptions == nil {
 		to = &dbTermOptions
@@ -135,16 +135,15 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 
 	commitOffset, err = db.ReadCommitOffset()
 	if err != nil {
-		return constant.I64NegativeOne, database.TermOptions{}, constant.I64NegativeOne, db, err
+		return constant.I64NegativeOne, constant.I64NegativeOne, db, err
 	}
-	return term, *to, commitOffset, db, nil
+	return term, commitOffset, db, nil
 }
 
 func NewFollowerController(storageOptions *option.StorageOptions, namespace string, shardId int64, wf wal.Factory, kvFactory kvstore.Factory,
 	newTermOptions *proto.NewTermOptions,
 ) (FollowerController, error) {
-
-	rawTerm, _, rawCommitOffset, db, err := initDatabase(namespace, shardId, newTermOptions, storageOptions, kvFactory)
+	rawTerm, rawCommitOffset, db, err := initDatabase(namespace, shardId, newTermOptions, storageOptions, kvFactory)
 	if err != nil {
 		return nil, err
 	}
@@ -276,8 +275,18 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 		if fc.logSynchronizer.IsValid() {
 			return nil, dserror.ErrResourceConflict
 		}
-		fc.logSynchronizer = NewLogSynchronizer(fc.log, fc.namespace, fc.shardId, fc.term.Load(), fc.wal, fc.advertisedCommitOffset, fc.lastAppendedOffset, fc.writeLatencyHisto, fc.stateApplierCond, stream, func() {
-			fc.status.Store(int32(proto.ServingStatus_FOLLOWER))
+		fc.logSynchronizer = NewLogSynchronizer(LogSynchronizerParams{
+			Log:                    fc.log,
+			Namespace:              fc.namespace,
+			ShardId:                fc.shardId,
+			Term:                   fc.term.Load(),
+			Wal:                    fc.wal,
+			AdvertisedCommitOffset: fc.advertisedCommitOffset,
+			LastAppendedOffset:     fc.lastAppendedOffset,
+			WriteLatencyHisto:      fc.writeLatencyHisto,
+			StateApplierCond:       fc.stateApplierCond,
+			Stream:                 stream,
+			OnAppend:               func() { fc.status.Store(int32(proto.ServingStatus_FOLLOWER)) },
 		})
 		return fc.logSynchronizer, nil
 	}(); err != nil {
@@ -374,7 +383,7 @@ func (fc *followerController) stateApplier() {
 		case <-fc.ctx.Done():
 			return
 		case <-fc.stateApplierCond:
-			//todo: support retry logic
+			// todo: support retry logic
 			maxInclusive := fc.advertisedCommitOffset.Load()
 			if err := fc.applyCommittedEntries(maxInclusive); err != nil {
 				return
@@ -476,7 +485,7 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	return fc.processCommittedEntriesLoop(reader, maxInclusive)
 }
 
-func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error {
+func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error { //nolint:revive // cyclomatic complexity justified by sequential error handling
 	if fc.closed.Load() {
 		return dserror.ErrResourceConflict
 	}
@@ -534,7 +543,7 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	defer func() {
 		if err != nil && fc.db == nil {
 			fc.log.Warn("Recovering database after failed snapshot install", slog.Any("error", err))
-			if _, _, _, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); initErr == nil {
+			if _, _, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); initErr == nil {
 				fc.db = db
 			} else {
 				fc.log.Error("Failed to recover database, follower is in a broken state", slog.Any("error", initErr))
@@ -550,48 +559,15 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 		_ = loader.Close()
 	}()
 
-	// Process the first chunk
-	fc.log.Info(
-		"Applying snapshot chunk",
-		slog.String("chunk-name", firstChunk.Name),
-		slog.Int("chunk-size", len(firstChunk.Content)),
-		slog.String("chunk-progress", fmt.Sprintf("%d/%d", firstChunk.ChunkIndex, firstChunk.ChunkCount)),
-	)
-	if err = loader.AddChunk(firstChunk.Name, firstChunk.ChunkIndex, firstChunk.ChunkCount, firstChunk.Content); err != nil {
-		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to add snapshot chunk")
-	}
-	totalSize := int64(len(firstChunk.Content))
-
-	// Process remaining chunks
-readChunkLoop:
-	for {
-		var snapChunk *proto.SnapshotChunk
-		snapChunk, err = stream.Recv()
-		switch {
-		case err != nil:
-			if errors.Is(err, io.EOF) {
-				break readChunkLoop
-			}
-			return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to read snapshot chunk")
-		case snapChunk == nil:
-			break readChunkLoop
-		}
-		fc.log.Info(
-			"Applying snapshot chunk",
-			slog.String("chunk-name", snapChunk.Name),
-			slog.Int("chunk-size", len(snapChunk.Content)),
-			slog.String("chunk-progress", fmt.Sprintf("%d/%d", snapChunk.ChunkIndex, snapChunk.ChunkCount)),
-		)
-		if err = loader.AddChunk(snapChunk.Name, snapChunk.ChunkIndex, snapChunk.ChunkCount, snapChunk.Content); err != nil {
-			return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to add snapshot chunk")
-		}
-		totalSize += int64(len(snapChunk.Content))
+	totalSize, err := fc.loadSnapshotChunks(loader, firstChunk, stream)
+	if err != nil {
+		return err
 	}
 	loader.Complete()
 
 	var db database.DB
 	var rawCommitOffset int64
-	if term, _, rawCommitOffset, db, err = initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); err != nil {
+	if _, rawCommitOffset, db, err = initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); err != nil {
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to initialize database")
 	}
 	fc.db = db
@@ -619,6 +595,42 @@ readChunkLoop:
 		slog.Int64("commit-offset", rawCommitOffset),
 	)
 	return nil
+}
+
+func (fc *followerController) loadSnapshotChunks(loader kvstore.SnapshotLoader, firstChunk *proto.SnapshotChunk, stream proto.OxiaLogReplication_SendSnapshotServer) (int64, error) {
+	fc.log.Info(
+		"Applying snapshot chunk",
+		slog.String("chunk-name", firstChunk.Name),
+		slog.Int("chunk-size", len(firstChunk.Content)),
+		slog.String("chunk-progress", fmt.Sprintf("%d/%d", firstChunk.ChunkIndex, firstChunk.ChunkCount)),
+	)
+	if err := loader.AddChunk(firstChunk.Name, firstChunk.ChunkIndex, firstChunk.ChunkCount, firstChunk.Content); err != nil {
+		return 0, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to add snapshot chunk")
+	}
+	totalSize := int64(len(firstChunk.Content))
+
+	for {
+		snapChunk, err := stream.Recv()
+		switch {
+		case err != nil:
+			if errors.Is(err, io.EOF) {
+				return totalSize, nil
+			}
+			return 0, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to read snapshot chunk")
+		case snapChunk == nil:
+			return totalSize, nil
+		}
+		fc.log.Info(
+			"Applying snapshot chunk",
+			slog.String("chunk-name", snapChunk.Name),
+			slog.Int("chunk-size", len(snapChunk.Content)),
+			slog.String("chunk-progress", fmt.Sprintf("%d/%d", snapChunk.ChunkIndex, snapChunk.ChunkCount)),
+		)
+		if err = loader.AddChunk(snapChunk.Name, snapChunk.ChunkIndex, snapChunk.ChunkCount, snapChunk.Content); err != nil {
+			return 0, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to add snapshot chunk")
+		}
+		totalSize += int64(len(snapChunk.Content))
+	}
 }
 
 func (fc *followerController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
