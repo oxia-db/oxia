@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +29,8 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	metric "github.com/oxia-db/oxia/oxiad/common/metric"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -121,38 +122,87 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 
 	// Verify the checksum gauge metric appears in the Prometheus endpoint
 	// with the expected labels and a non-zero value
+	var firstMetrics map[int64]string
 	assert.Eventually(t, func() bool {
-		body := fetchMetrics(t, metricsURL)
-		if body == "" {
-			return false
-		}
-		for _, line := range strings.Split(body, "\n") {
-			if strings.HasPrefix(line, "#") || !strings.Contains(line, "oxia_dataserver_db_checksum") {
-				continue
-			}
-			if strings.Contains(line, `shard="0"`) &&
-				strings.Contains(line, `oxia_namespace="default"`) &&
-				strings.Contains(line, "commit_offset=") {
-				parts := strings.Fields(line)
-				if len(parts) >= 2 {
-					return parts[len(parts)-1] != "0"
-				}
+		firstMetrics = parseChecksumMetrics(t, metricsURL)
+		return len(firstMetrics) > 0
+	}, 30*time.Second, 200*time.Millisecond)
+
+	// Capture the first commit offset and checksum value
+	var firstOffset int64
+	var firstChecksum string
+	for offset, checksum := range firstMetrics {
+		firstOffset = offset
+		firstChecksum = checksum
+	}
+	assert.NotZero(t, firstOffset)
+	assert.NotEqual(t, "0", firstChecksum)
+
+	// Write more data and record the checksum again
+	_, _, err = client.Put(context.Background(), "/key4", []byte("value4"))
+	assert.NoError(t, err)
+
+	lead.ProposeRecordChecksum(context.Background())
+
+	// Verify a new metric line appears with a higher commit offset and different checksum
+	assert.Eventually(t, func() bool {
+		metrics := parseChecksumMetrics(t, metricsURL)
+		for offset, checksum := range metrics {
+			if offset > firstOffset && checksum != firstChecksum {
+				return true
 			}
 		}
 		return false
 	}, 30*time.Second, 200*time.Millisecond)
 }
 
-func fetchMetrics(t *testing.T, url string) string {
+// parseChecksumMetrics scrapes the Prometheus endpoint and returns a map of
+// commit_offset -> checksum_value for all oxia_dataserver_db_checksum lines
+// matching shard=0 and namespace=default.
+func parseChecksumMetrics(t *testing.T, url string) map[int64]string {
 	t.Helper()
 	resp, err := http.Get(url) //nolint:gosec
 	if err != nil {
-		return ""
+		return nil
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return ""
+		return nil
 	}
-	return string(body)
+
+	result := make(map[int64]string)
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "#") || !strings.Contains(line, "oxia_dataserver_db_checksum") {
+			continue
+		}
+		if !strings.Contains(line, `shard="0"`) || !strings.Contains(line, `oxia_namespace="default"`) {
+			continue
+		}
+		// Extract commit_offset from label like commit_offset="42"
+		offsetIdx := strings.Index(line, `commit_offset="`)
+		if offsetIdx < 0 {
+			continue
+		}
+		offsetStart := offsetIdx + len(`commit_offset="`)
+		offsetEnd := strings.Index(line[offsetStart:], `"`)
+		if offsetEnd < 0 {
+			continue
+		}
+		offset, err := strconv.ParseInt(line[offsetStart:offsetStart+offsetEnd], 10, 64)
+		if err != nil {
+			continue
+		}
+
+		// The metric value is the last whitespace-separated field
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		value := parts[len(parts)-1]
+		if value != "0" {
+			result[offset] = value
+		}
+	}
+	return result
 }
