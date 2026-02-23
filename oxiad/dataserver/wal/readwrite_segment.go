@@ -168,6 +168,11 @@ func (ms *readWriteSegment) Append(offset int64, data []byte) error {
 }
 
 func (ms *readWriteSegment) Flush() error {
+	ms.RLock()
+	defer ms.RUnlock()
+	if ms.txnMappedFile == nil {
+		return nil
+	}
 	return ms.txnMappedFile.Flush()
 }
 
