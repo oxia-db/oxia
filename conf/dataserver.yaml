@@ -13,9 +13,11 @@ storage:
   database:
     dir: "./data/db"
     readCacheSizeMB: 100
-  checksumInterval: "1m"
   notification:
     retention: "1h"
+scheduler:
+  checksum:
+    interval: "1m"
 observability:
   metric:
     enabled: true

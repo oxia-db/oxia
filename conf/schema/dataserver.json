@@ -3,6 +3,16 @@
   "$id": "https://github.com/oxia-db/oxia/oxiad/dataserver/option/options",
   "$ref": "#/$defs/Options",
   "$defs": {
+    "ChecksumSchedulerOptions": {
+      "properties": {
+        "interval": {
+          "$ref": "#/$defs/Duration",
+          "description": "Interval for periodic DB checksum recording"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "DatabaseOptions": {
       "properties": {
         "dir": {
@@ -27,7 +37,7 @@
     },
     "Duration": {
       "type": "string",
-      "pattern": "^[0-9]+[smh]$",
+      "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
       "title": "Duration",
       "description": "Duration string in Go duration format (e.g., \"1h\", \"30m\", \"5s\")",
       "examples": [
@@ -132,7 +142,11 @@
         },
         "storage": {
           "$ref": "#/$defs/StorageOptions",
-          "description": "Storage configuration for WAL, database, and notifications"
+          "description": "Storage configuration for WAL"
+        },
+        "scheduler": {
+          "$ref": "#/$defs/SchedulerOptions",
+          "description": "Scheduler configuration for periodic tasks"
         },
         "observability": {
           "$ref": "#/$defs/ObservabilityOptions",
@@ -144,6 +158,7 @@
       "required": [
         "server",
         "storage",
+        "scheduler",
         "observability"
       ]
     },
@@ -181,6 +196,19 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "SchedulerOptions": {
+      "properties": {
+        "checksum": {
+          "$ref": "#/$defs/ChecksumSchedulerOptions",
+          "description": "Checksum scheduler configuration for periodic DB integrity checks"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "checksum"
+      ]
     },
     "ServerOptions": {
       "properties": {

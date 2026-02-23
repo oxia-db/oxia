@@ -155,19 +155,15 @@ func (*NotificationOptions) Validate() error {
 }
 
 type StorageOptions struct {
-	WAL              WALOptions          `yaml:"wal" json:"wal" jsonschema:"description=Write-Ahead Log configuration for durability and recovery"`
-	Database         DatabaseOptions     `yaml:"database" json:"database" jsonschema:"description=Database storage configuration for persistent data"`
-	Notification     NotificationOptions `yaml:"notification" json:"notification" jsonschema:"description=Notification system configuration for change events"`
-	ChecksumInterval option.Duration     `yaml:"checksumInterval,omitempty" json:"checksumInterval,omitempty" jsonschema:"description=Interval for periodic DB checksum recording,example=1m,format=duration"`
+	WAL          WALOptions          `yaml:"wal" json:"wal" jsonschema:"description=Write-Ahead Log configuration for durability and recovery"`
+	Database     DatabaseOptions     `yaml:"database" json:"database" jsonschema:"description=Database storage configuration for persistent data"`
+	Notification NotificationOptions `yaml:"notification" json:"notification" jsonschema:"description=Notification system configuration for change events"`
 }
 
 func (so *StorageOptions) WithDefault() {
 	so.WAL.WithDefault()
 	so.Database.WithDefault()
 	so.Notification.WithDefault()
-	if so.ChecksumInterval == 0 {
-		so.ChecksumInterval = option.Duration(time.Minute)
-	}
 }
 
 func (so *StorageOptions) Validate() error {
@@ -178,10 +174,37 @@ func (so *StorageOptions) Validate() error {
 	)
 }
 
+type ChecksumSchedulerOptions struct {
+	Interval option.Duration `yaml:"interval,omitempty" json:"interval,omitempty" jsonschema:"description=Interval for periodic DB checksum recording,example=1m,format=duration"`
+}
+
+func (co *ChecksumSchedulerOptions) WithDefault() {
+	if co.Interval == 0 {
+		co.Interval = option.Duration(time.Minute)
+	}
+}
+
+func (*ChecksumSchedulerOptions) Validate() error {
+	return nil
+}
+
+type SchedulerOptions struct {
+	Checksum ChecksumSchedulerOptions `yaml:"checksum" json:"checksum" jsonschema:"description=Checksum scheduler configuration for periodic DB integrity checks"`
+}
+
+func (so *SchedulerOptions) WithDefault() {
+	so.Checksum.WithDefault()
+}
+
+func (so *SchedulerOptions) Validate() error {
+	return so.Checksum.Validate()
+}
+
 type Options struct {
 	Server        ServerOptions               `yaml:"server" json:"server" jsonschema:"description=Server configuration for public and internal endpoints"`
 	Replication   ReplicationOptions          `yaml:"replication,omitempty" json:"replication,omitempty" jsonschema:"description=Replication configuration for data consistency"`
 	Storage       StorageOptions              `yaml:"storage" json:"storage" jsonschema:"description=Storage configuration for WAL, database, and notifications"`
+	Scheduler     SchedulerOptions            `yaml:"scheduler" json:"scheduler" jsonschema:"description=Scheduler configuration for periodic tasks"`
 	Observability option.ObservabilityOptions `yaml:"observability" json:"observability" jsonschema:"description=Observability configuration for metrics and tracing"`
 }
 
@@ -189,6 +212,7 @@ func (op *Options) WithDefault() {
 	op.Server.WithDefault()
 	op.Replication.WithDefault()
 	op.Storage.WithDefault()
+	op.Scheduler.WithDefault()
 	op.Observability.WithDefault()
 }
 
@@ -197,6 +221,7 @@ func (op *Options) Validate() error {
 		op.Server.Validate(),
 		op.Replication.Validate(),
 		op.Storage.Validate(),
+		op.Scheduler.Validate(),
 		op.Observability.Validate(),
 	)
 }
