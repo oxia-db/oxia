@@ -314,7 +314,6 @@ func (r *nodeBasedBalancer) IsBalanced() bool {
 		&model.RatioParams{
 			NodeShardsInfos: groupedStatus,
 			HistoryNodes:    historyNodes,
-			QuarantineNodes: r.quarantineNodes(),
 		},
 	).IsBalanced()
 }
