@@ -54,8 +54,8 @@ func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(option
 }
 
 func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
-	return NewServerWithOptions(t, name, func(options *option.Options) {
-
+	t.Helper()
+	return NewServerWithOptions(t, name, func(_ *option.Options) {
 	})
 }
 
