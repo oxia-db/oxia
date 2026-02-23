@@ -155,15 +155,19 @@ func (*NotificationOptions) Validate() error {
 }
 
 type StorageOptions struct {
-	WAL          WALOptions          `yaml:"wal" json:"wal" jsonschema:"description=Write-Ahead Log configuration for durability and recovery"`
-	Database     DatabaseOptions     `yaml:"database" json:"database" jsonschema:"description=Database storage configuration for persistent data"`
-	Notification NotificationOptions `yaml:"notification" json:"notification" jsonschema:"description=Notification system configuration for change events"`
+	WAL              WALOptions          `yaml:"wal" json:"wal" jsonschema:"description=Write-Ahead Log configuration for durability and recovery"`
+	Database         DatabaseOptions     `yaml:"database" json:"database" jsonschema:"description=Database storage configuration for persistent data"`
+	Notification     NotificationOptions `yaml:"notification" json:"notification" jsonschema:"description=Notification system configuration for change events"`
+	ChecksumInterval option.Duration     `yaml:"checksumInterval,omitempty" json:"checksumInterval,omitempty" jsonschema:"description=Interval for periodic DB checksum recording,example=1m,format=duration"`
 }
 
 func (so *StorageOptions) WithDefault() {
 	so.WAL.WithDefault()
 	so.Database.WithDefault()
 	so.Notification.WithDefault()
+	if so.ChecksumInterval == 0 {
+		so.ChecksumInterval = option.Duration(time.Minute)
+	}
 }
 
 func (so *StorageOptions) Validate() error {

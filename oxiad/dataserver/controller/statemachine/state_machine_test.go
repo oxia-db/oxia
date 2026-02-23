@@ -142,7 +142,7 @@ func TestApplyLogEntry_WriteRequest(t *testing.T) {
 		Timestamp: proposal.GetTimestamp(),
 	}
 
-	err := ApplyLogEntry(db, entry, database.NoOpCallback)
+	_, err := ApplyLogEntry(db, entry, database.NoOpCallback)
 	assert.NoError(t, err)
 
 	getResp, err := db.Get(&proto.GetRequest{Key: "follower-key", IncludeValue: true})
@@ -171,7 +171,7 @@ func TestApplyLogEntry_ControlRequest(t *testing.T) {
 		Timestamp: proposal.GetTimestamp(),
 	}
 
-	err := ApplyLogEntry(db, entry, database.NoOpCallback)
+	_, err := ApplyLogEntry(db, entry, database.NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.True(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
@@ -186,7 +186,7 @@ func TestApplyLogEntry_InvalidBytes(t *testing.T) {
 		Value:  []byte("invalid-protobuf-bytes"),
 	}
 
-	err := ApplyLogEntry(db, entry, database.NoOpCallback)
+	_, err := ApplyLogEntry(db, entry, database.NoOpCallback)
 	assert.Error(t, err)
 }
 
@@ -213,7 +213,7 @@ func TestApplyProposal_ThenApplyLogEntry(t *testing.T) {
 		Value:     marshalProposal(t, proposal),
 		Timestamp: proposal.GetTimestamp(),
 	}
-	err = ApplyLogEntry(followerDB, entry, database.NoOpCallback)
+	_, err = ApplyLogEntry(followerDB, entry, database.NoOpCallback)
 	assert.NoError(t, err)
 
 	// Both DBs should have the same data
@@ -237,7 +237,7 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 			},
 		},
 	})
-	err := ApplyLogEntry(db, &proto.LogEntry{
+	_, err := ApplyLogEntry(db, &proto.LogEntry{
 		Term:      1,
 		Offset:    0,
 		Value:     marshalProposal(t, controlProposal),
@@ -250,7 +250,7 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 	write1 := NewWriteProposal(1, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{{Key: "x", Value: []byte("1")}},
 	})
-	err = ApplyLogEntry(db, &proto.LogEntry{
+	_, err = ApplyLogEntry(db, &proto.LogEntry{
 		Term:      1,
 		Offset:    1,
 		Value:     marshalProposal(t, write1),
@@ -262,7 +262,7 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 	write2 := NewWriteProposal(2, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{{Key: "y", Value: []byte("2")}},
 	})
-	err = ApplyLogEntry(db, &proto.LogEntry{
+	_, err = ApplyLogEntry(db, &proto.LogEntry{
 		Term:      1,
 		Offset:    2,
 		Value:     marshalProposal(t, write2),

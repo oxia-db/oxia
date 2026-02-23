@@ -21,29 +21,34 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
-func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallback database.UpdateOperationCallback) error {
+func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallback database.UpdateOperationCallback) (ApplyResponse, error) {
 	logEntryValue := proto.LogEntryValueFromVTPool()
 	defer logEntryValue.ReturnToVTPool()
 
 	if err := logEntryValue.UnmarshalVT(entry.Value); err != nil {
-		return err
+		return ApplyResponse{}, err
 	}
 
 	switch logEntryValue.Value.(type) {
 	case *proto.LogEntryValue_ControlRequest:
-		if featureEnable := logEntryValue.GetControlRequest().GetFeatureEnable(); featureEnable != nil {
+		cr := logEntryValue.GetControlRequest()
+		if featureEnable := cr.GetFeatureEnable(); featureEnable != nil {
 			for _, feature := range featureEnable.GetFeatures() {
 				db.EnableFeature(feature)
 			}
 		}
+		if cr.GetRecordChecksum() != nil {
+			checksum := db.ReadChecksum()
+			return ApplyResponse{Checksum: &checksum}, nil
+		}
 	case *proto.LogEntryValue_Requests:
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
 			if _, err := db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil {
-				return err
+				return ApplyResponse{}, err
 			}
 		}
 	default:
-		return errors.New("unknown proposal type")
+		return ApplyResponse{}, errors.New("unknown proposal type")
 	}
-	return nil
+	return ApplyResponse{}, nil
 }

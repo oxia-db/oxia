@@ -113,6 +113,7 @@ type followerController struct {
 
 	stateApplierCond  chan struct{}
 	writeLatencyHisto metric.LatencyHistogram
+	checksumGauge     metric.SyncGauge
 }
 
 func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTermOptions, storageOptions *option.StorageOptions,
@@ -197,6 +198,8 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 		stateApplierCond:       make(chan struct{}, 1),
 		writeLatencyHisto: metric.NewLatencyHistogram("oxia_server_follower_write_latency",
 			"Latency for write operations in the follower", metric.LabelsForShard(namespace, shardId)),
+		checksumGauge: metric.NewSyncGauge("oxia_dataserver_db_checksum",
+			"The current DB checksum value", "count", metric.LabelsForShard(namespace, shardId)),
 	}
 
 	if rawTerm != constant.I64NegativeOne {
@@ -422,10 +425,13 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 		}
 
 		fc.rwMutex.RLock()
-		err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
+		resp, err := statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
 		fc.rwMutex.RUnlock()
 		if err != nil {
 			return err
+		}
+		if resp.Checksum != nil {
+			fc.checksumGauge.Record(int64(*resp.Checksum))
 		}
 
 		fc.commitOffset.Store(entry.Offset)

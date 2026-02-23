@@ -110,6 +110,8 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 	})
 
 	s.shardsDirector = controller.NewShardsDirector(storage, s.walFactory, s.kvFactory, replicationRpcProvider)
+	csScheduler := newChecksumScheduler(ctx, storage.ChecksumInterval.ToDuration(), s.shardsDirector)
+	s.wg.Go(csScheduler.run)
 	s.shardAssignmentDispatcher = assignment.NewShardAssignmentDispatcher(s.healthServer)
 
 	internalServer := options.Server.Internal

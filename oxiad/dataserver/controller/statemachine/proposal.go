@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
@@ -33,6 +34,7 @@ type Proposal interface {
 
 type ApplyResponse struct {
 	WriteResponse *proto.WriteResponse
+	Checksum      *crc.Checksum
 }
 
 var _ Proposal = &WriteProposal{}
@@ -93,6 +95,10 @@ func (c *ControlProposal) Apply(db database.DB, _ database.UpdateOperationCallba
 		for _, feature := range featureEnable.GetFeatures() {
 			db.EnableFeature(feature)
 		}
+	}
+	if c.request.GetRecordChecksum() != nil {
+		checksum := db.ReadChecksum()
+		return ApplyResponse{Checksum: &checksum}, nil
 	}
 	return ApplyResponse{}, nil
 }
