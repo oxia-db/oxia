@@ -31,13 +31,12 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 
 	switch logEntryValue.Value.(type) {
 	case *proto.LogEntryValue_ControlRequest:
-		cr := logEntryValue.GetControlRequest()
-		if featureEnable := cr.GetFeatureEnable(); featureEnable != nil {
-			for _, feature := range featureEnable.GetFeatures() {
+		switch v := logEntryValue.GetControlRequest().Value.(type) {
+		case *proto.ControlRequest_FeatureEnable:
+			for _, feature := range v.FeatureEnable.GetFeatures() {
 				db.EnableFeature(feature)
 			}
-		}
-		if cr.GetRecordChecksum() != nil {
+		case *proto.ControlRequest_RecordChecksum:
 			checksum := db.ReadChecksum()
 			return ApplyResponse{Checksum: &checksum}, nil
 		}

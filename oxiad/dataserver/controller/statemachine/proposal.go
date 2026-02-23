@@ -91,12 +91,12 @@ func (c *ControlProposal) ToLogEntry(vtEntry *proto.LogEntryValue) {
 }
 
 func (c *ControlProposal) Apply(db database.DB, _ database.UpdateOperationCallback) (ApplyResponse, error) {
-	if featureEnable := c.request.GetFeatureEnable(); featureEnable != nil {
-		for _, feature := range featureEnable.GetFeatures() {
+	switch v := c.request.Value.(type) {
+	case *proto.ControlRequest_FeatureEnable:
+		for _, feature := range v.FeatureEnable.GetFeatures() {
 			db.EnableFeature(feature)
 		}
-	}
-	if c.request.GetRecordChecksum() != nil {
+	case *proto.ControlRequest_RecordChecksum:
 		checksum := db.ReadChecksum()
 		return ApplyResponse{Checksum: &checksum}, nil
 	}

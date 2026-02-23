@@ -239,6 +239,9 @@ func (lc *leaderController) Term() int64 {
 func (lc *leaderController) IsFeatureEnabled(feature proto.Feature) bool {
 	lc.RLock()
 	defer lc.RUnlock()
+	if lc.db == nil {
+		return false
+	}
 	return lc.db.IsFeatureEnabled(feature)
 }
 
