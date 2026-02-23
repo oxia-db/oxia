@@ -446,8 +446,9 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		if leader == maxLeadersNodeID { // no changes
 			r.Info("quarantine the shard due to no leader changed", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
 			r.shardQuarantineShardMap.Store(shard, time.Now())
+			break
 		}
-		break
+		maxLeaders--
 	}
 }
 
