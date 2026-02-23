@@ -175,12 +175,12 @@ func (so *StorageOptions) Validate() error {
 }
 
 type ChecksumSchedulerOptions struct {
-	Interval option.Duration `yaml:"interval,omitempty" json:"interval,omitempty" jsonschema:"description=Interval for periodic DB checksum recording,example=1m,format=duration"`
+	Interval option.Duration `yaml:"interval,omitempty" json:"interval,omitempty" jsonschema:"description=Interval for periodic DB checksum recording. Set to 0s or a negative value to disable.,example=5m,format=duration"`
 }
 
 func (co *ChecksumSchedulerOptions) WithDefault() {
 	if co.Interval == 0 {
-		co.Interval = option.Duration(time.Minute)
+		co.Interval = option.Duration(5 * time.Minute)
 	}
 }
 

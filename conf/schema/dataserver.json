@@ -7,7 +7,7 @@
       "properties": {
         "interval": {
           "$ref": "#/$defs/Duration",
-          "description": "Interval for periodic DB checksum recording"
+          "description": "Interval for periodic DB checksum recording. Set to 0s or a negative value to disable."
         }
       },
       "additionalProperties": false,
@@ -37,7 +37,7 @@
     },
     "Duration": {
       "type": "string",
-      "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
       "title": "Duration",
       "description": "Duration string in Go duration format (e.g., \"1h\", \"30m\", \"5s\")",
       "examples": [

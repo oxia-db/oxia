@@ -17,7 +17,7 @@ storage:
     retention: "1h"
 scheduler:
   checksum:
-    interval: "1m"
+    interval: "5m"
 observability:
   metric:
     enabled: true
