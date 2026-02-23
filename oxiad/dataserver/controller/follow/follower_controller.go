@@ -115,6 +115,7 @@ type followerController struct {
 	stateApplierCond  chan struct{}
 	writeLatencyHisto metric.LatencyHistogram
 	checksumGauge     metric.SyncGauge
+	walChecksumGauge  metric.SyncGauge
 }
 
 func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTermOptions, storageOptions *option.StorageOptions,
@@ -201,6 +202,8 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 			"Latency for write operations in the follower", metric.LabelsForShard(namespace, shardId)),
 		checksumGauge: metric.NewSyncGauge("oxia_dataserver_db_checksum",
 			"The current DB checksum value", "count", metric.LabelsForShard(namespace, shardId)),
+		walChecksumGauge: metric.NewSyncGauge("oxia_dataserver_wal_checksum",
+			"The current WAL checksum value", "count", metric.LabelsForShard(namespace, shardId)),
 	}
 
 	if rawTerm != constant.I64NegativeOne {
@@ -405,7 +408,7 @@ func (fc *followerController) stateApplier() {
 
 func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, maxInclusive int64) error {
 	for reader.HasNext() {
-		entry, err := reader.ReadNext()
+		entry, entryCrc, err := reader.ReadNext()
 
 		if errors.Is(err, wal.ErrReaderClosed) {
 			fc.log.Info("Stopped reading committed entries")
@@ -433,6 +436,7 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 		}
 		if resp.Checksum != nil {
 			fc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("commit-offset", entry.Offset))
+			fc.walChecksumGauge.Record(int64(entryCrc), attribute.Int64("commit-offset", entry.Offset))
 		}
 
 		fc.commitOffset.Store(entry.Offset)
@@ -681,7 +685,7 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 		return constant2.InvalidEntryId, nil
 	}
 
-	entry, err := reader.ReadNext()
+	entry, _, err := reader.ReadNext()
 	if err != nil {
 		return nil, err
 	}

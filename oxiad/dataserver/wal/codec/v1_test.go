@@ -37,7 +37,7 @@ func TestV1_Codec(t *testing.T) {
 	assert.NoError(t, err)
 	assert.EqualValues(t, getRecordSize, recordSize)
 
-	getPayload, err := v1.ReadRecordWithValidation(buf, 0)
+	getPayload, _, err := v1.ReadRecordWithValidation(buf, 0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload, getPayload)
 }
@@ -84,7 +84,7 @@ func TestV1_RecoverIndex(t *testing.T) {
 	assert.EqualValues(t, fOffset, newFileOffset)
 	for i := 0; i < elementsNum; i++ {
 		fOffset := ReadInt(index, uint32(i*4))
-		payload, err := v1.ReadRecordWithValidation(buf, fOffset)
+		payload, _, err := v1.ReadRecordWithValidation(buf, fOffset)
 		assert.NoError(t, err)
 		assert.EqualValues(t, payloads[i], payload)
 	}

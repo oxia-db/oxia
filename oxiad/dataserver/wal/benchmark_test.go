@@ -85,7 +85,7 @@ func Benchmark_Wal_Append_with_Read(b *testing.B) {
 						continue
 					}
 
-					_, err := reader.ReadNext()
+					_, _, err := reader.ReadNext()
 					assert.NoError(b, err)
 					break
 				}
@@ -133,7 +133,7 @@ func Benchmark_Wal_Append_to_Read_latency(b *testing.B) {
 					continue
 				}
 
-				entry, err := reader.ReadNext()
+				entry, _, err := reader.ReadNext()
 				assert.NoError(b, err)
 				diff := time.Now().UnixMicro() - int64(entry.Timestamp)
 				diffs[i] = diff

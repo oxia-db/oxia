@@ -332,7 +332,7 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			continue
 		}
 
-		le, err := reader.ReadNext()
+		le, _, err := reader.ReadNext()
 		if err != nil {
 			return err
 		}
