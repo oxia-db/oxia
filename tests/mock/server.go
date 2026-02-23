@@ -29,7 +29,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
-func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
+func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(options *option.Options)) (s *dataserver.Server, addr model.Server) {
 	t.Helper()
 	dataServerOption := option.NewDefaultOptions()
 	dataServerOption.Server.Public.BindAddress = "localhost:0"
@@ -37,6 +37,7 @@ func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Serv
 	dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption.Storage.Database.Dir = t.TempDir()
 	dataServerOption.Storage.WAL.Dir = t.TempDir()
+	optionsConsumer(dataServerOption)
 	var err error
 	s, err = dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
 
@@ -50,6 +51,12 @@ func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Serv
 	}
 
 	return s, addr
+}
+
+func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
+	t.Helper()
+	return NewServerWithOptions(t, name, func(_ *option.Options) {
+	})
 }
 
 func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr model.Server) {

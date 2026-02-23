@@ -174,10 +174,37 @@ func (so *StorageOptions) Validate() error {
 	)
 }
 
+type ChecksumSchedulerOptions struct {
+	Interval option.Duration `yaml:"interval,omitempty" json:"interval,omitempty" jsonschema:"description=Interval for periodic DB checksum recording. Set to 0s or a negative value to disable.,example=5m,format=duration"`
+}
+
+func (co *ChecksumSchedulerOptions) WithDefault() {
+	if co.Interval == 0 {
+		co.Interval = option.Duration(5 * time.Minute)
+	}
+}
+
+func (*ChecksumSchedulerOptions) Validate() error {
+	return nil
+}
+
+type SchedulerOptions struct {
+	Checksum ChecksumSchedulerOptions `yaml:"checksum" json:"checksum" jsonschema:"description=Checksum scheduler configuration for periodic DB integrity checks"`
+}
+
+func (so *SchedulerOptions) WithDefault() {
+	so.Checksum.WithDefault()
+}
+
+func (so *SchedulerOptions) Validate() error {
+	return so.Checksum.Validate()
+}
+
 type Options struct {
 	Server        ServerOptions               `yaml:"server" json:"server" jsonschema:"description=Server configuration for public and internal endpoints"`
 	Replication   ReplicationOptions          `yaml:"replication,omitempty" json:"replication,omitempty" jsonschema:"description=Replication configuration for data consistency"`
 	Storage       StorageOptions              `yaml:"storage" json:"storage" jsonschema:"description=Storage configuration for WAL, database, and notifications"`
+	Scheduler     SchedulerOptions            `yaml:"scheduler" json:"scheduler" jsonschema:"description=Scheduler configuration for periodic tasks"`
 	Observability option.ObservabilityOptions `yaml:"observability" json:"observability" jsonschema:"description=Observability configuration for metrics and tracing"`
 }
 
@@ -185,6 +212,7 @@ func (op *Options) WithDefault() {
 	op.Server.WithDefault()
 	op.Replication.WithDefault()
 	op.Storage.WithDefault()
+	op.Scheduler.WithDefault()
 	op.Observability.WithDefault()
 }
 
@@ -193,6 +221,7 @@ func (op *Options) Validate() error {
 		op.Server.Validate(),
 		op.Replication.Validate(),
 		op.Storage.Validate(),
+		op.Scheduler.Validate(),
 		op.Observability.Validate(),
 	)
 }

@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
 
@@ -90,6 +91,8 @@ type LeaderController interface {
 	CloseSession(*proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
 
 	IsFeatureEnabled(feature proto.Feature) bool
+
+	ProposeRecordChecksum(ctx context.Context)
 }
 
 type leaderController struct {
@@ -120,6 +123,7 @@ type leaderController struct {
 	writeLatencyHisto       metric.LatencyHistogram
 	headOffsetGauge         metric.Gauge
 	commitOffsetGauge       metric.Gauge
+	checksumGauge           metric.SyncGauge
 	followerAckOffsetGauges map[string]metric.Gauge
 }
 
@@ -160,6 +164,8 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 
 			return -1
 		})
+	lc.checksumGauge = metric.NewSyncGauge("oxia_dataserver_db_checksum",
+		"The current DB checksum value", "count", labels)
 
 	lc.ctx, lc.cancel = context.WithCancel(context.Background())
 
@@ -233,6 +239,9 @@ func (lc *leaderController) Term() int64 {
 func (lc *leaderController) IsFeatureEnabled(feature proto.Feature) bool {
 	lc.RLock()
 	defer lc.RUnlock()
+	if lc.db == nil {
+		return false
+	}
 	return lc.db.IsFeatureEnabled(feature)
 }
 
@@ -529,8 +538,12 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		if err != nil {
 			return errors.Wrap(err, "failed to applies wal entries to db")
 		}
-		if err = statemachine.ApplyLogEntry(lc.db, entry, WrapperUpdateOperationCallback); err != nil {
+		resp, err := statemachine.ApplyLogEntry(lc.db, entry, WrapperUpdateOperationCallback)
+		if err != nil {
 			return errors.Wrap(err, "failed to applies wal entries to db")
+		}
+		if resp.Checksum != nil {
+			lc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("commit-offset", entry.Offset))
 		}
 	}
 
@@ -839,6 +852,21 @@ func (lc *leaderController) proposeFeaturesEnable(ctx context.Context, features 
 	}, deferPropose)
 }
 
+func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
+	deferPropose := concurrent.NewOnce(func(statemachine.ApplyResponse) {
+		lc.log.Debug("Recorded checksum")
+	}, func(err error) {
+		lc.log.Warn("Failed to record checksum", slog.Any("error", err))
+	})
+	lc.propose(ctx, func(offset int64) statemachine.Proposal {
+		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
+			Value: &proto.ControlRequest_RecordChecksum{
+				RecordChecksum: &proto.RecordChecksumRequest{},
+			},
+		})
+	}, deferPropose)
+}
+
 func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
 	timer := lc.writeLatencyHisto.Timer()
 	lc.Lock()
@@ -884,6 +912,9 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 				if err != nil {
 					cb.OnCompleteError(err)
 					return
+				}
+				if response.Checksum != nil {
+					lc.checksumGauge.Record(int64(*response.Checksum), attribute.Int64("commit-offset", newOffset))
 				}
 				cb.OnComplete(response)
 			}, func(err error) {

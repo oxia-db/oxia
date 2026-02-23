@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -40,6 +41,35 @@ func (g *gauge) Unregister() {
 			slog.Any("error", err),
 		)
 		os.Exit(1)
+	}
+}
+
+type SyncGauge interface {
+	Record(value int64, attrs ...attribute.KeyValue)
+}
+
+type syncGauge struct {
+	gauge metric.Int64Gauge
+	attrs metric.MeasurementOption
+}
+
+func (g *syncGauge) Record(value int64, attrs ...attribute.KeyValue) {
+	if len(attrs) > 0 {
+		g.gauge.Record(context.Background(), value, g.attrs, metric.WithAttributes(attrs...))
+	} else {
+		g.gauge.Record(context.Background(), value, g.attrs)
+	}
+}
+
+func NewSyncGauge(name string, description string, unit Unit, labels map[string]any) SyncGauge {
+	g, err := GetMeter().Int64Gauge(name,
+		metric.WithUnit(string(unit)),
+		metric.WithDescription(description),
+	)
+	fatalOnErr(err, name)
+	return &syncGauge{
+		gauge: g,
+		attrs: getAttrs(labels),
 	}
 }
 

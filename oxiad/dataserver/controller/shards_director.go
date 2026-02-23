@@ -47,6 +47,8 @@ type ShardsDirector interface {
 	GetOrCreateFollower(namespace string, shardId int64, term int64, newTermOptions *proto.NewTermOptions) (follow.FollowerController, error)
 
 	DeleteShard(req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
+
+	GetAllLeaders() []lead.LeaderController
 }
 
 type shardsDirector struct {
@@ -234,6 +236,17 @@ func (s *shardsDirector) DeleteShard(req *proto.DeleteShardRequest) (*proto.Dele
 		return nil, err
 	}
 	return fc.Delete(req)
+}
+
+func (s *shardsDirector) GetAllLeaders() []lead.LeaderController {
+	s.RLock()
+	defer s.RUnlock()
+
+	leaders := make([]lead.LeaderController, 0, len(s.leaders))
+	for _, leader := range s.leaders {
+		leaders = append(leaders, leader)
+	}
+	return leaders
 }
 
 func (s *shardsDirector) Close() error {

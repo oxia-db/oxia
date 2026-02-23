@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
@@ -33,6 +34,7 @@ type Proposal interface {
 
 type ApplyResponse struct {
 	WriteResponse *proto.WriteResponse
+	Checksum      *crc.Checksum
 }
 
 var _ Proposal = &WriteProposal{}
@@ -89,10 +91,14 @@ func (c *ControlProposal) ToLogEntry(vtEntry *proto.LogEntryValue) {
 }
 
 func (c *ControlProposal) Apply(db database.DB, _ database.UpdateOperationCallback) (ApplyResponse, error) {
-	if featureEnable := c.request.GetFeatureEnable(); featureEnable != nil {
-		for _, feature := range featureEnable.GetFeatures() {
+	switch v := c.request.Value.(type) {
+	case *proto.ControlRequest_FeatureEnable:
+		for _, feature := range v.FeatureEnable.GetFeatures() {
 			db.EnableFeature(feature)
 		}
+	case *proto.ControlRequest_RecordChecksum:
+		checksum := db.ReadChecksum()
+		return ApplyResponse{Checksum: &checksum}, nil
 	}
 	return ApplyResponse{}, nil
 }

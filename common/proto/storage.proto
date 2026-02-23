@@ -65,9 +65,12 @@ message WriteRequests {
 message ControlRequest {
   oneof value {
     FeatureEnableRequest feature_enable = 1;
+    RecordChecksumRequest record_checksum = 2;
   }
 }
 
 message FeatureEnableRequest {
   repeated replication.Feature features = 1;
 }
+
+message RecordChecksumRequest {}

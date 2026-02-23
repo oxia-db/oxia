@@ -15,6 +15,9 @@ storage:
     readCacheSizeMB: 100
   notification:
     retention: "1h"
+scheduler:
+  checksum:
+    interval: "5m"
 observability:
   metric:
     enabled: true
