@@ -21,7 +21,9 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/multierr"
@@ -41,7 +43,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/common/time"
+	commontime "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
@@ -129,7 +131,7 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 	if to != nil {
 		keySorting = to.KeySorting
 	}
-	db, err = database.NewDB(namespace, shardId, factory, keySorting, storageOptions.Notification.Retention.ToDuration(), time.SystemClock)
+	db, err = database.NewDB(namespace, shardId, factory, keySorting, storageOptions.Notification.Retention.ToDuration(), commontime.SystemClock)
 	if err != nil {
 		return constant.I64NegativeOne, constant.I64NegativeOne, nil, err
 	}
@@ -391,19 +393,27 @@ func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.Trunc
 }
 
 func (fc *followerController) stateApplier() {
-	for {
-		select {
-		case <-fc.ctx.Done():
-			return
-		case <-fc.stateApplierCond:
-			// todo: support retry logic
+	bo := commontime.NewBackOff(fc.ctx)
+	_ = backoff.RetryNotify(func() error {
+		for {
+			select {
+			case <-fc.ctx.Done():
+				return nil
+			case <-fc.stateApplierCond:
+			}
+
 			maxInclusive := fc.advertisedCommitOffset.Load()
 			if err := fc.applyCommittedEntries(maxInclusive); err != nil {
-				fc.log.Error("State applier failed", slog.Any("error", err))
-				return
+				return err
 			}
+			bo.Reset()
 		}
-	}
+	}, bo, func(err error, d time.Duration) {
+		fc.log.Error("State applier failed, retrying",
+			slog.Any("error", err),
+			slog.Duration("retry-after", d),
+		)
+	})
 }
 
 func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, maxInclusive int64) error {
