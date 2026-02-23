@@ -540,7 +540,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 			return errors.Wrap(err, "failed to applies wal entries to db")
 		}
 		if resp.Checksum != nil {
-			lc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("oxia.commit_offset", entry.Offset))
+			lc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("commit-offset", entry.Offset))
 		}
 	}
 
@@ -911,7 +911,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 					return
 				}
 				if response.Checksum != nil {
-					lc.checksumGauge.Record(int64(*response.Checksum), attribute.Int64("oxia.commit_offset", newOffset))
+					lc.checksumGauge.Record(int64(*response.Checksum), attribute.Int64("commit-offset", newOffset))
 				}
 				cb.OnComplete(response)
 			}, func(err error) {

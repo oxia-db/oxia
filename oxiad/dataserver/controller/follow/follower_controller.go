@@ -432,7 +432,7 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 			return err
 		}
 		if resp.Checksum != nil {
-			fc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("oxia.commit_offset", entry.Offset))
+			fc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("commit-offset", entry.Offset))
 		}
 
 		fc.commitOffset.Store(entry.Offset)
