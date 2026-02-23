@@ -29,7 +29,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
-	metric "github.com/oxia-db/oxia/oxiad/common/metric"
+	"github.com/oxia-db/oxia/oxiad/common/metric"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -161,7 +161,7 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 // matching shard=0 and namespace=default.
 func parseChecksumMetrics(t *testing.T, url string) map[int64]string {
 	t.Helper()
-	resp, err := http.Get(url) //nolint:gosec
+	resp, err := http.Get(url)
 	if err != nil {
 		return nil
 	}
