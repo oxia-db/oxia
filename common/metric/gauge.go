@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -44,7 +45,7 @@ func (g *gauge) Unregister() {
 }
 
 type SyncGauge interface {
-	Record(value int64)
+	Record(value int64, attrs ...attribute.KeyValue)
 }
 
 type syncGauge struct {
@@ -52,8 +53,12 @@ type syncGauge struct {
 	attrs metric.MeasurementOption
 }
 
-func (g *syncGauge) Record(value int64) {
-	g.gauge.Record(context.Background(), value, g.attrs)
+func (g *syncGauge) Record(value int64, attrs ...attribute.KeyValue) {
+	if len(attrs) > 0 {
+		g.gauge.Record(context.Background(), value, g.attrs, metric.WithAttributes(attrs...))
+	} else {
+		g.gauge.Record(context.Background(), value, g.attrs)
+	}
 }
 
 func NewSyncGauge(name string, description string, unit Unit, labels map[string]any) SyncGauge {

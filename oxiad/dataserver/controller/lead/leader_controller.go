@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
 
@@ -534,8 +535,12 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		if err != nil {
 			return errors.Wrap(err, "failed to applies wal entries to db")
 		}
-		if _, err = statemachine.ApplyLogEntry(lc.db, entry, WrapperUpdateOperationCallback); err != nil {
+		resp, err := statemachine.ApplyLogEntry(lc.db, entry, WrapperUpdateOperationCallback)
+		if err != nil {
 			return errors.Wrap(err, "failed to applies wal entries to db")
+		}
+		if resp.Checksum != nil {
+			lc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("oxia.commit_offset", entry.Offset))
 		}
 	}
 
@@ -906,7 +911,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 					return
 				}
 				if response.Checksum != nil {
-					lc.checksumGauge.Record(int64(*response.Checksum))
+					lc.checksumGauge.Record(int64(*response.Checksum), attribute.Int64("oxia.commit_offset", newOffset))
 				}
 				cb.OnComplete(response)
 			}, func(err error) {

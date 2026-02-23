@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
@@ -431,7 +432,7 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 			return err
 		}
 		if resp.Checksum != nil {
-			fc.checksumGauge.Record(int64(*resp.Checksum))
+			fc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("oxia.commit_offset", entry.Offset))
 		}
 
 		fc.commitOffset.Store(entry.Offset)
