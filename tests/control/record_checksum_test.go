@@ -120,23 +120,39 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	assert.NoError(t, err)
 	lead.ProposeRecordChecksum(context.Background())
 
-	// Verify the checksum gauge metric appears in the Prometheus endpoint
+	// Verify the DB checksum gauge metric appears in the Prometheus endpoint
 	// with the expected labels and a non-zero value
-	var firstMetrics map[int64]string
+	var firstDbMetrics map[int64]string
 	assert.Eventually(t, func() bool {
-		firstMetrics = parseChecksumMetrics(t, metricsURL)
-		return len(firstMetrics) > 0
+		firstDbMetrics = parseChecksumMetrics(t, metricsURL, "oxia_dataserver_db_checksum")
+		return len(firstDbMetrics) > 0
 	}, 30*time.Second, 200*time.Millisecond)
 
 	// Capture the first commit offset and checksum value
 	var firstOffset int64
 	var firstChecksum string
-	for offset, checksum := range firstMetrics {
+	for offset, checksum := range firstDbMetrics {
 		firstOffset = offset
 		firstChecksum = checksum
 	}
 	assert.NotZero(t, firstOffset)
 	assert.NotEqual(t, "0", firstChecksum)
+
+	// Verify the WAL checksum gauge also appears
+	var firstWalMetrics map[int64]string
+	assert.Eventually(t, func() bool {
+		firstWalMetrics = parseChecksumMetrics(t, metricsURL, "oxia_dataserver_wal_checksum")
+		return len(firstWalMetrics) > 0
+	}, 30*time.Second, 200*time.Millisecond)
+
+	var firstWalOffset int64
+	var firstWalChecksum string
+	for offset, checksum := range firstWalMetrics {
+		firstWalOffset = offset
+		firstWalChecksum = checksum
+	}
+	assert.NotZero(t, firstWalOffset)
+	assert.NotEqual(t, "0", firstWalChecksum)
 
 	// Write more data and record the checksum again
 	_, _, err = client.Put(context.Background(), "/key4", []byte("value4"))
@@ -144,11 +160,22 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 
 	lead.ProposeRecordChecksum(context.Background())
 
-	// Verify a new metric line appears with a higher commit offset and different checksum
+	// Verify a new DB metric line appears with a higher commit offset and different checksum
 	assert.Eventually(t, func() bool {
-		metrics := parseChecksumMetrics(t, metricsURL)
+		metrics := parseChecksumMetrics(t, metricsURL, "oxia_dataserver_db_checksum")
 		for offset, checksum := range metrics {
 			if offset > firstOffset && checksum != firstChecksum {
+				return true
+			}
+		}
+		return false
+	}, 30*time.Second, 200*time.Millisecond)
+
+	// Verify a new WAL metric line appears with a higher commit offset and different checksum
+	assert.Eventually(t, func() bool {
+		metrics := parseChecksumMetrics(t, metricsURL, "oxia_dataserver_wal_checksum")
+		for offset, checksum := range metrics {
+			if offset > firstWalOffset && checksum != firstWalChecksum {
 				return true
 			}
 		}
@@ -157,9 +184,9 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 }
 
 // parseChecksumMetrics scrapes the Prometheus endpoint and returns a map of
-// commit_offset -> checksum_value for all oxia_dataserver_db_checksum lines
-// matching shard=0 and namespace=default.
-func parseChecksumMetrics(t *testing.T, url string) map[int64]string {
+// commit_offset -> checksum_value for all lines matching the given metricName
+// with shard=0 and namespace=default.
+func parseChecksumMetrics(t *testing.T, url string, metricName string) map[int64]string {
 	t.Helper()
 	resp, err := http.Get(url)
 	if err != nil {
@@ -173,7 +200,7 @@ func parseChecksumMetrics(t *testing.T, url string) map[int64]string {
 
 	result := make(map[int64]string)
 	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.HasPrefix(line, "#") || !strings.Contains(line, "oxia_dataserver_db_checksum") {
+		if strings.HasPrefix(line, "#") || !strings.Contains(line, metricName) {
 			continue
 		}
 		if !strings.Contains(line, `shard="0"`) || !strings.Contains(line, `oxia_namespace="default"`) {

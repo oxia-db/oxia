@@ -59,7 +59,7 @@ func assertReaderReads(t *testing.T, r Reader, entries []string) {
 
 	for i := 0; i < len(entries); i++ {
 		assert.True(t, r.HasNext())
-		e, err := r.ReadNext()
+		e, _, err := r.ReadNext()
 		assert.NoError(t, err)
 		assert.Equal(t, entries[i], string(e.Value))
 	}
@@ -76,7 +76,7 @@ func assertReaderReadsEventually(t *testing.T, r Reader, entries []string) chan 
 				100*time.Millisecond,
 				10*time.Millisecond,
 				fmt.Sprintf("did not read all expected entries: only read %d/%d", i, len(entries)))
-			e, err := r.ReadNext()
+			e, _, err := r.ReadNext()
 			if err != nil {
 				ch <- err
 				return
@@ -232,7 +232,7 @@ func TestRollover(t *testing.T) {
 	assert.NoError(t, err)
 	for i := 299; i >= 0; i-- {
 		assert.True(t, rr.HasNext())
-		entry, err := rr.ReadNext()
+		entry, _, err := rr.ReadNext()
 		assert.NoError(t, err)
 
 		value := make([]byte, 1024)
@@ -246,7 +246,7 @@ func TestRollover(t *testing.T) {
 	assert.NoError(t, err)
 	for i := 0; i < 300; i++ {
 		assert.True(t, fr.HasNext())
-		entry, err := fr.ReadNext()
+		entry, _, err := fr.ReadNext()
 		assert.NoError(t, err)
 
 		value := make([]byte, 1024)
@@ -399,7 +399,7 @@ func TestClear(t *testing.T) {
 
 	for i := 250; i < 300; i++ {
 		assert.True(t, r.HasNext())
-		le, err := r.ReadNext()
+		le, _, err := r.ReadNext()
 		assert.NoError(t, err)
 
 		assert.EqualValues(t, i, le.Offset)
@@ -415,7 +415,7 @@ func TestClear(t *testing.T) {
 
 	for i := 299; i >= 250; i-- {
 		assert.True(t, r.HasNext())
-		le, err := r.ReadNext()
+		le, _, err := r.ReadNext()
 		assert.NoError(t, err)
 
 		assert.EqualValues(t, i, le.Offset)
@@ -457,7 +457,7 @@ func TestTrim(t *testing.T) {
 
 	for i := 50; i < 100; i++ {
 		assert.True(t, r.HasNext())
-		le, err := r.ReadNext()
+		le, _, err := r.ReadNext()
 		assert.NoError(t, err)
 
 		assert.EqualValues(t, i, le.Offset)
@@ -473,7 +473,7 @@ func TestTrim(t *testing.T) {
 
 	for i := 99; i >= 50; i-- {
 		assert.True(t, r.HasNext())
-		le, err := r.ReadNext()
+		le, _, err := r.ReadNext()
 		assert.NoError(t, err)
 
 		assert.EqualValues(t, i, le.Offset)
@@ -532,14 +532,14 @@ func TestReaderReadNext(t *testing.T) {
 
 	reader, err := w.NewReader(c - 2)
 	assert.NoError(t, err)
-	entry, err := reader.ReadNext()
+	entry, _, err := reader.ReadNext()
 	assert.NoError(t, err)
 	assert.Equal(t, &proto.LogEntry{
 		Term:   1,
 		Offset: 99,
 		Value:  []byte("entry-99"),
 	}, entry)
-	entry2, err := reader.ReadNext()
+	entry2, _, err := reader.ReadNext()
 	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
 	assert.Nil(t, entry2)
 

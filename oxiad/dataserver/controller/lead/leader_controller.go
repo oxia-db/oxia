@@ -124,6 +124,7 @@ type leaderController struct {
 	headOffsetGauge         metric.Gauge
 	commitOffsetGauge       metric.Gauge
 	checksumGauge           metric.SyncGauge
+	walChecksumGauge        metric.SyncGauge
 	followerAckOffsetGauges map[string]metric.Gauge
 }
 
@@ -166,6 +167,8 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 		})
 	lc.checksumGauge = metric.NewSyncGauge("oxia_dataserver_db_checksum",
 		"The current DB checksum value", "count", labels)
+	lc.walChecksumGauge = metric.NewSyncGauge("oxia_dataserver_wal_checksum",
+		"The current WAL checksum value", "count", labels)
 
 	lc.ctx, lc.cancel = context.WithCancel(context.Background())
 
@@ -534,7 +537,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 	defer r.Close()
 
 	for r.HasNext() {
-		entry, err := r.ReadNext()
+		entry, entryCrc, err := r.ReadNext()
 		if err != nil {
 			return errors.Wrap(err, "failed to applies wal entries to db")
 		}
@@ -544,6 +547,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		}
 		if resp.Checksum != nil {
 			lc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("commit-offset", entry.Offset))
+			lc.walChecksumGauge.Record(int64(entryCrc), attribute.Int64("commit-offset", entry.Offset))
 		}
 	}
 
@@ -624,7 +628,7 @@ func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {
 	}
 	defer r.Close()
 	for r.HasNext() {
-		e, err := r.ReadNext()
+		e, _, err := r.ReadNext()
 		if err != nil {
 			return constant2.InvalidEntryId, err
 		}
@@ -898,7 +902,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 		return
 	}
 
-	deferDbWrite := func(err error) {
+	deferDbWrite := func(entryCrc uint32, err error) {
 		if err != nil {
 			timer.DoneCtx(ctx)
 			cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
@@ -915,6 +919,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 				}
 				if response.Checksum != nil {
 					lc.checksumGauge.Record(int64(*response.Checksum), attribute.Int64("commit-offset", newOffset))
+					lc.walChecksumGauge.Record(int64(entryCrc), attribute.Int64("commit-offset", newOffset))
 				}
 				cb.OnComplete(response)
 			}, func(err error) {
@@ -1071,7 +1076,7 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 		return constant2.InvalidEntryId, nil
 	}
 
-	entry, err := reader.ReadNext()
+	entry, _, err := reader.ReadNext()
 	if err != nil {
 		return nil, err
 	}

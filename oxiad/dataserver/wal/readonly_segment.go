@@ -45,7 +45,7 @@ type ReadOnlySegment interface {
 
 	LastCrc() uint32
 
-	Read(offset int64) ([]byte, error)
+	Read(offset int64) ([]byte, uint32, error)
 
 	Delete() error
 
@@ -126,20 +126,21 @@ func (ms *readOnlySegment) LastOffset() int64 {
 	return ms.lastOffset
 }
 
-func (ms *readOnlySegment) Read(offset int64) ([]byte, error) {
+func (ms *readOnlySegment) Read(offset int64) ([]byte, uint32, error) {
 	if offset < ms.c.baseOffset || offset > ms.lastOffset {
-		return nil, codec.ErrOffsetOutOfBounds
+		return nil, 0, codec.ErrOffsetOutOfBounds
 	}
 	fileReadOffset := fileOffset(ms.idx, ms.c.baseOffset, offset)
 	var payload []byte
+	var payloadCrc uint32
 	var err error
-	if payload, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {
+	if payload, payloadCrc, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {
 		if errors.Is(err, codec.ErrDataCorrupted) {
-			return nil, errors.Wrapf(err, "read record failed. entryOffset: %d", offset)
+			return nil, 0, errors.Wrapf(err, "read record failed. entryOffset: %d", offset)
 		}
-		return nil, err
+		return nil, 0, err
 	}
-	return payload, nil
+	return payload, payloadCrc, nil
 }
 
 func (ms *readOnlySegment) Close() error {
