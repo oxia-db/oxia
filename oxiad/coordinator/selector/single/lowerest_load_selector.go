@@ -15,8 +15,6 @@
 package single
 
 import (
-	"math"
-
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 )
 
@@ -32,17 +30,12 @@ func (*lowerestLoadSelector) Select(ssContext *Context) (string, error) {
 	if loadRatios == nil {
 		return "", selector.ErrNoFunctioning
 	}
-	lowestRatio := math.MaxFloat64
-	lowestNodeID := ""
 	for iter := loadRatios.NodeIterator(); iter.Next(); {
 		nodeRatio := iter.Value()
-		if ssContext.Candidates.Contains(nodeRatio.NodeID) && nodeRatio.Ratio < lowestRatio {
-			lowestRatio = nodeRatio.Ratio
-			lowestNodeID = nodeRatio.NodeID
+		lowerLoad := nodeRatio.NodeID
+		if ssContext.Candidates.Contains(lowerLoad) {
+			return lowerLoad, nil
 		}
 	}
-	if lowestNodeID == "" {
-		return "", selector.ErrNoFunctioning
-	}
-	return lowestNodeID, nil
+	return "", selector.ErrNoFunctioning
 }

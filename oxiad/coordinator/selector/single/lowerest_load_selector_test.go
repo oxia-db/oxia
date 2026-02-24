@@ -126,7 +126,7 @@ func TestSelectLowerestLoadSelectorAfterShardMove(t *testing.T) {
 	ratioSnapshot.ReCalculateRatios()
 
 	// sv-4 has the lowest ratio (2/15)
-	// Without the sort fix, sv-5 (3/15) stays at index 0 and gets selected instead
+	// Without re-sorting in ReCalculateRatios, sv-5 (3/15) stays at index 0 and gets selected instead
 	ctx := &Context{
 		Candidates: linkedhashset.New("sv-1", "sv-2", "sv-3", "sv-4", "sv-5"),
 		LoadRatioSupplier: func() *model.Ratio {

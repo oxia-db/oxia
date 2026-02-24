@@ -15,6 +15,8 @@
 package model
 
 import (
+	"cmp"
+
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
@@ -95,6 +97,10 @@ func (r *Ratio) ReCalculateRatios() {
 			r.minNodeLoadRatio = nodeLoadRatio.Ratio
 		}
 	}
+
+	r.nodeLoadRatios.Sort(func(x, y *NodeLoadRatio) int {
+		return cmp.Compare(x.Ratio, y.Ratio)
+	})
 }
 
 func (r *Ratio) RemoveDeletedNode(nodeID string) error {
