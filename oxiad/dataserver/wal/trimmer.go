@@ -216,7 +216,7 @@ func (t *trimmer) readAtOffset(offset int64) (timestamp time.Time, err error) {
 		return time.Time{}, errors.Wrap(err, "failed to create reader")
 	}
 
-	fe, _, err := reader.ReadNext()
+	fe, _, _, err := reader.ReadNext()
 	if err != nil {
 		return time.Time{}, errors.Wrapf(err, "failed to read from wal at offset %d first=%d last=%d", offset,
 			t.wal.FirstOffset(), t.wal.LastOffset())

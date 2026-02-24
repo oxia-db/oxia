@@ -57,10 +57,10 @@ type Factory interface {
 type Reader interface {
 	io.Closer
 	// ReadNext returns the next entry in the log according to the Reader's direction,
-	// along with the chained WAL CRC for that entry.
+	// along with the previous entry's chained CRC and this entry's chained CRC.
 	// If a forward/reverse WalReader has passed the end/beginning of the log, it returns [ErrorEntryNotFound].
 	// To avoid this error, use HasNext.
-	ReadNext() (*proto.LogEntry, uint32, error)
+	ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error)
 	// HasNext returns true if there is an entry to read.
 	HasNext() bool
 }
@@ -74,6 +74,11 @@ type Wal interface {
 	// AppendAsync an entry without syncing the WAL
 	// Caller should use Sync to make the entry visible
 	AppendAsync(entry *proto.LogEntry) error
+
+	// AppendAsyncWithPreviousCrc appends an entry without syncing, using the given
+	// previousCrc to seed the CRC chain when the WAL is empty (e.g. after snapshot install).
+	// Pass nil when no CRC seed is needed.
+	AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) error
 
 	// AppendAndSync an entry and forces the sync on the WAL
 	// The operation is perfomed in background and the callback is

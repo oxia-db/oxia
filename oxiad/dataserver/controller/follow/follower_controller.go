@@ -408,7 +408,7 @@ func (fc *followerController) stateApplier() {
 
 func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, maxInclusive int64) error {
 	for reader.HasNext() {
-		entry, entryCrc, err := reader.ReadNext()
+		entry, _, entryCrc, err := reader.ReadNext()
 
 		if errors.Is(err, wal.ErrReaderClosed) {
 			fc.log.Info("Stopped reading committed entries")
@@ -685,7 +685,7 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 		return constant2.InvalidEntryId, nil
 	}
 
-	entry, _, err := reader.ReadNext()
+	entry, _, _, err := reader.ReadNext()
 	if err != nil {
 		return nil, err
 	}

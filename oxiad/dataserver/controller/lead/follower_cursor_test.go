@@ -159,7 +159,15 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	ackTracker := NewQuorumAckTracker(3, n-1, n-1)
+	// Append one more entry so there is something to stream after the snapshot
+	assert.NoError(t, w.Append(&proto.LogEntry{
+		Term:      1,
+		Offset:    n,
+		Value:     []byte("post-snapshot"),
+		Timestamp: uint64(n),
+	}))
+
+	ackTracker := NewQuorumAckTracker(3, n, n-1)
 
 	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, wal.InvalidOffset)
 	assert.NoError(t, err)
@@ -173,9 +181,24 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 
 	s.Response <- &proto.SnapshotResponse{AckOffset: n - 1}
 
+	// Wait for the first Append message after the snapshot
+	var firstAppend *proto.Append
 	assert.Eventually(t, func() bool {
-		return fc.AckOffset() == n-1
+		select {
+		case req := <-stream.AppendReqs:
+			firstAppend = req
+			return true
+		default:
+			return false
+		}
 	}, 10*time.Second, 10*time.Millisecond)
+
+	// The first Append after snapshot must carry the WAL CRC at the snapshot offset
+	assert.NotNil(t, firstAppend.PreviousEntryCrc,
+		"first Append after snapshot must have PreviousEntryCrc set")
+	assert.NotZero(t, firstAppend.GetPreviousEntryCrc(),
+		"first Append after snapshot must have non-zero PreviousEntryCrc")
+	assert.EqualValues(t, n, firstAppend.Entry.Offset)
 
 	assert.NoError(t, fc.Close())
 }

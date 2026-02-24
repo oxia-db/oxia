@@ -332,7 +332,7 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			continue
 		}
 
-		le, _, err := reader.ReadNext()
+		le, previousCrc, _, err := reader.ReadNext()
 		if err != nil {
 			return err
 		}
@@ -343,9 +343,10 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 		)
 
 		if err = fc.stream.Send(&proto.Append{
-			Term:         fc.term,
-			Entry:        le,
-			CommitOffset: fc.ackTracker.CommitOffset(),
+			Term:             fc.term,
+			Entry:            le,
+			CommitOffset:     fc.ackTracker.CommitOffset(),
+			PreviousEntryCrc: &previousCrc,
 		}); err != nil {
 			return err
 		}

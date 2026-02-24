@@ -62,9 +62,10 @@ type Codec interface {
 	//
 	// Returns:
 	// - payload: The actual data (payload) of the record.
+	// - previousCrc: The CRC value of the previous record (0 for V1 which has no CRC).
 	// - payloadCrc: The CRC value of the current payload (0 for V1 which has no CRC).
 	// - err: Error if any issues occur during reading or validation.
-	ReadRecordWithValidation(buf []byte, startFileOffset uint32) (payload []byte, payloadCrc uint32, err error)
+	ReadRecordWithValidation(buf []byte, startFileOffset uint32) (payload []byte, previousCrc uint32, payloadCrc uint32, err error)
 
 	// ReadHeaderWithValidation reads the header of a record at the specified
 	// offset and validates the integrity of the header data (e.g., CRC checks).
