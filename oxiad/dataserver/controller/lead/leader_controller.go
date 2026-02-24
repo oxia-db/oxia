@@ -650,6 +650,7 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 		cb.OnComplete(err)
 		return
 	}
+	log := lc.log
 	go process.DoWithLabels(
 		ctx,
 		map[string]string{
@@ -658,7 +659,7 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 			"peer":  rpc.GetPeer(ctx),
 		},
 		func() {
-			lc.log.Debug("Received read request")
+			log.Debug("Received read request")
 			var response *proto.GetResponse
 			var err error
 
@@ -707,6 +708,7 @@ func (lc *leaderController) List(ctx context.Context, request *proto.ListRequest
 }
 
 func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
+	log := lc.log
 	go process.DoWithLabels(
 		ctx,
 		map[string]string{
@@ -715,7 +717,7 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 			"peer":  rpc.GetPeer(ctx),
 		},
 		func() {
-			lc.log.Debug("Received list request", slog.Any("request", request))
+			log.Debug("Received list request", slog.Any("request", request))
 
 			var it kvstore.KeyIterator
 			var err error
@@ -726,7 +728,7 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 				it, err = lc.db.List(request)
 			}
 			if err != nil {
-				lc.log.Warn(
+				log.Warn(
 					"Failed to process list request",
 					slog.Any("error", err),
 				)
@@ -765,6 +767,7 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 		return
 	}
 
+	log := lc.log
 	go process.DoWithLabels(ctx,
 		map[string]string{
 			"oxia":  "range-scan",
@@ -772,7 +775,7 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 			"peer":  rpc.GetPeer(ctx),
 		},
 		func() {
-			lc.log.Debug("Received list request", slog.Any("request", request))
+			log.Debug("Received list request", slog.Any("request", request))
 
 			var it database.RangeScanIterator
 			var err error
@@ -784,7 +787,7 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 			}
 
 			if err != nil {
-				lc.log.Warn("Failed to process range-scan request", slog.Any("error", err))
+				log.Warn("Failed to process range-scan request", slog.Any("error", err))
 				cb.OnComplete(err)
 				return
 			}
@@ -840,10 +843,11 @@ func (lc *leaderController) writeBlock(ctx context.Context, requestSupplier func
 // As a result, the underlying State Machine must handle these requests
 // idempotently to ensure consistency across retries or leader transitions.
 func (lc *leaderController) proposeFeaturesEnable(ctx context.Context, features []proto.Feature) {
+	log := lc.log
 	deferPropose := concurrent.NewOnce(func(statemachine.ApplyResponse) {
-		lc.log.Info("Proposed feature enable", slog.Any("features", features))
+		log.Info("Proposed feature enable", slog.Any("features", features))
 	}, func(err error) {
-		lc.log.Error("Failed to propose feature enable", slog.Any("features", features), slog.Any("error", err))
+		log.Error("Failed to propose feature enable", slog.Any("features", features), slog.Any("error", err))
 	})
 	lc.propose(ctx, func(offset int64) statemachine.Proposal {
 		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
@@ -857,10 +861,11 @@ func (lc *leaderController) proposeFeaturesEnable(ctx context.Context, features 
 }
 
 func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
+	log := lc.log
 	deferPropose := concurrent.NewOnce(func(statemachine.ApplyResponse) {
-		lc.log.Debug("Recorded checksum")
+		log.Debug("Recorded checksum")
 	}, func(err error) {
-		lc.log.Warn("Failed to record checksum", slog.Any("error", err))
+		log.Warn("Failed to record checksum", slog.Any("error", err))
 	})
 	lc.propose(ctx, func(offset int64) statemachine.Proposal {
 		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
@@ -975,6 +980,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 		offsetExclusive = commitOffset
 	}
 
+	log := lc.log
 	go process.DoWithLabels(
 		ctx,
 		map[string]string{
@@ -983,7 +989,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			"peer":  rpc.GetPeer(ctx),
 		},
 		func() {
-			lc.log.Debug("Dispatch notifications", slog.Any("start-offset-include", offsetExclusive))
+			log.Debug("Dispatch notifications", slog.Any("start-offset-include", offsetExclusive))
 			offset := offsetExclusive
 			for {
 				select {
@@ -999,7 +1005,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 						cb.OnComplete(err)
 						return
 					}
-					lc.log.Debug(
+					log.Debug(
 						"Got a new list of notification batches",
 						slog.Int("list-size", len(notifications)),
 					)
