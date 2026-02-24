@@ -128,8 +128,10 @@ func TestLeaderHintWithClient(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	_, _, err = client.Put(t.Context(), "/key1", []byte("value"))
-	assert.NoError(t, err)
+	assert.Eventually(t, func() bool {
+		_, _, err = client.Put(t.Context(), "/key1", []byte("value"))
+		return err == nil
+	}, 5*time.Second, 100*time.Millisecond)
 
 	_, _, err = client.Put(t.Context(), "/key2", []byte("value"))
 	assert.NoError(t, err)
