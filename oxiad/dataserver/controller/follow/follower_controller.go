@@ -187,7 +187,6 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 			slog.String("component", "follower-controller"),
 			slog.String("namespace", namespace),
 			slog.Int64("shard", shardId),
-			slog.Any("term", term),
 		),
 		storageOptions:         storageOptions,
 		namespace:              namespace,
@@ -226,7 +225,7 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 		)
 	})
 
-	fc.log.Info("Created follower", slog.Int64("head-offset", fc.lastAppendedOffset.Load()), slog.Int64("commit-offset", commitOffset.Load()))
+	fc.log.Info("Created follower", slog.Int64("term", fc.term.Load()), slog.Int64("head-offset", fc.lastAppendedOffset.Load()), slog.Int64("commit-offset", commitOffset.Load()))
 	return fc, nil
 }
 
@@ -234,7 +233,7 @@ func (fc *followerController) Close() error {
 	if !fc.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	fc.log.Info("Closing follower controller")
+	fc.log.Info("Closing follower controller", slog.Int64("term", fc.term.Load()))
 	var err error
 	defer func() {
 		if err != nil {
@@ -350,7 +349,7 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		fc.log.Warn("Failed to get last entry from WAL", slog.Any("error", err), slog.Int64("new-term", req.Term))
 		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "get last entry from WAL failed")
 	}
-	fc.log.Info("Follower successfully initialized in new term", slog.Any("last-entry", lastEntryId))
+	fc.log.Info("Follower successfully initialized in new term", slog.Int64("term", fc.term.Load()), slog.Any("last-entry", lastEntryId))
 	return &proto.NewTermResponse{HeadEntryId: lastEntryId}, nil
 }
 
@@ -410,6 +409,7 @@ func (fc *followerController) stateApplier() {
 		}
 	}, bo, func(err error, d time.Duration) {
 		fc.log.Error("State applier failed, retrying",
+			slog.Int64("term", fc.term.Load()),
 			slog.Any("error", err),
 			slog.Duration("retry-after", d),
 		)
@@ -491,7 +491,7 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	if fc.closed.Load() {
 		return dserror.ErrResourceConflict
 	}
-	fc.log.Info("Installing snapshot...")
+	fc.log.Info("Installing snapshot...", slog.Int64("term", fc.term.Load()))
 	var err error
 	defer func() {
 		if err != nil {
@@ -585,6 +585,7 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	}
 	fc.log.Info(
 		"Successfully installed snapshot",
+		slog.Int64("term", fc.term.Load()),
 		slog.Int64("snapshot-size", totalSize),
 		slog.Int64("commit-offset", rawCommitOffset),
 	)
@@ -648,7 +649,7 @@ func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.
 		return nil, dserror.ErrInvalidTerm
 	}
 	var err error
-	fc.log.Info("Deleting shard")
+	fc.log.Info("Deleting shard", slog.Int64("term", fc.term.Load()))
 	defer func() {
 		if err != nil {
 			fc.log.Error("Follower controller deleted with error", slog.Any("error", err))
