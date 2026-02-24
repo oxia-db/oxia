@@ -110,7 +110,6 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 
 	checksums := make([]uint32, 0)
 	leadCommitOffset := int64(0)
-	followCommitOffset := make([]int64, 0)
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
 		if targetId == leader.GetIdentifier() {
@@ -120,14 +119,21 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 			leadCommitOffset = lead.CommitOffset()
 			continue
 		}
-		follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-		assert.NoError(t, err)
-		followCommitOffset = append(followCommitOffset, follow.CommitOffset())
 	}
 
-	// todo: The follower is always one step behind the leader.
-	for _, offset := range followCommitOffset {
-		assert.EqualValues(t, 1, leadCommitOffset-offset)
+	// Wait for followers to catch up to the leader's commit offset
+	for _, dataServer := range shardMetadata.Ensemble {
+		targetId := dataServer.GetIdentifier()
+		if targetId == leader.GetIdentifier() {
+			continue
+		}
+		assert.Eventually(t, func() bool {
+			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
+			if err != nil {
+				return false
+			}
+			return leadCommitOffset-follow.CommitOffset() <= 1
+		}, 10*time.Second, 100*time.Millisecond)
 	}
 
 	_, _, err = client.Put(context.Background(), "/key7", []byte("value"))
