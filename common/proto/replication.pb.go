@@ -1008,12 +1008,13 @@ func (x *TruncateResponse) GetHeadEntryId() *EntryId {
 }
 
 type Append struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Term          int64                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
-	Entry         *LogEntry              `protobuf:"bytes,2,opt,name=entry,proto3" json:"entry,omitempty"`
-	CommitOffset  int64                  `protobuf:"varint,3,opt,name=commit_offset,json=commitOffset,proto3" json:"commit_offset,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Term             int64                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
+	Entry            *LogEntry              `protobuf:"bytes,2,opt,name=entry,proto3" json:"entry,omitempty"`
+	CommitOffset     int64                  `protobuf:"varint,3,opt,name=commit_offset,json=commitOffset,proto3" json:"commit_offset,omitempty"`
+	PreviousEntryCrc *uint32                `protobuf:"varint,4,opt,name=previous_entry_crc,json=previousEntryCrc,proto3,oneof" json:"previous_entry_crc,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Append) Reset() {
@@ -1063,6 +1064,13 @@ func (x *Append) GetEntry() *LogEntry {
 func (x *Append) GetCommitOffset() int64 {
 	if x != nil {
 		return x.CommitOffset
+	}
+	return 0
+}
+
+func (x *Append) GetPreviousEntryCrc() uint32 {
+	if x != nil && x.PreviousEntryCrc != nil {
+		return *x.PreviousEntryCrc
 	}
 	return 0
 }
@@ -1423,11 +1431,13 @@ const file_replication_proto_rawDesc = "" +
 	"\x04term\x18\x03 \x01(\x03R\x04term\x128\n" +
 	"\rhead_entry_id\x18\x04 \x01(\v2\x14.replication.EntryIdR\vheadEntryId\"L\n" +
 	"\x10TruncateResponse\x128\n" +
-	"\rhead_entry_id\x18\x01 \x01(\v2\x14.replication.EntryIdR\vheadEntryId\"n\n" +
+	"\rhead_entry_id\x18\x01 \x01(\v2\x14.replication.EntryIdR\vheadEntryId\"\xb8\x01\n" +
 	"\x06Append\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x03R\x04term\x12+\n" +
 	"\x05entry\x18\x02 \x01(\v2\x15.replication.LogEntryR\x05entry\x12#\n" +
-	"\rcommit_offset\x18\x03 \x01(\x03R\fcommitOffset\"\x1d\n" +
+	"\rcommit_offset\x18\x03 \x01(\x03R\fcommitOffset\x121\n" +
+	"\x12previous_entry_crc\x18\x04 \x01(\rH\x00R\x10previousEntryCrc\x88\x01\x01B\x15\n" +
+	"\x13_previous_entry_crc\"\x1d\n" +
 	"\x03Ack\x12\x16\n" +
 	"\x06offset\x18\x01 \x01(\x03R\x06offset\"1\n" +
 	"\x10SnapshotResponse\x12\x1d\n" +
@@ -1563,6 +1573,7 @@ func file_replication_proto_init() {
 		return
 	}
 	file_client_proto_init()
+	file_replication_proto_msgTypes[15].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

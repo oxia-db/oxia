@@ -540,7 +540,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 	defer r.Close()
 
 	for r.HasNext() {
-		entry, entryCrc, err := r.ReadNext()
+		entry, _, entryCrc, err := r.ReadNext()
 		if err != nil {
 			return errors.Wrap(err, "failed to applies wal entries to db")
 		}
@@ -633,7 +633,7 @@ func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {
 	}
 	defer r.Close()
 	for r.HasNext() {
-		e, _, err := r.ReadNext()
+		e, _, _, err := r.ReadNext()
 		if err != nil {
 			return constant2.InvalidEntryId, err
 		}
@@ -1087,7 +1087,7 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 		return constant2.InvalidEntryId, nil
 	}
 
-	entry, _, err := reader.ReadNext()
+	entry, _, _, err := reader.ReadNext()
 	if err != nil {
 		return nil, err
 	}

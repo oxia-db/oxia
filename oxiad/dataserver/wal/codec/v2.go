@@ -86,15 +86,15 @@ func (v *V2) GetRecordSize(buf []byte, startFileOffset uint32) (uint32, error) {
 	return v.HeaderSize + payloadSize, nil
 }
 
-func (v *V2) ReadRecordWithValidation(buf []byte, startFileOffset uint32) (payload []byte, payloadCrc uint32, err error) {
+func (v *V2) ReadRecordWithValidation(buf []byte, startFileOffset uint32) (payload []byte, previousCrc uint32, payloadCrc uint32, err error) {
 	var payloadSize uint32
-	if payloadSize, _, payloadCrc, err = v.ReadHeaderWithValidation(buf, startFileOffset); err != nil {
-		return nil, 0, err
+	if payloadSize, previousCrc, payloadCrc, err = v.ReadHeaderWithValidation(buf, startFileOffset); err != nil {
+		return nil, 0, 0, err
 	}
 	payload = make([]byte, payloadSize)
 	payloadStartFileOffset := startFileOffset + v.HeaderSize
 	copy(payload, buf[payloadStartFileOffset:payloadStartFileOffset+payloadSize])
-	return payload, payloadCrc, nil
+	return payload, previousCrc, payloadCrc, nil
 }
 
 func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (payloadSize uint32, previousCrc uint32, payloadCrc uint32, err error) {

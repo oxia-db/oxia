@@ -79,7 +79,7 @@ func (r *reverseReader) Close() error {
 	return nil
 }
 
-func (r *forwardReader) ReadNext() (*proto.LogEntry, uint32, error) {
+func (r *forwardReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
 	timer := r.wal.readLatency.Timer()
 	defer timer.Done()
 
@@ -87,17 +87,17 @@ func (r *forwardReader) ReadNext() (*proto.LogEntry, uint32, error) {
 	defer r.Unlock()
 
 	if r.closed {
-		return nil, 0, ErrReaderClosed
+		return nil, 0, 0, ErrReaderClosed
 	}
 
 	index := r.nextOffset
-	entry, entryCrc, err := r.wal.readAtIndex(index)
+	entry, previousCrc, entryCrc, err = r.wal.readAtIndex(index)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
 	r.nextOffset++
-	return entry, entryCrc, nil
+	return entry, previousCrc, entryCrc, nil
 }
 
 func (r *forwardReader) HasNext() bool {
@@ -111,18 +111,18 @@ func (r *forwardReader) HasNext() bool {
 	return r.nextOffset <= r.wal.LastOffset()
 }
 
-func (r *reverseReader) ReadNext() (*proto.LogEntry, uint32, error) {
+func (r *reverseReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
 	if r.closed {
-		return nil, 0, ErrReaderClosed
+		return nil, 0, 0, ErrReaderClosed
 	}
 
-	entry, entryCrc, err := r.wal.readAtIndex(r.nextOffset)
+	entry, previousCrc, entryCrc, err = r.wal.readAtIndex(r.nextOffset)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	// If we read the first entry, this overflows to MaxUint64
 	r.nextOffset--
-	return entry, entryCrc, nil
+	return entry, previousCrc, entryCrc, nil
 }
 
 func (r *reverseReader) HasNext() bool {

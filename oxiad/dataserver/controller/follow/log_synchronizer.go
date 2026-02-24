@@ -131,9 +131,10 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 		return stream.Send(&proto.Ack{Offset: req.Entry.Offset})
 	}
 
-	// Append the entry asynchronously. We'll sync it in a group from the "sync" routine,
-	// where the ack is then sent back
-	if err := ls.wal.AppendAsync(req.GetEntry()); err != nil {
+	// Append the entry asynchronously, passing the previous CRC from the leader.
+	// When the WAL is empty (e.g. after snapshot install), the CRC seeds the chain
+	// so that the follower's CRC matches the leader's.
+	if err := ls.wal.AppendAsyncWithPreviousCrc(req.GetEntry(), req.PreviousEntryCrc); err != nil {
 		return err
 	}
 

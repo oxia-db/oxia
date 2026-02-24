@@ -96,9 +96,15 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 	} else {
 		commitOffset = nil
 	}
+	initialLastCrc := ms.lastCrc
 	if ms.writingIdx, ms.lastCrc, ms.currentFileOffset, ms.lastOffset, err = ms.c.codec.RecoverIndex(ms.txnMappedFile,
 		ms.currentFileOffset, ms.c.baseOffset, commitOffset); err != nil {
 		return nil, errors.Wrapf(err, "failed to rebuild index for segment file %s", ms.c.txnPath)
+	}
+	// If the segment is empty, preserve the caller's CRC seed so that it can
+	// be used as the previous CRC for the first entry appended to this segment.
+	if len(ms.writingIdx) == 0 {
+		ms.lastCrc = initialLastCrc
 	}
 	return ms, nil
 }
@@ -120,24 +126,21 @@ func (ms *readWriteSegment) LastOffset() int64 {
 	return ms.lastOffset
 }
 
-func (ms *readWriteSegment) Read(offset int64) ([]byte, uint32, error) {
+func (ms *readWriteSegment) Read(offset int64) (payload []byte, previousCrc uint32, payloadCrc uint32, err error) {
 	ms.Lock()
 	defer ms.Unlock()
 	if offset < ms.c.baseOffset || offset > ms.lastOffset {
-		return nil, 0, codec.ErrOffsetOutOfBounds
+		return nil, 0, 0, codec.ErrOffsetOutOfBounds
 	}
 
 	fileReadOffset := fileOffset(ms.writingIdx, ms.c.baseOffset, offset)
-	var payload []byte
-	var payloadCrc uint32
-	var err error
-	if payload, payloadCrc, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {
+	if payload, previousCrc, payloadCrc, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {
 		if errors.Is(err, codec.ErrDataCorrupted) {
-			return nil, 0, errors.Wrapf(err, "read record failed. entryOffset: %d", offset)
+			return nil, 0, 0, errors.Wrapf(err, "read record failed. entryOffset: %d", offset)
 		}
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	return payload, payloadCrc, nil
+	return payload, previousCrc, payloadCrc, nil
 }
 
 func (ms *readWriteSegment) HasSpace(l int) bool {
