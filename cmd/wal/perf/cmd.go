@@ -123,7 +123,7 @@ func run(*cobra.Command, []string) error {
 						continue
 					}
 
-					entry, _, err := reader.ReadNext()
+					entry, _, _, err := reader.ReadNext()
 					if err != nil {
 						panic(err)
 					}

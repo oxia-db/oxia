@@ -46,7 +46,7 @@ func TestV2_Codec(t *testing.T) {
 	assert.EqualValues(t, expectedPayloadCrc, payloadCrc)
 	assert.EqualValues(t, recordSize-(v2PayloadSizeLen+v2PreviousCrcLen+v2PayloadCrcLen), payloadSize)
 
-	getPayload, _, err := v2.ReadRecordWithValidation(buf, 0)
+	getPayload, _, _, err := v2.ReadRecordWithValidation(buf, 0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload, getPayload)
 }
@@ -78,7 +78,7 @@ func TestV2_Crc(t *testing.T) {
 
 	for index := range len(entriesToOffset) {
 		startFOffset := entriesToOffset[index]
-		payload, _, err := v2.ReadRecordWithValidation(buf, startFOffset)
+		payload, _, _, err := v2.ReadRecordWithValidation(buf, startFOffset)
 		assert.NoError(t, err)
 		assert.EqualValues(t, []byte{byte(index)}, payload)
 	}
@@ -194,7 +194,7 @@ func TestV2_BreakingPoint_Size(t *testing.T) {
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
 
-	_, _, err = v2.ReadRecordWithValidation(buf, 0)
+	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
 }
 
@@ -207,7 +207,7 @@ func TestV2_BreakingPoint_PreviousCrc(t *testing.T) {
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 
-	_, _, err = v2.ReadRecordWithValidation(buf, 0)
+	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 }
 
@@ -220,7 +220,7 @@ func TestV2_BreakingPoint_PayloadCrc(t *testing.T) {
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 
-	_, _, err = v2.ReadRecordWithValidation(buf, 0)
+	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 }
 
@@ -233,7 +233,7 @@ func TestV2_BreakingPoint_Payload(t *testing.T) {
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 
-	_, _, err = v2.ReadRecordWithValidation(buf, 0)
+	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 }
 
@@ -279,7 +279,7 @@ func TestV2_RecoverIndex(t *testing.T) {
 	assert.EqualValues(t, fOffset, newFileOffset)
 	for i := 0; i < elementsNum; i++ {
 		fOffset := ReadInt(index, uint32(i*4))
-		payload, _, err := v2.ReadRecordWithValidation(buf, fOffset)
+		payload, _, _, err := v2.ReadRecordWithValidation(buf, fOffset)
 		assert.NoError(t, err)
 		assert.EqualValues(t, payloads[i], payload)
 	}

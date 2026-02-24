@@ -326,6 +326,10 @@ func (m *Append) CloneVT() *Append {
 	r.Term = m.Term
 	r.Entry = m.Entry.CloneVT()
 	r.CommitOffset = m.CommitOffset
+	if rhs := m.PreviousEntryCrc; rhs != nil {
+		tmpVal := *rhs
+		r.PreviousEntryCrc = &tmpVal
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -830,6 +834,9 @@ func (this *Append) EqualVT(that *Append) bool {
 		return false
 	}
 	if this.CommitOffset != that.CommitOffset {
+		return false
+	}
+	if p, q := this.PreviousEntryCrc, that.PreviousEntryCrc; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1764,6 +1771,11 @@ func (m *Append) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.PreviousEntryCrc != nil {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.PreviousEntryCrc))
+		i--
+		dAtA[i] = 0x20
+	}
 	if m.CommitOffset != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.CommitOffset))
 		i--
@@ -2338,6 +2350,9 @@ func (m *Append) SizeVT() (n int) {
 	}
 	if m.CommitOffset != 0 {
 		n += 1 + protohelpers.SizeOfVarint(uint64(m.CommitOffset))
+	}
+	if m.PreviousEntryCrc != nil {
+		n += 1 + protohelpers.SizeOfVarint(uint64(*m.PreviousEntryCrc))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -4362,6 +4377,26 @@ func (m *Append) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PreviousEntryCrc", wireType)
+			}
+			var v uint32
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.PreviousEntryCrc = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -6843,6 +6878,26 @@ func (m *Append) UnmarshalVTUnsafe(dAtA []byte) error {
 					break
 				}
 			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PreviousEntryCrc", wireType)
+			}
+			var v uint32
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.PreviousEntryCrc = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

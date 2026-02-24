@@ -168,7 +168,6 @@ func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidat
 				slog.String("from-node", fromNodeID),
 				slog.Any("error", err),
 			)
-			continue
 		}
 		if !shardIter.Prev() {
 			break

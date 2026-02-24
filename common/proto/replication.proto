@@ -145,6 +145,7 @@ message Append {
   int64 term = 1;
   LogEntry entry = 2;
   int64 commit_offset = 3;
+  optional uint32 previous_entry_crc = 4;
 }
 
 message Ack {
