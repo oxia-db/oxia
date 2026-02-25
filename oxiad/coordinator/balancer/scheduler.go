@@ -429,7 +429,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		if minCandidateLeaders == maxLeaders || minCandidateLeaders+1 == maxLeaders {
 			r.Info("quarantine the shard due to no valid candidates", slog.Int64("shard", shard), slog.Any("leader", maxLeadersNodeID))
 			r.shardQuarantineShardMap.Store(shard, time.Now())
-			break
+			continue
 		}
 
 		latch := &sync.WaitGroup{}
