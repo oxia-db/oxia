@@ -417,6 +417,9 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		minCandidateLeaders := -1
 		for _, candidate := range shardStatus.Ensemble {
 			candidateID := candidate.GetIdentifier()
+			if candidateID == maxLeadersNodeID {
+				continue
+			}
 			if !r.nodeAvailableJudger(candidateID) {
 				continue
 			}
@@ -426,7 +429,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 				minCandidateLeaders = leaders
 			}
 		}
-		if minCandidateLeaders == maxLeaders || minCandidateLeaders+1 == maxLeaders {
+		if minCandidateLeaders == -1 || minCandidateLeaders >= maxLeaders {
 			r.Info("quarantine the shard due to no valid candidates", slog.Int64("shard", shard), slog.Any("leader", maxLeadersNodeID))
 			r.shardQuarantineShardMap.Store(shard, time.Now())
 			continue
@@ -444,9 +447,10 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		r.Info("triggered new election", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
 		if leader == maxLeadersNodeID { // no changes
 			r.Info("quarantine the shard due to no leader changed", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
-			r.shardQuarantineShardMap.Store(shard, time.Now())
+			continue
 		}
-		break
+		maxLeaders--
+		continue
 	}
 }
 
