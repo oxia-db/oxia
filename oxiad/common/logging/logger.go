@@ -39,6 +39,11 @@ var (
 	LogLevel slog.Level
 	// LogJSON Used for flags.
 	LogJSON bool
+
+	// logLevelVar is the shared atomic level variable passed to all handlers.
+	// This allows dynamic log level changes to take effect on all existing
+	// loggers, including those created via slog.With().
+	logLevelVar slog.LevelVar
 )
 
 // ParseLogLevel will convert the slog level configuration to slog.Level values.
@@ -59,19 +64,17 @@ func ParseLogLevel(levelStr string) (slog.Level, error) {
 
 func ReconfigureLogger(logOption *option.LogOptions) bool {
 	expectLevel, _ := ParseLogLevel(logOption.Level)
-	needReconfigure := false
-	if expectLevel != LogLevel {
-		needReconfigure = true
-		LogLevel = expectLevel
+	if expectLevel == LogLevel {
+		return false
 	}
-	if needReconfigure {
-		ConfigureLogger()
-		return true
-	}
-	return false
+	LogLevel = expectLevel
+	logLevelVar.Set(expectLevel)
+	return true
 }
 
 func ConfigureLogger() {
+	logLevelVar.Set(LogLevel)
+
 	zerolog.TimeFieldFormat = time.RFC3339Nano
 	//nolint
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
@@ -111,7 +114,7 @@ func ConfigureLogger() {
 
 	slogLogger := slog.New(
 		slogzerolog.Option{
-			Level:  LogLevel,
+			Level:  &logLevelVar,
 			Logger: &zerologLogger,
 		}.NewZerologHandler(),
 	)
