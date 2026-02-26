@@ -16,6 +16,7 @@ package control
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -63,64 +64,53 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	// Write some entries
-	_, _, err = client.Put(context.Background(), "/key1", []byte("value"))
-	assert.NoError(t, err)
-	_, _, err = client.Put(context.Background(), "/key2", []byte("value"))
-	assert.NoError(t, err)
-	_, _, err = client.Put(context.Background(), "/key3", []byte("value"))
-	assert.NoError(t, err)
-	// monitor the data persistent
-	keys, err := client.List(context.Background(), "/", "//")
-	assert.NoError(t, err)
-	assert.EqualValues(t, []string{"/key1", "/key2", "/key3"}, keys)
-
-	// Check the feature has enabled for all the replicas
 	resource := coordinatorInstance.StatusResource().Load()
 	shardMetadata := resource.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
+
+	// Write entries. The replication messages for these writes also carry
+	// commit notifications for the feature-enable control entry that was
+	// proposed when the leader started, ensuring all replicas activate
+	// the checksum feature and start the CRC chain from the same point.
+	for i := 1; i <= 7; i++ {
+		_, _, err = client.Put(context.Background(), fmt.Sprintf("/key%d", i), []byte("value"))
+		assert.NoError(t, err)
+	}
+
+	keys, err := client.List(context.Background(), "/", "//")
+	assert.NoError(t, err)
+	assert.EqualValues(t, []string{"/key1", "/key2", "/key3", "/key4", "/key5", "/key6", "/key7"}, keys)
+
+	// Verify the checksum feature is enabled on all replicas.
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
 		if targetId == leader.GetIdentifier() {
 			assert.Eventually(t, func() bool {
 				lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
 				return err == nil && lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
-			}, 30*time.Second, 100*time.Millisecond)
+			}, 10*time.Second, 100*time.Millisecond)
 			continue
 		}
 		assert.Eventually(t, func() bool {
 			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
 			return err == nil && follow.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
-		}, 30*time.Second, 100*time.Millisecond)
+		}, 10*time.Second, 100*time.Millisecond)
 	}
 
-	// Write some entries
-	_, _, err = client.Put(context.Background(), "/key4", []byte("value"))
+	// Capture the leader's state after all writes.
+	lead, err := serverInstanceIndex[leader.GetIdentifier()].GetShardDirector().GetLeader(0)
 	assert.NoError(t, err)
-	_, _, err = client.Put(context.Background(), "/key5", []byte("value"))
-	assert.NoError(t, err)
-	_, _, err = client.Put(context.Background(), "/key6", []byte("value"))
+	leadCommitOffset := lead.CommitOffset()
+	leaderChecksum := lead.Checksum().Value()
+
+	// Write one more entry to propagate the commit notification for key7.
+	// Commit notifications are piggybacked on replication messages, so the
+	// last committed entry requires a subsequent write to notify followers.
+	_, _, err = client.Put(context.Background(), "/key8", []byte("value"))
 	assert.NoError(t, err)
 
-	// monitor the data persistent
-	keys, err = client.List(context.Background(), "/", "//")
-	assert.NoError(t, err)
-	assert.EqualValues(t, []string{"/key1", "/key2", "/key3", "/key4", "/key5", "/key6"}, keys)
-
-	checksums := make([]uint32, 0)
-	leadCommitOffset := int64(0)
-	for _, dataServer := range shardMetadata.Ensemble {
-		targetId := dataServer.GetIdentifier()
-		if targetId == leader.GetIdentifier() {
-			lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
-			assert.NoError(t, err)
-			checksums = append(checksums, lead.Checksum().Value())
-			leadCommitOffset = lead.CommitOffset()
-			continue
-		}
-	}
-
-	// Wait for followers to catch up to within 1 offset of the leader.
+	// Wait for each follower to replicate up to the leader's pre-flush
+	// commit offset, then verify checksum consistency.
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
 		if targetId == leader.GetIdentifier() {
@@ -128,28 +118,11 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		}
 		assert.Eventually(t, func() bool {
 			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-			return err == nil && leadCommitOffset-follow.CommitOffset() <= 1
-		}, 30*time.Second, 100*time.Millisecond)
-	}
+			return err == nil && follow.CommitOffset() >= leadCommitOffset
+		}, 10*time.Second, 100*time.Millisecond)
 
-	_, _, err = client.Put(context.Background(), "/key7", []byte("value"))
-	assert.NoError(t, err)
-
-	// monitor the data persistent
-	keys, err = client.List(context.Background(), "/", "//")
-	assert.NoError(t, err)
-	assert.EqualValues(t, []string{"/key1", "/key2", "/key3", "/key4", "/key5", "/key6", "/key7"}, keys)
-
-	// Wait for follower checksums to converge with the leader's checksum.
-	leaderChecksum := checksums[0]
-	for _, dataServer := range shardMetadata.Ensemble {
-		targetId := dataServer.GetIdentifier()
-		if targetId == leader.GetIdentifier() {
-			continue
-		}
-		assert.Eventually(t, func() bool {
-			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-			return err == nil && follow.Checksum().Value() == leaderChecksum
-		}, 30*time.Second, 100*time.Millisecond)
+		follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
+		assert.NoError(t, err)
+		assert.Equal(t, leaderChecksum, follow.Checksum().Value())
 	}
 }
