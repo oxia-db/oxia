@@ -308,6 +308,32 @@ func TestV2_IndexBroken(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 }
 
+func TestV2_ReadEmptyIndex(t *testing.T) {
+	dir := os.TempDir()
+	fileName := "empty-index"
+	p := path.Join(dir, fileName+v2.GetIdxExtension())
+
+	// Create empty file
+	err := os.WriteFile(p, []byte{}, 0644)
+	assert.NoError(t, err)
+
+	_, err = v2.ReadIndex(p)
+	assert.ErrorIs(t, err, ErrDataCorrupted)
+}
+
+func TestV2_ReadShortIndex(t *testing.T) {
+	dir := os.TempDir()
+	fileName := "short-index"
+	p := path.Join(dir, fileName+v2.GetIdxExtension())
+
+	// Create file with only 2 bytes (less than header size of 4)
+	err := os.WriteFile(p, []byte{0x00, 0x01}, 0644)
+	assert.NoError(t, err)
+
+	_, err = v2.ReadIndex(p)
+	assert.ErrorIs(t, err, ErrDataCorrupted)
+}
+
 func TestV2_ReadWithValidation(t *testing.T) {
 	buf := make([]byte, 15)
 	payloadSize := uint32(len(buf)) - v2.HeaderSize
