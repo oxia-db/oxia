@@ -449,8 +449,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 			r.Info("quarantine the shard due to no leader changed", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
 			continue
 		}
-		maxLeaders--
-		continue
+		break
 	}
 }
 
