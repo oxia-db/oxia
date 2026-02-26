@@ -1293,6 +1293,118 @@ func (*DeleteShardResponse) Descriptor() ([]byte, []int) {
 	return file_replication_proto_rawDescGZIP(), []int{19}
 }
 
+type RemoveObserverRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Shard         int64                  `protobuf:"varint,2,opt,name=shard,proto3" json:"shard,omitempty"` // parent shard ID
+	Term          int64                  `protobuf:"varint,3,opt,name=term,proto3" json:"term,omitempty"`
+	FollowerName  string                 `protobuf:"bytes,4,opt,name=follower_name,json=followerName,proto3" json:"follower_name,omitempty"`
+	TargetShard   int64                  `protobuf:"varint,5,opt,name=target_shard,json=targetShard,proto3" json:"target_shard,omitempty"` // child shard ID — used to form the observer key
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveObserverRequest) Reset() {
+	*x = RemoveObserverRequest{}
+	mi := &file_replication_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveObserverRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveObserverRequest) ProtoMessage() {}
+
+func (x *RemoveObserverRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_replication_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveObserverRequest.ProtoReflect.Descriptor instead.
+func (*RemoveObserverRequest) Descriptor() ([]byte, []int) {
+	return file_replication_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *RemoveObserverRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *RemoveObserverRequest) GetShard() int64 {
+	if x != nil {
+		return x.Shard
+	}
+	return 0
+}
+
+func (x *RemoveObserverRequest) GetTerm() int64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
+func (x *RemoveObserverRequest) GetFollowerName() string {
+	if x != nil {
+		return x.FollowerName
+	}
+	return ""
+}
+
+func (x *RemoveObserverRequest) GetTargetShard() int64 {
+	if x != nil {
+		return x.TargetShard
+	}
+	return 0
+}
+
+type RemoveObserverResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveObserverResponse) Reset() {
+	*x = RemoveObserverResponse{}
+	mi := &file_replication_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveObserverResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveObserverResponse) ProtoMessage() {}
+
+func (x *RemoveObserverResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_replication_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveObserverResponse.ProtoReflect.Descriptor instead.
+func (*RemoveObserverResponse) Descriptor() ([]byte, []int) {
+	return file_replication_proto_rawDescGZIP(), []int{21}
+}
+
 type GetStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Shard         int64                  `protobuf:"varint,1,opt,name=shard,proto3" json:"shard,omitempty"`
@@ -1302,7 +1414,7 @@ type GetStatusRequest struct {
 
 func (x *GetStatusRequest) Reset() {
 	*x = GetStatusRequest{}
-	mi := &file_replication_proto_msgTypes[20]
+	mi := &file_replication_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1314,7 +1426,7 @@ func (x *GetStatusRequest) String() string {
 func (*GetStatusRequest) ProtoMessage() {}
 
 func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[20]
+	mi := &file_replication_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1327,7 +1439,7 @@ func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetStatusRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{20}
+	return file_replication_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *GetStatusRequest) GetShard() int64 {
@@ -1349,7 +1461,7 @@ type GetStatusResponse struct {
 
 func (x *GetStatusResponse) Reset() {
 	*x = GetStatusResponse{}
-	mi := &file_replication_proto_msgTypes[21]
+	mi := &file_replication_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1361,7 +1473,7 @@ func (x *GetStatusResponse) String() string {
 func (*GetStatusResponse) ProtoMessage() {}
 
 func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[21]
+	mi := &file_replication_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1374,7 +1486,7 @@ func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetStatusResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{21}
+	return file_replication_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *GetStatusResponse) GetTerm() int64 {
@@ -1486,7 +1598,14 @@ const file_replication_proto_rawDesc = "" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
 	"\x05shard\x18\x02 \x01(\x03R\x05shard\x12\x12\n" +
 	"\x04term\x18\x03 \x01(\x03R\x04term\"\x15\n" +
-	"\x13DeleteShardResponse\"(\n" +
+	"\x13DeleteShardResponse\"\xa7\x01\n" +
+	"\x15RemoveObserverRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
+	"\x05shard\x18\x02 \x01(\x03R\x05shard\x12\x12\n" +
+	"\x04term\x18\x03 \x01(\x03R\x04term\x12#\n" +
+	"\rfollower_name\x18\x04 \x01(\tR\ffollowerName\x12!\n" +
+	"\ftarget_shard\x18\x05 \x01(\x03R\vtargetShard\"\x18\n" +
+	"\x16RemoveObserverResponse\"(\n" +
 	"\x10GetStatusRequest\x12\x14\n" +
 	"\x05shard\x18\x01 \x01(\x03R\x05shard\"\xa1\x01\n" +
 	"\x11GetStatusResponse\x12\x12\n" +
@@ -1509,7 +1628,7 @@ const file_replication_proto_rawDesc = "" +
 	"\x06FENCED\x10\x01\x12\f\n" +
 	"\bFOLLOWER\x10\x02\x12\n" +
 	"\n" +
-	"\x06LEADER\x10\x032\xd4\x04\n" +
+	"\x06LEADER\x10\x032\xaf\x05\n" +
 	"\x10OxiaCoordination\x12o\n" +
 	"\x14PushShardAssignments\x12\".io.oxia.proto.v1.ShardAssignments\x1a1.replication.CoordinationShardAssignmentsResponse(\x01\x12D\n" +
 	"\aNewTerm\x12\x1b.replication.NewTermRequest\x1a\x1c.replication.NewTermResponse\x12S\n" +
@@ -1517,7 +1636,8 @@ const file_replication_proto_rawDesc = "" +
 	"\vAddFollower\x12\x1f.replication.AddFollowerRequest\x1a .replication.AddFollowerResponse\x12J\n" +
 	"\tGetStatus\x12\x1d.replication.GetStatusRequest\x1a\x1e.replication.GetStatusResponse\x12P\n" +
 	"\vDeleteShard\x12\x1f.replication.DeleteShardRequest\x1a .replication.DeleteShardResponse\x12D\n" +
-	"\aGetInfo\x12\x1b.replication.GetInfoRequest\x1a\x1c.replication.GetInfoResponse2\xe2\x01\n" +
+	"\aGetInfo\x12\x1b.replication.GetInfoRequest\x1a\x1c.replication.GetInfoResponse\x12Y\n" +
+	"\x0eRemoveObserver\x12\".replication.RemoveObserverRequest\x1a#.replication.RemoveObserverResponse2\xe2\x01\n" +
 	"\x12OxiaLogReplication\x12G\n" +
 	"\bTruncate\x12\x1c.replication.TruncateRequest\x1a\x1d.replication.TruncateResponse\x126\n" +
 	"\tReplicate\x12\x13.replication.Append\x1a\x10.replication.Ack(\x010\x01\x12K\n" +
@@ -1536,7 +1656,7 @@ func file_replication_proto_rawDescGZIP() []byte {
 }
 
 var file_replication_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_replication_proto_goTypes = []any{
 	(Feature)(0),                                 // 0: replication.Feature
 	(KeySortingType)(0),                          // 1: replication.KeySortingType
@@ -1561,48 +1681,52 @@ var file_replication_proto_goTypes = []any{
 	(*SnapshotResponse)(nil),                     // 20: replication.SnapshotResponse
 	(*DeleteShardRequest)(nil),                   // 21: replication.DeleteShardRequest
 	(*DeleteShardResponse)(nil),                  // 22: replication.DeleteShardResponse
-	(*GetStatusRequest)(nil),                     // 23: replication.GetStatusRequest
-	(*GetStatusResponse)(nil),                    // 24: replication.GetStatusResponse
-	nil,                                          // 25: replication.BecomeLeaderRequest.FollowerMapsEntry
-	(*Int32HashRange)(nil),                       // 26: io.oxia.proto.v1.Int32HashRange
-	(*ShardAssignments)(nil),                     // 27: io.oxia.proto.v1.ShardAssignments
+	(*RemoveObserverRequest)(nil),                // 23: replication.RemoveObserverRequest
+	(*RemoveObserverResponse)(nil),               // 24: replication.RemoveObserverResponse
+	(*GetStatusRequest)(nil),                     // 25: replication.GetStatusRequest
+	(*GetStatusResponse)(nil),                    // 26: replication.GetStatusResponse
+	nil,                                          // 27: replication.BecomeLeaderRequest.FollowerMapsEntry
+	(*Int32HashRange)(nil),                       // 28: io.oxia.proto.v1.Int32HashRange
+	(*ShardAssignments)(nil),                     // 29: io.oxia.proto.v1.ShardAssignments
 }
 var file_replication_proto_depIdxs = []int32{
 	0,  // 0: replication.GetInfoResponse.features_supported:type_name -> replication.Feature
 	1,  // 1: replication.NewTermOptions.key_sorting:type_name -> replication.KeySortingType
 	9,  // 2: replication.NewTermRequest.options:type_name -> replication.NewTermOptions
 	6,  // 3: replication.NewTermResponse.head_entry_id:type_name -> replication.EntryId
-	25, // 4: replication.BecomeLeaderRequest.follower_maps:type_name -> replication.BecomeLeaderRequest.FollowerMapsEntry
+	27, // 4: replication.BecomeLeaderRequest.follower_maps:type_name -> replication.BecomeLeaderRequest.FollowerMapsEntry
 	0,  // 5: replication.BecomeLeaderRequest.features_supported:type_name -> replication.Feature
 	6,  // 6: replication.AddFollowerRequest.follower_head_entry_id:type_name -> replication.EntryId
-	26, // 7: replication.AddFollowerRequest.split_hash_range:type_name -> io.oxia.proto.v1.Int32HashRange
+	28, // 7: replication.AddFollowerRequest.split_hash_range:type_name -> io.oxia.proto.v1.Int32HashRange
 	6,  // 8: replication.TruncateRequest.head_entry_id:type_name -> replication.EntryId
 	6,  // 9: replication.TruncateResponse.head_entry_id:type_name -> replication.EntryId
 	7,  // 10: replication.Append.entry:type_name -> replication.LogEntry
 	2,  // 11: replication.GetStatusResponse.status:type_name -> replication.ServingStatus
 	6,  // 12: replication.BecomeLeaderRequest.FollowerMapsEntry.value:type_name -> replication.EntryId
-	27, // 13: replication.OxiaCoordination.PushShardAssignments:input_type -> io.oxia.proto.v1.ShardAssignments
+	29, // 13: replication.OxiaCoordination.PushShardAssignments:input_type -> io.oxia.proto.v1.ShardAssignments
 	10, // 14: replication.OxiaCoordination.NewTerm:input_type -> replication.NewTermRequest
 	12, // 15: replication.OxiaCoordination.BecomeLeader:input_type -> replication.BecomeLeaderRequest
 	13, // 16: replication.OxiaCoordination.AddFollower:input_type -> replication.AddFollowerRequest
-	23, // 17: replication.OxiaCoordination.GetStatus:input_type -> replication.GetStatusRequest
+	25, // 17: replication.OxiaCoordination.GetStatus:input_type -> replication.GetStatusRequest
 	21, // 18: replication.OxiaCoordination.DeleteShard:input_type -> replication.DeleteShardRequest
 	3,  // 19: replication.OxiaCoordination.GetInfo:input_type -> replication.GetInfoRequest
-	16, // 20: replication.OxiaLogReplication.Truncate:input_type -> replication.TruncateRequest
-	18, // 21: replication.OxiaLogReplication.Replicate:input_type -> replication.Append
-	8,  // 22: replication.OxiaLogReplication.SendSnapshot:input_type -> replication.SnapshotChunk
-	5,  // 23: replication.OxiaCoordination.PushShardAssignments:output_type -> replication.CoordinationShardAssignmentsResponse
-	11, // 24: replication.OxiaCoordination.NewTerm:output_type -> replication.NewTermResponse
-	14, // 25: replication.OxiaCoordination.BecomeLeader:output_type -> replication.BecomeLeaderResponse
-	15, // 26: replication.OxiaCoordination.AddFollower:output_type -> replication.AddFollowerResponse
-	24, // 27: replication.OxiaCoordination.GetStatus:output_type -> replication.GetStatusResponse
-	22, // 28: replication.OxiaCoordination.DeleteShard:output_type -> replication.DeleteShardResponse
-	4,  // 29: replication.OxiaCoordination.GetInfo:output_type -> replication.GetInfoResponse
-	17, // 30: replication.OxiaLogReplication.Truncate:output_type -> replication.TruncateResponse
-	19, // 31: replication.OxiaLogReplication.Replicate:output_type -> replication.Ack
-	20, // 32: replication.OxiaLogReplication.SendSnapshot:output_type -> replication.SnapshotResponse
-	23, // [23:33] is the sub-list for method output_type
-	13, // [13:23] is the sub-list for method input_type
+	23, // 20: replication.OxiaCoordination.RemoveObserver:input_type -> replication.RemoveObserverRequest
+	16, // 21: replication.OxiaLogReplication.Truncate:input_type -> replication.TruncateRequest
+	18, // 22: replication.OxiaLogReplication.Replicate:input_type -> replication.Append
+	8,  // 23: replication.OxiaLogReplication.SendSnapshot:input_type -> replication.SnapshotChunk
+	5,  // 24: replication.OxiaCoordination.PushShardAssignments:output_type -> replication.CoordinationShardAssignmentsResponse
+	11, // 25: replication.OxiaCoordination.NewTerm:output_type -> replication.NewTermResponse
+	14, // 26: replication.OxiaCoordination.BecomeLeader:output_type -> replication.BecomeLeaderResponse
+	15, // 27: replication.OxiaCoordination.AddFollower:output_type -> replication.AddFollowerResponse
+	26, // 28: replication.OxiaCoordination.GetStatus:output_type -> replication.GetStatusResponse
+	22, // 29: replication.OxiaCoordination.DeleteShard:output_type -> replication.DeleteShardResponse
+	4,  // 30: replication.OxiaCoordination.GetInfo:output_type -> replication.GetInfoResponse
+	24, // 31: replication.OxiaCoordination.RemoveObserver:output_type -> replication.RemoveObserverResponse
+	17, // 32: replication.OxiaLogReplication.Truncate:output_type -> replication.TruncateResponse
+	19, // 33: replication.OxiaLogReplication.Replicate:output_type -> replication.Ack
+	20, // 34: replication.OxiaLogReplication.SendSnapshot:output_type -> replication.SnapshotResponse
+	24, // [24:35] is the sub-list for method output_type
+	13, // [13:24] is the sub-list for method input_type
 	13, // [13:13] is the sub-list for extension type_name
 	13, // [13:13] is the sub-list for extension extendee
 	0,  // [0:13] is the sub-list for field type_name
@@ -1622,7 +1746,7 @@ func file_replication_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_replication_proto_rawDesc), len(file_replication_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   23,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

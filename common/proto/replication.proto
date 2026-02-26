@@ -32,6 +32,10 @@ service OxiaCoordination {
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
   rpc DeleteShard(DeleteShardRequest) returns (DeleteShardResponse);
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+
+  // Removes an observer follower from the parent leader without fencing.
+  // Used during split abort to cleanly stop data streaming to children.
+  rpc RemoveObserver(RemoveObserverRequest) returns (RemoveObserverResponse);
 }
 
 // node (leader) -> node (follower)
@@ -179,6 +183,18 @@ message DeleteShardRequest {
 }
 
 message DeleteShardResponse {}
+
+//// Remove Observer RPC
+
+message RemoveObserverRequest {
+  string namespace = 1;
+  int64 shard = 2;        // parent shard ID
+  int64 term = 3;
+  string follower_name = 4;
+  int64 target_shard = 5; // child shard ID — used to form the observer key
+}
+
+message RemoveObserverResponse {}
 
 //// Status RPC
 
