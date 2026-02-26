@@ -16,7 +16,7 @@ package batch
 
 import (
 	"context"
-	"io"
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
@@ -55,6 +55,7 @@ func TestWriteBatchAdd(t *testing.T) {
 }
 
 func TestWriteBatchComplete(t *testing.T) {
+	errFailure := errors.New("failure")
 	putResponseOk := &proto.PutResponse{
 		Status: proto.Status_OK,
 		Version: &proto.Version{
@@ -124,13 +125,13 @@ func TestWriteBatchComplete(t *testing.T) {
 		},
 		{
 			nil,
-			io.EOF,
+			errFailure,
 			nil,
-			io.EOF,
+			errFailure,
 			nil,
-			io.EOF,
+			errFailure,
 			nil,
-			io.EOF,
+			errFailure,
 		},
 	} {
 		execute := func(ctx context.Context, request *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
