@@ -15,6 +15,9 @@
 package batch
 
 import (
+	"errors"
+	"io"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -22,6 +25,13 @@ import (
 )
 
 func isRetriable(err error) bool {
+	if errors.Is(err, io.EOF) {
+		// EOF can occur when a bidirectional write stream is closed by the
+		// server before delivering the gRPC status (e.g. the server returns
+		// an error from WriteStream before reading any messages).  This is a
+		// transient condition that should be retried.
+		return true
+	}
 	code := status.Code(err)
 	switch code {
 	case
