@@ -53,10 +53,9 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		status := coordinatorInstance.StatusResource().Load()
-		shard := status.Namespaces["default"].Shards[0]
-		return shard.Leader != nil
-	}, time.Second, time.Millisecond*100)
+		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
 	status := coordinatorInstance.StatusResource().Load()
@@ -112,10 +111,9 @@ func TestLeaderHintWithClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		status := coordinatorInstance.StatusResource().Load()
-		shard := status.Namespaces["default"].Shards[0]
-		return shard.Leader != nil
-	}, time.Second, time.Millisecond*100)
+		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
 	status := coordinatorInstance.StatusResource().Load()
