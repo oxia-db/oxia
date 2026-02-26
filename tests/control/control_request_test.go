@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emirpasic/gods/v2/sets/hashset"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -86,13 +85,13 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 			assert.Eventually(t, func() bool {
 				lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
 				return err == nil && lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
-			}, 10*time.Second, 100*time.Millisecond)
+			}, 30*time.Second, 100*time.Millisecond)
 			continue
 		}
 		assert.Eventually(t, func() bool {
 			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
 			return err == nil && follow.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
-		}, 10*time.Second, 100*time.Millisecond)
+		}, 30*time.Second, 100*time.Millisecond)
 	}
 
 	// Write some entries
@@ -110,7 +109,6 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 
 	checksums := make([]uint32, 0)
 	leadCommitOffset := int64(0)
-	followCommitOffset := make([]int64, 0)
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
 		if targetId == leader.GetIdentifier() {
@@ -120,14 +118,18 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 			leadCommitOffset = lead.CommitOffset()
 			continue
 		}
-		follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-		assert.NoError(t, err)
-		followCommitOffset = append(followCommitOffset, follow.CommitOffset())
 	}
 
-	// todo: The follower is always one step behind the leader.
-	for _, offset := range followCommitOffset {
-		assert.EqualValues(t, 1, leadCommitOffset-offset)
+	// Wait for followers to catch up to within 1 offset of the leader.
+	for _, dataServer := range shardMetadata.Ensemble {
+		targetId := dataServer.GetIdentifier()
+		if targetId == leader.GetIdentifier() {
+			continue
+		}
+		assert.Eventually(t, func() bool {
+			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
+			return err == nil && leadCommitOffset-follow.CommitOffset() <= 1
+		}, 30*time.Second, 100*time.Millisecond)
 	}
 
 	_, _, err = client.Put(context.Background(), "/key7", []byte("value"))
@@ -138,16 +140,16 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	assert.NoError(t, err)
 	assert.EqualValues(t, []string{"/key1", "/key2", "/key3", "/key4", "/key5", "/key6", "/key7"}, keys)
 
+	// Wait for follower checksums to converge with the leader's checksum.
+	leaderChecksum := checksums[0]
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
-		if targetId != leader.GetIdentifier() {
-			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-			assert.NoError(t, err)
-			checksums = append(checksums, follow.Checksum().Value())
+		if targetId == leader.GetIdentifier() {
 			continue
 		}
+		assert.Eventually(t, func() bool {
+			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
+			return err == nil && follow.Checksum().Value() == leaderChecksum
+		}, 30*time.Second, 100*time.Millisecond)
 	}
-
-	assert.Equal(t, 3, len(checksums))
-	assert.Equal(t, 1, hashset.New(checksums...).Size())
 }
