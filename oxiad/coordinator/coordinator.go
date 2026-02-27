@@ -427,7 +427,7 @@ func (c *coordinator) computeNewAssignments() {
 	c.assignmentsChanged.Broadcast()
 }
 
-func NewCoordinator(meta metadata.Provider,
+func NewCoordinator(ctx context.Context, meta metadata.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc.Provider) (Coordinator, error) {
@@ -448,12 +448,12 @@ func NewCoordinator(meta metadata.Provider,
 
 	// Ensure we are to become the leader coordinator
 	c.Info("Waiting to become leader")
-	if err := meta.WaitToBecomeLeader(context.Background()); err != nil {
+	if err := meta.WaitToBecomeLeader(ctx); err != nil {
 		return nil, errors.Wrap(err, "failed to wait in becoming leader")
 	}
 	c.Info("This coordinator is now leader")
 
-	c.ctx, c.cancel = context.WithCancel(context.Background())
+	c.ctx, c.cancel = context.WithCancel(ctx)
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
 	c.statusResource = resource.NewStatusResource(meta)
 

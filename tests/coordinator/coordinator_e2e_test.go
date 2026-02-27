@@ -81,7 +81,7 @@ func TestCoordinatorE2E(t *testing.T) {
 	}
 	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(context.Background(), metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -121,7 +121,7 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 	}
 	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(context.Background(), metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -175,7 +175,7 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 	}
 	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(context.Background(), metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -281,7 +281,7 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 	}
 	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(context.Background(), metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -374,7 +374,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}
 	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(context.Background(), metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -422,7 +422,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}
 
 	slog.Info("Restarting coordinator")
-	coordinatorInstance, err = coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return newClusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err = coordinator.NewCoordinator(context.Background(), metadataProvider, func() (model.ClusterConfig, error) { return newClusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 
 	statusResource = coordinatorInstance.StatusResource()
@@ -467,7 +467,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		return clusterConfig, nil
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(context.Background(), metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -559,7 +559,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	}
 
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(clientPool))
+	c, err := coordinator.NewCoordinator(context.Background(), metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 
 	assert.Equal(t, 3, len(c.NodeControllers()))
@@ -621,7 +621,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	}
 
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(clientPool))
+	c, err := coordinator.NewCoordinator(context.Background(), metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 
 	statusResource := c.StatusResource()
@@ -695,7 +695,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) {
+	c, err := coordinator.NewCoordinator(context.Background(), metadataProvider, func() (model.ClusterConfig, error) {
 		return clusterConfig, nil
 	}, configChangesCh,
 		rpc2.NewRpcProvider(rpc.NewClientPool(nil, nil)))
@@ -786,7 +786,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			}
 			clientPool := rpc.NewClientPool(nil, nil)
 
-			coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+			coordinatorInstance, err := coordinator.NewCoordinator(context.Background(), metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
 			assert.NoError(t, err)
 
 			statusResource := coordinatorInstance.StatusResource()
