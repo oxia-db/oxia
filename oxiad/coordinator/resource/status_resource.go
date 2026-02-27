@@ -15,6 +15,7 @@
 package resource
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -39,6 +40,8 @@ type StatusResource interface {
 	DeleteShardMetadata(namespace string, shard int64)
 
 	IsReady(clusterConfig *model.ClusterConfig) bool
+
+	FatalErr() <-chan error
 }
 
 var _ StatusResource = &status{}
@@ -50,6 +53,19 @@ type status struct {
 	lock             sync.RWMutex
 	current          *model.ClusterStatus
 	currentVersionID metadata.Version
+
+	fatalErr  chan error
+	fatalOnce sync.Once
+}
+
+func (s *status) signalFatal(err error) {
+	s.fatalOnce.Do(func() {
+		s.fatalErr <- err
+	})
+}
+
+func (s *status) FatalErr() <-chan error {
+	return s.fatalErr
 }
 
 func (s *status) loadWithInitSlow() {
@@ -94,16 +110,29 @@ func (s *status) LoadWithVersion() (*model.ClusterStatus, metadata.Version) {
 	return s.current, s.currentVersionID
 }
 
+func (s *status) wrapBadVersion(err error) error {
+	if errors.Is(err, metadata.ErrMetadataBadVersion) {
+		return backoff.Permanent(err)
+	}
+	return err
+}
+
+func (s *status) checkFatal(err error) {
+	if err != nil && errors.Is(err, metadata.ErrMetadataBadVersion) {
+		s.signalFatal(err)
+	}
+}
+
 func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) bool {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	if s.currentVersionID != version {
 		return false
 	}
-	_ = backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
-			return err
+			return s.wrapBadVersion(err)
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
@@ -115,16 +144,17 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 			slog.Duration("retry-after", duration),
 		)
 	})
+	s.checkFatal(err)
 	return true
 }
 
 func (s *status) Update(newStatus *model.ClusterStatus) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	_ = backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
-			return err
+			return s.wrapBadVersion(err)
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
@@ -136,6 +166,7 @@ func (s *status) Update(newStatus *model.ClusterStatus) {
 			slog.Duration("retry-after", duration),
 		)
 	})
+	s.checkFatal(err)
 }
 
 func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata) {
@@ -148,10 +179,10 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 		return
 	}
 	ns.Shards[shard] = shardMetadata.Clone()
-	_ = backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return err
+			return s.wrapBadVersion(err)
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID
@@ -163,6 +194,7 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 			slog.Duration("retry-after", duration),
 		)
 	})
+	s.checkFatal(err)
 }
 
 func (s *status) DeleteShardMetadata(namespace string, shard int64) {
@@ -178,10 +210,10 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) {
 	if len(ns.Shards) == 0 {
 		delete(clonedStatus.Namespaces, namespace)
 	}
-	_ = backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return err
+			return s.wrapBadVersion(err)
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID
@@ -193,6 +225,7 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) {
 			slog.Duration("retry-after", duration),
 		)
 	})
+	s.checkFatal(err)
 }
 
 func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
@@ -222,6 +255,7 @@ func NewStatusResource(meta metadata.Provider) StatusResource {
 		metadata:         meta,
 		currentVersionID: metadata.NotExists,
 		current:          nil,
+		fatalErr:         make(chan error, 1),
 	}
 	s.Load()
 	return &s
