@@ -16,10 +16,10 @@ package control
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/emirpasic/gods/v2/sets/hashset"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -64,22 +64,24 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	// Write some entries
-	_, _, err = client.Put(context.Background(), "/key1", []byte("value"))
-	assert.NoError(t, err)
-	_, _, err = client.Put(context.Background(), "/key2", []byte("value"))
-	assert.NoError(t, err)
-	_, _, err = client.Put(context.Background(), "/key3", []byte("value"))
-	assert.NoError(t, err)
-	// monitor the data persistent
-	keys, err := client.List(context.Background(), "/", "//")
-	assert.NoError(t, err)
-	assert.EqualValues(t, []string{"/key1", "/key2", "/key3"}, keys)
-
-	// Check the feature has enabled for all the replicas
 	resource := coordinatorInstance.StatusResource().Load()
 	shardMetadata := resource.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
+
+	// Write entries. The replication messages for these writes also carry
+	// commit notifications for the feature-enable control entry that was
+	// proposed when the leader started, ensuring all replicas activate
+	// the checksum feature and start the CRC chain from the same point.
+	for i := 1; i <= 7; i++ {
+		_, _, err = client.Put(context.Background(), fmt.Sprintf("/key%d", i), []byte("value"))
+		assert.NoError(t, err)
+	}
+
+	keys, err := client.List(context.Background(), "/", "//")
+	assert.NoError(t, err)
+	assert.EqualValues(t, []string{"/key1", "/key2", "/key3", "/key4", "/key5", "/key6", "/key7"}, keys)
+
+	// Verify the checksum feature is enabled on all replicas.
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
 		if targetId == leader.GetIdentifier() {
@@ -95,59 +97,32 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 
-	// Write some entries
-	_, _, err = client.Put(context.Background(), "/key4", []byte("value"))
+	// Capture the leader's state after all writes.
+	lead, err := serverInstanceIndex[leader.GetIdentifier()].GetShardDirector().GetLeader(0)
 	assert.NoError(t, err)
-	_, _, err = client.Put(context.Background(), "/key5", []byte("value"))
-	assert.NoError(t, err)
-	_, _, err = client.Put(context.Background(), "/key6", []byte("value"))
+	leadCommitOffset := lead.CommitOffset()
+	leaderChecksum := lead.Checksum().Value()
+
+	// Write one more entry to propagate the commit notification for key7.
+	// Commit notifications are piggybacked on replication messages, so the
+	// last committed entry requires a subsequent write to notify followers.
+	_, _, err = client.Put(context.Background(), "/key8", []byte("value"))
 	assert.NoError(t, err)
 
-	// monitor the data persistent
-	keys, err = client.List(context.Background(), "/", "//")
-	assert.NoError(t, err)
-	assert.EqualValues(t, []string{"/key1", "/key2", "/key3", "/key4", "/key5", "/key6"}, keys)
-
-	checksums := make([]uint32, 0)
-	leadCommitOffset := int64(0)
-	followCommitOffset := make([]int64, 0)
+	// Wait for each follower to replicate up to the leader's pre-flush
+	// commit offset, then verify checksum consistency.
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
 		if targetId == leader.GetIdentifier() {
-			lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
-			assert.NoError(t, err)
-			checksums = append(checksums, lead.Checksum().Value())
-			leadCommitOffset = lead.CommitOffset()
 			continue
 		}
+		assert.Eventually(t, func() bool {
+			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
+			return err == nil && follow.CommitOffset() >= leadCommitOffset
+		}, 10*time.Second, 100*time.Millisecond)
+
 		follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
 		assert.NoError(t, err)
-		followCommitOffset = append(followCommitOffset, follow.CommitOffset())
+		assert.Equal(t, leaderChecksum, follow.Checksum().Value())
 	}
-
-	// todo: The follower is always one step behind the leader.
-	for _, offset := range followCommitOffset {
-		assert.EqualValues(t, 1, leadCommitOffset-offset)
-	}
-
-	_, _, err = client.Put(context.Background(), "/key7", []byte("value"))
-	assert.NoError(t, err)
-
-	// monitor the data persistent
-	keys, err = client.List(context.Background(), "/", "//")
-	assert.NoError(t, err)
-	assert.EqualValues(t, []string{"/key1", "/key2", "/key3", "/key4", "/key5", "/key6", "/key7"}, keys)
-
-	for _, dataServer := range shardMetadata.Ensemble {
-		targetId := dataServer.GetIdentifier()
-		if targetId != leader.GetIdentifier() {
-			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-			assert.NoError(t, err)
-			checksums = append(checksums, follow.Checksum().Value())
-			continue
-		}
-	}
-
-	assert.Equal(t, 3, len(checksums))
-	assert.Equal(t, 1, hashset.New(checksums...).Size())
 }
