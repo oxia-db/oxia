@@ -155,8 +155,8 @@ func (ms *readOnlySegment) Close() error {
 func (ms *readOnlySegment) Delete() error {
 	return multierr.Combine(
 		ms.Close(),
-		os.Remove(ms.c.txnPath),
 		os.Remove(ms.c.idxPath),
+		os.Remove(ms.c.txnPath),
 	)
 }
 

@@ -200,8 +200,8 @@ func (ms *readWriteSegment) Close() error {
 func (ms *readWriteSegment) Delete() error {
 	return multierr.Combine(
 		ms.Close(),
-		os.Remove(ms.c.txnPath),
 		os.Remove(ms.c.idxPath),
+		os.Remove(ms.c.txnPath),
 	)
 }
 
