@@ -21,7 +21,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
 
 var _ proto.OxiaAdminServer = (*adminServer)(nil)
@@ -29,8 +28,7 @@ var _ proto.OxiaAdminServer = (*adminServer)(nil)
 type adminServer struct {
 	proto.UnimplementedOxiaAdminServer
 
-	statusResource resource.StatusResource
-	clusterConfig  func() (model.ClusterConfig, error)
+	clusterConfig func() (model.ClusterConfig, error)
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
@@ -73,9 +71,8 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 	return &proto.ListNodesResponse{Nodes: nodes}, nil
 }
 
-func newAdminServer(statusResource resource.StatusResource, clusterConfig func() (model.ClusterConfig, error)) *adminServer {
+func newAdminServer(clusterConfig func() (model.ClusterConfig, error)) *adminServer {
 	return &adminServer{
-		statusResource: statusResource,
-		clusterConfig:  clusterConfig,
+		clusterConfig: clusterConfig,
 	}
 }

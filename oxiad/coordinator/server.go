@@ -61,6 +61,7 @@ type GrpcServer struct {
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
 	coordinator  Coordinator
+	coordinatorMu sync.RWMutex
 	clientPool   rpc.ClientPool
 	metrics      *metric.PrometheusMetrics
 }
@@ -113,6 +114,26 @@ func loadClusterConfig(cluster *option.ClusterOptions, v *viper.Viper) (model.Cl
 	return cc, nil
 }
 
+// createMetadataProvider creates a metadata provider based on the configured provider name.
+// For raft providers, the provider is expensive to create and should be reused across lifecycle iterations.
+func createMetadataProvider(meta *option.MetadataOptions) (metadata.Provider, error) {
+	switch meta.ProviderName {
+	case metadata.ProviderNameMemory:
+		return metadata.NewMetadataProviderMemory(), nil
+	case metadata.ProviderNameFile:
+		return metadata.NewMetadataProviderFile(meta.File.Path), nil
+	case metadata.ProviderNameConfigmap:
+		k8sConfig := metadata.NewK8SClientConfig()
+		return metadata.NewMetadataProviderConfigMap(metadata.NewK8SClientset(k8sConfig),
+			meta.Kubernetes.Namespace, meta.Kubernetes.ConfigMapName), nil
+	case metadata.ProviderNameRaft:
+		return metadata.NewMetadataProviderRaft(
+			meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
+	default:
+		return nil, errors.New(`must be one of "memory", "configmap", "file" or "raft"`)
+	}
+}
+
 func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[*option.Options]) (*GrpcServer, error) {
 	options, _ := watchableOptions.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
@@ -136,29 +157,6 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 
-	meta := &options.Metadata
-
-	var metadataProvider metadata.Provider
-	switch meta.ProviderName {
-	case metadata.ProviderNameMemory:
-		metadataProvider = metadata.NewMetadataProviderMemory()
-	case metadata.ProviderNameFile:
-		metadataProvider = metadata.NewMetadataProviderFile(meta.File.Path)
-	case metadata.ProviderNameConfigmap:
-		k8sConfig := metadata.NewK8SClientConfig()
-		metadataProvider = metadata.NewMetadataProviderConfigMap(metadata.NewK8SClientset(k8sConfig),
-			meta.Kubernetes.Namespace, meta.Kubernetes.ConfigMapName)
-	case metadata.ProviderNameRaft:
-		var err error
-		metadataProvider, err = metadata.NewMetadataProviderRaft(
-			meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create raft metadata provider")
-		}
-	default:
-		return nil, errors.New(`must be one of "memory", "configmap" or "file"`)
-	}
-
 	controller := &options.Controller
 	controllerTLS, err := controller.TLS.TryIntoClientTLSConf()
 	if err != nil {
@@ -166,11 +164,6 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	}
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
-
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
-	if err != nil {
-		return nil, err
-	}
 
 	healthServer := health.NewServer()
 
@@ -191,7 +184,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	if err != nil {
 		return nil, err
 	}
-	admin := newAdminServer(coordinatorInstance.StatusResource(), clusterConfigProvider)
+	admin := newAdminServer(clusterConfigProvider)
 	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, admin)
 	}, adminSvTLS, &auth.Disabled)
@@ -209,7 +202,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		}
 	}
 	ctx, cancel := context.WithCancel(parent)
-	server := GrpcServer{
+	server := &GrpcServer{
 		ctx:              ctx,
 		ctxCancel:        cancel,
 		wg:               sync.WaitGroup{},
@@ -219,16 +212,136 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		adminServer:      adminGrpcServer,
 		healthServer:     healthServer,
 		clientPool:       clientPool,
-		coordinator:      coordinatorInstance,
 		metrics:          metricsServer,
 	}
+
+	// Start in NOT_SERVING — the lifecycle loop will transition to SERVING once leader
+	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+
+	// Start the coordinator lifecycle loop in the background
+	server.wg.Go(func() {
+		process.DoWithLabels(ctx, map[string]string{
+			"component": "coordinator-lifecycle",
+		}, func() {
+			server.coordinatorLifecycleLoop(&options.Metadata, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient)
+		})
+	})
+
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
 			"component": "configuration-watcher",
 		}, server.backgroundHandleConfChange)
 	})
 
-	return &server, nil
+	return server, nil
+}
+
+func (s *GrpcServer) coordinatorLifecycleLoop(
+	meta *option.MetadataOptions,
+	clusterConfigProvider func() (model.ClusterConfig, error),
+	clusterConfigNotificationsCh chan any,
+	rpcClient coordinatorrpc.Provider,
+) {
+	// For raft, create the provider once and reuse it
+	var raftProvider metadata.Provider
+	if meta.ProviderName == metadata.ProviderNameRaft {
+		var err error
+		raftProvider, err = createMetadataProvider(meta)
+		if err != nil {
+			s.logger.Error("Failed to create raft metadata provider", slog.Any("error", err))
+			return
+		}
+		defer func() {
+			if err := raftProvider.Close(); err != nil {
+				s.logger.Warn("Failed to close raft metadata provider", slog.Any("error", err))
+			}
+		}()
+	}
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+
+		// 1. Create or reuse metadata provider
+		var metadataProvider metadata.Provider
+		if meta.ProviderName == metadata.ProviderNameRaft {
+			metadataProvider = raftProvider
+		} else {
+			var err error
+			metadataProvider, err = createMetadataProvider(meta)
+			if err != nil {
+				s.logger.Error("Failed to create metadata provider", slog.Any("error", err))
+				return
+			}
+		}
+
+		// 2. Set health to NOT_SERVING
+		s.healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+
+		// 3. Wait to become leader (blocks for standby, cancellable)
+		s.logger.Info("Waiting to become leader")
+		if err := metadataProvider.WaitToBecomeLeader(s.ctx); err != nil {
+			s.logger.Info("WaitToBecomeLeader interrupted", slog.Any("error", err))
+			if meta.ProviderName != metadata.ProviderNameRaft {
+				_ = metadataProvider.Close()
+			}
+			return
+		}
+		s.logger.Info("This coordinator is now leader")
+
+		// 4. Create coordinator (now instant — no WaitToBecomeLeader inside)
+		coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigNotificationsCh, rpcClient) //nolint:contextcheck
+		if err != nil {
+			s.logger.Error("Failed to create coordinator", slog.Any("error", err))
+			if meta.ProviderName != metadata.ProviderNameRaft {
+				_ = metadataProvider.Close()
+			}
+			continue
+		}
+
+		// 5. Set coordinator reference
+		s.coordinatorMu.Lock()
+		s.coordinator = coordinatorInstance
+		s.coordinatorMu.Unlock()
+
+		// 6. Set health to SERVING
+		s.healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+
+		// 7. Wait for coordinator to finish (fatal error or context cancellation)
+		select {
+		case <-coordinatorInstance.Done():
+			s.logger.Warn("Coordinator reported fatal error, restarting", slog.Any("error", coordinatorInstance.Err()))
+		case <-s.ctx.Done():
+		}
+
+		// 8. Set health to NOT_SERVING
+		s.healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+
+		// 9. Close coordinator, clear reference
+		if err := coordinatorInstance.Close(); err != nil {
+			s.logger.Warn("Failed to close coordinator", slog.Any("error", err))
+		}
+		s.coordinatorMu.Lock()
+		s.coordinator = nil
+		s.coordinatorMu.Unlock()
+
+		// 10. Close metadata provider (except raft)
+		if meta.ProviderName != metadata.ProviderNameRaft {
+			if err := metadataProvider.Close(); err != nil {
+				s.logger.Warn("Failed to close metadata provider", slog.Any("error", err))
+			}
+		}
+
+		// 11. If ctx.Done → return, else → loop
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+	}
 }
 
 func (s *GrpcServer) backgroundHandleConfChange() {
@@ -257,12 +370,19 @@ func (s *GrpcServer) Close() error {
 
 	var err error
 	s.healthServer.Shutdown()
+
+	s.coordinatorMu.RLock()
+	coord := s.coordinator
+	s.coordinatorMu.RUnlock()
+
 	err = multierr.Combine(
 		s.clientPool.Close(),
 		s.grpcServer.Close(),
 		s.adminServer.Close(),
-		s.coordinator.Close(),
 	)
+	if coord != nil {
+		err = multierr.Append(err, coord.Close())
+	}
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())
 	}
