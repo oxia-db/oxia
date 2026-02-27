@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
@@ -55,6 +54,9 @@ type Coordinator interface {
 
 	StatusResource() resource.StatusResource
 	ConfigResource() resource.ClusterConfigResource
+
+	Done() <-chan struct{}
+	Err() error
 }
 
 var _ Coordinator = &coordinator{}
@@ -89,6 +91,28 @@ type coordinator struct {
 	assignments        *proto.ShardAssignments
 
 	rpc rpc.Provider
+
+	done    chan struct{}
+	fatal   error
+	fatalMu sync.Mutex
+}
+
+func (c *coordinator) Done() <-chan struct{} {
+	return c.done
+}
+
+func (c *coordinator) Err() error {
+	c.fatalMu.Lock()
+	defer c.fatalMu.Unlock()
+	return c.fatal
+}
+
+func (c *coordinator) setFatal(err error) {
+	c.fatalMu.Lock()
+	c.fatal = err
+	c.fatalMu.Unlock()
+	close(c.done)
+	c.cancel()
 }
 
 func (c *coordinator) LeaderElected(int64, model.Server, []model.Server) {
@@ -330,7 +354,7 @@ func (c *coordinator) WaitForNextUpdate(ctx context.Context, currentValue *proto
 }
 
 func (c *coordinator) startBackgroundActionWorker() {
-	defer c.Done()
+	defer c.WaitGroup.Done()
 	for {
 		select {
 		case ac := <-c.loadBalancer.Action():
@@ -443,15 +467,9 @@ func NewCoordinator(ctx context.Context, meta metadata.Provider,
 		nodeControllers:       make(map[string]controller.DataServerController),
 		drainingNodes:         make(map[string]controller.DataServerController),
 		rpc:                   rpcProvider,
+		done:                  make(chan struct{}),
 	}
 	c.ccrWg.Add(1)
-
-	// Ensure we are to become the leader coordinator
-	c.Info("Waiting to become leader")
-	if err := meta.WaitToBecomeLeader(ctx); err != nil {
-		return nil, errors.Wrap(err, "failed to wait in becoming leader")
-	}
-	c.Info("This coordinator is now leader")
 
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
@@ -491,6 +509,12 @@ func NewCoordinator(ctx context.Context, meta metadata.Provider,
 		clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
 
 		c.statusResource.Update(clusterStatus)
+
+		select {
+		case <-c.done:
+			return nil, c.Err()
+		default:
+		}
 	} else {
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 
@@ -501,6 +525,12 @@ func NewCoordinator(ctx context.Context, meta metadata.Provider,
 
 		if len(shardsToAdd) > 0 || len(shardsToDelete) > 0 {
 			c.statusResource.Update(clusterStatus)
+
+			select {
+			case <-c.done:
+				return nil, c.Err()
+			default:
+			}
 		}
 	}
 
@@ -518,6 +548,20 @@ func NewCoordinator(ctx context.Context, meta metadata.Provider,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		}
 	}
+
+	// Watch for fatal errors from the status resource
+	c.Add(1)
+	go process.DoWithLabels(c.ctx, map[string]string{
+		"component": "coordinator-fatal-watcher",
+	}, func() {
+		defer c.WaitGroup.Done()
+		select {
+		case err := <-c.statusResource.FatalErr():
+			c.Error("Fatal error detected, shutting down coordinator", slog.Any("error", err))
+			c.setFatal(err)
+		case <-c.ctx.Done():
+		}
+	})
 
 	c.Add(1)
 	go process.DoWithLabels(c.ctx, map[string]string{
