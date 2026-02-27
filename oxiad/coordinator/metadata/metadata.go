@@ -15,6 +15,7 @@
 package metadata
 
 import (
+	"context"
 	"io"
 
 	"github.com/pkg/errors"
@@ -45,5 +46,5 @@ type Provider interface {
 
 	Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
 
-	WaitToBecomeLeader() error
+	WaitToBecomeLeader(ctx context.Context) error
 }

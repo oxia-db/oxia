@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -136,20 +137,20 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 		slog.Error("Store metadata failed for version mismatch",
 			slog.Any("local-version", version),
 			slog.Any("expected-version", expectedVersion))
-		panic(ErrMetadataBadVersion)
+		return "", ErrMetadataBadVersion
 	}
 
 	data := configMap(m.name, status, expectedVersion)
 	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, data)
 	if k8serrors.IsConflict(err) {
-		panic(err)
+		return "", ErrMetadataBadVersion
 	}
 	version = Version(cm.ResourceVersion)
 	m.metadataSize.Store(int64(len(data.Data["status"])))
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
+func (m *metadataProviderConfigMap) WaitToBecomeLeader(ctx context.Context) error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -198,7 +199,7 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 	// Start leader election
 	leaderElector, err := leaderelection.NewLeaderElector(leaderElectionConfig)
 	if err != nil {
-		panic(err)
+		return errors.Wrap(err, "failed to create leader elector")
 	}
 
 	m.closeCh = make(chan any)
@@ -211,7 +212,7 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 		close(m.closeCh)
 	})
 
-	return wg.Wait(m.ctx)
+	return wg.Wait(ctx)
 }
 
 func (m *metadataProviderConfigMap) Close() error {

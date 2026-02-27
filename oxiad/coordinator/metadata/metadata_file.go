@@ -15,6 +15,7 @@
 package metadata
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -58,16 +59,28 @@ func (m *metadataProviderFile) Close() error {
 	return nil
 }
 
-func (m *metadataProviderFile) WaitToBecomeLeader() error {
+func (m *metadataProviderFile) WaitToBecomeLeader(ctx context.Context) error {
 	if err := m.ensureParentDirectoryExists(); err != nil {
 		return err
 	}
 
-	if err := m.fileLock.Lock(); err != nil {
-		return errors.Wrapf(err, "failed to acquire lock on %s", m.path)
+	type lockResult struct {
+		err error
 	}
+	ch := make(chan lockResult, 1)
+	go func() {
+		ch <- lockResult{err: m.fileLock.Lock()}
+	}()
 
-	return nil
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			return errors.Wrapf(res.err, "failed to acquire lock on %s", m.path)
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, err error) {
@@ -102,7 +115,7 @@ func (m *metadataProviderFile) Store(cs *model.ClusterStatus, expectedVersion Ve
 	}
 
 	if expectedVersion != existingVersion {
-		panic(ErrMetadataBadVersion)
+		return NotExists, ErrMetadataBadVersion
 	}
 
 	newVersion = incrVersion(existingVersion)

@@ -15,6 +15,7 @@
 package metadata
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -41,9 +42,17 @@ type metadataProviderRaft struct {
 	log   *slog.Logger
 }
 
-func (mpr *metadataProviderRaft) WaitToBecomeLeader() error {
-	<-mpr.raft.LeaderCh()
-	return nil
+func (mpr *metadataProviderRaft) WaitToBecomeLeader(ctx context.Context) error {
+	for {
+		select {
+		case isLeader := <-mpr.raft.LeaderCh():
+			if isLeader {
+				return nil
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func NewMetadataProviderRaft(
@@ -187,7 +196,7 @@ func (mpr *metadataProviderRaft) Store(cs *model.ClusterStatus, expectedVersion 
 	}
 
 	if !applyRes.changeApplied {
-		panic(ErrMetadataBadVersion)
+		return NotExists, ErrMetadataBadVersion
 	}
 
 	return toVersion(applyRes.newVersion), nil

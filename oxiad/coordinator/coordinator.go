@@ -448,7 +448,7 @@ func NewCoordinator(meta metadata.Provider,
 
 	// Ensure we are to become the leader coordinator
 	c.Info("Waiting to become leader")
-	if err := meta.WaitToBecomeLeader(); err != nil {
+	if err := meta.WaitToBecomeLeader(context.Background()); err != nil {
 		return nil, errors.Wrap(err, "failed to wait in becoming leader")
 	}
 	c.Info("This coordinator is now leader")

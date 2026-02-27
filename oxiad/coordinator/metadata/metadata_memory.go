@@ -15,6 +15,7 @@
 package metadata
 
 import (
+	"context"
 	"strconv"
 	"sync"
 
@@ -32,7 +33,7 @@ type metadataProviderMemory struct {
 	version Version
 }
 
-func (*metadataProviderMemory) WaitToBecomeLeader() error {
+func (*metadataProviderMemory) WaitToBecomeLeader(context.Context) error {
 	return nil
 }
 
@@ -58,7 +59,7 @@ func (m *metadataProviderMemory) Store(cs *model.ClusterStatus, expectedVersion 
 	defer m.Unlock()
 
 	if expectedVersion != m.version {
-		panic(ErrMetadataBadVersion)
+		return "", ErrMetadataBadVersion
 	}
 
 	m.cs = cs.Clone()
