@@ -19,6 +19,8 @@ import (
 	"io"
 	"sync/atomic"
 	"time"
+
+	"github.com/oxia-db/oxia/oxia/internal/model"
 )
 
 var ErrShuttingDown = errors.New("shutting down")
@@ -78,13 +80,31 @@ func (b *batcherImpl) Run() { //nolint:revive
 		batch = nil
 	}
 
+	var prevCallIsDelete *bool = nil
 	for {
 		select {
 		case call := <-b.callC:
+			var del = false
+			switch call.(type) {
+			case model.DeleteCall:
+				del = true
+			case model.DeleteRangeCall:
+				del = true
+			}
+			if prevCallIsDelete == nil {
+				prevCallIsDelete = &del
+			}
+
 			if batch == nil {
 				newBatch()
 			}
 			canAdd := batch.CanAdd(call)
+			if canAdd {
+				if del && !*prevCallIsDelete || !del && *prevCallIsDelete {
+					canAdd = false
+				}
+			}
+
 			if !canAdd {
 				completeBatch()
 				newBatch()
@@ -93,6 +113,7 @@ func (b *batcherImpl) Run() { //nolint:revive
 			if batch.Size() == b.maxRequestsPerBatch || b.linger == 0 {
 				completeBatch()
 			}
+			prevCallIsDelete = &del
 
 		case <-timeout:
 			if batch != nil {
