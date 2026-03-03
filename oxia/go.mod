@@ -1,10 +1,11 @@
 module github.com/oxia-db/oxia/oxia
 
-go 1.25
+go 1.26
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/dgraph-io/ristretto v0.2.0
+	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/google/uuid v1.6.0
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.10.0
@@ -34,6 +35,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace (
-	github.com/oxia-db/oxia/common => ../common
-)
+replace github.com/oxia-db/oxia/common => ../common

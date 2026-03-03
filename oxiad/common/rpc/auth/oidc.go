@@ -23,6 +23,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -185,7 +186,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 // loadPublicKeysFromFile loads public keys from a PEM-encoded file.
 // The file can contain multiple PEM blocks with public keys or certificates.
 func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
-	data, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(filepath.Clean(filePath))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to read key file")
 	}

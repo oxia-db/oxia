@@ -15,6 +15,7 @@
 package statemachine
 
 import (
+	"errors"
 	"time"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -99,6 +100,8 @@ func (c *ControlProposal) Apply(db database.DB, _ database.UpdateOperationCallba
 	case *proto.ControlRequest_RecordChecksum:
 		checksum := db.ReadChecksum()
 		return ApplyResponse{Checksum: &checksum}, nil
+	default:
+		return ApplyResponse{}, errors.New("unknown control request type")
 	}
 	return ApplyResponse{}, nil
 }
