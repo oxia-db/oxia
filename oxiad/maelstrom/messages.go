@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
@@ -250,10 +251,11 @@ func parseRequest(line string) (msgType MsgType, msg any, protoMsg pb.Message) {
 
 	msg = frame
 	msgType = frame.Body.Type
-	sm, ok := jsonMsgMapping[frame.Body.Type]
+	prototype, ok := jsonMsgMapping[frame.Body.Type]
 	if ok {
-		// Deserialize json again with specific type
-		// Deserialize again with the proper struct
+		// Create a fresh instance to avoid data races with goroutines
+		// that may still be reading a previously parsed message.
+		sm := reflect.New(reflect.TypeOf(prototype).Elem()).Interface()
 		if err := json.Unmarshal([]byte(line), sm); err != nil {
 			slog.Error(
 				"failed to unmarshal the proper struct",
@@ -265,8 +267,9 @@ func parseRequest(line string) (msgType MsgType, msg any, protoMsg pb.Message) {
 		msg = sm
 	}
 
-	protoMsg, ok = protoMsgMapping[frame.Body.Type]
+	protoPrototype, ok := protoMsgMapping[frame.Body.Type]
 	if ok {
+		protoMsg = reflect.New(reflect.TypeOf(protoPrototype).Elem()).Interface().(pb.Message)
 		if msgType.isOxiaStreamRequest() {
 			om := &Message[OxiaStreamMessage]{}
 			if err := json.Unmarshal([]byte(line), om); err != nil {
