@@ -61,7 +61,7 @@ func fatalOnErr(err error, name string) {
 }
 
 func getAttrs(labels map[string]any) (options metric.MeasurementOption) {
-	attrs := make([]attribute.KeyValue, 0)
+	attrs := make([]attribute.KeyValue, 0, len(labels))
 	for k, v := range labels {
 		key := attribute.Key(k)
 		var attr attribute.KeyValue

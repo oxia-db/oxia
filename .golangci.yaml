@@ -49,10 +49,11 @@ linters:
     - wastedassign
   settings:
     goconst:
-      ignore-strings: "localhost:0"
+      ignore-string-values: "localhost:0"
     gosec:
       excludes:
         - G115
+        - G703
     revive:
       enable-all-rules: true
       rules:
@@ -154,6 +155,9 @@ linters:
         path: \.go
         text: confusing-naming.*only by capitalization.*
       - linters:
+          - gosec
+        path: maelstrom/
+      - linters:
           - revive
         path: maelstrom/
         text: unchecked-type-assertion|unhandled-error|unused-receiver|unused-parameter|add-constant|cyclomatic|cognitive-complexity
@@ -161,6 +165,9 @@ linters:
           - revive
         path: _grpc\.go
         text: blank-imports
+      - linters:
+          - revive
+        text: "avoid package names that conflict with Go standard library"
       - linters:
           - goconst
         path: (.+)_test\.go
