@@ -66,3 +66,81 @@ func TestClusterStatus_Clone(t *testing.T) {
 	assert.Equal(t, cs1.ShardIdGenerator, cs2.ShardIdGenerator)
 	assert.Equal(t, cs1.ServerIdx, cs2.ServerIdx)
 }
+
+func TestSplitMetadata_Clone(t *testing.T) {
+	// Nil clone returns nil
+	var nilSplit *SplitMetadata
+	assert.Nil(t, nilSplit.Clone())
+
+	// Non-nil clone
+	sm := &SplitMetadata{
+		Phase:          SplitPhaseCatchUp,
+		ParentShardId:  10,
+		ChildShardIDs:  []int64{20, 21},
+		SplitPoint:     0x80000000,
+		SnapshotOffset: 42,
+	}
+
+	cloned := sm.Clone()
+	assert.Equal(t, sm, cloned)
+	assert.NotSame(t, sm, cloned)
+
+	// Verify deep copy of ChildShardIDs slice
+	cloned.ChildShardIDs[0] = 99
+	assert.EqualValues(t, 20, sm.ChildShardIDs[0])
+}
+
+func TestShardMetadata_Clone_WithSplit(t *testing.T) {
+	sm := ShardMetadata{
+		Status: ShardStatusSteadyState,
+		Term:   5,
+		Leader: &Server{
+			Public:   "l1",
+			Internal: "l1",
+		},
+		Ensemble: []Server{{
+			Public:   "f1",
+			Internal: "f1",
+		}},
+		RemovedNodes:            []Server{},
+		PendingDeleteShardNodes: []Server{},
+		Int32HashRange:          Int32HashRange{Min: 0, Max: 0xFFFFFFFF},
+		Split: &SplitMetadata{
+			Phase:          SplitPhaseBootstrap,
+			ParentShardId:  0,
+			ChildShardIDs:  []int64{1, 2},
+			SplitPoint:     0x80000000,
+			SnapshotOffset: 100,
+		},
+	}
+
+	cloned := sm.Clone()
+	assert.Equal(t, sm, cloned)
+	assert.NotSame(t, sm.Split, cloned.Split)
+
+	// Verify deep copy: modifying the clone doesn't affect the original
+	cloned.Split.Phase = SplitPhaseCutover
+	assert.Equal(t, SplitPhaseBootstrap, sm.Split.Phase)
+
+	cloned.Split.ChildShardIDs[0] = 99
+	assert.EqualValues(t, 1, sm.Split.ChildShardIDs[0])
+}
+
+func TestShardMetadata_Clone_NilSplit(t *testing.T) {
+	sm := ShardMetadata{
+		Status: ShardStatusSteadyState,
+		Term:   1,
+		Ensemble: []Server{{
+			Public:   "f1",
+			Internal: "f1",
+		}},
+		RemovedNodes:            []Server{},
+		PendingDeleteShardNodes: []Server{},
+		Int32HashRange:          Int32HashRange{Min: 0, Max: 0xFFFFFFFF},
+		Split:                   nil,
+	}
+
+	cloned := sm.Clone()
+	assert.Equal(t, sm, cloned)
+	assert.Nil(t, cloned.Split)
+}
