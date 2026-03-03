@@ -216,7 +216,6 @@ func (*clientPool) getActualAddress(target string) string {
 	return target
 }
 
-//nolint:gosec
 func (cp *clientPool) getTransportCredential(target string) credentials.TransportCredentials {
 	tcs := insecure.NewCredentials()
 	if strings.HasPrefix(target, AddressSchemaTLS) {

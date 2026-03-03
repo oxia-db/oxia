@@ -1,10 +1,11 @@
 module github.com/oxia-db/oxia/cmd
 
-go 1.25
+go 1.26
 
 require (
 	github.com/bmizerany/perks v0.0.0-20230307044200-03f9df79da1e
 	github.com/cockroachdb/pebble/v2 v2.1.0
+	github.com/fsnotify/fsnotify v1.4.7
 	github.com/invopop/jsonschema v0.13.0
 	github.com/oxia-db/oxia/common v0.0.0
 	github.com/oxia-db/oxia/oxia v0.0.0
@@ -36,7 +37,7 @@ require (
 	github.com/cockroachdb/errors v1.12.0 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506 // indirect
 	github.com/cockroachdb/redact v1.1.6 // indirect
-	github.com/cockroachdb/swiss v0.0.0-20250624142022-d6e517c1d961 // indirect
+	github.com/cockroachdb/swiss v0.0.0-20251224182025-b0f6560f979b // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb // indirect
 	github.com/coreos/go-oidc/v3 v3.17.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -46,7 +47,6 @@ require (
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/emirpasic/gods/v2 v2.0.0-alpha // indirect
 	github.com/fatih/color v1.18.0 // indirect
-	github.com/fsnotify/fsnotify v1.4.7 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/getsentry/sentry-go v0.32.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect

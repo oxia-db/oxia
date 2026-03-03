@@ -82,7 +82,7 @@ func (s *set[T]) Complement(other Set[T]) Set[T] {
 }
 
 func (s *set[T]) GetSorted() []T {
-	r := make([]T, 0)
+	r := make([]T, 0, len(s.Items))
 	for k := range s.Items {
 		r = append(r, k)
 	}
