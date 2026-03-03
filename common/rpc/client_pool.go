@@ -219,7 +219,7 @@ func (*clientPool) getActualAddress(target string) string {
 func (cp *clientPool) getTransportCredential(target string) credentials.TransportCredentials {
 	tcs := insecure.NewCredentials()
 	if strings.HasPrefix(target, AddressSchemaTLS) {
-		tcs = credentials.NewTLS(&tls.Config{})
+		tcs = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 	}
 	if cp.tls != nil {
 		tcs = credentials.NewTLS(cp.tls)

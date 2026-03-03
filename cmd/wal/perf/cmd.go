@@ -157,11 +157,13 @@ func printResults(threadTimesArray, writeEntryTimesArray, readEntryTimesArray []
 			threadName = fmt.Sprintf("Reader%d", i-1)
 		}
 
-		fmt.Printf("Thread: %s, Total entry: %d, Total time: %s, Throughput: %f ops/s\n",
+		if _, err := fmt.Printf("Thread: %s, Total entry: %d, Total time: %s, Throughput: %f ops/s\n",
 			threadName,
 			options.entryCount,
 			time.Duration(threadTimesArray[i])*time.Microsecond,
-			float64(options.entryCount)/float64(threadTimesArray[i])*1000000)
+			float64(options.entryCount)/float64(threadTimesArray[i])*1000000); err != nil {
+			panic(err)
+		}
 	}
 
 	printLatench("Writer", writeEntryTimesArray)
