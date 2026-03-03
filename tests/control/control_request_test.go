@@ -97,20 +97,20 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 
-	// Capture the leader's state after all writes.
-	lead, err := serverInstanceIndex[leader.GetIdentifier()].GetShardDirector().GetLeader(0)
-	assert.NoError(t, err)
-	leadCommitOffset := lead.CommitOffset()
-	leaderChecksum := lead.Checksum().Value()
-
 	// Write one more entry to propagate the commit notification for key7.
 	// Commit notifications are piggybacked on replication messages, so the
 	// last committed entry requires a subsequent write to notify followers.
 	_, _, err = client.Put(context.Background(), "/key8", []byte("value"))
 	assert.NoError(t, err)
 
-	// Wait for each follower to replicate up to the leader's pre-flush
-	// commit offset, then verify checksum consistency.
+	// Capture the leader's state after all writes (including key8).
+	lead, err := serverInstanceIndex[leader.GetIdentifier()].GetShardDirector().GetLeader(0)
+	assert.NoError(t, err)
+	leadCommitOffset := lead.CommitOffset()
+	leaderChecksum := lead.Checksum().Value()
+
+	// Wait for each follower to replicate up to the leader's commit
+	// offset, then verify checksum consistency.
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
 		if targetId == leader.GetIdentifier() {
