@@ -123,6 +123,22 @@ message AddFollowerRequest {
   int64 term = 3;
   string follower_name = 4;
   EntryId follower_head_entry_id = 5;
+
+  // If true, this follower is an observer that does not participate
+  // in the replication quorum. Used for shard split catch-up.
+  bool observer = 6;
+
+  // For observer followers during shard split: the shard ID that the
+  // receiving server should use for the replicated data. This allows
+  // the parent leader to replicate data to a child shard on the same
+  // server without conflicting with the parent's own controllers.
+  optional int64 target_shard = 7;
+
+  // For observer followers during shard split: the hash range that the
+  // child shard should retain after receiving the parent's snapshot.
+  // The child filters its database and WAL entries to only keep keys
+  // whose hash falls within this range.
+  optional io.oxia.proto.v1.Int32HashRange split_hash_range = 8;
 }
 
 message BecomeLeaderResponse {}
