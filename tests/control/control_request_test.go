@@ -97,20 +97,24 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 
-	// Capture the leader's state after all writes.
+	// Capture the leader's checksum before the flush write. At this point
+	// the leader has committed key1-key7 and the checksum reflects that state.
 	lead, err := serverInstanceIndex[leader.GetIdentifier()].GetShardDirector().GetLeader(0)
 	assert.NoError(t, err)
-	leadCommitOffset := lead.CommitOffset()
 	leaderChecksum := lead.Checksum().Value()
 
 	// Write one more entry to propagate the commit notification for key7.
 	// Commit notifications are piggybacked on replication messages, so the
 	// last committed entry requires a subsequent write to notify followers.
+	// After this, followers will have committed up to key7 (matching the
+	// captured checksum) but key8 itself remains uncommitted on followers
+	// since its commit notification has not been propagated yet.
 	_, _, err = client.Put(context.Background(), "/key8", []byte("value"))
 	assert.NoError(t, err)
 
-	// Wait for each follower to replicate up to the leader's pre-flush
-	// commit offset, then verify checksum consistency.
+	// Verify each follower's checksum matches the leader's pre-key8 state.
+	// The check is inside Eventually because the follower needs time to
+	// process key8's replication message and apply key7's commit.
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()
 		if targetId == leader.GetIdentifier() {
@@ -118,11 +122,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		}
 		assert.Eventually(t, func() bool {
 			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-			return err == nil && follow.CommitOffset() >= leadCommitOffset
+			return err == nil && follow.Checksum().Value() == leaderChecksum
 		}, 10*time.Second, 100*time.Millisecond)
-
-		follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-		assert.NoError(t, err)
-		assert.Equal(t, leaderChecksum, follow.Checksum().Value())
 	}
 }
