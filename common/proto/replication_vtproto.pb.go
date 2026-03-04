@@ -238,6 +238,12 @@ func (m *AddFollowerRequest) CloneVT() *AddFollowerRequest {
 	r.Term = m.Term
 	r.FollowerName = m.FollowerName
 	r.FollowerHeadEntryId = m.FollowerHeadEntryId.CloneVT()
+	r.Observer = m.Observer
+	r.SplitHashRange = m.SplitHashRange.CloneVT()
+	if rhs := m.TargetShard; rhs != nil {
+		tmpVal := *rhs
+		r.TargetShard = &tmpVal
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -730,6 +736,15 @@ func (this *AddFollowerRequest) EqualVT(that *AddFollowerRequest) bool {
 		return false
 	}
 	if !this.FollowerHeadEntryId.EqualVT(that.FollowerHeadEntryId) {
+		return false
+	}
+	if this.Observer != that.Observer {
+		return false
+	}
+	if p, q := this.TargetShard, that.TargetShard; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
+	}
+	if !this.SplitHashRange.EqualVT(that.SplitHashRange) {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1535,6 +1550,31 @@ func (m *AddFollowerRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.SplitHashRange != nil {
+		size, err := m.SplitHashRange.MarshalToSizedBufferVT(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+		i--
+		dAtA[i] = 0x42
+	}
+	if m.TargetShard != nil {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.TargetShard))
+		i--
+		dAtA[i] = 0x38
+	}
+	if m.Observer {
+		i--
+		if m.Observer {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x30
+	}
 	if m.FollowerHeadEntryId != nil {
 		size, err := m.FollowerHeadEntryId.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
@@ -2271,6 +2311,16 @@ func (m *AddFollowerRequest) SizeVT() (n int) {
 	}
 	if m.FollowerHeadEntryId != nil {
 		l = m.FollowerHeadEntryId.SizeVT()
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.Observer {
+		n += 2
+	}
+	if m.TargetShard != nil {
+		n += 1 + protohelpers.SizeOfVarint(uint64(*m.TargetShard))
+	}
+	if m.SplitHashRange != nil {
+		l = m.SplitHashRange.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
@@ -3903,6 +3953,82 @@ func (m *AddFollowerRequest) UnmarshalVT(dAtA []byte) error {
 				m.FollowerHeadEntryId = &EntryId{}
 			}
 			if err := m.FollowerHeadEntryId.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Observer", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.Observer = bool(v != 0)
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TargetShard", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.TargetShard = &v
+		case 8:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SplitHashRange", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.SplitHashRange == nil {
+				m.SplitHashRange = &Int32HashRange{}
+			}
+			if err := m.SplitHashRange.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -6400,6 +6526,82 @@ func (m *AddFollowerRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				m.FollowerHeadEntryId = &EntryId{}
 			}
 			if err := m.FollowerHeadEntryId.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Observer", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.Observer = bool(v != 0)
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TargetShard", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.TargetShard = &v
+		case 8:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SplitHashRange", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.SplitHashRange == nil {
+				m.SplitHashRange = &Int32HashRange{}
+			}
+			if err := m.SplitHashRange.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

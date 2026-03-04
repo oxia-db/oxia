@@ -55,3 +55,13 @@ func (m *MockAdminClient) ListNodes() *oxia.ListNodesResult {
 		Error: errors.New("no namespaces available"),
 	}
 }
+
+func (m *MockAdminClient) SplitShard(namespace string, shardId int64, splitPoint *uint32) *oxia.SplitShardResult {
+	args := m.MethodCalled("SplitShard", namespace, shardId, splitPoint)
+	if v, ok := args.Get(0).(*oxia.SplitShardResult); ok {
+		return v
+	}
+	return &oxia.SplitShardResult{
+		Error: errors.New("split shard failed"),
+	}
+}
