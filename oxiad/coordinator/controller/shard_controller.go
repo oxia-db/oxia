@@ -422,6 +422,7 @@ func (s *shardController) onChangeEnsemble(changeEnsembleAction *action.ChangeEn
 	}()
 	if s.currentElection != nil {
 		if ready := s.currentElection.IsReadyForChangeEnsemble(); !ready {
+			s.log.Warn("Change ensemble rejected: shard is not ready (follower catch-up still in progress)")
 			err = ErrNotReadyForChangeEnsemble
 			return
 		}
