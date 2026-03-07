@@ -98,6 +98,8 @@ func toGRPCError(err error) error {
 	switch {
 	case stderrors.Is(err, dserror.ErrInvalidTerm):
 		return status.Error(constant.CodeInvalidTerm, err.Error())
+	case stderrors.Is(err, dserror.ErrNodeIsNotMember):
+		return status.Error(constant.CodeNodeIsNotMember, err.Error())
 	case stderrors.Is(err, dserror.ErrInvalidStatus):
 		return status.Error(constant.CodeInvalidStatus, err.Error())
 	case stderrors.Is(err, dserror.ErrResourceConflict):

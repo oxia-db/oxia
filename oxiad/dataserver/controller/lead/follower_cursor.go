@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 
@@ -74,11 +75,12 @@ type followerCursor struct {
 	namespace   string
 	shardId     int64
 
-	backoff backoff.BackOff
-	closed  atomic.Bool
-	ctx     context.Context
-	cancel  context.CancelFunc
-	log     *slog.Logger
+	backoff       backoff.BackOff
+	closed        atomic.Bool
+	lastStreamErr atomic.Value // last error received from the follower's ack stream
+	ctx           context.Context
+	cancel        context.CancelFunc
+	log           *slog.Logger
 
 	snapshotsTransferTime     metric.LatencyHistogram
 	snapshotsStartedCounter   metric.Counter
@@ -236,7 +238,19 @@ func (fc *followerCursor) runOnce() error {
 		timer.Done()
 	}
 
-	return fc.streamEntries()
+	err := fc.streamEntries()
+	if err != nil {
+		// If the follower reported that it's not a member (e.g. after a
+		// data clean-up and restart), reset the ack offset so that
+		// shouldSendSnapshot() will send a full snapshot on the next retry.
+		if recvErr, ok := fc.lastStreamErr.Load().(error); ok &&
+			status.Code(recvErr) == constant.CodeNodeIsNotMember {
+			fc.log.Info("Follower reported not-member status, resetting ack offset to trigger snapshot")
+			fc.ackOffset.Store(wal.InvalidOffset)
+			fc.lastPushed.Store(wal.InvalidOffset)
+		}
+	}
+	return err
 }
 
 func (fc *followerCursor) sendSnapshot() error {
@@ -409,6 +423,7 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 				)
 			}
 
+			fc.lastStreamErr.Store(err)
 			cancel()
 			return
 		}

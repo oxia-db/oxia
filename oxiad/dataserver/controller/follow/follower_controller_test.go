@@ -822,6 +822,72 @@ func TestFollower_HandleSnapshot(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// TestFollower_SnapshotRecoveryFromNotMember verifies that when a follower
+// has its data cleaned up (status=NOT_MEMBER, term=-1) and the leader
+// sends a snapshot without a preceding NewTerm, the follower transitions
+// to FOLLOWER after the snapshot so that subsequent AppendEntries succeed.
+func TestFollower_SnapshotRecoveryFromNotMember(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// Fresh follower: NOT_MEMBER, term=-1
+	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, fc.Status())
+	assert.EqualValues(t, wal.InvalidTerm, fc.Term())
+
+	// Simulate leader sending a snapshot directly (no NewTerm first).
+	// This happens when the leader's FollowerCursor retries after the
+	// follower restarted with clean data.
+	snapshot := prepareTestDb(t, 5)
+
+	snapshotStream := rpc.NewMockServerSendSnapshotStream()
+	wg := sync.WaitGroup{}
+	wg.Go(func() {
+		err := fc.InstallSnapshot(snapshotStream)
+		assert.NoError(t, err)
+	})
+
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		assert.NoError(t, err)
+		content := chunk.Content()
+		snapshotStream.AddChunk(&proto.SnapshotChunk{
+			Term:       5,
+			Name:       chunk.Name(),
+			Content:    content,
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	close(snapshotStream.Chunks)
+	wg.Wait()
+
+	// After snapshot install, status must be FOLLOWER (not NOT_MEMBER).
+	// The snapshot provides a clean state — no truncation needed — so
+	// the node is ready for replication immediately.
+	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
+	assert.EqualValues(t, 5, fc.Term())
+	assert.EqualValues(t, 99, fc.CommitOffset())
+
+	// Verify the snapshot data is present
+	for i := 0; i < 100; i++ {
+		dbRes, err := fc.(*followerController).db.Get(&proto.GetRequest{
+			Key:          fmt.Sprintf("key-%d", i),
+			IncludeValue: true,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, proto.Status_OK, dbRes.Status)
+	}
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestFollower_DisconnectLeader(t *testing.T) {
 	var shardId int64
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
