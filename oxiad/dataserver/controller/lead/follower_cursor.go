@@ -385,16 +385,19 @@ func (fc *followerCursor) streamEntries() error {
 	}
 	defer reader.Close()
 
-	recvErrCh := make(chan error, 1)
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "follower-cursor-receive",
-			"shard": fmt.Sprintf("%d", fc.shardId),
-		}, func() {
-			fc.receiveAcks(cancel, fc.stream, recvErrCh)
-		},
-	)
+	var recvErr error
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		process.DoWithLabels(
+			ctx,
+			map[string]string{
+				"oxia":  "follower-cursor-receive",
+				"shard": fmt.Sprintf("%d", fc.shardId),
+			}, func() {
+				recvErr = fc.receiveAcks(cancel, fc.stream)
+			},
+		)
+	})
 
 	fc.log.Info(
 		"Successfully attached cursor follower",
@@ -402,24 +405,23 @@ func (fc *followerCursor) streamEntries() error {
 	)
 
 	sendErr := fc.streamEntriesLoop(ctx, reader, currentOffset)
+	wg.Wait()
 
 	// Prefer the receive-side error (e.g. not-member status from the
 	// follower) over the send-side error which is typically just a
 	// context cancellation triggered by the receive goroutine.
-	select {
-	case recvErr := <-recvErrCh:
+	if recvErr != nil {
 		return recvErr
-	default:
-		return sendErr
 	}
+	return sendErr
 }
 
-func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.OxiaLogReplication_ReplicateClient, recvErrCh chan<- error) {
+func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.OxiaLogReplication_ReplicateClient) error {
 	for {
 		res, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			fc.log.Info("Ack stream finished")
-			return
+			return nil
 		}
 		if err != nil {
 			if status.Code(err) != codes.Canceled && status.Code(err) != codes.Unavailable {
@@ -429,14 +431,13 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 				)
 			}
 
-			recvErrCh <- err
 			cancel()
-			return
+			return err
 		}
 
 		if res == nil {
 			// Stream was closed by dataserver side
-			return
+			return nil
 		}
 
 		fc.log.Debug(
