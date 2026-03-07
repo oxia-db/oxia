@@ -405,6 +405,7 @@ func (fc *followerCursor) streamEntries() error {
 	)
 
 	sendErr := fc.streamEntriesLoop(ctx, reader, currentOffset)
+	cancel()
 	wg.Wait()
 
 	// Prefer the receive-side error (e.g. not-member status from the
