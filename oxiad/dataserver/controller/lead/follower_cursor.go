@@ -75,10 +75,9 @@ type followerCursor struct {
 	namespace   string
 	shardId     int64
 
-	backoff       backoff.BackOff
-	closed        atomic.Bool
-	lastStreamErr atomic.Value // last error received from the follower's ack stream
-	ctx           context.Context
+	backoff backoff.BackOff
+	closed  atomic.Bool
+	ctx     context.Context
 	cancel        context.CancelFunc
 	log           *slog.Logger
 
@@ -218,6 +217,14 @@ func (fc *followerCursor) AckOffset() int64 {
 func (fc *followerCursor) run() {
 	_ = backoff.RetryNotify(fc.runOnce, fc.backoff,
 		func(err error, duration time.Duration) {
+			// If the follower reported that it's not a member (e.g. after a
+			// data clean-up and restart), reset the ack offset so that
+			// shouldSendSnapshot() will send a full snapshot on the next retry.
+			if status.Code(err) == constant.CodeNodeIsNotMember {
+				fc.log.Info("Follower reported not-member status, resetting ack offset to trigger snapshot")
+				fc.ackOffset.Store(wal.InvalidOffset)
+				fc.lastPushed.Store(wal.InvalidOffset)
+			}
 			fc.log.Error(
 				"Error while pushing entries to follower",
 				slog.Any("error", err),
@@ -238,19 +245,7 @@ func (fc *followerCursor) runOnce() error {
 		timer.Done()
 	}
 
-	err := fc.streamEntries()
-	if err != nil {
-		// If the follower reported that it's not a member (e.g. after a
-		// data clean-up and restart), reset the ack offset so that
-		// shouldSendSnapshot() will send a full snapshot on the next retry.
-		if recvErr, ok := fc.lastStreamErr.Load().(error); ok &&
-			status.Code(recvErr) == constant.CodeNodeIsNotMember {
-			fc.log.Info("Follower reported not-member status, resetting ack offset to trigger snapshot")
-			fc.ackOffset.Store(wal.InvalidOffset)
-			fc.lastPushed.Store(wal.InvalidOffset)
-		}
-	}
-	return err
+	return fc.streamEntries()
 }
 
 func (fc *followerCursor) sendSnapshot() error {
@@ -390,13 +385,14 @@ func (fc *followerCursor) streamEntries() error {
 	}
 	defer reader.Close()
 
+	recvErrCh := make(chan error, 1)
 	go process.DoWithLabels(
 		ctx,
 		map[string]string{
 			"oxia":  "follower-cursor-receive",
 			"shard": fmt.Sprintf("%d", fc.shardId),
 		}, func() {
-			fc.receiveAcks(cancel, fc.stream)
+			fc.receiveAcks(cancel, fc.stream, recvErrCh)
 		},
 	)
 
@@ -405,10 +401,20 @@ func (fc *followerCursor) streamEntries() error {
 		slog.Int64("ack-offset", currentOffset),
 	)
 
-	return fc.streamEntriesLoop(ctx, reader, currentOffset)
+	sendErr := fc.streamEntriesLoop(ctx, reader, currentOffset)
+
+	// Prefer the receive-side error (e.g. not-member status from the
+	// follower) over the send-side error which is typically just a
+	// context cancellation triggered by the receive goroutine.
+	select {
+	case recvErr := <-recvErrCh:
+		return recvErr
+	default:
+		return sendErr
+	}
 }
 
-func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.OxiaLogReplication_ReplicateClient) {
+func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.OxiaLogReplication_ReplicateClient, recvErrCh chan<- error) {
 	for {
 		res, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -423,7 +429,7 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 				)
 			}
 
-			fc.lastStreamErr.Store(err)
+			recvErrCh <- err
 			cancel()
 			return
 		}
