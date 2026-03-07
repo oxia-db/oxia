@@ -284,6 +284,9 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 		}
 
 		if s := proto.ServingStatus(fc.status.Load()); s != proto.ServingStatus_FENCED && s != proto.ServingStatus_FOLLOWER {
+			if s == proto.ServingStatus_NOT_MEMBER {
+				return nil, dserror.ErrNodeIsNotMember
+			}
 			return nil, dserror.ErrInvalidStatus
 		}
 		if fc.logSynchronizer.IsValid() {
@@ -583,6 +586,7 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	}); err != nil {
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to send snapshot response")
 	}
+	fc.status.Store(int32(proto.ServingStatus_FOLLOWER))
 	fc.log.Info(
 		"Successfully installed snapshot",
 		slog.Int64("term", fc.term.Load()),

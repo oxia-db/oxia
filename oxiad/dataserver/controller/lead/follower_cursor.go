@@ -26,9 +26,11 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/dustin/go-humanize"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 
@@ -216,6 +218,14 @@ func (fc *followerCursor) AckOffset() int64 {
 func (fc *followerCursor) run() {
 	_ = backoff.RetryNotify(fc.runOnce, fc.backoff,
 		func(err error, duration time.Duration) {
+			// If the follower reported that it's not a member (e.g. after a
+			// data clean-up and restart), reset the ack offset so that
+			// shouldSendSnapshot() will send a full snapshot on the next retry.
+			if status.Code(err) == constant.CodeNodeIsNotMember {
+				fc.log.Warn("Follower reported not-member status, resetting ack offset to trigger snapshot")
+				fc.ackOffset.Store(wal.InvalidOffset)
+				fc.lastPushed.Store(wal.InvalidOffset)
+			}
 			fc.log.Error(
 				"Error while pushing entries to follower",
 				slog.Any("error", err),
@@ -376,30 +386,43 @@ func (fc *followerCursor) streamEntries() error {
 	}
 	defer reader.Close()
 
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "follower-cursor-receive",
-			"shard": fmt.Sprintf("%d", fc.shardId),
-		}, func() {
-			fc.receiveAcks(cancel, fc.stream)
-		},
-	)
+	var recvErr error
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		process.DoWithLabels(
+			ctx,
+			map[string]string{
+				"oxia":  "follower-cursor-receive",
+				"shard": fmt.Sprintf("%d", fc.shardId),
+			}, func() {
+				recvErr = fc.receiveAcks(cancel, fc.stream)
+			},
+		)
+	})
 
 	fc.log.Info(
 		"Successfully attached cursor follower",
 		slog.Int64("ack-offset", currentOffset),
 	)
 
-	return fc.streamEntriesLoop(ctx, reader, currentOffset)
+	sendErr := fc.streamEntriesLoop(ctx, reader, currentOffset)
+	cancel()
+	wg.Wait()
+
+	// Filter out context.Canceled from sendErr — it's expected noise
+	// when the receive goroutine cancels the context on error.
+	if errors.Is(sendErr, context.Canceled) {
+		sendErr = nil
+	}
+	return multierr.Combine(recvErr, sendErr)
 }
 
-func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.OxiaLogReplication_ReplicateClient) {
+func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.OxiaLogReplication_ReplicateClient) error {
 	for {
 		res, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			fc.log.Info("Ack stream finished")
-			return
+			return nil
 		}
 		if err != nil {
 			if status.Code(err) != codes.Canceled && status.Code(err) != codes.Unavailable {
@@ -410,12 +433,12 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 			}
 
 			cancel()
-			return
+			return err
 		}
 
 		if res == nil {
 			// Stream was closed by dataserver side
-			return
+			return nil
 		}
 
 		fc.log.Debug(
@@ -430,3 +453,4 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 		fc.backoff.Reset()
 	}
 }
+
