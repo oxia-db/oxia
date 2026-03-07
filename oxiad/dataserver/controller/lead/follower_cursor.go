@@ -26,6 +26,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/dustin/go-humanize"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -78,8 +79,8 @@ type followerCursor struct {
 	backoff backoff.BackOff
 	closed  atomic.Bool
 	ctx     context.Context
-	cancel        context.CancelFunc
-	log           *slog.Logger
+	cancel  context.CancelFunc
+	log     *slog.Logger
 
 	snapshotsTransferTime     metric.LatencyHistogram
 	snapshotsStartedCounter   metric.Counter
@@ -221,7 +222,7 @@ func (fc *followerCursor) run() {
 			// data clean-up and restart), reset the ack offset so that
 			// shouldSendSnapshot() will send a full snapshot on the next retry.
 			if status.Code(err) == constant.CodeNodeIsNotMember {
-				fc.log.Info("Follower reported not-member status, resetting ack offset to trigger snapshot")
+				fc.log.Warn("Follower reported not-member status, resetting ack offset to trigger snapshot")
 				fc.ackOffset.Store(wal.InvalidOffset)
 				fc.lastPushed.Store(wal.InvalidOffset)
 			}
@@ -408,13 +409,12 @@ func (fc *followerCursor) streamEntries() error {
 	cancel()
 	wg.Wait()
 
-	// Prefer the receive-side error (e.g. not-member status from the
-	// follower) over the send-side error which is typically just a
-	// context cancellation triggered by the receive goroutine.
-	if recvErr != nil {
-		return recvErr
+	// Filter out context.Canceled from sendErr — it's expected noise
+	// when the receive goroutine cancels the context on error.
+	if errors.Is(sendErr, context.Canceled) {
+		sendErr = nil
 	}
-	return sendErr
+	return multierr.Combine(recvErr, sendErr)
 }
 
 func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.OxiaLogReplication_ReplicateClient) error {
@@ -453,3 +453,4 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 		fc.backoff.Reset()
 	}
 }
+
