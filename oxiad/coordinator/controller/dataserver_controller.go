@@ -283,7 +283,8 @@ func (n *dataServerController) becomeUnavailable() {
 
 func (n *dataServerController) becomeAvailable() {
 	n.statusLock.Lock()
-	if n.status == NotRunning {
+	wasNotRunning := n.status == NotRunning
+	if wasNotRunning {
 		n.Info("Storage data server is back online")
 
 		// To avoid the send assignments stream to miss the notification about the current
@@ -294,6 +295,10 @@ func (n *dataServerController) becomeAvailable() {
 	}
 	n.status = Running
 	n.statusLock.Unlock()
+
+	if !wasNotRunning {
+		return
+	}
 
 	// sync the latest info
 	bo := commontime.NewBackOffWithInitialInterval(n.ctx, defaultInitialRetryBackoff)
