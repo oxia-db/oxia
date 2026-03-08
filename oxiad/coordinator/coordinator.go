@@ -118,7 +118,11 @@ func (c *coordinator) ConfigResource() resource.ClusterConfigResource {
 func (c *coordinator) NodeControllers() map[string]controller.DataServerController {
 	c.RLock()
 	defer c.RUnlock()
-	return c.nodeControllers
+	res := make(map[string]controller.DataServerController, len(c.nodeControllers))
+	for k, v := range c.nodeControllers {
+		res[k] = v
+	}
+	return res
 }
 
 func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {

@@ -147,6 +147,7 @@ func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int6
 	case r = <-m.becomeLeaderRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive BecomeLeader request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
@@ -163,6 +164,7 @@ func (m *mockPerNodeChannels) expectBecomeLeaderRequestWithFeatures(t *testing.T
 	case r = <-m.becomeLeaderRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive BecomeLeader request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
@@ -179,6 +181,7 @@ func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, te
 	case r = <-m.newTermRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive NewTerm request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
@@ -205,6 +208,7 @@ func (m *mockPerNodeChannels) expectDeleteShardRequest(t *testing.T, shard int64
 	case r = <-m.deleteShardRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive DeleteShard request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
@@ -219,6 +223,7 @@ func (m *mockPerNodeChannels) expectAddFollowerRequest(t *testing.T, shard int64
 	case r = <-m.addFollowerRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive AddFollower request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
@@ -233,6 +238,7 @@ func (m *mockPerNodeChannels) expectGetStatusRequest(t *testing.T, shard int64) 
 	case r = <-m.getStatusRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive GetStatus request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)

@@ -475,10 +475,21 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	wg := concurrent.NewWaitGroup(1)
 
 	wg.Go(func() error {
-		action := action.NewChangeEnsembleAction(shard, s1, s4)
-		sc.ChangeEnsemble(action)
-		_, err := action.Wait()
-		return err
+		// Retry until the shard controller is ready for ensemble change.
+		// After an election, follower catch-up runs in a background
+		// goroutine; ChangeEnsemble is rejected until it completes.
+		for {
+			a := action.NewChangeEnsembleAction(shard, s1, s4)
+			sc.ChangeEnsemble(a)
+			_, err := a.Wait()
+			if err == nil {
+				return nil
+			}
+			if !errors.Is(err, ErrNotReadyForChangeEnsemble) {
+				return err
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 	})
 
 	// First leader election before swap will fail
@@ -569,10 +580,21 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	// Now start the swap dataServer, which will trigger a new election
 	wg := concurrent.NewWaitGroup(1)
 	wg.Go(func() error {
-		action := action.NewChangeEnsembleAction(shard, s1, s4)
-		sc.ChangeEnsemble(action)
-		_, err := action.Wait()
-		return err
+		// Retry until the shard controller is ready for ensemble change.
+		// After an election, follower catch-up runs in a background
+		// goroutine; ChangeEnsemble is rejected until it completes.
+		for {
+			a := action.NewChangeEnsembleAction(shard, s1, s4)
+			sc.ChangeEnsemble(a)
+			_, err := a.Wait()
+			if err == nil {
+				return nil
+			}
+			if !errors.Is(err, ErrNotReadyForChangeEnsemble) {
+				return err
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 	})
 
 	rpc.GetNode(s1).NewTermResponse(2, 1, nil)

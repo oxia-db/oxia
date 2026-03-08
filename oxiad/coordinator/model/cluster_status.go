@@ -22,6 +22,45 @@ type Int32HashRange struct {
 	Max uint32 `json:"max"`
 }
 
+// SplitMetadata tracks an in-progress shard split. This is set on both the
+// parent shard (with ChildShardIDs) and the child shards (with ParentShardId).
+// The split state is orthogonal to the shard's operational status.
+type SplitMetadata struct {
+	Phase SplitPhase `json:"phase" yaml:"phase"`
+
+	// ParentShardId is set on child shards, pointing to the parent they
+	// were split from.
+	ParentShardId int64 `json:"parentShardId" yaml:"parentShardId"`
+
+	// ChildShardIDs is set on the parent shard, pointing to the children.
+	ChildShardIDs []int64 `json:"childShardIds,omitempty" yaml:"childShardIds,omitempty"`
+
+	// SplitPoint is the hash boundary. Left child gets [min, splitPoint],
+	// right child gets [splitPoint+1, max].
+	SplitPoint uint32 `json:"splitPoint" yaml:"splitPoint"`
+
+	// SnapshotOffset is the parent WAL offset at which the snapshot was
+	// taken. Children catch up from this point.
+	SnapshotOffset int64 `json:"snapshotOffset,omitempty" yaml:"snapshotOffset,omitempty"`
+}
+
+func (sm *SplitMetadata) Clone() *SplitMetadata {
+	if sm == nil {
+		return nil
+	}
+	r := &SplitMetadata{
+		Phase:          sm.Phase,
+		ParentShardId:  sm.ParentShardId,
+		SplitPoint:     sm.SplitPoint,
+		SnapshotOffset: sm.SnapshotOffset,
+	}
+	if sm.ChildShardIDs != nil {
+		r.ChildShardIDs = make([]int64, len(sm.ChildShardIDs))
+		copy(r.ChildShardIDs, sm.ChildShardIDs)
+	}
+	return r
+}
+
 type ShardMetadata struct {
 	Status   ShardStatus `json:"status" yaml:"status"`
 	Term     int64       `json:"term" yaml:"term"`
@@ -39,6 +78,10 @@ type ShardMetadata struct {
 	// quorum.
 	PendingDeleteShardNodes []Server       `json:"pendingDeleteShardNodes" yaml:"pendingDeleteShardNodes"`
 	Int32HashRange          Int32HashRange `json:"int32HashRange" yaml:"int32HashRange"`
+
+	// Non-nil only when this shard is involved in an active split
+	// (either as parent or as child).
+	Split *SplitMetadata `json:"split,omitempty" yaml:"split,omitempty"`
 }
 
 type NamespaceStatus struct {
@@ -76,6 +119,7 @@ func (sm ShardMetadata) Clone() ShardMetadata {
 		RemovedNodes:            make([]Server, len(sm.RemovedNodes)),
 		PendingDeleteShardNodes: make([]Server, len(sm.PendingDeleteShardNodes)),
 		Int32HashRange:          sm.Int32HashRange.Clone(),
+		Split:                   sm.Split.Clone(),
 	}
 
 	copy(r.Ensemble, sm.Ensemble)

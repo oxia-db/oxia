@@ -39,6 +39,8 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 		case *proto.ControlRequest_RecordChecksum:
 			checksum := db.ReadChecksum()
 			return ApplyResponse{Checksum: &checksum}, nil
+		default:
+			return ApplyResponse{}, errors.New("unknown control request type")
 		}
 	case *proto.LogEntryValue_Requests:
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
