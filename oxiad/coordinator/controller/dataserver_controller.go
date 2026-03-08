@@ -90,7 +90,7 @@ type dataServerController struct {
 	healthClient       grpc_health_v1.HealthClient
 	healthClientCloser io.Closer
 
-	initialRetryBackoff        time.Duration
+	healthCheckBackoff         *commontime.ConcurrentBackOff
 	dispatchAssignmentsBackoff backoff.BackOff
 
 	dataServerRunningGauge metric.Gauge
@@ -204,7 +204,6 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 
 func (n *dataServerController) healthPingWithRetries() {
 	defer n.Done()
-	bo := commontime.NewBackOffWithInitialInterval(n.ctx, n.initialRetryBackoff)
 	_ = backoff.RetryNotify(func() error {
 		n.maybeInitHealthClient()
 		ticker := time.NewTicker(healthCheckProbeInterval)
@@ -223,7 +222,7 @@ func (n *dataServerController) healthPingWithRetries() {
 				}
 			}
 		}
-	}, bo, func(err error, duration time.Duration) {
+	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
 		n.Warn(
 			"Failed to check storage data server health by ping-pong",
 			slog.Duration("retry-after", duration),
@@ -235,7 +234,6 @@ func (n *dataServerController) healthPingWithRetries() {
 
 func (n *dataServerController) healthWatchWithRetries() {
 	defer n.Done()
-	bo := commontime.NewBackOffWithInitialInterval(n.ctx, n.initialRetryBackoff)
 	_ = backoff.RetryNotify(func() error {
 		n.Debug("Start new health watch cycle")
 		n.maybeInitHealthClient()
@@ -254,7 +252,7 @@ func (n *dataServerController) healthWatchWithRetries() {
 				}
 			}
 		}
-	}, bo, func(err error, duration time.Duration) {
+	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
 		n.Warn("Failed to check storage data server health by watch",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
@@ -295,6 +293,7 @@ func (n *dataServerController) becomeAvailable() {
 	// To avoid the send assignments stream to miss the notification about the current
 	// dataServer went down, we interrupt the current stream when the ping on the dataServer fails
 	n.rpc.ClearPooledConnections(n.dataServer)
+	n.healthCheckBackoff.Reset()
 	n.status = Running
 	n.statusLock.Unlock()
 
@@ -378,7 +377,7 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 		healthClientOnce:           sync.Once{},
 		healthClient:               nil,
 		healthClientCloser:         &commonio.NopCloser{},
-		initialRetryBackoff:        initialRetryBackoff,
+		healthCheckBackoff:         commontime.NewConcurrentBackOff(commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff)),
 		dispatchAssignmentsBackoff: commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff),
 		failedHealthChecks: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
 			"The number of failed health checks to a dataServer", "count", labels),

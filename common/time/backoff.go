@@ -16,6 +16,7 @@ package time
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -35,4 +36,27 @@ func NewBackOffWithInitialInterval(ctx context.Context, initialInterval time.Dur
 		Stop:                backoff.Stop,
 		Clock:               backoff.SystemClock,
 	}, ctx)
+}
+
+// ConcurrentBackOff wraps a backoff.BackOff with a mutex to make it safe
+// for concurrent use across multiple goroutines.
+type ConcurrentBackOff struct {
+	mu sync.Mutex
+	bo backoff.BackOff
+}
+
+func NewConcurrentBackOff(bo backoff.BackOff) *ConcurrentBackOff {
+	return &ConcurrentBackOff{bo: bo}
+}
+
+func (c *ConcurrentBackOff) NextBackOff() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.bo.NextBackOff()
+}
+
+func (c *ConcurrentBackOff) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.bo.Reset()
 }
