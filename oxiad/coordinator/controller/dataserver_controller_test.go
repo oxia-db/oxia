@@ -112,14 +112,14 @@ func TestDataServerController_GetInfoOnlyCalledOnStateTransition(t *testing.T) {
 	// Bring the server back online
 	node.healthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
 
-	assert.Eventually(t, func() bool {
-		return nc.Status() == Running
-	}, 10*time.Second, 100*time.Millisecond)
-
 	// GetInfo should have been called again for the NotRunning -> Running transition
-	countAfterRecovery := node.getInfoCount.Load()
-	assert.Greater(t, countAfterRecovery, countAfterWait,
+	assert.Eventually(t, func() bool {
+		return node.getInfoCount.Load() > countAfterWait
+	}, 10*time.Second, 100*time.Millisecond,
 		"GetInfo should be called on state transition from NotRunning to Running")
+
+	assert.Equal(t, Running, nc.Status())
+	countAfterRecovery := node.getInfoCount.Load()
 
 	// Wait again to confirm no further redundant calls
 	time.Sleep(5 * time.Second)
