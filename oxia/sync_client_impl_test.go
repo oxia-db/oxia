@@ -462,9 +462,15 @@ func TestSyncClientImpl_InternalKeys(t *testing.T) {
 	assert.Equal(t, "b", (<-resCh).Key)
 	assert.Equal(t, "c", (<-resCh).Key)
 	assert.Equal(t, "__oxia/a-test", (<-resCh).Key)
-	assert.Eventually(t, func() bool {
-		return assert.NotEmpty(t, resCh)
-	}, 1*time.Second, 10*time.Millisecond)
+	// Verify remaining system-created internal keys are returned
+	var systemKeys []string
+	for r := range resCh {
+		systemKeys = append(systemKeys, r.Key)
+	}
+	assert.NotEmpty(t, systemKeys)
+	for _, k := range systemKeys {
+		assert.True(t, strings.HasPrefix(k, "__oxia/"), "expected internal key prefix, got: %s", k)
+	}
 
 	assert.NoError(t, client.Close())
 	assert.NoError(t, standaloneServer.Close())
