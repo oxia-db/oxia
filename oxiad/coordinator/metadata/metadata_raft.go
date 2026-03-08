@@ -51,14 +51,23 @@ func (mpr *metadataProviderRaft) WaitToBecomeLeader() error {
 	// Monitor for leader loss in the background
 	go func() {
 		for hasLease := range mpr.raft.LeaderCh() {
-			mpr.hasLease.Store(hasLease)
-			if !hasLease {
-				close(mpr.leadershipLostCh)
+			if hasLease {
+				mpr.hasLease.Store(true)
+			} else {
+				mpr.signalLeadershipLost()
 				return
 			}
 		}
 	}()
 	return nil
+}
+
+// signalLeadershipLost atomically marks the provider as no longer the leader
+// and closes the leadershipLostCh. Safe to call multiple times.
+func (mpr *metadataProviderRaft) signalLeadershipLost() {
+	if mpr.hasLease.CompareAndSwap(true, false) {
+		close(mpr.leadershipLostCh)
+	}
 }
 
 func (mpr *metadataProviderRaft) LeadershipLostCh() <-chan struct{} {

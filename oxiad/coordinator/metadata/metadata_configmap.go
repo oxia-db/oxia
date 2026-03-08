@@ -148,10 +148,10 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	data := configMap(m.name, status, expectedVersion)
 	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, data)
 	if k8serrors.IsConflict(err) {
-		if !m.hasLease.Load() {
-			return version, ErrLeadershipLost
-		}
-		return version, ErrMetadataBadVersion
+		// Conflict means another coordinator wrote to the ConfigMap,
+		// which is a strong signal of leadership loss.
+		m.signalLeadershipLost()
+		return version, ErrLeadershipLost
 	}
 	version = Version(cm.ResourceVersion)
 	m.metadataSize.Store(int64(len(data.Data["status"])))
@@ -195,8 +195,7 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
-				m.hasLease.Store(false)
-				close(m.leadershipLostCh)
+				m.signalLeadershipLost()
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -225,6 +224,14 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 	})
 
 	return wg.Wait(m.ctx)
+}
+
+// signalLeadershipLost atomically marks the provider as no longer the leader
+// and closes the leadershipLostCh. Safe to call multiple times.
+func (m *metadataProviderConfigMap) signalLeadershipLost() {
+	if m.hasLease.CompareAndSwap(true, false) {
+		close(m.leadershipLostCh)
+	}
 }
 
 func (m *metadataProviderConfigMap) LeadershipLostCh() <-chan struct{} {
