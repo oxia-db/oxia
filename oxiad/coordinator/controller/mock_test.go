@@ -19,6 +19,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -134,6 +135,7 @@ type mockPerNodeChannels struct {
 	// Feature negotiation support
 	supportedFeatures []proto.Feature
 	getInfoErr        error
+	getInfoCount      atomic.Int64
 }
 
 const defaultTimeout = 10 * time.Second
@@ -361,6 +363,7 @@ func (r *mockRpcProvider) GetInfo(_ context.Context, node model.Server, _ *proto
 	defer r.Unlock()
 
 	n := r.getNode(node)
+	n.getInfoCount.Add(1)
 	if n.getInfoErr != nil {
 		return nil, n.getInfoErr
 	}

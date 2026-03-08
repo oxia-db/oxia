@@ -41,9 +41,13 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 	rpc := newMockRpcProvider()
 	nc := newDataServerController(context.Background(), addr, sap, nal, rpc, 1*time.Second)
 
-	assert.Equal(t, Running, nc.Status())
-
 	node := rpc.GetNode(addr)
+
+	// Controller starts as NotRunning and transitions to Running on first health check
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 100*time.Millisecond)
+
 	node.healthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
 	unavailableNode := <-nal.events
@@ -63,6 +67,66 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 	assert.Equal(t, addr, unavailableNode)
 
 	assert.Equal(t, NotRunning, nc.Status())
+
+	assert.NoError(t, nc.Close())
+}
+
+func TestDataServerController_GetInfoOnlyCalledOnStateTransition(t *testing.T) {
+	addr := model.Server{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+
+	sap := newMockShardAssignmentsProvider()
+	nal := newMockNodeAvailabilityListener()
+	rpc := newMockRpcProvider()
+	nc := newDataServerController(context.Background(), addr, sap, nal, rpc, 1*time.Second)
+
+	node := rpc.GetNode(addr)
+
+	// Wait for the initial GetInfo call that happens when the controller starts
+	// (the controller starts in Running state, transitions through health check)
+	assert.Eventually(t, func() bool {
+		return node.getInfoCount.Load() >= 1
+	}, 10*time.Second, 100*time.Millisecond)
+
+	// Record the count after initial startup
+	initialCount := node.getInfoCount.Load()
+
+	// Wait for several health check cycles (health check runs every 2s)
+	// If GetInfo were called on every health check, we'd see the count increase
+	time.Sleep(5 * time.Second)
+
+	// The count should NOT have increased while the server stayed Running
+	countAfterWait := node.getInfoCount.Load()
+	assert.Equal(t, initialCount, countAfterWait,
+		"GetInfo should not be called repeatedly while server is already Running")
+
+	// Now simulate the server going down and coming back
+	node.healthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+
+	unavailableNode := <-nal.events
+	assert.Equal(t, addr, unavailableNode)
+	assert.Equal(t, NotRunning, nc.Status())
+
+	// Bring the server back online
+	node.healthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
+
+	// GetInfo should have been called again for the NotRunning -> Running transition
+	assert.Eventually(t, func() bool {
+		return node.getInfoCount.Load() > countAfterWait
+	}, 10*time.Second, 100*time.Millisecond,
+		"GetInfo should be called on state transition from NotRunning to Running")
+
+	assert.Equal(t, Running, nc.Status())
+	countAfterRecovery := node.getInfoCount.Load()
+
+	// Wait again to confirm no further redundant calls
+	time.Sleep(5 * time.Second)
+
+	countAfterSecondWait := node.getInfoCount.Load()
+	assert.Equal(t, countAfterRecovery, countAfterSecondWait,
+		"GetInfo should not be called repeatedly after recovery")
 
 	assert.NoError(t, nc.Close())
 }
