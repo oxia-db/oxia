@@ -202,10 +202,21 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 	})
 }
 
+func (n *dataServerController) doHealthPing() error {
+	pingCtx, pingCancel := context.WithTimeout(n.ctx, healthCheckProbeTimeout)
+	response, err := n.healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
+	pingCancel()
+	return n.healthCheckHandler(response, err)
+}
+
 func (n *dataServerController) healthPingWithRetries() {
 	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
 		n.maybeInitHealthClient()
+		// Immediate check on startup instead of waiting for first tick
+		if err := n.doHealthPing(); err != nil {
+			return err
+		}
 		ticker := time.NewTicker(healthCheckProbeInterval)
 		defer ticker.Stop()
 		for {
@@ -213,10 +224,7 @@ func (n *dataServerController) healthPingWithRetries() {
 			case <-n.ctx.Done():
 				return nil
 			case <-ticker.C:
-				pingCtx, pingCancel := context.WithTimeout(n.ctx, healthCheckProbeTimeout)
-				response, err := n.healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
-				pingCancel()
-				if err := n.healthCheckHandler(response, err); err != nil {
+				if err := n.doHealthPing(); err != nil {
 					n.Warn("Data server stopped responding to ping")
 					return err
 				}
