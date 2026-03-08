@@ -57,6 +57,8 @@ type metadataProviderConfigMap struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
+	hasLease atomic.Bool
+
 	ctx     context.Context
 	cancel  context.CancelFunc
 	closeCh chan any
@@ -136,13 +138,19 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 		slog.Error("Store metadata failed for version mismatch",
 			slog.Any("local-version", version),
 			slog.Any("expected-version", expectedVersion))
-		panic(ErrMetadataBadVersion)
+		if !m.hasLease.Load() {
+			return version, ErrLeadershipLost
+		}
+		return version, ErrMetadataBadVersion
 	}
 
 	data := configMap(m.name, status, expectedVersion)
 	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, data)
 	if k8serrors.IsConflict(err) {
-		panic(err)
+		if !m.hasLease.Load() {
+			return version, ErrLeadershipLost
+		}
+		return version, ErrMetadataBadVersion
 	}
 	version = Version(cm.ResourceVersion)
 	m.metadataSize.Store(int64(len(data.Data["status"])))
@@ -180,10 +188,12 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(_ context.Context) {
 				log.Info("Started leading - lease acquired")
+				m.hasLease.Store(true)
 				wg.Done()
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
+				m.hasLease.Store(false)
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {

@@ -15,6 +15,8 @@
 package resource
 
 import (
+	"errors"
+	"log"
 	"log/slog"
 	"sync"
 	"time"
@@ -50,6 +52,27 @@ type status struct {
 	lock             sync.RWMutex
 	current          *model.ClusterStatus
 	currentVersionID metadata.Version
+}
+
+// handleStoreError handles errors from metadata.Store().
+// - ErrLeadershipLost: fatal — process must exit
+// - ErrMetadataBadVersion: re-read current version and retry
+// - other errors: retryable as-is
+func (s *status) handleStoreError(err error) error {
+	if errors.Is(err, metadata.ErrLeadershipLost) {
+		log.Fatalf("Leadership lost during metadata store: %v", err)
+	}
+	if errors.Is(err, metadata.ErrMetadataBadVersion) {
+		// Still leader but version is stale — re-read and retry
+		s.Warn("metadata version conflict, re-reading current version",
+			slog.Any("error", err))
+		_, version, readErr := s.metadata.Get()
+		if readErr == nil {
+			s.currentVersionID = version
+		}
+		return err // retryable
+	}
+	return err
 }
 
 func (s *status) loadWithInitSlow() {
@@ -100,10 +123,10 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 	if s.currentVersionID != version {
 		return false
 	}
-	_ = backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
-			return err
+			return s.handleStoreError(err)
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
@@ -115,7 +138,7 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 			slog.Duration("retry-after", duration),
 		)
 	})
-	return true
+	return err == nil
 }
 
 func (s *status) Update(newStatus *model.ClusterStatus) {
@@ -124,7 +147,7 @@ func (s *status) Update(newStatus *model.ClusterStatus) {
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
-			return err
+			return s.handleStoreError(err)
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
@@ -151,7 +174,7 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return err
+			return s.handleStoreError(err)
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID
@@ -181,7 +204,7 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) {
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return err
+			return s.handleStoreError(err)
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID

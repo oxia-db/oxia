@@ -15,6 +15,7 @@
 package metadata
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -64,12 +65,11 @@ func TestMetadataProvider(t *testing.T) {
 			assert.Equal(t, NotExists, version)
 			assert.Nil(t, res)
 
-			assert.PanicsWithError(t, ErrMetadataBadVersion.Error(), func() {
-				_, err := m.Store(&model.ClusterStatus{
-					Namespaces: map[string]model.NamespaceStatus{},
-				}, "")
-				assert.NoError(t, err)
-			})
+			_, err = m.Store(&model.ClusterStatus{
+				Namespaces: map[string]model.NamespaceStatus{},
+			}, "")
+			assert.True(t, errors.Is(err, ErrMetadataBadVersion) || errors.Is(err, ErrLeadershipLost),
+				"expected ErrMetadataBadVersion or ErrLeadershipLost, got: %v", err)
 
 			newVersion, err := m.Store(&model.ClusterStatus{
 				Namespaces: map[string]model.NamespaceStatus{},

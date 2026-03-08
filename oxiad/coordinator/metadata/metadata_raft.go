@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/raft"
@@ -35,14 +36,22 @@ import (
 type metadataProviderRaft struct {
 	sync.Mutex
 
-	sc    *stateContainer
-	raft  *raft.Raft
-	store *kvRaftStore
-	log   *slog.Logger
+	sc       *stateContainer
+	raft     *raft.Raft
+	store    *kvRaftStore
+	log      *slog.Logger
+	hasLease atomic.Bool
 }
 
 func (mpr *metadataProviderRaft) WaitToBecomeLeader() error {
 	<-mpr.raft.LeaderCh()
+	mpr.hasLease.Store(true)
+	// Monitor for leader loss in the background
+	go func() {
+		for hasLease := range mpr.raft.LeaderCh() {
+			mpr.hasLease.Store(hasLease)
+		}
+	}()
 	return nil
 }
 
@@ -55,7 +64,6 @@ func NewMetadataProviderRaft(
 		sc:  newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
 		log: slog.With(slog.String("component", "metadata-provider-raft")),
 	}
-
 	// Ensure data dir per node
 	nodeId := raftAddress
 	dataDir := filepath.Join(raftDataDir, nodeId)
@@ -187,7 +195,10 @@ func (mpr *metadataProviderRaft) Store(cs *model.ClusterStatus, expectedVersion 
 	}
 
 	if !applyRes.changeApplied {
-		panic(ErrMetadataBadVersion)
+		if !mpr.hasLease.Load() {
+			return NotExists, ErrLeadershipLost
+		}
+		return NotExists, ErrMetadataBadVersion
 	}
 
 	return toVersion(applyRes.newVersion), nil
