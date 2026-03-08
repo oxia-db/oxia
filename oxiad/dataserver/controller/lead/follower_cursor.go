@@ -336,6 +336,9 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			// We have reached the head of the wal
 			// Wait for more entries to be written
 			if err := fc.ackTracker.WaitForHeadOffset(ctx, currentOffset+1); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return nil
+				}
 				return err
 			}
 
@@ -358,6 +361,9 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			CommitOffset:     fc.ackTracker.CommitOffset(),
 			PreviousEntryCrc: &previousCrc,
 		}); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
 			return err
 		}
 
@@ -409,11 +415,6 @@ func (fc *followerCursor) streamEntries() error {
 	cancel()
 	wg.Wait()
 
-	// Filter out context.Canceled from sendErr — it's expected noise
-	// when the receive goroutine cancels the context on error.
-	if errors.Is(sendErr, context.Canceled) {
-		sendErr = nil
-	}
 	return multierr.Combine(recvErr, sendErr)
 }
 
@@ -453,4 +454,3 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 		fc.backoff.Reset()
 	}
 }
-
