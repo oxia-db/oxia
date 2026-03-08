@@ -274,20 +274,12 @@ func (s *GrpcServer) monitorLeaderLoss() {
 
 		select {
 		case <-leadershipLostCh:
-			s.logger.Warn("Leadership lost, closing coordinator and waiting to become leader again")
+			s.logger.Warn("Leadership lost, closing coordinator and recreating")
 			if err := s.coordinator.Close(); err != nil {
 				s.logger.Warn("Failed to close coordinator after leadership loss",
 					slog.Any("error", err))
 			}
 
-			s.logger.Info("Waiting to become leader")
-			if err := s.metadataProvider.WaitToBecomeLeader(); err != nil {
-				s.logger.Error("Failed to wait to become leader",
-					slog.Any("error", err))
-				return
-			}
-
-			s.logger.Info("Re-elected as leader, creating new coordinator")
 			coordinatorInstance, err := NewCoordinator(
 				s.metadataProvider,
 				s.clusterConfigProvider,
@@ -295,7 +287,7 @@ func (s *GrpcServer) monitorLeaderLoss() {
 				s.rpcProvider,
 			)
 			if err != nil {
-				s.logger.Error("Failed to create new coordinator after re-election",
+				s.logger.Error("Failed to create new coordinator",
 					slog.Any("error", err))
 				return
 			}
