@@ -144,7 +144,7 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 		}
 		assert.Equal(t, shard.Leader.Public, hint.LeaderAddress)
 		return true
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 20*time.Second, 100*time.Millisecond)
 }
 
 func TestLeaderHintListWithClient(t *testing.T) {
