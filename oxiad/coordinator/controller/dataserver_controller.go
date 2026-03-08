@@ -294,8 +294,6 @@ func (n *dataServerController) becomeAvailable() {
 	// To avoid the send assignments stream to miss the notification about the current
 	// dataServer went down, we interrupt the current stream when the ping on the dataServer fails
 	n.rpc.ClearPooledConnections(n.dataServer)
-	n.healthCheckBackoff.Reset()
-	n.healthWatchBackoff.Reset()
 	n.status = Running
 	n.statusLock.Unlock()
 
