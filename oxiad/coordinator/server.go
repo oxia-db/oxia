@@ -159,19 +159,11 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, errors.New(`must be one of "memory", "configmap" or "file"`)
 	}
 
-	controller := &options.Controller
-	controllerTLS, err := controller.TLS.TryIntoClientTLSConf()
-	if err != nil {
-		return nil, err
-	}
-	clientPool := rpc.NewClientPool(controllerTLS, nil)
-	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
-
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
-	if err != nil {
-		return nil, err
-	}
-
+	// Start the gRPC server and set health status to SERVING before waiting
+	// for leader election. In sidecar mode (3-pod StatefulSet), only the leader
+	// coordinator wins the election; non-leaders block at WaitToBecomeLeader().
+	// Without setting SERVING early, Kubernetes liveness probes kill non-leader
+	// pods because the health server defaults to UNKNOWN.
 	healthServer := health.NewServer()
 
 	internalServer := options.Server.Internal
@@ -182,6 +174,25 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, internalServerTLS, &auth.Disabled)
+	if err != nil {
+		return nil, err
+	}
+
+	// Mark the coordinator as healthy immediately. The coordinator sidecar is
+	// considered healthy as long as it is running — even while waiting for
+	// leadership. It is only unhealthy if it crashes.
+	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus("oxia-coordinator", grpc_health_v1.HealthCheckResponse_SERVING)
+
+	controller := &options.Controller
+	controllerTLS, err := controller.TLS.TryIntoClientTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	clientPool := rpc.NewClientPool(controllerTLS, nil)
+	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
+
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
