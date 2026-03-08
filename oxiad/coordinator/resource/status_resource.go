@@ -56,7 +56,7 @@ type status struct {
 // handleStoreError handles errors from metadata.Store().
 // - ErrLeadershipLost: permanent — stop retrying, let GrpcServer handle restart
 // - ErrMetadataBadVersion: re-read current version and retry
-// - other errors: retryable as-is
+// - other errors: retryable as-is.
 func (s *status) handleStoreError(err error) error {
 	if errors.Is(err, metadata.ErrLeadershipLost) {
 		// Stop retrying — the LeadershipLostCh channel will trigger
