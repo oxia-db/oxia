@@ -463,7 +463,7 @@ func TestSyncClientImpl_InternalKeys(t *testing.T) {
 	assert.Equal(t, "c", (<-resCh).Key)
 	assert.Equal(t, "__oxia/a-test", (<-resCh).Key)
 	// Verify remaining system-created internal keys are returned
-	var systemKeys []string
+	systemKeys := make([]string, 0)
 	for r := range resCh {
 		systemKeys = append(systemKeys, r.Key)
 	}
