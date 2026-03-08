@@ -394,6 +394,28 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 			return 0
 		})
 
+	// Sync info on startup so we have the initial feature set
+	nc.Add(1)
+	go process.DoWithLabels(
+		nc.ctx,
+		map[string]string{
+			"component":  "data-server-controller-initial-info-sync",
+			"dataServer": dataServerID,
+		},
+		func() {
+			defer nc.Done()
+			bo := commontime.NewBackOffWithInitialInterval(nc.ctx, initialRetryBackoff)
+			_ = backoff.RetryNotify(func() error {
+				return nc.syncDataServerInfo()
+			}, bo, func(err error, duration time.Duration) {
+				nc.Warn("Failed to get initial data server info",
+					slog.Any("error", err),
+					slog.Duration("retry-after", duration),
+				)
+			})
+		},
+	)
+
 	nc.Add(1)
 	go process.DoWithLabels(
 		nc.ctx,
