@@ -41,9 +41,13 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 	rpc := newMockRpcProvider()
 	nc := newDataServerController(context.Background(), addr, sap, nal, rpc, 1*time.Second)
 
-	assert.Equal(t, Running, nc.Status())
-
 	node := rpc.GetNode(addr)
+
+	// Controller starts as NotRunning and transitions to Running on first health check
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 100*time.Millisecond)
+
 	node.healthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
 	unavailableNode := <-nal.events
