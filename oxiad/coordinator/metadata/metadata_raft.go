@@ -51,12 +51,11 @@ func (mpr *metadataProviderRaft) WaitToBecomeLeader() error {
 	// Monitor for leader loss in the background
 	go func() {
 		for hasLease := range mpr.raft.LeaderCh() {
-			if hasLease {
-				mpr.hasLease.Store(true)
-			} else {
+			if !hasLease {
 				mpr.signalLeadershipLost()
 				return
 			}
+			mpr.hasLease.Store(true)
 		}
 	}()
 	return nil
