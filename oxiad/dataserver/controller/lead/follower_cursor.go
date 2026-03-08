@@ -336,7 +336,7 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			// We have reached the head of the wal
 			// Wait for more entries to be written
 			if err := fc.ackTracker.WaitForHeadOffset(ctx, currentOffset+1); err != nil {
-				if errors.Is(err, context.Canceled) {
+				if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 					return nil
 				}
 				return err
@@ -361,7 +361,7 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			CommitOffset:     fc.ackTracker.CommitOffset(),
 			PreviousEntryCrc: &previousCrc,
 		}); err != nil {
-			if errors.Is(err, context.Canceled) {
+			if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 				return nil
 			}
 			return err
