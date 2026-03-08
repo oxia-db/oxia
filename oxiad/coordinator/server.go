@@ -159,19 +159,6 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, errors.New(`must be one of "memory", "configmap" or "file"`)
 	}
 
-	controller := &options.Controller
-	controllerTLS, err := controller.TLS.TryIntoClientTLSConf()
-	if err != nil {
-		return nil, err
-	}
-	clientPool := rpc.NewClientPool(controllerTLS, nil)
-	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
-
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
-	if err != nil {
-		return nil, err
-	}
-
 	healthServer := health.NewServer()
 
 	internalServer := options.Server.Internal
@@ -182,6 +169,19 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, internalServerTLS, &auth.Disabled)
+	if err != nil {
+		return nil, err
+	}
+
+	controller := &options.Controller
+	controllerTLS, err := controller.TLS.TryIntoClientTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	clientPool := rpc.NewClientPool(controllerTLS, nil)
+	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
+
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
