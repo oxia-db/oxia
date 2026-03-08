@@ -224,8 +224,9 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		adminServer:      adminGrpcServer,
 		healthServer:     healthServer,
 		clientPool:       clientPool,
-		coordinator:                      coordinatorInstance,
-		metrics:                          metricsServer,
+		coordinator:      coordinatorInstance,
+		metrics:          metricsServer,
+
 		metadataProvider:                 metadataProvider,
 		clusterConfigProvider:            clusterConfigProvider,
 		clusterConfigChangeNotifications: clusterConfigChangeNotifications,
