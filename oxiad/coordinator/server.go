@@ -63,6 +63,11 @@ type GrpcServer struct {
 	coordinator  Coordinator
 	clientPool   rpc.ClientPool
 	metrics      *metric.PrometheusMetrics
+
+	metadataProvider                 metadata.Provider
+	clusterConfigProvider            func() (model.ClusterConfig, error)
+	clusterConfigChangeNotifications chan any
+	rpcProvider                      coordinatorrpc.Provider
 }
 
 func setConfigPath(cluster *option.ClusterOptions, v *viper.Viper) error {
@@ -219,13 +224,22 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		adminServer:      adminGrpcServer,
 		healthServer:     healthServer,
 		clientPool:       clientPool,
-		coordinator:      coordinatorInstance,
-		metrics:          metricsServer,
+		coordinator:                      coordinatorInstance,
+		metrics:                          metricsServer,
+		metadataProvider:                 metadataProvider,
+		clusterConfigProvider:            clusterConfigProvider,
+		clusterConfigChangeNotifications: clusterConfigChangeNotifications,
+		rpcProvider:                      rpcClient,
 	}
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
 			"component": "configuration-watcher",
 		}, server.backgroundHandleConfChange)
+	})
+	server.wg.Go(func() {
+		process.DoWithLabels(ctx, map[string]string{
+			"component": "leader-loss-monitor",
+		}, server.monitorLeaderLoss)
 	})
 
 	return &server, nil
@@ -246,6 +260,49 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 		logOptions := &coordinatorOptions.Observability.Log
 		if logging.ReconfigureLogger(logOptions) {
 			s.logger.Info("reconfigured log options", slog.Any("options", logOptions))
+		}
+	}
+}
+
+func (s *GrpcServer) monitorLeaderLoss() {
+	for {
+		leadershipLostCh := s.metadataProvider.LeadershipLostCh()
+		if leadershipLostCh == nil {
+			// Provider doesn't support leader election (memory, file)
+			return
+		}
+
+		select {
+		case <-leadershipLostCh:
+			s.logger.Warn("Leadership lost, closing coordinator and waiting to become leader again")
+			if err := s.coordinator.Close(); err != nil {
+				s.logger.Warn("Failed to close coordinator after leadership loss",
+					slog.Any("error", err))
+			}
+
+			s.logger.Info("Waiting to become leader")
+			if err := s.metadataProvider.WaitToBecomeLeader(); err != nil {
+				s.logger.Error("Failed to wait to become leader",
+					slog.Any("error", err))
+				return
+			}
+
+			s.logger.Info("Re-elected as leader, creating new coordinator")
+			coordinatorInstance, err := NewCoordinator(
+				s.metadataProvider,
+				s.clusterConfigProvider,
+				s.clusterConfigChangeNotifications,
+				s.rpcProvider,
+			)
+			if err != nil {
+				s.logger.Error("Failed to create new coordinator after re-election",
+					slog.Any("error", err))
+				return
+			}
+			s.coordinator = coordinatorInstance
+
+		case <-s.ctx.Done():
+			return
 		}
 	}
 }

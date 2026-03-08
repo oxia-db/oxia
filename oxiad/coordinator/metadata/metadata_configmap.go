@@ -57,7 +57,8 @@ type metadataProviderConfigMap struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	hasLease atomic.Bool
+	hasLease         atomic.Bool
+	leadershipLostCh chan struct{}
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -177,6 +178,7 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 
 	log := m.log.With(slog.String("identity", myIdentity))
 	wg := concurrent.NewWaitGroup(1)
+	m.leadershipLostCh = make(chan struct{})
 
 	// Configure leader election
 	leaderElectionConfig := leaderelection.LeaderElectionConfig{
@@ -194,6 +196,7 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
 				m.hasLease.Store(false)
+				close(m.leadershipLostCh)
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -222,6 +225,10 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 	})
 
 	return wg.Wait(m.ctx)
+}
+
+func (m *metadataProviderConfigMap) LeadershipLostCh() <-chan struct{} {
+	return m.leadershipLostCh
 }
 
 func (m *metadataProviderConfigMap) Close() error {

@@ -54,6 +54,10 @@ func (t testRaftClusterProvider) WaitToBecomeLeader() error {
 	return t.leader.WaitToBecomeLeader()
 }
 
+func (t testRaftClusterProvider) LeadershipLostCh() <-chan struct{} {
+	return t.leader.LeadershipLostCh()
+}
+
 func newTestRaftClusterProvider(t *testing.T) Provider {
 	t.Helper()
 

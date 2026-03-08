@@ -16,7 +16,6 @@ package resource
 
 import (
 	"errors"
-	"log"
 	"log/slog"
 	"sync"
 	"time"
@@ -55,12 +54,14 @@ type status struct {
 }
 
 // handleStoreError handles errors from metadata.Store().
-// - ErrLeadershipLost: fatal — process must exit
+// - ErrLeadershipLost: permanent — stop retrying, let GrpcServer handle restart
 // - ErrMetadataBadVersion: re-read current version and retry
 // - other errors: retryable as-is
 func (s *status) handleStoreError(err error) error {
 	if errors.Is(err, metadata.ErrLeadershipLost) {
-		log.Fatalf("Leadership lost during metadata store: %v", err)
+		// Stop retrying — the LeadershipLostCh channel will trigger
+		// GrpcServer to close coordinator and recreate as standby.
+		return backoff.Permanent(err)
 	}
 	if errors.Is(err, metadata.ErrMetadataBadVersion) {
 		// Still leader but version is stale — re-read and retry

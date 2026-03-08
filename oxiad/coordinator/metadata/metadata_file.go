@@ -121,6 +121,10 @@ func (m *metadataProviderFile) Store(cs *model.ClusterStatus, expectedVersion Ve
 	return newVersion, nil
 }
 
+func (*metadataProviderFile) LeadershipLostCh() <-chan struct{} {
+	return nil
+}
+
 func (m *metadataProviderFile) ensureParentDirectoryExists() error {
 	// Ensure directory exists
 	parentDir := filepath.Dir(m.path)

@@ -47,6 +47,10 @@ func (*metadataProviderMemory) Close() error {
 	return nil
 }
 
+func (*metadataProviderMemory) LeadershipLostCh() <-chan struct{} {
+	return nil
+}
+
 func (m *metadataProviderMemory) Get() (cs *model.ClusterStatus, version Version, err error) {
 	m.Lock()
 	defer m.Unlock()
