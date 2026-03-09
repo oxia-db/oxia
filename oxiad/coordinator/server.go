@@ -60,15 +60,19 @@ type GrpcServer struct {
 	grpcServer   rpc2.GrpcServer
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
-	coordinator  Coordinator
 	clientPool   rpc.ClientPool
 	metrics      *metric.PrometheusMetrics
+
+	// coordinatorMu protects coordinator and leadershipLostCh, which are
+	// swapped by monitorLease and read by Close.
+	coordinatorMu    sync.RWMutex
+	coordinator      Coordinator
+	leadershipLostCh <-chan struct{}
 
 	metadataProvider                 metadata.Provider
 	clusterConfigProvider            func() (model.ClusterConfig, error)
 	clusterConfigChangeNotifications chan any
 	rpcProvider                      coordinatorrpc.Provider
-	leadershipLostCh                 <-chan struct{}
 }
 
 func setConfigPath(cluster *option.ClusterOptions, v *viper.Viper) error {
@@ -269,18 +273,25 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 
 func (s *GrpcServer) monitorLease() {
 	for {
-		if s.leadershipLostCh == nil {
+		s.coordinatorMu.RLock()
+		ch := s.leadershipLostCh
+		s.coordinatorMu.RUnlock()
+
+		if ch == nil {
 			// Provider doesn't support leader election (memory, file)
 			return
 		}
 
 		select {
-		case <-s.leadershipLostCh:
+		case <-ch:
 			s.logger.Info("Leadership lost, closing coordinator and recreating")
+			s.coordinatorMu.Lock()
 			if err := s.coordinator.Close(); err != nil {
 				s.logger.Warn("Failed to close coordinator after leadership loss",
 					slog.Any("error", err))
 			}
+			s.coordinator = nil
+			s.coordinatorMu.Unlock()
 
 			coordinatorInstance, leadershipLostCh, err := NewCoordinator(
 				s.metadataProvider,
@@ -293,8 +304,11 @@ func (s *GrpcServer) monitorLease() {
 					slog.Any("error", err))
 				return
 			}
+
+			s.coordinatorMu.Lock()
 			s.coordinator = coordinatorInstance
 			s.leadershipLostCh = leadershipLostCh
+			s.coordinatorMu.Unlock()
 
 		case <-s.ctx.Done():
 			return
@@ -303,18 +317,26 @@ func (s *GrpcServer) monitorLease() {
 }
 
 func (s *GrpcServer) Close() error {
-	// sync close the background task first
+	// Cancel context to signal goroutines to stop.
 	s.ctxCancel()
 	s.wg.Wait()
 
 	var err error
 	s.healthServer.Shutdown()
+
+	s.coordinatorMu.RLock()
+	coord := s.coordinator
+	s.coordinatorMu.RUnlock()
+
 	err = multierr.Combine(
 		s.clientPool.Close(),
 		s.grpcServer.Close(),
 		s.adminServer.Close(),
-		s.coordinator.Close(),
+		s.metadataProvider.Close(),
 	)
+	if coord != nil {
+		err = multierr.Append(err, coord.Close())
+	}
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())
 	}
