@@ -276,7 +276,7 @@ func (s *GrpcServer) monitorLease() {
 
 		select {
 		case <-s.leadershipLostCh:
-			s.logger.Warn("Leadership lost, closing coordinator and recreating")
+			s.logger.Info("Leadership lost, closing coordinator and recreating")
 			if err := s.coordinator.Close(); err != nil {
 				s.logger.Warn("Failed to close coordinator after leadership loss",
 					slog.Any("error", err))
