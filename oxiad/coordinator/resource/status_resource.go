@@ -54,17 +54,13 @@ type status struct {
 }
 
 // handleStoreError handles errors from metadata.Store().
-// - ErrMetadataBadVersion: re-read current version and retry.
-// - other errors: retryable as-is.
+// ErrMetadataBadVersion is treated as permanent — retrying with a
+// re-read version could overwrite valid data written by a new leader.
+// The LeadershipLostCh will trigger a full coordinator restart with
+// clean state.
 func (s *status) handleStoreError(err error) error {
 	if errors.Is(err, metadata.ErrMetadataBadVersion) {
-		s.Warn("metadata version conflict, re-reading current version",
-			slog.Any("error", err))
-		_, version, readErr := s.metadata.Get()
-		if readErr == nil {
-			s.currentVersionID = version
-		}
-		return err // retryable
+		return backoff.Permanent(err)
 	}
 	return err
 }
