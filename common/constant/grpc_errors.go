@@ -36,6 +36,7 @@ const (
 	CodeInvalidSessionTimeout   codes.Code = 109
 	CodeNamespaceNotFound       codes.Code = 110
 	CodeNotificationsNotEnabled codes.Code = 111
+	CodeNodeIsNotMember         codes.Code = 112
 )
 
 var (
@@ -49,6 +50,7 @@ var (
 	ErrInvalidSessionTimeout   = status.Error(CodeInvalidSessionTimeout, "oxia: invalid session timeout")
 	ErrNamespaceNotFound       = status.Error(CodeNamespaceNotFound, "oxia: namespace not found")
 	ErrNotificationsNotEnabled = status.Error(CodeNotificationsNotEnabled, "oxia: notifications not enabled on namespace")
+	ErrNodeIsNotMember         = status.Error(CodeNodeIsNotMember, "oxia: node is not a member")
 )
 
 func NewNodeIsNotLeaderWithHint(shard int64, leader string) error {

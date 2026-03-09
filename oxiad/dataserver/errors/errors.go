@@ -21,4 +21,5 @@ var (
 	ErrResourceNotAvailable = errors.New("resource not available")
 	ErrResourceConflict     = errors.New("resource conflict")
 	ErrInvalidStatus        = errors.New("invalid status")
+	ErrNodeIsNotMember      = errors.New("node is not a member")
 )
