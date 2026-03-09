@@ -32,8 +32,8 @@ type metadataProviderMemory struct {
 	version Version
 }
 
-func (*metadataProviderMemory) WaitToBecomeLeader() error {
-	return nil
+func (*metadataProviderMemory) WaitToBecomeLeader() (<-chan struct{}, error) {
+	return nil, nil
 }
 
 func NewMetadataProviderMemory() Provider {
@@ -44,10 +44,6 @@ func NewMetadataProviderMemory() Provider {
 }
 
 func (*metadataProviderMemory) Close() error {
-	return nil
-}
-
-func (*metadataProviderMemory) LeadershipLostCh() <-chan struct{} {
 	return nil
 }
 

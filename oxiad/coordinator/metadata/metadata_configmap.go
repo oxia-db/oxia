@@ -151,7 +151,7 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
+func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -215,11 +215,10 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 		close(m.closeCh)
 	})
 
-	return wg.Wait(m.ctx)
-}
-
-func (m *metadataProviderConfigMap) LeadershipLostCh() <-chan struct{} {
-	return m.leadershipLostCh
+	if err := wg.Wait(m.ctx); err != nil {
+		return nil, err
+	}
+	return m.leadershipLostCh, nil
 }
 
 func (m *metadataProviderConfigMap) Close() error {

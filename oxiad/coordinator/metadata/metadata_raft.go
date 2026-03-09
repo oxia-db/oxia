@@ -42,7 +42,7 @@ type metadataProviderRaft struct {
 	leadershipLostCh chan struct{}
 }
 
-func (mpr *metadataProviderRaft) WaitToBecomeLeader() error {
+func (mpr *metadataProviderRaft) WaitToBecomeLeader() (<-chan struct{}, error) {
 	<-mpr.raft.LeaderCh()
 	mpr.leadershipLostCh = make(chan struct{})
 	// Monitor for leader loss in the background
@@ -54,11 +54,7 @@ func (mpr *metadataProviderRaft) WaitToBecomeLeader() error {
 			}
 		}
 	}()
-	return nil
-}
-
-func (mpr *metadataProviderRaft) LeadershipLostCh() <-chan struct{} {
-	return mpr.leadershipLostCh
+	return mpr.leadershipLostCh, nil
 }
 
 func NewMetadataProviderRaft(

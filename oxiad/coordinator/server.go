@@ -68,6 +68,7 @@ type GrpcServer struct {
 	clusterConfigProvider            func() (model.ClusterConfig, error)
 	clusterConfigChangeNotifications chan any
 	rpcProvider                      coordinatorrpc.Provider
+	leadershipLostCh                 <-chan struct{}
 }
 
 func setConfigPath(cluster *option.ClusterOptions, v *viper.Viper) error {
@@ -186,7 +187,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
+	coordinatorInstance, leadershipLostCh, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -231,6 +232,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		clusterConfigProvider:            clusterConfigProvider,
 		clusterConfigChangeNotifications: clusterConfigChangeNotifications,
 		rpcProvider:                      rpcClient,
+		leadershipLostCh:                 leadershipLostCh,
 	}
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
@@ -267,21 +269,20 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 
 func (s *GrpcServer) monitorLeaderLoss() {
 	for {
-		leadershipLostCh := s.metadataProvider.LeadershipLostCh()
-		if leadershipLostCh == nil {
+		if s.leadershipLostCh == nil {
 			// Provider doesn't support leader election (memory, file)
 			return
 		}
 
 		select {
-		case <-leadershipLostCh:
+		case <-s.leadershipLostCh:
 			s.logger.Warn("Leadership lost, closing coordinator and recreating")
 			if err := s.coordinator.Close(); err != nil {
 				s.logger.Warn("Failed to close coordinator after leadership loss",
 					slog.Any("error", err))
 			}
 
-			coordinatorInstance, err := NewCoordinator(
+			coordinatorInstance, leadershipLostCh, err := NewCoordinator(
 				s.metadataProvider,
 				s.clusterConfigProvider,
 				s.clusterConfigChangeNotifications,
@@ -293,6 +294,7 @@ func (s *GrpcServer) monitorLeaderLoss() {
 				return
 			}
 			s.coordinator = coordinatorInstance
+			s.leadershipLostCh = leadershipLostCh
 
 		case <-s.ctx.Done():
 			return
