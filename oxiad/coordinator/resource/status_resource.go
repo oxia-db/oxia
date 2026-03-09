@@ -58,7 +58,7 @@ type status struct {
 // re-read version could overwrite valid data written by a new leader.
 // The LeadershipLostCh will trigger a full coordinator restart with
 // clean state.
-func (s *status) handleStoreError(err error) error {
+func (*status) handleStoreError(err error) error {
 	if errors.Is(err, metadata.ErrMetadataBadVersion) {
 		return backoff.Permanent(err)
 	}
