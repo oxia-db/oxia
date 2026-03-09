@@ -122,7 +122,7 @@ func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response
 	var hint *proto.LeaderHint
 	err = backoff.RetryNotify(func() error {
 		response, err = b.execute(ctx, request, hint)
-		if !isRetriable(err) {
+		if !IsRetriable(err) {
 			return backoff.Permanent(err)
 		}
 		return err

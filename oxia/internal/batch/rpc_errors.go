@@ -24,7 +24,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 )
 
-func isRetriable(err error) bool {
+func IsRetriable(err error) bool {
 	if errors.Is(err, io.EOF) {
 		// EOF can occur when a bidirectional write stream is closed by the
 		// server before delivering the gRPC status (e.g. the server returns

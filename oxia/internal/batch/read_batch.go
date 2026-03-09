@@ -102,7 +102,7 @@ func (b *readBatch) doRequestWithRetries(request *proto.ReadRequest) (response *
 
 	err = backoff.RetryNotify(func() error {
 		response, err = b.doRequest(ctx, request, hint)
-		if !isRetriable(err) {
+		if !IsRetriable(err) {
 			return backoff.Permanent(err)
 		}
 		return err
