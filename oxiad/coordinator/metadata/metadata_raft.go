@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/raft"
@@ -40,33 +39,22 @@ type metadataProviderRaft struct {
 	raft             *raft.Raft
 	store            *kvRaftStore
 	log              *slog.Logger
-	hasLease         atomic.Bool
 	leadershipLostCh chan struct{}
 }
 
 func (mpr *metadataProviderRaft) WaitToBecomeLeader() error {
 	<-mpr.raft.LeaderCh()
-	mpr.hasLease.Store(true)
 	mpr.leadershipLostCh = make(chan struct{})
 	// Monitor for leader loss in the background
 	go func() {
 		for hasLease := range mpr.raft.LeaderCh() {
 			if !hasLease {
-				mpr.signalLeadershipLost()
+				close(mpr.leadershipLostCh)
 				return
 			}
-			mpr.hasLease.Store(true)
 		}
 	}()
 	return nil
-}
-
-// signalLeadershipLost atomically marks the provider as no longer the leader
-// and closes the leadershipLostCh. Safe to call multiple times.
-func (mpr *metadataProviderRaft) signalLeadershipLost() {
-	if mpr.hasLease.CompareAndSwap(true, false) {
-		close(mpr.leadershipLostCh)
-	}
 }
 
 func (mpr *metadataProviderRaft) LeadershipLostCh() <-chan struct{} {
@@ -213,9 +201,6 @@ func (mpr *metadataProviderRaft) Store(cs *model.ClusterStatus, expectedVersion 
 	}
 
 	if !applyRes.changeApplied {
-		if !mpr.hasLease.Load() {
-			return NotExists, ErrLeadershipLost
-		}
 		return NotExists, ErrMetadataBadVersion
 	}
 

@@ -25,7 +25,6 @@ import (
 var (
 	ErrMetadataNotInitialized = errors.New("metadata not initialized")
 	ErrMetadataBadVersion     = errors.New("metadata bad version")
-	ErrLeadershipLost         = errors.New("metadata leadership lost")
 )
 
 var (
