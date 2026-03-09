@@ -241,8 +241,8 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	})
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
-			"component": "leader-loss-monitor",
-		}, server.monitorLeaderLoss)
+			"component": "lease-monitor",
+		}, server.monitorLease)
 	})
 
 	return &server, nil
@@ -267,7 +267,7 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 	}
 }
 
-func (s *GrpcServer) monitorLeaderLoss() {
+func (s *GrpcServer) monitorLease() {
 	for {
 		if s.leadershipLostCh == nil {
 			// Provider doesn't support leader election (memory, file)
