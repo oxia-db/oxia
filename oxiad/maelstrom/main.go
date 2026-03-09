@@ -179,7 +179,7 @@ func main() {
 			Servers: servers,
 		}
 
-		_, err := coordinator.NewCoordinator(
+		_, _, err := coordinator.NewCoordinator(
 			metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json")),
 			func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil,
 			newRpcProvider(dispatcher))
