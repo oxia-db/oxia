@@ -196,6 +196,117 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	assert.Contains(t, keys, "/key2")
 }
 
+func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
+	s1, sa1 := mock.NewServer(t, "s1")
+	s2, sa2 := mock.NewServer(t, "s2")
+	s3, sa3 := mock.NewServer(t, "s3")
+	defer s1.Close()
+	defer s2.Close()
+	defer s3.Close()
+
+	metadataProvider := metadata.NewMetadataProviderMemory()
+	clusterConfig := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              "default",
+			ReplicationFactor: 3,
+			InitialShardCount: 1,
+		}},
+		Servers: []model.Server{sa1, sa2, sa3},
+	}
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	assert.NoError(t, err)
+	defer coordinatorInstance.Close()
+
+	assert.Eventually(t, func() bool {
+		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+	}, 10*time.Second, 100*time.Millisecond)
+
+	target := sa1.Public
+	status := coordinatorInstance.StatusResource().Load()
+	shard := status.Namespaces["default"].Shards[0]
+	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
+		target = sa2.Public
+	}
+	clientPool := clientrpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
+	clientRpc, err := clientPool.GetClientRpc(target)
+	assert.NoError(t, err)
+	shardID := int64(0)
+
+	// The assignment dispatcher on the non-leader may not have received
+	// the shard assignments yet, so retry until the leader hint is present.
+	assert.Eventually(t, func() bool {
+		stream, err := clientRpc.RangeScan(t.Context(), &proto.RangeScanRequest{Shard: &shardID})
+		if err != nil {
+			return false
+		}
+		_, err = stream.Recv()
+		if err == nil {
+			return false
+		}
+		hint := constant.FindLeaderHint(err)
+		if hint == nil {
+			return false
+		}
+		assert.Equal(t, shard.Leader.Public, hint.LeaderAddress)
+		return true
+	}, 20*time.Second, 100*time.Millisecond)
+}
+
+func TestLeaderHintRangeScanWithClient(t *testing.T) {
+	s1, sa1 := mock.NewServer(t, "s1")
+	s2, sa2 := mock.NewServer(t, "s2")
+	s3, sa3 := mock.NewServer(t, "s3")
+	defer s1.Close()
+	defer s2.Close()
+	defer s3.Close()
+
+	metadataProvider := metadata.NewMetadataProviderMemory()
+	clusterConfig := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              "default",
+			ReplicationFactor: 3,
+			InitialShardCount: 1,
+		}},
+		Servers: []model.Server{sa1, sa2, sa3},
+	}
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	assert.NoError(t, err)
+	defer coordinatorInstance.Close()
+
+	assert.Eventually(t, func() bool {
+		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+	}, 10*time.Second, 100*time.Millisecond)
+
+	target := sa1.Public
+	status := coordinatorInstance.StatusResource().Load()
+	shard := status.Namespaces["default"].Shards[0]
+	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
+		target = sa2.Public
+	}
+
+	client, err := oxia.NewSyncClient(target, oxia.WithNamespace("default"), oxia.WithFailureInjection([]oxia.Failure{oxia.DizzyShardManager}))
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, _, err = client.Put(t.Context(), "/key1", []byte("value1"))
+	assert.NoError(t, err)
+
+	_, _, err = client.Put(t.Context(), "/key2", []byte("value2"))
+	assert.NoError(t, err)
+
+	results := make([]oxia.GetResult, 0, 2)
+	for result := range client.RangeScan(t.Context(), "/key1", "/key3") {
+		results = append(results, result)
+	}
+	assert.Len(t, results, 2)
+	for _, r := range results {
+		assert.NoError(t, r.Err)
+	}
+}
+
 func TestLeaderHintWithClient(t *testing.T) {
 	s1, sa1 := mock.NewServer(t, "s1")
 	s2, sa2 := mock.NewServer(t, "s2")

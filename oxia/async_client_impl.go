@@ -478,28 +478,61 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 		IncludeInternalKeys: includeInternalKeys,
 	}
 
-	client, err := c.executor.ExecuteRangeScan(ctx, request, nil)
+	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
+	defer cancel()
+
+	backOff := time2.NewBackOff(retryCtx)
+	var hint *proto.LeaderHint
+
+	err := backoff.RetryNotify(func() error {
+		return c.doRangeScan(retryCtx, request, hint, ch)
+	}, backOff, func(err error, duration time.Duration) {
+		slog.Warn(
+			"Failed to perform range-scan request, retrying later",
+			slog.Any("error", err),
+			slog.String("namespace", c.options.namespace),
+			slog.Int64("shard", shardId),
+			slog.Duration("retry-after", duration),
+		)
+		if leaderHint := constant.FindLeaderHint(err); leaderHint != nil {
+			hint = leaderHint
+		}
+	})
 	if err != nil {
 		ch <- GetResult{Err: err}
-		return
 	}
 
-	defer close(ch)
+	close(ch)
+}
 
+func (c *clientImpl) doRangeScan(ctx context.Context, request *proto.RangeScanRequest, hint *proto.LeaderHint, ch chan<- GetResult) error {
+	client, err := c.executor.ExecuteRangeScan(ctx, request, hint)
+	if err != nil {
+		if batch.IsRetriable(err) {
+			return err
+		}
+		return backoff.Permanent(err)
+	}
+
+	dataSent := false
 	for {
 		response, err := client.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return
+				return nil
 			}
-
-			ch <- GetResult{Err: err}
-			return
+			// Only retry if no data has been sent to the channel yet,
+			// to avoid sending duplicate records.
+			if !dataSent && batch.IsRetriable(err) {
+				return err
+			}
+			return backoff.Permanent(err)
 		}
 
 		for _, record := range response.Records {
 			ch <- toGetResult(record, "", nil)
 		}
+		dataSent = true
 	}
 }
 
