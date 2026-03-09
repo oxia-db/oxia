@@ -67,7 +67,7 @@ func (m *metadataProviderFile) WaitToBecomeLeader() (<-chan struct{}, error) {
 		return nil, errors.Wrapf(err, "failed to acquire lock on %s", m.path)
 	}
 
-	return nil, nil
+	return nil, nil //nolint:nilnil
 }
 
 func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, err error) {

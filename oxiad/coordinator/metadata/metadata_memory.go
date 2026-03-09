@@ -33,7 +33,7 @@ type metadataProviderMemory struct {
 }
 
 func (*metadataProviderMemory) WaitToBecomeLeader() (<-chan struct{}, error) {
-	return nil, nil
+	return nil, nil //nolint:nilnil
 }
 
 func NewMetadataProviderMemory() Provider {
