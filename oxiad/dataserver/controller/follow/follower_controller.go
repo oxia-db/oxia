@@ -34,6 +34,7 @@ import (
 	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
@@ -85,6 +86,11 @@ type FollowerController interface {
 
 	IsFeatureEnabled(feature proto.Feature) bool
 	Checksum() crc.Checksum
+
+	// SetSplitHashRange marks this follower as a split child. After loading
+	// a snapshot, the database will be filtered to retain only keys within
+	// the given hash range. WAL entries will also be filtered at apply time.
+	SetSplitHashRange(hashRange *model.Int32HashRange)
 }
 
 type followerController struct {
@@ -118,6 +124,11 @@ type followerController struct {
 	writeLatencyHisto metric.LatencyHistogram
 	checksumGauge     metric.SyncGauge
 	walChecksumGauge  metric.SyncGauge
+
+	// splitHashRange, when non-nil, indicates this follower is a child shard
+	// in a split. The snapshot will be filtered after loading, and WAL entries
+	// will be filtered at state machine apply time.
+	splitHashRange *model.Int32HashRange
 }
 
 func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTermOptions, storageOptions *option.StorageOptions,
@@ -442,7 +453,13 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 		}
 
 		fc.rwMutex.RLock()
-		resp, err := statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
+		var resp statemachine.ApplyResponse
+		if fc.splitHashRange != nil {
+			resp, err = statemachine.ApplyLogEntryWithSplitFilter(fc.db, entry,
+				lead.WrapperUpdateOperationCallback, *fc.splitHashRange)
+		} else {
+			resp, err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
+		}
 		fc.rwMutex.RUnlock()
 		if err != nil {
 			return err
@@ -490,6 +507,12 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	return fc.processCommittedEntriesLoop(reader, maxInclusive)
 }
 
+func (fc *followerController) SetSplitHashRange(hashRange *model.Int32HashRange) {
+	fc.rwMutex.Lock()
+	defer fc.rwMutex.Unlock()
+	fc.splitHashRange = hashRange
+}
+
 func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error { //nolint:revive // cyclomatic complexity justified by sequential error handling
 	if fc.closed.Load() {
 		return dserror.ErrResourceConflict
@@ -528,9 +551,11 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 		return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to read first snapshot chunk")
 	case firstChunk == nil:
 		return nil
-	case term != constant.I64NegativeOne && term != firstChunk.Term:
+	case term != constant.I64NegativeOne && firstChunk.Term != constant.I64NegativeOne && term != firstChunk.Term:
 		// The follower could be left with term=-1 by a previous failed
 		// attempt at sending the snapshot. It's ok to proceed in that case.
+		// Observer cursors (used during shard splits) send term=-1 to bypass
+		// term validation since the child shard has its own term.
 		err = dserror.ErrInvalidTerm
 		return err
 	}
@@ -580,6 +605,14 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	fc.commitOffset.Store(rawCommitOffset)
 	fc.lastAppendedOffset.Store(rawCommitOffset)
 	fc.advertisedCommitOffset.Store(rawCommitOffset)
+
+	// If this follower is a split child, filter the snapshot to only retain
+	// keys within the child's hash range.
+	if fc.splitHashRange != nil {
+		if err = database.FilterDBForSplit(db.RawKV(), *fc.splitHashRange); err != nil {
+			return errors.Wrap(err, "failed to filter snapshot for split")
+		}
+	}
 
 	if err = stream.SendAndClose(&proto.SnapshotResponse{
 		AckOffset: rawCommitOffset,

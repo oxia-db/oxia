@@ -30,6 +30,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -1175,6 +1176,175 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// TestFollower_SplitHashRangeFiltering verifies that when a follower has a
+// split hash range set, only keys whose hash falls within the range are
+// applied to the database. Keys outside the range are filtered out both
+// during snapshot installation (FilterDBForSplit) and WAL catch-up
+// (ApplyLogEntryWithSplitFilter).
+//
+// Hash values (xxh3):
+//
+//	"a" → 0x1e964e1f (in lower half)
+//	"b" → 0x44d8843f (in lower half)
+//	"c" → 0x46b9f81b (in lower half)
+//	"d" → 0xc9c7a7ca (in upper half)
+//	"e" → 0x3bec4a78 (in lower half)
+//	"f" → 0x9ff3ba9a (in upper half)
+func TestFollower_SplitHashRangeFiltering(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	assert.NoError(t, err)
+
+	// Set the split hash range to the lower half of the hash space.
+	// Keys a, b, c, e are in range; d, f are out of range.
+	fc.SetSplitHashRange(&model.Int32HashRange{
+		Min: 0,
+		Max: 0x7FFFFFFF, // 2147483647
+	})
+
+	// --- Phase 1: Snapshot installation with filtering ---
+	// Prepare a snapshot DB containing keys a..f
+	snapshotKvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	snapshotDb, err := database.NewDB(constant.DefaultNamespace, 0, snapshotKvFactory, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	assert.NoError(t, err)
+
+	snapshotKeys := []string{"a", "b", "c", "d", "e", "f"}
+	for i, key := range snapshotKeys {
+		_, err := snapshotDb.ProcessWrite(&proto.WriteRequest{
+			Puts: []*proto.PutRequest{{
+				Key:   key,
+				Value: []byte(fmt.Sprintf("snapshot-%s", key)),
+			}},
+		}, int64(i), 0, database.NoOpCallback)
+		assert.NoError(t, err)
+	}
+	assert.NoError(t, snapshotDb.UpdateTerm(1, database.TermOptions{}))
+
+	snapshot, err := snapshotDb.Snapshot()
+	assert.NoError(t, err)
+	assert.NoError(t, snapshotKvFactory.Close())
+
+	// Install snapshot
+	snapshotStream := rpc.NewMockServerSendSnapshotStream()
+	wg := sync.WaitGroup{}
+	wg.Go(func() {
+		err := fc.InstallSnapshot(snapshotStream)
+		assert.NoError(t, err)
+	})
+
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		assert.NoError(t, err)
+		content := chunk.Content()
+		snapshotStream.AddChunk(&proto.SnapshotChunk{
+			Term:       1,
+			Name:       chunk.Name(),
+			Content:    content,
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	close(snapshotStream.Chunks)
+	wg.Wait()
+
+	// After snapshot + FilterDBForSplit, only keys in the lower hash half should remain
+	fci := fc.(*followerController)
+	for _, key := range []string{"a", "b", "c", "e"} {
+		dbRes, err := fci.db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+		assert.NoError(t, err)
+		assert.Equalf(t, proto.Status_OK, dbRes.Status, "key %q should be present after snapshot filtering", key)
+		assert.Equalf(t, []byte(fmt.Sprintf("snapshot-%s", key)), dbRes.Value, "key %q has wrong value", key)
+	}
+
+	for _, key := range []string{"d", "f"} {
+		dbRes, err := fci.db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+		assert.NoError(t, err)
+		assert.Equalf(t, proto.Status_KEY_NOT_FOUND, dbRes.Status, "key %q should have been filtered out", key)
+	}
+
+	// --- Phase 2: WAL catch-up with filtering ---
+	// Replicate entries that write both in-range and out-of-range keys.
+	// The follower should apply only the in-range operations.
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
+	}()
+
+	// Entry at offset 6: put "a" (in range) and "d" (out of range)
+	stream.AddRequest(createAddRequest(t, 1, 6, map[string]string{
+		"a": "wal-a",
+		"d": "wal-d",
+	}, wal.InvalidOffset))
+
+	// After snapshot install the WAL is empty (lastOffset=-1). When the syncer
+	// acks it sends offsets from oldHead+1 to newHead, so we may receive
+	// multiple acks (0..6). Drain until we see offset 6.
+	for {
+		r := stream.GetResponse()
+		if r.Offset == 6 {
+			break
+		}
+	}
+
+	// Entry at offset 7: put "f" (out of range) and "c" (in range)
+	stream.AddRequest(createAddRequest(t, 1, 7, map[string]string{
+		"f": "wal-f",
+		"c": "wal-c",
+	}, 7)) // commit up to offset 7
+
+	r := stream.GetResponse()
+	assert.EqualValues(t, 7, r.Offset)
+
+	// Wait for commit offset to advance
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == 7
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Verify: in-range keys were updated via WAL catch-up
+	dbRes, err := fci.db.Get(&proto.GetRequest{Key: "a", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, dbRes.Status)
+	assert.Equal(t, []byte("wal-a"), dbRes.Value)
+
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "c", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, dbRes.Status)
+	assert.Equal(t, []byte("wal-c"), dbRes.Value)
+
+	// Verify: out-of-range keys were NOT applied from WAL
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "d", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equalf(t, proto.Status_KEY_NOT_FOUND, dbRes.Status, "key 'd' should still be absent (out of hash range)")
+
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "f", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equalf(t, proto.Status_KEY_NOT_FOUND, dbRes.Status, "key 'f' should still be absent (out of hash range)")
+
+	// In-range keys that were only in snapshot (not in WAL) should still be present
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "b", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, dbRes.Status)
+	assert.Equal(t, []byte("snapshot-b"), dbRes.Value)
+
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "e", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, dbRes.Status)
+	assert.Equal(t, []byte("snapshot-e"), dbRes.Value)
 
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())

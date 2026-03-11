@@ -26,6 +26,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/channel"
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
@@ -108,7 +109,7 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 	timer := ls.writeLatencyHisto.Timer()
 	defer timer.Done()
 
-	if req.Term != ls.term {
+	if req.Term != constant.I64NegativeOne && req.Term != ls.term {
 		return dserror.ErrInvalidTerm
 	}
 

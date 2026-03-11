@@ -104,6 +104,10 @@ type DB interface {
 
 	Snapshot() (kvstore.Snapshot, error)
 
+	// RawKV returns the underlying key-value store. Used for operations that
+	// need direct access to the storage layer, such as split filtering.
+	RawKV() kvstore.KV
+
 	// Delete and close the database and all its files
 	Delete() error
 }
@@ -204,6 +208,10 @@ type db struct {
 
 func (d *db) Snapshot() (kvstore.Snapshot, error) {
 	return d.kv.Snapshot()
+}
+
+func (d *db) RawKV() kvstore.KV {
+	return d.kv
 }
 
 func (d *db) EnableNotifications(enabled bool) {

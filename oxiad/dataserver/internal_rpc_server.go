@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
@@ -247,6 +248,33 @@ func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowe
 	return res, err
 }
 
+func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
+	log := s.log.With(
+		slog.Any("request", req),
+		slog.String("peer", rpc.GetPeer(c)),
+	)
+
+	log.Info("Received RemoveObserver request")
+
+	leader, err := s.shardsDirector.GetLeader(req.Shard)
+	if err != nil {
+		log.Warn(
+			"RemoveObserver failed: could not get leader controller",
+			slog.Any("error", err),
+		)
+		return nil, err
+	}
+
+	res, err := leader.RemoveObserver(req)
+	if err != nil {
+		log.Warn(
+			"RemoveObserver failed",
+			slog.Any("error", err),
+		)
+	}
+	return res, err
+}
+
 func (s *internalRpcServer) GetInfo(c context.Context, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
 	log := s.log.With(
 		slog.Any("request", req),
@@ -326,6 +354,11 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 		return err
 	}
 
+	// Activate split filtering if hash range metadata is present
+	if hashRange, ok := readSplitHashRange(md); ok {
+		follower.SetSplitHashRange(hashRange)
+	}
+
 	err = follower.AppendEntries(srv)
 	if err != nil && !errors.Is(err, io.EOF) {
 		log.Warn(
@@ -376,6 +409,13 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
 		return err
+	}
+
+	// Activate split filtering if hash range metadata is present.
+	// The child follower will filter its snapshot and WAL entries to
+	// only keep keys whose hash falls within this range.
+	if hashRange, ok := readSplitHashRange(md); ok {
+		follower.SetSplitHashRange(hashRange)
 	}
 
 	err = follower.InstallSnapshot(srv)
@@ -449,4 +489,27 @@ func readTerm(md metadata.MD) (v int64, err error) {
 	}
 
 	return ReadHeaderInt64(md, constant.MetadataTerm)
+}
+
+// readSplitHashRange reads optional split hash range from gRPC metadata.
+// Returns the hash range and true if present, nil and false otherwise.
+func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool) {
+	minArr := md.Get(constant.MetadataSplitHashRangeMin)
+	maxArr := md.Get(constant.MetadataSplitHashRangeMax)
+	if len(minArr) == 0 || len(maxArr) == 0 {
+		return nil, false
+	}
+
+	var minVal, maxVal uint32
+	if _, err := fmt.Sscan(minArr[0], &minVal); err != nil {
+		return nil, false
+	}
+	if _, err := fmt.Sscan(maxArr[0], &maxVal); err != nil {
+		return nil, false
+	}
+
+	return &model.Int32HashRange{
+		Min: minVal,
+		Max: maxVal,
+	}, true
 }

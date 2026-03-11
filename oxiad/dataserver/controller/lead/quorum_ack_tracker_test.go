@@ -269,6 +269,32 @@ func TestQuorumAckTracker_AddingCursors_RF5(t *testing.T) {
 	assert.EqualValues(t, 7, at.CommitOffset())
 }
 
+func TestNoOpCursorAcker_DoesNotAffectQuorum(t *testing.T) {
+	at := NewQuorumAckTracker(3, 1, wal.InvalidOffset)
+
+	assert.EqualValues(t, 1, at.HeadOffset())
+	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+
+	at.AdvanceHeadOffset(2)
+	at.AdvanceHeadOffset(3)
+
+	// Create a regular cursor acker
+	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+
+	// Create a no-op cursor acker (observer)
+	noOp := NewNoOpCursorAcker()
+
+	// No-op acks should not advance the commit offset
+	noOp.Ack(2)
+	noOp.Ack(3)
+	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+
+	// Only the real cursor ack should advance the commit offset
+	c1.Ack(2)
+	assert.EqualValues(t, 2, at.CommitOffset())
+}
+
 func TestQuorumAckTracker_ClearPending(t *testing.T) {
 	at := NewQuorumAckTracker(5, 10, 5)
 	asyncRes := make(chan error, 1)

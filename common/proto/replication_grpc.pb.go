@@ -40,6 +40,7 @@ const (
 	OxiaCoordination_GetStatus_FullMethodName            = "/replication.OxiaCoordination/GetStatus"
 	OxiaCoordination_DeleteShard_FullMethodName          = "/replication.OxiaCoordination/DeleteShard"
 	OxiaCoordination_GetInfo_FullMethodName              = "/replication.OxiaCoordination/GetInfo"
+	OxiaCoordination_RemoveObserver_FullMethodName       = "/replication.OxiaCoordination/RemoveObserver"
 )
 
 // OxiaCoordinationClient is the client API for OxiaCoordination service.
@@ -55,6 +56,9 @@ type OxiaCoordinationClient interface {
 	GetStatus(ctx context.Context, in *GetStatusRequest, opts ...grpc.CallOption) (*GetStatusResponse, error)
 	DeleteShard(ctx context.Context, in *DeleteShardRequest, opts ...grpc.CallOption) (*DeleteShardResponse, error)
 	GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error)
+	// Removes an observer follower from the parent leader without fencing.
+	// Used during split abort to cleanly stop data streaming to children.
+	RemoveObserver(ctx context.Context, in *RemoveObserverRequest, opts ...grpc.CallOption) (*RemoveObserverResponse, error)
 }
 
 type oxiaCoordinationClient struct {
@@ -138,6 +142,16 @@ func (c *oxiaCoordinationClient) GetInfo(ctx context.Context, in *GetInfoRequest
 	return out, nil
 }
 
+func (c *oxiaCoordinationClient) RemoveObserver(ctx context.Context, in *RemoveObserverRequest, opts ...grpc.CallOption) (*RemoveObserverResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveObserverResponse)
+	err := c.cc.Invoke(ctx, OxiaCoordination_RemoveObserver_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OxiaCoordinationServer is the server API for OxiaCoordination service.
 // All implementations must embed UnimplementedOxiaCoordinationServer
 // for forward compatibility.
@@ -151,6 +165,9 @@ type OxiaCoordinationServer interface {
 	GetStatus(context.Context, *GetStatusRequest) (*GetStatusResponse, error)
 	DeleteShard(context.Context, *DeleteShardRequest) (*DeleteShardResponse, error)
 	GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error)
+	// Removes an observer follower from the parent leader without fencing.
+	// Used during split abort to cleanly stop data streaming to children.
+	RemoveObserver(context.Context, *RemoveObserverRequest) (*RemoveObserverResponse, error)
 	mustEmbedUnimplementedOxiaCoordinationServer()
 }
 
@@ -181,6 +198,9 @@ func (UnimplementedOxiaCoordinationServer) DeleteShard(context.Context, *DeleteS
 }
 func (UnimplementedOxiaCoordinationServer) GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetInfo not implemented")
+}
+func (UnimplementedOxiaCoordinationServer) RemoveObserver(context.Context, *RemoveObserverRequest) (*RemoveObserverResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveObserver not implemented")
 }
 func (UnimplementedOxiaCoordinationServer) mustEmbedUnimplementedOxiaCoordinationServer() {}
 func (UnimplementedOxiaCoordinationServer) testEmbeddedByValue()                          {}
@@ -318,6 +338,24 @@ func _OxiaCoordination_GetInfo_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OxiaCoordination_RemoveObserver_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveObserverRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaCoordinationServer).RemoveObserver(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaCoordination_RemoveObserver_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaCoordinationServer).RemoveObserver(ctx, req.(*RemoveObserverRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OxiaCoordination_ServiceDesc is the grpc.ServiceDesc for OxiaCoordination service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -348,6 +386,10 @@ var OxiaCoordination_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetInfo",
 			Handler:    _OxiaCoordination_GetInfo_Handler,
+		},
+		{
+			MethodName: "RemoveObserver",
+			Handler:    _OxiaCoordination_RemoveObserver_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

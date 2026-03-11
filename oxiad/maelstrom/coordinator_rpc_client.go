@@ -104,6 +104,10 @@ func (m *maelstromCoordinatorRpcProvider) DeleteShard(ctx context.Context, node 
 
 	return res.(*proto.DeleteShardResponse), nil
 }
+func (m *maelstromCoordinatorRpcProvider) RemoveObserver(ctx context.Context, node model.Server, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
+	return &proto.RemoveObserverResponse{}, nil
+}
+
 func (m *maelstromCoordinatorRpcProvider) GetInfo(ctx context.Context, node model.Server, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
 	return &proto.GetInfoResponse{
 		FeaturesSupported: make([]proto.Feature, 0),
