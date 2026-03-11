@@ -192,14 +192,6 @@ func (fc *followerCursor) shouldSendSnapshot() bool {
 func (fc *followerCursor) Close() error {
 	fc.closed.Store(true)
 	fc.cancel()
-
-	fc.Lock()
-	defer fc.Unlock()
-
-	if fc.stream != nil {
-		return fc.stream.CloseSend()
-	}
-
 	return nil
 }
 
