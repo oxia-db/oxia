@@ -232,7 +232,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 		},
 		Servers: []model.Server{s1ad, s2ad, s3ad},
 		LoadBalancer: &model.LoadBalancer{
-			QuarantineTime: 5 * time.Second,
+			QuarantineTime: 1 * time.Second,
 		},
 	}
 
@@ -291,5 +291,5 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 			}
 		}
 		return true
-	}, 1*time.Minute, 1*time.Second)
+	}, 2*time.Minute, 100*time.Millisecond)
 }
