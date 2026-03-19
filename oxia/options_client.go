@@ -25,6 +25,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc"
 
 	"github.com/oxia-db/oxia/common/constant"
 
@@ -67,6 +68,7 @@ type clientOptions struct {
 	authentication         auth.Authentication
 	sessionKeepAliveTicker time.Duration
 	failureInjection       *hashset.Set[Failure]
+	dialOptions            []grpc.DialOption
 }
 
 func defaultIdentity() string {
@@ -226,6 +228,17 @@ func WithAuthentication(authentication auth.Authentication) ClientOption {
 func WithFailureInjection(failures []Failure) ClientOption {
 	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
 		options.failureInjection = hashset.New(failures...)
+		return options, nil
+	})
+}
+
+// WithDialOptions appends additional gRPC DialOptions used when creating
+// connections. This can be used to inject a custom resolver (via
+// grpc.WithResolvers), additional interceptors, or any other gRPC-level
+// configuration.
+func WithDialOptions(opts ...grpc.DialOption) ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		options.dialOptions = append(options.dialOptions, opts...)
 		return options, nil
 	})
 }

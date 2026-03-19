@@ -72,7 +72,7 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		return nil, err
 	}
 
-	clientPool := rpc.NewClientPool(options.tls, options.authentication)
+	clientPool := rpc.NewClientPool(options.tls, options.authentication, options.dialOptions...)
 
 	var shardManager internal.ShardManager
 	if options.failureInjection.Contains(DizzyShardManager) {

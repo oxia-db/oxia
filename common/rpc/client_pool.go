@@ -62,6 +62,7 @@ type clientPool struct {
 
 	tls            *tls.Config
 	authentication auth.Authentication
+	dialOptions    []grpc.DialOption
 	log            *slog.Logger
 }
 
@@ -73,11 +74,12 @@ func (cp *clientPool) GetAminRpc(target string) (proto.OxiaAdminClient, error) {
 	return proto.NewOxiaAdminClient(cnx), nil
 }
 
-func NewClientPool(tlsConf *tls.Config, authentication auth.Authentication) ClientPool {
+func NewClientPool(tlsConf *tls.Config, authentication auth.Authentication, dialOptions ...grpc.DialOption) ClientPool {
 	return &clientPool{
 		connections:    make(map[string]*grpc.ClientConn),
 		tls:            tlsConf,
 		authentication: authentication,
+		dialOptions:    dialOptions,
 		log: slog.With(
 			slog.String("component", "client-pool"),
 		),
@@ -200,6 +202,7 @@ func (cp *clientPool) newConnection(target string) (*grpc.ClientConn, error) {
 	if cp.authentication != nil {
 		options = append(options, grpc.WithPerRPCCredentials(cp.authentication))
 	}
+	options = append(options, cp.dialOptions...)
 	cnx, err := grpc.NewClient(cp.getActualAddress(target), options...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error connecting to %s", target)
