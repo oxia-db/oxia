@@ -82,8 +82,9 @@ func TestCustomResolver(t *testing.T) {
 	server := newStandaloneServer(t)
 	actualAddr := server.ServiceAddr()
 
-	// Create a custom resolver that maps "oxia-test:///service" to the actual
-	// server address.
+	// Create a custom resolver that maps the custom scheme to the actual
+	// server address. The authority (path) in the URI must be the real
+	// address so the standalone server returns it as the shard leader.
 	rb := &staticResolverBuilder{
 		scheme: fmt.Sprintf("oxia-test-%d", os.Getpid()),
 		target: actualAddr,
@@ -91,7 +92,7 @@ func TestCustomResolver(t *testing.T) {
 
 	// Use the custom resolver via WithDialOptions + grpc.WithResolvers.
 	client, err := oxia.NewSyncClient(
-		fmt.Sprintf("%s:///service", rb.scheme),
+		fmt.Sprintf("%s:///%s", rb.scheme, actualAddr),
 		oxia.WithDialOptions(grpc.WithResolvers(rb)),
 		oxia.WithRequestTimeout(10*time.Second),
 	)
