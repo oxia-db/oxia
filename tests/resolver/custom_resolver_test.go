@@ -43,7 +43,7 @@ func (r *staticResolver) ResolveNow(_ resolver.ResolveNowOptions) {}
 func (r *staticResolver) Close() {}
 
 func (r *staticResolver) start() {
-	r.cc.UpdateState(resolver.State{
+	_ = r.cc.UpdateState(resolver.State{
 		Addresses: []resolver.Address{{Addr: r.target}},
 	})
 }
