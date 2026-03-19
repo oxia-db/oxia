@@ -1,0 +1,23 @@
+
+namespaces:
+  - name: default
+    initialShardCount: 1
+    replicationFactor: 1
+    notificationsEnabled: false
+
+servers:
+  - public: localhost:6648
+    internal: localhost:6649
+  # - public: localhost:6611
+  #   internal: localhost:6601
+  # - public: localhost:6612
+  #   internal: localhost:6602
+  # - public: localhost:6613
+  #   internal: localhost:6603
+  # - public: localhost:6614
+  #   internal: localhost:6604
+  # - public: localhost:6615
+  #   internal: localhost:6605
+  # - public: localhost:6616
+  #   internal: localhost:6606
+

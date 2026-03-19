@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  annotations:
+    meta.helm.sh/release-name: oxia-cluster
+    meta.helm.sh/release-namespace: oxia
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/instance: oxia-cluster
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: oxia-cluster
+    app.kubernetes.io/version: 0.0.1
+  name: oxiacluster
+  namespace: monitoring
+spec:
+  endpoints:
+  - port: metrics
+  namespaceSelector:
+    matchNames:
+    - oxia
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: server
+      app.kubernetes.io/instance: oxia-cluster
+      app.kubernetes.io/name: oxia-cluster
