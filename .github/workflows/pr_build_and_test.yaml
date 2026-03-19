@@ -37,17 +37,17 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.work'
           cache: 'true'
           cache-dependency-path: "go.work.sum"
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -84,7 +84,7 @@ jobs:
       security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
       actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -92,7 +92,7 @@ jobs:
             image=moby/buildkit:latest
             network=host
       - name: Build docker
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: false
@@ -115,7 +115,7 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
 
-      - uses: helm/kind-action@v1.5.0
+      - uses: helm/kind-action@v1.14.0
         with:
           cluster_name: kind
           kubectl_version: v1.25.5
@@ -156,17 +156,17 @@ jobs:
       contents: read
       actions: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.work'
           cache: 'true'
           cache-dependency-path: "go.work.sum"
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
