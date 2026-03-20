@@ -59,6 +59,10 @@ func (m *mockStatusResource) IsReady(_ *model.ClusterConfig) bool {
 	return true
 }
 
+func (m *mockStatusResource) ChangeNotify() <-chan struct{} {
+	return make(chan struct{})
+}
+
 // mockClusterConfigResource implements resource.ClusterConfigResource for testing.
 type mockClusterConfigResource struct {
 	nodes     *linkedhashset.Set[string]
