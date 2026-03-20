@@ -75,6 +75,7 @@ type LeaderController interface {
 
 	GetStatus(request *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
 	DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
+	RemoveObserver(request *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error)
 
 	Context() context.Context
 	// Term The current term of the leader
@@ -106,6 +107,7 @@ type leaderController struct {
 	replicationFactor uint32
 	quorumAckTracker  QuorumAckTracker
 	followers         map[string]FollowerCursor
+	observers         map[string]FollowerCursor
 
 	// This represents the last entry in the WAL at the time this node
 	// became leader. It's used in the logic for deciding where to
@@ -308,11 +310,18 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 		}
 	}
 
+	for _, observer := range lc.observers {
+		if err := observer.Close(); err != nil {
+			return nil, err
+		}
+	}
+
 	for _, g := range lc.followerAckOffsetGauges {
 		g.Unregister()
 	}
 
 	lc.followers = nil
+	lc.observers = nil
 	headEntryId, err := getLastEntryIdInWal(lc.wal)
 	if err != nil {
 		return nil, err
@@ -353,6 +362,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 
 	lc.replicationFactor = req.GetReplicationFactor()
 	lc.followers = make(map[string]FollowerCursor)
+	lc.observers = make(map[string]FollowerCursor)
 
 	var err error
 	lc.leaderElectionHeadEntryId, err = getLastEntryIdInWal(lc.wal)
@@ -452,6 +462,10 @@ func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.A
 		return nil, errors.Wrap(constant.ErrInvalidStatus, "Node is not leader")
 	}
 
+	if req.Observer {
+		return lc.addObserverFollower(req)
+	}
+
 	if _, followerAlreadyPresent := lc.followers[req.FollowerName]; followerAlreadyPresent {
 		return &proto.AddFollowerResponse{}, nil
 	}
@@ -467,9 +481,60 @@ func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.A
 	return &proto.AddFollowerResponse{}, nil
 }
 
+func (lc *leaderController) addObserverFollower(req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	// Use target_shard if set (for split observers), otherwise use the parent shard ID
+	targetShardId := lc.shardId
+	if req.TargetShard != nil {
+		targetShardId = *req.TargetShard
+	}
+
+	// Use a composite key so that the same follower node can observe on
+	// behalf of multiple target shards (e.g., left and right children
+	// during a shard split whose leaders land on the same node).
+	observerKey := fmt.Sprintf("%s:%d", req.FollowerName, targetShardId)
+	if _, alreadyPresent := lc.observers[observerKey]; alreadyPresent {
+		return &proto.AddFollowerResponse{}, nil
+	}
+
+	if err := lc.addObserver(observerKey, req.FollowerName, req.FollowerHeadEntryId, targetShardId, req.SplitHashRange); err != nil {
+		return nil, err
+	}
+
+	return &proto.AddFollowerResponse{}, nil
+}
+
+func (lc *leaderController) RemoveObserver(req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
+	lc.Lock()
+	defer lc.Unlock()
+
+	if req.Term != lc.term.Load() {
+		return nil, constant.ErrInvalidTerm
+	}
+
+	observerKey := fmt.Sprintf("%s:%d", req.FollowerName, req.TargetShard)
+	observer, exists := lc.observers[observerKey]
+	if !exists {
+		// Idempotent: already removed
+		return &proto.RemoveObserverResponse{}, nil
+	}
+
+	if err := observer.Close(); err != nil {
+		return nil, err
+	}
+
+	delete(lc.observers, observerKey)
+	delete(lc.followerAckOffsetGauges, observerKey)
+
+	lc.log.Info("Removed observer follower",
+		slog.String("observer-key", observerKey),
+	)
+
+	return &proto.RemoveObserverResponse{}, nil
+}
+
 func (lc *leaderController) addFollower(follower string, followerHeadEntryId *proto.EntryId) error {
 	term := lc.term.Load()
-	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, followerHeadEntryId)
+	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, lc.shardId, followerHeadEntryId)
 	if err != nil {
 		lc.log.Error(
 			"Failed to truncate follower",
@@ -506,6 +571,51 @@ func (lc *leaderController) addFollower(follower string, followerHeadEntryId *pr
 		map[string]any{
 			"shard":    lc.shardId,
 			"follower": follower,
+		}, func() int64 {
+			return cursor.AckOffset()
+		})
+	return nil
+}
+
+func (lc *leaderController) addObserver(observerKey string, follower string, followerHeadEntryId *proto.EntryId,
+	targetShardId int64, splitHashRange *proto.Int32HashRange) error {
+	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, targetShardId, followerHeadEntryId)
+	if err != nil {
+		lc.log.Error(
+			"Failed to truncate observer follower",
+			slog.Any("error", err),
+			slog.String("follower", follower),
+			slog.Any("follower-head-entry", followerHeadEntryId),
+		)
+		return err
+	}
+
+	// Use the parent's current term for the observer cursor. The coordinator
+	// fences the child shard with the same term as the parent, so the child
+	// can validate incoming entries. If the parent gets a new election (term
+	// advances), stale entries from old observer cursors are rejected.
+	cursor, err := NewObserverFollowerCursor(follower, lc.term.Load(), lc.namespace, targetShardId,
+		lc.rpcClient, lc.quorumAckTracker, lc.wal, lc.db, followerHeadEntryId.Offset, splitHashRange)
+	if err != nil {
+		lc.log.Error(
+			"Failed to create observer follower cursor",
+			slog.Any("error", err),
+			slog.String("follower", follower),
+		)
+		return err
+	}
+
+	lc.log.Info(
+		"Added observer follower",
+		slog.String("follower", follower),
+		slog.Any("follower-head-entry", followerHeadEntryId),
+		slog.Int64("head-offset", lc.wal.LastOffset()),
+	)
+	lc.observers[observerKey] = cursor
+	lc.followerAckOffsetGauges[observerKey] = metric.NewGauge("oxia_server_observer_ack_offset", "", "count",
+		map[string]any{
+			"shard":    lc.shardId,
+			"follower": observerKey,
 		}, func() int64 {
 			return cursor.AckOffset()
 		})
@@ -565,7 +675,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 	return nil
 }
 
-func (lc *leaderController) truncateFollowerIfNeeded(follower string, followerHeadEntryId *proto.EntryId) (*proto.EntryId, error) {
+func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId int64, followerHeadEntryId *proto.EntryId) (*proto.EntryId, error) {
 	term := lc.term.Load()
 	lc.log.Debug(
 		"Needs truncation?",
@@ -607,7 +717,7 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, followerHe
 
 	tr, err := lc.rpcClient.Truncate(follower, &proto.TruncateRequest{
 		Namespace:   lc.namespace,
-		Shard:       lc.shardId,
+		Shard:       shardId,
 		Term:        term,
 		HeadEntryId: lastEntryInFollowerTerm,
 	})
@@ -1051,6 +1161,11 @@ func (lc *leaderController) close() error {
 		err = multierr.Append(err, follower.Close())
 	}
 	lc.followers = nil
+
+	for _, observer := range lc.observers {
+		err = multierr.Append(err, observer.Close())
+	}
+	lc.observers = nil
 
 	for _, g := range lc.followerAckOffsetGauges {
 		g.Unregister()

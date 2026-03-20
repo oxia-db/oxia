@@ -87,6 +87,7 @@ type DB interface {
 	EnableFeature(feature proto.Feature)
 	IsFeatureEnabled(feature proto.Feature) bool
 	ReadChecksum() crc.Checksum
+	ResetChecksum()
 
 	ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error)
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
@@ -103,6 +104,10 @@ type DB interface {
 	ReadTerm() (term int64, options TermOptions, err error)
 
 	Snapshot() (kvstore.Snapshot, error)
+
+	// RawKV returns the underlying key-value store. Used for operations that
+	// need direct access to the storage layer, such as split filtering.
+	RawKV() kvstore.KV
 
 	// Delete and close the database and all its files
 	Delete() error
@@ -206,11 +211,21 @@ func (d *db) Snapshot() (kvstore.Snapshot, error) {
 	return d.kv.Snapshot()
 }
 
+func (d *db) RawKV() kvstore.KV {
+	return d.kv
+}
+
 func (d *db) EnableNotifications(enabled bool) {
 	d.notificationsEnabled = enabled
 }
 func (d *db) ReadChecksum() crc.Checksum {
 	return *d.committedChecksum.Load()
+}
+
+func (d *db) ResetChecksum() {
+	var zero crc.Checksum
+	d.committedChecksum.Store(&zero)
+	d.enabledFeatures.Delete(proto.Feature_FEATURE_DB_CHECKSUM)
 }
 
 func (d *db) Close() error {
