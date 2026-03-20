@@ -87,6 +87,7 @@ type DB interface {
 	EnableFeature(feature proto.Feature)
 	IsFeatureEnabled(feature proto.Feature) bool
 	ReadChecksum() crc.Checksum
+	ResetChecksum()
 
 	ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error)
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
@@ -219,6 +220,12 @@ func (d *db) EnableNotifications(enabled bool) {
 }
 func (d *db) ReadChecksum() crc.Checksum {
 	return *d.committedChecksum.Load()
+}
+
+func (d *db) ResetChecksum() {
+	var zero crc.Checksum
+	d.committedChecksum.Store(&zero)
+	d.enabledFeatures.Delete(proto.Feature_FEATURE_DB_CHECKSUM)
 }
 
 func (d *db) Close() error {

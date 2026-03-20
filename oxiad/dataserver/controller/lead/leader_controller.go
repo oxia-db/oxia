@@ -534,7 +534,7 @@ func (lc *leaderController) RemoveObserver(req *proto.RemoveObserverRequest) (*p
 
 func (lc *leaderController) addFollower(follower string, followerHeadEntryId *proto.EntryId) error {
 	term := lc.term.Load()
-	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, followerHeadEntryId)
+	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, lc.shardId, followerHeadEntryId)
 	if err != nil {
 		lc.log.Error(
 			"Failed to truncate follower",
@@ -579,7 +579,7 @@ func (lc *leaderController) addFollower(follower string, followerHeadEntryId *pr
 
 func (lc *leaderController) addObserver(observerKey string, follower string, followerHeadEntryId *proto.EntryId,
 	targetShardId int64, splitHashRange *proto.Int32HashRange) error {
-	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, followerHeadEntryId)
+	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, targetShardId, followerHeadEntryId)
 	if err != nil {
 		lc.log.Error(
 			"Failed to truncate observer follower",
@@ -675,7 +675,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 	return nil
 }
 
-func (lc *leaderController) truncateFollowerIfNeeded(follower string, followerHeadEntryId *proto.EntryId) (*proto.EntryId, error) {
+func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId int64, followerHeadEntryId *proto.EntryId) (*proto.EntryId, error) {
 	term := lc.term.Load()
 	lc.log.Debug(
 		"Needs truncation?",
@@ -717,7 +717,7 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, followerHe
 
 	tr, err := lc.rpcClient.Truncate(follower, &proto.TruncateRequest{
 		Namespace:   lc.namespace,
-		Shard:       lc.shardId,
+		Shard:       shardId,
 		Term:        term,
 		HeadEntryId: lastEntryInFollowerTerm,
 	})

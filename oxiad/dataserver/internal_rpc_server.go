@@ -355,7 +355,11 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 	}
 
 	// Activate split filtering if hash range metadata is present
-	if hashRange, ok := readSplitHashRange(md); ok {
+	hashRange, ok, err := readSplitHashRange(md)
+	if err != nil {
+		return err
+	}
+	if ok {
 		follower.SetSplitHashRange(hashRange)
 	}
 
@@ -414,7 +418,11 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 	// Activate split filtering if hash range metadata is present.
 	// The child follower will filter its snapshot and WAL entries to
 	// only keep keys whose hash falls within this range.
-	if hashRange, ok := readSplitHashRange(md); ok {
+	hashRange, ok, err := readSplitHashRange(md)
+	if err != nil {
+		return err
+	}
+	if ok {
 		follower.SetSplitHashRange(hashRange)
 	}
 
@@ -492,24 +500,25 @@ func readTerm(md metadata.MD) (v int64, err error) {
 }
 
 // readSplitHashRange reads optional split hash range from gRPC metadata.
-// Returns the hash range and true if present, nil and false otherwise.
-func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool) {
+// Returns the hash range and true if present, nil and false if absent,
+// or an error if the metadata is present but malformed.
+func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool, error) {
 	minArr := md.Get(constant.MetadataSplitHashRangeMin)
 	maxArr := md.Get(constant.MetadataSplitHashRangeMax)
 	if len(minArr) == 0 || len(maxArr) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	var minVal, maxVal uint32
 	if _, err := fmt.Sscan(minArr[0], &minVal); err != nil {
-		return nil, false
+		return nil, false, fmt.Errorf("invalid split hash range min %q: %w", minArr[0], err)
 	}
 	if _, err := fmt.Sscan(maxArr[0], &maxVal); err != nil {
-		return nil, false
+		return nil, false, fmt.Errorf("invalid split hash range max %q: %w", maxArr[0], err)
 	}
 
 	return &model.Int32HashRange{
 		Min: minVal,
 		Max: maxVal,
-	}, true
+	}, true, nil
 }

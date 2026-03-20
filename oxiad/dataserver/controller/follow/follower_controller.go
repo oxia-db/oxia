@@ -554,8 +554,6 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	case term != constant.I64NegativeOne && firstChunk.Term != constant.I64NegativeOne && term != firstChunk.Term:
 		// The follower could be left with term=-1 by a previous failed
 		// attempt at sending the snapshot. It's ok to proceed in that case.
-		// Observer cursors (used during shard splits) send term=-1 to bypass
-		// term validation since the child shard has its own term.
 		err = dserror.ErrInvalidTerm
 		return err
 	}
@@ -610,8 +608,11 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	// keys within the child's hash range.
 	if fc.splitHashRange != nil {
 		if err = database.FilterDBForSplit(db.RawKV(), *fc.splitHashRange); err != nil {
-			return errors.Wrap(err, "failed to filter snapshot for split")
+			return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to filter snapshot for split")
 		}
+		// FilterDBForSplit deletes the checksum key (it's invalid after
+		// filtering), so reset the in-memory cached checksum state.
+		db.ResetChecksum()
 	}
 
 	if err = stream.SendAndClose(&proto.SnapshotResponse{
