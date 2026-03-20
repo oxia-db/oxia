@@ -19,31 +19,41 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 )
 
-func TestWithDialOptions(t *testing.T) {
-	opt1 := grpc.WithAuthority("test-authority")
-	opt2 := grpc.WithUserAgent("test-agent")
-
-	options, err := newClientOptions("localhost:6648", WithDialOptions(opt1, opt2))
-	require.NoError(t, err)
-	assert.Len(t, options.dialOptions, 2)
+type mockResolver struct {
+	scheme string
 }
 
-func TestWithDialOptions_Multiple(t *testing.T) {
-	opt1 := grpc.WithAuthority("test-authority")
-	opt2 := grpc.WithUserAgent("test-agent")
+func (r *mockResolver) Scheme() string         { return r.scheme }
+func (r *mockResolver) Start(_ AddressUpdater) {}
+func (r *mockResolver) ResolveNow()            {}
+func (r *mockResolver) Close()                 {}
+
+func TestWithDialOption(t *testing.T) {
+	r1 := &mockResolver{scheme: "test1"}
+	r2 := &mockResolver{scheme: "test2"}
 
 	options, err := newClientOptions("localhost:6648",
-		WithDialOptions(opt1),
-		WithDialOptions(opt2),
+		WithDialOption(WithResolver(r1), WithResolver(r2)),
 	)
 	require.NoError(t, err)
 	assert.Len(t, options.dialOptions, 2)
 }
 
-func TestWithDialOptions_Empty(t *testing.T) {
+func TestWithDialOption_Multiple(t *testing.T) {
+	r1 := &mockResolver{scheme: "test1"}
+	r2 := &mockResolver{scheme: "test2"}
+
+	options, err := newClientOptions("localhost:6648",
+		WithDialOption(WithResolver(r1)),
+		WithDialOption(WithResolver(r2)),
+	)
+	require.NoError(t, err)
+	assert.Len(t, options.dialOptions, 2)
+}
+
+func TestWithDialOption_Empty(t *testing.T) {
 	options, err := newClientOptions("localhost:6648")
 	require.NoError(t, err)
 	assert.Empty(t, options.dialOptions)

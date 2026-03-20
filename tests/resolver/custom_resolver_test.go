@@ -23,50 +23,29 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/resolver"
 
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
-// staticResolver is a simple gRPC resolver that always resolves to a
+// staticResolver is a simple ServiceResolver that always resolves to a
 // pre-configured address. It demonstrates how users can plug in custom
-// service discovery (e.g. Consul, Kubernetes, DNS SRV).
+// service discovery (e.g. Consul, Kubernetes, DNS SRV) using the Oxia
+// ServiceResolver interface — no gRPC imports required.
 type staticResolver struct {
-	target string
-	cc     resolver.ClientConn
-}
-
-func (r *staticResolver) ResolveNow(_ resolver.ResolveNowOptions) {}
-
-func (r *staticResolver) Close() {}
-
-func (r *staticResolver) start() {
-	_ = r.cc.UpdateState(resolver.State{
-		Addresses: []resolver.Address{{Addr: r.target}},
-	})
-}
-
-// staticResolverBuilder builds staticResolver instances for a given scheme.
-type staticResolverBuilder struct {
 	scheme string
 	target string
 }
 
-func (b *staticResolverBuilder) Build(
-	_ resolver.Target,
-	cc resolver.ClientConn,
-	_ resolver.BuildOptions,
-) (resolver.Resolver, error) {
-	r := &staticResolver{target: b.target, cc: cc}
-	r.start()
-	return r, nil
+func (r *staticResolver) Scheme() string { return r.scheme }
+
+func (r *staticResolver) Start(updater oxia.AddressUpdater) {
+	updater([]string{r.target})
 }
 
-func (b *staticResolverBuilder) Scheme() string {
-	return b.scheme
-}
+func (r *staticResolver) ResolveNow() {}
+
+func (r *staticResolver) Close() {}
 
 func newStandaloneServer(t *testing.T) *dataserver.Standalone {
 	t.Helper()
@@ -85,15 +64,15 @@ func TestCustomResolver(t *testing.T) {
 	// Create a custom resolver that maps the custom scheme to the actual
 	// server address. The authority (path) in the URI must be the real
 	// address so the standalone server returns it as the shard leader.
-	rb := &staticResolverBuilder{
+	sr := &staticResolver{
 		scheme: fmt.Sprintf("oxia-test-%d", os.Getpid()),
 		target: actualAddr,
 	}
 
-	// Use the custom resolver via WithDialOptions + grpc.WithResolvers.
+	// Use the custom resolver via WithDialOption + WithResolver.
 	client, err := oxia.NewSyncClient(
-		fmt.Sprintf("%s:///%s", rb.scheme, actualAddr),
-		oxia.WithDialOptions(grpc.WithResolvers(rb)),
+		fmt.Sprintf("%s:///%s", sr.scheme, actualAddr),
+		oxia.WithDialOption(oxia.WithResolver(sr)),
 		oxia.WithRequestTimeout(10*time.Second),
 	)
 	require.NoError(t, err)
