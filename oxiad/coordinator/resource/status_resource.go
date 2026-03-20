@@ -15,6 +15,7 @@
 package resource
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"sync"
@@ -40,6 +41,23 @@ type StatusResource interface {
 	DeleteShardMetadata(namespace string, shard int64)
 
 	IsReady(clusterConfig *model.ClusterConfig) bool
+
+	// ChangeNotify returns a channel that is closed when the next status
+	// change occurs. Callers should capture this channel BEFORE checking
+	// the condition they are waiting for, to avoid missing a change:
+	//
+	//	for {
+	//	    ch := statusResource.ChangeNotify()
+	//	    if condition(statusResource.Load()) {
+	//	        return
+	//	    }
+	//	    select {
+	//	    case <-ch:
+	//	    case <-ctx.Done():
+	//	        return ctx.Err()
+	//	    }
+	//	}
+	ChangeNotify() <-chan struct{}
 }
 
 var _ StatusResource = &status{}
@@ -51,6 +69,7 @@ type status struct {
 	lock             sync.RWMutex
 	current          *model.ClusterStatus
 	currentVersionID metadata.Version
+	changeCh         chan struct{}
 }
 
 // handleStoreError handles errors from metadata.Store().
@@ -63,6 +82,39 @@ func (*status) handleStoreError(err error) error {
 		return backoff.Permanent(err)
 	}
 	return err
+}
+
+// notifyChange wakes all goroutines waiting on ChangeNotify.
+// Must be called while holding s.lock for writing.
+func (s *status) notifyChange() {
+	close(s.changeCh)
+	s.changeCh = make(chan struct{})
+}
+
+func (s *status) ChangeNotify() <-chan struct{} {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	return s.changeCh
+}
+
+// WaitForCondition blocks until condition returns true for the current
+// status, using event-driven notifications instead of time-based polling.
+// It triggers triggerFn (if non-nil) each iteration to drive progress.
+func WaitForCondition(ctx context.Context, sr StatusResource, triggerFn func(), condition func(*model.ClusterStatus) bool) error {
+	for {
+		ch := sr.ChangeNotify()
+		if condition(sr.Load()) {
+			return nil
+		}
+		if triggerFn != nil {
+			triggerFn()
+		}
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func (s *status) loadWithInitSlow() {
@@ -128,6 +180,9 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 			slog.Duration("retry-after", duration),
 		)
 	})
+	if err == nil {
+		s.notifyChange()
+	}
 	return err == nil
 }
 
@@ -149,6 +204,7 @@ func (s *status) Update(newStatus *model.ClusterStatus) {
 			slog.Duration("retry-after", duration),
 		)
 	})
+	s.notifyChange()
 }
 
 func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata) {
@@ -176,6 +232,7 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 			slog.Duration("retry-after", duration),
 		)
 	})
+	s.notifyChange()
 }
 
 func (s *status) DeleteShardMetadata(namespace string, shard int64) {
@@ -206,6 +263,7 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) {
 			slog.Duration("retry-after", duration),
 		)
 	})
+	s.notifyChange()
 }
 
 func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
@@ -235,6 +293,7 @@ func NewStatusResource(meta metadata.Provider) StatusResource {
 		metadata:         meta,
 		currentVersionID: metadata.NotExists,
 		current:          nil,
+		changeCh:         make(chan struct{}),
 	}
 	s.Load()
 	return &s
