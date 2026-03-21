@@ -15,7 +15,7 @@
 package controller
 
 import (
-	"fmt"
+	"errors"
 	"testing"
 	"time"
 
@@ -248,7 +248,6 @@ func TestSplitController_ResumeFromBootstrap(t *testing.T) {
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
 
-
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:      constant.DefaultNamespace,
 		ParentShardId:  0,
@@ -289,7 +288,6 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
 
-
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:      constant.DefaultNamespace,
 		ParentShardId:  0,
@@ -307,14 +305,12 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 	}
 }
 
-
 func TestSplitController_PhaseTransitions(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
 
 	queueBootstrapResponses(rpcMock)
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
-
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:      constant.DefaultNamespace,
@@ -503,7 +499,6 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 
 	queueCutoverResponses(rpcMock)
 
-
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:      constant.DefaultNamespace,
 		ParentShardId:  0,
@@ -532,7 +527,7 @@ func TestSplitController_ChildFencingPartialSuccess(t *testing.T) {
 	// ls1 has higher offset -> deterministically becomes leader
 	rpcMock.GetNode(ls1).NewTermResponse(1, 101, nil)
 	rpcMock.GetNode(ls2).NewTermResponse(1, 100, nil)
-	rpcMock.GetNode(ls3).NewTermResponse(0, 0, fmt.Errorf("connection refused"))
+	rpcMock.GetNode(ls3).NewTermResponse(0, 0, errors.New("connection refused"))
 	// BecomeLeader for left child
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 
@@ -549,7 +544,6 @@ func TestSplitController_ChildFencingPartialSuccess(t *testing.T) {
 
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
-
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:      constant.DefaultNamespace,
@@ -578,7 +572,7 @@ func TestSplitController_ParentFencingPartialFailure(t *testing.T) {
 	// Cutover: parent fencing with 1/3 failure (still quorum)
 	rpcMock.GetNode(ps1).NewTermResponse(5, 105, nil)
 	rpcMock.GetNode(ps2).NewTermResponse(5, 105, nil)
-	rpcMock.GetNode(ps3).NewTermResponse(0, 0, fmt.Errorf("connection refused"))
+	rpcMock.GetNode(ps3).NewTermResponse(0, 0, errors.New("connection refused"))
 
 	// Children reach final offset
 	rpcMock.GetNode(ls1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
@@ -593,8 +587,6 @@ func TestSplitController_ParentFencingPartialFailure(t *testing.T) {
 	rpcMock.GetNode(rs3).NewTermResponse(1, 105, nil)
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
-
-
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:      constant.DefaultNamespace,
@@ -644,8 +636,6 @@ func TestSplitController_ChildQuorumCommitRetry(t *testing.T) {
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
 
-
-
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:      constant.DefaultNamespace,
 		ParentShardId:  0,
@@ -694,7 +684,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 
 	// Simulate dead child leader: GetStatus returns errors
 	rpcMock.GetNode(ps1).GetStatusResponse(5, proto.ServingStatus_LEADER, 100, 100) // parent OK
-	rpcMock.GetNode(ls1).GetStatusResponseError(fmt.Errorf("connection refused"))   // child-L dead
+	rpcMock.GetNode(ls1).EnqueueGetStatusError(errors.New("connection refused"))    // child-L dead
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:      constant.DefaultNamespace,
@@ -812,7 +802,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
-	leftMeta.Term = 2 // term=2 because the shard controller re-elected
+	leftMeta.Term = 2      // term=2 because the shard controller re-elected
 	leftMeta.Leader = &ls2 // NEW leader (was ls1 at bootstrap)
 	ns.Shards[1] = leftMeta
 
@@ -906,13 +896,13 @@ func TestSplitController_ChildEnsembleMemberDiesDuringBootstrap(t *testing.T) {
 	// ls1 has higher offset so pickLeader deterministically chooses it.
 	rpcMock.GetNode(ls1).NewTermResponse(0, 0, nil)
 	rpcMock.GetNode(ls2).NewTermResponse(0, -1, nil)
-	rpcMock.GetNode(ls3).NewTermResponse(0, 0, fmt.Errorf("connection refused"))
+	rpcMock.GetNode(ls3).NewTermResponse(0, 0, errors.New("connection refused"))
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 
 	// Right child: 2/3 respond, 1 dead.
 	// rs1 has higher offset so pickLeader deterministically chooses it.
 	rpcMock.GetNode(rs1).NewTermResponse(0, 0, nil)
-	rpcMock.GetNode(rs2).NewTermResponse(0, 0, fmt.Errorf("connection refused"))
+	rpcMock.GetNode(rs2).NewTermResponse(0, 0, errors.New("connection refused"))
 	rpcMock.GetNode(rs3).NewTermResponse(0, -1, nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
 

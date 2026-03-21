@@ -253,73 +253,15 @@ func (sc *SplitController) runBootstrap() error {
 	}
 
 	// Step 1: Fence and elect each child leader (if not already done).
-	// We check whether the child already has a leader — if Bootstrap is
-	// being re-run (e.g. after a CatchUp→Bootstrap fallback), the children
-	// may already be fenced and elected from the previous attempt.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		childMeta := sc.loadShardMeta(childId)
-		if childMeta == nil {
-			return errors.Errorf("child shard %d not found", childId)
+		if err := sc.fenceAndElectChild(childId); err != nil {
+			return err
 		}
-
-		// Skip if child already has a leader (from a previous Bootstrap run)
-		if childMeta.Leader != nil {
-			sc.log.Info("Child already has leader, skipping fence/elect",
-				slog.Int64("child-shard", childId),
-				slog.Any("leader", *childMeta.Leader),
-			)
-			continue
-		}
-
-		// Fence all child ensemble members with a new term
-		childTerm := childMeta.Term + 1
-		headEntries, err := sc.fenceEnsemble(childId, childTerm, childMeta.Ensemble)
-		if err != nil {
-			return errors.Wrapf(err, "failed to fence child shard %d", childId)
-		}
-
-		// Pick a child leader (highest offset among fenced members)
-		childLeader := sc.pickLeader(headEntries)
-
-		// Update child metadata: set term, leader
-		sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
-			meta.Term = childTerm
-			meta.Leader = &childLeader
-			meta.Status = model.ShardStatusSteadyState
-		})
-
-		// Elect the child leader so it starts replicating to its followers
-		// immediately. This is critical: without an elected leader, only the
-		// single child leader node would have the data and a crash there loses
-		// it. By electing now, commitOffset advances as followers acknowledge.
-		followerMap := make(map[string]*proto.EntryId)
-		for server, entry := range headEntries {
-			if server != childLeader {
-				followerMap[server.Internal] = entry
-			}
-		}
-
-		_, err = sc.rpcProvider.BecomeLeader(sc.ctx, childLeader, &proto.BecomeLeaderRequest{
-			Namespace:         sc.namespace,
-			Shard:             childId,
-			Term:              childTerm,
-			ReplicationFactor: uint32(len(childMeta.Ensemble)),
-			FollowerMaps:      followerMap,
-		})
-		if err != nil {
-			return errors.Wrapf(err, "BecomeLeader failed for child %d", childId)
-		}
-
-		sc.log.Info("Child leader elected",
-			slog.Int64("child-shard", childId),
-			slog.Any("child-leader", childLeader),
-			slog.Int64("term", childTerm),
-		)
 	}
 
 	// Step 2: Add each child leader as an observer on the parent leader.
-	// Re-read parent metadata here in case the parent leader changed since
-	// the start of Bootstrap (e.g. parent leader election while fencing children).
+	// Re-read parent metadata in case the parent leader changed while
+	// fencing children.
 	parentMeta = sc.loadParentMeta()
 	if parentMeta == nil || parentMeta.Leader == nil {
 		return errors.New("parent shard has no leader")
@@ -328,40 +270,9 @@ func (sc *SplitController) runBootstrap() error {
 	parentTerm := parentMeta.Term
 
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		childMeta := sc.loadShardMeta(childId)
-		if childMeta == nil || childMeta.Leader == nil {
-			return errors.Errorf("child shard %d has no leader", childId)
+		if err := sc.addChildObserver(childId, parentLeader, parentTerm); err != nil {
+			return err
 		}
-		childLeader := *childMeta.Leader
-
-		// Add child leader as observer follower on the parent leader.
-		// Use offset -1 to indicate the follower is empty and needs a snapshot.
-		// Set TargetShard to the child's shard ID so the receiving server creates
-		// a follower controller for the child shard, not the parent shard.
-		_, err := sc.rpcProvider.AddFollower(sc.ctx, parentLeader, &proto.AddFollowerRequest{
-			Namespace:    sc.namespace,
-			Shard:        sc.parentShardId,
-			Term:         parentTerm,
-			FollowerName: childLeader.Internal,
-			FollowerHeadEntryId: &proto.EntryId{
-				Term:   -1,
-				Offset: -1,
-			},
-			Observer:    true,
-			TargetShard: &childId,
-			SplitHashRange: &proto.Int32HashRange{
-				MinHashInclusive: childMeta.Int32HashRange.Min,
-				MaxHashInclusive: childMeta.Int32HashRange.Max,
-			},
-		})
-		if err != nil {
-			return errors.Wrapf(err, "failed to add child %d as observer on parent", childId)
-		}
-
-		sc.log.Info("Added child as observer on parent",
-			slog.Int64("child-shard", childId),
-			slog.Any("child-leader", childLeader),
-		)
 	}
 
 	// Record the parent term and child leaders used during bootstrap so
@@ -380,6 +291,100 @@ func (sc *SplitController) runBootstrap() error {
 	})
 
 	sc.updatePhase(model.SplitPhaseCatchUp)
+	return nil
+}
+
+// fenceAndElectChild fences a child shard's ensemble and elects a leader.
+// Skipped if the child already has a leader (from a previous Bootstrap run).
+func (sc *SplitController) fenceAndElectChild(childId int64) error {
+	childMeta := sc.loadShardMeta(childId)
+	if childMeta == nil {
+		return errors.Errorf("child shard %d not found", childId)
+	}
+
+	if childMeta.Leader != nil {
+		sc.log.Info("Child already has leader, skipping fence/elect",
+			slog.Int64("child-shard", childId),
+			slog.Any("leader", *childMeta.Leader),
+		)
+		return nil
+	}
+
+	childTerm := childMeta.Term + 1
+	headEntries, err := sc.fenceEnsemble(childId, childTerm, childMeta.Ensemble)
+	if err != nil {
+		return errors.Wrapf(err, "failed to fence child shard %d", childId)
+	}
+
+	childLeader := sc.pickLeader(headEntries)
+
+	sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
+		meta.Term = childTerm
+		meta.Leader = &childLeader
+		meta.Status = model.ShardStatusSteadyState
+	})
+
+	// Elect the child leader so it replicates to its followers immediately.
+	// Without this, only the single child leader node has the data.
+	followerMap := make(map[string]*proto.EntryId)
+	for server, entry := range headEntries {
+		if server != childLeader {
+			followerMap[server.Internal] = entry
+		}
+	}
+
+	_, err = sc.rpcProvider.BecomeLeader(sc.ctx, childLeader, &proto.BecomeLeaderRequest{
+		Namespace:         sc.namespace,
+		Shard:             childId,
+		Term:              childTerm,
+		ReplicationFactor: uint32(len(childMeta.Ensemble)),
+		FollowerMaps:      followerMap,
+	})
+	if err != nil {
+		return errors.Wrapf(err, "BecomeLeader failed for child %d", childId)
+	}
+
+	sc.log.Info("Child leader elected",
+		slog.Int64("child-shard", childId),
+		slog.Any("child-leader", childLeader),
+		slog.Int64("term", childTerm),
+	)
+	return nil
+}
+
+// addChildObserver adds a child's leader as an observer follower on the parent
+// leader so the parent streams snapshots and WAL entries to it.
+func (sc *SplitController) addChildObserver(childId int64, parentLeader model.Server, parentTerm int64) error {
+	childMeta := sc.loadShardMeta(childId)
+	if childMeta == nil || childMeta.Leader == nil {
+		return errors.Errorf("child shard %d has no leader", childId)
+	}
+	childLeader := *childMeta.Leader
+
+	_, err := sc.rpcProvider.AddFollower(sc.ctx, parentLeader, &proto.AddFollowerRequest{
+		Namespace:    sc.namespace,
+		Shard:        sc.parentShardId,
+		Term:         parentTerm,
+		FollowerName: childLeader.Internal,
+		FollowerHeadEntryId: &proto.EntryId{
+			Term:   -1,
+			Offset: -1,
+		},
+		Observer:    true,
+		TargetShard: &childId,
+		SplitHashRange: &proto.Int32HashRange{
+			MinHashInclusive: childMeta.Int32HashRange.Min,
+			MaxHashInclusive: childMeta.Int32HashRange.Max,
+		},
+	})
+	if err != nil {
+		return errors.Wrapf(err, "failed to add child %d as observer on parent", childId)
+	}
+
+	sc.log.Info("Added child as observer on parent",
+		slog.Int64("child-shard", childId),
+		slog.Any("child-leader", childLeader),
+	)
 	return nil
 }
 
@@ -404,101 +409,124 @@ func (sc *SplitController) runCatchUp() error {
 			return backoff.Permanent(err)
 		}
 
-		// Check if the parent had a leader election since Bootstrap.
-		// If so, observer cursors are stale — fall back to Bootstrap.
-		parentMeta := sc.loadParentMeta()
-		if parentMeta == nil || parentMeta.Split == nil {
-			return errors.New("parent or split metadata missing")
-		}
-		if parentMeta.Split.ParentTermAtBootstrap > 0 && parentMeta.Term != parentMeta.Split.ParentTermAtBootstrap {
-			sc.log.Warn("Parent term changed since bootstrap, resetting to Bootstrap",
-				slog.Int64("bootstrap-term", parentMeta.Split.ParentTermAtBootstrap),
-				slog.Int64("current-term", parentMeta.Term),
-			)
-			sc.updatePhase(model.SplitPhaseBootstrap)
+		if fallback, err := sc.checkObserverCursorsStale(); err != nil {
+			return err
+		} else if fallback {
 			return nil
 		}
 
-		// Check if any child had a leader election since Bootstrap.
-		// If so, the observer cursor on the parent targets the old (dead) leader.
-		// Remove the stale observer and fall back to Bootstrap to re-add.
-		if parentMeta.Split.ChildLeadersAtBootstrap != nil {
-			for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-				childMeta := sc.loadShardMeta(childId)
-				if childMeta == nil || childMeta.Leader == nil {
-					continue
-				}
-				bootstrapLeader, ok := parentMeta.Split.ChildLeadersAtBootstrap[childId]
-				if !ok {
-					continue
-				}
-				if childMeta.Leader.Internal != bootstrapLeader {
-					sc.log.Warn("Child leader changed since bootstrap, removing stale observer and resetting to Bootstrap",
-						slog.Int64("child-shard", childId),
-						slog.String("old-leader", bootstrapLeader),
-						slog.String("new-leader", childMeta.Leader.Internal),
-					)
-					// Remove the stale observer cursor from the parent leader (best-effort).
-					if parentMeta.Leader != nil {
-						_, _ = sc.rpcProvider.RemoveObserver(sc.ctx, *parentMeta.Leader, &proto.RemoveObserverRequest{
-							Namespace:    sc.namespace,
-							Shard:        sc.parentShardId,
-							Term:         parentMeta.Term,
-							FollowerName: bootstrapLeader,
-							TargetShard:  childId,
-						})
-					}
-					sc.updatePhase(model.SplitPhaseBootstrap)
-					return nil
-				}
-			}
-		}
-
-		if parentMeta.Leader == nil {
-			return errors.New("parent has no leader")
-		}
-
-		// Snapshot the parent's current commitOffset as the target.
-		parentStatus, err := sc.rpcProvider.GetStatus(sc.ctx, *parentMeta.Leader, &proto.GetStatusRequest{
-			Shard: sc.parentShardId,
-		})
+		caughtUp, err := sc.runCatchUpRound()
 		if err != nil {
 			return err
 		}
-		target := parentStatus.CommitOffset
-
-		sc.log.Info("CatchUp round: waiting for children to reach target",
-			slog.Int64("target-commit-offset", target),
-		)
-
-		// Wait up to CatchUpRoundTimeout for both children to reach the target.
-		roundCtx, roundCancel := context.WithTimeout(sc.ctx, CatchUpRoundTimeout)
-		allCaughtUp := true
-
-		for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-			if err := sc.waitForChildCommitOffset(roundCtx, childId, target); err != nil {
-				if roundCtx.Err() != nil {
-					// Round timed out — re-read parent commitOffset
-					sc.log.Info("CatchUp round timed out, retrying",
-						slog.Int64("child-shard", childId),
-						slog.Int64("target", target),
-					)
-					allCaughtUp = false
-					break
-				}
-				roundCancel()
-				return err
-			}
-		}
-
-		roundCancel()
-
-		if allCaughtUp {
+		if caughtUp {
 			sc.log.Info("All children caught up")
 			sc.updatePhase(model.SplitPhaseCutover)
 			return nil
 		}
 	}
+}
+
+// checkObserverCursorsStale detects if a parent or child leader election has
+// invalidated the observer cursors set up during Bootstrap. Returns
+// (true, nil) if the phase was reset to Bootstrap and the caller should return.
+func (sc *SplitController) checkObserverCursorsStale() (bool, error) {
+	parentMeta := sc.loadParentMeta()
+	if parentMeta == nil || parentMeta.Split == nil {
+		return false, errors.New("parent or split metadata missing")
+	}
+
+	// Parent leader election: observer cursors are closed when the old leader
+	// is fenced, so they need to be re-added on the new leader.
+	if parentMeta.Split.ParentTermAtBootstrap > 0 && parentMeta.Term != parentMeta.Split.ParentTermAtBootstrap {
+		sc.log.Warn("Parent term changed since bootstrap, resetting to Bootstrap",
+			slog.Int64("bootstrap-term", parentMeta.Split.ParentTermAtBootstrap),
+			slog.Int64("current-term", parentMeta.Term),
+		)
+		sc.updatePhase(model.SplitPhaseBootstrap)
+		return true, nil
+	}
+
+	// Child leader election: the observer cursor targets the old (dead) leader.
+	// Remove the stale cursor and fall back to Bootstrap to re-add.
+	if sc.removeStaleChildObservers(parentMeta) {
+		sc.updatePhase(model.SplitPhaseBootstrap)
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// removeStaleChildObservers checks if any child leader changed since Bootstrap.
+// If so, removes the stale observer cursor from the parent and returns true.
+func (sc *SplitController) removeStaleChildObservers(parentMeta *model.ShardMetadata) bool {
+	if parentMeta.Split.ChildLeadersAtBootstrap == nil || parentMeta.Leader == nil {
+		return false
+	}
+	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
+		childMeta := sc.loadShardMeta(childId)
+		if childMeta == nil || childMeta.Leader == nil {
+			continue
+		}
+		bootstrapLeader, ok := parentMeta.Split.ChildLeadersAtBootstrap[childId]
+		if !ok || childMeta.Leader.Internal == bootstrapLeader {
+			continue
+		}
+
+		sc.log.Warn("Child leader changed since bootstrap, removing stale observer and resetting to Bootstrap",
+			slog.Int64("child-shard", childId),
+			slog.String("old-leader", bootstrapLeader),
+			slog.String("new-leader", childMeta.Leader.Internal),
+		)
+		_, _ = sc.rpcProvider.RemoveObserver(sc.ctx, *parentMeta.Leader, &proto.RemoveObserverRequest{
+			Namespace:    sc.namespace,
+			Shard:        sc.parentShardId,
+			Term:         parentMeta.Term,
+			FollowerName: bootstrapLeader,
+			TargetShard:  childId,
+		})
+		return true
+	}
+	return false
+}
+
+// runCatchUpRound snapshots the parent's commitOffset and waits up to
+// CatchUpRoundTimeout for both children to reach it. Returns true if all
+// children caught up, false if the round timed out (caller should retry).
+func (sc *SplitController) runCatchUpRound() (bool, error) {
+	parentMeta := sc.loadParentMeta()
+	if parentMeta == nil || parentMeta.Leader == nil {
+		return false, errors.New("parent has no leader")
+	}
+
+	parentStatus, err := sc.rpcProvider.GetStatus(sc.ctx, *parentMeta.Leader, &proto.GetStatusRequest{
+		Shard: sc.parentShardId,
+	})
+	if err != nil {
+		return false, err
+	}
+	target := parentStatus.CommitOffset
+
+	sc.log.Info("CatchUp round: waiting for children to reach target",
+		slog.Int64("target-commit-offset", target),
+	)
+
+	roundCtx, roundCancel := context.WithTimeout(sc.ctx, CatchUpRoundTimeout)
+	defer roundCancel()
+
+	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
+		if err := sc.waitForChildCommitOffset(roundCtx, childId, target); err != nil {
+			if roundCtx.Err() != nil {
+				sc.log.Info("CatchUp round timed out, retrying",
+					slog.Int64("child-shard", childId),
+					slog.Int64("target", target),
+				)
+				return false, nil
+			}
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // runCutover fences the parent, waits for children to commit all remaining
@@ -581,7 +609,6 @@ func (sc *SplitController) runCutover() error {
 
 	return nil
 }
-
 
 // abort cleans up a failed/timed-out split that hasn't reached Cutover.
 // It removes observer cursors from the parent, deletes child shards from

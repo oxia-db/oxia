@@ -278,7 +278,7 @@ func (m *mockPerNodeChannels) GetStatusResponse(term int64, status proto.Serving
 	}, nil}
 }
 
-func (m *mockPerNodeChannels) GetStatusResponseError(err error) {
+func (m *mockPerNodeChannels) EnqueueGetStatusError(err error) {
 	m.getStatusResponses <- struct {
 		*proto.GetStatusResponse
 		error
