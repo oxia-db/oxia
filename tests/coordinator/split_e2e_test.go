@@ -1043,11 +1043,16 @@ func TestCoordinator_ShardSplit_FollowerKillDuringSplit(t *testing.T) {
 	cluster.leftChild, cluster.rightChild, err = cluster.coordinator.InitiateSplit(constant.DefaultNamespace, 0, nil)
 	require.NoError(t, err)
 
+	// With a dead follower, the shard controller's DeleteShard retries
+	// indefinitely (can't reach the dead node). So we accept the parent
+	// being either fully deleted OR marked Deleting with split metadata cleared.
 	require.Eventually(t, func() bool {
 		st := cluster.statusResource.Load()
 		ns := st.Namespaces[constant.DefaultNamespace]
-		if _, parentExists := ns.Shards[0]; parentExists {
-			return false
+		if parentMeta, parentExists := ns.Shards[0]; parentExists {
+			if parentMeta.Status != model.ShardStatusDeleting {
+				return false
+			}
 		}
 		for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
 			sm, ok := ns.Shards[child]
