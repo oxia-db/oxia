@@ -201,6 +201,13 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 	switch {
 	case initShardMeta.Status == model.ShardStatusDeleting:
 		s.DeleteShard()
+	case initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIDs) == 0:
+		// Child shard during a split: the SplitController manages its lifecycle.
+		// Wait until the split is complete (Split metadata cleared) before
+		// entering the normal event loop, to prevent the load balancer from
+		// triggering elections that would interfere with the split controller.
+		s.log.Info("Child shard during split, waiting for split to complete")
+		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.Status != model.ShardStatusSteadyState:
 		s.onElectLeader(nil)
 	default:
@@ -236,6 +243,42 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 		case electionAction := <-s.electionOp:
 			newLeader := s.onElectLeader(nil)
 			electionAction.Done(newLeader.GetIdentifier())
+		}
+	}
+}
+
+// waitForSplitComplete blocks until the Split metadata is cleared from this
+// shard in the status resource, indicating the split controller has finished
+// and the shard can operate normally. This prevents the load balancer from
+// triggering elections that would interfere with the split controller.
+// We read from the status resource (not the shard controller's local metadata)
+// because the split controller updates the status resource directly.
+func (s *shardController) waitForSplitComplete() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			status := s.statusResource.Load()
+			ns, exists := status.Namespaces[s.namespace]
+			if !exists {
+				continue
+			}
+			meta, exists := ns.Shards[s.shard]
+			if !exists {
+				continue
+			}
+			if meta.Split == nil {
+				s.log.Info("Split complete, child shard entering normal operation",
+					slog.Any("leader", meta.Leader),
+				)
+				// Update local metadata to match the status resource
+				s.metadata.Store(meta)
+				return
+			}
 		}
 	}
 }

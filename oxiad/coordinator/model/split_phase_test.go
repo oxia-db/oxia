@@ -21,20 +21,16 @@ import (
 )
 
 func TestSplitPhase_String(t *testing.T) {
-	assert.Equal(t, "Init", SplitPhaseInit.String())
 	assert.Equal(t, "Bootstrap", SplitPhaseBootstrap.String())
 	assert.Equal(t, "CatchUp", SplitPhaseCatchUp.String())
 	assert.Equal(t, "Cutover", SplitPhaseCutover.String())
-	assert.Equal(t, "Cleanup", SplitPhaseCleanup.String())
 }
 
 func TestSplitPhase_JSON(t *testing.T) {
 	for _, phase := range []SplitPhase{
-		SplitPhaseInit,
 		SplitPhaseBootstrap,
 		SplitPhaseCatchUp,
 		SplitPhaseCutover,
-		SplitPhaseCleanup,
 	} {
 		j, err := phase.MarshalJSON()
 		assert.NoError(t, err)

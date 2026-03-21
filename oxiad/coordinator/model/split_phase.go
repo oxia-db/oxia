@@ -22,11 +22,9 @@ import (
 type SplitPhase uint16
 
 const (
-	SplitPhaseInit      SplitPhase = iota
-	SplitPhaseBootstrap            // Sending snapshots to children
-	SplitPhaseCatchUp              // Children following parent WAL
-	SplitPhaseCutover              // Fencing parent, electing children
-	SplitPhaseCleanup              // Deleting parent shard
+	SplitPhaseBootstrap SplitPhase = iota // Fencing children, adding observers
+	SplitPhaseCatchUp                     // Children following parent WAL
+	SplitPhaseCutover                     // Fencing parent, electing children
 )
 
 func (s SplitPhase) String() string {
@@ -34,19 +32,15 @@ func (s SplitPhase) String() string {
 }
 
 var splitPhaseToString = map[SplitPhase]string{
-	SplitPhaseInit:      "Init",
 	SplitPhaseBootstrap: "Bootstrap",
 	SplitPhaseCatchUp:   "CatchUp",
 	SplitPhaseCutover:   "Cutover",
-	SplitPhaseCleanup:   "Cleanup",
 }
 
 var stringToSplitPhase = map[string]SplitPhase{
-	"Init":      SplitPhaseInit,
 	"Bootstrap": SplitPhaseBootstrap,
 	"CatchUp":   SplitPhaseCatchUp,
 	"Cutover":   SplitPhaseCutover,
-	"Cleanup":   SplitPhaseCleanup,
 }
 
 // MarshalJSON marshals the enum as a quoted json string.
