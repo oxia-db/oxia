@@ -73,6 +73,40 @@ func (*KeySorting) Type() string {
 	return "KeySorting"
 }
 
+func (cc *ClusterConfig) Validate() error {
+	if len(cc.Servers) == 0 {
+		return errors.New("cluster config: at least one server must be configured")
+	}
+
+	if len(cc.Namespaces) == 0 {
+		return errors.New("cluster config: at least one namespace must be configured")
+	}
+
+	for _, ns := range cc.Namespaces {
+		if ns.Name == "" {
+			return errors.New("cluster config: namespace name must not be empty")
+		}
+
+		if ns.ReplicationFactor < 1 {
+			return errors.Errorf("cluster config: namespace %q has invalid replicationFactor=%d, must be >= 1",
+				ns.Name, ns.ReplicationFactor)
+		}
+
+		if ns.InitialShardCount < 1 {
+			return errors.Errorf("cluster config: namespace %q has invalid initialShardCount=%d, must be >= 1",
+				ns.Name, ns.InitialShardCount)
+		}
+
+		if ns.ReplicationFactor > uint32(len(cc.Servers)) {
+			return errors.Errorf(
+				"cluster config: namespace %q has replicationFactor=%d but only %d servers are configured",
+				ns.Name, ns.ReplicationFactor, len(cc.Servers))
+		}
+	}
+
+	return nil
+}
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func (ks *KeySorting) ToProto() proto.KeySortingType {
