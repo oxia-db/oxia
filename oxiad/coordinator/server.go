@@ -120,6 +120,10 @@ func loadClusterConfig(cluster *option.ClusterOptions, v *viper.Viper) (model.Cl
 		return cc, errors.Wrap(err, "failed to load cluster config")
 	}
 
+	if err := cc.Validate(); err != nil {
+		return cc, err
+	}
+
 	return cc, nil
 }
 
