@@ -141,34 +141,38 @@ jobs:
           echo "- **Image:** \`oxia/oxia:${{ needs.prepare.outputs.rc_tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
 
-  # ── Step 3: Run regret correctness tests ──
-  regret-test:
-    name: Regret Correctness Test
+  # ── Step 3: Setup regret tests ──
+  regret-setup:
+    name: Setup Regret Tests
     needs: [prepare, build-image]
     runs-on: ubuntu-latest
-    timeout-minutes: 240
     env:
       API: ${{ secrets.REGRET_API_URL }}
       AUTH: "admin:${{ secrets.REGRET_PASSWORD }}"
-      CANDIDATE: "oxia/oxia:${{ needs.prepare.outputs.rc_tag }}"
-      STABLE: "oxia/oxia:latest"
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+    outputs:
+      hyp_basic_kv: ${{ steps.create.outputs.hyp_basic_kv }}
+      hyp_kv_cas: ${{ steps.create.outputs.hyp_kv_cas }}
+      hyp_kv_ephemeral: ${{ steps.create.outputs.hyp_kv_ephemeral }}
+      hyp_kv_secondary_index: ${{ steps.create.outputs.hyp_kv_secondary_index }}
+      hyp_kv_sequence: ${{ steps.create.outputs.hyp_kv_sequence }}
+      run_basic_kv: ${{ steps.create.outputs.run_basic_kv }}
+      run_kv_cas: ${{ steps.create.outputs.run_kv_cas }}
+      run_kv_ephemeral: ${{ steps.create.outputs.run_kv_ephemeral }}
+      run_kv_secondary_index: ${{ steps.create.outputs.run_kv_secondary_index }}
+      run_kv_sequence: ${{ steps.create.outputs.run_kv_sequence }}
     steps:
       - name: Validate
         run: |
-          echo "Candidate: ${CANDIDATE}"
-          echo "Stable:    ${STABLE}"
-          echo "Duration:  ${{ inputs.duration }}"
-          echo "Generators: ${{ inputs.generators }}"
           curl -sf "${API}/health" || { echo "ERROR: Regret API not reachable"; exit 1; }
 
       - name: Create hypotheses and start runs
-        id: hypotheses
+        id: create
         run: |
-          HYP_IDS=""
           FIRST_ID=""
-
-          for gen in ${{ inputs.generators }}; do
-            echo "Creating hypothesis: ci-${gen}..."
+          for gen in basic-kv kv-cas kv-ephemeral kv-secondary-index kv-sequence; do
+            SAFE_GEN=$(echo "$gen" | tr '-' '_')
+            echo "Creating: ci-${gen}..."
             RESULT=$(curl -sf -u "${AUTH}" "${API}/api/hypothesis" \
               -X POST -H 'Content-Type: application/json' \
               -d "{
@@ -179,18 +183,18 @@ jobs:
                 \"checkpoint_every\": \"${{ inputs.checkpoint_every }}\",
                 \"tolerance\": {\"structural\":[{\"field\":\"version_id\",\"ignore\":true}]}
               }")
-            ID=$(echo "$RESULT" | jq -r .id)
-            echo "  Created: $ID ($gen)"
+            HYP_ID=$(echo "$RESULT" | jq -r .id)
 
-            # Start run
-            curl -sf -u "${AUTH}" "${API}/api/hypothesis/${ID}/run" \
-              -X POST -H 'Content-Type: application/json' -d '{}'
+            RUN_RESULT=$(curl -sf -u "${AUTH}" "${API}/api/hypothesis/${HYP_ID}/run" \
+              -X POST -H 'Content-Type: application/json' -d '{}')
+            RUN_ID=$(echo "$RUN_RESULT" | jq -r .run_id)
 
-            HYP_IDS="${HYP_IDS} ${ID}"
-            if [ -z "$FIRST_ID" ]; then FIRST_ID="$ID"; fi
+            echo "hyp_${SAFE_GEN}=${HYP_ID}" >> $GITHUB_OUTPUT
+            echo "run_${SAFE_GEN}=${RUN_ID}" >> $GITHUB_OUTPUT
+            echo "  ${gen}: hyp=${HYP_ID} run=${RUN_ID}"
+
+            if [ -z "$FIRST_ID" ]; then FIRST_ID="$HYP_ID"; fi
           done
-
-          echo "ids=${HYP_IDS}" >> $GITHUB_OUTPUT
           echo "first_id=${FIRST_ID}" >> $GITHUB_OUTPUT
 
       - name: Trigger upgrade test
@@ -199,15 +203,14 @@ jobs:
             | jq -r '.items[] | select(.name=="oxia-upgrade-test") | .id')
 
           if [ -n "$SCENARIO_ID" ] && [ "$SCENARIO_ID" != "null" ]; then
-            echo "Injecting upgrade test (scenario: $SCENARIO_ID)..."
             curl -sf -u "${AUTH}" "${API}/api/chaos/scenarios/${SCENARIO_ID}/inject" \
               -X POST -H 'Content-Type: application/json' \
               -d "{
                 \"overrides\": {
                   \"upgrade_test\": {
-                    \"hypothesis_id\": \"${{ steps.hypotheses.outputs.first_id }}\",
-                    \"candidate_image\": \"${CANDIDATE}\",
-                    \"stable_image\": \"${STABLE}\"
+                    \"hypothesis_id\": \"${{ steps.create.outputs.first_id }}\",
+                    \"candidate_image\": \"oxia/oxia:${{ needs.prepare.outputs.rc_tag }}\",
+                    \"stable_image\": \"oxia/oxia:latest\"
                   }
                 }
               }"
@@ -216,63 +219,191 @@ jobs:
             echo "WARNING: oxia-upgrade-test scenario not found, skipping."
           fi
 
+  # ── Step 3a-e: Watch each hypothesis in parallel ──
+  regret-basic-kv:
+    name: "Regret: basic-kv"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_basic_kv }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_basic_kv }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
       - name: Wait for completion
         run: |
-          echo "Polling every 5 minutes..."
           while true; do
-            ALL_DONE=true
-            for hyp_id in ${{ steps.hypotheses.outputs.ids }}; do
-              STATUS=$(curl -sf "${API}/api/hypothesis/${hyp_id}/status")
-              STATE=$(echo "$STATUS" | jq -r .status)
-              OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
-              ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
-              VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
-              echo "  $hyp_id: status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
-              if [ "$STATE" = "running" ]; then ALL_DONE=false; fi
-            done
-            if [ "$ALL_DONE" = "true" ]; then break; fi
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
             sleep 300
           done
-
-      - name: Check results
-        id: results
+      - name: Check result
         run: |
-          FAILED=false
-          for hyp_id in ${{ steps.hypotheses.outputs.ids }}; do
-            STATUS=$(curl -sf "${API}/api/hypothesis/${hyp_id}/status")
-            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
-            FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
-            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
-            PASSED_CK=$(echo "$STATUS" | jq -r '.progress.passed_checkpoints // 0')
-            if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
-              echo "FAIL $hyp_id: violations=$VIOLATIONS failed_checkpoints=$FAILED_CK"
-              FAILED=true
-            else
-              echo "PASS $hyp_id: ops=$OPS checkpoints=$PASSED_CK"
-            fi
-          done
-          echo "failed=${FAILED}" >> $GITHUB_OUTPUT
-
-      - name: Report
-        if: always()
-        run: |
-          if [ "${{ steps.results.outputs.failed }}" = "true" ]; then
-            echo "### :x: Regret Correctness Test Failed" >> $GITHUB_STEP_SUMMARY
-            echo "**Candidate:** \`${CANDIDATE}\`" >> $GITHUB_STEP_SUMMARY
-            echo "**Duration:** ${{ inputs.duration }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Generators:** ${{ inputs.generators }}" >> $GITHUB_STEP_SUMMARY
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
             exit 1
-          else
-            echo "### :white_check_mark: Regret Correctness Test Passed" >> $GITHUB_STEP_SUMMARY
-            echo "**Candidate:** \`${CANDIDATE}\`" >> $GITHUB_STEP_SUMMARY
-            echo "**Duration:** ${{ inputs.duration }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Generators:** ${{ inputs.generators }}" >> $GITHUB_STEP_SUMMARY
           fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
+
+  regret-kv-cas:
+    name: "Regret: kv-cas"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_kv_cas }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_kv_cas }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+      - name: Wait for completion
+        run: |
+          while true; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
+            sleep 300
+          done
+      - name: Check result
+        run: |
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
+
+  regret-kv-ephemeral:
+    name: "Regret: kv-ephemeral"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_kv_ephemeral }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_kv_ephemeral }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+      - name: Wait for completion
+        run: |
+          while true; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
+            sleep 300
+          done
+      - name: Check result
+        run: |
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
+
+  regret-kv-secondary-index:
+    name: "Regret: kv-secondary-index"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_kv_secondary_index }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_kv_secondary_index }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+      - name: Wait for completion
+        run: |
+          while true; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
+            sleep 300
+          done
+      - name: Check result
+        run: |
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
+
+  regret-kv-sequence:
+    name: "Regret: kv-sequence"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_kv_sequence }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_kv_sequence }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+      - name: Wait for completion
+        run: |
+          while true; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
+            sleep 300
+          done
+      - name: Check result
+        run: |
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
 
   # ── Step 4: Manual approval + promote to official release ──
   promote:
     name: Promote to Release
-    needs: [prepare, regret-test]
+    needs: [prepare, regret-basic-kv, regret-kv-cas, regret-kv-ephemeral, regret-kv-secondary-index, regret-kv-sequence]
     runs-on: ubuntu-latest
     environment: production
     steps:
