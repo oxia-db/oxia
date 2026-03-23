@@ -16,7 +16,7 @@ package perf
 
 import (
 	"context"
-	cryptorand "crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -157,7 +157,9 @@ func (p *perf) generateWriteTraffic(ctx context.Context, client oxia.AsyncClient
 		}
 
 		if p.config.RandomPayload {
-			_, _ = cryptorand.Read(value)
+			for i := 0; i+8 <= len(value); i += 8 {
+				binary.NativeEndian.PutUint64(value[i:], rand.Uint64()) //nolint:gosec
+			}
 		}
 
 		key := p.keys[rand.Intn(int(p.config.KeysCardinality))] //nolint:gosec
