@@ -20,6 +20,9 @@ on:
         required: false
         default: '3h'
 
+permissions:
+  contents: write
+
 concurrency:
   group: candidate-release
   cancel-in-progress: false
@@ -149,7 +152,6 @@ jobs:
     secrets:
       regret_api: ${{ secrets.REGRET_API_URL }}
       regret_password: ${{ secrets.REGRET_PASSWORD }}
-      adapter_addr: ${{ secrets.REGRET_ADAPTER_ADDR }}
 
   # ── Step 4: Manual approval + promote to official release ──
   promote:
