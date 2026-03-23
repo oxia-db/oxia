@@ -226,6 +226,13 @@ func (r *nodeBasedBalancer) swapShard(
 	if nsc, exist = r.configResource.NamespaceConfig(candidateShard.Namespace); !exist {
 		return false, nil
 	}
+
+	// With RF=1, an ensemble swap cannot safely transfer data (there's no
+	// follower to replicate from). Skip rebalancing for such namespaces.
+	if nsc.ReplicationFactor <= 1 {
+		return false, nil
+	}
+
 	policies := nsc.Policies
 	sContext := &single.Context{
 		Candidates:         candidates,
