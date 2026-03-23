@@ -16,6 +16,7 @@ package perf
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -37,6 +38,8 @@ type Config struct {
 	ReadPercentage  float64
 	KeysCardinality uint32
 	ValueSize       uint32
+
+	RandomPayload bool
 
 	BatchLinger         time.Duration
 	MaxRequestsPerBatch int
@@ -151,6 +154,12 @@ func (p *perf) generateWriteTraffic(ctx context.Context, client oxia.AsyncClient
 	for {
 		if err := limiter.Wait(ctx); err != nil {
 			return
+		}
+
+		if p.config.RandomPayload {
+			for i := 0; i+8 <= len(value); i += 8 {
+				binary.NativeEndian.PutUint64(value[i:], rand.Uint64()) //nolint:gosec
+			}
 		}
 
 		key := p.keys[rand.Intn(int(p.config.KeysCardinality))] //nolint:gosec
