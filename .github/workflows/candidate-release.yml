@@ -1,0 +1,430 @@
+name: Candidate Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      branch:
+        description: 'Branch to release from'
+        required: false
+        default: 'main'
+      duration:
+        description: 'Regret test duration'
+        required: false
+        default: '3h'
+      generators:
+        description: 'Generators to test (space-separated)'
+        required: false
+        default: 'basic-kv kv-cas kv-ephemeral kv-secondary-index kv-sequence'
+      checkpoint_every:
+        description: 'Checkpoint interval'
+        required: false
+        default: '10m'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: candidate-release
+  cancel-in-progress: false
+
+jobs:
+  # ── Step 1: Calculate version and create RC tag ──
+  prepare:
+    name: Prepare RC
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      rc_tag: ${{ steps.calc.outputs.rc_tag }}
+      release_tag: ${{ steps.calc.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Calculate version
+        id: calc
+        run: |
+          LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          if [ -z "$LATEST" ]; then
+            echo "No existing version tags found, starting from v0.0.0"
+            LATEST="v0.0.0"
+          fi
+          echo "Latest release: $LATEST"
+
+          MAJOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST" | cut -d. -f2)
+          PATCH=$(echo "$LATEST" | cut -d. -f3)
+
+          case "${{ inputs.bump }}" in
+            patch) PATCH=$((PATCH + 1)) ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+          esac
+
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+          RC=0
+          while git tag | grep -q "^v${VERSION}-rc${RC}$"; do
+            RC=$((RC + 1))
+          done
+
+          RC_TAG="v${VERSION}-rc${RC}"
+          RELEASE_TAG="v${VERSION}"
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "rc_tag=${RC_TAG}" >> $GITHUB_OUTPUT
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+
+          echo "## Version Calculation" >> $GITHUB_STEP_SUMMARY
+          echo "- **Previous:** ${LATEST}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bump:** ${{ inputs.bump }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **RC Tag:** ${RC_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Tag:** ${RELEASE_TAG}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create RC tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.calc.outputs.rc_tag }}" -m "Release candidate ${{ steps.calc.outputs.rc_tag }}"
+          git push origin "${{ steps.calc.outputs.rc_tag }}"
+
+  # ── Step 2: Build & push RC Docker image ──
+  build-image:
+    name: Build RC Image
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.rc_tag }}
+
+      - uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: oxia/oxia:${{ needs.prepare.outputs.rc_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "## Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** \`oxia/oxia:${{ needs.prepare.outputs.rc_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+
+  # ── Step 3: Setup regret tests ──
+  regret-setup:
+    name: Setup Regret Tests
+    needs: [prepare, build-image]
+    runs-on: ubuntu-latest
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      AUTH: "admin:${{ secrets.REGRET_PASSWORD }}"
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+    outputs:
+      hyp_basic_kv: ${{ steps.create.outputs.hyp_basic_kv }}
+      hyp_kv_cas: ${{ steps.create.outputs.hyp_kv_cas }}
+      hyp_kv_ephemeral: ${{ steps.create.outputs.hyp_kv_ephemeral }}
+      hyp_kv_secondary_index: ${{ steps.create.outputs.hyp_kv_secondary_index }}
+      hyp_kv_sequence: ${{ steps.create.outputs.hyp_kv_sequence }}
+      run_basic_kv: ${{ steps.create.outputs.run_basic_kv }}
+      run_kv_cas: ${{ steps.create.outputs.run_kv_cas }}
+      run_kv_ephemeral: ${{ steps.create.outputs.run_kv_ephemeral }}
+      run_kv_secondary_index: ${{ steps.create.outputs.run_kv_secondary_index }}
+      run_kv_sequence: ${{ steps.create.outputs.run_kv_sequence }}
+    steps:
+      - name: Validate
+        run: |
+          curl -sf "${API}/health" || { echo "ERROR: Regret API not reachable"; exit 1; }
+
+      - name: Create hypotheses and start runs
+        id: create
+        run: |
+          FIRST_ID=""
+          for gen in basic-kv kv-cas kv-ephemeral kv-secondary-index kv-sequence; do
+            SAFE_GEN=$(echo "$gen" | tr '-' '_')
+            echo "Creating: ci-${gen}..."
+            RESULT=$(curl -sf -u "${AUTH}" "${API}/api/hypothesis" \
+              -X POST -H 'Content-Type: application/json' \
+              -d "{
+                \"name\": \"ci-${gen}-${GITHUB_RUN_ID}\",
+                \"generator\": \"${gen}\",
+                \"adapter\": \"oxia\",
+                \"duration\": \"${{ inputs.duration }}\",
+                \"checkpoint_every\": \"${{ inputs.checkpoint_every }}\",
+                \"tolerance\": {\"structural\":[{\"field\":\"version_id\",\"ignore\":true}]}
+              }")
+            HYP_ID=$(echo "$RESULT" | jq -r .id)
+
+            RUN_RESULT=$(curl -sf -u "${AUTH}" "${API}/api/hypothesis/${HYP_ID}/run" \
+              -X POST -H 'Content-Type: application/json' -d '{}')
+            RUN_ID=$(echo "$RUN_RESULT" | jq -r .run_id)
+
+            echo "hyp_${SAFE_GEN}=${HYP_ID}" >> $GITHUB_OUTPUT
+            echo "run_${SAFE_GEN}=${RUN_ID}" >> $GITHUB_OUTPUT
+            echo "  ${gen}: hyp=${HYP_ID} run=${RUN_ID}"
+
+            if [ -z "$FIRST_ID" ]; then FIRST_ID="$HYP_ID"; fi
+          done
+          echo "first_id=${FIRST_ID}" >> $GITHUB_OUTPUT
+
+      - name: Trigger upgrade test
+        run: |
+          SCENARIO_ID=$(curl -sf "${API}/api/chaos/scenarios" \
+            | jq -r '.items[] | select(.name=="oxia-upgrade-test") | .id')
+
+          if [ -n "$SCENARIO_ID" ] && [ "$SCENARIO_ID" != "null" ]; then
+            curl -sf -u "${AUTH}" "${API}/api/chaos/scenarios/${SCENARIO_ID}/inject" \
+              -X POST -H 'Content-Type: application/json' \
+              -d "{
+                \"overrides\": {
+                  \"upgrade_test\": {
+                    \"hypothesis_id\": \"${{ steps.create.outputs.first_id }}\",
+                    \"candidate_image\": \"oxia/oxia:${{ needs.prepare.outputs.rc_tag }}\",
+                    \"stable_image\": \"oxia/oxia:latest\"
+                  }
+                }
+              }"
+            echo "Upgrade test started."
+          else
+            echo "WARNING: oxia-upgrade-test scenario not found, skipping."
+          fi
+
+  # ── Step 3a-e: Watch each hypothesis in parallel ──
+  regret-basic-kv:
+    name: "Regret: basic-kv"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_basic_kv }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_basic_kv }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+      - name: Wait for completion
+        run: |
+          while true; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
+            sleep 300
+          done
+      - name: Check result
+        run: |
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
+
+  regret-kv-cas:
+    name: "Regret: kv-cas"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_kv_cas }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_kv_cas }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+      - name: Wait for completion
+        run: |
+          while true; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
+            sleep 300
+          done
+      - name: Check result
+        run: |
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
+
+  regret-kv-ephemeral:
+    name: "Regret: kv-ephemeral"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_kv_ephemeral }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_kv_ephemeral }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+      - name: Wait for completion
+        run: |
+          while true; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
+            sleep 300
+          done
+      - name: Check result
+        run: |
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
+
+  regret-kv-secondary-index:
+    name: "Regret: kv-secondary-index"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_kv_secondary_index }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_kv_secondary_index }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+      - name: Wait for completion
+        run: |
+          while true; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
+            sleep 300
+          done
+      - name: Check result
+        run: |
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
+
+  regret-kv-sequence:
+    name: "Regret: kv-sequence"
+    needs: [regret-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      STUDIO: ${{ secrets.REGRET_STUDIO_URL }}
+      HYP_ID: ${{ needs.regret-setup.outputs.hyp_kv_sequence }}
+      RUN_ID: ${{ needs.regret-setup.outputs.run_kv_sequence }}
+    steps:
+      - name: Studio link
+        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+      - name: Wait for completion
+        run: |
+          while true; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+            STATE=$(echo "$STATUS" | jq -r .status)
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            echo "status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+            if [ "$STATE" != "running" ]; then break; fi
+            sleep 300
+          done
+      - name: Check result
+        run: |
+          STATUS=$(curl -sf "${API}/api/hypothesis/${HYP_ID}/status")
+          VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+          FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+          if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+            echo ":x: **FAILED** — $VIOLATIONS violations, $FAILED_CK failed checkpoints" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo ":white_check_mark: **PASSED**" >> $GITHUB_STEP_SUMMARY
+
+  # ── Step 4: Manual approval + promote to official release ──
+  promote:
+    name: Promote to Release
+    needs: [prepare, regret-basic-kv, regret-kv-cas, regret-kv-ephemeral, regret-kv-secondary-index, regret-kv-sequence]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.rc_tag }}
+          fetch-depth: 0
+
+      - name: Create official release tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          RELEASE_TAG="${{ needs.prepare.outputs.release_tag }}"
+          RC_TAG="${{ needs.prepare.outputs.rc_tag }}"
+
+          echo "Promoting ${RC_TAG} → ${RELEASE_TAG}"
+          git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG} (promoted from ${RC_TAG})"
+          git push origin "${RELEASE_TAG}"
+
+          echo "## Release Promoted" >> $GITHUB_STEP_SUMMARY
+          echo "- **RC:** ${RC_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release:** ${RELEASE_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "The existing Release workflow will now trigger automatically." >> $GITHUB_STEP_SUMMARY
