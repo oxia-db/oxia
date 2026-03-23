@@ -38,6 +38,8 @@ type Config struct {
 	KeysCardinality uint32
 	ValueSize       uint32
 
+	RandomPayload bool
+
 	BatchLinger         time.Duration
 	MaxRequestsPerBatch int
 	RequestTimeout      time.Duration
@@ -151,6 +153,10 @@ func (p *perf) generateWriteTraffic(ctx context.Context, client oxia.AsyncClient
 	for {
 		if err := limiter.Wait(ctx); err != nil {
 			return
+		}
+
+		if p.config.RandomPayload {
+			rand.Read(value) //nolint:gosec
 		}
 
 		key := p.keys[rand.Intn(int(p.config.KeysCardinality))] //nolint:gosec

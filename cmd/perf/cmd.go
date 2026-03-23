@@ -47,6 +47,7 @@ func init() {
 	Cmd.Flags().Float64VarP(&config.ReadPercentage, "read-write-percent", "p", 80.0, "Percentage of read requests, compared to total requests")
 	Cmd.Flags().Uint32Var(&config.KeysCardinality, "keys-cardinality", 1000, "Batch linger in milliseconds")
 	Cmd.Flags().Uint32VarP(&config.ValueSize, "value-size", "s", 128, "Size of the values to write")
+	Cmd.Flags().BoolVar(&config.RandomPayload, "random-payload", false, "Generate random payload for each write request")
 
 	Cmd.Flags().DurationVar(&config.BatchLinger, "batch-linger", oxia.DefaultBatchLinger, "Batch linger time")
 	Cmd.Flags().IntVar(&config.MaxRequestsPerBatch, "max-requests-per-batch", oxia.DefaultMaxRequestsPerBatch, "Maximum requests per batch")
