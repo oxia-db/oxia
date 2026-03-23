@@ -141,7 +141,6 @@ jobs:
       candidate_image: "oxia/oxia:${{ needs.prepare.outputs.rc_tag }}"
       stable_image: "oxia/oxia:${{ needs.prepare.outputs.stable_tag }}"
     secrets: inherit
-      regret_studio: ${{ secrets.REGRET_STUDIO_URL }}
 
   # ── Step 4: Manual approval + promote to official release ──
   promote:
