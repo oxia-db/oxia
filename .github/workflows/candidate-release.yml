@@ -19,6 +19,14 @@ on:
         description: 'Regret test duration'
         required: false
         default: '3h'
+      generators:
+        description: 'Generators to test (space-separated)'
+        required: false
+        default: 'basic-kv kv-cas kv-ephemeral kv-secondary-index kv-sequence'
+      checkpoint_every:
+        description: 'Checkpoint interval'
+        required: false
+        default: '10m'
 
 permissions:
   contents: write
@@ -32,8 +40,6 @@ jobs:
   prepare:
     name: Prepare RC
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     outputs:
       version: ${{ steps.calc.outputs.version }}
       rc_tag: ${{ steps.calc.outputs.rc_tag }}
@@ -42,12 +48,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch }}
-          fetch-depth: 0  # need full history for tags
+          fetch-depth: 0
 
       - name: Calculate version
         id: calc
         run: |
-          # Get latest official semver tag (non-RC)
           LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           if [ -z "$LATEST" ]; then
             echo "No existing version tags found, starting from v0.0.0"
@@ -55,12 +60,10 @@ jobs:
           fi
           echo "Latest release: $LATEST"
 
-          # Parse
           MAJOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f1)
           MINOR=$(echo "$LATEST" | cut -d. -f2)
           PATCH=$(echo "$LATEST" | cut -d. -f3)
 
-          # Bump
           case "${{ inputs.bump }}" in
             patch) PATCH=$((PATCH + 1)) ;;
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
@@ -69,7 +72,6 @@ jobs:
 
           VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
-          # Find next RC number
           RC=0
           while git tag | grep -q "^v${VERSION}-rc${RC}$"; do
             RC=$((RC + 1))
@@ -94,7 +96,6 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "${{ steps.calc.outputs.rc_tag }}" -m "Release candidate ${{ steps.calc.outputs.rc_tag }}"
           git push origin "${{ steps.calc.outputs.rc_tag }}"
-          echo "Created and pushed tag: ${{ steps.calc.outputs.rc_tag }}"
 
   # ── Step 2: Build & push RC Docker image ──
   build-image:
@@ -144,14 +145,136 @@ jobs:
   regret-test:
     name: Regret Correctness Test
     needs: [prepare, build-image]
-    uses: mattisonchao/regret/.github/workflows/oxia-candidate-test.yml@main
-    with:
-      candidate_image: "oxia/oxia:${{ needs.prepare.outputs.rc_tag }}"
-      stable_image: "oxia/oxia:latest"
-      duration: ${{ inputs.duration }}
-    secrets:
-      regret_api: ${{ secrets.REGRET_API_URL }}
-      regret_password: ${{ secrets.REGRET_PASSWORD }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API: ${{ secrets.REGRET_API_URL }}
+      AUTH: "admin:${{ secrets.REGRET_PASSWORD }}"
+      CANDIDATE: "oxia/oxia:${{ needs.prepare.outputs.rc_tag }}"
+      STABLE: "oxia/oxia:latest"
+    steps:
+      - name: Validate
+        run: |
+          echo "Candidate: ${CANDIDATE}"
+          echo "Stable:    ${STABLE}"
+          echo "Duration:  ${{ inputs.duration }}"
+          echo "Generators: ${{ inputs.generators }}"
+          curl -sf "${API}/health" || { echo "ERROR: Regret API not reachable"; exit 1; }
+
+      - name: Create hypotheses and start runs
+        id: hypotheses
+        run: |
+          HYP_IDS=""
+          FIRST_ID=""
+
+          for gen in ${{ inputs.generators }}; do
+            echo "Creating hypothesis: ci-${gen}..."
+            RESULT=$(curl -sf -u "${AUTH}" "${API}/api/hypothesis" \
+              -X POST -H 'Content-Type: application/json' \
+              -d "{
+                \"name\": \"ci-${gen}-${GITHUB_RUN_ID}\",
+                \"generator\": \"${gen}\",
+                \"adapter\": \"oxia\",
+                \"duration\": \"${{ inputs.duration }}\",
+                \"checkpoint_every\": \"${{ inputs.checkpoint_every }}\",
+                \"tolerance\": {\"structural\":[{\"field\":\"version_id\",\"ignore\":true}]}
+              }")
+            ID=$(echo "$RESULT" | jq -r .id)
+            echo "  Created: $ID ($gen)"
+
+            # Start run
+            curl -sf -u "${AUTH}" "${API}/api/hypothesis/${ID}/run" \
+              -X POST -H 'Content-Type: application/json' -d '{}'
+
+            HYP_IDS="${HYP_IDS} ${ID}"
+            if [ -z "$FIRST_ID" ]; then FIRST_ID="$ID"; fi
+          done
+
+          echo "ids=${HYP_IDS}" >> $GITHUB_OUTPUT
+          echo "first_id=${FIRST_ID}" >> $GITHUB_OUTPUT
+
+      - name: Trigger upgrade test
+        run: |
+          SCENARIO_ID=$(curl -sf "${API}/api/chaos/scenarios" \
+            | jq -r '.items[] | select(.name=="oxia-upgrade-test") | .id')
+
+          if [ -n "$SCENARIO_ID" ] && [ "$SCENARIO_ID" != "null" ]; then
+            echo "Injecting upgrade test (scenario: $SCENARIO_ID)..."
+            curl -sf -u "${AUTH}" "${API}/api/chaos/scenarios/${SCENARIO_ID}/inject" \
+              -X POST -H 'Content-Type: application/json' \
+              -d "{
+                \"overrides\": {
+                  \"upgrade_test\": {
+                    \"hypothesis_id\": \"${{ steps.hypotheses.outputs.first_id }}\",
+                    \"candidate_image\": \"${CANDIDATE}\",
+                    \"stable_image\": \"${STABLE}\"
+                  }
+                }
+              }"
+            echo "Upgrade test started."
+          else
+            echo "WARNING: oxia-upgrade-test scenario not found, skipping."
+          fi
+
+      - name: Wait for completion
+        run: |
+          echo "Polling every 5 minutes..."
+          while true; do
+            ALL_DONE=true
+            for hyp_id in ${{ steps.hypotheses.outputs.ids }}; do
+              STATUS=$(curl -sf "${API}/api/hypothesis/${hyp_id}/status")
+              STATE=$(echo "$STATUS" | jq -r .status)
+              OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+              ELAPSED=$(echo "$STATUS" | jq -r '.progress.elapsed_secs // 0')
+              VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+              echo "  $hyp_id: status=$STATE ops=$OPS elapsed=${ELAPSED}s violations=$VIOLATIONS"
+              if [ "$STATE" = "running" ]; then ALL_DONE=false; fi
+            done
+            if [ "$ALL_DONE" = "true" ]; then break; fi
+            sleep 300
+          done
+
+      - name: Check results
+        id: results
+        run: |
+          FAILED=false
+          for hyp_id in ${{ steps.hypotheses.outputs.ids }}; do
+            STATUS=$(curl -sf "${API}/api/hypothesis/${hyp_id}/status")
+            VIOLATIONS=$(echo "$STATUS" | jq -r '.progress.safety_violations // 0')
+            FAILED_CK=$(echo "$STATUS" | jq -r '.progress.failed_checkpoints // 0')
+            OPS=$(echo "$STATUS" | jq -r '.progress.completed_ops // 0')
+            PASSED_CK=$(echo "$STATUS" | jq -r '.progress.passed_checkpoints // 0')
+            if [ "$VIOLATIONS" != "0" ] || [ "$FAILED_CK" != "0" ]; then
+              echo "FAIL $hyp_id: violations=$VIOLATIONS failed_checkpoints=$FAILED_CK"
+              FAILED=true
+            else
+              echo "PASS $hyp_id: ops=$OPS checkpoints=$PASSED_CK"
+            fi
+          done
+          echo "failed=${FAILED}" >> $GITHUB_OUTPUT
+
+      - name: Cleanup hypotheses
+        if: always()
+        run: |
+          for hyp_id in ${{ steps.hypotheses.outputs.ids }}; do
+            curl -sf -u "${AUTH}" "${API}/api/hypothesis/${hyp_id}" -X DELETE || true
+          done
+
+      - name: Report
+        if: always()
+        run: |
+          if [ "${{ steps.results.outputs.failed }}" = "true" ]; then
+            echo "### :x: Regret Correctness Test Failed" >> $GITHUB_STEP_SUMMARY
+            echo "**Candidate:** \`${CANDIDATE}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Duration:** ${{ inputs.duration }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Generators:** ${{ inputs.generators }}" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "### :white_check_mark: Regret Correctness Test Passed" >> $GITHUB_STEP_SUMMARY
+            echo "**Candidate:** \`${CANDIDATE}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Duration:** ${{ inputs.duration }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Generators:** ${{ inputs.generators }}" >> $GITHUB_STEP_SUMMARY
+          fi
 
   # ── Step 4: Manual approval + promote to official release ──
   promote:
@@ -159,8 +282,6 @@ jobs:
     needs: [prepare, regret-test]
     runs-on: ubuntu-latest
     environment: production
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -176,14 +297,10 @@ jobs:
           RC_TAG="${{ needs.prepare.outputs.rc_tag }}"
 
           echo "Promoting ${RC_TAG} → ${RELEASE_TAG}"
-
-          # Tag the same commit as the RC
           git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG} (promoted from ${RC_TAG})"
           git push origin "${RELEASE_TAG}"
 
           echo "## Release Promoted" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **RC:** ${RC_TAG}" >> $GITHUB_STEP_SUMMARY
           echo "- **Release:** ${RELEASE_TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The existing [Release workflow](../release.yaml) will now trigger automatically." >> $GITHUB_STEP_SUMMARY
+          echo "The existing Release workflow will now trigger automatically." >> $GITHUB_STEP_SUMMARY
