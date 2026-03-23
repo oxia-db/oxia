@@ -512,7 +512,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 			Max: sp,
 		},
 	}
-	cloned.ServerIdx += uint32(nsConfig.ReplicationFactor)
+	cloned.ServerIdx += nsConfig.ReplicationFactor
 
 	rightEnsemble, err := c.selectNewEnsemble(nsConfig, cloned)
 	if err != nil {
