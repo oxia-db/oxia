@@ -156,7 +156,7 @@ func (p *perf) generateWriteTraffic(ctx context.Context, client oxia.AsyncClient
 		}
 
 		if p.config.RandomPayload {
-			rand.Read(value) //nolint:gosec
+			_, _ = rand.Read(value) //nolint:gosec
 		}
 
 		key := p.keys[rand.Intn(int(p.config.KeysCardinality))] //nolint:gosec
