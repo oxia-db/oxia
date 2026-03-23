@@ -1,0 +1,187 @@
+name: Candidate Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      branch:
+        description: 'Branch to release from'
+        required: false
+        default: 'main'
+      duration:
+        description: 'Regret test duration'
+        required: false
+        default: '3h'
+
+concurrency:
+  group: candidate-release
+  cancel-in-progress: false
+
+jobs:
+  # ── Step 1: Calculate version and create RC tag ──
+  prepare:
+    name: Prepare RC
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      rc_tag: ${{ steps.calc.outputs.rc_tag }}
+      release_tag: ${{ steps.calc.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0  # need full history for tags
+
+      - name: Calculate version
+        id: calc
+        run: |
+          # Get latest official semver tag (non-RC)
+          LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          if [ -z "$LATEST" ]; then
+            echo "No existing version tags found, starting from v0.0.0"
+            LATEST="v0.0.0"
+          fi
+          echo "Latest release: $LATEST"
+
+          # Parse
+          MAJOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST" | cut -d. -f2)
+          PATCH=$(echo "$LATEST" | cut -d. -f3)
+
+          # Bump
+          case "${{ inputs.bump }}" in
+            patch) PATCH=$((PATCH + 1)) ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+          esac
+
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+          # Find next RC number
+          RC=0
+          while git tag | grep -q "^v${VERSION}-rc${RC}$"; do
+            RC=$((RC + 1))
+          done
+
+          RC_TAG="v${VERSION}-rc${RC}"
+          RELEASE_TAG="v${VERSION}"
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "rc_tag=${RC_TAG}" >> $GITHUB_OUTPUT
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+
+          echo "## Version Calculation" >> $GITHUB_STEP_SUMMARY
+          echo "- **Previous:** ${LATEST}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bump:** ${{ inputs.bump }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **RC Tag:** ${RC_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Tag:** ${RELEASE_TAG}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create RC tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.calc.outputs.rc_tag }}" -m "Release candidate ${{ steps.calc.outputs.rc_tag }}"
+          git push origin "${{ steps.calc.outputs.rc_tag }}"
+          echo "Created and pushed tag: ${{ steps.calc.outputs.rc_tag }}"
+
+  # ── Step 2: Build & push RC Docker image ──
+  build-image:
+    name: Build RC Image
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.rc_tag }}
+
+      - uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: oxia/oxia:${{ needs.prepare.outputs.rc_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "## Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** \`oxia/oxia:${{ needs.prepare.outputs.rc_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+
+  # ── Step 3: Run regret correctness tests ──
+  regret-test:
+    name: Regret Correctness Test
+    needs: [prepare, build-image]
+    uses: mattisonchao/regret/.github/workflows/oxia-candidate-test.yml@main
+    with:
+      candidate_image: "oxia/oxia:${{ needs.prepare.outputs.rc_tag }}"
+      stable_image: "oxia/oxia:latest"
+      duration: ${{ inputs.duration }}
+    secrets:
+      regret_api: ${{ secrets.REGRET_API_URL }}
+      regret_password: ${{ secrets.REGRET_PASSWORD }}
+      adapter_addr: ${{ secrets.REGRET_ADAPTER_ADDR }}
+
+  # ── Step 4: Manual approval + promote to official release ──
+  promote:
+    name: Promote to Release
+    needs: [prepare, regret-test]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.rc_tag }}
+          fetch-depth: 0
+
+      - name: Create official release tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          RELEASE_TAG="${{ needs.prepare.outputs.release_tag }}"
+          RC_TAG="${{ needs.prepare.outputs.rc_tag }}"
+
+          echo "Promoting ${RC_TAG} → ${RELEASE_TAG}"
+
+          # Tag the same commit as the RC
+          git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG} (promoted from ${RC_TAG})"
+          git push origin "${RELEASE_TAG}"
+
+          echo "## Release Promoted" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **RC:** ${RC_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release:** ${RELEASE_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The existing [Release workflow](../release.yaml) will now trigger automatically." >> $GITHUB_STEP_SUMMARY
