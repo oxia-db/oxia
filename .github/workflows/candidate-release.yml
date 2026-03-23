@@ -253,13 +253,6 @@ jobs:
           done
           echo "failed=${FAILED}" >> $GITHUB_OUTPUT
 
-      - name: Cleanup hypotheses
-        if: always()
-        run: |
-          for hyp_id in ${{ steps.hypotheses.outputs.ids }}; do
-            curl -sf -u "${AUTH}" "${API}/api/hypothesis/${hyp_id}" -X DELETE || true
-          done
-
       - name: Report
         if: always()
         run: |
