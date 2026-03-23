@@ -29,6 +29,10 @@ var _ selector.Selector[*Context, model.Server] = &leader{}
 type leader struct{}
 
 func (*leader) Select(context *Context) (model.Server, error) {
+	if len(context.Candidates) == 0 {
+		return model.Server{}, selector.ErrNoCandidates
+	}
+
 	status := context.Status
 	candidates := linkedhashset.New[string]()
 	for _, candidate := range context.Candidates {

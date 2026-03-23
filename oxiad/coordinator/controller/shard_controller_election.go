@@ -222,12 +222,15 @@ func (*ShardElection) waitForMajority(ch chan struct {
 }
 
 func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto.EntryId) (
-	leader model.Server, followers map[model.Server]*proto.EntryId) {
+	leader model.Server, followers map[model.Server]*proto.EntryId, err error) {
 	candidates := chooseCandidates(candidatesStatus)
-	server, _ := e.leaderSelector.Select(&leaderselector.Context{
+	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
 		Status:     e.statusResource.Load(),
 	})
+	if err != nil {
+		return model.Server{}, nil, err
+	}
 	leader = server
 	followers = make(map[model.Server]*proto.EntryId)
 	for a, e := range candidatesStatus {
@@ -235,7 +238,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto
 			followers[a] = e
 		}
 	}
-	return leader, followers
+	return leader, followers, nil
 }
 
 func (e *ShardElection) becomeLeader(term int64, leader model.Server, followers map[model.Server]*proto.EntryId,
@@ -442,7 +445,10 @@ func (e *ShardElection) start() (model.Server, error) {
 	if err != nil {
 		return model.Server{}, err
 	}
-	newLeader, followers := e.selectNewLeader(candidatesStatus)
+	newLeader, followers, err := e.selectNewLeader(candidatesStatus)
+	if err != nil {
+		return model.Server{}, err
+	}
 	if e.Enabled(context.Background(), slog.LevelInfo) {
 		f := make([]struct {
 			ServerAddress model.Server   `json:"server-address"`
