@@ -233,7 +233,8 @@ jobs:
       RUN_ID: ${{ needs.regret-setup.outputs.run_basic_kv }}
     steps:
       - name: Studio link
-        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+        run: |
+          echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
       - name: Wait for completion
         run: |
           while true; do
@@ -269,7 +270,8 @@ jobs:
       RUN_ID: ${{ needs.regret-setup.outputs.run_kv_cas }}
     steps:
       - name: Studio link
-        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+        run: |
+          echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
       - name: Wait for completion
         run: |
           while true; do
@@ -305,7 +307,8 @@ jobs:
       RUN_ID: ${{ needs.regret-setup.outputs.run_kv_ephemeral }}
     steps:
       - name: Studio link
-        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+        run: |
+          echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
       - name: Wait for completion
         run: |
           while true; do
@@ -341,7 +344,8 @@ jobs:
       RUN_ID: ${{ needs.regret-setup.outputs.run_kv_secondary_index }}
     steps:
       - name: Studio link
-        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+        run: |
+          echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
       - name: Wait for completion
         run: |
           while true; do
@@ -377,7 +381,8 @@ jobs:
       RUN_ID: ${{ needs.regret-setup.outputs.run_kv_sequence }}
     steps:
       - name: Studio link
-        run: echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
+        run: |
+          echo "### [:mag: View in Regret Studio](${STUDIO}/runs/${HYP_ID}/${RUN_ID})" >> $GITHUB_STEP_SUMMARY
       - name: Wait for completion
         run: |
           while true; do
