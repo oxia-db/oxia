@@ -140,6 +140,7 @@ jobs:
     with:
       candidate_image: "oxia/oxia:${{ needs.prepare.outputs.rc_tag }}"
       stable_image: "oxia/oxia:${{ needs.prepare.outputs.stable_tag }}"
+      studio_url: ${{ vars.REGRET_STUDIO_URL }}
     secrets: inherit
 
   # ── Step 4: Manual approval + promote to official release ──
