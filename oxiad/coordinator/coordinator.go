@@ -493,18 +493,28 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	rightChildId := cloned.ShardIdGenerator + 1
 	cloned.ShardIdGenerator += 2
 
-	// Select ensembles for children
-	leftEnsemble, err := c.selectNewEnsemble(
-		c.namespaceConfigForSplit(namespace),
-		cloned,
-	)
+	// Select ensembles for children.
+	// After selecting the left child's ensemble, insert it into the cloned
+	// status so the right child's selection sees the updated load distribution
+	// and picks a different server.
+	nsConfig := c.namespaceConfigForSplit(namespace)
+	leftEnsemble, err := c.selectNewEnsemble(nsConfig, cloned)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "failed to select ensemble for left child")
 	}
-	rightEnsemble, err := c.selectNewEnsemble(
-		c.namespaceConfigForSplit(namespace),
-		cloned,
-	)
+
+	// Update cloned status with left child placement before selecting right child
+	cloned.Namespaces[namespace].Shards[leftChildId] = model.ShardMetadata{
+		Status:   model.ShardStatusSteadyState,
+		Ensemble: leftEnsemble,
+		Int32HashRange: model.Int32HashRange{
+			Min: parentMeta.Int32HashRange.Min,
+			Max: sp,
+		},
+	}
+	cloned.ServerIdx += uint32(nsConfig.ReplicationFactor)
+
+	rightEnsemble, err := c.selectNewEnsemble(nsConfig, cloned)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "failed to select ensemble for right child")
 	}
@@ -563,7 +573,6 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	)
 
 	// Create shard controllers for children
-	nsConfig := c.namespaceConfigForSplit(namespace)
 	for _, childId := range []int64{leftChildId, rightChildId} {
 		childMeta := nsCloned.Shards[childId]
 		c.shardControllers[childId] = controller.NewShardController(namespace, childId, nsConfig,
