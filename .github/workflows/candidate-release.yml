@@ -130,7 +130,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: oxia/oxia:${{ needs.prepare.outputs.rc_tag }}
           cache-from: type=gha
