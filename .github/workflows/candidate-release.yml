@@ -16,18 +16,6 @@ on:
         description: 'Branch to release from'
         required: false
         default: 'main'
-      duration:
-        description: 'Regret test duration'
-        required: false
-        default: '3h'
-      generators:
-        description: 'Generators to test (space-separated)'
-        required: false
-        default: 'basic-kv kv-cas kv-ephemeral kv-secondary-index kv-sequence'
-      checkpoint_every:
-        description: 'Checkpoint interval'
-        required: false
-        default: '10m'
 
 permissions:
   contents: write
@@ -45,6 +33,7 @@ jobs:
       version: ${{ steps.calc.outputs.version }}
       rc_tag: ${{ steps.calc.outputs.rc_tag }}
       release_tag: ${{ steps.calc.outputs.release_tag }}
+      stable_tag: ${{ steps.calc.outputs.stable_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,6 +73,7 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "rc_tag=${RC_TAG}" >> $GITHUB_OUTPUT
           echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "stable_tag=${LATEST}" >> $GITHUB_OUTPUT
 
           echo "## Version Calculation" >> $GITHUB_STEP_SUMMARY
           echo "- **Previous:** ${LATEST}" >> $GITHUB_STEP_SUMMARY
@@ -149,12 +139,8 @@ jobs:
     uses: oxia-db/regret-adapters/.github/workflows/regret-test.yml@main
     with:
       candidate_image: "oxia/oxia:${{ needs.prepare.outputs.rc_tag }}"
-      stable_image: "oxia/oxia:latest"
-      duration: ${{ inputs.duration }}
-      checkpoint_every: ${{ inputs.checkpoint_every }}
-    secrets:
-      regret_api: ${{ secrets.REGRET_API_URL }}
-      regret_password: ${{ secrets.REGRET_PASSWORD }}
+      stable_image: "oxia/oxia:${{ needs.prepare.outputs.stable_tag }}"
+    secrets: inherit
       regret_studio: ${{ secrets.REGRET_STUDIO_URL }}
 
   # ── Step 4: Manual approval + promote to official release ──
