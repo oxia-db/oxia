@@ -1,3 +1,4 @@
+# Candidate Release — create RC, test with Regret, promote to official release
 name: Candidate Release
 
 on:
