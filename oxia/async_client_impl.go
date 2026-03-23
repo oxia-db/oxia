@@ -73,9 +73,9 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		return nil, err
 	}
 
-	grpcDialOptions := make([]grpc.DialOption, len(options.dialOptions))
-	for i, opt := range options.dialOptions {
-		grpcDialOptions[i] = opt.toGrpcDialOption()
+	var grpcDialOptions []grpc.DialOption
+	if options.resolver != nil {
+		grpcDialOptions = append(grpcDialOptions, grpc.WithResolvers(&grpcResolverBuilder{sr: options.resolver}))
 	}
 	clientPool := rpc.NewClientPool(options.tls, options.authentication, grpcDialOptions...)
 

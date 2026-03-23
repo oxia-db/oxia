@@ -67,7 +67,7 @@ type clientOptions struct {
 	authentication         auth.Authentication
 	sessionKeepAliveTicker time.Duration
 	failureInjection       *hashset.Set[Failure]
-	dialOptions            []DialOption
+	resolver               ServiceResolver
 }
 
 func defaultIdentity() string {
@@ -227,24 +227,6 @@ func WithAuthentication(authentication auth.Authentication) ClientOption {
 func WithFailureInjection(failures []Failure) ClientOption {
 	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
 		options.failureInjection = hashset.New(failures...)
-		return options, nil
-	})
-}
-
-// WithDialOption appends an Oxia DialOption used when creating
-// connections. This can be used to inject a custom service resolver
-// or other transport-level configuration without depending on gRPC
-// types directly.
-//
-// Example:
-//
-//	client, err := oxia.NewSyncClient(
-//	    "k8s:///my-service",
-//	    oxia.WithDialOption(oxia.WithResolver(myResolver)),
-//	)
-func WithDialOption(opts ...DialOption) ClientOption {
-	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
-		options.dialOptions = append(options.dialOptions, opts...)
 		return options, nil
 	})
 }

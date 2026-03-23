@@ -30,31 +30,18 @@ func (r *mockResolver) Start(_ AddressUpdater) {}
 func (r *mockResolver) ResolveNow()            {}
 func (r *mockResolver) Close()                 {}
 
-func TestWithDialOption(t *testing.T) {
-	r1 := &mockResolver{scheme: "test1"}
-	r2 := &mockResolver{scheme: "test2"}
+func TestWithDialResolver(t *testing.T) {
+	r := &mockResolver{scheme: "test"}
 
 	options, err := newClientOptions("localhost:6648",
-		WithDialOption(WithResolver(r1), WithResolver(r2)),
+		WithDialResolver(r),
 	)
 	require.NoError(t, err)
-	assert.Len(t, options.dialOptions, 2)
+	assert.Equal(t, r, options.resolver)
 }
 
-func TestWithDialOption_Multiple(t *testing.T) {
-	r1 := &mockResolver{scheme: "test1"}
-	r2 := &mockResolver{scheme: "test2"}
-
-	options, err := newClientOptions("localhost:6648",
-		WithDialOption(WithResolver(r1)),
-		WithDialOption(WithResolver(r2)),
-	)
-	require.NoError(t, err)
-	assert.Len(t, options.dialOptions, 2)
-}
-
-func TestWithDialOption_Empty(t *testing.T) {
+func TestWithDialResolver_NotSet(t *testing.T) {
 	options, err := newClientOptions("localhost:6648")
 	require.NoError(t, err)
-	assert.Empty(t, options.dialOptions)
+	assert.Nil(t, options.resolver)
 }

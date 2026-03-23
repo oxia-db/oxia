@@ -69,10 +69,10 @@ func TestCustomResolver(t *testing.T) {
 		target: actualAddr,
 	}
 
-	// Use the custom resolver via WithDialOption + WithResolver.
+	// Use the custom resolver via WithDialResolver.
 	client, err := oxia.NewSyncClient(
 		fmt.Sprintf("%s:///%s", sr.scheme, actualAddr),
-		oxia.WithDialOption(oxia.WithResolver(sr)),
+		oxia.WithDialResolver(sr),
 		oxia.WithRequestTimeout(10*time.Second),
 	)
 	require.NoError(t, err)

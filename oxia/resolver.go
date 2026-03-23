@@ -15,7 +15,6 @@
 package oxia
 
 import (
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/resolver"
 )
 
@@ -48,7 +47,7 @@ type ServiceResolver interface {
 // updated addresses to the underlying transport.
 type AddressUpdater func(addresses []string)
 
-// WithResolver configures the client to use a custom ServiceResolver
+// WithDialResolver configures the client to use a custom ServiceResolver
 // for discovering server addresses. The service address passed to
 // NewSyncClient / NewAsyncClient must use the scheme returned by
 // ServiceResolver.Scheme().
@@ -58,18 +57,13 @@ type AddressUpdater func(addresses []string)
 //	resolver := &myResolver{scheme: "k8s", ...}
 //	client, err := oxia.NewSyncClient(
 //	    "k8s:///my-oxia-service",
-//	    oxia.WithDialOption(oxia.WithResolver(resolver)),
+//	    oxia.WithDialResolver(resolver),
 //	)
-func WithResolver(sr ServiceResolver) DialOption {
-	return &resolverDialOption{resolver: sr}
-}
-
-type resolverDialOption struct {
-	resolver ServiceResolver
-}
-
-func (o *resolverDialOption) toGrpcDialOption() grpc.DialOption {
-	return grpc.WithResolvers(&grpcResolverBuilder{sr: o.resolver})
+func WithDialResolver(sr ServiceResolver) ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		options.resolver = sr
+		return options, nil
+	})
 }
 
 // grpcResolverBuilder adapts a ServiceResolver to the gRPC
