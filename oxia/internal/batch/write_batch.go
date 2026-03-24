@@ -114,7 +114,7 @@ func (b *writeBatch) Complete() {
 		// The target shard was deleted (e.g. after a split). Re-submit
 		// each operation through the normal pipeline so keys get re-hashed
 		// and routed to the correct child shards.
-		slog.Info("Shard deleted, re-routing write batch operations",
+		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),
 			slog.Int("puts", len(b.puts)),
 			slog.Int("deletes", len(b.deletes)),

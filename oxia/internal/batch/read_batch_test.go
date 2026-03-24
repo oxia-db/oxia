@@ -20,11 +20,14 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
@@ -133,6 +136,43 @@ func TestReadBatchComplete(t *testing.T) {
 		assert.Equal(t, item.expectedGetResponse, getResponse)
 		assert.ErrorIs(t, getErr, item.expectedGetErr)
 	}
+}
+
+func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
+	shardDeleted := false
+	executeCount := 0
+
+	execute := func(_ context.Context, _ *proto.ReadRequest, _ *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
+		executeCount++
+		shardDeleted = true
+		return nil, status.Error(constant.CodeNodeIsNotLeader, "node is not leader for shard 1")
+	}
+
+	var reroutedGets []model.GetCall
+
+	factory := &readBatchFactory{
+		execute: execute,
+		shardExists: func(id int64) bool {
+			return !shardDeleted
+		},
+		reroute: func(gets []model.GetCall) {
+			reroutedGets = gets
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+	}
+	batch := factory.newBatch(&shardId)
+
+	getCallback := func(*proto.GetResponse, error) {}
+	batch.Add(model.GetCall{Key: "key-1", Callback: getCallback, IncludeValue: true})
+	batch.Add(model.GetCall{Key: "key-2", Callback: getCallback, IncludeValue: true})
+
+	batch.Complete()
+
+	assert.Equal(t, 2, len(reroutedGets))
+	assert.Equal(t, "key-1", reroutedGets[0].Key)
+	assert.Equal(t, "key-2", reroutedGets[1].Key)
+	assert.Equal(t, 1, executeCount)
 }
 
 type readResult struct {

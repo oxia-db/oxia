@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"time"
 
-
 	"github.com/cenkalti/backoff/v4"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -94,7 +93,7 @@ func (b *readBatch) Complete() {
 	response, err := b.doRequestWithRetries(request)
 
 	if errors.Is(err, ErrShardNotFound) && b.reroute != nil {
-		slog.Info("Shard deleted, re-routing read batch operations",
+		slog.Info("Shard was split/merged, re-routing read batch operations",
 			slog.Int64("shard", *b.shardId),
 			slog.Int("gets", len(b.gets)),
 		)
