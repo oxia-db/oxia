@@ -24,6 +24,11 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 )
 
+// ErrShardNotFound is returned when a batch's target shard no longer exists
+// in the shard manager (e.g. after a shard split). The batch should be broken
+// apart and individual operations re-routed to the correct child shards.
+var ErrShardNotFound = errors.New("shard not found in shard manager")
+
 func IsRetriable(err error) bool {
 	if errors.Is(err, io.EOF) {
 		// EOF can occur when a bidirectional write stream is closed by the

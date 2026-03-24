@@ -95,6 +95,7 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		options.maxRequestsPerBatch,
 		metrics.NewMetrics(options.meterProvider),
 		options.requestTimeout)
+	batcherFactory.ShardExists = shardManager.Exists
 	c := &clientImpl{
 		options:      options,
 		clientPool:   clientPool,
@@ -108,7 +109,42 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 
 	c.ctx, c.cancel = ctx, cancel
 	c.sessions = newSessions(c.ctx, c.shardManager, c.clientPool, c.options)
+
+	// Set up re-routing callbacks for shard splits. When a batch detects its
+	// target shard was deleted, these callbacks re-submit each operation through
+	// the normal path (which re-hashes keys and routes to the correct child shards).
+	batcherFactory.WriteRerouter = c.rerouteWrites
+	batcherFactory.ReadRerouter = c.rerouteReads
+
 	return c, nil
+}
+
+// rerouteWrites re-submits write operations to the correct child shards after
+// the original target shard was deleted (e.g. shard split).
+func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
+	for _, put := range puts {
+		shardId := c.shardManager.Get(put.PartitionKeyOrKey())
+		c.writeBatchManager.Get(shardId).Add(put)
+	}
+	for _, del := range deletes {
+		shardId := c.shardManager.Get(del.Key)
+		c.writeBatchManager.Get(shardId).Add(del)
+	}
+	for _, dr := range deleteRanges {
+		// DeleteRanges without partition key are sent to all shards.
+		// Re-submit to all current shards.
+		for _, shardId := range c.shardManager.GetAll() {
+			c.writeBatchManager.Get(shardId).Add(dr)
+		}
+	}
+}
+
+// rerouteReads re-submits read operations to the correct child shards.
+func (c *clientImpl) rerouteReads(gets []model.GetCall) {
+	for _, get := range gets {
+		shardId := c.shardManager.Get(get.Key)
+		c.readBatchManager.Get(shardId).Add(get)
+	}
 }
 
 func (c *clientImpl) Close() error {

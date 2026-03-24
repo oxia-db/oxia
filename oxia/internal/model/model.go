@@ -50,6 +50,15 @@ type GetCall struct {
 	Callback           func(*proto.GetResponse, error)
 }
 
+// PartitionKeyOrKey returns the partition key if set, otherwise the record key.
+// Used for shard routing when re-routing operations after a shard split.
+func (r PutCall) PartitionKeyOrKey() string {
+	if r.PartitionKey != nil {
+		return *r.PartitionKey
+	}
+	return r.Key
+}
+
 func (r PutCall) ToProto() *proto.PutRequest {
 	return &proto.PutRequest{
 		Key:               r.Key,
