@@ -400,6 +400,7 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 		"Received SendSnapshot request",
 		slog.Int64("shard", shardId),
 		slog.String("namespace", namespace),
+		slog.Int64("term", term),
 		slog.String("peer", rpc.GetPeer(srv.Context())),
 	)
 
@@ -410,6 +411,7 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.Any("error", err),
 			slog.String("namespace", namespace),
 			slog.Int64("shard", shardId),
+			slog.Int64("term", term),
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
 		return err

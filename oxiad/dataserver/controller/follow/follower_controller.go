@@ -330,7 +330,7 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	newTerm := req.GetTerm()
 	newTermOptions := req.GetOptions()
 	if newTerm < fc.term.Load() { // Allowing idempotency during negotiations
-		fc.log.Warn("Failed to fence with invalid term", slog.Int64("new-term", newTerm))
+		fc.log.Warn("Failed to fence with invalid term", slog.Int64("current-term", fc.term.Load()), slog.Int64("new-term", newTerm))
 		return nil, dserror.ErrInvalidTerm
 	}
 	fc.rwMutex.Lock()
