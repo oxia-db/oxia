@@ -527,6 +527,7 @@ func (lc *leaderController) RemoveObserver(req *proto.RemoveObserverRequest) (*p
 
 	lc.log.Info("Removed observer follower",
 		slog.String("observer-key", observerKey),
+		slog.Int64("term", lc.term.Load()),
 	)
 
 	return &proto.RemoveObserverResponse{}, nil
@@ -586,6 +587,7 @@ func (lc *leaderController) addObserver(observerKey string, follower string, fol
 			slog.Any("error", err),
 			slog.String("follower", follower),
 			slog.Any("follower-head-entry", followerHeadEntryId),
+			slog.Int64("term", lc.term.Load()),
 		)
 		return err
 	}
@@ -601,6 +603,7 @@ func (lc *leaderController) addObserver(observerKey string, follower string, fol
 			"Failed to create observer follower cursor",
 			slog.Any("error", err),
 			slog.String("follower", follower),
+			slog.Int64("term", lc.term.Load()),
 		)
 		return err
 	}
@@ -610,6 +613,7 @@ func (lc *leaderController) addObserver(observerKey string, follower string, fol
 		slog.String("follower", follower),
 		slog.Any("follower-head-entry", followerHeadEntryId),
 		slog.Int64("head-offset", lc.wal.LastOffset()),
+		slog.Int64("term", lc.term.Load()),
 	)
 	lc.observers[observerKey] = cursor
 	lc.followerAckOffsetGauges[observerKey] = metric.NewGauge("oxia_server_observer_ack_offset", "", "count",
