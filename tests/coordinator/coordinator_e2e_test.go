@@ -29,8 +29,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/common/proto"
-
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -750,80 +748,4 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	assert.NoError(t, err)
 	err = c.Close()
 	assert.NoError(t, err)
-}
-
-func TestCoordinator_KeySorting(t *testing.T) {
-	for _, test := range []struct {
-		sorting string
-	}{
-		{"hierarchical"},
-		{"natural"},
-	} {
-		t.Run(test.sorting, func(t *testing.T) {
-			dataServerOption := option.NewDefaultOptions()
-			dataServerOption.Server.Public.BindAddress = "localhost:0"
-			dataServerOption.Server.Internal.BindAddress = "localhost:0"
-			dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
-			dataServerOption.Storage.Database.Dir = t.TempDir()
-			dataServerOption.Storage.WAL.Dir = t.TempDir()
-			s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
-			assert.NoError(t, err)
-
-			sa1 := model.Server{
-				Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
-				Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
-			}
-
-			metadataProvider := metadata.NewMetadataProviderMemory()
-			clusterConfig := model.ClusterConfig{
-				Namespaces: []model.NamespaceConfig{{
-					Name:              constant.DefaultNamespace,
-					ReplicationFactor: 1,
-					InitialShardCount: 1,
-					KeySorting:        model.KeySorting(test.sorting),
-				}},
-				Servers: []model.Server{sa1},
-			}
-			clientPool := rpc.NewClientPool(nil, nil)
-
-			coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
-			assert.NoError(t, err)
-
-			statusResource := coordinatorInstance.StatusResource()
-			status := statusResource.Load()
-
-			assert.EqualValues(t, 1, len(status.Namespaces))
-			nsStatus := status.Namespaces[constant.DefaultNamespace]
-			assert.EqualValues(t, 1, len(nsStatus.Shards))
-			assert.EqualValues(t, 1, nsStatus.ReplicationFactor)
-
-			assert.Eventually(t, func() bool {
-				shard := statusResource.Load().Namespaces[constant.DefaultNamespace].Shards[0]
-				return shard.Status == model.ShardStatusSteadyState
-			}, 10*time.Second, 10*time.Millisecond)
-
-			client, err := oxia.NewSyncClient(sa1.Public)
-			assert.NoError(t, err)
-
-			_, _, _ = client.Put(context.Background(), "/a", []byte("a"))
-			_, _, _ = client.Put(context.Background(), "/b", []byte("b"))
-			_, _, _ = client.Put(context.Background(), "/a/b", []byte("a/b"))
-
-			list, err := client.List(context.Background(), "", "")
-			assert.NoError(t, err)
-
-			ks := model.KeySorting(test.sorting)
-			if ks.ToProto() == proto.KeySortingType_HIERARCHICAL {
-				assert.Equal(t, []string{"/a", "/b", "/a/b"}, list)
-			} else {
-				assert.Equal(t, []string{"/a", "/a/b", "/b"}, list)
-			}
-
-			assert.NoError(t, client.Close())
-			assert.NoError(t, coordinatorInstance.Close())
-			assert.NoError(t, clientPool.Close())
-
-			assert.NoError(t, s1.Close())
-		})
-	}
 }

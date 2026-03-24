@@ -278,6 +278,13 @@ func (m *mockPerNodeChannels) GetStatusResponse(term int64, status proto.Serving
 	}, nil}
 }
 
+func (m *mockPerNodeChannels) EnqueueGetStatusError(err error) {
+	m.getStatusResponses <- struct {
+		*proto.GetStatusResponse
+		error
+	}{nil, err}
+}
+
 func (m *mockPerNodeChannels) BecomeLeaderResponse(err error) {
 	m.becomeLeaderResponses <- struct {
 		*proto.BecomeLeaderResponse

@@ -42,6 +42,18 @@ type SplitMetadata struct {
 	// SnapshotOffset is the parent WAL offset at which the snapshot was
 	// taken. Children catch up from this point.
 	SnapshotOffset int64 `json:"snapshotOffset,omitempty" yaml:"snapshotOffset,omitempty"`
+
+	// ParentTermAtBootstrap is the parent's term when observers were added
+	// during the Bootstrap phase. If the parent's term changes (leader
+	// election), the CatchUp phase detects this and falls back to Bootstrap
+	// to re-add observers.
+	ParentTermAtBootstrap int64 `json:"parentTermAtBootstrap,omitempty" yaml:"parentTermAtBootstrap,omitempty"`
+
+	// ChildLeadersAtBootstrap maps child shard ID → leader internal address
+	// as set during Bootstrap. If a child leader changes during CatchUp
+	// (detected by comparing with current metadata), the CatchUp phase falls
+	// back to Bootstrap to re-add observers on the parent for the new leader.
+	ChildLeadersAtBootstrap map[int64]string `json:"childLeadersAtBootstrap,omitempty" yaml:"childLeadersAtBootstrap,omitempty"`
 }
 
 func (sm *SplitMetadata) Clone() *SplitMetadata {
@@ -49,14 +61,21 @@ func (sm *SplitMetadata) Clone() *SplitMetadata {
 		return nil
 	}
 	r := &SplitMetadata{
-		Phase:          sm.Phase,
-		ParentShardId:  sm.ParentShardId,
-		SplitPoint:     sm.SplitPoint,
-		SnapshotOffset: sm.SnapshotOffset,
+		Phase:                 sm.Phase,
+		ParentShardId:         sm.ParentShardId,
+		SplitPoint:            sm.SplitPoint,
+		SnapshotOffset:        sm.SnapshotOffset,
+		ParentTermAtBootstrap: sm.ParentTermAtBootstrap,
 	}
 	if sm.ChildShardIDs != nil {
 		r.ChildShardIDs = make([]int64, len(sm.ChildShardIDs))
 		copy(r.ChildShardIDs, sm.ChildShardIDs)
+	}
+	if sm.ChildLeadersAtBootstrap != nil {
+		r.ChildLeadersAtBootstrap = make(map[int64]string, len(sm.ChildLeadersAtBootstrap))
+		for k, v := range sm.ChildLeadersAtBootstrap {
+			r.ChildLeadersAtBootstrap[k] = v
+		}
 	}
 	return r
 }

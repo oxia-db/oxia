@@ -83,6 +83,8 @@ func ApplyLogEntryWithSplitFilter(
 		case *proto.ControlRequest_RecordChecksum:
 			checksum := db.ReadChecksum()
 			return ApplyResponse{Checksum: &checksum}, nil
+		default:
+			// Unknown control request type — ignore
 		}
 	case *proto.LogEntryValue_Requests:
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
