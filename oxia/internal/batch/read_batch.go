@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"time"
 
+
 	"github.com/cenkalti/backoff/v4"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -36,6 +37,8 @@ import (
 type readBatchFactory struct {
 	namespace      string
 	execute        func(context.Context, *proto.ReadRequest, *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)
+	shardExists    func(int64) bool
+	reroute        func([]model.GetCall)
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
 }
@@ -45,6 +48,8 @@ func (b readBatchFactory) newBatch(shardId *int64) batch.Batch {
 		namespace:      b.namespace,
 		shardId:        shardId,
 		execute:        b.execute,
+		shardExists:    b.shardExists,
+		reroute:        b.reroute,
 		gets:           make([]model.GetCall, 0),
 		start:          time.Now(),
 		metrics:        b.metrics,
@@ -57,6 +62,8 @@ type readBatch struct {
 	namespace      string
 	shardId        *int64
 	execute        func(context.Context, *proto.ReadRequest, *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)
+	shardExists    func(int64) bool
+	reroute        func([]model.GetCall)
 	gets           []model.GetCall
 	start          time.Time
 	requestTimeout time.Duration
@@ -85,6 +92,16 @@ func (b *readBatch) Complete() {
 	executionStart := time.Now()
 	request := b.toProto()
 	response, err := b.doRequestWithRetries(request)
+
+	if errors.Is(err, ErrShardNotFound) && b.reroute != nil {
+		slog.Info("Shard deleted, re-routing read batch operations",
+			slog.Int64("shard", *b.shardId),
+			slog.Int("gets", len(b.gets)),
+		)
+		b.reroute(b.gets)
+		return
+	}
+
 	b.callback(executionStart, request, response, err)
 	if err != nil {
 		b.Fail(err)
@@ -101,6 +118,9 @@ func (b *readBatch) doRequestWithRetries(request *proto.ReadRequest) (response *
 	var hint *proto.LeaderHint
 
 	err = backoff.RetryNotify(func() error {
+		if b.shardExists != nil && !b.shardExists(*b.shardId) {
+			return backoff.Permanent(ErrShardNotFound)
+		}
 		response, err = b.doRequest(ctx, request, hint)
 		if !IsRetriable(err) {
 			return backoff.Permanent(err)

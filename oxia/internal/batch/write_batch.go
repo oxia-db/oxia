@@ -37,6 +37,8 @@ var ErrRequestTooLarge = errors.New("put request is too large")
 type writeBatchFactory struct {
 	namespace      string
 	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
+	shardExists    func(int64) bool
+	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
 	maxByteSize    int
@@ -47,6 +49,8 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 		namespace:      b.namespace,
 		shardId:        shardId,
 		execute:        b.execute,
+		shardExists:    b.shardExists,
+		reroute:        b.reroute,
 		puts:           make([]model.PutCall, 0),
 		deletes:        make([]model.DeleteCall, 0),
 		deleteRanges:   make([]model.DeleteRangeCall, 0),
@@ -62,6 +66,8 @@ type writeBatch struct {
 	namespace      string
 	shardId        *int64
 	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
+	shardExists    func(int64) bool
+	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
 	deleteRanges   []model.DeleteRangeCall
@@ -104,6 +110,20 @@ func (b *writeBatch) Complete() {
 
 	response, err := b.doRequestWithRetries(request)
 
+	if errors.Is(err, ErrShardNotFound) && b.reroute != nil {
+		// The target shard was deleted (e.g. after a split). Re-submit
+		// each operation through the normal pipeline so keys get re-hashed
+		// and routed to the correct child shards.
+		slog.Info("Shard deleted, re-routing write batch operations",
+			slog.Int64("shard", *b.shardId),
+			slog.Int("puts", len(b.puts)),
+			slog.Int("deletes", len(b.deletes)),
+			slog.Int("delete-ranges", len(b.deleteRanges)),
+		)
+		b.reroute(b.puts, b.deletes, b.deleteRanges)
+		return
+	}
+
 	b.callback(executionStart, request, response, err)
 
 	if err != nil {
@@ -121,6 +141,12 @@ func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response
 
 	var hint *proto.LeaderHint
 	err = backoff.RetryNotify(func() error {
+		// Check if the shard still exists before each retry. If it was
+		// deleted (e.g. after a split), stop retrying so the batch can
+		// be re-routed to the correct child shards.
+		if b.shardExists != nil && !b.shardExists(*b.shardId) {
+			return backoff.Permanent(ErrShardNotFound)
+		}
 		response, err = b.execute(ctx, request, hint)
 		if !IsRetriable(err) {
 			return backoff.Permanent(err)
