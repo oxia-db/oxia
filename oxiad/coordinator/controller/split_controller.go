@@ -592,20 +592,19 @@ func (sc *SplitController) runCutover() error {
 		})
 	}
 
+	// Clear split metadata and mark parent for deletion in a single update,
+	// before notifying the coordinator. This avoids a race where the
+	// coordinator (or tests) observes the completion event but finds stale
+	// split metadata on the parent.
 	sc.updateParentMeta(func(meta *model.ShardMetadata) {
 		meta.Status = model.ShardStatusDeleting
+		meta.Split = nil
 	})
 
 	// Step 5: Notify the coordinator. This triggers the parent shard
 	// controller's DeleteShard (which retries indefinitely with backoff)
 	// and recomputes shard assignments so clients discover the children.
 	sc.eventListener.SplitComplete(sc.parentShardId, sc.leftChildId, sc.rightChildId)
-
-	// Clear split metadata from parent — the split controller's job is done.
-	// The parent shard controller handles the actual deletion.
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
-		meta.Split = nil
-	})
 
 	return nil
 }
