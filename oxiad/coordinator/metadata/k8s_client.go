@@ -42,6 +42,7 @@ func NewK8SClientConfig() *rest.Config {
 		)
 		os.Exit(1)
 	}
+	config.QPS = -1
 	return config
 }
 
