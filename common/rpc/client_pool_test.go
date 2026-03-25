@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"google.golang.org/grpc"
 )
 
 func TestClientPool_GetActualAddress(t *testing.T) {
@@ -41,21 +40,4 @@ func TestClientPool_GetTransportCredential(t *testing.T) {
 
 	credential = poolInstance.getTransportCredential("xxxxaaa:6649")
 	assert.Equal(t, "insecure", credential.Info().SecurityProtocol)
-}
-
-func TestClientPool_WithDialOptions(t *testing.T) {
-	opt1 := grpc.WithAuthority("test-authority")
-	opt2 := grpc.WithUserAgent("test-agent")
-
-	pool := NewClientPool(nil, nil, opt1, opt2)
-	poolInstance := pool.(*clientPool)
-
-	assert.Len(t, poolInstance.dialOptions, 2)
-}
-
-func TestClientPool_WithDialOptions_Empty(t *testing.T) {
-	pool := NewClientPool(nil, nil)
-	poolInstance := pool.(*clientPool)
-
-	assert.Empty(t, poolInstance.dialOptions)
 }

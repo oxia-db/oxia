@@ -203,6 +203,7 @@ func (cp *clientPool) newConnection(target string) (*grpc.ClientConn, error) {
 		options = append(options, grpc.WithPerRPCCredentials(cp.authentication))
 	}
 	options = append(options, cp.dialOptions...)
+
 	cnx, err := grpc.NewClient(cp.getActualAddress(target), options...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error connecting to %s", target)
