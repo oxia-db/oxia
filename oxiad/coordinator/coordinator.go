@@ -173,7 +173,13 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	var shardsToDelete []int64
 	for {
 		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(newConfig, currentStatus, c.selectNewEnsemble)
-		if !c.statusResource.Swap(clusterStatus, version) {
+		swapped, err := c.statusResource.Swap(clusterStatus, version)
+		if err != nil {
+			c.Warn("Failed to swap cluster status", slog.Any("error", err))
+			currentStatus, version = c.statusResource.LoadWithVersion()
+			continue
+		}
+		if !swapped {
 			currentStatus, version = c.statusResource.LoadWithVersion()
 			continue
 		}
@@ -563,7 +569,9 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Persist
-	c.statusResource.Update(cloned)
+	if err = c.statusResource.Update(cloned); err != nil {
+		return 0, 0, errors.Wrap(err, "failed to persist split status")
+	}
 
 	c.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
@@ -777,7 +785,9 @@ func NewCoordinator(meta metadata.Provider,
 
 		clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
 
-		c.statusResource.Update(clusterStatus)
+		if err = c.statusResource.Update(clusterStatus); err != nil {
+			return nil, nil, errors.Wrap(err, "failed to persist initial cluster status")
+		}
 	} else {
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 
@@ -787,7 +797,9 @@ func NewCoordinator(meta metadata.Provider,
 			clusterStatus, c.selectNewEnsemble)
 
 		if len(shardsToAdd) > 0 || len(shardsToDelete) > 0 {
-			c.statusResource.Update(clusterStatus)
+			if err = c.statusResource.Update(clusterStatus); err != nil {
+				return nil, nil, errors.Wrap(err, "failed to persist cluster status changes")
+			}
 		}
 	}
 

@@ -434,7 +434,9 @@ func (e *ShardElection) start() (model.Server, error) {
 		metadata.Term++
 		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
-	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	if err := e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta); err != nil {
+		return model.Server{}, err
+	}
 
 	if e.changeEnsembleAction != nil {
 		e.prepareIfChangeEnsemble(&mutShardMeta)
@@ -484,7 +486,9 @@ func (e *ShardElection) start() (model.Server, error) {
 	leader := mutShardMeta.Leader
 	leaderEntry := candidatesStatus[*leader]
 
-	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	if err = e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta); err != nil {
+		return model.Server{}, err
+	}
 	e.meta.Store(mutShardMeta)
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
