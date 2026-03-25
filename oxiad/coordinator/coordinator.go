@@ -127,7 +127,7 @@ func (c *coordinator) NodeControllers() map[string]controller.DataServerControll
 	return res
 }
 
-func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
+func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) error {
 	c.ccrWg.Wait()
 	c.Lock()
 	defer c.Unlock()
@@ -175,9 +175,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(newConfig, currentStatus, c.selectNewEnsemble)
 		swapped, err := c.statusResource.Swap(clusterStatus, version)
 		if err != nil {
-			c.Warn("Failed to swap cluster status", slog.Any("error", err))
-			currentStatus, version = c.statusResource.LoadWithVersion()
-			continue
+			return fmt.Errorf("failed to swap cluster status: %w", err)
 		}
 		if !swapped {
 			currentStatus, version = c.statusResource.LoadWithVersion()
@@ -203,6 +201,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 
 	c.computeNewAssignments()
 	c.loadBalancer.Trigger()
+	return nil
 }
 
 func (c *coordinator) findDataServerFeatures(dataServers []model.Server) map[string][]proto.Feature {

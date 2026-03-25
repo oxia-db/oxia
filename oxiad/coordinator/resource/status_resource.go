@@ -16,6 +16,7 @@ package resource
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -66,6 +67,28 @@ type status struct {
 	current          *model.ClusterStatus
 	currentVersionID metadata.Version
 	changeCh         chan struct{}
+}
+
+// refreshOnVersionConflict re-reads the metadata from the remote store
+// when a version conflict occurs. Without this, the local versionID stays
+// stale and every subsequent Store would fail with ErrMetadataBadVersion
+// forever — making the error non-retryable even though the caller retries.
+// Must be called while holding s.lock for writing.
+func (s *status) refreshOnVersionConflict(err error) {
+	if !errors.Is(err, metadata.ErrMetadataBadVersion) {
+		return
+	}
+	clusterStatus, version, getErr := s.metadata.Get()
+	if getErr != nil {
+		slog.Warn("failed to refresh status from remote",
+			slog.Any("error", getErr))
+		return
+	}
+	if clusterStatus != nil {
+		s.current = clusterStatus
+		s.currentVersionID = version
+		s.notifyChange()
+	}
 }
 
 // notifyChange wakes all goroutines waiting on ChangeNotify.
@@ -146,6 +169,7 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 	}
 	versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 	if err != nil {
+		s.refreshOnVersionConflict(err)
 		return false, err
 	}
 	s.current = newStatus
@@ -159,6 +183,7 @@ func (s *status) Update(newStatus *model.ClusterStatus) error {
 	defer s.lock.Unlock()
 	versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 	if err != nil {
+		s.refreshOnVersionConflict(err)
 		return err
 	}
 	s.current = newStatus
@@ -179,6 +204,7 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 	ns.Shards[shard] = shardMetadata.Clone()
 	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 	if err != nil {
+		s.refreshOnVersionConflict(err)
 		return err
 	}
 	s.current = clonedStatus
@@ -202,6 +228,7 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) error {
 	}
 	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 	if err != nil {
+		s.refreshOnVersionConflict(err)
 		return err
 	}
 	s.current = clonedStatus

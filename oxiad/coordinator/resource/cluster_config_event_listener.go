@@ -17,5 +17,5 @@ package resource
 import "github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 type ClusterConfigEventListener interface {
-	ConfigChanged(newConfig *model.ClusterConfig)
+	ConfigChanged(newConfig *model.ClusterConfig) error
 }

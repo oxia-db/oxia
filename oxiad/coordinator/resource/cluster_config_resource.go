@@ -216,7 +216,10 @@ func (ccf *clusterConfig) waitForUpdates() {
 				ccf.Info("No cluster config changes detected")
 				return
 			}
-			ccf.clusterConfigEventListener.ConfigChanged(currentClusterConfig)
+			if err := ccf.clusterConfigEventListener.ConfigChanged(currentClusterConfig); err != nil {
+				ccf.Warn("Failed to apply config change, will retry on next event",
+					slog.Any("error", err))
+			}
 		}
 	}
 }
