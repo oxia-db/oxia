@@ -60,7 +60,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		Int32HashRange:          model.Int32HashRange{Min: 2000, Max: 100000},
 	}
 	statusResource := coordinatorInstance.StatusResource()
-	statusResource.UpdateShardMetadata("default", 1, metadata)
+	assert.NoError(t, statusResource.UpdateShardMetadata("default", 1, metadata))
 
 	status := statusResource.Load()
 	assert.EqualValues(t, status.Namespaces["default"].Shards[1], metadata)

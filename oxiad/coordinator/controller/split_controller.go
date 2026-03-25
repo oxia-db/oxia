@@ -615,13 +615,9 @@ func (sc *SplitController) runCutover() error {
 
 	// Clear split metadata from parent — the split controller's job is done.
 	// The parent shard controller handles the actual deletion.
-	if err := sc.updateParentMeta(func(meta *model.ShardMetadata) {
+	return sc.updateParentMeta(func(meta *model.ShardMetadata) {
 		meta.Split = nil
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	})
 }
 
 // abort cleans up a failed/timed-out split that hasn't reached Cutover.
