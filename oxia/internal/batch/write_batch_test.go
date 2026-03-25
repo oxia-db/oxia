@@ -16,14 +16,17 @@ package batch
 
 import (
 	"context"
-	"io"
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/metric/noop"
+	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
@@ -55,6 +58,7 @@ func TestWriteBatchAdd(t *testing.T) {
 }
 
 func TestWriteBatchComplete(t *testing.T) {
+	errFailure := errors.New("failure")
 	putResponseOk := &proto.PutResponse{
 		Status: proto.Status_OK,
 		Version: &proto.Version{
@@ -124,16 +128,16 @@ func TestWriteBatchComplete(t *testing.T) {
 		},
 		{
 			nil,
-			io.EOF,
+			errFailure,
 			nil,
-			io.EOF,
+			errFailure,
 			nil,
-			io.EOF,
+			errFailure,
 			nil,
-			io.EOF,
+			errFailure,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
+		execute := func(ctx context.Context, request *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
 			assert.Equal(t, &proto.WriteRequest{
 				Shard: &shardId,
 				Puts: []*proto.PutRequest{{
@@ -217,6 +221,112 @@ func TestWriteBatchComplete(t *testing.T) {
 		assert.Equal(t, item.expectedDeleteRangeResponse, deleteRangeResponse)
 		assert.ErrorIs(t, deleteRangeErr, item.expectedDeleteRangeErr)
 	}
+}
+
+func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
+	// Simulate a shard that gets deleted after the first execute attempt
+	// (e.g. after a shard split). The batch should detect the deletion
+	// and invoke the reroute callback instead of retrying forever.
+	shardDeleted := false
+	executeCount := 0
+
+	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
+		executeCount++
+		// After first call, mark shard as deleted. Return a retriable
+		// error so the retry loop runs again and hits the shard check.
+		shardDeleted = true
+		return nil, status.Error(constant.CodeNodeIsNotLeader, "node is not leader for shard 1")
+	}
+
+	var reroutedPuts []model.PutCall
+	var reroutedDeletes []model.DeleteCall
+	var reroutedDeleteRanges []model.DeleteRangeCall
+
+	factory := &writeBatchFactory{
+		execute: execute,
+		shardExists: func(id int64) bool {
+			return !shardDeleted
+		},
+		reroute: func(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
+			reroutedPuts = puts
+			reroutedDeletes = deletes
+			reroutedDeleteRanges = deleteRanges
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+		maxByteSize:    1024,
+	}
+	batch := factory.newBatch(&shardId)
+
+	putCallback := func(*proto.PutResponse, error) {}
+	deleteCallback := func(*proto.DeleteResponse, error) {}
+	deleteRangeCallback := func(*proto.DeleteRangeResponse, error) {}
+
+	batch.Add(model.PutCall{Key: "key-1", Value: []byte("v1"), Callback: putCallback})
+	batch.Add(model.PutCall{Key: "key-2", Value: []byte("v2"), Callback: putCallback})
+	batch.Add(model.DeleteCall{Key: "key-3", Callback: deleteCallback})
+	batch.Add(model.DeleteRangeCall{MinKeyInclusive: "a", MaxKeyExclusive: "z", Callback: deleteRangeCallback})
+
+	batch.Complete()
+
+	// Verify the reroute callback received all operations
+	assert.Equal(t, 2, len(reroutedPuts))
+	assert.Equal(t, "key-1", reroutedPuts[0].Key)
+	assert.Equal(t, "key-2", reroutedPuts[1].Key)
+	assert.Equal(t, 1, len(reroutedDeletes))
+	assert.Equal(t, "key-3", reroutedDeletes[0].Key)
+	assert.Equal(t, 1, len(reroutedDeleteRanges))
+
+	// Execute should only be called once (then shard check triggers reroute)
+	assert.Equal(t, 1, executeCount)
+}
+
+func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
+	// When the shard still exists, retries should proceed normally
+	// (no reroute). We simulate a transient error followed by success.
+	callCount := 0
+	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
+		callCount++
+		if callCount == 1 {
+			return nil, status.Error(constant.CodeNodeIsNotLeader, "transient error")
+		}
+		return &proto.WriteResponse{
+			Puts: []*proto.PutResponse{{Status: proto.Status_OK, Version: &proto.Version{VersionId: 1}}},
+		}, nil
+	}
+
+	rerouted := false
+	factory := &writeBatchFactory{
+		execute: execute,
+		shardExists: func(int64) bool {
+			return true // shard always exists
+		},
+		reroute: func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall) {
+			rerouted = true
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+		maxByteSize:    1024,
+	}
+	batch := factory.newBatch(&shardId)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	batch.Add(model.PutCall{
+		Key:   "key-1",
+		Value: []byte("v1"),
+		Callback: func(resp *proto.PutResponse, err error) {
+			assert.NoError(t, err)
+			assert.Equal(t, proto.Status_OK, resp.Status)
+			wg.Done()
+		},
+	})
+
+	batch.Complete()
+	wg.Wait()
+
+	assert.False(t, rerouted, "reroute should not be called when shard exists")
+	assert.Equal(t, 2, callCount, "should retry and succeed on second attempt")
 }
 
 func TestWriteBatchCanAdd(t *testing.T) {

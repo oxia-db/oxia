@@ -59,7 +59,7 @@ func assertReaderReads(t *testing.T, r Reader, entries []string) {
 
 	for i := 0; i < len(entries); i++ {
 		assert.True(t, r.HasNext())
-		e, err := r.ReadNext()
+		e, _, _, err := r.ReadNext()
 		assert.NoError(t, err)
 		assert.Equal(t, entries[i], string(e.Value))
 	}
@@ -76,7 +76,7 @@ func assertReaderReadsEventually(t *testing.T, r Reader, entries []string) chan 
 				100*time.Millisecond,
 				10*time.Millisecond,
 				fmt.Sprintf("did not read all expected entries: only read %d/%d", i, len(entries)))
-			e, err := r.ReadNext()
+			e, _, _, err := r.ReadNext()
 			if err != nil {
 				ch <- err
 				return
@@ -232,7 +232,7 @@ func TestRollover(t *testing.T) {
 	assert.NoError(t, err)
 	for i := 299; i >= 0; i-- {
 		assert.True(t, rr.HasNext())
-		entry, err := rr.ReadNext()
+		entry, _, _, err := rr.ReadNext()
 		assert.NoError(t, err)
 
 		value := make([]byte, 1024)
@@ -246,7 +246,7 @@ func TestRollover(t *testing.T) {
 	assert.NoError(t, err)
 	for i := 0; i < 300; i++ {
 		assert.True(t, fr.HasNext())
-		entry, err := fr.ReadNext()
+		entry, _, _, err := fr.ReadNext()
 		assert.NoError(t, err)
 
 		value := make([]byte, 1024)
@@ -399,7 +399,7 @@ func TestClear(t *testing.T) {
 
 	for i := 250; i < 300; i++ {
 		assert.True(t, r.HasNext())
-		le, err := r.ReadNext()
+		le, _, _, err := r.ReadNext()
 		assert.NoError(t, err)
 
 		assert.EqualValues(t, i, le.Offset)
@@ -415,7 +415,7 @@ func TestClear(t *testing.T) {
 
 	for i := 299; i >= 250; i-- {
 		assert.True(t, r.HasNext())
-		le, err := r.ReadNext()
+		le, _, _, err := r.ReadNext()
 		assert.NoError(t, err)
 
 		assert.EqualValues(t, i, le.Offset)
@@ -457,7 +457,7 @@ func TestTrim(t *testing.T) {
 
 	for i := 50; i < 100; i++ {
 		assert.True(t, r.HasNext())
-		le, err := r.ReadNext()
+		le, _, _, err := r.ReadNext()
 		assert.NoError(t, err)
 
 		assert.EqualValues(t, i, le.Offset)
@@ -473,7 +473,7 @@ func TestTrim(t *testing.T) {
 
 	for i := 99; i >= 50; i-- {
 		assert.True(t, r.HasNext())
-		le, err := r.ReadNext()
+		le, _, _, err := r.ReadNext()
 		assert.NoError(t, err)
 
 		assert.EqualValues(t, i, le.Offset)
@@ -532,17 +532,121 @@ func TestReaderReadNext(t *testing.T) {
 
 	reader, err := w.NewReader(c - 2)
 	assert.NoError(t, err)
-	entry, err := reader.ReadNext()
+	entry, _, _, err := reader.ReadNext()
 	assert.NoError(t, err)
 	assert.Equal(t, &proto.LogEntry{
 		Term:   1,
 		Offset: 99,
 		Value:  []byte("entry-99"),
 	}, entry)
-	entry2, err := reader.ReadNext()
+	entry2, _, _, err := reader.ReadNext()
 	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
 	assert.Nil(t, entry2)
 
 	assert.NoError(t, reader.Close())
 	assert.NoError(t, f.Close())
+}
+
+// readCrcsViaReader reads all entries from the WAL using a forward reader
+// and returns the previousCrc and entryCrc for each offset.
+func readCrcsViaReader(t *testing.T, w Wal) (previousCrcs, entryCrcs map[int64]uint32) {
+	t.Helper()
+	previousCrcs = make(map[int64]uint32)
+	entryCrcs = make(map[int64]uint32)
+	r, err := w.NewReader(w.FirstOffset() - 1)
+	assert.NoError(t, err)
+	defer func() { assert.NoError(t, r.Close()) }()
+	for r.HasNext() {
+		entry, prevCrc, entryCrc, err := r.ReadNext()
+		assert.NoError(t, err)
+		previousCrcs[entry.Offset] = prevCrc
+		entryCrcs[entry.Offset] = entryCrc
+	}
+	return previousCrcs, entryCrcs
+}
+
+func TestReadNextReturnsCrc(t *testing.T) {
+	f, w := createWal(t)
+
+	n := 10
+	for i := 0; i < n; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term:   1,
+			Offset: int64(i),
+			Value:  []byte(fmt.Sprintf("entry-%d", i)),
+		}))
+	}
+
+	_, entryCrcs := readCrcsViaReader(t, w)
+
+	// Each entry should have a non-zero CRC, and CRCs should differ between offsets
+	var prevCrc uint32
+	for i := 0; i < n; i++ {
+		crc := entryCrcs[int64(i)]
+		assert.NotZero(t, crc, "CRC at offset %d should be non-zero", i)
+		if i > 0 {
+			assert.NotEqual(t, prevCrc, crc, "CRC should differ between offsets %d and %d", i-1, i)
+		}
+		prevCrc = crc
+	}
+
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+func TestAppendAsyncWithPreviousCrc(t *testing.T) {
+	// Create a WAL and append entries 0-19 continuously
+	f1, w1 := createWal(t)
+	for i := 0; i < 20; i++ {
+		assert.NoError(t, w1.Append(&proto.LogEntry{
+			Term:   1,
+			Offset: int64(i),
+			Value:  []byte(fmt.Sprintf("entry-%d", i)),
+		}))
+	}
+	_, w1Crcs := readCrcsViaReader(t, w1)
+	expectedCrc := w1Crcs[19]
+
+	// Create another WAL: append 0-9, record CRC at 9, clear, then use
+	// AppendAsyncWithPreviousCrc to seed CRC chain and append 10-19
+	f2, w2 := createWal(t)
+	for i := 0; i < 10; i++ {
+		assert.NoError(t, w2.Append(&proto.LogEntry{
+			Term:   1,
+			Offset: int64(i),
+			Value:  []byte(fmt.Sprintf("entry-%d", i)),
+		}))
+	}
+	_, w2Crcs := readCrcsViaReader(t, w2)
+	crcAt9 := w2Crcs[9]
+
+	assert.NoError(t, w2.Clear())
+
+	// First entry after clear uses AppendAsyncWithPreviousCrc to seed the CRC chain
+	assert.NoError(t, w2.AppendAsyncWithPreviousCrc(&proto.LogEntry{
+		Term:   1,
+		Offset: 10,
+		Value:  []byte("entry-10"),
+	}, &crcAt9))
+	assert.NoError(t, w2.Sync(context.Background()))
+
+	for i := 11; i < 20; i++ {
+		assert.NoError(t, w2.Append(&proto.LogEntry{
+			Term:   1,
+			Offset: int64(i),
+			Value:  []byte(fmt.Sprintf("entry-%d", i)),
+		}))
+	}
+	_, w2CrcsAfter := readCrcsViaReader(t, w2)
+	actualCrc := w2CrcsAfter[19]
+
+	// The CRC at offset 19 must match between the continuous WAL and
+	// the WAL that was cleared+reseeded at offset 9.
+	assert.Equal(t, expectedCrc, actualCrc,
+		"CRC chain must match after clear+AppendAsyncWithPreviousCrc")
+
+	assert.NoError(t, w1.Close())
+	assert.NoError(t, f1.Close())
+	assert.NoError(t, w2.Close())
+	assert.NoError(t, f2.Close())
 }

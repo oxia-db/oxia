@@ -567,6 +567,208 @@ func TestLeaderController_AddFollower(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+func TestLeaderController_AddObserverFollower(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Term:  5,
+		Shard: shard,
+	})
+	assert.NoError(t, err)
+
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              5,
+		ReplicationFactor: 3,
+		FollowerMaps: map[string]*proto.EntryId{
+			"f1": constant2.InvalidEntryId,
+		},
+	})
+	assert.NoError(t, err)
+
+	// Add a second quorum follower to fill the replication factor
+	_, err = lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "f2",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+	})
+	assert.NoError(t, err)
+
+	// We have already 2 followers and with replication-factor=3
+	// it's not possible to add any more regular followers
+	afRes, err := lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "f3",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+	})
+	assert.Nil(t, afRes)
+	assert.Error(t, err)
+
+	// But adding an observer follower should succeed even when quorum is full
+	_, err = lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "observer-1",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+		Observer:            true,
+	})
+	assert.NoError(t, err)
+
+	// Adding the same observer again should be idempotent
+	_, err = lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "observer-1",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+		Observer:            true,
+	})
+	assert.NoError(t, err)
+
+	// Adding a second observer should also succeed
+	_, err = lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "observer-2",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+		Observer:            true,
+	})
+	assert.NoError(t, err)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestLeaderController_ObserverClosedOnNewTerm(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Term:  5,
+		Shard: shard,
+	})
+	assert.NoError(t, err)
+
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              5,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+	assert.NoError(t, err)
+
+	// Add observer
+	_, err = lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "observer-1",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+		Observer:            true,
+	})
+	assert.NoError(t, err)
+
+	// Fencing with a new term should close the observer
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  6,
+	})
+	assert.NoError(t, err)
+
+	assert.EqualValues(t, 6, lc.Term())
+	assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestLeaderController_RemoveObserver(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Term:  5,
+		Shard: shard,
+	})
+	assert.NoError(t, err)
+
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              5,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+	assert.NoError(t, err)
+
+	var targetShard int64 = 10
+
+	// Add an observer follower
+	_, err = lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "observer-1",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+		Observer:            true,
+		TargetShard:         &targetShard,
+	})
+	assert.NoError(t, err)
+
+	// Remove the observer
+	_, err = lc.RemoveObserver(&proto.RemoveObserverRequest{
+		Namespace:    constant.DefaultNamespace,
+		Shard:        shard,
+		Term:         5,
+		FollowerName: "observer-1",
+		TargetShard:  targetShard,
+	})
+	assert.NoError(t, err)
+
+	// Idempotent: removing again should succeed
+	_, err = lc.RemoveObserver(&proto.RemoveObserverRequest{
+		Namespace:    constant.DefaultNamespace,
+		Shard:        shard,
+		Term:         5,
+		FollowerName: "observer-1",
+		TargetShard:  targetShard,
+	})
+	assert.NoError(t, err)
+
+	// Wrong term should fail
+	_, err = lc.RemoveObserver(&proto.RemoveObserverRequest{
+		Namespace:    constant.DefaultNamespace,
+		Shard:        shard,
+		Term:         4,
+		FollowerName: "observer-1",
+		TargetShard:  targetShard,
+	})
+	assert.ErrorIs(t, err, constant.ErrInvalidTerm)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestLeaderController_AddFollowerRepeated(t *testing.T) {
 	var shard int64 = 1
 
@@ -1491,4 +1693,82 @@ func newTestWalFactory(t *testing.T) wal.Factory {
 		BaseWalDir:  t.TempDir(),
 		SegmentSize: 128 * 1024,
 	})
+}
+
+func TestLeaderController_IsFeatureEnabled(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// Before becoming leader, no features should be enabled
+	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+
+	// Fence first
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  1,
+	})
+	assert.NoError(t, err)
+
+	// Become leader with Feature_FEATURE_DB_CHECKSUM feature
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+		FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+	})
+	assert.NoError(t, err)
+
+	// Now Feature_FEATURE_DB_CHECKSUM should be enabled
+	assert.Eventually(t, func() bool {
+		return lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
+	}, 5*time.Second, 50*time.Millisecond)
+
+	// Unknown feature should not be enabled
+	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_UNKNOWN))
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestLeaderController_IsFeatureEnabled_NoFeatures(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// Fence first
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  1,
+	})
+	assert.NoError(t, err)
+
+	// Become leader without any features (simulating old coordinator)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+		FeaturesSupported: nil,
+	})
+	assert.NoError(t, err)
+
+	// No features should be enabled
+	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
 }

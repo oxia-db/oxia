@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/crc"
+
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
@@ -1064,6 +1066,212 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
+}
+
+func TestDB_OverrideVersionId(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	// Put with overridden version id and modifications count
+	res, err := db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{
+				Key:                        "a",
+				Value:                      []byte("v0"),
+				OverrideVersionId:          pb.Int64(100),
+				OverrideModificationsCount: pb.Int64(5),
+			},
+		},
+	}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	assert.Equal(t, 1, len(res.Puts))
+	r0 := res.Puts[0]
+	assert.Equal(t, proto.Status_OK, r0.Status)
+	assert.EqualValues(t, 100, r0.Version.VersionId)
+	assert.EqualValues(t, 5, r0.Version.ModificationsCount)
+
+	// Verify via Get
+	getRes, err := db.Get(&proto.GetRequest{Key: "a", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, getRes.Status)
+	assert.EqualValues(t, 100, getRes.Version.VersionId)
+	assert.EqualValues(t, 5, getRes.Version.ModificationsCount)
+	assert.Equal(t, "v0", string(getRes.Value))
+
+	// Next auto-generated version should be past the overridden value
+	res, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{
+				Key:   "b",
+				Value: []byte("v1"),
+			},
+		},
+	}, 1, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	r1 := res.Puts[0]
+	assert.Equal(t, proto.Status_OK, r1.Status)
+	assert.EqualValues(t, 0, r1.Version.VersionId)
+
+	// Conditional write on overridden version should work
+	res, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{
+				Key:               "a",
+				Value:             []byte("v2"),
+				ExpectedVersionId: pb.Int64(100),
+			},
+		},
+	}, 2, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	r2 := res.Puts[0]
+	assert.Equal(t, proto.Status_OK, r2.Status)
+	assert.EqualValues(t, 1, r2.Version.VersionId)
+	// modifications_count should be 6 (overridden 5 + 1 increment)
+	assert.EqualValues(t, 6, r2.Version.ModificationsCount)
+
+	// Override only version_id without modifications_count
+	res, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{
+				Key:               "c",
+				Value:             []byte("v3"),
+				OverrideVersionId: pb.Int64(200),
+			},
+		},
+	}, 3, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	r3 := res.Puts[0]
+	assert.Equal(t, proto.Status_OK, r3.Status)
+	assert.EqualValues(t, 200, r3.Version.VersionId)
+	assert.EqualValues(t, 0, r3.Version.ModificationsCount) // New key, default 0
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_ChecksumPersistence(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	testDB.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+
+	initialChecksum := testDB.(*db).committedChecksum.Load().Value()
+	assert.NotNil(t, initialChecksum)
+	assert.EqualValues(t, crc.Checksum(0).Value(), initialChecksum)
+
+	// Write some data
+	writeReq := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{{
+			Key:   "a",
+			Value: []byte("value-a"),
+		}},
+	}
+	_, err = testDB.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	// Checksum should have changed
+	checksum1 := testDB.(*db).committedChecksum.Load().Value()
+	assert.NotNil(t, checksum1)
+	assert.NotEqual(t, initialChecksum, checksum1)
+
+	// Close and reopen the database
+	assert.NoError(t, testDB.Close())
+
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	// Checksum should be restored
+	restoredChecksum := testDB.(*db).committedChecksum.Load().Value()
+	assert.NotNil(t, restoredChecksum)
+	assert.Equal(t, checksum1, restoredChecksum)
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_ChecksumUpdatesOnWrite(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	testDB.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+
+	checksums := make([]uint32, 0)
+	checksums = append(checksums, testDB.(*db).committedChecksum.Load().Value())
+
+	// Perform multiple writes and track checksums
+	for i := 0; i < 5; i++ {
+		writeReq := &proto.WriteRequest{
+			Puts: []*proto.PutRequest{{
+				Key:   fmt.Sprintf("key-%d", i),
+				Value: []byte(fmt.Sprintf("value-%d", i)),
+			}},
+		}
+		_, err = testDB.ProcessWrite(writeReq, int64(i), 0, NoOpCallback)
+		assert.NoError(t, err)
+
+		cs := testDB.(*db).committedChecksum.Load()
+		checksums = append(checksums, cs.Value())
+	}
+
+	// All checksums should be different
+	for i := 0; i < len(checksums); i++ {
+		for j := i + 1; j < len(checksums); j++ {
+			assert.NotEqual(t, checksums[i], checksums[j],
+				"checksum at index %d should differ from checksum at index %d", i, j)
+		}
+	}
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_ChecksumDeterministic(t *testing.T) {
+	// Create two databases and perform the same operations
+	// They should end up with the same checksum
+
+	factory1, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db1, err := NewDB(constant.DefaultNamespace, 1, factory1, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	db1.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+
+	factory2, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db2, err := NewDB(constant.DefaultNamespace, 1, factory2, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	db2.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+
+	// Perform same writes on both databases
+	writeReq := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{Key: "a", Value: []byte("1")},
+			{Key: "b", Value: []byte("2")},
+			{Key: "c", Value: []byte("3")},
+		},
+	}
+
+	_, err = db1.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	_, err = db2.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	cs1 := db1.(*db).committedChecksum.Load().Value()
+	cs2 := db2.(*db).committedChecksum.Load().Value()
+
+	assert.Equal(t, cs1, cs2, "same operations should produce same checksum")
+
+	assert.NoError(t, db1.Close())
+	assert.NoError(t, db2.Close())
+	assert.NoError(t, factory1.Close())
+	assert.NoError(t, factory2.Close())
 }
 
 func TestDB_ShowInternalKeys(t *testing.T) {

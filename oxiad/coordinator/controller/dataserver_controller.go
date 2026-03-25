@@ -50,6 +50,7 @@ const (
 const (
 	healthCheckProbeInterval   = 2 * time.Second
 	healthCheckProbeTimeout    = 2 * time.Second
+	getInfoTimeout             = 10 * time.Second
 	defaultInitialRetryBackoff = 10 * time.Second
 )
 
@@ -63,6 +64,8 @@ type DataServerController interface {
 	io.Closer
 
 	Status() DataServerStatus
+
+	SupportedFeatures() []proto.Feature
 
 	SetStatus(status DataServerStatus)
 }
@@ -79,15 +82,15 @@ type dataServerController struct {
 	rpc        rpc.Provider
 	closed     atomic.Bool
 
-	statusLock sync.RWMutex
-	status     DataServerStatus
+	statusLock        sync.RWMutex
+	status            DataServerStatus
+	supportedFeatures atomic.Value
 
 	healthClientOnce   sync.Once
 	healthClient       grpc_health_v1.HealthClient
 	healthClientCloser io.Closer
 
-	healthWatchBackoff         backoff.BackOff
-	healthCheckBackoff         backoff.BackOff
+	healthCheckBackoff         *commontime.ConcurrentBackOff
 	dispatchAssignmentsBackoff backoff.BackOff
 
 	dataServerRunningGauge metric.Gauge
@@ -98,6 +101,10 @@ func (n *dataServerController) Status() DataServerStatus {
 	n.statusLock.RLock()
 	defer n.statusLock.RUnlock()
 	return n.status
+}
+
+func (n *dataServerController) SupportedFeatures() []proto.Feature {
+	return n.supportedFeatures.Load().([]proto.Feature) //nolint: revive
 }
 
 func (n *dataServerController) SetStatus(status DataServerStatus) {
@@ -195,10 +202,21 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 	})
 }
 
+func (n *dataServerController) doHealthPing() error {
+	pingCtx, pingCancel := context.WithTimeout(n.ctx, healthCheckProbeTimeout)
+	response, err := n.healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
+	pingCancel()
+	return n.healthCheckHandler(response, err)
+}
+
 func (n *dataServerController) healthPingWithRetries() {
 	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
 		n.maybeInitHealthClient()
+		// Immediate check on startup instead of waiting for first tick
+		if err := n.doHealthPing(); err != nil {
+			return err
+		}
 		ticker := time.NewTicker(healthCheckProbeInterval)
 		defer ticker.Stop()
 		for {
@@ -206,10 +224,7 @@ func (n *dataServerController) healthPingWithRetries() {
 			case <-n.ctx.Done():
 				return nil
 			case <-ticker.C:
-				pingCtx, pingCancel := context.WithTimeout(n.ctx, healthCheckProbeTimeout)
-				response, err := n.healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
-				pingCancel()
-				if err := n.healthCheckHandler(response, err); err != nil {
+				if err := n.doHealthPing(); err != nil {
 					n.Warn("Data server stopped responding to ping")
 					return err
 				}
@@ -245,7 +260,7 @@ func (n *dataServerController) healthWatchWithRetries() {
 				}
 			}
 		}
-	}, n.healthWatchBackoff, func(err error, duration time.Duration) {
+	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
 		n.Warn("Failed to check storage data server health by watch",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
@@ -273,6 +288,53 @@ func (n *dataServerController) becomeUnavailable() {
 	n.BecameUnavailable(n.dataServer)
 }
 
+func (n *dataServerController) becomeAvailable() {
+	n.statusLock.Lock()
+	if n.status != NotRunning {
+		n.status = Running
+		n.statusLock.Unlock()
+		return
+	}
+
+	n.Info("Storage data server is back online")
+
+	// To avoid the send assignments stream to miss the notification about the current
+	// dataServer went down, we interrupt the current stream when the ping on the dataServer fails
+	n.rpc.ClearPooledConnections(n.dataServer)
+	n.healthCheckBackoff.Reset()
+	n.status = Running
+	n.statusLock.Unlock()
+
+	// sync the latest info
+	bo := commontime.NewBackOffWithInitialInterval(n.ctx, defaultInitialRetryBackoff)
+	_ = backoff.RetryNotify(func() error {
+		return n.syncDataServerInfo()
+	}, bo, func(err error, duration time.Duration) {
+		n.Warn("Failed to get data server info",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+		n.becomeUnavailable()
+	})
+}
+
+func (n *dataServerController) syncDataServerInfo() error {
+	ctx, cancelFunc := context.WithTimeout(n.ctx, getInfoTimeout)
+	info, err := n.rpc.GetInfo(ctx, n.dataServer, &proto.GetInfoRequest{})
+	cancelFunc()
+	if err != nil {
+		code := grpcstatus.Code(err)
+		if code == codes.Unimplemented {
+			// The old data server might not have this endpoint, we should treat it as success.
+			n.Warn("the storage data server is too old without info endpoint.")
+			return nil
+		}
+		return err
+	}
+	n.supportedFeatures.Store(info.FeaturesSupported)
+	return nil
+}
+
 func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
@@ -283,19 +345,7 @@ func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.Healt
 	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
 		return errors.New("Data server is not actively serving")
 	}
-
-	n.statusLock.Lock()
-	if n.status == NotRunning {
-		n.Info("Storage data server is back online")
-
-		// To avoid the send assignments stream to miss the notification about the current
-		// dataServer went down, we interrupt the current stream when the ping on the dataServer fails
-		n.rpc.ClearPooledConnections(n.dataServer)
-		n.healthCheckBackoff.Reset()
-		n.healthWatchBackoff.Reset()
-	}
-	n.status = Running
-	n.statusLock.Unlock()
+	n.becomeAvailable()
 	return nil
 }
 
@@ -314,6 +364,10 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 	dataServerCtx, cancel := context.WithCancel(ctx)
 	dataServerID := dataServer.GetIdentifier()
 	labels := map[string]any{"data-server": dataServerID}
+
+	supportedFeatures := atomic.Value{}
+	supportedFeatures.Store(make([]proto.Feature, 0))
+
 	nc := &dataServerController{
 		ctx:                      dataServerCtx,
 		cancel:                   cancel,
@@ -322,7 +376,8 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 		DataServerEventListener:  dataServerEventListener,
 		rpc:                      rpcProvider,
 		statusLock:               sync.RWMutex{},
-		status:                   Running,
+		status:                   NotRunning,
+		supportedFeatures:        supportedFeatures,
 		Logger: slog.With(
 			slog.String("component", "data-server-controller"),
 			slog.Any("data-server", dataServerID),
@@ -330,8 +385,7 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 		healthClientOnce:           sync.Once{},
 		healthClient:               nil,
 		healthClientCloser:         &commonio.NopCloser{},
-		healthCheckBackoff:         commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff),
-		healthWatchBackoff:         commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff),
+		healthCheckBackoff:         commontime.NewConcurrentBackOff(commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff)),
 		dispatchAssignmentsBackoff: commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff),
 		failedHealthChecks: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
 			"The number of failed health checks to a dataServer", "count", labels),

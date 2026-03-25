@@ -115,7 +115,7 @@ func NewSessionManager(ctx context.Context, namespace string, shardId int64, con
 			slog.String("component", "session-manager"),
 			slog.String("namespace", namespace),
 			slog.Int64("shard", shardId),
-			slog.Int64("term", controller.term),
+			slog.Int64("term", controller.term.Load()),
 		),
 
 		createdSessions: metric.NewCounter("oxia_server_sessions_created",

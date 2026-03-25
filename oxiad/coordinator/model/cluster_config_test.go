@@ -56,3 +56,59 @@ func TestClusterConfig(t *testing.T) {
 	assert.Equal(t, cc1, cc2)
 	assert.NotSame(t, &cc1, &cc2)
 }
+
+func validConfig() ClusterConfig {
+	return ClusterConfig{
+		Namespaces: []NamespaceConfig{{
+			Name:              "ns1",
+			InitialShardCount: 1,
+			ReplicationFactor: 3,
+		}},
+		Servers: []Server{
+			{Public: "s1:6648", Internal: "s1:6649"},
+			{Public: "s2:6648", Internal: "s2:6649"},
+			{Public: "s3:6648", Internal: "s3:6649"},
+		},
+	}
+}
+
+func TestValidate_ValidConfig(t *testing.T) {
+	cc := validConfig()
+	assert.NoError(t, cc.Validate())
+}
+
+func TestValidate_NoServers(t *testing.T) {
+	cc := validConfig()
+	cc.Servers = nil
+	assert.ErrorContains(t, cc.Validate(), "at least one server must be configured")
+}
+
+func TestValidate_NoNamespaces(t *testing.T) {
+	cc := validConfig()
+	cc.Namespaces = nil
+	assert.ErrorContains(t, cc.Validate(), "at least one namespace must be configured")
+}
+
+func TestValidate_EmptyNamespaceName(t *testing.T) {
+	cc := validConfig()
+	cc.Namespaces[0].Name = ""
+	assert.ErrorContains(t, cc.Validate(), "namespace name must not be empty")
+}
+
+func TestValidate_ReplicationFactorZero(t *testing.T) {
+	cc := validConfig()
+	cc.Namespaces[0].ReplicationFactor = 0
+	assert.ErrorContains(t, cc.Validate(), "invalid replicationFactor=0, must be >= 1")
+}
+
+func TestValidate_InitialShardCountZero(t *testing.T) {
+	cc := validConfig()
+	cc.Namespaces[0].InitialShardCount = 0
+	assert.ErrorContains(t, cc.Validate(), "invalid initialShardCount=0, must be >= 1")
+}
+
+func TestValidate_ReplicationFactorExceedsServers(t *testing.T) {
+	cc := validConfig()
+	cc.Namespaces[0].ReplicationFactor = 5
+	assert.ErrorContains(t, cc.Validate(), "replicationFactor=5 but only 3 servers are configured")
+}

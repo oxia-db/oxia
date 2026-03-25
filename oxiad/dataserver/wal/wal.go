@@ -56,10 +56,11 @@ type Factory interface {
 // Reader reads the Wal sequentially. It is not synchronized itself.
 type Reader interface {
 	io.Closer
-	// ReadNext returns the next entry in the log according to the Reader's direction.
+	// ReadNext returns the next entry in the log according to the Reader's direction,
+	// along with the previous entry's chained CRC and this entry's chained CRC.
 	// If a forward/reverse WalReader has passed the end/beginning of the log, it returns [ErrorEntryNotFound].
 	// To avoid this error, use HasNext.
-	ReadNext() (*proto.LogEntry, error)
+	ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error)
 	// HasNext returns true if there is an entry to read.
 	HasNext() bool
 }
@@ -74,10 +75,16 @@ type Wal interface {
 	// Caller should use Sync to make the entry visible
 	AppendAsync(entry *proto.LogEntry) error
 
+	// AppendAsyncWithPreviousCrc appends an entry without syncing, using the given
+	// previousCrc to seed the CRC chain when the WAL is empty (e.g. after snapshot install).
+	// Pass nil when no CRC seed is needed.
+	AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) error
+
 	// AppendAndSync an entry and forces the sync on the WAL
 	// The operation is perfomed in background and the callback is
-	// triggered when it's completed
-	AppendAndSync(entry *proto.LogEntry, callback func(err error))
+	// triggered when it's completed. The entryCrc parameter in the callback
+	// is the chained CRC of the WAL after appending this entry.
+	AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error))
 
 	// Sync flushes all the entries in the wal to disk
 	Sync(ctx context.Context) error

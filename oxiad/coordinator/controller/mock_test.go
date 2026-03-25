@@ -19,6 +19,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,8 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
@@ -125,9 +128,20 @@ type mockPerNodeChannels struct {
 		error
 	}
 
+	removeObserverRequests  chan *proto.RemoveObserverRequest
+	removeObserverResponses chan struct {
+		*proto.RemoveObserverResponse
+		error
+	}
+
 	shardAssignmentsStream *mockShardAssignmentClient
 	healthClient           *mockHealthClient
 	err                    error
+
+	// Feature negotiation support
+	supportedFeatures []proto.Feature
+	getInfoErr        error
+	getInfoCount      atomic.Int64
 }
 
 const defaultTimeout = 10 * time.Second
@@ -141,11 +155,30 @@ func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int6
 	case r = <-m.becomeLeaderRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive BecomeLeader request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
 	assert.Equal(t, replicationFactor, r.ReplicationFactor)
+}
+
+// expectBecomeLeaderRequestWithFeatures verifies the BecomeLeader request includes expected negotiated features.
+func (m *mockPerNodeChannels) expectBecomeLeaderRequestWithFeatures(t *testing.T, shard int64, term int64, replicationFactor uint32, expectedFeatures []proto.Feature) {
+	t.Helper()
+
+	var r *proto.BecomeLeaderRequest
+	select {
+	case r = <-m.becomeLeaderRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive BecomeLeader request in time")
+		return
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	assert.Equal(t, replicationFactor, r.ReplicationFactor)
+	assert.ElementsMatch(t, expectedFeatures, r.FeaturesSupported, "negotiated features should match")
 }
 
 func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, term int64, notificationsEnabled bool) {
@@ -156,6 +189,7 @@ func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, te
 	case r = <-m.newTermRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive NewTerm request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
@@ -182,6 +216,7 @@ func (m *mockPerNodeChannels) expectDeleteShardRequest(t *testing.T, shard int64
 	case r = <-m.deleteShardRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive DeleteShard request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
@@ -196,6 +231,7 @@ func (m *mockPerNodeChannels) expectAddFollowerRequest(t *testing.T, shard int64
 	case r = <-m.addFollowerRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive AddFollower request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
@@ -210,6 +246,7 @@ func (m *mockPerNodeChannels) expectGetStatusRequest(t *testing.T, shard int64) 
 	case r = <-m.getStatusRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive GetStatus request in time")
+		return
 	}
 
 	assert.Equal(t, shard, r.Shard)
@@ -241,6 +278,13 @@ func (m *mockPerNodeChannels) GetStatusResponse(term int64, status proto.Serving
 	}, nil}
 }
 
+func (m *mockPerNodeChannels) EnqueueGetStatusError(err error) {
+	m.getStatusResponses <- struct {
+		*proto.GetStatusResponse
+		error
+	}{nil, err}
+}
+
 func (m *mockPerNodeChannels) BecomeLeaderResponse(err error) {
 	m.becomeLeaderResponses <- struct {
 		*proto.BecomeLeaderResponse
@@ -260,6 +304,13 @@ func (m *mockPerNodeChannels) AddFollowerResponse(err error) {
 		*proto.AddFollowerResponse
 		error
 	}{&proto.AddFollowerResponse{}, err}
+}
+
+func (m *mockPerNodeChannels) RemoveObserverResponse(err error) {
+	m.removeObserverResponses <- struct {
+		*proto.RemoveObserverResponse
+		error
+	}{&proto.RemoveObserverResponse{}, err}
 }
 
 func newMockPerNodeChannels() *mockPerNodeChannels {
@@ -289,9 +340,26 @@ func newMockPerNodeChannels() *mockPerNodeChannels {
 			*proto.DeleteShardResponse
 			error
 		}, 100),
+		removeObserverRequests: make(chan *proto.RemoveObserverRequest, 100),
+		removeObserverResponses: make(chan struct {
+			*proto.RemoveObserverResponse
+			error
+		}, 100),
 		shardAssignmentsStream: newMockShardAssignmentClient(),
 		healthClient:           newMockHealthClient(),
+		supportedFeatures:      feature.SupportedFeatures(), // Default to current version
 	}
+}
+
+// SetNodeFeatures sets the features supported by this node (simulates a specific version).
+func (m *mockPerNodeChannels) SetNodeFeatures(features []proto.Feature) {
+	m.supportedFeatures = features
+}
+
+// SetOldNode simulates an old node that doesn't support the GetInfo RPC.
+func (m *mockPerNodeChannels) SetOldNode() {
+	m.getInfoErr = ErrNotImplement
+	m.supportedFeatures = nil
 }
 
 type mockRpcProvider struct {
@@ -314,6 +382,19 @@ func (r *mockRpcProvider) FailNode(node model.Server, err error) {
 
 	n := r.getNode(node)
 	n.err = err
+}
+func (r *mockRpcProvider) GetInfo(_ context.Context, node model.Server, _ *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+	r.Lock()
+	defer r.Unlock()
+
+	n := r.getNode(node)
+	n.getInfoCount.Add(1)
+	if n.getInfoErr != nil {
+		return nil, n.getInfoErr
+	}
+	return &proto.GetInfoResponse{
+		FeaturesSupported: n.supportedFeatures,
+	}, nil
 }
 
 func (r *mockRpcProvider) RecoverNode(node model.Server) {
@@ -462,6 +543,29 @@ func (r *mockRpcProvider) AddFollower(ctx context.Context, node model.Server, re
 	select {
 	case response := <-s.addFollowerResponses:
 		return response.AddFollowerResponse, response.error
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(3 * time.Second):
+		return nil, errors.New("timeout")
+	}
+}
+
+func (r *mockRpcProvider) RemoveObserver(ctx context.Context, node model.Server, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
+	r.Lock()
+
+	s := r.getNode(node)
+	s.removeObserverRequests <- req
+
+	if s.err != nil {
+		r.Unlock()
+		return nil, s.err
+	}
+
+	r.Unlock()
+
+	select {
+	case response := <-s.removeObserverResponses:
+		return response.RemoveObserverResponse, response.error
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(3 * time.Second):

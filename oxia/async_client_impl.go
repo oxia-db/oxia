@@ -19,13 +19,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/concurrent"
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
+	time2 "github.com/oxia-db/oxia/common/time"
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
 
 	"github.com/oxia-db/oxia/common/compare"
@@ -61,6 +66,7 @@ type clientImpl struct {
 //
 //	client, err := oxia.NewAsyncClient("my-oxia-service:6648", oxia.WithBatchLinger(10*time.Milliseconds))
 func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, error) {
+	var err error
 	options, err := newClientOptions(serviceAddress, opts...)
 	if err != nil {
 		return nil, err
@@ -68,8 +74,14 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 
 	clientPool := rpc.NewClientPool(options.tls, options.authentication)
 
-	shardManager, err := internal.NewShardManager(internal.NewShardStrategy(), clientPool, serviceAddress,
-		options.namespace, options.requestTimeout)
+	var shardManager internal.ShardManager
+	if options.failureInjection.Contains(DizzyShardManager) {
+		shardManager, err = internal.NewDizzyShardManager(internal.NewShardStrategy(), clientPool, serviceAddress,
+			options.namespace, options.requestTimeout)
+	} else {
+		shardManager, err = internal.NewShardManager(internal.NewShardStrategy(), clientPool, serviceAddress,
+			options.namespace, options.requestTimeout)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +95,7 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		options.maxRequestsPerBatch,
 		metrics.NewMetrics(options.meterProvider),
 		options.requestTimeout)
+	batcherFactory.ShardExists = shardManager.Exists
 	c := &clientImpl{
 		options:      options,
 		clientPool:   clientPool,
@@ -96,7 +109,42 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 
 	c.ctx, c.cancel = ctx, cancel
 	c.sessions = newSessions(c.ctx, c.shardManager, c.clientPool, c.options)
+
+	// Set up re-routing callbacks for shard splits. When a batch detects its
+	// target shard was deleted, these callbacks re-submit each operation through
+	// the normal path (which re-hashes keys and routes to the correct child shards).
+	batcherFactory.WriteRerouter = c.rerouteWrites
+	batcherFactory.ReadRerouter = c.rerouteReads
+
 	return c, nil
+}
+
+// rerouteWrites re-submits write operations to the correct child shards after
+// the original target shard was deleted (e.g. shard split).
+func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
+	for _, put := range puts {
+		shardId := c.shardManager.Get(put.PartitionKeyOrKey())
+		c.writeBatchManager.Get(shardId).Add(put)
+	}
+	for _, del := range deletes {
+		shardId := c.shardManager.Get(del.Key)
+		c.writeBatchManager.Get(shardId).Add(del)
+	}
+	for _, dr := range deleteRanges {
+		// DeleteRanges without partition key are sent to all shards.
+		// Re-submit to all current shards.
+		for _, shardId := range c.shardManager.GetAll() {
+			c.writeBatchManager.Get(shardId).Add(dr)
+		}
+	}
+}
+
+// rerouteReads re-submits read operations to the correct child shards.
+func (c *clientImpl) rerouteReads(gets []model.GetCall) {
+	for _, get := range gets {
+		shardId := c.shardManager.Get(get.Key)
+		c.readBatchManager.Get(shardId).Add(get)
+	}
 }
 
 func (c *clientImpl) Close() error {
@@ -368,24 +416,57 @@ func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, 
 		IncludeInternalKeys: showInternalKeys,
 	}
 
-	client, err := c.executor.ExecuteList(ctx, request)
+	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
+	defer cancel()
+
+	backOff := time2.NewBackOff(retryCtx)
+	var hint *proto.LeaderHint
+
+	err := backoff.RetryNotify(func() error {
+		return c.doList(retryCtx, request, hint, ch)
+	}, backOff, func(err error, duration time.Duration) {
+		slog.Warn(
+			"Failed to perform list request, retrying later",
+			slog.Any("error", err),
+			slog.String("namespace", c.options.namespace),
+			slog.Int64("shard", shardId),
+			slog.Duration("retry-after", duration),
+		)
+		if leaderHint := constant.FindLeaderHint(err); leaderHint != nil {
+			hint = leaderHint
+		}
+	})
 	if err != nil {
 		ch <- ListResult{Err: err}
-		return
+	}
+}
+
+func (c *clientImpl) doList(ctx context.Context, request *proto.ListRequest, hint *proto.LeaderHint, ch chan<- ListResult) error {
+	client, err := c.executor.ExecuteList(ctx, request, hint)
+	if err != nil {
+		if batch.IsRetriable(err) {
+			return err
+		}
+		return backoff.Permanent(err)
 	}
 
+	dataSent := false
 	for {
 		response, err := client.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return
+				return nil
 			}
-
-			ch <- ListResult{Err: err}
-			return
+			// Only retry if no data has been sent to the channel yet,
+			// to avoid sending duplicate keys.
+			if !dataSent && batch.IsRetriable(err) {
+				return err
+			}
+			return backoff.Permanent(err)
 		}
 
 		ch <- ListResult{Keys: response.Keys}
+		dataSent = true
 	}
 }
 
@@ -433,28 +514,61 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 		IncludeInternalKeys: includeInternalKeys,
 	}
 
-	client, err := c.executor.ExecuteRangeScan(ctx, request)
+	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
+	defer cancel()
+
+	backOff := time2.NewBackOff(retryCtx)
+	var hint *proto.LeaderHint
+
+	err := backoff.RetryNotify(func() error {
+		return c.doRangeScan(retryCtx, request, hint, ch)
+	}, backOff, func(err error, duration time.Duration) {
+		slog.Warn(
+			"Failed to perform range-scan request, retrying later",
+			slog.Any("error", err),
+			slog.String("namespace", c.options.namespace),
+			slog.Int64("shard", shardId),
+			slog.Duration("retry-after", duration),
+		)
+		if leaderHint := constant.FindLeaderHint(err); leaderHint != nil {
+			hint = leaderHint
+		}
+	})
 	if err != nil {
 		ch <- GetResult{Err: err}
-		return
 	}
 
-	defer close(ch)
+	close(ch)
+}
 
+func (c *clientImpl) doRangeScan(ctx context.Context, request *proto.RangeScanRequest, hint *proto.LeaderHint, ch chan<- GetResult) error {
+	client, err := c.executor.ExecuteRangeScan(ctx, request, hint)
+	if err != nil {
+		if batch.IsRetriable(err) {
+			return err
+		}
+		return backoff.Permanent(err)
+	}
+
+	dataSent := false
 	for {
 		response, err := client.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return
+				return nil
 			}
-
-			ch <- GetResult{Err: err}
-			return
+			// Only retry if no data has been sent to the channel yet,
+			// to avoid sending duplicate records.
+			if !dataSent && batch.IsRetriable(err) {
+				return err
+			}
+			return backoff.Permanent(err)
 		}
 
 		for _, record := range response.Records {
 			ch <- toGetResult(record, "", nil)
 		}
+		dataSent = true
 	}
 }
 

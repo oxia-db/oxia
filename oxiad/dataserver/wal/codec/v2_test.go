@@ -23,6 +23,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/common/crc"
 )
 
 func TestV2_GetHeaderSize(t *testing.T) {
@@ -40,11 +42,11 @@ func TestV2_Codec(t *testing.T) {
 	payloadSize, previousCrc, payloadCrc, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, previousCrc, 0)
-	expectedPayloadCrc := Checksum(0).Update(payload).Value()
+	expectedPayloadCrc := crc.Checksum(0).Update(payload).Value()
 	assert.EqualValues(t, expectedPayloadCrc, payloadCrc)
 	assert.EqualValues(t, recordSize-(v2PayloadSizeLen+v2PreviousCrcLen+v2PayloadCrcLen), payloadSize)
 
-	getPayload, err := v2.ReadRecordWithValidation(buf, 0)
+	getPayload, _, _, err := v2.ReadRecordWithValidation(buf, 0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload, getPayload)
 }
@@ -69,14 +71,14 @@ func TestV2_Crc(t *testing.T) {
 		_, previousCrc, payloadCrc, err := v2.ReadHeaderWithValidation(buf, startFOffset)
 		assert.NoError(t, err)
 		assert.EqualValues(t, expectedChecksum, previousCrc)
-		expectedPayloadChecksum := Checksum(expectedChecksum).Update([]byte{byte(index)}).Value()
+		expectedPayloadChecksum := crc.Checksum(expectedChecksum).Update([]byte{byte(index)}).Value()
 		assert.EqualValues(t, expectedPayloadChecksum, payloadCrc)
 		expectedChecksum = expectedPayloadChecksum
 	}
 
 	for index := range len(entriesToOffset) {
 		startFOffset := entriesToOffset[index]
-		payload, err := v2.ReadRecordWithValidation(buf, startFOffset)
+		payload, _, _, err := v2.ReadRecordWithValidation(buf, startFOffset)
 		assert.NoError(t, err)
 		assert.EqualValues(t, []byte{byte(index)}, payload)
 	}
@@ -192,7 +194,7 @@ func TestV2_BreakingPoint_Size(t *testing.T) {
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
 
-	_, err = v2.ReadRecordWithValidation(buf, 0)
+	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
 }
 
@@ -205,7 +207,7 @@ func TestV2_BreakingPoint_PreviousCrc(t *testing.T) {
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 
-	_, err = v2.ReadRecordWithValidation(buf, 0)
+	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 }
 
@@ -218,7 +220,7 @@ func TestV2_BreakingPoint_PayloadCrc(t *testing.T) {
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 
-	_, err = v2.ReadRecordWithValidation(buf, 0)
+	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 }
 
@@ -231,7 +233,7 @@ func TestV2_BreakingPoint_Payload(t *testing.T) {
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 
-	_, err = v2.ReadRecordWithValidation(buf, 0)
+	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrDataCorrupted)
 }
 
@@ -277,7 +279,7 @@ func TestV2_RecoverIndex(t *testing.T) {
 	assert.EqualValues(t, fOffset, newFileOffset)
 	for i := 0; i < elementsNum; i++ {
 		fOffset := ReadInt(index, uint32(i*4))
-		payload, err := v2.ReadRecordWithValidation(buf, fOffset)
+		payload, _, _, err := v2.ReadRecordWithValidation(buf, fOffset)
 		assert.NoError(t, err)
 		assert.EqualValues(t, payloads[i], payload)
 	}
@@ -302,6 +304,32 @@ func TestV2_IndexBroken(t *testing.T) {
 	faultData, err := uuid.New().MarshalBinary()
 	assert.NoError(t, err)
 	_, err = file.WriteAt(faultData, 0)
+	assert.NoError(t, err)
+
+	_, err = v2.ReadIndex(p)
+	assert.ErrorIs(t, err, ErrDataCorrupted)
+}
+
+func TestV2_ReadEmptyIndex(t *testing.T) {
+	dir := os.TempDir()
+	fileName := "empty-index"
+	p := path.Join(dir, fileName+v2.GetIdxExtension())
+
+	// Create empty file
+	err := os.WriteFile(p, []byte{}, 0644)
+	assert.NoError(t, err)
+
+	_, err = v2.ReadIndex(p)
+	assert.ErrorIs(t, err, ErrDataCorrupted)
+}
+
+func TestV2_ReadShortIndex(t *testing.T) {
+	dir := os.TempDir()
+	fileName := "short-index"
+	p := path.Join(dir, fileName+v2.GetIdxExtension())
+
+	// Create file with only 2 bytes (less than header size of 4)
+	err := os.WriteFile(p, []byte{0x00, 0x01}, 0644)
 	assert.NoError(t, err)
 
 	_, err = v2.ReadIndex(p)

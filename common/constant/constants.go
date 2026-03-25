@@ -16,11 +16,17 @@ package constant
 
 import "time"
 
+const I64NegativeOne int64 = -1
+const I64Zero int64 = 0
+const U32Zero uint32 = 0
+
 const (
-	MetadataTerm      = "term"
-	MetadataNamespace = "namespace"
-	MetadataShardId   = "shard-id"
-	DefaultNamespace  = "default"
+	MetadataTerm              = "term"
+	MetadataNamespace         = "namespace"
+	MetadataShardId           = "shard-id"
+	MetadataSplitHashRangeMin = "split-hash-range-min"
+	MetadataSplitHashRangeMax = "split-hash-range-max"
+	DefaultNamespace          = "default"
 
 	DefaultPublicPort   = 6648
 	DefaultInternalPort = 6649

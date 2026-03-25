@@ -15,13 +15,28 @@
 package batch
 
 import (
+	"errors"
+	"io"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 )
 
-func isRetriable(err error) bool {
+// ErrShardNotFound is returned when a batch's target shard no longer exists
+// in the shard manager (e.g. after a shard split). The batch should be broken
+// apart and individual operations re-routed to the correct child shards.
+var ErrShardNotFound = errors.New("shard not found in shard manager")
+
+func IsRetriable(err error) bool {
+	if errors.Is(err, io.EOF) {
+		// EOF can occur when a bidirectional write stream is closed by the
+		// server before delivering the gRPC status (e.g. the server returns
+		// an error from WriteStream before reading any messages).  This is a
+		// transient condition that should be retried.
+		return true
+	}
 	code := status.Code(err)
 	switch code {
 	case

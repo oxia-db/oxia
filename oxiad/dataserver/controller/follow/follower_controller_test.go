@@ -22,13 +22,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
+
+	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -92,7 +94,8 @@ func TestFollower(t *testing.T) {
 	wg := concurrent.NewWaitGroup(1)
 
 	go func() {
-		_ = fc.Replicate(stream)
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
 		wg.Done()
 	}()
 
@@ -142,8 +145,9 @@ func TestFollower(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	wg2 := concurrent.NewWaitGroup(1)
 	go func() {
-		err := fc.Replicate(stream)
+		err := fc.AppendEntries(stream)
 		assert.ErrorIs(t, err, context.Canceled)
+		stream.Cancel()
 		wg2.Done()
 	}()
 	stream.AddRequest(createAddRequest(t, 2, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -217,7 +221,8 @@ func TestReadingUpToCommitOffset(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -306,7 +311,8 @@ func TestFollower_AdvanceCommitOffsetToHead(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 10))
@@ -342,7 +348,7 @@ func TestFollower_NewTerm(t *testing.T) {
 	// We cannot fence with earlier term
 	fr, err := fc.NewTerm(&proto.NewTermRequest{Term: 0})
 	assert.Nil(t, fr)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 1, fc.Term())
 
@@ -375,7 +381,9 @@ func TestFollower_DuplicateNewTermInFollowerState(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
-		assert.NoError(t, fc.Replicate(stream))
+		// cancelled due to fc.Close() below
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 10))
@@ -394,6 +402,13 @@ func TestFollower_DuplicateNewTermInFollowerState(t *testing.T) {
 	assert.NotNil(t, r)
 	assert.EqualValues(t, r1.Offset, r.HeadEntryId.Offset)
 	assert.EqualValues(t, 1, r.HeadEntryId.Term)
+
+	stream = rpc.NewMockServerReplicateStream()
+	go func() {
+		// cancelled due to fc.Close() below
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
+	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 1, map[string]string{"a": "1", "b": "2"}, 11))
 
@@ -433,7 +448,7 @@ func TestFollower_TruncateAfterRestart(t *testing.T) {
 		},
 	})
 
-	assert.Equal(t, constant.CodeInvalidStatus, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidStatus, err)
 	assert.Nil(t, tr)
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, fc.Status())
 
@@ -518,7 +533,8 @@ func TestFollower_CommitOffsetLastEntry(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 0))
@@ -578,18 +594,21 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "1", "b": "1"}, wal.InvalidOffset))
 
 	// Follower will reject the entry because it's from an earlier term
-	err = fc.Replicate(stream)
+	err = fc.AppendEntries(stream)
 	assert.Error(t, err)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
+	stream.Cancel()
 
+	stream = rpc.NewMockServerReplicateStream()
 	// If we send an entry of same term, it will be accepted
 	stream.AddRequest(createAddRequest(t, 5, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
 
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	// Wait for acks
@@ -598,7 +617,6 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
 	assert.EqualValues(t, 0, r1.Offset)
 	assert.NoError(t, fc.Close())
-	close(stream.Requests)
 
 	// A higher term will also be rejected
 	fc, err = NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
@@ -606,8 +624,9 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 
 	stream = rpc.NewMockServerReplicateStream()
 	stream.AddRequest(createAddRequest(t, 6, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
-	err = fc.Replicate(stream)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err), "Unexpected error: %s", err)
+	err = fc.AppendEntries(stream)
+	stream.Cancel()
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 
@@ -643,7 +662,7 @@ func TestFollower_RejectTruncateInvalidTerm(t *testing.T) {
 		},
 	})
 	assert.Nil(t, truncateResp)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 
@@ -656,12 +675,12 @@ func TestFollower_RejectTruncateInvalidTerm(t *testing.T) {
 		},
 	})
 	assert.Nil(t, truncateResp)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, dserror.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 }
 
-func prepareTestDb(t *testing.T) kvstore.Snapshot {
+func prepareTestDb(t *testing.T, term int64) kvstore.Snapshot {
 	t.Helper()
 
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -678,6 +697,7 @@ func prepareTestDb(t *testing.T) kvstore.Snapshot {
 		}, int64(i), 0, database.NoOpCallback)
 		assert.NoError(t, err)
 	}
+	assert.NoError(t, db.UpdateTerm(term, database.TermOptions{}))
 
 	snapshot, err := db.Snapshot()
 	assert.NoError(t, err)
@@ -702,7 +722,10 @@ func TestFollower_HandleSnapshot(t *testing.T) {
 	assert.EqualValues(t, 1, fc.Term())
 
 	stream := rpc.NewMockServerReplicateStream()
-	go func() { assert.NoError(t, fc.Replicate(stream)) }()
+	go func() {
+		assert.NoError(t, fc.AppendEntries(stream))
+		stream.Cancel()
+	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 0))
 
@@ -713,12 +736,12 @@ func TestFollower_HandleSnapshot(t *testing.T) {
 	close(stream.Requests)
 
 	// Load snapshot into follower
-	snapshot := prepareTestDb(t)
+	snapshot := prepareTestDb(t, 1)
 
 	snapshotStream := rpc.NewMockServerSendSnapshotStream()
 	wg := sync.WaitGroup{}
 	wg.Go(func() {
-		err := fc.SendSnapshot(snapshotStream)
+		err := fc.InstallSnapshot(snapshotStream)
 		assert.NoError(t, err)
 	})
 
@@ -800,6 +823,72 @@ func TestFollower_HandleSnapshot(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// TestFollower_SnapshotRecoveryFromNotMember verifies that when a follower
+// has its data cleaned up (status=NOT_MEMBER, term=-1) and the leader
+// sends a snapshot without a preceding NewTerm, the follower transitions
+// to FOLLOWER after the snapshot so that subsequent AppendEntries succeed.
+func TestFollower_SnapshotRecoveryFromNotMember(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// Fresh follower: NOT_MEMBER, term=-1
+	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, fc.Status())
+	assert.EqualValues(t, wal.InvalidTerm, fc.Term())
+
+	// Simulate leader sending a snapshot directly (no NewTerm first).
+	// This happens when the leader's FollowerCursor retries after the
+	// follower restarted with clean data.
+	snapshot := prepareTestDb(t, 5)
+
+	snapshotStream := rpc.NewMockServerSendSnapshotStream()
+	wg := sync.WaitGroup{}
+	wg.Go(func() {
+		err := fc.InstallSnapshot(snapshotStream)
+		assert.NoError(t, err)
+	})
+
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		assert.NoError(t, err)
+		content := chunk.Content()
+		snapshotStream.AddChunk(&proto.SnapshotChunk{
+			Term:       5,
+			Name:       chunk.Name(),
+			Content:    content,
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	close(snapshotStream.Chunks)
+	wg.Wait()
+
+	// After snapshot install, status must be FOLLOWER (not NOT_MEMBER).
+	// The snapshot provides a clean state — no truncation needed — so
+	// the node is ready for replication immediately.
+	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
+	assert.EqualValues(t, 5, fc.Term())
+	assert.EqualValues(t, 99, fc.CommitOffset())
+
+	// Verify the snapshot data is present
+	for i := 0; i < 100; i++ {
+		dbRes, err := fc.(*followerController).db.Get(&proto.GetRequest{
+			Key:          fmt.Sprintf("key-%d", i),
+			IncludeValue: true,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, proto.Status_OK, dbRes.Status)
+	}
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestFollower_DisconnectLeader(t *testing.T) {
 	var shardId int64
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -811,22 +900,26 @@ func TestFollower_DisconnectLeader(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 
-	go func() { assert.NoError(t, fc.Replicate(stream)) }()
+	go func() {
+		// cancelled due to NewTerm(2) below which closes the logSynchronizer
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
+	}()
 
 	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
 
 	// It's not possible to add a new leader stream
-	assert.ErrorIs(t, fc.Replicate(stream), constant.ErrLeaderAlreadyConnected)
+	assert.ErrorIs(t, fc.AppendEntries(stream), dserror.ErrResourceConflict)
 
 	// When we fence again, the leader should have been cutoff
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
 	assert.NoError(t, err)
 
-	assert.Nil(t, fc.(*followerController).closeStreamWg)
-
+	stream = rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
@@ -847,7 +940,8 @@ func TestFollower_DupEntries(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -886,7 +980,8 @@ func TestFollowerController_DeleteShard(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -895,7 +990,7 @@ func TestFollowerController_DeleteShard(t *testing.T) {
 	r1 := stream.GetResponse()
 	assert.EqualValues(t, 0, r1.Offset)
 
-	_, err := fc.DeleteShard(&proto.DeleteShardRequest{
+	_, err := fc.Delete(&proto.DeleteShardRequest{
 		Namespace: constant.DefaultNamespace,
 		Shard:     shardId,
 		Term:      1,
@@ -916,13 +1011,13 @@ func TestFollowerController_DeleteShard_WrongTerm(t *testing.T) {
 	fc, _ := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
 	_, _ = fc.NewTerm(&proto.NewTermRequest{Term: 2})
 
-	_, err := fc.DeleteShard(&proto.DeleteShardRequest{
+	_, err := fc.Delete(&proto.DeleteShardRequest{
 		Namespace: constant.DefaultNamespace,
 		Shard:     shardId,
 		Term:      1,
 	})
 
-	assert.ErrorIs(t, err, constant.ErrInvalidTerm)
+	assert.ErrorIs(t, err, dserror.ErrInvalidTerm)
 }
 
 func TestFollowerController_Closed(t *testing.T) {
@@ -946,7 +1041,7 @@ func TestFollowerController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res)
-	assert.Equal(t, constant.CodeAlreadyClosed, status.Code(err))
+	assert.Equal(t, dserror.ErrResourceConflict, err)
 
 	res2, err := fc.Truncate(&proto.TruncateRequest{
 		Shard: shard,
@@ -958,7 +1053,7 @@ func TestFollowerController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res2)
-	assert.Equal(t, constant.CodeAlreadyClosed, status.Code(err))
+	assert.Equal(t, dserror.ErrResourceConflict, err)
 
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
@@ -975,7 +1070,8 @@ func TestFollower_GetStatus(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.Replicate(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
 	}()
 
 	stream.AddRequest(createAddRequest(t, 2, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
@@ -1026,7 +1122,10 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	assert.EqualValues(t, 1, fc.Term())
 
 	stream := rpc.NewMockServerReplicateStream()
-	go func() { assert.NoError(t, fc.Replicate(stream)) }()
+	go func() {
+		assert.NoError(t, fc.AppendEntries(stream))
+		stream.Cancel()
+	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, 0))
 
@@ -1037,14 +1136,14 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	close(stream.Requests)
 
 	// Load snapshot into follower
-	snapshot := prepareTestDb(t)
+	snapshot := prepareTestDb(t, 2)
 
 	snapshotStream := rpc.NewMockServerSendSnapshotStream()
 
 	wg := concurrent.NewWaitGroup(1)
 
 	go func() {
-		err := fc.SendSnapshot(snapshotStream)
+		err := fc.InstallSnapshot(snapshotStream)
 		if err != nil {
 			wg.Fail(err)
 		} else {
@@ -1068,7 +1167,7 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	close(snapshotStream.Chunks)
 
 	// The snapshot sending should fail because the term is invalid
-	assert.ErrorIs(t, constant.ErrInvalidTerm, wg.Wait(context.Background()))
+	assert.ErrorIs(t, dserror.ErrInvalidTerm, wg.Wait(context.Background()))
 
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 5, Options: &proto.NewTermOptions{
 		EnableNotifications: true,
@@ -1083,12 +1182,181 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// TestFollower_SplitHashRangeFiltering verifies that when a follower has a
+// split hash range set, only keys whose hash falls within the range are
+// applied to the database. Keys outside the range are filtered out both
+// during snapshot installation (FilterDBForSplit) and WAL catch-up
+// (ApplyLogEntryWithSplitFilter).
+//
+// Hash values (xxh3):
+//
+//	"a" → 0x1e964e1f (in lower half)
+//	"b" → 0x44d8843f (in lower half)
+//	"c" → 0x46b9f81b (in lower half)
+//	"d" → 0xc9c7a7ca (in upper half)
+//	"e" → 0x3bec4a78 (in lower half)
+//	"f" → 0x9ff3ba9a (in upper half)
+func TestFollower_SplitHashRangeFiltering(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	assert.NoError(t, err)
+
+	// Set the split hash range to the lower half of the hash space.
+	// Keys a, b, c, e are in range; d, f are out of range.
+	fc.SetSplitHashRange(&model.Int32HashRange{
+		Min: 0,
+		Max: 0x7FFFFFFF, // 2147483647
+	})
+
+	// --- Phase 1: Snapshot installation with filtering ---
+	// Prepare a snapshot DB containing keys a..f
+	snapshotKvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	snapshotDb, err := database.NewDB(constant.DefaultNamespace, 0, snapshotKvFactory, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	assert.NoError(t, err)
+
+	snapshotKeys := []string{"a", "b", "c", "d", "e", "f"}
+	for i, key := range snapshotKeys {
+		_, err := snapshotDb.ProcessWrite(&proto.WriteRequest{
+			Puts: []*proto.PutRequest{{
+				Key:   key,
+				Value: []byte(fmt.Sprintf("snapshot-%s", key)),
+			}},
+		}, int64(i), 0, database.NoOpCallback)
+		assert.NoError(t, err)
+	}
+	assert.NoError(t, snapshotDb.UpdateTerm(1, database.TermOptions{}))
+
+	snapshot, err := snapshotDb.Snapshot()
+	assert.NoError(t, err)
+	assert.NoError(t, snapshotKvFactory.Close())
+
+	// Install snapshot
+	snapshotStream := rpc.NewMockServerSendSnapshotStream()
+	wg := sync.WaitGroup{}
+	wg.Go(func() {
+		err := fc.InstallSnapshot(snapshotStream)
+		assert.NoError(t, err)
+	})
+
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		assert.NoError(t, err)
+		content := chunk.Content()
+		snapshotStream.AddChunk(&proto.SnapshotChunk{
+			Term:       1,
+			Name:       chunk.Name(),
+			Content:    content,
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	close(snapshotStream.Chunks)
+	wg.Wait()
+
+	// After snapshot + FilterDBForSplit, only keys in the lower hash half should remain
+	fci := fc.(*followerController)
+	for _, key := range []string{"a", "b", "c", "e"} {
+		dbRes, err := fci.db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+		assert.NoError(t, err)
+		assert.Equalf(t, proto.Status_OK, dbRes.Status, "key %q should be present after snapshot filtering", key)
+		assert.Equalf(t, []byte(fmt.Sprintf("snapshot-%s", key)), dbRes.Value, "key %q has wrong value", key)
+	}
+
+	for _, key := range []string{"d", "f"} {
+		dbRes, err := fci.db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+		assert.NoError(t, err)
+		assert.Equalf(t, proto.Status_KEY_NOT_FOUND, dbRes.Status, "key %q should have been filtered out", key)
+	}
+
+	// --- Phase 2: WAL catch-up with filtering ---
+	// Replicate entries that write both in-range and out-of-range keys.
+	// The follower should apply only the in-range operations.
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
+	}()
+
+	// Entry at offset 6: put "a" (in range) and "d" (out of range)
+	stream.AddRequest(createAddRequest(t, 1, 6, map[string]string{
+		"a": "wal-a",
+		"d": "wal-d",
+	}, wal.InvalidOffset))
+
+	// After snapshot install the WAL is empty (lastOffset=-1). When the syncer
+	// acks it sends offsets from oldHead+1 to newHead, so we may receive
+	// multiple acks (0..6). Drain until we see offset 6.
+	for {
+		r := stream.GetResponse()
+		if r.Offset == 6 {
+			break
+		}
+	}
+
+	// Entry at offset 7: put "f" (out of range) and "c" (in range)
+	stream.AddRequest(createAddRequest(t, 1, 7, map[string]string{
+		"f": "wal-f",
+		"c": "wal-c",
+	}, 7)) // commit up to offset 7
+
+	r := stream.GetResponse()
+	assert.EqualValues(t, 7, r.Offset)
+
+	// Wait for commit offset to advance
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == 7
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Verify: in-range keys were updated via WAL catch-up
+	dbRes, err := fci.db.Get(&proto.GetRequest{Key: "a", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, dbRes.Status)
+	assert.Equal(t, []byte("wal-a"), dbRes.Value)
+
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "c", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, dbRes.Status)
+	assert.Equal(t, []byte("wal-c"), dbRes.Value)
+
+	// Verify: out-of-range keys were NOT applied from WAL
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "d", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equalf(t, proto.Status_KEY_NOT_FOUND, dbRes.Status, "key 'd' should still be absent (out of hash range)")
+
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "f", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equalf(t, proto.Status_KEY_NOT_FOUND, dbRes.Status, "key 'f' should still be absent (out of hash range)")
+
+	// In-range keys that were only in snapshot (not in WAL) should still be present
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "b", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, dbRes.Status)
+	assert.Equal(t, []byte("snapshot-b"), dbRes.Value)
+
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "e", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, dbRes.Status)
+	assert.Equal(t, []byte("snapshot-e"), dbRes.Value)
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func closeChanIsNotNil(fc FollowerController) func() bool {
 	return func() bool {
-		_fc := fc.(*followerController)
-		_fc.Lock()
-		defer _fc.Unlock()
-		return _fc.closeStreamWg != nil
+		fci := fc.(*followerController)
+		fci.rwMutex.RLock()
+		defer fci.rwMutex.RUnlock()
+		return fci.logSynchronizer.IsValid()
 	}
 }
 

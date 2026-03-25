@@ -67,6 +67,12 @@ type ShardController interface {
 	ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction)
 }
 
+type DataServerSupportedFeaturesSupplier = func(dataServers []model.Server) map[string][]proto.Feature
+
+func NoOpSupportedFeaturesSupplier([]model.Server) map[string][]proto.Feature {
+	return map[string][]proto.Feature{}
+}
+
 type shardController struct {
 	namespace       string
 	shard           int64
@@ -76,9 +82,10 @@ type shardController struct {
 
 	leaderSelector selector.Selector[*leaderselector.Context, model.Server]
 
-	eventListener  ShardEventListener
-	configResource resource.ClusterConfigResource
-	statusResource resource.StatusResource
+	eventListener                       ShardEventListener
+	configResource                      resource.ClusterConfigResource
+	statusResource                      resource.StatusResource
+	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 
 	electionOp          chan *action.ElectionAction
 	deleteOp            chan any
@@ -116,24 +123,26 @@ func NewShardController(
 	shardMetadata model.ShardMetadata,
 	configResource resource.ClusterConfigResource,
 	statusResource resource.StatusResource,
+	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	eventListener ShardEventListener,
 	rpcProvider rpc.Provider,
 	periodTasksInterval time.Duration) ShardController {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &shardController{
-		namespace:           namespace,
-		shard:               shard,
-		namespaceConfig:     nc,
-		metadata:            NewMetadata(shardMetadata),
-		rpc:                 rpcProvider,
-		configResource:      configResource,
-		statusResource:      statusResource,
-		eventListener:       eventListener,
-		leaderSelector:      leaderselector.NewSelector(),
-		electionOp:          make(chan *action.ElectionAction, chanBufferSize),
-		deleteOp:            make(chan any, chanBufferSize),
-		dataServerFailureOp: make(chan model.Server, chanBufferSize),
-		changeEnsembleOp:    make(chan *action.ChangeEnsembleAction, chanBufferSize),
+		namespace:                           namespace,
+		shard:                               shard,
+		namespaceConfig:                     nc,
+		metadata:                            NewMetadata(shardMetadata),
+		rpc:                                 rpcProvider,
+		configResource:                      configResource,
+		statusResource:                      statusResource,
+		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
+		eventListener:                       eventListener,
+		leaderSelector:                      leaderselector.NewSelector(),
+		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
+		deleteOp:                            make(chan any, chanBufferSize),
+		dataServerFailureOp:                 make(chan model.Server, chanBufferSize),
+		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
 
 		periodicTasksInterval: periodTasksInterval,
 		log: slog.With(
@@ -192,6 +201,13 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 	switch {
 	case initShardMeta.Status == model.ShardStatusDeleting:
 		s.DeleteShard()
+	case initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIDs) == 0:
+		// Child shard during a split: the SplitController manages its lifecycle.
+		// Wait until the split is complete (Split metadata cleared) before
+		// entering the normal event loop, to prevent the load balancer from
+		// triggering elections that would interfere with the split controller.
+		s.log.Info("Child shard during split, waiting for split to complete")
+		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.Status != model.ShardStatusSteadyState:
 		s.onElectLeader(nil)
 	default:
@@ -227,6 +243,42 @@ func (s *shardController) run(initShardMeta *model.ShardMetadata) {
 		case electionAction := <-s.electionOp:
 			newLeader := s.onElectLeader(nil)
 			electionAction.Done(newLeader.GetIdentifier())
+		}
+	}
+}
+
+// waitForSplitComplete blocks until the Split metadata is cleared from this
+// shard in the status resource, indicating the split controller has finished
+// and the shard can operate normally. This prevents the load balancer from
+// triggering elections that would interfere with the split controller.
+// We read from the status resource (not the shard controller's local metadata)
+// because the split controller updates the status resource directly.
+func (s *shardController) waitForSplitComplete() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			status := s.statusResource.Load()
+			ns, exists := status.Namespaces[s.namespace]
+			if !exists {
+				continue
+			}
+			meta, exists := ns.Shards[s.shard]
+			if !exists {
+				continue
+			}
+			if meta.Split == nil {
+				s.log.Info("Split complete, child shard entering normal operation",
+					slog.Any("leader", meta.Leader),
+				)
+				// Update local metadata to match the status resource
+				s.metadata.Store(meta)
+				return
+			}
 		}
 	}
 }
@@ -316,7 +368,7 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		termOptions.KeySorting = nsConfig.KeySorting.ToProto()
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
-		s.statusResource, s.configResource, s.leaderSelector,
+		s.statusResource, s.configResource, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
 		s.rpc, &s.metadata, s.namespace, s.shard, changeEnsembleAction,
 		termOptions,
 		s.leaderElectionLatency,
@@ -413,6 +465,7 @@ func (s *shardController) onChangeEnsemble(changeEnsembleAction *action.ChangeEn
 	}()
 	if s.currentElection != nil {
 		if ready := s.currentElection.IsReadyForChangeEnsemble(); !ready {
+			s.log.Warn("Change ensemble rejected: shard is not ready (follower catch-up still in progress)")
 			err = ErrNotReadyForChangeEnsemble
 			return
 		}

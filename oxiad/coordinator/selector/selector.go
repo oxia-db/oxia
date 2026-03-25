@@ -26,6 +26,7 @@ var (
 	ErrUnsupportedAntiAffinityMode = errors.New("selector: unsupported anti-affinity mode")
 	ErrNoFunctioning               = errors.New("selector: no functioning selection")
 	ErrMultipleResult              = errors.New("selector: multiple results")
+	ErrNoCandidates                = errors.New("selector: no candidates available")
 )
 
 type LoadRatioAlgorithm = func(params *model.RatioParams) *model.Ratio

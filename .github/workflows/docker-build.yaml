@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: DockerHub Publish
+name: Docker Build & Push
 
 on:
-  push:
-    tags:
-      - 'v*'
-
-  # Publish nightly builds
-  schedule:
-    - cron: '0 0 * * *' # run at midnight UTC
-
   workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform(s)'
+        required: true
+        type: choice
+        default: 'linux/amd64,linux/arm64'
+        options:
+          - 'linux/amd64,linux/arm64'
+          - 'linux/amd64'
+          - 'linux/arm64'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -31,14 +33,14 @@ concurrency:
 
 jobs:
   publish-docker:
-    name: Publish docker image
+    name: Build & Push Docker Image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v3
-      - uses: docker/setup-qemu-action@v2
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -48,26 +50,23 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
-          # images: ${{ github.repository }}
           images: oxia/oxia
           tags: |
             type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/x86_64,linux/arm64
+          platforms: ${{ inputs.platform }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

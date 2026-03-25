@@ -264,6 +264,11 @@ message PutRequest {
   repeated uint64 sequence_key_delta = 7;
 
   repeated SecondaryIndex secondary_indexes = 8;
+
+  // Optional overrides for version metadata, used during data migration.
+  // When set, the server will use these values instead of auto-generating them.
+  optional int64 override_version_id = 9;
+  optional int64 override_modifications_count = 10;
 }
 
 /**
@@ -509,4 +514,10 @@ message Notification {
   optional int64 version_id = 2;
 
   optional string key_range_last = 3;
+}
+
+
+message LeaderHint {
+  int64 shard = 1;
+  string leader_address = 2;
 }

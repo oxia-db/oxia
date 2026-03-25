@@ -40,6 +40,7 @@ type ShardManager interface {
 	Get(key string) int64
 	GetAll() []int64
 	Leader(shardId int64) string
+	Exists(shardId int64) bool
 }
 
 type shardManagerImpl struct {
@@ -136,7 +137,14 @@ func (s *shardManagerImpl) Leader(shardId int64) string {
 	if shard, ok := s.shards[shardId]; ok {
 		return shard.Leader
 	}
-	panic("shard not found")
+	return s.serviceAddress
+}
+
+func (s *shardManagerImpl) Exists(shardId int64) bool {
+	s.RLock()
+	defer s.RUnlock()
+	_, ok := s.shards[shardId]
+	return ok
 }
 
 func (s *shardManagerImpl) isClosed() bool {

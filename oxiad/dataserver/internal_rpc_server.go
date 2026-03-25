@@ -17,6 +17,7 @@ package dataserver
 import (
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,10 +29,14 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/oxiad/common/feature"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
+	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
@@ -78,6 +83,33 @@ func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, sh
 
 func (s *internalRpcServer) Close() error {
 	return s.grpcServer.Close()
+}
+
+// toGRPCError converts domain errors from the dataserver layer into gRPC
+// status errors so that remote callers (e.g. the coordinator) can match on
+// the expected gRPC error codes. If the error is already a gRPC status error,
+// it is returned as-is. Unknown domain errors are mapped to codes.Unknown.
+func toGRPCError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := status.FromError(err); ok {
+		return err
+	}
+	switch {
+	case stderrors.Is(err, dserror.ErrInvalidTerm):
+		return status.Error(constant.CodeInvalidTerm, err.Error())
+	case stderrors.Is(err, dserror.ErrNodeIsNotMember):
+		return status.Error(constant.CodeNodeIsNotMember, err.Error())
+	case stderrors.Is(err, dserror.ErrInvalidStatus):
+		return status.Error(constant.CodeInvalidStatus, err.Error())
+	case stderrors.Is(err, dserror.ErrResourceConflict):
+		return status.Error(constant.CodeAlreadyClosed, err.Error())
+	case stderrors.Is(err, dserror.ErrResourceNotAvailable):
+		return status.Error(codes.Unavailable, err.Error())
+	default:
+		return status.Error(codes.Unknown, err.Error())
+	}
 }
 
 func (s *internalRpcServer) PushShardAssignments(srv proto.OxiaCoordination_PushShardAssignmentsServer) error {
@@ -134,7 +166,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 				slog.Any("error", err2),
 			)
 		}
-		return res, err2
+		return res, toGRPCError(err2)
 	}
 
 	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard, req.Options)
@@ -216,6 +248,45 @@ func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowe
 	return res, err
 }
 
+func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
+	log := s.log.With(
+		slog.Any("request", req),
+		slog.String("peer", rpc.GetPeer(c)),
+	)
+
+	log.Info("Received RemoveObserver request")
+
+	leader, err := s.shardsDirector.GetLeader(req.Shard)
+	if err != nil {
+		log.Warn(
+			"RemoveObserver failed: could not get leader controller",
+			slog.Any("error", err),
+		)
+		return nil, err
+	}
+
+	res, err := leader.RemoveObserver(req)
+	if err != nil {
+		log.Warn(
+			"RemoveObserver failed",
+			slog.Any("error", err),
+		)
+	}
+	return res, err
+}
+
+func (s *internalRpcServer) GetInfo(c context.Context, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+	log := s.log.With(
+		slog.Any("request", req),
+		slog.String("peer", rpc.GetPeer(c)),
+	)
+	log.Info("Received GetInfo request")
+	features := feature.SupportedFeatures()
+	return &proto.GetInfoResponse{
+		FeaturesSupported: features,
+	}, nil
+}
+
 func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
 	log := s.log.With(
 		slog.Any("request", req),
@@ -240,7 +311,7 @@ func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateReque
 			slog.Any("error", err),
 		)
 	}
-	return res, err
+	return res, toGRPCError(err)
 }
 
 func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServer) error {
@@ -283,14 +354,23 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 		return err
 	}
 
-	err = follower.Replicate(srv)
+	// Activate split filtering if hash range metadata is present
+	hashRange, ok, err := readSplitHashRange(md)
+	if err != nil {
+		return err
+	}
+	if ok {
+		follower.SetSplitHashRange(hashRange)
+	}
+
+	err = follower.AppendEntries(srv)
 	if err != nil && !errors.Is(err, io.EOF) {
 		log.Warn(
 			"Replicate failed",
 			slog.Any("error", err),
 		)
 	}
-	return err
+	return toGRPCError(err)
 }
 
 func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapshotServer) error {
@@ -320,6 +400,7 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 		"Received SendSnapshot request",
 		slog.Int64("shard", shardId),
 		slog.String("namespace", namespace),
+		slog.Int64("term", term),
 		slog.String("peer", rpc.GetPeer(srv.Context())),
 	)
 
@@ -330,12 +411,24 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.Any("error", err),
 			slog.String("namespace", namespace),
 			slog.Int64("shard", shardId),
+			slog.Int64("term", term),
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
 		return err
 	}
 
-	err = follower.SendSnapshot(srv)
+	// Activate split filtering if hash range metadata is present.
+	// The child follower will filter its snapshot and WAL entries to
+	// only keep keys whose hash falls within this range.
+	hashRange, ok, err := readSplitHashRange(md)
+	if err != nil {
+		return err
+	}
+	if ok {
+		follower.SetSplitHashRange(hashRange)
+	}
+
+	err = follower.InstallSnapshot(srv)
 	if err != nil {
 		s.log.Warn(
 			"SendSnapshot failed",
@@ -345,13 +438,14 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
 	}
-	return err
+	return toGRPCError(err)
 }
 
 func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	follower, err := s.shardsDirector.GetFollower(req.Shard)
 	if err == nil {
-		return follower.GetStatus(req)
+		res, err := follower.GetStatus(req)
+		return res, toGRPCError(err)
 	}
 
 	if status.Code(err) != constant.CodeNodeIsNotFollower {
@@ -368,7 +462,8 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 }
 
 func (s *internalRpcServer) DeleteShard(_ context.Context, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
-	return s.shardsDirector.DeleteShard(req)
+	res, err := s.shardsDirector.DeleteShard(req)
+	return res, toGRPCError(err)
 }
 
 func readHeader(md metadata.MD, key string) (value string, err error) {
@@ -404,4 +499,28 @@ func readTerm(md metadata.MD) (v int64, err error) {
 	}
 
 	return ReadHeaderInt64(md, constant.MetadataTerm)
+}
+
+// readSplitHashRange reads optional split hash range from gRPC metadata.
+// Returns the hash range and true if present, nil and false if absent,
+// or an error if the metadata is present but malformed.
+func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool, error) {
+	minArr := md.Get(constant.MetadataSplitHashRangeMin)
+	maxArr := md.Get(constant.MetadataSplitHashRangeMax)
+	if len(minArr) == 0 || len(maxArr) == 0 {
+		return nil, false, nil
+	}
+
+	var minVal, maxVal uint32
+	if _, err := fmt.Sscan(minArr[0], &minVal); err != nil {
+		return nil, false, fmt.Errorf("invalid split hash range min %q: %w", minArr[0], err)
+	}
+	if _, err := fmt.Sscan(maxArr[0], &maxVal); err != nil {
+		return nil, false, fmt.Errorf("invalid split hash range max %q: %w", maxArr[0], err)
+	}
+
+	return &model.Int32HashRange{
+		Min: minVal,
+		Max: maxVal,
+	}, true, nil
 }

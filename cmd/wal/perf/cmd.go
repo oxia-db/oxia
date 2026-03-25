@@ -57,7 +57,6 @@ func init() {
 	Cmd.Flags().Int64Var(&options.retentionSecond, "retention-second", 3600, "retention time for the wal")
 }
 
-//nolint:revive
 func run(*cobra.Command, []string) error {
 	factory := wal.NewWalFactory(&wal.FactoryOptions{
 		BaseWalDir:  common.WalOption.WalDir,
@@ -80,84 +79,95 @@ func run(*cobra.Command, []string) error {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(1 + int(options.readerCount))
-	go func() {
-		defer wg.Done()
-		n := time.Now().UnixMicro()
-
-		writeGroup := sync.WaitGroup{}
-		for i := int64(0); i < options.entryCount; i++ {
-			writeGroup.Add(1)
-			entry := &proto.LogEntry{
-				Term:      1,
-				Offset:    i,
-				Value:     data,
-				Timestamp: uint64(time.Now().UnixMicro()),
-			}
-			writeAheadLog.AppendAndSync(entry, func(err error) {
-				writeGroup.Done()
-				writeEntryTimesArray[i] = time.Now().UnixMicro() - int64(entry.Timestamp)
-				if err != nil {
-					panic(err)
-				}
-			})
-		}
-		writeGroup.Wait()
-		threadTimesArray[0] = time.Now().UnixMicro() - n
-		slog.Info("writer thread has done", slog.Int64("Elapse", threadTimesArray[0]))
-	}()
+	wg.Go(func() {
+		runWriter(writeAheadLog, data, threadTimesArray, writeEntryTimesArray)
+	})
 
 	for i := int64(0); i < options.readerCount; i++ {
-		go func(readerIdx int64) {
-			defer wg.Done()
-			n := time.Now().UnixMicro()
-
-			reader, err := writeAheadLog.NewReader(wal.InvalidOffset)
-			if err != nil {
-				panic(err)
-			}
-
-			for i := int64(0); i < options.entryCount; i++ {
-				for {
-					if !reader.HasNext() {
-						continue
-					}
-
-					entry, err := reader.ReadNext()
-					if err != nil {
-						panic(err)
-					}
-					readEntryTimesArray[readerIdx*options.entryCount+i] = time.Now().UnixMicro() - int64(entry.Timestamp)
-					break
-				}
-			}
-
-			threadTimesArray[readerIdx+1] = time.Now().UnixMicro() - n
-			slog.Info("reader thread has done",
-				slog.Int64("Elapse", threadTimesArray[readerIdx+1]),
-				slog.Int64("ReaderIdx", readerIdx),
-			)
-		}(i)
+		readerIdx := i
+		wg.Go(func() {
+			runReader(writeAheadLog, readerIdx, threadTimesArray, readEntryTimesArray)
+		})
 	}
 
 	wg.Wait()
+	printResults(threadTimesArray, writeEntryTimesArray, readEntryTimesArray)
+	return nil
+}
+
+func runWriter(writeAheadLog wal.Wal, data []byte, threadTimesArray, writeEntryTimesArray []int64) {
+	n := time.Now().UnixMicro()
+
+	writeGroup := sync.WaitGroup{}
+	for i := int64(0); i < options.entryCount; i++ {
+		writeGroup.Add(1)
+		entry := &proto.LogEntry{
+			Term:      1,
+			Offset:    i,
+			Value:     data,
+			Timestamp: uint64(time.Now().UnixMicro()),
+		}
+		writeAheadLog.AppendAndSync(entry, func(_ uint32, err error) {
+			writeGroup.Done()
+			writeEntryTimesArray[i] = time.Now().UnixMicro() - int64(entry.Timestamp)
+			if err != nil {
+				panic(err)
+			}
+		})
+	}
+	writeGroup.Wait()
+	threadTimesArray[0] = time.Now().UnixMicro() - n
+	slog.Info("writer thread has done", slog.Int64("Elapse", threadTimesArray[0]))
+}
+
+func runReader(writeAheadLog wal.Wal, readerIdx int64, threadTimesArray, readEntryTimesArray []int64) {
+	n := time.Now().UnixMicro()
+
+	reader, err := writeAheadLog.NewReader(wal.InvalidOffset)
+	if err != nil {
+		panic(err)
+	}
+
+	for i := int64(0); i < options.entryCount; i++ {
+		for {
+			if !reader.HasNext() {
+				continue
+			}
+
+			entry, _, _, err := reader.ReadNext()
+			if err != nil {
+				panic(err)
+			}
+			readEntryTimesArray[readerIdx*options.entryCount+i] = time.Now().UnixMicro() - int64(entry.Timestamp)
+			break
+		}
+	}
+
+	threadTimesArray[readerIdx+1] = time.Now().UnixMicro() - n
+	slog.Info("reader thread has done",
+		slog.Int64("Elapse", threadTimesArray[readerIdx+1]),
+		slog.Int64("ReaderIdx", readerIdx),
+	)
+}
+
+func printResults(threadTimesArray, writeEntryTimesArray, readEntryTimesArray []int64) {
 	for i := 0; i < len(threadTimesArray); i++ {
 		threadName := "Writer"
 		if i > 0 {
 			threadName = fmt.Sprintf("Reader%d", i-1)
 		}
 
-		//nolint:revive
-		fmt.Printf("Thread: %s, Total entry: %d, Total time: %s, Throughput: %f ops/s\n",
+		if _, err := fmt.Printf("Thread: %s, Total entry: %d, Total time: %s, Throughput: %f ops/s\n",
 			threadName,
 			options.entryCount,
 			time.Duration(threadTimesArray[i])*time.Microsecond,
-			float64(options.entryCount)/float64(threadTimesArray[i])*1000000)
+			float64(options.entryCount)/float64(threadTimesArray[i])*1000000); err != nil {
+			panic(err)
+		}
 	}
 
 	printLatench("Writer", writeEntryTimesArray)
 	printLatench("Reader", readEntryTimesArray)
-	return nil
 }
 
 func printLatench(name string, datas []int64) {

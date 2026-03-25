@@ -15,6 +15,8 @@
 package model
 
 import (
+	"cmp"
+
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
@@ -79,22 +81,18 @@ func (r *Ratio) MoveShardToNode(shard *ShardLoadRatio, fromNode string, toNode s
 }
 
 func (r *Ratio) ReCalculateRatios() {
-	iter := r.nodeLoadRatios.Iterator()
-	if !iter.First() {
+	if r.nodeLoadRatios.Empty() {
 		return
 	}
-	nodeRatio := iter.Value()
-	r.maxNodeLoadRatio = nodeRatio.Ratio
-	r.minNodeLoadRatio = nodeRatio.Ratio
 
-	for iter.Next() {
-		nodeLoadRatio := iter.Value()
-		if nodeLoadRatio.Ratio > r.maxNodeLoadRatio {
-			r.maxNodeLoadRatio = nodeLoadRatio.Ratio
-		} else if nodeLoadRatio.Ratio < r.minNodeLoadRatio {
-			r.minNodeLoadRatio = nodeLoadRatio.Ratio
-		}
-	}
+	r.nodeLoadRatios.Sort(func(x, y *NodeLoadRatio) int {
+		return cmp.Compare(x.Ratio, y.Ratio)
+	})
+
+	first, _ := r.nodeLoadRatios.Get(0)
+	last, _ := r.nodeLoadRatios.Get(r.nodeLoadRatios.Size() - 1)
+	r.minNodeLoadRatio = first.Ratio
+	r.maxNodeLoadRatio = last.Ratio
 }
 
 func (r *Ratio) RemoveDeletedNode(nodeID string) error {

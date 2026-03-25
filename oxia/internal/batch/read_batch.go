@@ -23,6 +23,8 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 
+	"github.com/oxia-db/oxia/common/constant"
+
 	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxia/batch"
 
@@ -33,7 +35,9 @@ import (
 
 type readBatchFactory struct {
 	namespace      string
-	execute        func(context.Context, *proto.ReadRequest) (proto.OxiaClient_ReadClient, error)
+	execute        func(context.Context, *proto.ReadRequest, *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)
+	shardExists    func(int64) bool
+	reroute        func([]model.GetCall)
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
 }
@@ -43,6 +47,8 @@ func (b readBatchFactory) newBatch(shardId *int64) batch.Batch {
 		namespace:      b.namespace,
 		shardId:        shardId,
 		execute:        b.execute,
+		shardExists:    b.shardExists,
+		reroute:        b.reroute,
 		gets:           make([]model.GetCall, 0),
 		start:          time.Now(),
 		metrics:        b.metrics,
@@ -54,7 +60,9 @@ func (b readBatchFactory) newBatch(shardId *int64) batch.Batch {
 type readBatch struct {
 	namespace      string
 	shardId        *int64
-	execute        func(context.Context, *proto.ReadRequest) (proto.OxiaClient_ReadClient, error)
+	execute        func(context.Context, *proto.ReadRequest, *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)
+	shardExists    func(int64) bool
+	reroute        func([]model.GetCall)
 	gets           []model.GetCall
 	start          time.Time
 	requestTimeout time.Duration
@@ -83,6 +91,16 @@ func (b *readBatch) Complete() {
 	executionStart := time.Now()
 	request := b.toProto()
 	response, err := b.doRequestWithRetries(request)
+
+	if errors.Is(err, ErrShardNotFound) && b.reroute != nil {
+		slog.Info("Shard was split/merged, re-routing read batch operations",
+			slog.Int64("shard", *b.shardId),
+			slog.Int("gets", len(b.gets)),
+		)
+		b.reroute(b.gets)
+		return
+	}
+
 	b.callback(executionStart, request, response, err)
 	if err != nil {
 		b.Fail(err)
@@ -96,28 +114,35 @@ func (b *readBatch) doRequestWithRetries(request *proto.ReadRequest) (response *
 	defer cancel()
 
 	backOff := time2.NewBackOff(ctx)
+	var hint *proto.LeaderHint
 
 	err = backoff.RetryNotify(func() error {
-		response, err = b.doRequest(ctx, request)
-		if !isRetriable(err) {
+		if b.shardExists != nil && !b.shardExists(*b.shardId) {
+			return backoff.Permanent(ErrShardNotFound)
+		}
+		response, err = b.doRequest(ctx, request, hint)
+		if !IsRetriable(err) {
 			return backoff.Permanent(err)
 		}
 		return err
 	}, backOff, func(err error, duration time.Duration) {
-		slog.Debug(
+		slog.Warn(
 			"Failed to perform request, retrying later",
 			slog.Any("error", err),
 			slog.String("namespace", b.namespace),
 			slog.Int64("shard", *b.shardId),
 			slog.Duration("retry-after", duration),
 		)
+		if leaderHint := constant.FindLeaderHint(err); leaderHint != nil {
+			hint = leaderHint
+		}
 	})
 
 	return response, err
 }
 
-func (b *readBatch) doRequest(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error) {
-	stream, err := b.execute(ctx, request)
+func (b *readBatch) doRequest(ctx context.Context, request *proto.ReadRequest, hint *proto.LeaderHint) (*proto.ReadResponse, error) {
+	stream, err := b.execute(ctx, request, hint)
 	if err != nil {
 		return nil, err
 	}

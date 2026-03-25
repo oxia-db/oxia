@@ -28,6 +28,12 @@ service OxiaAdmin {
 
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
 
+  /**
+   * Triggers a shard split. The specified shard is split into two child
+   * shards at the given split point (or midpoint if not specified).
+   */
+  rpc SplitShard(SplitShardRequest) returns (SplitShardResponse);
+
 }
 
 message ListNamespacesRequest {
@@ -49,4 +55,16 @@ message Node {
 
 message ListNodesResponse {
   repeated Node nodes = 1;
+}
+
+message SplitShardRequest {
+  string namespace = 1;
+  int64 shard = 2;
+  // Optional: explicit split point. If omitted, split at midpoint.
+  optional uint32 split_point = 3;
+}
+
+message SplitShardResponse {
+  int64 left_child_shard = 1;
+  int64 right_child_shard = 2;
 }

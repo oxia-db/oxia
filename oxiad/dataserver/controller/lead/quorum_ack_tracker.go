@@ -282,6 +282,18 @@ func (q *quorumAckTracker) NewCursorAcker(ackOffset int64) (CursorAcker, error) 
 	return qa, nil
 }
 
+// noOpCursorAcker is a CursorAcker that does not participate in the
+// quorum. Used for observer followers (e.g., shard split children).
+type noOpCursorAcker struct{}
+
+func NewNoOpCursorAcker() CursorAcker {
+	return &noOpCursorAcker{}
+}
+
+func (*noOpCursorAcker) Ack(_ int64) {
+	// no-op: observer acks don't affect quorum commit offset
+}
+
 func (c *cursorAcker) Ack(offset int64) {
 	c.quorumTracker.Lock()
 	defer c.quorumTracker.Unlock()

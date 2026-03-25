@@ -41,16 +41,16 @@ func TestReadOnlySegment(t *testing.T) {
 	assert.EqualValues(t, 9, ro.LastOffset())
 
 	for i := int64(0); i < 10; i++ {
-		data, err := ro.Read(i)
+		data, _, _, err := ro.Read(i)
 		assert.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("entry-%d", i), string(data))
 	}
 
-	data, err := ro.Read(100)
+	data, _, _, err := ro.Read(100)
 	assert.Nil(t, data)
 	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
 
-	data, err = ro.Read(-1)
+	data, _, _, err = ro.Read(-1)
 	assert.Nil(t, data)
 	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
 
@@ -84,16 +84,16 @@ func TestRO_auto_recover_broken_index(t *testing.T) {
 	assert.EqualValues(t, 9, ro.LastOffset())
 
 	for i := int64(0); i < 10; i++ {
-		data, err := ro.Read(i)
+		data, _, _, err := ro.Read(i)
 		assert.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("entry-%d", i), string(data))
 	}
 
-	data, err := ro.Read(100)
+	data, _, _, err := ro.Read(100)
 	assert.Nil(t, data)
 	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
 
-	data, err = ro.Read(-1)
+	data, _, _, err = ro.Read(-1)
 	assert.Nil(t, data)
 	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
 

@@ -110,6 +110,10 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 	})
 
 	s.shardsDirector = controller.NewShardsDirector(storage, s.walFactory, s.kvFactory, replicationRpcProvider)
+	if checksumInterval := options.Scheduler.Checksum.Interval.ToDuration(); checksumInterval > 0 {
+		csScheduler := newChecksumScheduler(ctx, checksumInterval, s.shardsDirector)
+		s.wg.Go(csScheduler.run)
+	}
 	s.shardAssignmentDispatcher = assignment.NewShardAssignmentDispatcher(s.healthServer)
 
 	internalServer := options.Server.Internal
@@ -142,6 +146,10 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 		}
 	}
 	return s, nil
+}
+
+func (s *Server) GetShardDirector() controller.ShardsDirector {
+	return s.shardsDirector
 }
 
 func (s *Server) PublicPort() int {

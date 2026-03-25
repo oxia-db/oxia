@@ -168,7 +168,6 @@ func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidat
 				slog.String("from-node", fromNodeID),
 				slog.Any("error", err),
 			)
-			continue
 		}
 		if !shardIter.Prev() {
 			break
@@ -227,6 +226,13 @@ func (r *nodeBasedBalancer) swapShard(
 	if nsc, exist = r.configResource.NamespaceConfig(candidateShard.Namespace); !exist {
 		return false, nil
 	}
+
+	// With RF=1, an ensemble swap cannot safely transfer data (there's no
+	// follower to replicate from). Skip rebalancing for such namespaces.
+	if nsc.ReplicationFactor <= 1 {
+		return false, nil
+	}
+
 	policies := nsc.Policies
 	sContext := &single.Context{
 		Candidates:         candidates,
@@ -430,7 +436,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		if minCandidateLeaders == maxLeaders || minCandidateLeaders+1 == maxLeaders {
 			r.Info("quarantine the shard due to no valid candidates", slog.Int64("shard", shard), slog.Any("leader", maxLeadersNodeID))
 			r.shardQuarantineShardMap.Store(shard, time.Now())
-			break
+			continue
 		}
 
 		latch := &sync.WaitGroup{}

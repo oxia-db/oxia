@@ -26,9 +26,12 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/dustin/go-humanize"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 
@@ -74,11 +77,12 @@ type followerCursor struct {
 	namespace   string
 	shardId     int64
 
-	backoff backoff.BackOff
-	closed  atomic.Bool
-	ctx     context.Context
-	cancel  context.CancelFunc
-	log     *slog.Logger
+	backoff        backoff.BackOff
+	closed         atomic.Bool
+	ctx            context.Context
+	cancel         context.CancelFunc
+	log            *slog.Logger
+	splitHashRange *proto.Int32HashRange // non-nil for split observer cursors
 
 	snapshotsTransferTime     metric.LatencyHistogram
 	snapshotsStartedCounter   metric.Counter
@@ -159,6 +163,82 @@ func NewFollowerCursor( //nolint:revive
 	return fc, nil
 }
 
+// NewObserverFollowerCursor creates a follower cursor for an observer that does
+// not participate in the replication quorum. Observer acks do not advance the
+// commit offset. Used for shard split children.
+func NewObserverFollowerCursor( //nolint:revive
+	follower string,
+	term int64,
+	namespace string,
+	shardId int64,
+	replicateStreamProvider rpc.ReplicateStreamProvider,
+	ackTracker QuorumAckTracker,
+	walObject wal.Wal,
+	db database.DB,
+	ackOffset int64,
+	splitHashRange *proto.Int32HashRange,
+) (FollowerCursor, error) {
+	labels := map[string]any{
+		"namespace": namespace,
+		"shard":     shardId,
+		"follower":  follower,
+	}
+
+	fc := &followerCursor{
+		term:                    term,
+		follower:                follower,
+		ackTracker:              ackTracker,
+		replicateStreamProvider: replicateStreamProvider,
+		wal:                     walObject,
+		db:                      db,
+		namespace:               namespace,
+		shardId:                 shardId,
+		splitHashRange:          splitHashRange,
+
+		log: slog.With(
+			slog.String("component", "observer-cursor"),
+			slog.String("namespace", namespace),
+			slog.Int64("shard", shardId),
+			slog.Int64("term", term),
+			slog.String("follower", follower),
+		),
+
+		snapshotsTransferTime: metric.NewLatencyHistogram("oxia_server_observer_snapshots_transfer_time",
+			"The time taken to transfer a full snapshot to an observer", labels),
+		snapshotsStartedCounter: metric.NewCounter("oxia_server_observer_snapshots_started",
+			"The number of DB snapshots started for observers", "count", labels),
+		snapshotsCompletedCounter: metric.NewCounter("oxia_server_observer_snapshots_completed",
+			"The number of DB snapshots completed for observers", "count", labels),
+		snapshotsFailedCounter: metric.NewCounter("oxia_server_observer_snapshots_failed",
+			"The number of DB snapshots failed for observers", "count", labels),
+		snapshotsBytesSent: metric.NewCounter("oxia_server_observer_snapshots_sent",
+			"The amount of data sent as snapshot to observers", metric.Bytes, labels),
+	}
+
+	fc.ctx, fc.cancel = context.WithCancel(context.Background())
+	fc.backoff = time2.NewBackOff(fc.ctx)
+
+	fc.lastPushed.Store(ackOffset)
+	fc.ackOffset.Store(ackOffset)
+
+	// Observer uses a no-op cursor acker — its acks don't affect quorum
+	fc.cursorAcker = NewNoOpCursorAcker()
+
+	go process.DoWithLabels(
+		context.Background(),
+		map[string]string{
+			"oxia":      "observer-cursor-send",
+			"namespace": namespace,
+			"shard":     fmt.Sprintf("%d", fc.shardId),
+		},
+		func() {
+			fc.run()
+		},
+	)
+
+	return fc, nil
+}
+
 func (fc *followerCursor) shouldSendSnapshot() bool {
 	fc.Lock()
 	defer fc.Unlock()
@@ -190,14 +270,6 @@ func (fc *followerCursor) shouldSendSnapshot() bool {
 func (fc *followerCursor) Close() error {
 	fc.closed.Store(true)
 	fc.cancel()
-
-	fc.Lock()
-	defer fc.Unlock()
-
-	if fc.stream != nil {
-		return fc.stream.CloseSend()
-	}
-
 	return nil
 }
 
@@ -216,6 +288,14 @@ func (fc *followerCursor) AckOffset() int64 {
 func (fc *followerCursor) run() {
 	_ = backoff.RetryNotify(fc.runOnce, fc.backoff,
 		func(err error, duration time.Duration) {
+			// If the follower reported that it's not a member (e.g. after a
+			// data clean-up and restart), reset the ack offset so that
+			// shouldSendSnapshot() will send a full snapshot on the next retry.
+			if status.Code(err) == constant.CodeNodeIsNotMember {
+				fc.log.Warn("Follower reported not-member status, resetting ack offset to trigger snapshot")
+				fc.ackOffset.Store(wal.InvalidOffset)
+				fc.lastPushed.Store(wal.InvalidOffset)
+			}
 			fc.log.Error(
 				"Error while pushing entries to follower",
 				slog.Any("error", err),
@@ -247,6 +327,15 @@ func (fc *followerCursor) sendSnapshot() error {
 
 	ctx, cancel := context.WithCancel(fc.ctx)
 	defer cancel()
+
+	// Inject split hash range into gRPC metadata so the child follower
+	// can activate split filtering before loading the snapshot.
+	if fc.splitHashRange != nil {
+		ctx = metadata.AppendToOutgoingContext(ctx,
+			constant.MetadataSplitHashRangeMin, fmt.Sprintf("%d", fc.splitHashRange.MinHashInclusive),
+			constant.MetadataSplitHashRangeMax, fmt.Sprintf("%d", fc.splitHashRange.MaxHashInclusive),
+		)
+	}
 
 	stream, err := fc.replicateStreamProvider.SendSnapshot(ctx, fc.follower, fc.namespace, fc.shardId, fc.term)
 	if err != nil {
@@ -326,13 +415,16 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			// We have reached the head of the wal
 			// Wait for more entries to be written
 			if err := fc.ackTracker.WaitForHeadOffset(ctx, currentOffset+1); err != nil {
+				if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
+					return nil
+				}
 				return err
 			}
 
 			continue
 		}
 
-		le, err := reader.ReadNext()
+		le, previousCrc, _, err := reader.ReadNext()
 		if err != nil {
 			return err
 		}
@@ -343,10 +435,14 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 		)
 
 		if err = fc.stream.Send(&proto.Append{
-			Term:         fc.term,
-			Entry:        le,
-			CommitOffset: fc.ackTracker.CommitOffset(),
+			Term:             fc.term,
+			Entry:            le,
+			CommitOffset:     fc.ackTracker.CommitOffset(),
+			PreviousEntryCrc: &previousCrc,
 		}); err != nil {
+			if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
+				return nil
+			}
 			return err
 		}
 
@@ -358,6 +454,14 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 func (fc *followerCursor) streamEntries() error {
 	ctx, cancel := context.WithCancel(fc.ctx)
 	defer cancel()
+
+	// Inject split hash range for WAL catch-up filtering on the child
+	if fc.splitHashRange != nil {
+		ctx = metadata.AppendToOutgoingContext(ctx,
+			constant.MetadataSplitHashRangeMin, fmt.Sprintf("%d", fc.splitHashRange.MinHashInclusive),
+			constant.MetadataSplitHashRangeMax, fmt.Sprintf("%d", fc.splitHashRange.MaxHashInclusive),
+		)
+	}
 
 	fc.Lock()
 	var err error
@@ -375,30 +479,38 @@ func (fc *followerCursor) streamEntries() error {
 	}
 	defer reader.Close()
 
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "follower-cursor-receive",
-			"shard": fmt.Sprintf("%d", fc.shardId),
-		}, func() {
-			fc.receiveAcks(cancel, fc.stream)
-		},
-	)
+	var recvErr error
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		process.DoWithLabels(
+			ctx,
+			map[string]string{
+				"oxia":  "follower-cursor-receive",
+				"shard": fmt.Sprintf("%d", fc.shardId),
+			}, func() {
+				recvErr = fc.receiveAcks(cancel, fc.stream)
+			},
+		)
+	})
 
 	fc.log.Info(
 		"Successfully attached cursor follower",
 		slog.Int64("ack-offset", currentOffset),
 	)
 
-	return fc.streamEntriesLoop(ctx, reader, currentOffset)
+	sendErr := fc.streamEntriesLoop(ctx, reader, currentOffset)
+	cancel()
+	wg.Wait()
+
+	return multierr.Combine(recvErr, sendErr)
 }
 
-func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.OxiaLogReplication_ReplicateClient) {
+func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.OxiaLogReplication_ReplicateClient) error {
 	for {
 		res, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			fc.log.Info("Ack stream finished")
-			return
+			return nil
 		}
 		if err != nil {
 			if status.Code(err) != codes.Canceled && status.Code(err) != codes.Unavailable {
@@ -409,12 +521,12 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 			}
 
 			cancel()
-			return
+			return err
 		}
 
 		if res == nil {
 			// Stream was closed by dataserver side
-			return
+			return nil
 		}
 
 		fc.log.Debug(

@@ -316,6 +316,57 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 	assert.NoError(t, dispatcher.Close())
 }
 
+func TestShardAssignmentDispatcher_GetLeader(t *testing.T) {
+	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
+
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
+	go func() {
+		err := dispatcher.PushShardAssignments(coordinatorStream)
+		assert.NoError(t, err)
+	}()
+
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{
+					newShardAssignment(0, "server1:6649", 0, 100),
+					newShardAssignment(1, "server2:6649", 100, math.MaxUint32),
+				},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+	})
+	assert.Eventually(t, func() bool {
+		return dispatcher.Initialized()
+	}, 10*time.Second, 10*time.Millisecond)
+
+	assert.Equal(t, "server1:6649", dispatcher.GetLeader(0))
+	assert.Equal(t, "server2:6649", dispatcher.GetLeader(1))
+	assert.Equal(t, "", dispatcher.GetLeader(999))
+
+	// Update assignments - shard 1 moves to server3
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{
+					newShardAssignment(0, "server1:6649", 0, 100),
+					newShardAssignment(1, "server3:6649", 100, math.MaxUint32),
+				},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+	})
+
+	assert.Eventually(t, func() bool {
+		return dispatcher.GetLeader(1) == "server3:6649"
+	}, 10*time.Second, 10*time.Millisecond)
+
+	assert.Equal(t, "server1:6649", dispatcher.GetLeader(0))
+	assert.Equal(t, "server3:6649", dispatcher.GetLeader(1))
+
+	assert.NoError(t, dispatcher.Close())
+}
+
 func newShardAssignment(id int64, leader string, minHashInclusive uint32, maxHashInclusive uint32) *proto.ShardAssignment {
 	return &proto.ShardAssignment{
 		Shard:  id,

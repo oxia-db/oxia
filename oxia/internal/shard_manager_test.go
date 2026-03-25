@@ -41,8 +41,7 @@ func TestWithStandalone(t *testing.T) {
 	defer standaloneServer.Close()
 
 	clientPool := rpc.NewClientPool(nil, nil)
-	shardManager, err := NewShardManager(&testShardStrategy{}, clientPool, standaloneServer.ServiceAddr(),
-		constant.DefaultNamespace, 30*time.Second)
+	shardManager, err := NewShardManager(&testShardStrategy{}, clientPool, standaloneServer.ServiceAddr(), constant.DefaultNamespace, 30*time.Second)
 	assert.NoError(t, err)
 
 	defer func() {

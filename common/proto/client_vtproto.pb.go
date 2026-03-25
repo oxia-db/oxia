@@ -320,6 +320,14 @@ func (m *PutRequest) CloneVT() *PutRequest {
 		}
 		r.SecondaryIndexes = tmpContainer
 	}
+	if rhs := m.OverrideVersionId; rhs != nil {
+		tmpVal := *rhs
+		r.OverrideVersionId = &tmpVal
+	}
+	if rhs := m.OverrideModificationsCount; rhs != nil {
+		tmpVal := *rhs
+		r.OverrideModificationsCount = &tmpVal
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -817,6 +825,24 @@ func (m *Notification) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
+func (m *LeaderHint) CloneVT() *LeaderHint {
+	if m == nil {
+		return (*LeaderHint)(nil)
+	}
+	r := new(LeaderHint)
+	r.Shard = m.Shard
+	r.LeaderAddress = m.LeaderAddress
+	if len(m.unknownFields) > 0 {
+		r.unknownFields = make([]byte, len(m.unknownFields))
+		copy(r.unknownFields, m.unknownFields)
+	}
+	return r
+}
+
+func (m *LeaderHint) CloneMessageVT() proto.Message {
+	return m.CloneVT()
+}
+
 func (this *ShardAssignmentsRequest) EqualVT(that *ShardAssignmentsRequest) bool {
 	if this == that {
 		return true
@@ -1266,6 +1292,12 @@ func (this *PutRequest) EqualVT(that *PutRequest) bool {
 				return false
 			}
 		}
+	}
+	if p, q := this.OverrideVersionId, that.OverrideVersionId; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
+	}
+	if p, q := this.OverrideModificationsCount, that.OverrideModificationsCount; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -1850,6 +1882,28 @@ func (this *Notification) EqualMessageVT(thatMsg proto.Message) bool {
 	}
 	return this.EqualVT(that)
 }
+func (this *LeaderHint) EqualVT(that *LeaderHint) bool {
+	if this == that {
+		return true
+	} else if this == nil || that == nil {
+		return false
+	}
+	if this.Shard != that.Shard {
+		return false
+	}
+	if this.LeaderAddress != that.LeaderAddress {
+		return false
+	}
+	return string(this.unknownFields) == string(that.unknownFields)
+}
+
+func (this *LeaderHint) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*LeaderHint)
+	if !ok {
+		return false
+	}
+	return this.EqualVT(that)
+}
 func (m *ShardAssignmentsRequest) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
@@ -2427,6 +2481,16 @@ func (m *PutRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.OverrideModificationsCount != nil {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.OverrideModificationsCount))
+		i--
+		dAtA[i] = 0x50
+	}
+	if m.OverrideVersionId != nil {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.OverrideVersionId))
+		i--
+		dAtA[i] = 0x48
 	}
 	if len(m.SecondaryIndexes) > 0 {
 		for iNdEx := len(m.SecondaryIndexes) - 1; iNdEx >= 0; iNdEx-- {
@@ -3636,6 +3700,51 @@ func (m *Notification) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
+func (m *LeaderHint) MarshalVT() (dAtA []byte, err error) {
+	if m == nil {
+		return nil, nil
+	}
+	size := m.SizeVT()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBufferVT(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *LeaderHint) MarshalToVT(dAtA []byte) (int, error) {
+	size := m.SizeVT()
+	return m.MarshalToSizedBufferVT(dAtA[:size])
+}
+
+func (m *LeaderHint) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+	if m == nil {
+		return 0, nil
+	}
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.unknownFields != nil {
+		i -= len(m.unknownFields)
+		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.LeaderAddress) > 0 {
+		i -= len(m.LeaderAddress)
+		copy(dAtA[i:], m.LeaderAddress)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.LeaderAddress)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if m.Shard != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Shard))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
 func (m *ShardAssignmentsRequest) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -3892,6 +4001,12 @@ func (m *PutRequest) SizeVT() (n int) {
 			l = e.SizeVT()
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
+	}
+	if m.OverrideVersionId != nil {
+		n += 1 + protohelpers.SizeOfVarint(uint64(*m.OverrideVersionId))
+	}
+	if m.OverrideModificationsCount != nil {
+		n += 1 + protohelpers.SizeOfVarint(uint64(*m.OverrideModificationsCount))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -4327,6 +4442,23 @@ func (m *Notification) SizeVT() (n int) {
 	}
 	if m.KeyRangeLast != nil {
 		l = len(*m.KeyRangeLast)
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	n += len(m.unknownFields)
+	return n
+}
+
+func (m *LeaderHint) SizeVT() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.Shard != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.Shard))
+	}
+	l = len(m.LeaderAddress)
+	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
@@ -5856,6 +5988,46 @@ func (m *PutRequest) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 9:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OverrideVersionId", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OverrideVersionId = &v
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OverrideModificationsCount", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OverrideModificationsCount = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -8539,6 +8711,108 @@ func (m *Notification) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *LeaderHint) UnmarshalVT(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return protohelpers.ErrIntOverflow
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: LeaderHint: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: LeaderHint: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Shard", wireType)
+			}
+			m.Shard = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Shard |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LeaderAddress", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.LeaderAddress = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.unknownFields = append(m.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func (m *ShardAssignmentsRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -10091,6 +10365,46 @@ func (m *PutRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 9:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OverrideVersionId", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OverrideVersionId = &v
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OverrideModificationsCount", wireType)
+			}
+			var v int64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OverrideModificationsCount = &v
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -12832,6 +13146,112 @@ func (m *Notification) UnmarshalVTUnsafe(dAtA []byte) error {
 			}
 			s := stringValue
 			m.KeyRangeLast = &s
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.unknownFields = append(m.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *LeaderHint) UnmarshalVTUnsafe(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return protohelpers.ErrIntOverflow
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: LeaderHint: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: LeaderHint: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Shard", wireType)
+			}
+			m.Shard = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Shard |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LeaderAddress", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			var stringValue string
+			if intStringLen > 0 {
+				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
+			}
+			m.LeaderAddress = stringValue
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

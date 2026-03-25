@@ -16,13 +16,20 @@ package coordinator
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
+	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
+
+// ShardSplitter is implemented by the coordinator to initiate shard splits.
+type ShardSplitter interface {
+	InitiateSplit(namespace string, parentShardId int64, splitPoint *uint32) (leftChild, rightChild int64, err error)
+}
 
 var _ proto.OxiaAdminServer = (*adminServer)(nil)
 
@@ -31,6 +38,7 @@ type adminServer struct {
 
 	statusResource resource.StatusResource
 	clusterConfig  func() (model.ClusterConfig, error)
+	shardSplitter  ShardSplitter
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
@@ -73,9 +81,36 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 	return &proto.ListNodesResponse{Nodes: nodes}, nil
 }
 
-func newAdminServer(statusResource resource.StatusResource, clusterConfig func() (model.ClusterConfig, error)) *adminServer {
+func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
+	if admin.shardSplitter == nil {
+		return nil, errors.New("split shard not supported")
+	}
+
+	slog.Info("Received SplitShard request",
+		slog.String("namespace", req.Namespace),
+		slog.Int64("shard", req.Shard),
+		slog.Any("split-point", req.SplitPoint),
+	)
+
+	left, right, err := admin.shardSplitter.InitiateSplit(req.Namespace, req.Shard, req.SplitPoint)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proto.SplitShardResponse{
+		LeftChildShard:  left,
+		RightChildShard: right,
+	}, nil
+}
+
+func newAdminServer(
+	statusResource resource.StatusResource,
+	clusterConfig func() (model.ClusterConfig, error),
+	shardSplitter ShardSplitter,
+) *adminServer {
 	return &adminServer{
 		statusResource: statusResource,
 		clusterConfig:  clusterConfig,
+		shardSplitter:  shardSplitter,
 	}
 }

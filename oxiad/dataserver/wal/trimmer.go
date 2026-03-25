@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -34,6 +35,18 @@ const (
 
 type CommitOffsetProvider interface {
 	CommitOffset() int64
+}
+
+type CommitOffsetObserver struct {
+	commitOffset *atomic.Int64
+}
+
+func (o *CommitOffsetObserver) CommitOffset() int64 {
+	return o.commitOffset.Load()
+}
+
+func NewCommitOffsetObserver(offset *atomic.Int64) CommitOffsetProvider {
+	return &CommitOffsetObserver{commitOffset: offset}
 }
 
 type Trimmer interface {
@@ -203,7 +216,7 @@ func (t *trimmer) readAtOffset(offset int64) (timestamp time.Time, err error) {
 		return time.Time{}, errors.Wrap(err, "failed to create reader")
 	}
 
-	fe, err := reader.ReadNext()
+	fe, _, _, err := reader.ReadNext()
 	if err != nil {
 		return time.Time{}, errors.Wrapf(err, "failed to read from wal at offset %d first=%d last=%d", offset,
 			t.wal.FirstOffset(), t.wal.LastOffset())

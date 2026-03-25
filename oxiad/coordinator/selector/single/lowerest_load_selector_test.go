@@ -98,3 +98,68 @@ func TestSelectLowerestLoadSelector(t *testing.T) {
 	assert.NoError(t, err)
 	assert.EqualValues(t, "sv-1", id)
 }
+
+func TestSelectLowerestLoadSelectorAfterShardMove(t *testing.T) {
+	llSelector := &lowerestLoadSelector{}
+
+	// Create sorted ratio: sv-5(1 shard), sv-4(2), sv-3(3), sv-2(4), sv-1(5)
+	// Total 15 shards, each shard ratio = 1/15
+	ratioSnapshot := DefaultShardsRank(&model.RatioParams{
+		NodeShardsInfos: map[string][]model.ShardInfo{
+			"sv-1": makeShardInfos("sv-1", 5, 0),
+			"sv-2": makeShardInfos("sv-2", 4, 5),
+			"sv-3": makeShardInfos("sv-3", 3, 9),
+			"sv-4": makeShardInfos("sv-4", 2, 12),
+			"sv-5": makeShardInfos("sv-5", 1, 14),
+		},
+	})
+
+	// Get shards from sv-1 to move
+	sv1Shards := findNodeShards(ratioSnapshot, "sv-1")
+
+	// Move shard sv-1→sv-5: sv-5(2/15), sv-4(2/15), sv-3(3/15), sv-2(4/15), sv-1(4/15)
+	ratioSnapshot.MoveShardToNode(sv1Shards[0], "sv-1", "sv-5")
+	ratioSnapshot.ReCalculateRatios()
+
+	// Move shard sv-1→sv-5: sv-5(3/15), sv-4(2/15), sv-3(3/15), sv-2(4/15), sv-1(3/15)
+	ratioSnapshot.MoveShardToNode(sv1Shards[1], "sv-1", "sv-5")
+	ratioSnapshot.ReCalculateRatios()
+
+	// sv-4 has the lowest ratio (2/15)
+	// Without re-sorting in ReCalculateRatios, sv-5 (3/15) stays at index 0 and gets selected instead
+	ctx := &Context{
+		Candidates: linkedhashset.New("sv-1", "sv-2", "sv-3", "sv-4", "sv-5"),
+		LoadRatioSupplier: func() *model.Ratio {
+			return ratioSnapshot
+		},
+	}
+	id, err := llSelector.Select(ctx)
+	assert.NoError(t, err)
+	assert.EqualValues(t, "sv-4", id)
+}
+
+func makeShardInfos(nodeID string, count int, startID int) []model.ShardInfo {
+	shards := make([]model.ShardInfo, count)
+	for i := 0; i < count; i++ {
+		shards[i] = model.ShardInfo{
+			Namespace: "ns",
+			ShardID:   int64(startID + i),
+			Ensemble:  []model.Server{{Internal: nodeID}},
+		}
+	}
+	return shards
+}
+
+func findNodeShards(ratio *model.Ratio, nodeID string) []*model.ShardLoadRatio {
+	for iter := ratio.NodeIterator(); iter.Next(); {
+		node := iter.Value()
+		if node.NodeID == nodeID {
+			var shards []*model.ShardLoadRatio
+			for sIter := node.ShardIterator(); sIter.Next(); {
+				shards = append(shards, sIter.Value())
+			}
+			return shards
+		}
+	}
+	return nil
+}

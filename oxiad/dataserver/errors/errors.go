@@ -12,21 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package codec
+package errors
 
-import (
-	"hash/crc32"
+import "errors"
+
+var (
+	ErrInvalidTerm          = errors.New("invalid term")
+	ErrResourceNotAvailable = errors.New("resource not available")
+	ErrResourceConflict     = errors.New("resource conflict")
+	ErrInvalidStatus        = errors.New("invalid status")
+	ErrNodeIsNotMember      = errors.New("node is not a member")
 )
-
-const MagicNumber uint32 = 0xa282ead8
-
-var table = crc32.MakeTable(crc32.Castagnoli)
-
-type Checksum uint32
-
-func (c Checksum) Update(b []byte) Checksum {
-	return Checksum(crc32.Update(uint32(c), table, b))
-}
-func (c Checksum) Value() uint32 {
-	return uint32(c>>15|c<<17) + MagicNumber
-}

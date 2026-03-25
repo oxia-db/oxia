@@ -17,7 +17,6 @@ package internal
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -45,10 +44,6 @@ func newStreamWrapper(shard int64, stream proto.OxiaClient_WriteStreamClient) *s
 		"oxia":  "write-stream-handle-response",
 		"shard": fmt.Sprintf("%d", shard),
 	}, sw.handleResponses)
-	go process.DoWithLabels(stream.Context(), map[string]string{
-		"oxia":  "write-stream-handle-stream-closed",
-		"shard": fmt.Sprintf("%d", shard),
-	}, sw.handleStreamClosed)
 	return sw
 }
 
@@ -68,26 +63,16 @@ func (sw *streamWrapper) Send(ctx context.Context, req *proto.WriteRequest) (*pr
 	return f.Wait(ctx)
 }
 
-func (sw *streamWrapper) handleStreamClosed() {
-	<-sw.stream.Context().Done()
-
-	// Fail all pending requests
-	sw.Lock()
-	defer sw.Unlock()
-
-	for _, f := range sw.pendingRequests {
-		f.Fail(io.EOF)
-	}
-	sw.pendingRequests = nil
-	sw.failed.Store(true)
-}
-
 func (sw *streamWrapper) handleResponses() {
 	for {
 		response, err := sw.stream.Recv()
 		sw.Lock()
 
 		if err != nil {
+			for _, f := range sw.pendingRequests {
+				f.Fail(err)
+			}
+			sw.pendingRequests = nil
 			sw.failed.Store(true)
 			sw.Unlock()
 			return

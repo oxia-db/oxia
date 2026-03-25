@@ -166,14 +166,13 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 	return w, nil
 }
 
-func (t *wal) readAtIndex(index int64) (*proto.LogEntry, error) {
+func (t *wal) readAtIndex(index int64) (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
 	t.RLock()
 	defer t.RUnlock()
 
 	timer := t.readLatency.Timer()
 	defer timer.Done()
 
-	var err error
 	var rc object.RefCount[ReadOnlySegment]
 	var segment ReadOnlySegment
 	if index >= t.currentSegment.BaseOffset() {
@@ -181,7 +180,7 @@ func (t *wal) readAtIndex(index int64) (*proto.LogEntry, error) {
 	} else {
 		rc, err = t.readOnlySegments.Get(index)
 		if err != nil {
-			return nil, err
+			return nil, 0, 0, err
 		}
 
 		defer func(rc object.RefCount[ReadOnlySegment]) {
@@ -191,18 +190,18 @@ func (t *wal) readAtIndex(index int64) (*proto.LogEntry, error) {
 	}
 
 	var val []byte
-	if val, err = segment.Read(index); err != nil {
+	if val, previousCrc, entryCrc, err = segment.Read(index); err != nil {
 		t.readErrors.Inc()
-		return nil, err
+		return nil, 0, 0, err
 	}
 
-	entry := &proto.LogEntry{}
+	entry = &proto.LogEntry{}
 	if err = entry.UnmarshalVT(val); err != nil {
 		t.readErrors.Inc()
-		return nil, err
+		return nil, 0, 0, err
 	}
 	t.readBytes.Add(len(val))
-	return entry, err
+	return entry, previousCrc, entryCrc, err
 }
 
 func (t *wal) LastOffset() int64 {
@@ -273,10 +272,16 @@ func (t *wal) Append(entry *proto.LogEntry) error {
 func (t *wal) AppendAsync(entry *proto.LogEntry) error {
 	t.Lock()
 	defer t.Unlock()
-	return t.appendAsync0(entry)
+	return t.appendAsync0(entry, nil)
 }
 
-func (t *wal) appendAsync0(entry *proto.LogEntry) error {
+func (t *wal) AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) error {
+	t.Lock()
+	defer t.Unlock()
+	return t.appendAsync0(entry, previousCrc)
+}
+
+func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 	timer := t.appendLatency.Timer()
 	defer timer.Done()
 
@@ -302,8 +307,13 @@ func (t *wal) appendAsync0(entry *proto.LogEntry) error {
 			return err
 		}
 
+		var lastCrc uint32
+		if previousCrc != nil {
+			lastCrc = *previousCrc
+		}
+
 		if t.currentSegment, err = newReadWriteSegment(t.walPath, entry.Offset, t.segmentSize,
-			0, t.commitOffsetProvider); err != nil {
+			lastCrc, t.commitOffsetProvider); err != nil {
 			t.writeErrors.Inc()
 			return err
 		}
@@ -333,14 +343,17 @@ func (t *wal) appendAsync0(entry *proto.LogEntry) error {
 	return nil
 }
 
-func (t *wal) AppendAndSync(entry *proto.LogEntry, callback func(err error)) {
+func (t *wal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) {
 	t.Lock()
 	defer t.Unlock()
-	if err := t.appendAsync0(entry); err != nil {
-		callback(err)
+	if err := t.appendAsync0(entry, nil); err != nil {
+		callback(0, err)
 		return
 	}
-	t.doSync(callback)
+	entryCrc := t.currentSegment.LastCrc()
+	t.doSync(func(err error) {
+		callback(entryCrc, err)
+	})
 }
 
 func (t *wal) rolloverSegment() error {
@@ -466,7 +479,7 @@ func (t *wal) Clear() error {
 	}
 
 	if t.currentSegment, err = newReadWriteSegment(t.walPath, 0, t.segmentSize,
-		0, t.commitOffsetProvider); err != nil {
+		constant.U32Zero, t.commitOffsetProvider); err != nil {
 		return err
 	}
 
@@ -586,12 +599,12 @@ func (t *wal) recoverWal() error {
 				return err
 			}
 		} else {
-			lastCrc = 0
+			lastCrc = constant.U32Zero
 		}
 	} else {
 		firstSegment = 0
 		lastSegment = 0
-		lastCrc = 0
+		lastCrc = constant.U32Zero
 	}
 
 	if t.currentSegment, err = newReadWriteSegment(t.walPath, lastSegment, t.segmentSize,
