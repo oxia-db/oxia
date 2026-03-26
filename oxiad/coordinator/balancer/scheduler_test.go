@@ -35,12 +35,12 @@ type mockStatusResource struct {
 	status *model.ClusterStatus
 }
 
-func (m *mockStatusResource) Load() *model.ClusterStatus {
-	return m.status
+func (m *mockStatusResource) Load() (*model.ClusterStatus, error) {
+	return m.status, nil
 }
 
-func (m *mockStatusResource) LoadWithVersion() (*model.ClusterStatus, metadata.Version) {
-	return m.status, "0"
+func (m *mockStatusResource) LoadWithVersion() (*model.ClusterStatus, metadata.Version, error) {
+	return m.status, "0", nil
 }
 
 func (m *mockStatusResource) Swap(_ *model.ClusterStatus, _ metadata.Version) (bool, error) {

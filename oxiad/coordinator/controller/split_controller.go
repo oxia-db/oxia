@@ -111,7 +111,11 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 	sc.ctx, sc.cancel = context.WithTimeout(context.Background(), splitTimeout)
 
 	// Load the current split metadata from cluster status
-	status := sc.statusResource.Load()
+	status, err := sc.statusResource.Load()
+	if err != nil {
+		sc.log.Error("Failed to load cluster status", slog.Any("error", err))
+		return sc
+	}
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
 		sc.log.Error("Namespace not found in cluster status")
@@ -202,7 +206,10 @@ func (sc *SplitController) driveStateMachine() error {
 }
 
 func (sc *SplitController) currentPhase() *model.SplitPhase {
-	status := sc.statusResource.Load()
+	status, err := sc.statusResource.Load()
+	if err != nil {
+		return nil
+	}
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
 		return nil
@@ -216,7 +223,10 @@ func (sc *SplitController) currentPhase() *model.SplitPhase {
 
 // updatePhase atomically updates the split phase on both parent and children.
 func (sc *SplitController) updatePhase(newPhase model.SplitPhase) error {
-	status := sc.statusResource.Load()
+	status, err := sc.statusResource.Load()
+	if err != nil {
+		return err
+	}
 	cloned := status.Clone()
 
 	ns := cloned.Namespaces[sc.namespace]
@@ -687,7 +697,10 @@ func (sc *SplitController) loadParentMeta() *model.ShardMetadata {
 }
 
 func (sc *SplitController) loadShardMeta(shardId int64) *model.ShardMetadata {
-	status := sc.statusResource.Load()
+	status, err := sc.statusResource.Load()
+	if err != nil {
+		return nil
+	}
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
 		return nil
@@ -709,7 +722,10 @@ func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *model.Sh
 }
 
 func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *model.ShardMetadata)) error {
-	status := sc.statusResource.Load()
+	status, err := sc.statusResource.Load()
+	if err != nil {
+		return err
+	}
 	cloned := status.Clone()
 	ns := cloned.Namespaces[sc.namespace]
 	if meta, exists := ns.Shards[shardId]; exists {

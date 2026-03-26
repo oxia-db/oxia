@@ -80,7 +80,8 @@ func setupSplitTest(t *testing.T, phase model.SplitPhase) (
 	rpcMock := newMockRpcProvider()
 	metaProvider := metadata.NewMetadataProviderMemory()
 	t.Cleanup(func() { metaProvider.Close() })
-	statusRes := resource.NewStatusResource(metaProvider)
+	statusRes, err := resource.NewStatusResource(metaProvider)
+	assert.NoError(t, err)
 
 	clusterStatus := &model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
@@ -224,7 +225,8 @@ func TestSplitController_FullLifecycle(t *testing.T) {
 	}
 
 	// Verify final state: parent is Deleting, children have no split metadata
-	status := statusRes.Load()
+	status, err := statusRes.Load()
+	assert.NoError(t, err)
 	ns := status.Namespaces[constant.DefaultNamespace]
 
 	parentMeta, parentExists := ns.Shards[0]
@@ -272,7 +274,8 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 
 	// For CatchUp, we need child leaders to already be set (they were set during bootstrap)
 	// Update child metadata to have leaders
-	status := statusRes.Load()
+	status, err := statusRes.Load()
+	assert.NoError(t, err)
 	cloned := status.Clone()
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 	leftMeta := ns.Shards[1]
@@ -325,7 +328,8 @@ func TestSplitController_PhaseTransitions(t *testing.T) {
 	select {
 	case <-listener.completions:
 		// Verify final state: parent marked Deleting, children elected
-		status := statusRes.Load()
+		status, err := statusRes.Load()
+		assert.NoError(t, err)
 		ns := status.Namespaces[constant.DefaultNamespace]
 
 		parentMeta := ns.Shards[0]
@@ -370,7 +374,7 @@ func TestSplitController_TimeoutDuringBootstrap(t *testing.T) {
 	}
 
 	// Verify: parent.Split cleared, children deleted
-	status := statusRes.Load()
+	status, _ := statusRes.Load()
 	ns := status.Namespaces[constant.DefaultNamespace]
 
 	parentMeta, parentExists := ns.Shards[0]
@@ -388,7 +392,7 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
-	status := statusRes.Load()
+	status, _ := statusRes.Load()
 	cloned := status.Clone()
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -433,7 +437,7 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	}
 
 	// Verify: parent restored, children deleted
-	finalStatus := statusRes.Load()
+	finalStatus, _ := statusRes.Load()
 	finalNs := finalStatus.Namespaces[constant.DefaultNamespace]
 
 	pm, exists := finalNs.Shards[0]
@@ -450,7 +454,7 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
 
 	// Set child leaders and ParentTermAtBootstrap = 5
-	status := statusRes.Load()
+	status, _ := statusRes.Load()
 	cloned := status.Clone()
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -658,7 +662,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
-	status := statusRes.Load()
+	status, _ := statusRes.Load()
 	cloned := status.Clone()
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -707,7 +711,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	}
 
 	// Verify: parent restored, children deleted
-	finalStatus := statusRes.Load()
+	finalStatus, _ := statusRes.Load()
 	finalNs := finalStatus.Namespaces[constant.DefaultNamespace]
 
 	pm, exists := finalNs.Shards[0]
@@ -724,7 +728,7 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
-	status := statusRes.Load()
+	status, _ := statusRes.Load()
 	cloned := status.Clone()
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -779,7 +783,7 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	}
 
 	// Verify: parent restored, children deleted
-	finalStatus := statusRes.Load()
+	finalStatus, _ := statusRes.Load()
 	finalNs := finalStatus.Namespaces[constant.DefaultNamespace]
 
 	pm, exists := finalNs.Shards[0]
@@ -797,7 +801,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 
 	// Set child leaders and ParentTermAtBootstrap as if Bootstrap completed.
 	// Also set ChildLeadersAtBootstrap with the ORIGINAL leaders.
-	status := statusRes.Load()
+	status, _ := statusRes.Load()
 	cloned := status.Clone()
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -874,7 +878,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	}
 
 	// Verify parent is Deleting and children are healthy
-	finalStatus := statusRes.Load()
+	finalStatus, _ := statusRes.Load()
 	finalNs := finalStatus.Namespaces[constant.DefaultNamespace]
 
 	pm := finalNs.Shards[0]

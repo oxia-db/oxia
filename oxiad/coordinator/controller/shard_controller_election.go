@@ -224,9 +224,13 @@ func (*ShardElection) waitForMajority(ch chan struct {
 func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto.EntryId) (
 	leader model.Server, followers map[model.Server]*proto.EntryId, err error) {
 	candidates := chooseCandidates(candidatesStatus)
+	cs, err := e.statusResource.Load()
+	if err != nil {
+		return model.Server{}, nil, err
+	}
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Status:     e.statusResource.Load(),
+		Status:     cs,
 	})
 	if err != nil {
 		return model.Server{}, nil, err

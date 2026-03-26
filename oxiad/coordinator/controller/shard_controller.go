@@ -262,7 +262,10 @@ func (s *shardController) waitForSplitComplete() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			status := s.statusResource.Load()
+			status, err := s.statusResource.Load()
+			if err != nil {
+				continue
+			}
 			ns, exists := status.Namespaces[s.namespace]
 			if !exists {
 				continue
