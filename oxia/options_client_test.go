@@ -15,6 +15,7 @@
 package oxia
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,10 +26,10 @@ type mockResolver struct {
 	scheme string
 }
 
-func (r *mockResolver) Scheme() string         { return r.scheme }
-func (r *mockResolver) Start(_ AddressUpdater) {}
-func (r *mockResolver) ResolveNow()            {}
-func (r *mockResolver) Close()                 {}
+func (r *mockResolver) Scheme() string                              { return r.scheme }
+func (r *mockResolver) Start(_ context.Context, _ AddressUpdater)   {}
+func (r *mockResolver) ResolveNow()                                 {}
+func (r *mockResolver) Close()                                      {}
 
 func TestWithDialResolver(t *testing.T) {
 	r := &mockResolver{scheme: "test"}

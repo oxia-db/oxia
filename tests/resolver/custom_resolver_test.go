@@ -40,8 +40,8 @@ type staticResolver struct {
 
 func (r *staticResolver) Scheme() string { return r.scheme }
 
-func (r *staticResolver) Start(updater oxia.AddressUpdater) {
-	updater([]string{r.target})
+func (r *staticResolver) Start(_ context.Context, updater oxia.AddressUpdater) {
+	_ = updater([]string{r.target})
 }
 
 func (r *staticResolver) ResolveNow() {}
@@ -60,11 +60,11 @@ type dynamicResolver struct {
 
 func (r *dynamicResolver) Scheme() string { return r.scheme }
 
-func (r *dynamicResolver) Start(updater oxia.AddressUpdater) {
+func (r *dynamicResolver) Start(_ context.Context, updater oxia.AddressUpdater) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.updater = updater
-	updater(r.targets)
+	_ = updater(r.targets)
 }
 
 // UpdateTargets pushes a new set of addresses to the client.
@@ -73,7 +73,7 @@ func (r *dynamicResolver) UpdateTargets(targets []string) {
 	defer r.mu.Unlock()
 	r.targets = targets
 	if r.updater != nil {
-		r.updater(targets)
+		_ = r.updater(targets)
 	}
 }
 

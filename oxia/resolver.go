@@ -15,6 +15,8 @@
 package oxia
 
 import (
+	"context"
+
 	"google.golang.org/grpc/resolver"
 )
 
@@ -33,7 +35,10 @@ type ServiceResolver interface {
 	// Start begins resolving. The updater function must be called with
 	// the current set of addresses whenever the resolved set changes.
 	// Start should call updater at least once before returning.
-	Start(updater AddressUpdater)
+	//
+	// The context is cancelled when the resolver is closed; long-running
+	// operations (DNS watches, API calls) should respect it.
+	Start(ctx context.Context, updater AddressUpdater)
 
 	// ResolveNow is a hint that the caller would like the resolver to
 	// re-resolve immediately. It may be ignored by the implementation.
@@ -45,7 +50,13 @@ type ServiceResolver interface {
 
 // AddressUpdater is a callback that the ServiceResolver uses to push
 // updated addresses to the underlying transport.
-type AddressUpdater func(addresses []string)
+//
+// If an error is returned, the resolver should try to resolve the
+// target again. The resolver should use a backoff timer to prevent
+// overloading the server with requests. If a resolver is certain that
+// reresolving will not change the result, e.g. because it is
+// a watch-based resolver, returned errors can be ignored.
+type AddressUpdater func(addresses []string) error
 
 // WithDialResolver configures the client to use a custom ServiceResolver
 // for discovering server addresses. The service address passed to
@@ -87,17 +98,20 @@ func (b *grpcResolverBuilder) Scheme() string {
 }
 
 type grpcResolver struct {
-	sr ServiceResolver
-	cc resolver.ClientConn
+	sr     ServiceResolver
+	cc     resolver.ClientConn
+	cancel context.CancelFunc
 }
 
 func (r *grpcResolver) start() {
-	r.sr.Start(func(addresses []string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
+	r.sr.Start(ctx, func(addresses []string) error {
 		addrs := make([]resolver.Address, len(addresses))
 		for i, addr := range addresses {
 			addrs[i] = resolver.Address{Addr: addr}
 		}
-		_ = r.cc.UpdateState(resolver.State{Addresses: addrs})
+		return r.cc.UpdateState(resolver.State{Addresses: addrs})
 	})
 }
 
@@ -106,5 +120,6 @@ func (r *grpcResolver) ResolveNow(_ resolver.ResolveNowOptions) {
 }
 
 func (r *grpcResolver) Close() {
+	r.cancel()
 	r.sr.Close()
 }
