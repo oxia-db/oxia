@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,6 +47,39 @@ func (r *staticResolver) Start(updater oxia.AddressUpdater) {
 func (r *staticResolver) ResolveNow() {}
 
 func (r *staticResolver) Close() {}
+
+// dynamicResolver demonstrates a resolver that can update its target
+// address after creation. This simulates service-discovery systems where
+// the set of backends changes over time (e.g. rolling deploys, failovers).
+type dynamicResolver struct {
+	scheme  string
+	mu      sync.Mutex
+	targets []string
+	updater oxia.AddressUpdater
+}
+
+func (r *dynamicResolver) Scheme() string { return r.scheme }
+
+func (r *dynamicResolver) Start(updater oxia.AddressUpdater) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.updater = updater
+	updater(r.targets)
+}
+
+// UpdateTargets pushes a new set of addresses to the client.
+func (r *dynamicResolver) UpdateTargets(targets []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.targets = targets
+	if r.updater != nil {
+		r.updater(targets)
+	}
+}
+
+func (r *dynamicResolver) ResolveNow() {}
+
+func (r *dynamicResolver) Close() {}
 
 func newStandaloneServer(t *testing.T) *dataserver.Standalone {
 	t.Helper()
@@ -88,4 +122,49 @@ func TestCustomResolver(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/resolver-test", key)
 	assert.Equal(t, []byte("hello"), value)
+}
+
+func TestDynamicResolver(t *testing.T) {
+	// Start two servers to simulate a failover scenario.
+	server1 := newStandaloneServer(t)
+	server2 := newStandaloneServer(t)
+	addr1 := server1.ServiceAddr()
+	addr2 := server2.ServiceAddr()
+
+	dr := &dynamicResolver{
+		scheme:  fmt.Sprintf("oxia-dyn-%d", os.Getpid()),
+		targets: []string{addr1},
+	}
+
+	// Client initially connects to server1 via the dynamic resolver.
+	client, err := oxia.NewSyncClient(
+		fmt.Sprintf("%s:///%s", dr.scheme, addr1),
+		oxia.WithDialResolver(dr),
+		oxia.WithRequestTimeout(10*time.Second),
+	)
+	require.NoError(t, err)
+	defer client.Close()
+
+	ctx := context.Background()
+
+	// Write through server1.
+	_, _, err = client.Put(ctx, "/dyn-test", []byte("from-server1"))
+	require.NoError(t, err)
+
+	key, value, _, err := client.Get(ctx, "/dyn-test")
+	require.NoError(t, err)
+	assert.Equal(t, "/dyn-test", key)
+	assert.Equal(t, []byte("from-server1"), value)
+
+	// Simulate failover: update the resolver to point to server2.
+	dr.UpdateTargets([]string{addr2})
+
+	// Write through server2.
+	_, _, err = client.Put(ctx, "/dyn-test-2", []byte("from-server2"))
+	require.NoError(t, err)
+
+	key, value, _, err = client.Get(ctx, "/dyn-test-2")
+	require.NoError(t, err)
+	assert.Equal(t, "/dyn-test-2", key)
+	assert.Equal(t, []byte("from-server2"), value)
 }
