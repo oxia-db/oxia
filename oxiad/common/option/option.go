@@ -62,8 +62,8 @@ func (*MetricOptions) Validate() error {
 }
 
 const (
-	LogFormatText = "text"
-	LogFormatJSON = "json"
+	LogFormatText    = "text"
+	LogFormatJSON    = "json"
 	DefaultLogFormat = LogFormatText
 )
 
