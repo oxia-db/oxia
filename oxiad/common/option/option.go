@@ -72,7 +72,7 @@ type LogOptions struct {
 	Format string `yaml:"format,omitempty" json:"format,omitempty" jsonschema:"description=Log format (text or json),example=text,default=text,enum=text,enum=json"`
 }
 
-func (lo *LogOptions) WithDefault() {
+func (*LogOptions) WithDefault() {
 }
 
 func (*LogOptions) Validate() error {

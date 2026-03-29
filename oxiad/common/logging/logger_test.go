@@ -48,9 +48,30 @@ func TestReconfigureLogger_DynamicLevelChange(t *testing.T) {
 
 func TestReconfigureLogger_NoChangeReturnsFalse(t *testing.T) {
 	LogLevel = slog.LevelInfo
-	LogJSON = true
 	ConfigureLogger()
 
 	changed := ReconfigureLogger(&option.LogOptions{Level: "info"})
 	assert.False(t, changed)
+}
+
+func TestReconfigureLogger_EmptyLevelDefaultsToInfo(t *testing.T) {
+	LogLevel = slog.LevelDebug
+	ConfigureLogger()
+
+	// Empty level defaults to info via ParseLogLevel fallback
+	changed := ReconfigureLogger(&option.LogOptions{})
+	assert.True(t, changed)
+	assert.Equal(t, slog.LevelInfo, LogLevel)
+}
+
+func TestReconfigureLogger_OnlyUpdatesLevel(t *testing.T) {
+	LogLevel = slog.LevelInfo
+	LogJSON = true
+	ConfigureLogger()
+
+	// ReconfigureLogger should only change level, not format
+	changed := ReconfigureLogger(&option.LogOptions{Level: "debug"})
+	assert.True(t, changed)
+	assert.Equal(t, slog.LevelDebug, LogLevel)
+	assert.True(t, LogJSON) // format unchanged
 }

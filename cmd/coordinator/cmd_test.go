@@ -64,6 +64,7 @@ observability:
     bindAddress: "0.0.0.0:9090"
   log:
     level: "debug"
+    format: "json"
 `
 
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
@@ -97,6 +98,32 @@ observability:
 
 	assert.Equal(t, "0.0.0.0:9090", opts.Observability.Metric.BindAddress)
 	assert.Equal(t, "debug", opts.Observability.Log.Level)
+	assert.Equal(t, "json", opts.Observability.Log.Format)
+}
+
+func TestCoordinator_ConfigurationLogFormatNotConfigured(t *testing.T) {
+	// When config file doesn't set format, it should remain empty
+	// so CLI --log-json flag is preserved
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+metadata:
+  providerName: "file"
+observability:
+  log:
+    level: "debug"
+`
+
+	err := os.WriteFile(configPath, []byte(configContent), 0644)
+	require.NoError(t, err)
+
+	opts := option.NewDefaultOptions()
+	err = codec.TryReadAndInitConf(configPath, opts)
+	require.NoError(t, err)
+
+	assert.Equal(t, "debug", opts.Observability.Log.Level)
+	assert.Empty(t, opts.Observability.Log.Format) // not defaulted, CLI preserved
 }
 
 func TestCoordinator_ConfigurationWithDefaults(t *testing.T) {
