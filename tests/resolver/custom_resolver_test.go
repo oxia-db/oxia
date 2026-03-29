@@ -40,13 +40,10 @@ type staticResolver struct {
 
 func (r *staticResolver) Scheme() string { return r.scheme }
 
-func (r *staticResolver) Start(_ context.Context, updater oxia.AddressUpdater) {
+func (r *staticResolver) Resolve(_ string, updater oxia.AddressUpdater) {
 	_ = updater([]string{r.target})
 }
 
-func (r *staticResolver) ResolveNow() {}
-
-func (r *staticResolver) Close() {}
 
 // dynamicResolver demonstrates a resolver that can update its target
 // address after creation. This simulates service-discovery systems where
@@ -60,7 +57,7 @@ type dynamicResolver struct {
 
 func (r *dynamicResolver) Scheme() string { return r.scheme }
 
-func (r *dynamicResolver) Start(_ context.Context, updater oxia.AddressUpdater) {
+func (r *dynamicResolver) Resolve(_ string, updater oxia.AddressUpdater) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.updater = updater
@@ -77,9 +74,6 @@ func (r *dynamicResolver) UpdateTargets(targets []string) {
 	}
 }
 
-func (r *dynamicResolver) ResolveNow() {}
-
-func (r *dynamicResolver) Close() {}
 
 func newStandaloneServer(t *testing.T) *dataserver.Standalone {
 	t.Helper()
@@ -96,8 +90,9 @@ func TestCustomResolver(t *testing.T) {
 	actualAddr := server.ServiceAddr()
 
 	// Create a custom resolver that maps the custom scheme to the actual
-	// server address. The authority (path) in the URI must be the real
-	// address so the standalone server returns it as the shard leader.
+	// server address. In the URI form used below ("%s:///%s"), the path
+	// component after the "///" encodes the real address so the standalone
+	// server can return it as the shard leader.
 	sr := &staticResolver{
 		scheme: fmt.Sprintf("oxia-test-%d", os.Getpid()),
 		target: actualAddr,

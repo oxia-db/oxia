@@ -15,8 +15,6 @@
 package oxia
 
 import (
-	"context"
-
 	"google.golang.org/grpc/resolver"
 )
 
@@ -26,26 +24,29 @@ import (
 //
 // The resolver is given an AddressUpdater when it is started. It should
 // call the updater whenever the set of addresses changes.
+//
+// Lifecycle: a single ServiceResolver instance may be shared across
+// multiple gRPC connections. Start may be called more than once (and
+// potentially concurrently). Implementations must be safe for
+// concurrent use. The caller owns the resolver's lifecycle.
 type ServiceResolver interface {
 	// Scheme returns the URI scheme handled by this resolver (e.g.
 	// "k8s", "consul"). The service address passed to NewSyncClient /
 	// NewAsyncClient must use this scheme (e.g. "k8s:///my-service").
 	Scheme() string
 
-	// Start begins resolving. The updater function must be called with
-	// the current set of addresses whenever the resolved set changes.
-	// Start should call updater at least once before returning.
+	// Resolve begins resolving the given endpoint. The endpoint is
+	// extracted from the dial target URI (e.g. for "k8s:///my-service",
+	// endpoint is "my-service"). Resolve is called for each new
+	// connection, including connections to shard leaders.
 	//
-	// The context is cancelled when the resolver is closed; long-running
-	// operations (DNS watches, API calls) should respect it.
-	Start(ctx context.Context, updater AddressUpdater)
-
-	// ResolveNow is a hint that the caller would like the resolver to
-	// re-resolve immediately. It may be ignored by the implementation.
-	ResolveNow()
-
-	// Close stops the resolver and releases any resources.
-	Close()
+	// Resolve must return promptly. Long-running operations (DNS
+	// watches, API polling) should be launched in a separate goroutine.
+	//
+	// The updater function must be called at least once (either before
+	// Resolve returns or shortly after in a background goroutine) with
+	// the current set of addresses, and again whenever the set changes.
+	Resolve(endpoint string, updater AddressUpdater)
 }
 
 // AddressUpdater is a callback that the ServiceResolver uses to push
@@ -84,42 +85,29 @@ type grpcResolverBuilder struct {
 }
 
 func (b *grpcResolverBuilder) Build(
-	_ resolver.Target,
+	target resolver.Target,
 	cc resolver.ClientConn,
 	_ resolver.BuildOptions,
 ) (resolver.Resolver, error) {
-	r := &grpcResolver{sr: b.sr, cc: cc}
-	r.start()
-	return r, nil
+	b.sr.Resolve(target.Endpoint(), func(addresses []string) error {
+		addrs := make([]resolver.Address, len(addresses))
+		for i, addr := range addresses {
+			addrs[i] = resolver.Address{Addr: addr}
+		}
+		return cc.UpdateState(resolver.State{Addresses: addrs})
+	})
+	return &grpcResolver{}, nil
 }
 
 func (b *grpcResolverBuilder) Scheme() string {
 	return b.sr.Scheme()
 }
 
-type grpcResolver struct {
-	sr     ServiceResolver
-	cc     resolver.ClientConn
-	cancel context.CancelFunc
-}
+// grpcResolver is a no-op resolver that satisfies the gRPC interface.
+// All address updates are pushed by the ServiceResolver via the updater
+// callback set up in Build.
+type grpcResolver struct{}
 
-func (r *grpcResolver) start() {
-	ctx, cancel := context.WithCancel(context.Background())
-	r.cancel = cancel
-	r.sr.Start(ctx, func(addresses []string) error {
-		addrs := make([]resolver.Address, len(addresses))
-		for i, addr := range addresses {
-			addrs[i] = resolver.Address{Addr: addr}
-		}
-		return r.cc.UpdateState(resolver.State{Addresses: addrs})
-	})
-}
+func (*grpcResolver) ResolveNow(_ resolver.ResolveNowOptions) {}
 
-func (r *grpcResolver) ResolveNow(_ resolver.ResolveNowOptions) {
-	r.sr.ResolveNow()
-}
-
-func (r *grpcResolver) Close() {
-	r.cancel()
-	r.sr.Close()
-}
+func (*grpcResolver) Close() {}
