@@ -28,6 +28,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
@@ -99,6 +100,8 @@ func exec(cmd *cobra.Command, _ []string) {
 			if err := codec.TryReadAndInitConf(sconfFile, coordinatorOptions); err != nil {
 				return nil, err
 			}
+			logging.LogJSON = coordinatorOptions.Observability.Log.Format == "json"
+			logging.ConfigureLogger()
 			// start listener
 			v := viper.New()
 			v.SetConfigFile(sconfFile)

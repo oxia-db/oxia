@@ -34,6 +34,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
@@ -123,6 +124,8 @@ func exec(cmd *cobra.Command, _ []string) {
 			if err := codec.TryReadAndInitConf(sconfFile, dataServerOptions); err != nil {
 				return nil, err
 			}
+			logging.LogJSON = dataServerOptions.Observability.Log.Format == "json"
+			logging.ConfigureLogger()
 			// start listener
 			v := viper.New()
 			v.SetConfigFile(sconfFile)
