@@ -44,7 +44,6 @@ func (r *staticResolver) Resolve(_ string, updater oxia.AddressUpdater) {
 	_ = updater([]string{r.target})
 }
 
-
 // dynamicResolver demonstrates a resolver that can update its target
 // address after creation. This simulates service-discovery systems where
 // the set of backends changes over time (e.g. rolling deploys, failovers).
@@ -73,7 +72,6 @@ func (r *dynamicResolver) UpdateTargets(targets []string) {
 		_ = r.updater(targets)
 	}
 }
-
 
 func newStandaloneServer(t *testing.T) *dataserver.Standalone {
 	t.Helper()
