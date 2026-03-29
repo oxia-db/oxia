@@ -59,7 +59,6 @@ func (l LogLevelError) Error() string {
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&logLevelStr, "log-level", "l", logging.DefaultLogLevel.String(), "Set logging level [debug|info|warn|error]")
-	rootCmd.PersistentFlags().BoolVarP(&logging.LogJSON, "log-json", "j", false, "Print logs in JSON format")
 	rootCmd.PersistentFlags().BoolVar(&process.PprofEnable, "profile", false, "Enable pprof profiler")
 	rootCmd.PersistentFlags().StringVar(&process.PprofBindAddress, "profile-bind-address", "127.0.0.1:6060", "Bind address for pprof")
 

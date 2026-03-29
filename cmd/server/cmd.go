@@ -52,6 +52,7 @@ var (
 func init() {
 	Cmd.Flags().SortFlags = false
 	Cmd.Flags().StringVar(&sconfFile, "sconfig", "", "server config file path")
+	Cmd.Flags().StringVar(&dataServerOptions.Observability.Log.Format, "log-format", oxiadcommonoption.DefaultLogFormat, "Log output format [text|json]")
 
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultPublicPort), "Public service bind address")
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
@@ -124,8 +125,6 @@ func exec(cmd *cobra.Command, _ []string) {
 			if err := codec.TryReadAndInitConf(sconfFile, dataServerOptions); err != nil {
 				return nil, err
 			}
-			logging.LogJSON = dataServerOptions.Observability.Log.Format == "json"
-			logging.ConfigureLogger()
 			// start listener
 			v := viper.New()
 			v.SetConfigFile(sconfFile)
@@ -148,6 +147,9 @@ func exec(cmd *cobra.Command, _ []string) {
 				return nil, err
 			}
 		}
+
+		logging.LogJSON = dataServerOptions.Observability.Log.Format == "json"
+		logging.ConfigureLogger()
 
 		return dataserver.New(context.Background(), watchableOptions)
 	})
