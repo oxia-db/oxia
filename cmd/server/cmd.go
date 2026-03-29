@@ -34,6 +34,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
@@ -139,6 +140,13 @@ func exec(cmd *cobra.Command, _ []string) {
 				watchableOptions.Notify(temporaryOptions)
 			})
 			v.WatchConfig()
+
+			logOptions := &dataServerOptions.Observability.Log
+			logging.ReconfigureLogger(logOptions)
+			if logOptions.Format != "" {
+				logging.LogJSON = logOptions.Format == oxiadcommonoption.LogFormatJSON
+				logging.ConfigureLogger()
+			}
 		default:
 			dataServerOptions.WithDefault()
 			if err := dataServerOptions.Validate(); err != nil {

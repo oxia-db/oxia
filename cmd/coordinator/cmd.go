@@ -28,6 +28,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/common/logging"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
@@ -115,12 +116,20 @@ func exec(cmd *cobra.Command, _ []string) {
 				watchableOptions.Notify(temporaryOptions)
 			})
 			v.WatchConfig()
+
+			logOptions := &coordinatorOptions.Observability.Log
+			logging.ReconfigureLogger(logOptions)
+			if logOptions.Format != "" {
+				logging.LogJSON = logOptions.Format == oxiadcommonoption.LogFormatJSON
+				logging.ConfigureLogger()
+			}
 		} else {
 			coordinatorOptions.WithDefault()
 			if err := coordinatorOptions.Validate(); err != nil {
 				return nil, err
 			}
 		}
+
 		return coordinator.NewGrpcServer(context.Background(), watchableOptions)
 	})
 }
