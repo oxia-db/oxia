@@ -64,13 +64,19 @@ func (*MetricOptions) Validate() error {
 	return nil
 }
 
+const DefaultLogFormat = "text"
+
 type LogOptions struct {
-	Level string `yaml:"level,omitempty" json:"level,omitempty" jsonschema:"description=Log level,example=info,default=info"`
+	Level  string `yaml:"level,omitempty" json:"level,omitempty" jsonschema:"description=Log level,example=info,default=info"`
+	Format string `yaml:"format,omitempty" json:"format,omitempty" jsonschema:"description=Log format (text or json),example=text,default=text,enum=text,enum=json"`
 }
 
 func (lo *LogOptions) WithDefault() {
 	if lo.Level == "" {
 		lo.Level = DefaultLogLevel
+	}
+	if lo.Format == "" {
+		lo.Format = DefaultLogFormat
 	}
 }
 

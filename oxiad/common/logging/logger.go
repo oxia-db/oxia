@@ -63,13 +63,23 @@ func ParseLogLevel(levelStr string) (slog.Level, error) {
 }
 
 func ReconfigureLogger(logOption *option.LogOptions) bool {
+	changed := false
+
 	expectLevel, _ := ParseLogLevel(logOption.Level)
-	if expectLevel == LogLevel {
-		return false
+	if expectLevel != LogLevel {
+		LogLevel = expectLevel
+		logLevelVar.Set(expectLevel)
+		changed = true
 	}
-	LogLevel = expectLevel
-	logLevelVar.Set(expectLevel)
-	return true
+
+	expectJSON := logOption.Format == "json"
+	if expectJSON != LogJSON {
+		LogJSON = expectJSON
+		ConfigureLogger()
+		changed = true
+	}
+
+	return changed
 }
 
 func ConfigureLogger() {

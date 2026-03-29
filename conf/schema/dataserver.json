@@ -76,6 +76,18 @@
           "examples": [
             "info"
           ]
+        },
+        "format": {
+          "type": "string",
+          "description": "Log format (text or json)",
+          "default": "text",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "examples": [
+            "text"
+          ]
         }
       },
       "additionalProperties": false,

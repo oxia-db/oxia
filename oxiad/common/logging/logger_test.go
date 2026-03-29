@@ -39,7 +39,7 @@ func TestReconfigureLogger_DynamicLevelChange(t *testing.T) {
 	assert.True(t, derivedLogger.Enabled(context.Background(), slog.LevelInfo))
 
 	// Reconfigure to DEBUG level
-	changed := ReconfigureLogger(&option.LogOptions{Level: "debug"})
+	changed := ReconfigureLogger(&option.LogOptions{Level: "debug", Format: "json"})
 	assert.True(t, changed)
 
 	// The derived logger (created before reconfigure) should now enable DEBUG
@@ -51,6 +51,20 @@ func TestReconfigureLogger_NoChangeReturnsFalse(t *testing.T) {
 	LogJSON = true
 	ConfigureLogger()
 
-	changed := ReconfigureLogger(&option.LogOptions{Level: "info"})
+	changed := ReconfigureLogger(&option.LogOptions{Level: "info", Format: "json"})
 	assert.False(t, changed)
+}
+
+func TestReconfigureLogger_FormatChange(t *testing.T) {
+	LogLevel = slog.LevelInfo
+	LogJSON = false
+	ConfigureLogger()
+
+	changed := ReconfigureLogger(&option.LogOptions{Level: "info", Format: "json"})
+	assert.True(t, changed)
+	assert.True(t, LogJSON)
+
+	changed = ReconfigureLogger(&option.LogOptions{Level: "info", Format: "text"})
+	assert.True(t, changed)
+	assert.False(t, LogJSON)
 }
