@@ -25,7 +25,7 @@ type mockResolver struct {
 	scheme string
 }
 
-func (r *mockResolver) Scheme() string         { return r.scheme }
+func (r *mockResolver) Scheme() string                     { return r.scheme }
 func (r *mockResolver) Resolve(_ string, _ AddressUpdater) {}
 
 func TestWithDialResolver(t *testing.T) {
