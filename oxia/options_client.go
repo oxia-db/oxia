@@ -67,6 +67,7 @@ type clientOptions struct {
 	authentication         auth.Authentication
 	sessionKeepAliveTicker time.Duration
 	failureInjection       *hashset.Set[Failure]
+	resolver               ServiceResolver
 }
 
 func defaultIdentity() string {
