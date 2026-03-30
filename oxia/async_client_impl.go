@@ -26,6 +26,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
@@ -72,7 +73,11 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		return nil, err
 	}
 
-	clientPool := rpc.NewClientPool(options.tls, options.authentication)
+	var grpcDialOptions []grpc.DialOption
+	if options.resolver != nil {
+		grpcDialOptions = append(grpcDialOptions, grpc.WithResolvers(&grpcResolverBuilder{sr: options.resolver}))
+	}
+	clientPool := rpc.NewClientPool(options.tls, options.authentication, grpcDialOptions...)
 
 	var shardManager internal.ShardManager
 	if options.failureInjection.Contains(DizzyShardManager) {
