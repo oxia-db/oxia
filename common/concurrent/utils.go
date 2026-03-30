@@ -15,7 +15,7 @@
 package concurrent
 
 import (
-	"github.com/oxia-db/oxia/oxiad/common/entity"
+	"github.com/oxia-db/oxia/common/entity"
 )
 
 func ReadFromStreamCallback[T any](ch chan *entity.TWithError[T]) StreamCallback[T] {

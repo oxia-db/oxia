@@ -22,10 +22,9 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/option"
-
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/security"
 )
 
 const rpcTimeout = 30 * time.Second
@@ -49,8 +48,8 @@ type replicationRpcProvider struct {
 	pool ClientPool
 }
 
-func NewReplicationRpcProvider(options *option.ReplicationOptions) (ReplicationRpcProvider, error) {
-	tlsConf, err := options.TLS.TryIntoClientTLSConf()
+func NewReplicationRpcProvider(tlsOptions *security.TLSOptions) (ReplicationRpcProvider, error) {
+	tlsConf, err := tlsOptions.TryIntoClientTLSConf()
 	if err != nil {
 		return nil, err
 	}
