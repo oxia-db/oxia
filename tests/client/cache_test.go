@@ -278,7 +278,7 @@ func TestCache_GetNotFoundTwice(t *testing.T) {
 	assert.Equal(t, testStruct{}, value)
 
 	// Wait for ristretto to commit the async Set
-	cache.WaitForCommit()
+	cache.Sync()
 
 	// Second Get: served from ristretto cache. Before the fix, this panicked with:
 	//   interface conversion: *oxia.optional[cachedResult[...]] is not cachedResult[...]:
@@ -313,7 +313,7 @@ func TestCache_GetNotFoundThenPut(t *testing.T) {
 	_, _, err = cache.Get(context.Background(), key)
 	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
 
-	cache.WaitForCommit()
+	cache.Sync()
 
 	// Verify it's still not found from the cache
 	_, _, err = cache.Get(context.Background(), key)
