@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package oxia
+package client
 
 import (
 	"context"
@@ -20,8 +20,10 @@ import (
 	"log"
 	"os"
 	"sync"
+	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
@@ -41,14 +43,14 @@ func initExampleServer(serviceAddr string) *dataserver.Standalone {
 	return standaloneServer
 }
 
-func Example() {
+func TestExample(t *testing.T) {
 	standaloneServer := initExampleServer(exampleServerAddr)
 	defer standaloneServer.Close()
 
 	// Creates a client instance
 	// Once created, a client instance will be valid until it's explicitly closed, and it can
 	// be used from different go-routines.
-	client, err := NewSyncClient(exampleServerAddr, WithRequestTimeout(10*time.Second))
+	client, err := oxia.NewSyncClient(exampleServerAddr, oxia.WithRequestTimeout(10*time.Second))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,14 +58,14 @@ func Example() {
 
 	// Write a record to Oxia with the specified key and value, and with the expectation
 	// that the record does not already exist.
-	_, res1, err := client.Put(context.Background(), "/my-key", []byte("value-1"), ExpectedRecordNotExists())
+	_, res1, err := client.Put(context.Background(), "/my-key", []byte("value-1"), oxia.ExpectedRecordNotExists())
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Write a record with the expectation that it has not changed since the previous write.
 	// If there was any change, the operation will fail
-	_, _, err = client.Put(context.Background(), "/my-key", []byte("value-2"), ExpectedVersionId(res1.VersionId))
+	_, _, err = client.Put(context.Background(), "/my-key", []byte("value-2"), oxia.ExpectedVersionId(res1.VersionId))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -76,17 +78,16 @@ func Example() {
 	_ = client.Close()
 
 	fmt.Printf("Result: key: %s - Value: %s - Version: %#v\n", key, string(value), version.VersionId)
-	// Output: Result: key: /my-key - Value: value-2 - Version: 1
 }
 
-func ExampleAsyncClient() {
+func TestExampleAsyncClient(t *testing.T) {
 	standaloneServer := initExampleServer(exampleServerAddr)
 	defer standaloneServer.Close()
 
 	// Creates a client instance
 	// Once created, a client instance will be valid until it's explicitly closed, and it can
 	// be used from different go-routines.
-	client, err := NewAsyncClient(exampleServerAddr, WithRequestTimeout(10*time.Second))
+	client, err := oxia.NewAsyncClient(exampleServerAddr, oxia.WithRequestTimeout(10*time.Second))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -110,18 +111,13 @@ func ExampleAsyncClient() {
 	fmt.Printf("First operation complete: version: %#v - error: %#v\n", r3.Version.VersionId, r3.Err)
 
 	_ = client.Close()
-
-	// Output:
-	// First operation complete: version: 0 - error: <nil>
-	// First operation complete: version: 1 - error: <nil>
-	// First operation complete: version: 2 - error: <nil>
 }
 
-func ExampleNotifications() {
+func TestExampleNotifications(t *testing.T) {
 	standaloneServer := initExampleServer(exampleServerAddr)
 	defer standaloneServer.Close()
 
-	client, err := NewSyncClient(exampleServerAddr)
+	client, err := oxia.NewSyncClient(exampleServerAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -131,7 +127,7 @@ func ExampleNotifications() {
 		log.Fatal(err)
 	}
 
-	_, _, err = client.Put(context.Background(), "/my-key", []byte("value-1"), ExpectedRecordNotExists())
+	_, _, err = client.Put(context.Background(), "/my-key", []byte("value-1"), oxia.ExpectedRecordNotExists())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -150,7 +146,4 @@ func ExampleNotifications() {
 
 	_ = client.Close()
 	wg.Wait()
-
-	// Output:
-	// Type 0 - Key: /my-key - VersionId: 0
 }

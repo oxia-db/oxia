@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package oxia
+package client
 
 import (
 	"context"
@@ -25,9 +25,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver"
-
+	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
 func init() {
@@ -35,29 +35,33 @@ func init() {
 	logging.ConfigureLogger()
 }
 
+func newKey() string {
+	return fmt.Sprintf("/my-key-%d", time.Now().Nanosecond())
+}
+
 func TestAsyncClientImpl(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	client, err := NewAsyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
 	assert.NoError(t, err)
 
-	putResultA := <-client.Put("/a", []byte{0}, ExpectedRecordNotExists())
+	putResultA := <-client.Put("/a", []byte{0}, oxia.ExpectedRecordNotExists())
 	assert.EqualValues(t, 0, putResultA.Version.VersionId)
 	assert.EqualValues(t, 0, putResultA.Version.ModificationsCount)
 
 	getResult := <-client.Get("/a")
-	assert.Equal(t, GetResult{
+	assert.Equal(t, oxia.GetResult{
 		Key:     "/a",
 		Value:   []byte{0},
 		Version: putResultA.Version,
 	}, getResult)
 
-	putResultC1 := <-client.Put("/c", []byte{0}, ExpectedRecordNotExists())
+	putResultC1 := <-client.Put("/c", []byte{0}, oxia.ExpectedRecordNotExists())
 	assert.EqualValues(t, 1, putResultC1.Version.VersionId)
 	assert.EqualValues(t, 0, putResultC1.Version.ModificationsCount)
 
-	putResultC2 := <-client.Put("/c", []byte{1}, ExpectedVersionId(putResultC1.Version.VersionId))
+	putResultC2 := <-client.Put("/c", []byte{1}, oxia.ExpectedVersionId(putResultC1.Version.VersionId))
 	assert.EqualValues(t, 2, putResultC2.Version.VersionId)
 	assert.EqualValues(t, 1, putResultC2.Version.ModificationsCount)
 
@@ -65,24 +69,24 @@ func TestAsyncClientImpl(t *testing.T) {
 	assert.Len(t, listResult.Keys, 0)
 
 	listResult = <-client.List(context.Background(), "/a", "/d")
-	assert.Equal(t, ListResult{
+	assert.Equal(t, oxia.ListResult{
 		Keys: []string{"/a", "/c"},
 	}, listResult)
 
-	deleteErr := <-client.Delete("/a", ExpectedVersionId(putResultA.Version.VersionId))
+	deleteErr := <-client.Delete("/a", oxia.ExpectedVersionId(putResultA.Version.VersionId))
 	assert.NoError(t, deleteErr)
 
 	getResult = <-client.Get("/a")
-	assert.Equal(t, GetResult{
-		Err: ErrKeyNotFound,
+	assert.Equal(t, oxia.GetResult{
+		Err: oxia.ErrKeyNotFound,
 	}, getResult)
 
 	deleteRangeResult := <-client.DeleteRange("/c", "/d")
 	assert.NoError(t, deleteRangeResult)
 
 	getResult = <-client.Get("/d")
-	assert.Equal(t, GetResult{
-		Err: ErrKeyNotFound,
+	assert.Equal(t, oxia.GetResult{
+		Err: oxia.ErrKeyNotFound,
 	}, getResult)
 
 	err = client.Close()
@@ -96,7 +100,7 @@ func TestSyncClientImpl_Notifications(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	client, err := NewSyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
 	assert.NoError(t, err)
 
 	notifications, err := client.GetNotifications()
@@ -107,14 +111,14 @@ func TestSyncClientImpl_Notifications(t *testing.T) {
 	_, s1, _ := client.Put(ctx, "/a", []byte("0"))
 
 	n := <-notifications.Ch()
-	assert.Equal(t, KeyCreated, n.Type)
+	assert.Equal(t, oxia.KeyCreated, n.Type)
 	assert.Equal(t, "/a", n.Key)
 	assert.Equal(t, s1.VersionId, n.VersionId)
 
 	_, s2, _ := client.Put(ctx, "/a", []byte("1"))
 
 	n = <-notifications.Ch()
-	assert.Equal(t, KeyModified, n.Type)
+	assert.Equal(t, oxia.KeyModified, n.Type)
 	assert.Equal(t, "/a", n.Key)
 	assert.Equal(t, s2.VersionId, n.VersionId)
 
@@ -122,12 +126,12 @@ func TestSyncClientImpl_Notifications(t *testing.T) {
 	assert.NoError(t, client.Delete(ctx, "/a"))
 
 	n = <-notifications.Ch()
-	assert.Equal(t, KeyCreated, n.Type)
+	assert.Equal(t, oxia.KeyCreated, n.Type)
 	assert.Equal(t, "/b", n.Key)
 	assert.Equal(t, s3.VersionId, n.VersionId)
 
 	n = <-notifications.Ch()
-	assert.Equal(t, KeyDeleted, n.Type)
+	assert.Equal(t, oxia.KeyDeleted, n.Type)
 	assert.Equal(t, "/a", n.Key)
 	assert.EqualValues(t, -1, n.VersionId)
 
@@ -146,12 +150,12 @@ func TestSyncClientImpl_Notifications(t *testing.T) {
 	_, s4, _ := client.Put(ctx, "/x", []byte("1"))
 
 	n = <-notifications.Ch()
-	assert.Equal(t, KeyCreated, n.Type)
+	assert.Equal(t, oxia.KeyCreated, n.Type)
 	assert.Equal(t, "/x", n.Key)
 	assert.Equal(t, s4.VersionId, n.VersionId)
 
 	n = <-notifications2.Ch()
-	assert.Equal(t, KeyCreated, n.Type)
+	assert.Equal(t, oxia.KeyCreated, n.Type)
 	assert.Equal(t, "/x", n.Key)
 	assert.Equal(t, s4.VersionId, n.VersionId)
 
@@ -180,7 +184,7 @@ func TestAsyncClientImpl_NotificationsClose(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	client, err := NewSyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
 	assert.NoError(t, err)
 
 	notifications, err := client.GetNotifications()
@@ -204,10 +208,10 @@ func TestAsyncClientImpl_Sessions(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	client, err := NewAsyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0), WithSessionTimeout(5*time.Second))
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0), oxia.WithSessionTimeout(5*time.Second))
 	assert.NoError(t, err)
 
-	putCh := client.Put("/x", []byte("x"), Ephemeral())
+	putCh := client.Put("/x", []byte("x"), oxia.Ephemeral())
 	versionId := atomic.Int64{}
 
 	select {
@@ -234,7 +238,7 @@ func TestAsyncClientImpl_Sessions(t *testing.T) {
 	assert.NoError(t, client.Close())
 	slog.Debug("First client closed")
 
-	client, err = NewAsyncClient(standaloneServer.ServiceAddr(), WithBatchLinger(0))
+	client, err = oxia.NewAsyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
 	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
 		getCh = client.Get("/x")
@@ -245,7 +249,7 @@ func TestAsyncClientImpl_Sessions(t *testing.T) {
 				"Get resulted in",
 				slog.Any("res", res),
 			)
-			return errors.Is(res.Err, ErrKeyNotFound)
+			return errors.Is(res.Err, oxia.ErrKeyNotFound)
 
 		case <-time.After(1 * time.Second):
 			assert.Fail(t, "Shouldn't have timed out")
@@ -262,13 +266,13 @@ func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	client, err := NewSyncClient(standaloneServer.ServiceAddr(),
-		WithSessionTimeout(5*time.Second),
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(),
+		oxia.WithSessionTimeout(5*time.Second),
 	)
 	assert.NoError(t, err)
 
 	k := newKey()
-	_, version, err := client.Put(context.Background(), k, []byte("v1"), Ephemeral())
+	_, version, err := client.Put(context.Background(), k, []byte("v1"), oxia.Ephemeral())
 	assert.NoError(t, err)
 
 	assert.True(t, version.Ephemeral)
@@ -283,7 +287,7 @@ func TestAsyncClientImpl_OverrideEphemeral(t *testing.T) {
 	assert.NoError(t, client.Close())
 
 	// Reopen
-	client, err = NewSyncClient(standaloneServer.ServiceAddr())
+	client, err = oxia.NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	var res []byte
@@ -301,21 +305,21 @@ func TestAsyncClientImpl_ClientIdentity(t *testing.T) {
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	client1, err := NewSyncClient(standaloneServer.ServiceAddr(),
-		WithIdentity("client-1"),
+	client1, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(),
+		oxia.WithIdentity("client-1"),
 	)
 	assert.NoError(t, err)
 
 	k := newKey()
-	_, version, err := client1.Put(context.Background(), k, []byte("v1"), Ephemeral())
+	_, version, err := client1.Put(context.Background(), k, []byte("v1"), oxia.Ephemeral())
 	assert.NoError(t, err)
 
 	assert.True(t, version.Ephemeral)
 	assert.Equal(t, "client-1", version.ClientIdentity)
 
-	client2, err := NewSyncClient(standaloneServer.ServiceAddr(),
-		WithSessionTimeout(2*time.Second),
-		WithIdentity("client-2"),
+	client2, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(),
+		oxia.WithSessionTimeout(2*time.Second),
+		oxia.WithIdentity("client-2"),
 	)
 	assert.NoError(t, err)
 
@@ -327,7 +331,7 @@ func TestAsyncClientImpl_ClientIdentity(t *testing.T) {
 	assert.True(t, version.Ephemeral)
 	assert.Equal(t, "client-1", version.ClientIdentity)
 
-	_, version, err = client2.Put(context.Background(), k, []byte("v2"), Ephemeral())
+	_, version, err = client2.Put(context.Background(), k, []byte("v2"), oxia.Ephemeral())
 	assert.NoError(t, err)
 
 	assert.True(t, version.Ephemeral)
@@ -341,10 +345,10 @@ func TestSyncClientImpl_SessionNotifications(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	client1, err := NewSyncClient(standaloneServer.ServiceAddr(), WithIdentity("client-1"))
+	client1, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithIdentity("client-1"))
 	assert.NoError(t, err)
 
-	client2, err := NewSyncClient(standaloneServer.ServiceAddr(), WithIdentity("client-1"))
+	client2, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithIdentity("client-1"))
 	assert.NoError(t, err)
 
 	notifications, err := client2.GetNotifications()
@@ -352,10 +356,10 @@ func TestSyncClientImpl_SessionNotifications(t *testing.T) {
 
 	ctx := context.Background()
 
-	_, s1, _ := client1.Put(ctx, "/a", []byte("0"), Ephemeral())
+	_, s1, _ := client1.Put(ctx, "/a", []byte("0"), oxia.Ephemeral())
 
 	n := <-notifications.Ch()
-	assert.Equal(t, KeyCreated, n.Type)
+	assert.Equal(t, oxia.KeyCreated, n.Type)
 	assert.Equal(t, "/a", n.Key)
 	assert.Equal(t, s1.VersionId, n.VersionId)
 
@@ -364,7 +368,7 @@ func TestSyncClientImpl_SessionNotifications(t *testing.T) {
 
 	select {
 	case n = <-notifications.Ch():
-		assert.Equal(t, KeyDeleted, n.Type)
+		assert.Equal(t, oxia.KeyDeleted, n.Type)
 		assert.Equal(t, "/a", n.Key)
 	case <-time.After(3 * time.Second):
 		assert.Fail(t, "read from channel timed out")
@@ -381,7 +385,7 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
-	client, err := NewSyncClient(standaloneServer.ServiceAddr())
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
@@ -398,25 +402,25 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 	assert.Equal(t, "a", key)
 	assert.Equal(t, "0", string(value))
 
-	key, value, _, err = client.Get(ctx, "a", ComparisonEqual())
+	key, value, _, err = client.Get(ctx, "a", oxia.ComparisonEqual())
 	assert.NoError(t, err)
 	assert.Equal(t, "a", key)
 	assert.Equal(t, "0", string(value))
 
-	key, value, _, err = client.Get(ctx, "a", ComparisonFloor())
+	key, value, _, err = client.Get(ctx, "a", oxia.ComparisonFloor())
 	assert.NoError(t, err)
 	assert.Equal(t, "a", key)
 	assert.Equal(t, "0", string(value))
 
-	key, value, _, err = client.Get(ctx, "a", ComparisonCeiling())
+	key, value, _, err = client.Get(ctx, "a", oxia.ComparisonCeiling())
 	assert.NoError(t, err)
 	assert.Equal(t, "a", key)
 	assert.Equal(t, "0", string(value))
 
-	_, _, _, err = client.Get(ctx, "a", ComparisonLower())
-	assert.ErrorIs(t, ErrKeyNotFound, err)
+	_, _, _, err = client.Get(ctx, "a", oxia.ComparisonLower())
+	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
 
-	key, value, _, err = client.Get(ctx, "a", ComparisonHigher())
+	key, value, _, err = client.Get(ctx, "a", oxia.ComparisonHigher())
 	assert.NoError(t, err)
 	assert.Equal(t, "c", key)
 	assert.Equal(t, "2", string(value))
@@ -424,27 +428,27 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 	// ---------------------------------------------------------------
 
 	_, _, _, err = client.Get(ctx, "b")
-	assert.ErrorIs(t, ErrKeyNotFound, err)
+	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
 
-	_, _, _, err = client.Get(ctx, "b", ComparisonEqual())
-	assert.ErrorIs(t, ErrKeyNotFound, err)
+	_, _, _, err = client.Get(ctx, "b", oxia.ComparisonEqual())
+	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
 
-	key, value, _, err = client.Get(ctx, "b", ComparisonFloor())
+	key, value, _, err = client.Get(ctx, "b", oxia.ComparisonFloor())
 	assert.NoError(t, err)
 	assert.Equal(t, "a", key)
 	assert.Equal(t, "0", string(value))
 
-	key, value, _, err = client.Get(ctx, "b", ComparisonCeiling())
+	key, value, _, err = client.Get(ctx, "b", oxia.ComparisonCeiling())
 	assert.NoError(t, err)
 	assert.Equal(t, "c", key)
 	assert.Equal(t, "2", string(value))
 
-	key, value, _, err = client.Get(ctx, "b", ComparisonLower())
+	key, value, _, err = client.Get(ctx, "b", oxia.ComparisonLower())
 	assert.NoError(t, err)
 	assert.Equal(t, "a", key)
 	assert.Equal(t, "0", string(value))
 
-	key, value, _, err = client.Get(ctx, "b", ComparisonHigher())
+	key, value, _, err = client.Get(ctx, "b", oxia.ComparisonHigher())
 	assert.NoError(t, err)
 	assert.Equal(t, "c", key)
 	assert.Equal(t, "2", string(value))
@@ -456,27 +460,27 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 	assert.Equal(t, "c", key)
 	assert.Equal(t, "2", string(value))
 
-	key, value, _, err = client.Get(ctx, "c", ComparisonEqual())
+	key, value, _, err = client.Get(ctx, "c", oxia.ComparisonEqual())
 	assert.NoError(t, err)
 	assert.Equal(t, "c", key)
 	assert.Equal(t, "2", string(value))
 
-	key, value, _, err = client.Get(ctx, "c", ComparisonFloor())
+	key, value, _, err = client.Get(ctx, "c", oxia.ComparisonFloor())
 	assert.NoError(t, err)
 	assert.Equal(t, "c", key)
 	assert.Equal(t, "2", string(value))
 
-	key, value, _, err = client.Get(ctx, "c", ComparisonCeiling())
+	key, value, _, err = client.Get(ctx, "c", oxia.ComparisonCeiling())
 	assert.NoError(t, err)
 	assert.Equal(t, "c", key)
 	assert.Equal(t, "2", string(value))
 
-	key, value, _, err = client.Get(ctx, "c", ComparisonLower())
+	key, value, _, err = client.Get(ctx, "c", oxia.ComparisonLower())
 	assert.NoError(t, err)
 	assert.Equal(t, "a", key)
 	assert.Equal(t, "0", string(value))
 
-	key, value, _, err = client.Get(ctx, "c", ComparisonHigher())
+	key, value, _, err = client.Get(ctx, "c", oxia.ComparisonHigher())
 	assert.NoError(t, err)
 	assert.Equal(t, "d", key)
 	assert.Equal(t, "3", string(value))
@@ -488,27 +492,27 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 	assert.Equal(t, "d", key)
 	assert.Equal(t, "3", string(value))
 
-	key, value, _, err = client.Get(ctx, "d", ComparisonEqual())
+	key, value, _, err = client.Get(ctx, "d", oxia.ComparisonEqual())
 	assert.NoError(t, err)
 	assert.Equal(t, "d", key)
 	assert.Equal(t, "3", string(value))
 
-	key, value, _, err = client.Get(ctx, "d", ComparisonFloor())
+	key, value, _, err = client.Get(ctx, "d", oxia.ComparisonFloor())
 	assert.NoError(t, err)
 	assert.Equal(t, "d", key)
 	assert.Equal(t, "3", string(value))
 
-	key, value, _, err = client.Get(ctx, "d", ComparisonCeiling())
+	key, value, _, err = client.Get(ctx, "d", oxia.ComparisonCeiling())
 	assert.NoError(t, err)
 	assert.Equal(t, "d", key)
 	assert.Equal(t, "3", string(value))
 
-	key, value, _, err = client.Get(ctx, "d", ComparisonLower())
+	key, value, _, err = client.Get(ctx, "d", oxia.ComparisonLower())
 	assert.NoError(t, err)
 	assert.Equal(t, "c", key)
 	assert.Equal(t, "2", string(value))
 
-	key, value, _, err = client.Get(ctx, "d", ComparisonHigher())
+	key, value, _, err = client.Get(ctx, "d", oxia.ComparisonHigher())
 	assert.NoError(t, err)
 	assert.Equal(t, "e", key)
 	assert.Equal(t, "4", string(value))
@@ -520,27 +524,27 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 	assert.Equal(t, "e", key)
 	assert.Equal(t, "4", string(value))
 
-	key, value, _, err = client.Get(ctx, "e", ComparisonEqual())
+	key, value, _, err = client.Get(ctx, "e", oxia.ComparisonEqual())
 	assert.NoError(t, err)
 	assert.Equal(t, "e", key)
 	assert.Equal(t, "4", string(value))
 
-	key, value, _, err = client.Get(ctx, "e", ComparisonFloor())
+	key, value, _, err = client.Get(ctx, "e", oxia.ComparisonFloor())
 	assert.NoError(t, err)
 	assert.Equal(t, "e", key)
 	assert.Equal(t, "4", string(value))
 
-	key, value, _, err = client.Get(ctx, "e", ComparisonCeiling())
+	key, value, _, err = client.Get(ctx, "e", oxia.ComparisonCeiling())
 	assert.NoError(t, err)
 	assert.Equal(t, "e", key)
 	assert.Equal(t, "4", string(value))
 
-	key, value, _, err = client.Get(ctx, "e", ComparisonLower())
+	key, value, _, err = client.Get(ctx, "e", oxia.ComparisonLower())
 	assert.NoError(t, err)
 	assert.Equal(t, "d", key)
 	assert.Equal(t, "3", string(value))
 
-	key, value, _, err = client.Get(ctx, "e", ComparisonHigher())
+	key, value, _, err = client.Get(ctx, "e", oxia.ComparisonHigher())
 	assert.NoError(t, err)
 	assert.Equal(t, "g", key)
 	assert.Equal(t, "6", string(value))
@@ -548,27 +552,27 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 	// ---------------------------------------------------------------
 
 	_, _, _, err = client.Get(ctx, "f")
-	assert.ErrorIs(t, ErrKeyNotFound, err)
+	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
 
-	_, _, _, err = client.Get(ctx, "f", ComparisonEqual())
-	assert.ErrorIs(t, ErrKeyNotFound, err)
+	_, _, _, err = client.Get(ctx, "f", oxia.ComparisonEqual())
+	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
 
-	key, value, _, err = client.Get(ctx, "f", ComparisonFloor())
+	key, value, _, err = client.Get(ctx, "f", oxia.ComparisonFloor())
 	assert.NoError(t, err)
 	assert.Equal(t, "e", key)
 	assert.Equal(t, "4", string(value))
 
-	key, value, _, err = client.Get(ctx, "f", ComparisonCeiling())
+	key, value, _, err = client.Get(ctx, "f", oxia.ComparisonCeiling())
 	assert.NoError(t, err)
 	assert.Equal(t, "g", key)
 	assert.Equal(t, "6", string(value))
 
-	key, value, _, err = client.Get(ctx, "f", ComparisonLower())
+	key, value, _, err = client.Get(ctx, "f", oxia.ComparisonLower())
 	assert.NoError(t, err)
 	assert.Equal(t, "e", key)
 	assert.Equal(t, "4", string(value))
 
-	key, value, _, err = client.Get(ctx, "f", ComparisonHigher())
+	key, value, _, err = client.Get(ctx, "f", oxia.ComparisonHigher())
 	assert.NoError(t, err)
 	assert.Equal(t, "g", key)
 	assert.Equal(t, "6", string(value))
@@ -584,72 +588,72 @@ func TestSyncClientImpl_PartitionRouting(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
-	client, err := NewSyncClient(standaloneServer.ServiceAddr())
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
 
-	_, _, _ = client.Put(ctx, "a", []byte("0"), PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "a", []byte("0"), oxia.PartitionKey("x"))
 	_, _, _, err = client.Get(ctx, "a")
-	assert.ErrorIs(t, ErrKeyNotFound, err)
+	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
 
-	key, value, _, err := client.Get(ctx, "a", PartitionKey("x"))
+	key, value, _, err := client.Get(ctx, "a", oxia.PartitionKey("x"))
 	assert.NoError(t, err)
 	assert.Equal(t, "a", key)
 	assert.Equal(t, "0", string(value))
 
-	_, _, _ = client.Put(ctx, "a", []byte("0"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "b", []byte("1"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "c", []byte("2"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "d", []byte("3"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "e", []byte("4"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "f", []byte("5"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "g", []byte("6"), PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "a", []byte("0"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "b", []byte("1"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "c", []byte("2"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "d", []byte("3"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "e", []byte("4"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "f", []byte("5"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "g", []byte("6"), oxia.PartitionKey("x"))
 
 	// Listing must yield the same results
 	keys, err := client.List(ctx, "a", "d")
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"a", "b", "c"}, keys)
 
-	keys, err = client.List(ctx, "a", "d", PartitionKey("x"))
+	keys, err = client.List(ctx, "a", "d", oxia.PartitionKey("x"))
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"a", "b", "c"}, keys)
 
 	// Searching with wrong partition-key will return empty list
-	keys, err = client.List(ctx, "a", "d", PartitionKey("wrong-partition-key"))
+	keys, err = client.List(ctx, "a", "d", oxia.PartitionKey("wrong-partition-key"))
 	assert.NoError(t, err)
 	assert.Equal(t, []string{}, keys)
 
 	// Delete with wrong partition key would fail
-	err = client.Delete(ctx, "g", PartitionKey("wrong-partition-key"))
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	err = client.Delete(ctx, "g", oxia.PartitionKey("wrong-partition-key"))
+	assert.ErrorIs(t, err, oxia.ErrKeyNotFound)
 
-	err = client.Delete(ctx, "g", PartitionKey("x"))
+	err = client.Delete(ctx, "g", oxia.PartitionKey("x"))
 	assert.NoError(t, err)
 
 	// Get tests
-	key, value, _, err = client.Get(ctx, "a", ComparisonHigher())
+	key, value, _, err = client.Get(ctx, "a", oxia.ComparisonHigher())
 	assert.NoError(t, err)
 	assert.Equal(t, "b", key)
 	assert.Equal(t, "1", string(value))
 
-	key, value, _, err = client.Get(ctx, "a", ComparisonHigher(), PartitionKey("x"))
+	key, value, _, err = client.Get(ctx, "a", oxia.ComparisonHigher(), oxia.PartitionKey("x"))
 	assert.NoError(t, err)
 	assert.Equal(t, "b", key)
 	assert.Equal(t, "1", string(value))
 
-	_, _, _, err = client.Get(ctx, "a", ComparisonHigher(), PartitionKey("wrong-partition-key"))
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	_, _, _, err = client.Get(ctx, "a", oxia.ComparisonHigher(), oxia.PartitionKey("wrong-partition-key"))
+	assert.ErrorIs(t, err, oxia.ErrKeyNotFound)
 
 	// Delete with wrong partition key would fail to delete all keys
-	err = client.DeleteRange(ctx, "c", "e", PartitionKey("wrong-partition-key"))
+	err = client.DeleteRange(ctx, "c", "e", oxia.PartitionKey("wrong-partition-key"))
 	assert.NoError(t, err)
 
 	keys, err = client.List(ctx, "c", "f")
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"c", "d", "e"}, keys)
 
-	err = client.DeleteRange(ctx, "c", "e", PartitionKey("x"))
+	err = client.DeleteRange(ctx, "c", "e", oxia.PartitionKey("x"))
 	assert.NoError(t, err)
 
 	keys, err = client.List(ctx, "c", "f")
@@ -667,54 +671,54 @@ func TestSyncClientImpl_SequentialKeys(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
-	client, err := NewSyncClient(standaloneServer.ServiceAddr())
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
 
-	_, _, err = client.Put(ctx, "a", []byte("0"), SequenceKeysDeltas(1))
-	assert.ErrorIs(t, err, ErrInvalidOptions)
+	_, _, err = client.Put(ctx, "a", []byte("0"), oxia.SequenceKeysDeltas(1))
+	assert.ErrorIs(t, err, oxia.ErrInvalidOptions)
 
 	_, _, err = client.Put(ctx, "a", []byte("0"),
-		SequenceKeysDeltas(1),
-		PartitionKey("x"),
-		ExpectedVersionId(1),
+		oxia.SequenceKeysDeltas(1),
+		oxia.PartitionKey("x"),
+		oxia.ExpectedVersionId(1),
 	)
-	assert.ErrorIs(t, err, ErrInvalidOptions)
+	assert.ErrorIs(t, err, oxia.ErrInvalidOptions)
 
 	key, _, err := client.Put(ctx, "a", []byte("0"),
-		SequenceKeysDeltas(1),
-		PartitionKey("x"),
+		oxia.SequenceKeysDeltas(1),
+		oxia.PartitionKey("x"),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("a-%020d", 1), key)
 
 	key, _, err = client.Put(ctx, "a", []byte("1"),
-		SequenceKeysDeltas(3),
-		PartitionKey("x"),
+		oxia.SequenceKeysDeltas(3),
+		oxia.PartitionKey("x"),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("a-%020d", 4), key)
 
 	key, _, err = client.Put(ctx, "a", []byte("2"),
-		SequenceKeysDeltas(1, 6),
-		PartitionKey("x"),
+		oxia.SequenceKeysDeltas(1, 6),
+		oxia.PartitionKey("x"),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("a-%020d-%020d", 5, 6), key)
 
 	_, _, _, err = client.Get(ctx, "a")
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, oxia.ErrKeyNotFound)
 
-	_, value, _, err := client.Get(ctx, fmt.Sprintf("a-%020d", 1), PartitionKey("x"))
+	_, value, _, err := client.Get(ctx, fmt.Sprintf("a-%020d", 1), oxia.PartitionKey("x"))
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("0"), value)
 
-	_, value, _, err = client.Get(ctx, fmt.Sprintf("a-%020d", 4), PartitionKey("x"))
+	_, value, _, err = client.Get(ctx, fmt.Sprintf("a-%020d", 4), oxia.PartitionKey("x"))
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("1"), value)
 
-	_, value, _, err = client.Get(ctx, fmt.Sprintf("a-%020d-%020d", 5, 6), PartitionKey("x"))
+	_, value, _, err = client.Get(ctx, fmt.Sprintf("a-%020d-%020d", 5, 6), oxia.PartitionKey("x"))
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("2"), value)
 
@@ -729,7 +733,7 @@ func TestSyncClientImpl_RangeScan(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
-	client, err := NewSyncClient(standaloneServer.ServiceAddr())
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
@@ -778,20 +782,20 @@ func TestSyncClientImpl_RangeScanOnPartition(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
-	client, err := NewSyncClient(standaloneServer.ServiceAddr())
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ctx := context.Background()
 
-	_, _, _ = client.Put(ctx, "a", []byte("0"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "b", []byte("1"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "c", []byte("2"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "d", []byte("3"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "e", []byte("4"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "f", []byte("5"), PartitionKey("x"))
-	_, _, _ = client.Put(ctx, "g", []byte("6"), PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "a", []byte("0"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "b", []byte("1"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "c", []byte("2"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "d", []byte("3"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "e", []byte("4"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "f", []byte("5"), oxia.PartitionKey("x"))
+	_, _, _ = client.Put(ctx, "g", []byte("6"), oxia.PartitionKey("x"))
 
-	ch := client.RangeScan(ctx, "b", "f", PartitionKey("x"))
+	ch := client.RangeScan(ctx, "b", "f", oxia.PartitionKey("x"))
 
 	gr := <-ch
 	assert.NoError(t, gr.Err)
@@ -825,13 +829,13 @@ func TestAsyncClientImpl_SequenceOrdering(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(config)
 	assert.NoError(t, err)
 
-	client, err := NewAsyncClient(standaloneServer.ServiceAddr(), WithMaxRequestsPerBatch(1))
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr(), oxia.WithMaxRequestsPerBatch(1))
 	assert.NoError(t, err)
 
-	var responses []<-chan PutResult
+	var responses []<-chan oxia.PutResult
 
 	for i := 0; i < 100; i++ {
-		r := client.Put("a", []byte("0"), PartitionKey("x"), SequenceKeysDeltas(1))
+		r := client.Put("a", []byte("0"), oxia.PartitionKey("x"), oxia.SequenceKeysDeltas(1))
 		responses = append(responses, r)
 	}
 
@@ -849,7 +853,7 @@ func TestAsyncClientImpl_versionId(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 
-	client, err := NewAsyncClient(standaloneServer.ServiceAddr())
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	ch0 := client.Put("/a", []byte("0"))
@@ -885,10 +889,10 @@ func TestGetValueWithSessionId(t *testing.T) {
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	client, err := NewAsyncClient(standaloneServer.ServiceAddr())
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
-	ch0 := client.Put("/TestGetValueWithSessionId", []byte("0"), Ephemeral())
+	ch0 := client.Put("/TestGetValueWithSessionId", []byte("0"), oxia.Ephemeral())
 	r0 := <-ch0
 	assert.NoError(t, r0.Err)
 	assert.EqualValues(t, 1, r0.Version.VersionId)
@@ -901,10 +905,10 @@ func TestGetValueWithSessionId(t *testing.T) {
 	// cleanup
 	client.Close()
 
-	client, err = NewAsyncClient(standaloneServer.ServiceAddr())
+	client, err = oxia.NewAsyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
-	ch0 = client.Put("/TestGetValueWithSessionId", []byte("0"), Ephemeral())
+	ch0 = client.Put("/TestGetValueWithSessionId", []byte("0"), oxia.Ephemeral())
 	r0 = <-ch0
 	assert.NoError(t, r0.Err)
 	assert.EqualValues(t, 3, r0.Version.VersionId)
@@ -921,7 +925,7 @@ func TestGetWithoutValue(t *testing.T) {
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	client, err := NewAsyncClient(standaloneServer.ServiceAddr())
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 	defer client.Close()
 
@@ -929,28 +933,28 @@ func TestGetWithoutValue(t *testing.T) {
 
 	keys := make([]string, 0, 2)
 
-	putResult := <-client.Put(key, []byte("0"), PartitionKey(key), SequenceKeysDeltas(1))
+	putResult := <-client.Put(key, []byte("0"), oxia.PartitionKey(key), oxia.SequenceKeysDeltas(1))
 	assert.NotNil(t, putResult.Key)
 	assert.NoError(t, putResult.Err)
 	keys = append(keys, putResult.Key)
 
-	putResult = <-client.Put(key, []byte("1"), PartitionKey(key), SequenceKeysDeltas(1))
+	putResult = <-client.Put(key, []byte("1"), oxia.PartitionKey(key), oxia.SequenceKeysDeltas(1))
 	assert.NotNil(t, putResult.Key)
 	assert.NoError(t, putResult.Err)
 	keys = append(keys, putResult.Key)
 
 	for _, subKey := range keys {
-		result := <-client.Get(subKey, PartitionKey(key), IncludeValue(true))
+		result := <-client.Get(subKey, oxia.PartitionKey(key), oxia.IncludeValue(true))
 		assert.NotNil(t, result.Value)
-		result = <-client.Get(subKey, PartitionKey(key), IncludeValue(false))
+		result = <-client.Get(subKey, oxia.PartitionKey(key), oxia.IncludeValue(false))
 		assert.Nil(t, result.Value)
 	}
 
-	result := <-client.Get(keys[0], PartitionKey(key), IncludeValue(false), ComparisonHigher())
+	result := <-client.Get(keys[0], oxia.PartitionKey(key), oxia.IncludeValue(false), oxia.ComparisonHigher())
 	assert.Nil(t, result.Value)
 	assert.Equal(t, result.Key, keys[1])
 
-	result = <-client.Get(keys[1], PartitionKey(key), IncludeValue(false), ComparisonLower())
+	result = <-client.Get(keys[1], oxia.PartitionKey(key), oxia.IncludeValue(false), oxia.ComparisonLower())
 	assert.Nil(t, result.Value)
 	assert.Equal(t, result.Key, keys[0])
 }
