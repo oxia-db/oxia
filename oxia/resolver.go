@@ -15,7 +15,7 @@
 package oxia
 
 import (
-	"fmt"
+	"errors"
 
 	"google.golang.org/grpc/resolver"
 )
@@ -50,10 +50,10 @@ type AddressUpdater func(addresses []string) error
 func WithDialResolver(sr ServiceResolver) ClientOption {
 	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
 		if sr == nil {
-			return options, fmt.Errorf("ServiceResolver must not be nil")
+			return options, errors.New("ServiceResolver must not be nil")
 		}
 		if sr.Scheme() == "" {
-			return options, fmt.Errorf("ServiceResolver.Scheme() must not be empty")
+			return options, errors.New("ServiceResolver.Scheme() must not be empty")
 		}
 		options.resolver = sr
 		return options, nil
