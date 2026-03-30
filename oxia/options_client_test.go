@@ -43,3 +43,13 @@ func TestWithDialResolver_NotSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, options.resolver)
 }
+
+func TestWithDialResolver_Nil(t *testing.T) {
+	_, err := newClientOptions("localhost:6648", WithDialResolver(nil))
+	assert.ErrorContains(t, err, "must not be nil")
+}
+
+func TestWithDialResolver_EmptyScheme(t *testing.T) {
+	_, err := newClientOptions("localhost:6648", WithDialResolver(&mockResolver{scheme: ""}))
+	assert.ErrorContains(t, err, "must not be empty")
+}
