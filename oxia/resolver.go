@@ -22,8 +22,8 @@ import (
 // Implementations can integrate with service-discovery systems such as
 // Kubernetes, Consul, or DNS SRV records.
 //
-// The resolver is given an AddressUpdater when it is started. It should
-// call the updater whenever the set of addresses changes.
+// The resolver is given an AddressUpdater when Resolve is called. It
+// should call the updater whenever the set of addresses changes.
 //
 // Lifecycle: a single ServiceResolver instance may be shared across
 // multiple gRPC connections. Resolve may be called multiple times
