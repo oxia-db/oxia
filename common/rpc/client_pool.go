@@ -32,8 +32,8 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 
-	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/auth"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 const DefaultRpcTimeout = 30 * time.Second
