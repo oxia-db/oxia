@@ -26,9 +26,10 @@ import (
 // call the updater whenever the set of addresses changes.
 //
 // Lifecycle: a single ServiceResolver instance may be shared across
-// multiple gRPC connections. Resolve may be called more than once
-// (and potentially concurrently). Implementations must be safe for
-// concurrent use. The caller owns the resolver's lifecycle.
+// multiple gRPC connections. Resolve may be called multiple times
+// with different endpoints (e.g. once per shard leader). Each call
+// is for an independent connection. Implementations must be safe
+// for concurrent use. The caller owns the resolver's lifecycle.
 type ServiceResolver interface {
 	// Scheme returns the URI scheme handled by this resolver (e.g.
 	// "k8s", "consul"). The service address passed to NewSyncClient /
