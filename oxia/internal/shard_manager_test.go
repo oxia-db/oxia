@@ -16,42 +16,9 @@ package internal
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/oxiad/dataserver"
-
-	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
 )
-
-type testShardStrategy struct {
-}
-
-func (s *testShardStrategy) Get(key string) func(Shard) bool {
-	return func(shard Shard) bool {
-		return shard.Id%2 == 0
-	}
-}
-
-func TestWithStandalone(t *testing.T) {
-	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
-	assert.NoError(t, err)
-	defer standaloneServer.Close()
-
-	clientPool := rpc.NewClientPool(nil, nil)
-	shardManager, err := NewShardManager(&testShardStrategy{}, clientPool, standaloneServer.ServiceAddr(), constant.DefaultNamespace, 30*time.Second)
-	assert.NoError(t, err)
-
-	defer func() {
-		assert.NoError(t, shardManager.Close())
-	}()
-
-	shardId := shardManager.Get("foo")
-
-	assert.EqualValues(t, 0, shardId)
-}
 
 func TestOverlap(t *testing.T) {
 	for _, item := range []struct {

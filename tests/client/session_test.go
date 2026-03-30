@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package oxia
+package client
 
 import (
 	"context"
@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/time/rate"
 
+	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
@@ -32,10 +33,10 @@ func TestSessionEphemeralKeysLeak(t *testing.T) {
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
 
-	client, err := NewAsyncClient(standaloneServer.ServiceAddr(),
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr(),
 		// force the server cleanup the session to make the race-condition
-		withSessionKeepAliveTicker(16*time.Second),
-		WithSessionTimeout(10*time.Second))
+		oxia.WithSessionKeepAliveTicker(16*time.Second),
+		oxia.WithSessionTimeout(10*time.Second))
 	assert.NoError(t, err)
 
 	after := time.After(40 * time.Second)
@@ -48,13 +49,13 @@ loop:
 		default:
 			err := limiter.Wait(context.Background())
 			assert.NoError(t, err)
-			_ = client.Put(fmt.Sprintf("/session-leak/%d", i), []byte{}, Ephemeral())
+			_ = client.Put(fmt.Sprintf("/session-leak/%d", i), []byte{}, oxia.Ephemeral())
 		}
 	}
 	err = client.Close()
 	assert.NoError(t, err)
 
-	syncClient, err := NewSyncClient(standaloneServer.ServiceAddr())
+	syncClient, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
