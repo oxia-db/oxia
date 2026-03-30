@@ -19,34 +19,17 @@ import (
 )
 
 // ServiceResolver resolves a service name to a set of network addresses.
-// Implementations can integrate with service-discovery systems such as
-// Kubernetes, Consul, or DNS SRV records.
 //
-// The resolver is given an AddressUpdater when Resolve is called. It
-// should call the updater whenever the set of addresses changes.
-//
-// Lifecycle: a single ServiceResolver instance may be shared across
-// multiple gRPC connections. Resolve may be called multiple times
-// with different endpoints (e.g. once per shard leader). Each call
-// is for an independent connection. Implementations must be safe
-// for concurrent use. The caller owns the resolver's lifecycle.
+// Resolve may be called multiple times with different endpoints and
+// concurrently. Implementations must be safe for concurrent use.
+// The caller owns the resolver's lifecycle.
 type ServiceResolver interface {
-	// Scheme returns the URI scheme handled by this resolver (e.g.
-	// "k8s", "consul"). The service address passed to NewSyncClient /
-	// NewAsyncClient must use this scheme (e.g. "k8s:///my-service").
+	// Scheme returns the URI scheme handled by this resolver (e.g. "dns", "tls").
 	Scheme() string
 
-	// Resolve begins resolving the given endpoint. The endpoint is
-	// extracted from the dial target URI (e.g. for "k8s:///my-service",
-	// endpoint is "my-service"). Resolve is called for each new
-	// connection, including connections to shard leaders.
-	//
-	// Resolve must return promptly. Long-running operations (DNS
-	// watches, API polling) should be launched in a separate goroutine.
-	//
-	// The updater function must be called at least once (either before
-	// Resolve returns or shortly after in a background goroutine) with
-	// the current set of addresses, and again whenever the set changes.
+	// Resolve resolves the given endpoint and calls updater with the addresses.
+	// The updater must be called at least once, and again whenever addresses change.
+	// Resolve must return promptly; launch long-running work in a goroutine.
 	Resolve(endpoint string, updater AddressUpdater)
 }
 
@@ -61,17 +44,7 @@ type ServiceResolver interface {
 type AddressUpdater func(addresses []string) error
 
 // WithDialResolver configures the client to use a custom ServiceResolver
-// for discovering server addresses. The service address passed to
-// NewSyncClient / NewAsyncClient must use the scheme returned by
-// ServiceResolver.Scheme().
-//
-// Example:
-//
-//	resolver := &myResolver{scheme: "k8s", ...}
-//	client, err := oxia.NewSyncClient(
-//	    "k8s:///my-oxia-service",
-//	    oxia.WithDialResolver(resolver),
-//	)
+// for discovering server addresses.
 func WithDialResolver(sr ServiceResolver) ClientOption {
 	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
 		options.resolver = sr
