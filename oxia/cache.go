@@ -68,10 +68,6 @@ type Cache[Value any] interface {
 	// about the record state.
 	// Returns ErrorKeyNotFound if the record does not exist
 	Get(ctx context.Context, key string) (Value, Version, error)
-
-	// Sync waits for all pending async cache operations to complete.
-	// This is primarily useful in tests to ensure ristretto's async sets have committed.
-	Sync()
 }
 
 // ModifyFunc is the transformation function to apply on ReadModifyUpdate.
@@ -227,10 +223,6 @@ func newCacheImpl[Value any](client SyncClient, serializeFunc SerializeFunc, des
 		return nil, err
 	}
 	return c, nil
-}
-
-func (c *cacheImpl[Value]) Sync() {
-	c.valueCache.Wait()
 }
 
 func (c *cacheImpl[Value]) handleNotification(n *Notification) {

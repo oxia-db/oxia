@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -277,18 +278,18 @@ func TestCache_GetNotFoundTwice(t *testing.T) {
 	assert.Equal(t, oxia.Version{}, version)
 	assert.Equal(t, testStruct{}, value)
 
-	// Wait for ristretto to commit the async Set
-	cache.Sync()
-
-	// Second Get: served from ristretto cache. Before the fix, this panicked with:
-	//   interface conversion: *oxia.optional[cachedResult[...]] is not cachedResult[...]:
-	//   missing method Get
-	assert.NotPanics(t, func() {
-		value, version, err = cache.Get(context.Background(), key)
-	})
-	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
-	assert.Equal(t, oxia.Version{}, version)
-	assert.Equal(t, testStruct{}, value)
+	// Wait for ristretto to commit the async Set, then verify the second Get
+	// doesn't panic (regression: double-wrapped optional type caused panic)
+	assert.Eventually(t, func() bool {
+		var ok bool
+		assert.NotPanics(t, func() {
+			value, version, err = cache.Get(context.Background(), key)
+			ok = assert.ErrorIs(t, oxia.ErrKeyNotFound, err) &&
+				assert.Equal(t, oxia.Version{}, version) &&
+				assert.Equal(t, testStruct{}, value)
+		})
+		return ok
+	}, 5*time.Second, 50*time.Millisecond)
 
 	assert.NoError(t, cache.Close())
 	assert.NoError(t, client.Close())
@@ -313,10 +314,11 @@ func TestCache_GetNotFoundThenPut(t *testing.T) {
 	_, _, err = cache.Get(context.Background(), key)
 	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
 
-	cache.Sync()
-
-	// Verify it's still not found from the cache
-	_, _, err = cache.Get(context.Background(), key)
+	// Wait for ristretto async set, then verify still not found from cache
+	assert.Eventually(t, func() bool {
+		_, _, err = cache.Get(context.Background(), key)
+		return err != nil
+	}, 5*time.Second, 50*time.Millisecond)
 	assert.ErrorIs(t, oxia.ErrKeyNotFound, err)
 
 	// Now put a value for this key
