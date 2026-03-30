@@ -40,7 +40,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/channel"
 
-	oentity "github.com/oxia-db/oxia/oxiad/common/entity"
+	oentity "github.com/oxia-db/oxia/common/entity"
 
 	"github.com/oxia-db/oxia/common/proto"
 )

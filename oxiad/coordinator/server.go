@@ -33,7 +33,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
-	"github.com/oxia-db/oxia/oxiad/common/entity"
+	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 

@@ -48,7 +48,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxia"
 
-	clientauth "github.com/oxia-db/oxia/oxia/auth"
+	clientauth "github.com/oxia-db/oxia/common/auth"
 )
 
 func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (address string, closeFunc func()) {

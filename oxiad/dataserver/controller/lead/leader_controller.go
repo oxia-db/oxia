@@ -37,17 +37,15 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
+	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/entity"
+	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
-	"github.com/oxia-db/oxia/oxiad/common/entity"
-
-	"github.com/oxia-db/oxia/common/channel"
-
-	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/common/proto"
 )
 
 type LeaderController interface {

@@ -62,7 +62,7 @@ type Server struct {
 
 func New(parent context.Context, watchableOption *commonoption.Watch[*option.Options]) (*Server, error) {
 	options, _ := watchableOption.Load()
-	provider, err := rpc.NewReplicationRpcProvider(&options.Replication)
+	provider, err := rpc.NewReplicationRpcProvider(&options.Replication.TLS)
 	if err != nil {
 		return nil, err
 	}
