@@ -47,29 +47,33 @@ func (r *staticResolver) Resolve(_ string, updater oxia.AddressUpdater) {
 // dynamicResolver demonstrates a resolver that can update its target
 // address after creation. This simulates service-discovery systems where
 // the set of backends changes over time (e.g. rolling deploys, failovers).
+// It tracks updaters per endpoint so each connection gets its own updates.
 type dynamicResolver struct {
-	scheme  string
-	mu      sync.Mutex
-	targets []string
-	updater oxia.AddressUpdater
+	scheme   string
+	mu       sync.Mutex
+	targets  []string
+	updaters map[string]oxia.AddressUpdater
 }
 
 func (r *dynamicResolver) Scheme() string { return r.scheme }
 
-func (r *dynamicResolver) Resolve(_ string, updater oxia.AddressUpdater) {
+func (r *dynamicResolver) Resolve(endpoint string, updater oxia.AddressUpdater) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.updater = updater
+	if r.updaters == nil {
+		r.updaters = make(map[string]oxia.AddressUpdater)
+	}
+	r.updaters[endpoint] = updater
 	_ = updater(r.targets)
 }
 
-// UpdateTargets pushes a new set of addresses to the client.
+// UpdateTargets pushes a new set of addresses to all connections.
 func (r *dynamicResolver) UpdateTargets(targets []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.targets = targets
-	if r.updater != nil {
-		_ = r.updater(targets)
+	for _, updater := range r.updaters {
+		_ = updater(targets)
 	}
 }
 
