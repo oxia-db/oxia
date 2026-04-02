@@ -289,6 +289,9 @@ func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
 
 func NewStatusResource(meta metadata.Provider) StatusResource {
 	s := status{
+		Logger: slog.With(
+			slog.String("component", "status-resource"),
+		),
 		lock:             sync.RWMutex{},
 		metadata:         meta,
 		currentVersionID: metadata.NotExists,
