@@ -292,7 +292,8 @@ func (c *coordinator) Close() error {
 	c.cancel()
 	c.Wait()
 
-	err := c.configResource.Close()
+	err := multierr.Append(c.statusResource.Close(),
+		c.configResource.Close())
 	for _, sc := range c.splitControllers {
 		sc.Close()
 	}
@@ -747,7 +748,10 @@ func NewCoordinator(meta metadata.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc.Provider) (Coordinator, <-chan struct{}, error) {
+	ctx, cancelFunc := context.WithCancel(context.Background())
 	c := &coordinator{
+		ctx:    ctx,
+		cancel: cancelFunc,
 		Logger: slog.With(
 			slog.String("component", "coordinator"),
 		),
@@ -763,20 +767,16 @@ func NewCoordinator(meta metadata.Provider,
 	}
 	c.ccrWg.Add(1)
 
-	// Ensure we are to become the leader coordinator
 	c.Info("Waiting to become leader")
-	leadershipLostCh, err := meta.WaitToBecomeLeader()
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to wait in becoming leader")
-	}
-	c.Info("This coordinator is now leader")
-
-	c.ctx, c.cancel = context.WithCancel(context.Background())
-	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.statusResource, err = resource.NewStatusResource(meta)
+	var leadershipLostCh <-chan struct{}
+	var err error
+	c.statusResource, leadershipLostCh, err = resource.NewStatusResource(ctx, meta)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to create status resource")
 	}
+	c.Info("This coordinator is now leader")
+
+	c.assignmentsChanged = concurrent.NewConditionContext(c)
 
 	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
