@@ -16,7 +16,10 @@ package resource
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"sync"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -24,6 +27,8 @@ import (
 )
 
 type StatusResource interface {
+	io.Closer
+
 	Load() (*model.ClusterStatus, error)
 
 	LoadWithVersion() (*model.ClusterStatus, metadata.Version, error)
@@ -61,10 +66,32 @@ var _ StatusResource = &status{}
 type status struct {
 	metadata metadata.Provider
 
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
 	lock             sync.RWMutex
 	current          *model.ClusterStatus
 	currentVersionID metadata.Version
 	changeCh         chan struct{}
+	leaseWatch       chan struct{}
+	leaseWatchOnce   sync.Once
+}
+
+func (s *status) Close() error {
+	s.cancel()
+	s.wg.Wait()
+	return nil
+}
+
+func (s *status) guardedStore(cs *model.ClusterStatus, expectedVersion metadata.Version) (metadata.Version, error) {
+	v, err := s.metadata.Store(cs, expectedVersion)
+	if errors.Is(err, metadata.ErrMetadataBadVersion) {
+		slog.Error("Metadata version mismatch, triggering coordinator revalidation",
+			slog.Any("error", err))
+		s.broadcastLeaseMightChanged()
+	}
+	return v, err
 }
 
 // notifyChange wakes all goroutines waiting on ChangeNotify.
@@ -148,7 +175,7 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 	if s.currentVersionID != version {
 		return false, nil
 	}
-	versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
+	versionID, err := s.guardedStore(newStatus, s.currentVersionID)
 	if err != nil {
 		return false, err
 	}
@@ -161,7 +188,7 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 func (s *status) Update(newStatus *model.ClusterStatus) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
+	versionID, err := s.guardedStore(newStatus, s.currentVersionID)
 	if err != nil {
 		return err
 	}
@@ -181,7 +208,7 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 		return nil
 	}
 	ns.Shards[shard] = shardMetadata.Clone()
-	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
+	versionID, err := s.guardedStore(clonedStatus, s.currentVersionID)
 	if err != nil {
 		return err
 	}
@@ -204,7 +231,7 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) error {
 	if len(ns.Shards) == 0 {
 		delete(clonedStatus.Namespaces, namespace)
 	}
-	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
+	versionID, err := s.guardedStore(clonedStatus, s.currentVersionID)
 	if err != nil {
 		return err
 	}
@@ -238,19 +265,50 @@ func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
 	return true
 }
 
-func NewStatusResource(meta metadata.Provider) (StatusResource, error) {
-	s := status{
-		Logger: slog.With(
-			slog.String("component", "status-resource"),
-		),
-		lock:             sync.RWMutex{},
+func NewStatusResource(ctx context.Context, meta metadata.Provider) (StatusResource, <-chan struct{}, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	leaseWatch := make(chan struct{})
+	s := &status{
+		ctx:              ctx,
+		cancel:           cancel,
 		metadata:         meta,
 		currentVersionID: metadata.NotExists,
-		current:          nil,
 		changeCh:         make(chan struct{}),
+		leaseWatch:       leaseWatch,
 	}
-	if _, err := s.Load(); err != nil {
-		return nil, err
+
+	providerLeaseWatch, err := meta.WaitToBecomeLeader()
+	if err != nil {
+		cancel()
+		return nil, nil, fmt.Errorf("failed to become leader: %w", err)
 	}
-	return &s, nil
+
+	if providerLeaseWatch != nil {
+		s.wg.Go(func() {
+			s.watchProviderLease(providerLeaseWatch)
+		})
+	}
+
+	if _, loadErr := s.Load(); loadErr != nil {
+		cancel()
+		return nil, nil, loadErr
+	}
+	return s, leaseWatch, nil
+}
+
+func (s *status) watchProviderLease(providerLeaseWatch <-chan struct{}) {
+	select {
+	case <-providerLeaseWatch:
+		slog.Warn("Leadership lost from provider")
+		s.broadcastLeaseMightChanged()
+	case <-s.ctx.Done():
+		// Graceful shutdown.
+	}
+}
+
+// broadcastLeaseMightChanged closes leaseWatch to trigger a coordinator restart.
+func (s *status) broadcastLeaseMightChanged() {
+	s.leaseWatchOnce.Do(func() {
+		close(s.leaseWatch)
+	})
 }
