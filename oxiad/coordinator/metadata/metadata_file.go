@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 
 	"github.com/juju/fslock"
-	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
@@ -36,14 +36,16 @@ var _ Provider = &metadataProviderFile{}
 // MetadataProviderMemory is a provider that just keeps the cluster status in a local file,
 // using a lock mechanism to prevent missing updates.
 type metadataProviderFile struct {
-	path     string
-	fileLock *fslock.Lock
+	path       string
+	fileLock   *fslock.Lock
+	leaseWatch *concurrent.Watch[LeaseStatus]
 }
 
 func NewMetadataProviderFile(path string) Provider {
 	return &metadataProviderFile{
-		path:     path,
-		fileLock: fslock.New(path),
+		path:       path,
+		fileLock:   fslock.New(path),
+		leaseWatch: concurrent.NewWatch(LeaseStatusNotAcquired),
 	}
 }
 
@@ -58,16 +60,17 @@ func (m *metadataProviderFile) Close() error {
 	return nil
 }
 
-func (m *metadataProviderFile) WaitToBecomeLeader() (<-chan struct{}, error) {
+func (m *metadataProviderFile) RunElection() *concurrent.Watch[LeaseStatus] {
 	if err := m.ensureParentDirectoryExists(); err != nil {
-		return nil, err
+		m.leaseWatch.Send(LeaseStatusLost)
+		return m.leaseWatch
 	}
-
 	if err := m.fileLock.Lock(); err != nil {
-		return nil, errors.Wrapf(err, "failed to acquire lock on %s", m.path)
+		m.leaseWatch.Send(LeaseStatusLost)
+		return m.leaseWatch
 	}
-
-	return nil, nil //nolint:nilnil
+	m.leaseWatch.Send(LeaseStatusAcquired)
+	return m.leaseWatch
 }
 
 func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, err error) {

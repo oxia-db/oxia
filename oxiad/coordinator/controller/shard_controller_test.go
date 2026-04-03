@@ -110,7 +110,7 @@ func TestShardController(t *testing.T) {
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
@@ -194,7 +194,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
@@ -230,7 +230,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
@@ -283,7 +283,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
@@ -344,7 +344,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
@@ -386,7 +386,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{
 			Namespaces: []model.NamespaceConfig{
@@ -435,7 +435,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
 
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
@@ -540,7 +540,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
 
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
@@ -666,7 +666,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
@@ -770,7 +770,7 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)
@@ -832,7 +832,7 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 
 	meta := metadata.NewMetadataProviderMemory()
 	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
+	statusResource := resource.NewStatusResource(meta, meta.RunElection())
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
 	}, nil, nil)

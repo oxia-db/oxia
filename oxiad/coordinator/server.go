@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -63,11 +64,11 @@ type GrpcServer struct {
 	clientPool   rpc.ClientPool
 	metrics      *metric.PrometheusMetrics
 
-	// coordinatorMu protects coordinator and leadershipLostCh, which are
+	// coordinatorMu protects coordinator, which is
 	// swapped by monitorLease and read by Close.
-	coordinatorMu    sync.RWMutex
-	coordinator      Coordinator
-	leadershipLostCh <-chan struct{}
+	coordinatorMu sync.RWMutex
+	coordinator   Coordinator
+	leaseWatch    *concurrent.Watch[metadata.LeaseStatus]
 
 	metadataProvider                 metadata.Provider
 	clusterConfigProvider            func() (model.ClusterConfig, error)
@@ -195,7 +196,12 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, leadershipLostCh, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
+	leaseWatch := metadataProvider.RunElection()
+	for leaseWatch.Get() != metadata.LeaseStatusAcquired {
+		<-leaseWatch.Changed()
+	}
+
+	coordinatorInstance, err := NewCoordinator(metadataProvider, leaseWatch, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +246,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		clusterConfigProvider:            clusterConfigProvider,
 		clusterConfigChangeNotifications: clusterConfigChangeNotifications,
 		rpcProvider:                      rpcClient,
-		leadershipLostCh:                 leadershipLostCh,
+		leaseWatch:                       leaseWatch,
 	}
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
@@ -276,46 +282,51 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 }
 
 func (s *GrpcServer) monitorLease() {
+	w := s.leaseWatch
 	for {
-		s.coordinatorMu.RLock()
-		ch := s.leadershipLostCh
-		s.coordinatorMu.RUnlock()
-
-		if ch == nil {
-			// Provider doesn't support leader election (memory, file)
+		select {
+		case <-w.Changed():
+		case <-s.ctx.Done():
 			return
 		}
 
-		select {
-		case <-ch:
-			s.logger.Info("Leadership lost, closing coordinator and recreating")
+		status := w.Get()
+		switch status {
+		case metadata.LeaseStatusLost:
+			s.logger.Info("Lease lost, closing coordinator")
 			s.coordinatorMu.Lock()
-			if err := s.coordinator.Close(); err != nil {
-				s.logger.Warn("Failed to close coordinator after leadership loss",
-					slog.Any("error", err))
+			if s.coordinator != nil {
+				if err := s.coordinator.Close(); err != nil {
+					s.logger.Warn("Failed to close coordinator", slog.Any("error", err))
+				}
+				s.coordinator = nil
 			}
-			s.coordinator = nil
 			s.coordinatorMu.Unlock()
 
-			coordinatorInstance, leadershipLostCh, err := NewCoordinator(
+		case metadata.LeaseStatusAcquired:
+			s.coordinatorMu.RLock()
+			hasCoordinator := s.coordinator != nil
+			s.coordinatorMu.RUnlock()
+			if hasCoordinator {
+				continue
+			}
+
+			s.logger.Info("Lease acquired, creating coordinator")
+			coordinatorInstance, err := NewCoordinator(
 				s.metadataProvider,
+				w,
 				s.clusterConfigProvider,
 				s.clusterConfigChangeNotifications,
 				s.rpcProvider,
 			)
 			if err != nil {
-				s.logger.Error("Failed to create new coordinator",
-					slog.Any("error", err))
-				return
+				s.logger.Error("Failed to create coordinator", slog.Any("error", err))
+				continue
 			}
 
 			s.coordinatorMu.Lock()
 			s.coordinator = coordinatorInstance
-			s.leadershipLostCh = leadershipLostCh
 			s.coordinatorMu.Unlock()
-
-		case <-s.ctx.Done():
-			return
 		}
 	}
 }

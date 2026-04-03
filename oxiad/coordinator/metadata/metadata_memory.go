@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
@@ -28,18 +29,20 @@ var _ Provider = &metadataProviderMemory{}
 type metadataProviderMemory struct {
 	sync.Mutex
 
-	cs      *model.ClusterStatus
-	version Version
+	cs         *model.ClusterStatus
+	version    Version
+	leaseWatch *concurrent.Watch[LeaseStatus]
 }
 
-func (*metadataProviderMemory) WaitToBecomeLeader() (<-chan struct{}, error) {
-	return nil, nil //nolint:nilnil
+func (m *metadataProviderMemory) RunElection() *concurrent.Watch[LeaseStatus] {
+	return m.leaseWatch
 }
 
 func NewMetadataProviderMemory() Provider {
 	return &metadataProviderMemory{
-		cs:      nil,
-		version: NotExists,
+		cs:         nil,
+		version:    NotExists,
+		leaseWatch: concurrent.NewWatch(LeaseStatusAcquired),
 	}
 }
 

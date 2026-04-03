@@ -50,8 +50,8 @@ func (t testRaftClusterProvider) Store(cs *model.ClusterStatus, expectedVersion 
 	return t.leader.Store(cs, expectedVersion)
 }
 
-func (t testRaftClusterProvider) WaitToBecomeLeader() (<-chan struct{}, error) {
-	return t.leader.WaitToBecomeLeader()
+func (t testRaftClusterProvider) RunElection() *concurrent.Watch[LeaseStatus] {
+	return t.leader.RunElection()
 }
 
 func newTestRaftClusterProvider(t *testing.T) Provider {
@@ -77,8 +77,10 @@ func newTestRaftClusterProvider(t *testing.T) Provider {
 		idx := i
 		go func() {
 			p := trc.providers[idx]
-			_, err := p.WaitToBecomeLeader()
-			assert.NoError(t, err)
+			w := p.RunElection()
+			for w.Get() != LeaseStatusAcquired {
+				<-w.Changed()
+			}
 			leaderFuture.Complete(p)
 		}()
 	}

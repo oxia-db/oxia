@@ -65,8 +65,9 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 	}
 	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, _, err := coordinator.NewCoordinator(
+	coordinatorInstance, err := coordinator.NewCoordinator(
 		metadataProvider,
+		metadataProvider.RunElection(),
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc2.NewRpcProvider(clientPool),
@@ -331,8 +332,9 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 	}
 	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, _, err := coordinator.NewCoordinator(
+	coordinatorInstance, err := coordinator.NewCoordinator(
 		metadataProvider,
+		metadataProvider.RunElection(),
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc2.NewRpcProvider(clientPool),
@@ -860,7 +862,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			}
 			clientPool := rpc.NewClientPool(nil, nil)
 
-			coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+			coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
 			assert.NoError(t, err)
 
 			statusResource := coordinatorInstance.StatusResource()

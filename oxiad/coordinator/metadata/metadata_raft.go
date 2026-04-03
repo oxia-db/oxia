@@ -29,32 +29,31 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 type metadataProviderRaft struct {
 	sync.Mutex
 
-	sc               *stateContainer
-	raft             *raft.Raft
-	store            *kvRaftStore
-	log              *slog.Logger
-	leadershipLostCh chan struct{}
+	sc         *stateContainer
+	raft       *raft.Raft
+	store      *kvRaftStore
+	log        *slog.Logger
+	leaseWatch *concurrent.Watch[LeaseStatus]
 }
 
-func (mpr *metadataProviderRaft) WaitToBecomeLeader() (<-chan struct{}, error) {
-	<-mpr.raft.LeaderCh()
-	mpr.leadershipLostCh = make(chan struct{})
-	// Monitor for leader loss in the background
+func (mpr *metadataProviderRaft) RunElection() *concurrent.Watch[LeaseStatus] {
 	go func() {
 		for hasLease := range mpr.raft.LeaderCh() {
-			if !hasLease {
-				close(mpr.leadershipLostCh)
-				return
+			if hasLease {
+				mpr.leaseWatch.Send(LeaseStatusAcquired)
+			} else {
+				mpr.leaseWatch.Send(LeaseStatusLost)
 			}
 		}
 	}()
-	return mpr.leadershipLostCh, nil
+	return mpr.leaseWatch
 }
 
 func NewMetadataProviderRaft(
@@ -63,8 +62,9 @@ func NewMetadataProviderRaft(
 	raftDataDir string,
 ) (Provider, error) {
 	mpr := &metadataProviderRaft{
-		sc:  newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
-		log: slog.With(slog.String("component", "metadata-provider-raft")),
+		sc:         newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
+		log:        slog.With(slog.String("component", "metadata-provider-raft")),
+		leaseWatch: concurrent.NewWatch(LeaseStatusNotAcquired),
 	}
 	// Ensure data dir per node
 	nodeId := raftAddress

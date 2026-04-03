@@ -31,7 +31,7 @@ func NewCoordinator(t *testing.T, config *model.ClusterConfig, clusterConfigNoti
 	t.Helper()
 	metadataProvider := metadata.NewMetadataProviderMemory()
 	clientPool := rpc.NewClientPool(nil, nil)
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return *config, nil }, clusterConfigNotificationCh, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(), func() (model.ClusterConfig, error) { return *config, nil }, clusterConfigNotificationCh, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 	return coordinatorInstance
 }

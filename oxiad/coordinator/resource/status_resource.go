@@ -23,6 +23,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
@@ -64,7 +65,8 @@ var _ StatusResource = &status{}
 
 type status struct {
 	*slog.Logger
-	metadata metadata.Provider
+	metadata   metadata.Provider
+	leaseWatch *concurrent.Watch[metadata.LeaseStatus]
 
 	lock             sync.RWMutex
 	current          *model.ClusterStatus
@@ -77,8 +79,10 @@ type status struct {
 // re-read version could overwrite valid data written by a new leader.
 // The LeadershipLostCh will trigger a full coordinator restart with
 // clean state.
-func (*status) handleStoreError(err error) error {
+func (s *status) handleStoreError(err error) error {
 	if errors.Is(err, metadata.ErrMetadataBadVersion) {
+		slog.Error("Metadata version mismatch, triggering coordinator revalidation", slog.Any("error", err))
+		s.leaseWatch.Send(metadata.LeaseStatusLost)
 		return backoff.Permanent(err)
 	}
 	return err
@@ -287,13 +291,14 @@ func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
 	return true
 }
 
-func NewStatusResource(meta metadata.Provider) StatusResource {
+func NewStatusResource(meta metadata.Provider, leaseWatch *concurrent.Watch[metadata.LeaseStatus]) StatusResource {
 	s := status{
 		Logger: slog.With(
 			slog.String("component", "status-resource"),
 		),
 		lock:             sync.RWMutex{},
 		metadata:         meta,
+		leaseWatch:       leaseWatch,
 		currentVersionID: metadata.NotExists,
 		current:          nil,
 		changeCh:         make(chan struct{}),

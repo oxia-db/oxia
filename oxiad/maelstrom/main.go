@@ -179,8 +179,14 @@ func main() {
 			Servers: servers,
 		}
 
-		_, _, err := coordinator.NewCoordinator(
-			metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json")),
+		metaProvider := metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json"))
+		leaseWatch := metaProvider.RunElection()
+		for leaseWatch.Get() != metadata.LeaseStatusAcquired {
+			<-leaseWatch.Changed()
+		}
+		_, err := coordinator.NewCoordinator(
+			metaProvider,
+			leaseWatch,
 			func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil,
 			newRpcProvider(dispatcher))
 		if err != nil {

@@ -57,7 +57,7 @@ type metadataProviderConfigMap struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	leadershipLostCh chan struct{}
+	leaseWatch *concurrent.Watch[LeaseStatus]
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -72,6 +72,7 @@ func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name strin
 		namespace:  namespace,
 		name:       name,
 		log:        slog.With("component", "metadata-config-map"),
+		leaseWatch: concurrent.NewWatch(LeaseStatusNotAcquired),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
 			"Latency for reading coordinator metadata", nil),
@@ -154,7 +155,12 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error) {
+func (m *metadataProviderConfigMap) RunElection() *concurrent.Watch[LeaseStatus] {
+	m.startLeaderElection()
+	return m.leaseWatch
+}
+
+func (m *metadataProviderConfigMap) startLeaderElection() {
 	m.Lock()
 	defer m.Unlock()
 
@@ -173,8 +179,6 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error
 	}
 
 	log := m.log.With(slog.String("identity", myIdentity))
-	wg := concurrent.NewWaitGroup(1)
-	m.leadershipLostCh = make(chan struct{})
 
 	// Configure leader election
 	leaderElectionConfig := leaderelection.LeaderElectionConfig{
@@ -184,13 +188,24 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error
 		RenewDeadline:   renewDeadline,
 		RetryPeriod:     retryPeriod,
 		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(_ context.Context) {
+			OnStartedLeading: func(ctx context.Context) {
 				log.Info("Started leading - lease acquired")
-				wg.Done()
+				m.leaseWatch.Send(LeaseStatusAcquired)
+
+				ticker := time.NewTicker(retryPeriod)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ticker.C:
+						m.leaseWatch.Send(LeaseStatusAcquired)
+					case <-ctx.Done():
+						return
+					}
+				}
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
-				close(m.leadershipLostCh)
+				m.leaseWatch.Send(LeaseStatusLost)
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -217,11 +232,6 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error
 		leaderElector.Run(m.ctx)
 		close(m.closeCh)
 	})
-
-	if err := wg.Wait(m.ctx); err != nil {
-		return nil, err
-	}
-	return m.leadershipLostCh, nil
 }
 
 func (m *metadataProviderConfigMap) Close() error {

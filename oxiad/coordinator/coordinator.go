@@ -713,9 +713,10 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 }
 
 func NewCoordinator(meta metadata.Provider,
+	leaseWatch *concurrent.Watch[metadata.LeaseStatus],
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
-	rpcProvider rpc.Provider) (Coordinator, <-chan struct{}, error) {
+	rpcProvider rpc.Provider) (Coordinator, error) {
 	c := &coordinator{
 		Logger: slog.With(
 			slog.String("component", "coordinator"),
@@ -732,17 +733,11 @@ func NewCoordinator(meta metadata.Provider,
 	}
 	c.ccrWg.Add(1)
 
-	// Ensure we are to become the leader coordinator
-	c.Info("Waiting to become leader")
-	leadershipLostCh, err := meta.WaitToBecomeLeader()
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to wait in becoming leader")
-	}
 	c.Info("This coordinator is now leader")
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.statusResource = resource.NewStatusResource(meta)
+	c.statusResource = resource.NewStatusResource(meta, leaseWatch)
 
 	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
@@ -816,5 +811,5 @@ func NewCoordinator(meta metadata.Provider,
 
 	c.loadBalancer.Start()
 	c.ccrWg.Done()
-	return c, leadershipLostCh, nil
+	return c, nil
 }
