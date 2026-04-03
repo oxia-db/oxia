@@ -63,6 +63,10 @@ func (m *mockStatusResource) ChangeNotify() <-chan struct{} {
 	return make(chan struct{})
 }
 
+func (m *mockStatusResource) Close() error {
+	return nil
+}
+
 // mockClusterConfigResource implements resource.ClusterConfigResource for testing.
 type mockClusterConfigResource struct {
 	nodes     *linkedhashset.Set[string]

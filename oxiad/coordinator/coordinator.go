@@ -281,7 +281,7 @@ func (c *coordinator) Close() error {
 	c.cancel()
 	c.Wait()
 
-	err := c.configResource.Close()
+	err := multierr.Append(c.statusResource.Close(), c.configResource.Close())
 	for _, sc := range c.splitControllers {
 		sc.Close()
 	}
@@ -732,17 +732,18 @@ func NewCoordinator(meta metadata.Provider,
 	}
 	c.ccrWg.Add(1)
 
-	// Ensure we are to become the leader coordinator
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+
 	c.Info("Waiting to become leader")
-	leadershipLostCh, err := meta.WaitToBecomeLeader()
+	var leadershipLostCh <-chan struct{}
+	var err error
+	c.statusResource, leadershipLostCh, err = resource.NewStatusResource(c.ctx, meta)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to wait in becoming leader")
+		return nil, nil, errors.Wrap(err, "failed to create status resource")
 	}
 	c.Info("This coordinator is now leader")
 
-	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.statusResource = resource.NewStatusResource(meta)
 
 	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 

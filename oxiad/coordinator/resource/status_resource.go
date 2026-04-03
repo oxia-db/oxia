@@ -17,17 +17,22 @@ package resource
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 type StatusResource interface {
+	io.Closer
+
 	Load() *model.ClusterStatus
 
 	LoadWithVersion() (*model.ClusterStatus, metadata.Version)
@@ -66,22 +71,52 @@ type status struct {
 	*slog.Logger
 	metadata metadata.Provider
 
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
 	lock             sync.RWMutex
 	current          *model.ClusterStatus
 	currentVersionID metadata.Version
 	changeCh         chan struct{}
+	leaseWatch       chan struct{}
+	leaseWatchOnce   sync.Once
 }
 
-// handleStoreError handles errors from metadata.Store().
-// ErrMetadataBadVersion is treated as permanent — retrying with a
-// re-read version could overwrite valid data written by a new leader.
-// The LeadershipLostCh will trigger a full coordinator restart with
-// clean state.
-func (*status) handleStoreError(err error) error {
+func (s *status) Close() error {
+	s.cancel()
+	s.wg.Wait()
+	return nil
+}
+
+// guardedStore wraps metadata.Store and triggers a coordinator restart on
+// ErrMetadataBadVersion, which is a permanent error that cannot self-heal.
+func (s *status) guardedStore(cs *model.ClusterStatus, expectedVersion metadata.Version) (metadata.Version, error) {
+	v, err := s.metadata.Store(cs, expectedVersion)
 	if errors.Is(err, metadata.ErrMetadataBadVersion) {
-		return backoff.Permanent(err)
+		slog.Error("Metadata version mismatch, triggering coordinator revalidation",
+			slog.Any("error", err))
+		s.broadcastLeaseMightChanged()
 	}
-	return err
+	return v, err
+}
+
+// watchProviderLease monitors the provider's leadership-lost signal
+// and forwards it to leaseWatch.
+func (s *status) watchProviderLease(providerLeaseWatch <-chan struct{}) {
+	select {
+	case <-providerLeaseWatch:
+		slog.Warn("Lease lost from provider")
+		s.broadcastLeaseMightChanged()
+	case <-s.ctx.Done():
+	}
+}
+
+// broadcastLeaseMightChanged closes leaseWatch to trigger a coordinator restart.
+func (s *status) broadcastLeaseMightChanged() {
+	s.leaseWatchOnce.Do(func() {
+		close(s.leaseWatch)
+	})
 }
 
 // notifyChange wakes all goroutines waiting on ChangeNotify.
@@ -131,7 +166,7 @@ func (s *status) loadWithInitSlow() {
 		s.current = clusterStatus
 		s.currentVersionID = version
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to load status, retrying later",
 			slog.Any("error", err),
@@ -166,14 +201,17 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 		return false
 	}
 	err := backoff.RetryNotify(func() error {
-		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
+		versionID, err := s.guardedStore(newStatus, s.currentVersionID)
+		if errors.Is(err, metadata.ErrMetadataBadVersion) {
+			return backoff.Permanent(err)
+		}
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to swap status, retrying later",
 			slog.Any("error", err),
@@ -190,14 +228,14 @@ func (s *status) Update(newStatus *model.ClusterStatus) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	_ = backoff.RetryNotify(func() error {
-		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
+		versionID, err := s.guardedStore(newStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to update status, retrying later",
 			slog.Any("error", err),
@@ -218,14 +256,14 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 	}
 	ns.Shards[shard] = shardMetadata.Clone()
 	_ = backoff.RetryNotify(func() error {
-		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
+		versionID, err := s.guardedStore(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to update shard metadata, retrying later",
 			slog.Any("error", err),
@@ -249,14 +287,14 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) {
 		delete(clonedStatus.Namespaces, namespace)
 	}
 	_ = backoff.RetryNotify(func() error {
-		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
+		versionID, err := s.guardedStore(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to delete shard metadata, retrying later",
 			slog.Any("error", err),
@@ -287,17 +325,33 @@ func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
 	return true
 }
 
-func NewStatusResource(meta metadata.Provider) StatusResource {
-	s := status{
+func NewStatusResource(ctx context.Context, meta metadata.Provider) (StatusResource, <-chan struct{}, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	leaseWatch := make(chan struct{})
+	s := &status{
 		Logger: slog.With(
 			slog.String("component", "status-resource"),
 		),
-		lock:             sync.RWMutex{},
+		ctx:              ctx,
+		cancel:           cancel,
 		metadata:         meta,
 		currentVersionID: metadata.NotExists,
-		current:          nil,
 		changeCh:         make(chan struct{}),
+		leaseWatch:       leaseWatch,
 	}
+
+	providerLeaseWatch, err := meta.WaitToBecomeLeader()
+	if err != nil {
+		cancel()
+		return nil, nil, fmt.Errorf("failed to become leader: %w", err)
+	}
+
+	if providerLeaseWatch != nil {
+		s.wg.Go(func() {
+			s.watchProviderLease(providerLeaseWatch)
+		})
+	}
+
 	s.Load()
-	return &s
+	return s, leaseWatch, nil
 }
