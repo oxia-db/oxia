@@ -7,7 +7,7 @@ require (
 	github.com/dgraph-io/ristretto v0.2.0
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/google/uuid v1.6.0
-	github.com/oxia-db/oxia/common v0.16.1
+	github.com/oxia-db/oxia/common v0.0.0-00010101000000-000000000000
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.40.0
@@ -45,3 +45,5 @@ require (
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/oxia-db/oxia/common => ../common
