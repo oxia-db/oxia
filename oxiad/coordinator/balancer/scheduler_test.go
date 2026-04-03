@@ -35,25 +35,30 @@ type mockStatusResource struct {
 	status *model.ClusterStatus
 }
 
-func (m *mockStatusResource) Load() *model.ClusterStatus {
-	return m.status
+func (m *mockStatusResource) Load() (*model.ClusterStatus, error) {
+	return m.status, nil
 }
 
-func (m *mockStatusResource) LoadWithVersion() (*model.ClusterStatus, metadata.Version) {
-	return m.status, "0"
+func (m *mockStatusResource) LoadWithVersion() (*model.ClusterStatus, metadata.Version, error) {
+	return m.status, "0", nil
 }
 
-func (m *mockStatusResource) Swap(_ *model.ClusterStatus, _ metadata.Version) bool {
-	return true
+func (m *mockStatusResource) Swap(_ *model.ClusterStatus, _ metadata.Version) (bool, error) {
+	return true, nil
 }
 
-func (m *mockStatusResource) Update(newStatus *model.ClusterStatus) {
+func (m *mockStatusResource) Update(newStatus *model.ClusterStatus) error {
 	m.status = newStatus
+	return nil
 }
 
-func (m *mockStatusResource) UpdateShardMetadata(_ string, _ int64, _ model.ShardMetadata) {}
+func (m *mockStatusResource) UpdateShardMetadata(_ string, _ int64, _ model.ShardMetadata) error {
+	return nil
+}
 
-func (m *mockStatusResource) DeleteShardMetadata(_ string, _ int64) {}
+func (m *mockStatusResource) DeleteShardMetadata(_ string, _ int64) error {
+	return nil
+}
 
 func (m *mockStatusResource) IsReady(_ *model.ClusterConfig) bool {
 	return true

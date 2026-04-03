@@ -127,7 +127,7 @@ func (c *coordinator) NodeControllers() map[string]controller.DataServerControll
 	return res
 }
 
-func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
+func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) error {
 	c.ccrWg.Wait()
 	c.Lock()
 	defer c.Unlock()
@@ -167,14 +167,24 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	}
 
 	// compare and set
-	currentStatus, version := c.statusResource.LoadWithVersion()
+	currentStatus, version, err := c.statusResource.LoadWithVersion()
+	if err != nil {
+		return fmt.Errorf("failed to load cluster status: %w", err)
+	}
 	var clusterStatus *model.ClusterStatus
 	var shardsToAdd map[int64]string
 	var shardsToDelete []int64
 	for {
 		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(newConfig, currentStatus, c.selectNewEnsemble)
-		if !c.statusResource.Swap(clusterStatus, version) {
-			currentStatus, version = c.statusResource.LoadWithVersion()
+		swapped, err := c.statusResource.Swap(clusterStatus, version)
+		if err != nil {
+			return fmt.Errorf("failed to swap cluster status: %w", err)
+		}
+		if !swapped {
+			currentStatus, version, err = c.statusResource.LoadWithVersion()
+			if err != nil {
+				return fmt.Errorf("failed to load cluster status: %w", err)
+			}
 			continue
 		}
 		break
@@ -197,6 +207,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 
 	c.computeNewAssignments()
 	c.loadBalancer.Trigger()
+	return nil
 }
 
 func (c *coordinator) findDataServerFeatures(dataServers []model.Server) map[string][]proto.Feature {
@@ -401,7 +412,10 @@ func (c *coordinator) computeNewAssignments() {
 	c.assignments = &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{},
 	}
-	status := c.statusResource.Load()
+	status, err := c.statusResource.Load()
+	if err != nil {
+		return
+	}
 	// Update the leader for the shards on all the namespaces
 	for name, ns := range status.Namespaces {
 		nsAssignments := &proto.NamespaceShardsAssignment{
@@ -449,7 +463,10 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	c.Lock()
 	defer c.Unlock()
 
-	status := c.statusResource.Load()
+	status, err := c.statusResource.Load()
+	if err != nil {
+		return 0, 0, err
+	}
 
 	// Validate namespace
 	ns, exists := status.Namespaces[namespace]
@@ -563,7 +580,9 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Persist
-	c.statusResource.Update(cloned)
+	if err = c.statusResource.Update(cloned); err != nil {
+		return 0, 0, errors.Wrap(err, "failed to persist split status")
+	}
 
 	c.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
@@ -588,7 +607,11 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 		RpcProvider:    c.rpc,
 		EventListener:  c,
 		EnsembleSelector: func(ns string) ([]model.Server, error) {
-			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.statusResource.Load())
+			s, loadErr := c.statusResource.Load()
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), s)
 		},
 	})
 	c.splitControllers[parentShardId] = sc
@@ -629,7 +652,11 @@ func (c *coordinator) SplitComplete(parentShard int64, leftChild int64, rightChi
 	// during Cutover.
 	if sc, exists := c.shardControllers[parentShard]; exists {
 		// Sync shard controller metadata from the status resource.
-		status := c.statusResource.Load()
+		status, err := c.statusResource.Load()
+		if err != nil {
+			c.Error("Failed to load cluster status in SplitComplete", slog.Any("error", err))
+			return
+		}
 		for _, ns := range status.Namespaces {
 			if parentMeta, ok := ns.Shards[parentShard]; ok {
 				sc.Metadata().Store(parentMeta)
@@ -704,7 +731,11 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 				RpcProvider:    c.rpc,
 				EventListener:  c,
 				EnsembleSelector: func(namespace string) ([]model.Server, error) {
-					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.statusResource.Load())
+					s, loadErr := c.statusResource.Load()
+					if loadErr != nil {
+						return nil, loadErr
+					}
+					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), s)
 				},
 			})
 			c.splitControllers[shardId] = sc
@@ -742,7 +773,10 @@ func NewCoordinator(meta metadata.Provider,
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.statusResource = resource.NewStatusResource(meta)
+	c.statusResource, err = resource.NewStatusResource(meta)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to create status resource")
+	}
 
 	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
@@ -759,7 +793,10 @@ func NewCoordinator(meta metadata.Provider,
 	})
 
 	clusterConfig := c.configResource.Load()
-	clusterStatus := c.statusResource.Load()
+	clusterStatus, err := c.statusResource.Load()
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to load cluster status")
+	}
 
 	// init node controller
 	for _, node := range clusterConfig.Servers {
@@ -777,7 +814,9 @@ func NewCoordinator(meta metadata.Provider,
 
 		clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
 
-		c.statusResource.Update(clusterStatus)
+		if err = c.statusResource.Update(clusterStatus); err != nil {
+			return nil, nil, errors.Wrap(err, "failed to persist initial cluster status")
+		}
 	} else {
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 
@@ -787,7 +826,9 @@ func NewCoordinator(meta metadata.Provider,
 			clusterStatus, c.selectNewEnsemble)
 
 		if len(shardsToAdd) > 0 || len(shardsToDelete) > 0 {
-			c.statusResource.Update(clusterStatus)
+			if err = c.statusResource.Update(clusterStatus); err != nil {
+				return nil, nil, errors.Wrap(err, "failed to persist cluster status changes")
+			}
 		}
 	}
 

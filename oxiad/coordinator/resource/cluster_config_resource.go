@@ -27,6 +27,7 @@ import (
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
 
 	"github.com/oxia-db/oxia/common/process"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
@@ -201,22 +202,31 @@ func (ccf *clusterConfig) waitForUpdates() {
 
 		case <-ccf.clusterConfigNotificationsCh:
 			ccf.Info("Received cluster config change event")
-			ccf.clusterConfigLock.Lock()
-			oldClusterConfig := ccf.currentClusterConfig
-			ccf.currentClusterConfig = nil
-			ccf.clusterConfigLock.Unlock()
-
-			ccf.loadWithInitSlow()
-
 			ccf.clusterConfigLock.RLock()
-			currentClusterConfig := ccf.currentClusterConfig
+			oldClusterConfig := ccf.currentClusterConfig
 			ccf.clusterConfigLock.RUnlock()
 
-			if reflect.DeepEqual(oldClusterConfig, currentClusterConfig) {
-				ccf.Info("No cluster config changes detected")
-				return
-			}
-			ccf.clusterConfigEventListener.ConfigChanged(currentClusterConfig)
+			_ = backoff.RetryNotify(func() error {
+				ccf.clusterConfigLock.Lock()
+				ccf.currentClusterConfig = nil
+				ccf.clusterConfigLock.Unlock()
+
+				ccf.loadWithInitSlow()
+
+				ccf.clusterConfigLock.RLock()
+				currentClusterConfig := ccf.currentClusterConfig
+				ccf.clusterConfigLock.RUnlock()
+
+				if reflect.DeepEqual(oldClusterConfig, currentClusterConfig) {
+					ccf.Info("No cluster config changes detected")
+					return nil
+				}
+				return ccf.clusterConfigEventListener.ConfigChanged(currentClusterConfig)
+			}, oxiatime.NewBackOff(ccf.ctx), func(err error, duration time.Duration) {
+				ccf.Warn("Failed to apply config change, retrying",
+					slog.Any("error", err),
+					slog.Duration("retry-after", duration))
+			})
 		}
 	}
 }

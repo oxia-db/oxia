@@ -64,7 +64,8 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	resource := coordinatorInstance.StatusResource().Load()
+	resource, err := coordinatorInstance.StatusResource().Load()
+	assert.NoError(t, err)
 	shardMetadata := resource.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
 

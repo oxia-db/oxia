@@ -224,9 +224,13 @@ func (*ShardElection) waitForMajority(ch chan struct {
 func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto.EntryId) (
 	leader model.Server, followers map[model.Server]*proto.EntryId, err error) {
 	candidates := chooseCandidates(candidatesStatus)
+	cs, err := e.statusResource.Load()
+	if err != nil {
+		return model.Server{}, nil, err
+	}
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Status:     e.statusResource.Load(),
+		Status:     cs,
 	})
 	if err != nil {
 		return model.Server{}, nil, err
@@ -434,7 +438,9 @@ func (e *ShardElection) start() (model.Server, error) {
 		metadata.Term++
 		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
-	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	if err := e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta); err != nil {
+		return model.Server{}, err
+	}
 
 	if e.changeEnsembleAction != nil {
 		e.prepareIfChangeEnsemble(&mutShardMeta)
@@ -484,7 +490,9 @@ func (e *ShardElection) start() (model.Server, error) {
 	leader := mutShardMeta.Leader
 	leaderEntry := candidatesStatus[*leader]
 
-	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	if err = e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta); err != nil {
+		return model.Server{}, err
+	}
 	e.meta.Store(mutShardMeta)
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
