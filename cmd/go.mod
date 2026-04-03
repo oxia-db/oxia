@@ -7,7 +7,7 @@ require (
 	github.com/cockroachdb/pebble/v2 v2.1.0
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/invopop/jsonschema v0.13.0
-	github.com/oxia-db/oxia/common v0.0.0
+	github.com/oxia-db/oxia/common v0.16.1
 	github.com/oxia-db/oxia/oxia v0.0.0
 	github.com/oxia-db/oxia/oxiad v0.0.0-20260311203958-42be7c29268f
 	github.com/pkg/errors v0.9.1
