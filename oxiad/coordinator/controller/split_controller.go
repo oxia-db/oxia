@@ -215,7 +215,7 @@ func (sc *SplitController) currentPhase() *model.SplitPhase {
 }
 
 // updatePhase atomically updates the split phase on both parent and children.
-func (sc *SplitController) updatePhase(newPhase model.SplitPhase) {
+func (sc *SplitController) updatePhase(newPhase model.SplitPhase) error {
 	status := sc.statusResource.Load()
 	cloned := status.Clone()
 
@@ -235,7 +235,7 @@ func (sc *SplitController) updatePhase(newPhase model.SplitPhase) {
 		}
 	}
 
-	sc.statusResource.Update(cloned)
+	return sc.statusResource.Update(cloned)
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects
@@ -285,13 +285,14 @@ func (sc *SplitController) runBootstrap() error {
 			childLeaders[childId] = childMeta.Leader.Internal
 		}
 	}
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
+	if err := sc.updateParentMeta(func(meta *model.ShardMetadata) {
 		meta.Split.ParentTermAtBootstrap = parentTerm
 		meta.Split.ChildLeadersAtBootstrap = childLeaders
-	})
+	}); err != nil {
+		return err
+	}
 
-	sc.updatePhase(model.SplitPhaseCatchUp)
-	return nil
+	return sc.updatePhase(model.SplitPhaseCatchUp)
 }
 
 // fenceAndElectChild fences a child shard's ensemble and elects a leader.
@@ -318,11 +319,13 @@ func (sc *SplitController) fenceAndElectChild(childId int64) error {
 
 	childLeader := sc.pickLeader(headEntries)
 
-	sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
+	if err := sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
 		meta.Term = childTerm
 		meta.Leader = &childLeader
 		meta.Status = model.ShardStatusSteadyState
-	})
+	}); err != nil {
+		return err
+	}
 
 	// Elect the child leader so it replicates to its followers immediately.
 	// Without this, only the single child leader node has the data.
@@ -421,8 +424,7 @@ func (sc *SplitController) runCatchUp() error {
 		}
 		if caughtUp {
 			sc.log.Info("All children caught up")
-			sc.updatePhase(model.SplitPhaseCutover)
-			return nil
+			return sc.updatePhase(model.SplitPhaseCutover)
 		}
 	}
 }
@@ -443,14 +445,18 @@ func (sc *SplitController) checkObserverCursorsStale() (bool, error) {
 			slog.Int64("bootstrap-term", parentMeta.Split.ParentTermAtBootstrap),
 			slog.Int64("current-term", parentMeta.Term),
 		)
-		sc.updatePhase(model.SplitPhaseBootstrap)
+		if err := sc.updatePhase(model.SplitPhaseBootstrap); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 
 	// Child leader election: the observer cursor targets the old (dead) leader.
 	// Remove the stale cursor and fall back to Bootstrap to re-add.
 	if sc.removeStaleChildObservers(parentMeta) {
-		sc.updatePhase(model.SplitPhaseBootstrap)
+		if err := sc.updatePhase(model.SplitPhaseBootstrap); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 
@@ -562,11 +568,13 @@ func (sc *SplitController) runCutover() error {
 	)
 
 	// Update parent term in metadata
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
+	if err := sc.updateParentMeta(func(meta *model.ShardMetadata) {
 		meta.Term = newParentTerm
 		meta.Leader = nil
 		meta.Status = model.ShardStatusElection
-	})
+	}); err != nil {
+		return err
+	}
 
 	// Step 2: Wait for children to commit parentFinalOffset.
 	// Children were already elected leader in Bootstrap, so commitOffset
@@ -587,14 +595,18 @@ func (sc *SplitController) runCutover() error {
 	// Step 4: Clear split metadata from children and mark parent for deletion.
 	// Children are now independent shards.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
+		if err := sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
 			meta.Split = nil
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
+	if err := sc.updateParentMeta(func(meta *model.ShardMetadata) {
 		meta.Status = model.ShardStatusDeleting
-	})
+	}); err != nil {
+		return err
+	}
 
 	// Step 5: Notify the coordinator. This triggers the parent shard
 	// controller's DeleteShard (which retries indefinitely with backoff)
@@ -603,11 +615,9 @@ func (sc *SplitController) runCutover() error {
 
 	// Clear split metadata from parent — the split controller's job is done.
 	// The parent shard controller handles the actual deletion.
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
+	return sc.updateParentMeta(func(meta *model.ShardMetadata) {
 		meta.Split = nil
 	})
-
-	return nil
 }
 
 // abort cleans up a failed/timed-out split that hasn't reached Cutover.
@@ -650,13 +660,19 @@ func (sc *SplitController) abort() {
 
 	// Delete child shards from status.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		sc.statusResource.DeleteShardMetadata(sc.namespace, childId)
+		if err := sc.statusResource.DeleteShardMetadata(sc.namespace, childId); err != nil {
+			sc.log.Warn("Failed to delete child shard metadata during abort",
+				slog.Int64("child-shard", childId),
+				slog.Any("error", err))
+		}
 	}
 
 	// Clear parent split metadata.
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
+	if err := sc.updateParentMeta(func(meta *model.ShardMetadata) {
 		meta.Split = nil
-	})
+	}); err != nil {
+		sc.log.Warn("Failed to clear parent split metadata during abort", slog.Any("error", err))
+	}
 
 	sc.log.Info("Split aborted, parent restored")
 
@@ -684,23 +700,24 @@ func (sc *SplitController) loadShardMeta(shardId int64) *model.ShardMetadata {
 	return &cloned
 }
 
-func (sc *SplitController) updateParentMeta(fn func(meta *model.ShardMetadata)) {
-	sc.updateShardMeta(sc.parentShardId, fn)
+func (sc *SplitController) updateParentMeta(fn func(meta *model.ShardMetadata)) error {
+	return sc.updateShardMeta(sc.parentShardId, fn)
 }
 
-func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *model.ShardMetadata)) {
-	sc.updateShardMeta(childId, fn)
+func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *model.ShardMetadata)) error {
+	return sc.updateShardMeta(childId, fn)
 }
 
-func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *model.ShardMetadata)) {
+func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *model.ShardMetadata)) error {
 	status := sc.statusResource.Load()
 	cloned := status.Clone()
 	ns := cloned.Namespaces[sc.namespace]
 	if meta, exists := ns.Shards[shardId]; exists {
 		fn(&meta)
 		ns.Shards[shardId] = meta
-		sc.statusResource.Update(cloned)
+		return sc.statusResource.Update(cloned)
 	}
+	return nil
 }
 
 // fenceEnsemble sends NewTerm to all ensemble members and returns the
@@ -860,11 +877,13 @@ func (sc *SplitController) reelectChild(childId int64) error {
 	}
 
 	// Update child metadata
-	sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
+	if err := sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
 		meta.Term = newTerm
 		meta.Leader = &newLeader
 		meta.Status = model.ShardStatusSteadyState
-	})
+	}); err != nil {
+		return err
+	}
 
 	sc.log.Info("Child re-elected in clean term",
 		slog.Int64("child-shard", childId),

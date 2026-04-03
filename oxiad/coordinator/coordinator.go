@@ -127,7 +127,7 @@ func (c *coordinator) NodeControllers() map[string]controller.DataServerControll
 	return res
 }
 
-func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
+func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) error {
 	c.ccrWg.Wait()
 	c.Lock()
 	defer c.Unlock()
@@ -173,7 +173,11 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	var shardsToDelete []int64
 	for {
 		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(newConfig, currentStatus, c.selectNewEnsemble)
-		if !c.statusResource.Swap(clusterStatus, version) {
+		swapped, err := c.statusResource.Swap(clusterStatus, version)
+		if err != nil {
+			return fmt.Errorf("failed to swap cluster status: %w", err)
+		}
+		if !swapped {
 			currentStatus, version = c.statusResource.LoadWithVersion()
 			continue
 		}
@@ -197,6 +201,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 
 	c.computeNewAssignments()
 	c.loadBalancer.Trigger()
+	return nil
 }
 
 func (c *coordinator) findDataServerFeatures(dataServers []model.Server) map[string][]proto.Feature {
@@ -563,7 +568,9 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Persist
-	c.statusResource.Update(cloned)
+	if err = c.statusResource.Update(cloned); err != nil {
+		return 0, 0, errors.Wrap(err, "failed to persist split status")
+	}
 
 	c.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
@@ -588,7 +595,8 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 		RpcProvider:    c.rpc,
 		EventListener:  c,
 		EnsembleSelector: func(ns string) ([]model.Server, error) {
-			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.statusResource.Load())
+			s := c.statusResource.Load()
+			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), s)
 		},
 	})
 	c.splitControllers[parentShardId] = sc
@@ -704,7 +712,8 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 				RpcProvider:    c.rpc,
 				EventListener:  c,
 				EnsembleSelector: func(namespace string) ([]model.Server, error) {
-					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.statusResource.Load())
+					s := c.statusResource.Load()
+					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), s)
 				},
 			})
 			c.splitControllers[shardId] = sc
@@ -742,7 +751,10 @@ func NewCoordinator(meta metadata.Provider,
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.statusResource = resource.NewStatusResource(meta)
+	c.statusResource, err = resource.NewStatusResource(meta)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to create status resource")
+	}
 
 	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
@@ -777,7 +789,9 @@ func NewCoordinator(meta metadata.Provider,
 
 		clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
 
-		c.statusResource.Update(clusterStatus)
+		if err = c.statusResource.Update(clusterStatus); err != nil {
+			return nil, nil, errors.Wrap(err, "failed to persist initial cluster status")
+		}
 	} else {
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 
@@ -787,7 +801,9 @@ func NewCoordinator(meta metadata.Provider,
 			clusterStatus, c.selectNewEnsemble)
 
 		if len(shardsToAdd) > 0 || len(shardsToDelete) > 0 {
-			c.statusResource.Update(clusterStatus)
+			if err = c.statusResource.Update(clusterStatus); err != nil {
+				return nil, nil, errors.Wrap(err, "failed to persist cluster status changes")
+			}
 		}
 	}
 

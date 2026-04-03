@@ -427,7 +427,9 @@ func (s *shardController) deleteShard() error {
 		)
 	}
 
-	s.statusResource.DeleteShardMetadata(s.namespace, s.shard)
+	if err := s.statusResource.DeleteShardMetadata(s.namespace, s.shard); err != nil {
+		return err
+	}
 	s.eventListener.ShardDeleted(s.shard)
 	return s.close()
 }
@@ -508,7 +510,10 @@ func (s *shardController) handlePeriodicTasks() {
 	}
 
 	// Update the shard status
-	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta)
+	if err := s.statusResource.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta); err != nil {
+		s.log.Warn("Failed to update shard metadata", "error", err)
+		return
+	}
 	s.metadata.Store(mutShardMeta)
 }
 

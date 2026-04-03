@@ -231,6 +231,7 @@ func (s *shardsDirector) DeleteShard(req *proto.DeleteShardRequest) (*proto.Dele
 		return resp, nil
 	}
 
+	// todo: check the database directly to avoid init follower controller again if coordinator is retrying by some internal error
 	fc, err := follow.NewFollowerController(s.storageOptions, req.Namespace, req.Shard, s.walFactory, s.kvFactory, nil)
 	if err != nil {
 		return nil, err
