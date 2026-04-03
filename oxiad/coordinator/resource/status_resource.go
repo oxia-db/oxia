@@ -16,14 +16,12 @@ package resource
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 
-	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
@@ -65,27 +63,12 @@ var _ StatusResource = &status{}
 
 type status struct {
 	*slog.Logger
-	metadata   metadata.Provider
-	leaseWatch *concurrent.Watch[metadata.LeaseStatus]
+	metadata metadata.Provider
 
 	lock             sync.RWMutex
 	current          *model.ClusterStatus
 	currentVersionID metadata.Version
 	changeCh         chan struct{}
-}
-
-// handleStoreError handles errors from metadata.Store().
-// ErrMetadataBadVersion is treated as permanent — retrying with a
-// re-read version could overwrite valid data written by a new leader.
-// The LeadershipLostCh will trigger a full coordinator restart with
-// clean state.
-func (s *status) handleStoreError(err error) error {
-	if errors.Is(err, metadata.ErrMetadataBadVersion) {
-		slog.Error("Metadata version mismatch, triggering coordinator revalidation", slog.Any("error", err))
-		s.leaseWatch.Send(metadata.LeaseStatusLost)
-		return backoff.Permanent(err)
-	}
-	return err
 }
 
 // notifyChange wakes all goroutines waiting on ChangeNotify.
@@ -172,7 +155,7 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
@@ -196,7 +179,7 @@ func (s *status) Update(newStatus *model.ClusterStatus) {
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
@@ -224,7 +207,7 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID
@@ -255,7 +238,7 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) {
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID
@@ -291,14 +274,13 @@ func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
 	return true
 }
 
-func NewStatusResource(meta metadata.Provider, leaseWatch *concurrent.Watch[metadata.LeaseStatus]) StatusResource {
+func NewStatusResource(meta metadata.Provider) StatusResource {
 	s := status{
 		Logger: slog.With(
 			slog.String("component", "status-resource"),
 		),
 		lock:             sync.RWMutex{},
 		metadata:         meta,
-		leaseWatch:       leaseWatch,
 		currentVersionID: metadata.NotExists,
 		current:          nil,
 		changeCh:         make(chan struct{}),

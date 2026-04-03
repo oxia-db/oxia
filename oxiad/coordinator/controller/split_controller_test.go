@@ -80,7 +80,7 @@ func setupSplitTest(t *testing.T, phase model.SplitPhase) (
 	rpcMock := newMockRpcProvider()
 	metaProvider := metadata.NewMetadataProviderMemory()
 	t.Cleanup(func() { metaProvider.Close() })
-	statusRes := resource.NewStatusResource(metaProvider, metaProvider.RunElection())
+	statusRes := resource.NewStatusResource(metaProvider)
 
 	clusterStatus := &model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{

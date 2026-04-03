@@ -737,7 +737,7 @@ func NewCoordinator(meta metadata.Provider,
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.statusResource = resource.NewStatusResource(meta, leaseWatch)
+	c.statusResource = resource.NewStatusResource(meta)
 
 	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
