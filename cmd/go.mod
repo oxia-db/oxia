@@ -7,7 +7,7 @@ require (
 	github.com/cockroachdb/pebble/v2 v2.1.0
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/invopop/jsonschema v0.13.0
-	github.com/oxia-db/oxia/common v0.0.0
+	github.com/oxia-db/oxia/common v0.16.1
 	github.com/oxia-db/oxia/oxia v0.0.0
 	github.com/oxia-db/oxia/oxiad v0.0.0-20260311203958-42be7c29268f
 	github.com/pkg/errors v0.9.1
@@ -49,7 +49,7 @@ require (
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/getsentry/sentry-go v0.32.0 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
