@@ -146,12 +146,11 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) RunElection(ctx context.Context) (*concurrent.Watch[LeaseStatus], <-chan struct{}) {
+func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus] {
 	m.Lock()
 	defer m.Unlock()
 
 	w := concurrent.NewWatch(LeaseStatusNotAcquired)
-	doneCh := make(chan struct{})
 	myIdentity, _ := os.Hostname()
 
 	// Create a lease lock
@@ -206,10 +205,10 @@ func (m *metadataProviderConfigMap) RunElection(ctx context.Context) (*concurren
 		"sub-component": "k8s-leader-elector",
 	}, func() {
 		leaderElector.Run(ctx)
-		close(doneCh)
+		w.Close()
 	})
 
-	return w, doneCh
+	return w
 }
 
 func (m *metadataProviderConfigMap) Close() error {

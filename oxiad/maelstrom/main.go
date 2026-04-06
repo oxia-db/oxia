@@ -180,13 +180,12 @@ func main() {
 		}
 
 		metaProvider := metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json"))
-		leaseWatch, _ := metaProvider.RunElection(context.Background())
+		leaseWatch := metaProvider.RunElection(context.Background())
 		for leaseWatch.Get() != metadata.LeaseStatusAcquired {
 			<-leaseWatch.Changed()
 		}
 		_, err := coordinator.NewCoordinator(
 			metaProvider,
-			leaseWatch,
 			func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil,
 			newRpcProvider(dispatcher))
 		if err != nil {

@@ -43,11 +43,10 @@ type metadataProviderRaft struct {
 	log   *slog.Logger
 }
 
-func (mpr *metadataProviderRaft) RunElection(ctx context.Context) (*concurrent.Watch[LeaseStatus], <-chan struct{}) {
+func (mpr *metadataProviderRaft) RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus] {
 	w := concurrent.NewWatch(LeaseStatusNotAcquired)
-	doneCh := make(chan struct{})
 	go func() {
-		defer close(doneCh)
+		defer w.Close()
 		for {
 			select {
 			case <-ctx.Done():
@@ -64,7 +63,7 @@ func (mpr *metadataProviderRaft) RunElection(ctx context.Context) (*concurrent.W
 			}
 		}
 	}()
-	return w, doneCh
+	return w
 }
 
 func NewMetadataProviderRaft(

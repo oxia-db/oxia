@@ -59,18 +59,14 @@ func (m *metadataProviderFile) Close() error {
 	return nil
 }
 
-func (m *metadataProviderFile) RunElection(_ context.Context) (*concurrent.Watch[LeaseStatus], <-chan struct{}) {
-	w := concurrent.NewWatch(LeaseStatusNotAcquired)
-	doneCh := make(chan struct{})
-	close(doneCh)
+func (m *metadataProviderFile) RunElection(_ context.Context) *concurrent.Watch[LeaseStatus] {
 	if err := m.ensureParentDirectoryExists(); err != nil {
-		return w, doneCh
+		return nil
 	}
 	if err := m.fileLock.Lock(); err != nil {
-		return w, doneCh
+		return nil
 	}
-	w.Send(LeaseStatusAcquired)
-	return w, doneCh
+	return nil
 }
 
 func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, err error) {

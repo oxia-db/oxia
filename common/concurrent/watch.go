@@ -17,13 +17,14 @@ package concurrent
 import "sync"
 
 type Watch[T comparable] struct {
-	mu  sync.RWMutex
-	val T
-	ch  chan struct{}
+	mu   sync.RWMutex
+	val  T
+	ch   chan struct{}
+	done chan struct{}
 }
 
 func NewWatch[T comparable](initial T) *Watch[T] {
-	return &Watch[T]{val: initial, ch: make(chan struct{})}
+	return &Watch[T]{val: initial, ch: make(chan struct{}), done: make(chan struct{})}
 }
 
 func (w *Watch[T]) Send(value T) {
@@ -47,4 +48,14 @@ func (w *Watch[T]) Changed() <-chan struct{} {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.ch
+}
+
+// Close signals that no more values will be sent on this Watch.
+func (w *Watch[T]) Close() {
+	close(w.done)
+}
+
+// Done returns a channel that is closed when Close is called.
+func (w *Watch[T]) Done() <-chan struct{} {
+	return w.done
 }

@@ -68,8 +68,7 @@ type GrpcServer struct {
 	// swapped by monitorLease and read by Close.
 	coordinatorMu  sync.RWMutex
 	coordinator    Coordinator
-	leaseWatch     *concurrent.Watch[metadata.LeaseStatus]
-	electionDoneCh <-chan struct{}
+	leaseWatch *concurrent.Watch[metadata.LeaseStatus]
 
 	metadataProvider                 metadata.Provider
 	clusterConfigProvider            func() (model.ClusterConfig, error)
@@ -197,12 +196,14 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	leaseWatch, electionDoneCh := metadataProvider.RunElection(parent)
-	for leaseWatch.Get() != metadata.LeaseStatusAcquired {
-		<-leaseWatch.Changed()
+	leaseWatch := metadataProvider.RunElection(parent)
+	if leaseWatch != nil {
+		for leaseWatch.Get() != metadata.LeaseStatusAcquired {
+			<-leaseWatch.Changed()
+		}
 	}
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, leaseWatch, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -247,19 +248,20 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		clusterConfigProvider:            clusterConfigProvider,
 		clusterConfigChangeNotifications: clusterConfigChangeNotifications,
 		rpcProvider:                      rpcClient,
-		leaseWatch:                       leaseWatch,
-		electionDoneCh:                   electionDoneCh,
+		leaseWatch: leaseWatch,
 	}
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
 			"component": "configuration-watcher",
 		}, server.backgroundHandleConfChange)
 	})
-	server.wg.Go(func() {
-		process.DoWithLabels(ctx, map[string]string{
-			"component": "lease-monitor",
-		}, server.monitorLease)
-	})
+	if leaseWatch != nil {
+		server.wg.Go(func() {
+			process.DoWithLabels(ctx, map[string]string{
+				"component": "lease-monitor",
+			}, server.monitorLease)
+		})
+	}
 
 	return &server, nil
 }
@@ -316,7 +318,6 @@ func (s *GrpcServer) monitorLease() {
 			s.logger.Info("Lease acquired, creating coordinator")
 			coordinatorInstance, err := NewCoordinator(
 				s.metadataProvider,
-				w,
 				s.clusterConfigProvider,
 				s.clusterConfigChangeNotifications,
 				s.rpcProvider,
@@ -339,7 +340,9 @@ func (s *GrpcServer) Close() error {
 	s.wg.Wait()
 
 	// Wait for the election goroutine to finish.
-	<-s.electionDoneCh
+	if s.leaseWatch != nil {
+		<-s.leaseWatch.Done()
+	}
 
 	var err error
 	s.healthServer.Shutdown()

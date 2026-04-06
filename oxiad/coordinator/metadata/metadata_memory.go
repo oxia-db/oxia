@@ -34,10 +34,8 @@ type metadataProviderMemory struct {
 	version Version
 }
 
-func (*metadataProviderMemory) RunElection(_ context.Context) (*concurrent.Watch[LeaseStatus], <-chan struct{}) {
-	doneCh := make(chan struct{})
-	close(doneCh)
-	return concurrent.NewWatch(LeaseStatusAcquired), doneCh
+func (*metadataProviderMemory) RunElection(_ context.Context) *concurrent.Watch[LeaseStatus] {
+	return nil
 }
 
 func NewMetadataProviderMemory() Provider {

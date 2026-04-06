@@ -713,7 +713,6 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 }
 
 func NewCoordinator(meta metadata.Provider,
-	leaseWatch *concurrent.Watch[metadata.LeaseStatus],
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc.Provider) (Coordinator, error) {
