@@ -33,7 +33,6 @@ type LeaseStatus int
 const (
 	LeaseStatusNotAcquired LeaseStatus = iota
 	LeaseStatusAcquired
-	LeaseStatusLost
 )
 
 var (

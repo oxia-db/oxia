@@ -62,11 +62,11 @@ func (m *metadataProviderFile) Close() error {
 
 func (m *metadataProviderFile) RunElection() *concurrent.Watch[LeaseStatus] {
 	if err := m.ensureParentDirectoryExists(); err != nil {
-		m.leaseWatch.Send(LeaseStatusLost)
+		m.leaseWatch.Send(LeaseStatusNotAcquired)
 		return m.leaseWatch
 	}
 	if err := m.fileLock.Lock(); err != nil {
-		m.leaseWatch.Send(LeaseStatusLost)
+		m.leaseWatch.Send(LeaseStatusNotAcquired)
 		return m.leaseWatch
 	}
 	m.leaseWatch.Send(LeaseStatusAcquired)

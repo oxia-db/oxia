@@ -49,7 +49,7 @@ func (mpr *metadataProviderRaft) RunElection() *concurrent.Watch[LeaseStatus] {
 			if hasLease {
 				mpr.leaseWatch.Send(LeaseStatusAcquired)
 			} else {
-				mpr.leaseWatch.Send(LeaseStatusLost)
+				mpr.leaseWatch.Send(LeaseStatusNotAcquired)
 			}
 		}
 	}()

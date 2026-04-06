@@ -292,7 +292,7 @@ func (s *GrpcServer) monitorLease() {
 
 		status := w.Get()
 		switch status {
-		case metadata.LeaseStatusLost:
+		case metadata.LeaseStatusNotAcquired:
 			s.logger.Info("Lease lost, closing coordinator")
 			s.coordinatorMu.Lock()
 			if s.coordinator != nil {

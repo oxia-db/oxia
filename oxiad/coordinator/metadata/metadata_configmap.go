@@ -195,7 +195,7 @@ func (m *metadataProviderConfigMap) startLeaderElection() {
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
-				m.leaseWatch.Send(LeaseStatusLost)
+				m.leaseWatch.Send(LeaseStatusNotAcquired)
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
