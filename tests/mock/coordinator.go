@@ -15,7 +15,6 @@
 package mock
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,7 +31,7 @@ func NewCoordinator(t *testing.T, config *model.ClusterConfig, clusterConfigNoti
 	t.Helper()
 	metadataProvider := metadata.NewMetadataProviderMemory()
 	clientPool := rpc.NewClientPool(nil, nil)
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()), func() (model.ClusterConfig, error) { return *config, nil }, clusterConfigNotificationCh, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, mustElect(metadataProvider), func() (model.ClusterConfig, error) { return *config, nil }, clusterConfigNotificationCh, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
 	return coordinatorInstance
 }

@@ -57,8 +57,6 @@ type metadataProviderConfigMap struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	closeCh chan any
-
 	log *slog.Logger
 }
 
@@ -148,11 +146,12 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus] {
+func (m *metadataProviderConfigMap) RunElection(ctx context.Context) (*concurrent.Watch[LeaseStatus], <-chan struct{}) {
 	m.Lock()
 	defer m.Unlock()
 
 	w := concurrent.NewWatch(LeaseStatusNotAcquired)
+	doneCh := make(chan struct{})
 	myIdentity, _ := os.Hostname()
 
 	// Create a lease lock
@@ -202,26 +201,18 @@ func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent
 		panic(err)
 	}
 
-	m.closeCh = make(chan any)
-
 	go process.DoWithLabels(ctx, map[string]string{
 		"component":     "metadata-provider",
 		"sub-component": "k8s-leader-elector",
 	}, func() {
 		leaderElector.Run(ctx)
-		close(m.closeCh)
+		close(doneCh)
 	})
 
-	return w
+	return w, doneCh
 }
 
 func (m *metadataProviderConfigMap) Close() error {
-	m.Lock()
-	defer m.Unlock()
-
-	if m.closeCh != nil {
-		<-m.closeCh
-	}
 	m.log.Info("Closed metadata provider")
 	return nil
 }

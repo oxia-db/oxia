@@ -54,5 +54,8 @@ type Provider interface {
 
 	Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
 
-	RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus]
+	// RunElection starts the leader election process. It returns a Watch
+	// that tracks the lease status and a channel that is closed when the
+	// election goroutine has exited (after the context is cancelled).
+	RunElection(ctx context.Context) (*concurrent.Watch[LeaseStatus], <-chan struct{})
 }

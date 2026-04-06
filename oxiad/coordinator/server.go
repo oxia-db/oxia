@@ -66,9 +66,10 @@ type GrpcServer struct {
 
 	// coordinatorMu protects coordinator, which is
 	// swapped by monitorLease and read by Close.
-	coordinatorMu sync.RWMutex
-	coordinator   Coordinator
-	leaseWatch    *concurrent.Watch[metadata.LeaseStatus]
+	coordinatorMu  sync.RWMutex
+	coordinator    Coordinator
+	leaseWatch     *concurrent.Watch[metadata.LeaseStatus]
+	electionDoneCh <-chan struct{}
 
 	metadataProvider                 metadata.Provider
 	clusterConfigProvider            func() (model.ClusterConfig, error)
@@ -196,7 +197,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	leaseWatch := metadataProvider.RunElection(parent)
+	leaseWatch, electionDoneCh := metadataProvider.RunElection(parent)
 	for leaseWatch.Get() != metadata.LeaseStatusAcquired {
 		<-leaseWatch.Changed()
 	}
@@ -247,6 +248,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		clusterConfigChangeNotifications: clusterConfigChangeNotifications,
 		rpcProvider:                      rpcClient,
 		leaseWatch:                       leaseWatch,
+		electionDoneCh:                   electionDoneCh,
 	}
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
@@ -335,6 +337,9 @@ func (s *GrpcServer) Close() error {
 	// Cancel context to signal goroutines to stop.
 	s.ctxCancel()
 	s.wg.Wait()
+
+	// Wait for the election goroutine to finish.
+	<-s.electionDoneCh
 
 	var err error
 	s.healthServer.Shutdown()
