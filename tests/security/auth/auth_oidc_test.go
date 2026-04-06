@@ -117,7 +117,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 
 	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(),
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()),
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
@@ -317,7 +317,7 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	clientPool := rpc.NewClientPool(nil, nil)
 	defer clientPool.Close()
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(),
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()),
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)
@@ -478,7 +478,7 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	clientPool := rpc.NewClientPool(nil, nil)
 	defer clientPool.Close()
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(),
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()),
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil, rpc2.NewRpcProvider(clientPool))
 	assert.NoError(t, err)

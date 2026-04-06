@@ -50,8 +50,8 @@ func (t testRaftClusterProvider) Store(cs *model.ClusterStatus, expectedVersion 
 	return t.leader.Store(cs, expectedVersion)
 }
 
-func (t testRaftClusterProvider) RunElection() *concurrent.Watch[LeaseStatus] {
-	return t.leader.RunElection()
+func (t testRaftClusterProvider) RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus] {
+	return t.leader.RunElection(ctx)
 }
 
 func newTestRaftClusterProvider(t *testing.T) Provider {
@@ -77,7 +77,7 @@ func newTestRaftClusterProvider(t *testing.T) Provider {
 		idx := i
 		go func() {
 			p := trc.providers[idx]
-			w := p.RunElection()
+			w := p.RunElection(context.Background())
 			for w.Get() != LeaseStatusAcquired {
 				<-w.Changed()
 			}

@@ -15,6 +15,7 @@
 package metadata
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -43,13 +44,21 @@ type metadataProviderRaft struct {
 	leaseWatch *concurrent.Watch[LeaseStatus]
 }
 
-func (mpr *metadataProviderRaft) RunElection() *concurrent.Watch[LeaseStatus] {
+func (mpr *metadataProviderRaft) RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus] {
 	go func() {
-		for hasLease := range mpr.raft.LeaderCh() {
-			if hasLease {
-				mpr.leaseWatch.Send(LeaseStatusAcquired)
-			} else {
-				mpr.leaseWatch.Send(LeaseStatusNotAcquired)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case hasLease, ok := <-mpr.raft.LeaderCh():
+				if !ok {
+					return
+				}
+				if hasLease {
+					mpr.leaseWatch.Send(LeaseStatusAcquired)
+				} else {
+					mpr.leaseWatch.Send(LeaseStatusNotAcquired)
+				}
 			}
 		}
 	}()

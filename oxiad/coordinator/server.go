@@ -196,7 +196,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	leaseWatch := metadataProvider.RunElection()
+	leaseWatch := metadataProvider.RunElection(parent)
 	for leaseWatch.Get() != metadata.LeaseStatusAcquired {
 		<-leaseWatch.Changed()
 	}

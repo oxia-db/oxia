@@ -15,6 +15,7 @@
 package assignments
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -106,7 +107,7 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -164,7 +165,7 @@ func TestLeaderHintListWithClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -213,7 +214,7 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -271,7 +272,7 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -324,7 +325,7 @@ func TestLeaderHintWithClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 

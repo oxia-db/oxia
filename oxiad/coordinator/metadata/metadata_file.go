@@ -15,6 +15,7 @@
 package metadata
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -60,7 +61,7 @@ func (m *metadataProviderFile) Close() error {
 	return nil
 }
 
-func (m *metadataProviderFile) RunElection() *concurrent.Watch[LeaseStatus] {
+func (m *metadataProviderFile) RunElection(_ context.Context) *concurrent.Watch[LeaseStatus] {
 	if err := m.ensureParentDirectoryExists(); err != nil {
 		m.leaseWatch.Send(LeaseStatusNotAcquired)
 		return m.leaseWatch

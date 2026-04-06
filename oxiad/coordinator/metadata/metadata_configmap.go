@@ -59,8 +59,6 @@ type metadataProviderConfigMap struct {
 
 	leaseWatch *concurrent.Watch[LeaseStatus]
 
-	ctx     context.Context
-	cancel  context.CancelFunc
 	closeCh chan any
 
 	log *slog.Logger
@@ -79,8 +77,6 @@ func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name strin
 		storeLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_store_latency",
 			"Latency for storing coordinator metadata", nil),
 	}
-
-	m.ctx, m.cancel = context.WithCancel(context.Background())
 
 	m.metadataSizeGauge = metric.NewGauge("oxia_coordinator_metadata_size",
 		"The size of the coordinator metadata", metric.Bytes, nil, func() int64 {
@@ -155,12 +151,7 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) RunElection() *concurrent.Watch[LeaseStatus] {
-	m.startLeaderElection()
-	return m.leaseWatch
-}
-
-func (m *metadataProviderConfigMap) startLeaderElection() {
+func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus] {
 	m.Lock()
 	defer m.Unlock()
 
@@ -215,20 +206,21 @@ func (m *metadataProviderConfigMap) startLeaderElection() {
 
 	m.closeCh = make(chan any)
 
-	go process.DoWithLabels(m.ctx, map[string]string{
+	go process.DoWithLabels(ctx, map[string]string{
 		"component":     "metadata-provider",
 		"sub-component": "k8s-leader-elector",
 	}, func() {
-		leaderElector.Run(m.ctx)
+		leaderElector.Run(ctx)
 		close(m.closeCh)
 	})
+
+	return m.leaseWatch
 }
 
 func (m *metadataProviderConfigMap) Close() error {
 	m.Lock()
 	defer m.Unlock()
 
-	m.cancel()
 	if m.closeCh != nil {
 		<-m.closeCh
 	}

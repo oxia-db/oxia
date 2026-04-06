@@ -56,7 +56,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, metadataProvider.RunElection(context.Background()), func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
