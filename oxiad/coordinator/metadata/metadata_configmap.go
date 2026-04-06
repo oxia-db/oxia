@@ -191,17 +191,7 @@ func (m *metadataProviderConfigMap) startLeaderElection() {
 			OnStartedLeading: func(ctx context.Context) {
 				log.Info("Started leading - lease acquired")
 				m.leaseWatch.Send(LeaseStatusAcquired)
-
-				ticker := time.NewTicker(retryPeriod)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ticker.C:
-						m.leaseWatch.Send(LeaseStatusAcquired)
-					case <-ctx.Done():
-						return
-					}
-				}
+				<-ctx.Done()
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
