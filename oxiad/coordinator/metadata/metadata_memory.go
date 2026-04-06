@@ -30,20 +30,18 @@ var _ Provider = &metadataProviderMemory{}
 type metadataProviderMemory struct {
 	sync.Mutex
 
-	cs         *model.ClusterStatus
-	version    Version
-	leaseWatch *concurrent.Watch[LeaseStatus]
+	cs      *model.ClusterStatus
+	version Version
 }
 
-func (m *metadataProviderMemory) RunElection(_ context.Context) *concurrent.Watch[LeaseStatus] {
-	return m.leaseWatch
+func (*metadataProviderMemory) RunElection(_ context.Context) *concurrent.Watch[LeaseStatus] {
+	return concurrent.NewWatch(LeaseStatusAcquired)
 }
 
 func NewMetadataProviderMemory() Provider {
 	return &metadataProviderMemory{
-		cs:         nil,
-		version:    NotExists,
-		leaseWatch: concurrent.NewWatch(LeaseStatusAcquired),
+		cs:      nil,
+		version: NotExists,
 	}
 }
 

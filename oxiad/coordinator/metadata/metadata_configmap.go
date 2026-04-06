@@ -57,8 +57,6 @@ type metadataProviderConfigMap struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	leaseWatch *concurrent.Watch[LeaseStatus]
-
 	closeCh chan any
 
 	log *slog.Logger
@@ -69,8 +67,7 @@ func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name strin
 		kubernetes: kc,
 		namespace:  namespace,
 		name:       name,
-		log:        slog.With("component", "metadata-config-map"),
-		leaseWatch: concurrent.NewWatch(LeaseStatusNotAcquired),
+		log: slog.With("component", "metadata-config-map"),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
 			"Latency for reading coordinator metadata", nil),
@@ -155,6 +152,7 @@ func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent
 	m.Lock()
 	defer m.Unlock()
 
+	w := concurrent.NewWatch(LeaseStatusNotAcquired)
 	myIdentity, _ := os.Hostname()
 
 	// Create a lease lock
@@ -181,12 +179,12 @@ func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				log.Info("Started leading - lease acquired")
-				m.leaseWatch.Send(LeaseStatusAcquired)
+				w.Send(LeaseStatusAcquired)
 				<-ctx.Done()
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
-				m.leaseWatch.Send(LeaseStatusNotAcquired)
+				w.Send(LeaseStatusNotAcquired)
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -214,7 +212,7 @@ func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent
 		close(m.closeCh)
 	})
 
-	return m.leaseWatch
+	return w
 }
 
 func (m *metadataProviderConfigMap) Close() error {

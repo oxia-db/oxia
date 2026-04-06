@@ -37,16 +37,14 @@ var _ Provider = &metadataProviderFile{}
 // MetadataProviderMemory is a provider that just keeps the cluster status in a local file,
 // using a lock mechanism to prevent missing updates.
 type metadataProviderFile struct {
-	path       string
-	fileLock   *fslock.Lock
-	leaseWatch *concurrent.Watch[LeaseStatus]
+	path     string
+	fileLock *fslock.Lock
 }
 
 func NewMetadataProviderFile(path string) Provider {
 	return &metadataProviderFile{
-		path:       path,
-		fileLock:   fslock.New(path),
-		leaseWatch: concurrent.NewWatch(LeaseStatusNotAcquired),
+		path:     path,
+		fileLock: fslock.New(path),
 	}
 }
 
@@ -62,16 +60,15 @@ func (m *metadataProviderFile) Close() error {
 }
 
 func (m *metadataProviderFile) RunElection(_ context.Context) *concurrent.Watch[LeaseStatus] {
+	w := concurrent.NewWatch(LeaseStatusNotAcquired)
 	if err := m.ensureParentDirectoryExists(); err != nil {
-		m.leaseWatch.Send(LeaseStatusNotAcquired)
-		return m.leaseWatch
+		return w
 	}
 	if err := m.fileLock.Lock(); err != nil {
-		m.leaseWatch.Send(LeaseStatusNotAcquired)
-		return m.leaseWatch
+		return w
 	}
-	m.leaseWatch.Send(LeaseStatusAcquired)
-	return m.leaseWatch
+	w.Send(LeaseStatusAcquired)
+	return w
 }
 
 func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, err error) {

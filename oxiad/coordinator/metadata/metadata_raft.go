@@ -37,14 +37,14 @@ import (
 type metadataProviderRaft struct {
 	sync.Mutex
 
-	sc         *stateContainer
-	raft       *raft.Raft
-	store      *kvRaftStore
-	log        *slog.Logger
-	leaseWatch *concurrent.Watch[LeaseStatus]
+	sc    *stateContainer
+	raft  *raft.Raft
+	store *kvRaftStore
+	log   *slog.Logger
 }
 
 func (mpr *metadataProviderRaft) RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus] {
+	w := concurrent.NewWatch(LeaseStatusNotAcquired)
 	go func() {
 		for {
 			select {
@@ -55,14 +55,14 @@ func (mpr *metadataProviderRaft) RunElection(ctx context.Context) *concurrent.Wa
 					return
 				}
 				if hasLease {
-					mpr.leaseWatch.Send(LeaseStatusAcquired)
+					w.Send(LeaseStatusAcquired)
 				} else {
-					mpr.leaseWatch.Send(LeaseStatusNotAcquired)
+					w.Send(LeaseStatusNotAcquired)
 				}
 			}
 		}
 	}()
-	return mpr.leaseWatch
+	return w
 }
 
 func NewMetadataProviderRaft(
@@ -71,9 +71,8 @@ func NewMetadataProviderRaft(
 	raftDataDir string,
 ) (Provider, error) {
 	mpr := &metadataProviderRaft{
-		sc:         newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
-		log:        slog.With(slog.String("component", "metadata-provider-raft")),
-		leaseWatch: concurrent.NewWatch(LeaseStatusNotAcquired),
+		sc:  newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
+		log: slog.With(slog.String("component", "metadata-provider-raft")),
 	}
 	// Ensure data dir per node
 	nodeId := raftAddress
