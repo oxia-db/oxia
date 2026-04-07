@@ -15,6 +15,7 @@
 package metadata
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -29,35 +30,26 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 type metadataProviderRaft struct {
 	sync.Mutex
 
-	sc               *stateContainer
-	raft             *raft.Raft
-	store            *kvRaftStore
-	log              *slog.Logger
-	leadershipLostCh chan struct{}
+	sc         *stateContainer
+	raft       *raft.Raft
+	store      *kvRaftStore
+	log        *slog.Logger
+	leaseWatch *concurrent.Watch[LeaseStatus]
 }
 
-func (mpr *metadataProviderRaft) WaitToBecomeLeader() (<-chan struct{}, error) {
-	<-mpr.raft.LeaderCh()
-	mpr.leadershipLostCh = make(chan struct{})
-	// Monitor for leader loss in the background
-	go func() {
-		for hasLease := range mpr.raft.LeaderCh() {
-			if !hasLease {
-				close(mpr.leadershipLostCh)
-				return
-			}
-		}
-	}()
-	return mpr.leadershipLostCh, nil
+func (mpr *metadataProviderRaft) LeaseWatch() *concurrent.Watch[LeaseStatus] {
+	return mpr.leaseWatch
 }
 
 func NewMetadataProviderRaft(
+	ctx context.Context,
 	raftAddress string,
 	raftBootstrapNodes []string,
 	raftDataDir string,
@@ -122,6 +114,27 @@ func NewMetadataProviderRaft(
 			return nil, errors.Wrap(err, "failed to create raft node")
 		}
 	}
+
+	// Start election monitoring
+	mpr.leaseWatch = concurrent.NewWatch(LeaseStatusNotAcquired)
+	go func() {
+		defer mpr.leaseWatch.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case hasLease, ok := <-mpr.raft.LeaderCh():
+				if !ok {
+					return
+				}
+				if hasLease {
+					mpr.leaseWatch.Send(LeaseStatusAcquired)
+				} else {
+					mpr.leaseWatch.Send(LeaseStatusNotAcquired)
+				}
+			}
+		}
+	}()
 
 	return mpr, nil
 }

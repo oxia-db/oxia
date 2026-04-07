@@ -56,17 +56,12 @@ type metadataProviderConfigMap struct {
 	getLatencyHisto   metric.LatencyHistogram
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
-
-	leadershipLostCh chan struct{}
-
-	ctx     context.Context
-	cancel  context.CancelFunc
-	closeCh chan any
+	leaseWatch        *concurrent.Watch[LeaseStatus]
 
 	log *slog.Logger
 }
 
-func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name string) Provider {
+func NewMetadataProviderConfigMap(ctx context.Context, kc kubernetes.Interface, namespace, name string) Provider {
 	m := &metadataProviderConfigMap{
 		kubernetes: kc,
 		namespace:  namespace,
@@ -79,8 +74,6 @@ func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name strin
 			"Latency for storing coordinator metadata", nil),
 	}
 
-	m.ctx, m.cancel = context.WithCancel(context.Background())
-
 	m.metadataSizeGauge = metric.NewGauge("oxia_coordinator_metadata_size",
 		"The size of the coordinator metadata", metric.Bytes, nil, func() int64 {
 			return m.metadataSize.Load()
@@ -88,6 +81,8 @@ func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name strin
 
 	logger := logr.FromSlogHandler(m.log.With(slog.String("sub-component", "k8s-client")).Handler())
 	klog.SetLogger(logger)
+
+	m.startElection(ctx)
 	return m
 }
 
@@ -154,10 +149,12 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error) {
-	m.Lock()
-	defer m.Unlock()
+func (m *metadataProviderConfigMap) LeaseWatch() *concurrent.Watch[LeaseStatus] {
+	return m.leaseWatch
+}
 
+func (m *metadataProviderConfigMap) startElection(ctx context.Context) {
+	m.leaseWatch = concurrent.NewWatch(LeaseStatusNotAcquired)
 	myIdentity, _ := os.Hostname()
 
 	// Create a lease lock
@@ -173,8 +170,6 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error
 	}
 
 	log := m.log.With(slog.String("identity", myIdentity))
-	wg := concurrent.NewWaitGroup(1)
-	m.leadershipLostCh = make(chan struct{})
 
 	// Configure leader election
 	leaderElectionConfig := leaderelection.LeaderElectionConfig{
@@ -184,13 +179,14 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error
 		RenewDeadline:   renewDeadline,
 		RetryPeriod:     retryPeriod,
 		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(_ context.Context) {
+			OnStartedLeading: func(ctx context.Context) {
 				log.Info("Started leading - lease acquired")
-				wg.Done()
+				m.leaseWatch.Send(LeaseStatusAcquired)
+				<-ctx.Done()
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
-				close(m.leadershipLostCh)
+				m.leaseWatch.Send(LeaseStatusNotAcquired)
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -208,30 +204,16 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error
 		panic(err)
 	}
 
-	m.closeCh = make(chan any)
-
-	go process.DoWithLabels(m.ctx, map[string]string{
+	go process.DoWithLabels(ctx, map[string]string{
 		"component":     "metadata-provider",
 		"sub-component": "k8s-leader-elector",
 	}, func() {
-		leaderElector.Run(m.ctx)
-		close(m.closeCh)
+		leaderElector.Run(ctx)
+		m.leaseWatch.Close()
 	})
-
-	if err := wg.Wait(m.ctx); err != nil {
-		return nil, err
-	}
-	return m.leadershipLostCh, nil
 }
 
 func (m *metadataProviderConfigMap) Close() error {
-	m.Lock()
-	defer m.Unlock()
-
-	m.cancel()
-	if m.closeCh != nil {
-		<-m.closeCh
-	}
 	m.log.Info("Closed metadata provider")
 	return nil
 }

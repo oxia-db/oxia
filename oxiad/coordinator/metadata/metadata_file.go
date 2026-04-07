@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 
 	"github.com/juju/fslock"
-	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
@@ -41,10 +41,14 @@ type metadataProviderFile struct {
 }
 
 func NewMetadataProviderFile(path string) Provider {
-	return &metadataProviderFile{
+	m := &metadataProviderFile{
 		path:     path,
 		fileLock: fslock.New(path),
 	}
+	if err := m.ensureParentDirectoryExists(); err == nil {
+		_ = m.fileLock.Lock()
+	}
+	return m
 }
 
 func (m *metadataProviderFile) Close() error {
@@ -58,16 +62,8 @@ func (m *metadataProviderFile) Close() error {
 	return nil
 }
 
-func (m *metadataProviderFile) WaitToBecomeLeader() (<-chan struct{}, error) {
-	if err := m.ensureParentDirectoryExists(); err != nil {
-		return nil, err
-	}
-
-	if err := m.fileLock.Lock(); err != nil {
-		return nil, errors.Wrapf(err, "failed to acquire lock on %s", m.path)
-	}
-
-	return nil, nil //nolint:nilnil
+func (*metadataProviderFile) LeaseWatch() *concurrent.Watch[LeaseStatus] {
+	return nil
 }
 
 func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, err error) {

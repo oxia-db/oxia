@@ -50,8 +50,8 @@ func (t testRaftClusterProvider) Store(cs *model.ClusterStatus, expectedVersion 
 	return t.leader.Store(cs, expectedVersion)
 }
 
-func (t testRaftClusterProvider) WaitToBecomeLeader() (<-chan struct{}, error) {
-	return t.leader.WaitToBecomeLeader()
+func (t testRaftClusterProvider) LeaseWatch() *concurrent.Watch[LeaseStatus] {
+	return t.leader.LeaseWatch()
 }
 
 func newTestRaftClusterProvider(t *testing.T) Provider {
@@ -65,7 +65,7 @@ func newTestRaftClusterProvider(t *testing.T) Provider {
 	for i := 0; i < 3; i++ {
 		addr := fmt.Sprintf("127.0.0.1:%d", 9000+i)
 		dataDir := filepath.Join(baseDir, fmt.Sprintf("data-%d", i))
-		p, err := NewMetadataProviderRaft(addr, bootstrapServers, dataDir)
+		p, err := NewMetadataProviderRaft(context.Background(), addr, bootstrapServers, dataDir)
 		assert.NoError(t, err)
 
 		trc.providers = append(trc.providers, p)
@@ -77,8 +77,10 @@ func newTestRaftClusterProvider(t *testing.T) Provider {
 		idx := i
 		go func() {
 			p := trc.providers[idx]
-			_, err := p.WaitToBecomeLeader()
-			assert.NoError(t, err)
+			w := p.LeaseWatch()
+			for w.Get() != LeaseStatusAcquired {
+				<-w.Changed()
+			}
 			leaderFuture.Complete(p)
 		}()
 	}

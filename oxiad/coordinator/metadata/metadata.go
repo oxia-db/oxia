@@ -19,12 +19,20 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 var (
 	ErrMetadataNotInitialized = errors.New("metadata not initialized")
 	ErrMetadataBadVersion     = errors.New("metadata bad version")
+)
+
+type LeaseStatus int
+
+const (
+	LeaseStatusNotAcquired LeaseStatus = iota
+	LeaseStatusAcquired
 )
 
 var (
@@ -45,8 +53,5 @@ type Provider interface {
 
 	Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
 
-	// WaitToBecomeLeader blocks until this provider becomes the leader.
-	// Returns a channel that is closed when leadership is lost, or nil
-	// for providers without leader election (memory, file).
-	WaitToBecomeLeader() (<-chan struct{}, error)
+	LeaseWatch() *concurrent.Watch[LeaseStatus]
 }
