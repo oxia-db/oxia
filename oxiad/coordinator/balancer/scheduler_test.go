@@ -26,6 +26,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
 )
@@ -35,25 +36,33 @@ type mockStatusResource struct {
 	status *model.ClusterStatus
 }
 
-func (m *mockStatusResource) Load() *model.ClusterStatus {
-	return m.status
+func (m *mockStatusResource) Get() *resource.Versioned[*model.ClusterStatus] {
+	return &resource.Versioned[*model.ClusterStatus]{
+		Data:    m.status,
+		Version: "0",
+	}
 }
 
-func (m *mockStatusResource) LoadWithVersion() (*model.ClusterStatus, metadata.Version) {
-	return m.status, "0"
+func (m *mockStatusResource) GetShard(_ string, _ int64) *resource.Versioned[*model.ShardMetadata] {
+	return &resource.Versioned[*model.ShardMetadata]{}
 }
 
-func (m *mockStatusResource) Swap(_ *model.ClusterStatus, _ metadata.Version) bool {
-	return true
+func (m *mockStatusResource) Swap(_ *model.ClusterStatus, _ metadata.Version) error {
+	return nil
 }
 
-func (m *mockStatusResource) Update(newStatus *model.ClusterStatus) {
+func (m *mockStatusResource) Update(newStatus *model.ClusterStatus, _ metadata.Version) error {
 	m.status = newStatus
+	return nil
 }
 
-func (m *mockStatusResource) UpdateShardMetadata(_ string, _ int64, _ model.ShardMetadata) {}
+func (m *mockStatusResource) UpdateShard(_ string, _ int64, _ model.ShardMetadata, _ metadata.Version) error {
+	return nil
+}
 
-func (m *mockStatusResource) DeleteShardMetadata(_ string, _ int64) {}
+func (m *mockStatusResource) DeleteShard(_ string, _ int64, _ metadata.Version) error {
+	return nil
+}
 
 func (m *mockStatusResource) IsReady(_ *model.ClusterConfig) bool {
 	return true

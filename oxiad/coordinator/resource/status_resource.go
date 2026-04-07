@@ -18,26 +18,30 @@ import (
 	"context"
 	"log/slog"
 	"sync"
-	"time"
-
-	"github.com/cenkalti/backoff/v4"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
+// Versioned pairs a value with its metadata version,
+// enabling callers to perform CAS writes.
+type Versioned[T any] struct {
+	Data    T
+	Version metadata.Version
+}
+
 type StatusResource interface {
-	Load() *model.ClusterStatus
+	Get() *Versioned[*model.ClusterStatus]
 
-	LoadWithVersion() (*model.ClusterStatus, metadata.Version)
+	GetShard(namespace string, shard int64) *Versioned[*model.ShardMetadata]
 
-	Swap(newStatus *model.ClusterStatus, version metadata.Version) bool
+	Swap(newStatus *model.ClusterStatus, version metadata.Version) error
 
-	Update(newStatus *model.ClusterStatus)
+	Update(newStatus *model.ClusterStatus, version metadata.Version) error
 
-	UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata)
+	UpdateShard(namespace string, shard int64, shardMetadata model.ShardMetadata, version metadata.Version) error
 
-	DeleteShardMetadata(namespace string, shard int64)
+	DeleteShard(namespace string, shard int64, version metadata.Version) error
 
 	IsReady(clusterConfig *model.ClusterConfig) bool
 
@@ -47,7 +51,8 @@ type StatusResource interface {
 	//
 	//	for {
 	//	    ch := statusResource.ChangeNotify()
-	//	    if condition(statusResource.Load()) {
+	//	    state := statusResource.Get()
+	//	    if condition(state.Data) {
 	//	        return
 	//	    }
 	//	    select {
@@ -90,7 +95,8 @@ func (s *status) ChangeNotify() <-chan struct{} {
 func WaitForCondition(ctx context.Context, sr StatusResource, triggerFn func(), condition func(*model.ClusterStatus) bool) error {
 	for {
 		ch := sr.ChangeNotify()
-		if condition(sr.Load()) {
+		state := sr.Get()
+		if condition(state.Data) {
 			return nil
 		}
 		if triggerFn != nil {
@@ -104,161 +110,154 @@ func WaitForCondition(ctx context.Context, sr StatusResource, triggerFn func(), 
 	}
 }
 
-func (s *status) loadWithInitSlow() {
+func (s *status) loadFromProvider() {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	if s.current != nil {
 		return
 	}
-	_ = backoff.RetryNotify(func() error {
-		clusterStatus, version, err := s.metadata.Get()
-		if err != nil {
-			return err
-		}
-		s.current = clusterStatus
-		s.currentVersionID = version
-		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-		s.Warn(
-			"failed to load status, retrying later",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
+	clusterStatus, version, err := s.metadata.Get()
+	if err != nil {
+		s.Warn("failed to load status from metadata provider", slog.Any("error", err))
+		s.current = &model.ClusterStatus{}
+		return
+	}
+	s.current = clusterStatus
+	s.currentVersionID = version
 	if s.current == nil {
 		s.current = &model.ClusterStatus{}
 	}
 }
 
-func (s *status) Load() *model.ClusterStatus {
-	current, _ := s.LoadWithVersion()
-	return current
-}
-
-func (s *status) LoadWithVersion() (*model.ClusterStatus, metadata.Version) {
+func (s *status) Get() *Versioned[*model.ClusterStatus] {
 	s.lock.RLock()
-	defer s.lock.RUnlock()
 	if s.current == nil {
 		s.lock.RUnlock()
-		s.loadWithInitSlow()
+		s.loadFromProvider()
 		s.lock.RLock()
 	}
-	return s.current, s.currentVersionID
+	defer s.lock.RUnlock()
+	return &Versioned[*model.ClusterStatus]{
+		Data:    s.current,
+		Version: s.currentVersionID,
+	}
 }
 
-func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) bool {
+func (s *status) GetShard(namespace string, shard int64) *Versioned[*model.ShardMetadata] {
+	s.lock.RLock()
+	if s.current == nil {
+		s.lock.RUnlock()
+		s.loadFromProvider()
+		s.lock.RLock()
+	}
+	defer s.lock.RUnlock()
+	if s.current == nil {
+		return &Versioned[*model.ShardMetadata]{Version: s.currentVersionID}
+	}
+	ns, exist := s.current.Namespaces[namespace]
+	if !exist {
+		return &Versioned[*model.ShardMetadata]{Version: s.currentVersionID}
+	}
+	meta, exist := ns.Shards[shard]
+	if !exist {
+		return &Versioned[*model.ShardMetadata]{Version: s.currentVersionID}
+	}
+	cloned := meta.Clone()
+	return &Versioned[*model.ShardMetadata]{
+		Data:    &cloned,
+		Version: s.currentVersionID,
+	}
+}
+
+func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	if s.currentVersionID != version {
-		return false
+		return metadata.ErrMetadataBadVersion
 	}
-	err := backoff.RetryNotify(func() error {
-		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
-		if err != nil {
-			return err
-		}
-		s.current = newStatus
-		s.currentVersionID = versionID
-		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-		s.Warn(
-			"failed to swap status, retrying later",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
-	if err == nil {
-		s.notifyChange()
+	versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
+	if err != nil {
+		return err
 	}
-	return err == nil
-}
-
-func (s *status) Update(newStatus *model.ClusterStatus) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	_ = backoff.RetryNotify(func() error {
-		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
-		if err != nil {
-			return err
-		}
-		s.current = newStatus
-		s.currentVersionID = versionID
-		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-		s.Warn(
-			"failed to update status, retrying later",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
+	s.current = newStatus
+	s.currentVersionID = versionID
 	s.notifyChange()
+	return nil
 }
 
-func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata) {
+func (s *status) Update(newStatus *model.ClusterStatus, version metadata.Version) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	if s.currentVersionID != version {
+		return metadata.ErrMetadataBadVersion
+	}
+	versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
+	if err != nil {
+		return err
+	}
+	s.current = newStatus
+	s.currentVersionID = versionID
+	s.notifyChange()
+	return nil
+}
 
+func (s *status) UpdateShard(namespace string, shard int64, shardMetadata model.ShardMetadata,
+	version metadata.Version,
+) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	if s.currentVersionID != version {
+		return metadata.ErrMetadataBadVersion
+	}
 	clonedStatus := s.current.Clone()
 	ns, exist := clonedStatus.Namespaces[namespace]
 	if !exist {
-		return
+		return nil
 	}
 	ns.Shards[shard] = shardMetadata.Clone()
-	_ = backoff.RetryNotify(func() error {
-		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
-		if err != nil {
-			return err
-		}
-		s.current = clonedStatus
-		s.currentVersionID = versionID
-		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-		s.Warn(
-			"failed to update shard metadata, retrying later",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
+	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
+	if err != nil {
+		return err
+	}
+	s.current = clonedStatus
+	s.currentVersionID = versionID
 	s.notifyChange()
+	return nil
 }
 
-func (s *status) DeleteShardMetadata(namespace string, shard int64) {
+func (s *status) DeleteShard(namespace string, shard int64,
+	version metadata.Version,
+) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-
+	if s.currentVersionID != version {
+		return metadata.ErrMetadataBadVersion
+	}
 	clonedStatus := s.current.Clone()
 	ns, exist := clonedStatus.Namespaces[namespace]
 	if !exist {
-		return
+		return nil
 	}
 	delete(ns.Shards, shard)
 	if len(ns.Shards) == 0 {
 		delete(clonedStatus.Namespaces, namespace)
 	}
-	_ = backoff.RetryNotify(func() error {
-		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
-		if err != nil {
-			return err
-		}
-		s.current = clonedStatus
-		s.currentVersionID = versionID
-		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-		s.Warn(
-			"failed to delete shard metadata, retrying later",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
+	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
+	if err != nil {
+		return err
+	}
+	s.current = clonedStatus
+	s.currentVersionID = versionID
 	s.notifyChange()
+	return nil
 }
 
 func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
-	currentStatus := s.Load()
+	state := s.Get()
 	for _, namespace := range clusterConfig.Namespaces {
 		count := namespace.InitialShardCount
 		name := namespace.Name
-		namespaceStatus, ok := currentStatus.Namespaces[name]
+		namespaceStatus, ok := state.Data.Namespaces[name]
 		if !ok {
 			return false
 		}
@@ -285,6 +284,6 @@ func NewStatusResource(meta metadata.Provider) StatusResource {
 		current:          nil,
 		changeCh:         make(chan struct{}),
 	}
-	s.Load()
+	s.Get()
 	return &s
 }

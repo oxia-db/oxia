@@ -262,8 +262,8 @@ func (s *shardController) waitForSplitComplete() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			status := s.statusResource.Load()
-			ns, exists := status.Namespaces[s.namespace]
+			cs := s.statusResource.Get()
+			ns, exists := cs.Data.Namespaces[s.namespace]
 			if !exists {
 				continue
 			}
@@ -427,7 +427,10 @@ func (s *shardController) deleteShard() error {
 		)
 	}
 
-	s.statusResource.DeleteShardMetadata(s.namespace, s.shard)
+	cs := s.statusResource.Get()
+	if err := s.statusResource.DeleteShard(s.namespace, s.shard, cs.Version); err != nil {
+		return err
+	}
 	s.eventListener.ShardDeleted(s.shard)
 	return s.close()
 }
@@ -508,7 +511,11 @@ func (s *shardController) handlePeriodicTasks() {
 	}
 
 	// Update the shard status
-	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta)
+	cs := s.statusResource.Get()
+	if err := s.statusResource.UpdateShard(s.namespace, s.shard, mutShardMeta, cs.Version); err != nil {
+		s.log.Warn("Failed to update shard metadata", "error", err)
+		return
+	}
 	s.metadata.Store(mutShardMeta)
 }
 

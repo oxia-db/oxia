@@ -98,7 +98,7 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	r.checkQuarantineNodes()
 
 	swapGroup := &sync.WaitGroup{}
-	currentStatus := r.statusResource.Load()
+	currentStatus := r.statusResource.Get().Data
 	candidates, metadata := r.configResource.NodesWithMetadata()
 	groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
@@ -313,7 +313,7 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 }
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
-	status := r.statusResource.Load()
+	status := r.statusResource.Get().Data
 	candidates := r.configResource.Nodes()
 	groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(candidates, status)
 	return r.loadRatioAlgorithm(
@@ -381,7 +381,7 @@ func (r *nodeBasedBalancer) startBackgroundNotifier() {
 func (r *nodeBasedBalancer) rebalanceLeader() {
 	r.checkQuarantineShards()
 
-	status := r.statusResource.Load()
+	status := r.statusResource.Get().Data
 	candidates := r.configResource.Nodes()
 	totalShards, electedShards, nodeLeaders := util.NodeShardLeaders(candidates, status)
 

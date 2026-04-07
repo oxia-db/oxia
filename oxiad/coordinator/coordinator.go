@@ -167,14 +167,14 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	}
 
 	// compare and set
-	currentStatus, version := c.statusResource.LoadWithVersion()
+	state := c.statusResource.Get()
 	var clusterStatus *model.ClusterStatus
 	var shardsToAdd map[int64]string
 	var shardsToDelete []int64
 	for {
-		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(newConfig, currentStatus, c.selectNewEnsemble)
-		if !c.statusResource.Swap(clusterStatus, version) {
-			currentStatus, version = c.statusResource.LoadWithVersion()
+		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(newConfig, state.Data, c.selectNewEnsemble)
+		if err := c.statusResource.Swap(clusterStatus, state.Version); err != nil {
+			state = c.statusResource.Get()
 			continue
 		}
 		break
@@ -401,9 +401,9 @@ func (c *coordinator) computeNewAssignments() {
 	c.assignments = &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{},
 	}
-	status := c.statusResource.Load()
+	state := c.statusResource.Get()
 	// Update the leader for the shards on all the namespaces
-	for name, ns := range status.Namespaces {
+	for name, ns := range state.Data.Namespaces {
 		nsAssignments := &proto.NamespaceShardsAssignment{
 			Assignments:    make([]*proto.ShardAssignment, 0),
 			ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
@@ -449,10 +449,10 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	c.Lock()
 	defer c.Unlock()
 
-	status := c.statusResource.Load()
+	state := c.statusResource.Get()
 
 	// Validate namespace
-	ns, exists := status.Namespaces[namespace]
+	ns, exists := state.Data.Namespaces[namespace]
 	if !exists {
 		return 0, 0, errors.Errorf("namespace %q not found", namespace)
 	}
@@ -488,7 +488,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Allocate child shard IDs
-	cloned := status.Clone()
+	cloned := state.Data.Clone()
 	leftChildId := cloned.ShardIdGenerator
 	rightChildId := cloned.ShardIdGenerator + 1
 	cloned.ShardIdGenerator += 2
@@ -563,7 +563,9 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Persist
-	c.statusResource.Update(cloned)
+	if err := c.statusResource.Update(cloned, state.Version); err != nil {
+		return 0, 0, err
+	}
 
 	c.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
@@ -588,7 +590,8 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 		RpcProvider:    c.rpc,
 		EventListener:  c,
 		EnsembleSelector: func(ns string) ([]model.Server, error) {
-			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.statusResource.Load())
+			state := c.statusResource.Get()
+			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), state.Data)
 		},
 	})
 	c.splitControllers[parentShardId] = sc
@@ -629,8 +632,8 @@ func (c *coordinator) SplitComplete(parentShard int64, leftChild int64, rightChi
 	// during Cutover.
 	if sc, exists := c.shardControllers[parentShard]; exists {
 		// Sync shard controller metadata from the status resource.
-		status := c.statusResource.Load()
-		for _, ns := range status.Namespaces {
+		state := c.statusResource.Get()
+		for _, ns := range state.Data.Namespaces {
 			if parentMeta, ok := ns.Shards[parentShard]; ok {
 				sc.Metadata().Store(parentMeta)
 				break
@@ -704,7 +707,8 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 				RpcProvider:    c.rpc,
 				EventListener:  c,
 				EnsembleSelector: func(namespace string) ([]model.Server, error) {
-					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.statusResource.Load())
+					state := c.statusResource.Get()
+					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), state.Data)
 				},
 			})
 			c.splitControllers[shardId] = sc
@@ -753,7 +757,8 @@ func NewCoordinator(meta metadata.Provider,
 	})
 
 	clusterConfig := c.configResource.Load()
-	clusterStatus := c.statusResource.Load()
+	state := c.statusResource.Get()
+	clusterStatus := state.Data
 
 	// init node controller
 	for _, node := range clusterConfig.Servers {
@@ -771,7 +776,14 @@ func NewCoordinator(meta metadata.Provider,
 
 		clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
 
-		c.statusResource.Update(clusterStatus)
+		for {
+			if err := c.statusResource.Update(clusterStatus, state.Version); err != nil {
+				state = c.statusResource.Get()
+				clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
+				continue
+			}
+			break
+		}
 	} else {
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 
@@ -781,7 +793,15 @@ func NewCoordinator(meta metadata.Provider,
 			clusterStatus, c.selectNewEnsemble)
 
 		if len(shardsToAdd) > 0 || len(shardsToDelete) > 0 {
-			c.statusResource.Update(clusterStatus)
+			for {
+				if err := c.statusResource.Update(clusterStatus, state.Version); err != nil {
+					state = c.statusResource.Get()
+					clusterStatus = state.Data
+					clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(clusterConfig, clusterStatus, c.selectNewEnsemble)
+					continue
+				}
+				break
+			}
 		}
 	}
 
