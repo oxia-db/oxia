@@ -67,8 +67,8 @@ func initShardInStatusResource(t *testing.T, statusResource resource.StatusResou
 }
 
 // getShardMeta is a helper to read shard metadata from the status resource.
-func getShardMeta(statusResource resource.StatusResource, namespace string, shard int64) *model.ShardMetadata {
-	return statusResource.GetShard(namespace, shard).Data
+func getShardMeta(statusResource resource.StatusResource, namespace string, shard int64) model.ShardMetadata {
+	return statusResource.GetShard(namespace, shard).Unwrap().Data
 }
 
 func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
@@ -148,7 +148,8 @@ func TestShardController(t *testing.T) {
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	assert.NoError(t, err)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -232,7 +233,8 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	assert.NoError(t, err)
 
 	n1.expectGetStatusRequest(t, shard)
 	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
@@ -270,7 +272,8 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	assert.NoError(t, err)
 
 	timeStart := time.Now()
 
@@ -324,7 +327,8 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	assert.NoError(t, err)
 
 	// s3 is failing, though we can still elect a leader
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -386,7 +390,8 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	assert.NoError(t, err)
 
 	n1.expectGetStatusRequest(t, 5)
 	n1.GetStatusResponse(4, proto.ServingStatus_LEADER, 0, 0)
@@ -438,7 +443,8 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	assert.NoError(t, err)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -479,7 +485,8 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	assert.NoError(t, err)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -585,7 +592,8 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	assert.NoError(t, err)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -668,8 +676,8 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	// Eventually, the shard should get deleted
 	rpc.GetNode(s1).expectDeleteShardRequest(t, shard, 3)
 	assert.Eventually(t, func() bool {
-		sm := getShardMeta(statusResource, constant.DefaultNamespace, shard)
-		return sm != nil && len(sm.PendingDeleteShardNodes) == 1
+		v := statusResource.GetShard(constant.DefaultNamespace, shard)
+		return v.IsSome() && len(v.Unwrap().Data.PendingDeleteShardNodes) == 1
 	}, 10*time.Second, 100*time.Millisecond)
 
 	// Next attempt wlll succeed
@@ -678,8 +686,8 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 
 	// s1 should be completely removed from list
 	assert.Eventually(t, func() bool {
-		sm := getShardMeta(statusResource, constant.DefaultNamespace, shard)
-		return sm != nil && len(sm.PendingDeleteShardNodes) == 0
+		v := statusResource.GetShard(constant.DefaultNamespace, shard)
+		return v.IsSome() && len(v.Unwrap().Data.PendingDeleteShardNodes) == 0
 	}, 10*time.Second, 100*time.Millisecond)
 
 	assert.NoError(t, sc.Close())
@@ -709,7 +717,8 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shardId, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	sc, err := NewShardController(constant.DefaultNamespace, shardId, namespaceConfig, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	assert.NoError(t, err)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -732,14 +741,14 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	action3 := action.NewChangeEnsembleAction(shardId, s3, s6)
 	sc.ChangeEnsemble(action3)
 
-	_, err := action1.Wait()
-	assert.Error(t, err)
-	_, err = action2.Wait()
-	assert.Error(t, err)
-	_, err = action3.Wait()
-	assert.Error(t, err)
+	_, err2 := action1.Wait()
+	assert.Error(t, err2)
+	_, err2 = action2.Wait()
+	assert.Error(t, err2)
+	_, err2 = action3.Wait()
+	assert.Error(t, err2)
 
-	metaSnap := *getShardMeta(statusResource, constant.DefaultNamespace, shardId)
+	metaSnap := getShardMeta(statusResource, constant.DefaultNamespace, shardId)
 	assert.EqualValues(t, metaSnap.Ensemble, []model.Server{s1, s2, s3})
 
 	// test become leader would not change metadata ensemble
@@ -783,7 +792,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	rpc.GetNode(s6).NewTermResponse(4, 3, nil)
 	wait.Wait()
 
-	metaSnap = *getShardMeta(statusResource, constant.DefaultNamespace, shardId)
+	metaSnap = getShardMeta(statusResource, constant.DefaultNamespace, shardId)
 	assert.EqualValues(t, metaSnap.Ensemble, []model.Server{s1, s2, s3})
 }
 
@@ -827,7 +836,8 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	assert.NoError(t, err)
 
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
@@ -889,7 +899,8 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
 	})
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	sc, err := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, configResource, statusResource, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	assert.NoError(t, err)
 
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)

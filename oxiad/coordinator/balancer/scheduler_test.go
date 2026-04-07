@@ -23,6 +23,7 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
+	"github.com/oxia-db/oxia/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -43,8 +44,12 @@ func (m *mockStatusResource) Get() *resource.Versioned[*model.ClusterStatus] {
 	}
 }
 
-func (m *mockStatusResource) GetShard(_ string, _ int64) *resource.Versioned[*model.ShardMetadata] {
-	return &resource.Versioned[*model.ShardMetadata]{}
+func (m *mockStatusResource) GetData() *model.ClusterStatus {
+	return m.status
+}
+
+func (m *mockStatusResource) GetShard(_ string, _ int64) option.Option[resource.Versioned[model.ShardMetadata]] {
+	return option.None[resource.Versioned[model.ShardMetadata]]()
 }
 
 func (m *mockStatusResource) Swap(state *resource.Versioned[*model.ClusterStatus]) error {
@@ -56,8 +61,8 @@ func (m *mockStatusResource) Update(state *resource.Versioned[*model.ClusterStat
 	return nil
 }
 
-func (m *mockStatusResource) UpdateShard(_ string, _ int64, _ *resource.Versioned[*model.ShardMetadata]) error {
-	return nil
+func (m *mockStatusResource) UpdateShard(_ string, _ int64, _ *resource.Versioned[*model.ShardMetadata]) (metadata.Version, error) {
+	return "0", nil
 }
 
 func (m *mockStatusResource) DeleteShard(_ string, _ int64, _ metadata.Version) error {

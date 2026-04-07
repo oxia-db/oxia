@@ -50,12 +50,10 @@ func (w *Watch[T]) Changed() <-chan struct{} {
 	return w.ch
 }
 
-// Close signals that no more values will be sent on this Watch.
 func (w *Watch[T]) Close() {
 	close(w.done)
 }
 
-// Done returns a channel that is closed when Close is called.
 func (w *Watch[T]) Done() <-chan struct{} {
 	return w.done
 }

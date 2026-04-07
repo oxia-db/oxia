@@ -118,7 +118,7 @@ func NewShardController(
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	eventListener ShardEventListener,
 	rpcProvider rpc.Provider,
-	periodTasksInterval time.Duration) ShardController {
+	periodTasksInterval time.Duration) (ShardController, error) {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &shardController{
 		namespace:                           namespace,
@@ -156,20 +156,20 @@ func NewShardController(
 	s.termGauge = metric.NewGauge("oxia_coordinator_term",
 		"The term of the shard", "count", labels, func() int64 {
 			v := s.statusResource.GetShard(s.namespace, s.shard)
-			if v == nil || v.Data == nil {
+			if v.IsNone() {
 				return 0
 			}
-			return v.Data.Term
+			return v.Unwrap().Data.Term
 		})
 
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
 	v := s.statusResource.GetShard(s.namespace, s.shard)
-	var shardMeta model.ShardMetadata
-	if v != nil && v.Data != nil {
-		shardMeta = *v.Data
+	if v.IsNone() {
+		return nil, fmt.Errorf("shard %d not found in namespace %s", shard, namespace)
 	}
-	s.log.Info("Started shard controller", slog.Any("shard-metadata", shardMeta))
+	shardMeta := v.Unwrap()
+	s.log.Info("Started shard controller", slog.Any("shard-metadata", shardMeta.Data))
 
 	s.wg.Go(func() {
 		process.DoWithLabels(
@@ -179,12 +179,12 @@ func NewShardController(
 				"namespace": s.namespace,
 				"shard":     fmt.Sprintf("%d", s.shard),
 			}, func() {
-				s.run(&shardMeta)
+				s.run(&shardMeta.Data)
 			},
 		)
 	})
 
-	return s
+	return s, nil
 }
 
 func (s *shardController) Election(electionAction *action.ElectionAction) string {
@@ -261,15 +261,11 @@ func (s *shardController) waitForSplitComplete() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			cs := s.statusResource.Get()
-			ns, exists := cs.Data.Namespaces[s.namespace]
-			if !exists {
+			v := s.statusResource.GetShard(s.namespace, s.shard)
+			if v.IsNone() {
 				continue
 			}
-			meta, exists := ns.Shards[s.shard]
-			if !exists {
-				continue
-			}
+			meta := v.Unwrap().Data
 			if meta.Split == nil {
 				s.log.Info("Split complete, child shard entering normal operation",
 					slog.Any("leader", meta.Leader),
@@ -282,10 +278,11 @@ func (s *shardController) waitForSplitComplete() {
 
 func (s *shardController) handleDataServerFailure(failedDataServer model.Server) {
 	v := s.statusResource.GetShard(s.namespace, s.shard)
-	var shardMeta model.ShardMetadata
-	if v != nil && v.Data != nil {
-		shardMeta = *v.Data
+	if v.IsNone() {
+		s.log.Warn("Shard metadata not found, skipping data server failure handling")
+		return
 	}
+	shardMeta := v.Unwrap().Data
 	s.log.Debug(
 		"Received notification of failed data server",
 		slog.Any("failed-data-server", failedDataServer.GetIdentifier()),
@@ -359,37 +356,51 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		s.currentElection.Stop()
 		s.currentElection = nil
 	}
-	termOptions := &proto.NewTermOptions{
-		EnableNotifications: true,
-		KeySorting:          proto.KeySortingType_UNKNOWN,
-	}
-	nsConfig, exist := s.configResource.NamespaceConfig(s.namespace)
-	if exist {
-		termOptions.EnableNotifications = nsConfig.NotificationsEnabled.Get()
-		termOptions.KeySorting = nsConfig.KeySorting.ToProto()
-	}
-	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
-		s.statusResource, s.configResource, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
-		s.rpc, s.namespace, s.shard, changeEnsembleAction,
-		termOptions,
-		s.leaderElectionLatency,
-		s.newTermQuorumLatency,
-		s.becomeLeaderLatency,
-		s.leaderElectionsFailed)
-	leaderDataServer := s.currentElection.Start()
-	return leaderDataServer
+
+	newLeader, _ := backoff.RetryNotifyWithData[model.Server](func() (model.Server, error) {
+		termOptions := &proto.NewTermOptions{
+			EnableNotifications: true,
+			KeySorting:          proto.KeySortingType_UNKNOWN,
+		}
+		nsConfig, exist := s.configResource.NamespaceConfig(s.namespace)
+		if exist {
+			termOptions.EnableNotifications = nsConfig.NotificationsEnabled.Get()
+			termOptions.KeySorting = nsConfig.KeySorting.ToProto()
+		}
+		v := s.statusResource.GetShard(s.namespace, s.shard)
+		if v.IsNone() {
+			return model.Server{}, fmt.Errorf("shard %d not found in namespace %s", s.shard, s.namespace)
+		}
+		s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
+			s.statusResource, s.configResource, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
+			s.rpc, v.Unwrap(), s.namespace, s.shard, changeEnsembleAction,
+			termOptions,
+			s.leaderElectionLatency,
+			s.newTermQuorumLatency,
+			s.becomeLeaderLatency,
+			s.leaderElectionsFailed)
+		return s.currentElection.Start()
+	}, oxiatime.NewBackOff(s.ctx), func(err error, duration time.Duration) {
+		s.leaderElectionsFailed.Inc()
+		s.log.Warn(
+			"Leader election has failed, retrying later",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	return newLeader
 }
 
 func (s *shardController) deleteShardRpc(ctx context.Context, dataServer model.Server) error {
 	v := s.statusResource.GetShard(s.namespace, s.shard)
-	var term int64
-	if v != nil && v.Data != nil {
-		term = v.Data.Term
+	if v.IsNone() {
+		s.log.Info("Shard metadata not found, skipping delete RPC")
+		return nil
 	}
 	_, err := s.rpc.DeleteShard(ctx, dataServer, &proto.DeleteShardRequest{
 		Namespace: s.namespace,
 		Shard:     s.shard,
-		Term:      term,
+		Term:      v.Unwrap().Data.Term,
 	})
 
 	return err
@@ -416,11 +427,13 @@ func (s *shardController) deleteShardWithRetries() {
 
 func (s *shardController) deleteShard() error {
 	v := s.statusResource.GetShard(s.namespace, s.shard)
-	var shardMeta model.ShardMetadata
-	if v != nil && v.Data != nil {
-		shardMeta = *v.Data
+	if v.IsNone() {
+		s.log.Info("Shard metadata not found, shard already deleted")
+		s.eventListener.ShardDeleted(s.shard)
+		return s.close()
 	}
-	for _, server := range shardMeta.Ensemble {
+	meta := v.Unwrap()
+	for _, server := range meta.Data.Ensemble {
 		// We need to save the address because it gets modified in the loop
 		if err := s.deleteShardRpc(s.ctx, server); err != nil {
 			s.log.Warn(
@@ -436,9 +449,7 @@ func (s *shardController) deleteShard() error {
 			slog.Any("server-address", server),
 		)
 	}
-
-	cs := s.statusResource.Get()
-	if err := s.statusResource.DeleteShard(s.namespace, s.shard, cs.Version); err != nil {
+	if err := s.statusResource.DeleteShard(s.namespace, s.shard, meta.Version); err != nil {
 		return err
 	}
 	s.eventListener.ShardDeleted(s.shard)
@@ -487,13 +498,13 @@ func (s *shardController) onChangeEnsemble(changeEnsembleAction *action.ChangeEn
 	s.onElectLeader(changeEnsembleAction)
 }
 func (s *shardController) SyncServerAddress() {
-	v := s.statusResource.GetShard(s.namespace, s.shard)
-	var shardMeta model.ShardMetadata
-	if v != nil && v.Data != nil {
-		shardMeta = *v.Data
+	shardMeta := s.statusResource.GetShard(s.namespace, s.shard)
+	if shardMeta.IsNone() {
+		s.log.Info("Shard metadata not found, skip syncing server address")
+		return
 	}
 	needSync := false
-	for _, candidate := range shardMeta.Ensemble {
+	for _, candidate := range shardMeta.Unwrap().Data.Ensemble {
 		if newInfo, ok := s.configResource.Node(candidate.GetIdentifier()); ok {
 			if newInfo.Public != candidate.Public || newInfo.Internal != candidate.Internal {
 				needSync = true
@@ -515,10 +526,12 @@ func (s *shardController) SyncServerAddress() {
 
 func (s *shardController) handlePeriodicTasks() {
 	v := s.statusResource.GetShard(s.namespace, s.shard)
-	var mutShardMeta model.ShardMetadata
-	if v != nil && v.Data != nil {
-		mutShardMeta = v.Data.Clone()
+	if v.IsNone() {
+		s.log.Info("Shard metadata not found, skip run periodic tasks")
+		return
 	}
+	current := v.Unwrap()
+	mutShardMeta := current.Data
 
 	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
 		var err error
@@ -529,8 +542,7 @@ func (s *shardController) handlePeriodicTasks() {
 	}
 
 	// Update the shard status
-	cs := s.statusResource.Get()
-	if err := s.statusResource.UpdateShard(s.namespace, s.shard, &resource.Versioned[*model.ShardMetadata]{Data: &mutShardMeta, Version: cs.Version}); err != nil {
+	if _, err := s.statusResource.UpdateShard(s.namespace, s.shard, &resource.Versioned[*model.ShardMetadata]{Data: &mutShardMeta, Version: current.Version}); err != nil {
 		s.log.Warn("Failed to update shard metadata", "error", err)
 		return
 	}

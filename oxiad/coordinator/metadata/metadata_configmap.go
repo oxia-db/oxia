@@ -65,7 +65,7 @@ func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name strin
 		kubernetes: kc,
 		namespace:  namespace,
 		name:       name,
-		log: slog.With("component", "metadata-config-map"),
+		log:        slog.With("component", "metadata-config-map"),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
 			"Latency for reading coordinator metadata", nil),

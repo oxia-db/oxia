@@ -62,8 +62,8 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	}
 	statusResource := coordinatorInstance.StatusResource()
 	cs := statusResource.Get()
-	statusResource.UpdateShard("default", 1, &resource.Versioned[*model.ShardMetadata]{Data: &metadata, Version: cs.Version}) //nolint:errcheck
+	_, _ = statusResource.UpdateShard("default", 1, &resource.Versioned[*model.ShardMetadata]{Data: &metadata, Version: cs.Version})
 
 	status := statusResource.Get()
-	assert.EqualValues(t, status.Status.Namespaces["default"].Shards[1], metadata)
+	assert.EqualValues(t, status.Data.Namespaces["default"].Shards[1], metadata)
 }

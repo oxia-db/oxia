@@ -182,9 +182,15 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
-			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
+			sc, err := controller.NewShardController(namespace, shard, namespaceConfig,
 				c.configResource, c.statusResource, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
+			if err != nil {
+				slog.Warn("Failed to create shard controller", slog.Int64("shard", shard),
+					slog.String("namespace", namespace), slog.Any("error", err))
+				continue
+			}
+			c.shardControllers[shard] = sc
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
 		}
@@ -449,10 +455,8 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	c.Lock()
 	defer c.Unlock()
 
-	state := c.statusResource.Get()
-
 	// Validate namespace
-	ns, exists := state.Data.Namespaces[namespace]
+	ns, exists := c.statusResource.GetData().Namespaces[namespace]
 	if !exists {
 		return 0, 0, errors.Errorf("namespace %q not found", namespace)
 	}
@@ -488,6 +492,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Allocate child shard IDs
+	state := c.statusResource.Get()
 	cloned := state.Data.Clone()
 	leftChildId := cloned.ShardIdGenerator
 	rightChildId := cloned.ShardIdGenerator + 1
@@ -576,9 +581,13 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 
 	// Create shard controllers for children
 	for _, childId := range []int64{leftChildId, rightChildId} {
-		c.shardControllers[childId] = controller.NewShardController(namespace, childId, nsConfig,
+		sc, scErr := controller.NewShardController(namespace, childId, nsConfig,
 			c.configResource, c.statusResource, c.findDataServerFeatures,
 			c, c.rpc, controller.DefaultPeriodicTasksInterval)
+		if scErr != nil {
+			return 0, 0, errors.Wrap(scErr, fmt.Sprintf("failed to create shard controller for child %d", childId))
+		}
+		c.shardControllers[childId] = sc
 	}
 
 	// Start split controller
@@ -800,9 +809,15 @@ func NewCoordinator(meta metadata.Provider,
 			if nsConfig, exist = c.configResource.NamespaceConfig(ns); !exist {
 				nsConfig = &model.NamespaceConfig{}
 			}
-			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
+			sc, scErr := controller.NewShardController(ns, shard, nsConfig,
 				c.configResource, c.statusResource, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
+			if scErr != nil {
+				slog.Warn("Failed to create shard controller", slog.Int64("shard", shard),
+					slog.String("namespace", ns), slog.Any("error", scErr))
+				continue
+			}
+			c.shardControllers[shard] = sc
 		}
 	}
 

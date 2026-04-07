@@ -77,7 +77,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 
 	// Wait for initial shard to be in steady state
 	require.Eventually(t, func() bool {
-		shard := statusResource.Get().Status.Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := statusResource.Get().Data.Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState
 	}, 30*time.Second, 100*time.Millisecond)
 
@@ -115,7 +115,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 	// and both children should be in steady state with leaders.
 	require.Eventually(t, func() bool {
 		status := statusResource.Get()
-		ns, ok := status.Status.Namespaces[constant.DefaultNamespace]
+		ns, ok := status.Data.Namespaces[constant.DefaultNamespace]
 		if !ok {
 			t.Log("Namespace not found in status")
 			return false
@@ -174,7 +174,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 
 	// Verify hash ranges: children should cover the entire original range
 	status := statusResource.Get()
-	ns := status.Status.Namespaces[constant.DefaultNamespace]
+	ns := status.Data.Namespaces[constant.DefaultNamespace]
 	leftMeta := ns.Shards[leftChild]
 	rightMeta := ns.Shards[rightChild]
 
@@ -341,7 +341,7 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 
 	statusResource := coordinatorInstance.StatusResource()
 	require.Eventually(t, func() bool {
-		shard := statusResource.Get().Status.Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := statusResource.Get().Data.Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState
 	}, 30*time.Second, 100*time.Millisecond)
 	slog.Info("Initial cluster is ready")
@@ -370,7 +370,7 @@ func (c *splitTestCluster) splitAndWait(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		status := c.statusResource.Get()
-		ns := status.Status.Namespaces[constant.DefaultNamespace]
+		ns := status.Data.Namespaces[constant.DefaultNamespace]
 		if _, parentExists := ns.Shards[0]; parentExists {
 			return false
 		}
@@ -384,7 +384,7 @@ func (c *splitTestCluster) splitAndWait(t *testing.T) {
 	}, 60*time.Second, 500*time.Millisecond)
 
 	status := c.statusResource.Get()
-	ns := status.Status.Namespaces[constant.DefaultNamespace]
+	ns := status.Data.Namespaces[constant.DefaultNamespace]
 	c.leftMeta = ns.Shards[c.leftChild]
 	c.rightMeta = ns.Shards[c.rightChild]
 	slog.Info("Split complete",
@@ -866,13 +866,13 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			statusResource := coordinatorInstance.StatusResource()
 			status := statusResource.Get()
 
-			assert.EqualValues(t, 1, len(status.Status.Namespaces))
-			nsStatus := status.Status.Namespaces[constant.DefaultNamespace]
+			assert.EqualValues(t, 1, len(status.Data.Namespaces))
+			nsStatus := status.Data.Namespaces[constant.DefaultNamespace]
 			assert.EqualValues(t, 1, len(nsStatus.Shards))
 			assert.EqualValues(t, 1, nsStatus.ReplicationFactor)
 
 			assert.Eventually(t, func() bool {
-				shard := statusResource.Get().Status.Namespaces[constant.DefaultNamespace].Shards[0]
+				shard := statusResource.Get().Data.Namespaces[constant.DefaultNamespace].Shards[0]
 				return shard.Status == model.ShardStatusSteadyState
 			}, 10*time.Second, 10*time.Millisecond)
 
@@ -938,7 +938,7 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 
 	// Find the parent leader before initiating the split
 	status := cluster.statusResource.Get()
-	parentLeader := *status.Status.Namespaces[constant.DefaultNamespace].Shards[0].Leader
+	parentLeader := *status.Data.Namespaces[constant.DefaultNamespace].Shards[0].Leader
 	slog.Info("Parent leader identified", slog.Any("leader", parentLeader))
 
 	// Initiate split (don't wait for completion)
@@ -963,7 +963,7 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		st := cluster.statusResource.Get()
-		ns := st.Status.Namespaces[constant.DefaultNamespace]
+		ns := st.Data.Namespaces[constant.DefaultNamespace]
 		if _, parentExists := ns.Shards[0]; parentExists {
 			return false
 		}
@@ -1023,7 +1023,7 @@ func TestCoordinator_ShardSplit_FollowerKillDuringSplit(t *testing.T) {
 
 	// Find a follower (non-leader) server
 	status := cluster.statusResource.Get()
-	parentMeta := status.Status.Namespaces[constant.DefaultNamespace].Shards[0]
+	parentMeta := status.Data.Namespaces[constant.DefaultNamespace].Shards[0]
 	parentLeader := *parentMeta.Leader
 	var follower model.Server
 	for addr := range cluster.servers {
@@ -1048,7 +1048,7 @@ func TestCoordinator_ShardSplit_FollowerKillDuringSplit(t *testing.T) {
 	// being either fully deleted OR marked Deleting with split metadata cleared.
 	require.Eventually(t, func() bool {
 		st := cluster.statusResource.Get()
-		ns := st.Status.Namespaces[constant.DefaultNamespace]
+		ns := st.Data.Namespaces[constant.DefaultNamespace]
 		if parentMeta, parentExists := ns.Shards[0]; parentExists {
 			if parentMeta.Status != model.ShardStatusDeleting {
 				return false
@@ -1113,7 +1113,7 @@ func TestCoordinator_ShardSplit_ConcurrentSplitRejected(t *testing.T) {
 	// First split should still complete
 	require.Eventually(t, func() bool {
 		st := cluster.statusResource.Get()
-		ns := st.Status.Namespaces[constant.DefaultNamespace]
+		ns := st.Data.Namespaces[constant.DefaultNamespace]
 		if _, parentExists := ns.Shards[0]; parentExists {
 			return false
 		}

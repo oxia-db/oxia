@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/oxia-db/oxia/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
@@ -33,13 +34,15 @@ type Versioned[T any] struct {
 type StatusResource interface {
 	Get() *Versioned[*model.ClusterStatus]
 
-	GetShard(namespace string, shard int64) *Versioned[*model.ShardMetadata]
+	GetData() *model.ClusterStatus
+
+	GetShard(namespace string, shard int64) option.Option[Versioned[model.ShardMetadata]]
 
 	Swap(state *Versioned[*model.ClusterStatus]) error
 
 	Update(state *Versioned[*model.ClusterStatus]) error
 
-	UpdateShard(namespace string, shard int64, state *Versioned[*model.ShardMetadata]) error
+	UpdateShard(namespace string, shard int64, state *Versioned[*model.ShardMetadata]) (metadata.Version, error)
 
 	DeleteShard(namespace string, shard int64, version metadata.Version) error
 
@@ -143,7 +146,11 @@ func (s *status) Get() *Versioned[*model.ClusterStatus] {
 	}
 }
 
-func (s *status) GetShard(namespace string, shard int64) *Versioned[*model.ShardMetadata] {
+func (s *status) GetData() *model.ClusterStatus {
+	return s.Get().Data
+}
+
+func (s *status) GetShard(namespace string, shard int64) option.Option[Versioned[model.ShardMetadata]] {
 	s.lock.RLock()
 	if s.current == nil {
 		s.lock.RUnlock()
@@ -152,21 +159,20 @@ func (s *status) GetShard(namespace string, shard int64) *Versioned[*model.Shard
 	}
 	defer s.lock.RUnlock()
 	if s.current == nil {
-		return nil
+		return option.None[Versioned[model.ShardMetadata]]()
 	}
 	ns, exist := s.current.Namespaces[namespace]
 	if !exist {
-		return nil
+		return option.None[Versioned[model.ShardMetadata]]()
 	}
 	meta, exist := ns.Shards[shard]
 	if !exist {
-		return nil
+		return option.None[Versioned[model.ShardMetadata]]()
 	}
-	cloned := meta.Clone()
-	return &Versioned[*model.ShardMetadata]{
-		Data:    &cloned,
+	return option.Some(Versioned[model.ShardMetadata]{
+		Data:    meta.Clone(),
 		Version: s.currentVersionID,
-	}
+	})
 }
 
 func (s *status) Swap(state *Versioned[*model.ClusterStatus]) error {
@@ -201,26 +207,26 @@ func (s *status) Update(state *Versioned[*model.ClusterStatus]) error {
 	return nil
 }
 
-func (s *status) UpdateShard(namespace string, shard int64, state *Versioned[*model.ShardMetadata]) error {
+func (s *status) UpdateShard(namespace string, shard int64, state *Versioned[*model.ShardMetadata]) (metadata.Version, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	if s.currentVersionID != state.Version {
-		return metadata.ErrMetadataBadVersion
+		return "", metadata.ErrMetadataBadVersion
 	}
 	clonedStatus := s.current.Clone()
 	ns, exist := clonedStatus.Namespaces[namespace]
 	if !exist {
-		return nil
+		return "", nil
 	}
 	ns.Shards[shard] = state.Data.Clone()
 	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	s.current = clonedStatus
 	s.currentVersionID = versionID
 	s.notifyChange()
-	return nil
+	return versionID, nil
 }
 
 func (s *status) DeleteShard(namespace string, shard int64,

@@ -72,7 +72,7 @@ func TestNormalShardBalancer(t *testing.T) {
 	configResource := coordinator.ConfigResource()
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Get().Status.Namespaces {
+		for _, ns := range statusResource.Get().Data.Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -170,7 +170,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	configResource := coordinator.ConfigResource()
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Get().Status.Namespaces {
+		for _, ns := range statusResource.Get().Data.Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -195,7 +195,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}, 30*time.Second, 50*time.Millisecond)
 
 	// check if follow the policy
-	for name, ns := range statusResource.Get().Status.Namespaces {
+	for name, ns := range statusResource.Get().Data.Namespaces {
 		for _, shard := range ns.Shards {
 			nodeIDs := linkedhashset.New[string]()
 			nodeZones := linkedhashset.New[string]()

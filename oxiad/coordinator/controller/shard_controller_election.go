@@ -65,9 +65,10 @@ type ShardElection struct {
 	leaderSelector                      selector.Selector[*leaderselector.Context, model.Server]
 	eventListener ShardEventListener
 	provider      rpc.Provider
+	mutShardMeta   resource.Versioned[model.ShardMetadata]
 	// owned status
-	namespace            string
-	shard                int64
+	namespace string
+	shard     int64
 	changeEnsembleAction *action.ChangeEnsembleAction
 	followerCaughtUp     atomic.Bool // If the followers caught up leader after election
 	termOptions          *proto.NewTermOptions
@@ -223,10 +224,9 @@ func (*ShardElection) waitForMajority(ch chan struct {
 func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto.EntryId) (
 	leader model.Server, followers map[model.Server]*proto.EntryId, err error) {
 	candidates := chooseCandidates(candidatesStatus)
-	cs := e.statusResource.Get()
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Status:     cs.Data,
+		Status:     e.statusResource.GetData(),
 	})
 	if err != nil {
 		return model.Server{}, nil, err
@@ -428,25 +428,22 @@ func (e *ShardElection) start() (model.Server, error) {
 	e.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
 
-	v := e.statusResource.GetShard(e.namespace, e.shard)
-	if v == nil {
-		return model.Server{}, fmt.Errorf("shard %d not found in namespace %s", e.shard, e.namespace)
-	}
-	mutShardMeta := v.Data.Clone()
-	mutShardMeta.Status = model.ShardStatusElection
-	mutShardMeta.Leader = nil
-	mutShardMeta.Term++
-	mutShardMeta.Ensemble = e.refreshedEnsemble(mutShardMeta.Ensemble)
-	if err := e.statusResource.UpdateShard(e.namespace, e.shard, &resource.Versioned[*model.ShardMetadata]{Data: &mutShardMeta, Version: v.Version}); err != nil {
+	e.mutShardMeta.Data.Status = model.ShardStatusElection
+	e.mutShardMeta.Data.Leader = nil
+	e.mutShardMeta.Data.Term++
+	e.mutShardMeta.Data.Ensemble = e.refreshedEnsemble(e.mutShardMeta.Data.Ensemble)
+	newVersion, err := e.statusResource.UpdateShard(e.namespace, e.shard, &resource.Versioned[*model.ShardMetadata]{Data: &e.mutShardMeta.Data, Version: e.mutShardMeta.Version})
+	if err != nil {
 		return model.Server{}, err
 	}
+	e.mutShardMeta.Version = newVersion
 
 	if e.changeEnsembleAction != nil {
-		e.prepareIfChangeEnsemble(&mutShardMeta)
+		e.prepareIfChangeEnsemble(&e.mutShardMeta.Data)
 	}
 
 	// Send NewTerm to all the ensemble members
-	candidatesStatus, err := e.fenceNewTermQuorum(mutShardMeta.Term, mutShardMeta.Ensemble, mutShardMeta.RemovedNodes)
+	candidatesStatus, err := e.fenceNewTermQuorum(e.mutShardMeta.Data.Term, e.mutShardMeta.Data.Ensemble, e.mutShardMeta.Data.RemovedNodes)
 	if err != nil {
 		return model.Server{}, err
 	}
@@ -467,41 +464,42 @@ func (e *ShardElection) start() (model.Server, error) {
 		}
 		e.Info(
 			"Successfully moved ensemble to a new term",
-			slog.Int64("term", mutShardMeta.Term),
+			slog.Int64("term", e.mutShardMeta.Data.Term),
 			slog.Any("new-leader", newLeader),
 			slog.Any("followers", f),
 		)
 	}
-	features := e.dataServerSupportedFeaturesSupplier(mutShardMeta.Ensemble)
+	features := e.dataServerSupportedFeaturesSupplier(e.mutShardMeta.Data.Ensemble)
 	negotiatedFeatures := negotiate(features)
 
-	if err = e.becomeLeader(mutShardMeta.Term, newLeader, followers,
-		uint32(len(mutShardMeta.Ensemble)), negotiatedFeatures); err != nil {
+	if err = e.becomeLeader(e.mutShardMeta.Data.Term, newLeader, followers,
+		uint32(len(e.mutShardMeta.Data.Ensemble)), negotiatedFeatures); err != nil {
 		return model.Server{}, err
 	}
-	mutShardMeta.Status = model.ShardStatusSteadyState
-	mutShardMeta.PendingDeleteShardNodes = slices.Concat(mutShardMeta.PendingDeleteShardNodes, mutShardMeta.RemovedNodes)
-	mutShardMeta.RemovedNodes = nil
-	mutShardMeta.Leader = &newLeader
+	e.mutShardMeta.Data.Status = model.ShardStatusSteadyState
+	e.mutShardMeta.Data.PendingDeleteShardNodes = slices.Concat(e.mutShardMeta.Data.PendingDeleteShardNodes, e.mutShardMeta.Data.RemovedNodes)
+	e.mutShardMeta.Data.RemovedNodes = nil
+	e.mutShardMeta.Data.Leader = &newLeader
 
-	term := mutShardMeta.Term
-	ensemble := mutShardMeta.Ensemble
-	leader := mutShardMeta.Leader
+	term := e.mutShardMeta.Data.Term
+	ensemble := e.mutShardMeta.Data.Ensemble
+	leader := e.mutShardMeta.Data.Leader
 	leaderEntry := candidatesStatus[*leader]
 
-	cs := e.statusResource.Get()
-	if err := e.statusResource.UpdateShard(e.namespace, e.shard, &resource.Versioned[*model.ShardMetadata]{Data: &mutShardMeta, Version: cs.Version}); err != nil {
+	newVersion, err = e.statusResource.UpdateShard(e.namespace, e.shard, &resource.Versioned[*model.ShardMetadata]{Data: &e.mutShardMeta.Data, Version: e.mutShardMeta.Version})
+	if err != nil {
 		return model.Server{}, err
 	}
+	e.mutShardMeta.Version = newVersion
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
 	}
 
 	e.Info(
 		"Elected new leader",
-		slog.Int64("term", mutShardMeta.Term),
-		slog.Any("leader", mutShardMeta.Leader),
-		slog.Any("ensemble", mutShardMeta.Ensemble),
+		slog.Int64("term", e.mutShardMeta.Data.Term),
+		slog.Any("leader", e.mutShardMeta.Data.Leader),
+		slog.Any("ensemble", e.mutShardMeta.Data.Ensemble),
 	)
 	timer.Done()
 
@@ -570,36 +568,17 @@ func (e *ShardElection) IsReadyForChangeEnsemble() bool {
 	return e.followerCaughtUp.Load()
 }
 
-func (e *ShardElection) Start() model.Server {
+func (e *ShardElection) Start() (model.Server, error) {
 	if swapped := e.started.CompareAndSwap(false, true); !swapped {
 		panic("bug! the election has been started")
 	}
-	newLeader, _ := backoff.RetryNotifyWithData[model.Server](func() (model.Server, error) {
-		return e.start()
-	}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {
-		e.leaderElectionsFailed.Inc()
-		var currentTerm int64
-		if sv := e.statusResource.GetShard(e.namespace, e.shard); sv != nil {
-			currentTerm = sv.Data.Term
-		}
-		e.Warn(
-			"Leader election has failed, retrying later",
-			slog.Int64("term", currentTerm),
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
-	return newLeader
+	return e.start()
 }
 
 func (e *ShardElection) Stop() {
 	e.CancelFunc()
 	e.Wait()
-	var stopTerm int64
-	if sv := e.statusResource.GetShard(e.namespace, e.shard); sv != nil {
-		stopTerm = sv.Data.Term
-	}
-	e.Info("stopped the election", slog.Any("term", stopTerm))
+	e.Info("stopped the election", slog.Any("term", e.mutShardMeta.Data.Term))
 }
 
 //nolint:revive
@@ -607,7 +586,7 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 	statusResource resource.StatusResource, configResource resource.ClusterConfigResource,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	leaderSelector selector.Selector[*leaderselector.Context, model.Server],
-	provider rpc.Provider, namespace string, shard int64,
+	provider rpc.Provider, mutShardMeta resource.Versioned[model.ShardMetadata], namespace string, shard int64,
 	changeEnsembleAction *action.ChangeEnsembleAction, termOptions *proto.NewTermOptions,
 	leaderElectionLatency metric.LatencyHistogram, newTermQuorumLatency metric.LatencyHistogram,
 	becomeLeaderLatency metric.LatencyHistogram, leaderElectionsFailed metric.Counter) *ShardElection {
@@ -623,6 +602,7 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 		eventListener:                       eventListener,
 		leaderSelector:                      leaderSelector,
 		provider:                            provider,
+		mutShardMeta:                         mutShardMeta,
 		namespace:                           namespace,
 		shard:                               shard,
 		termOptions:                         termOptions,

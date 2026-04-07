@@ -92,7 +92,7 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 
 	// Wait for the checksum feature to be enabled on all replicas
 	resource := coordinatorInstance.StatusResource().Get()
-	shardMetadata := resource.Status.Namespaces["default"].Shards[0]
+	shardMetadata := resource.Data.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetIdentifier()

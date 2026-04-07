@@ -65,7 +65,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	defer client.Close()
 
 	resource := coordinatorInstance.StatusResource().Get()
-	shardMetadata := resource.Status.Namespaces["default"].Shards[0]
+	shardMetadata := resource.Data.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
 
 	// Write entries. The replication messages for these writes also carry
