@@ -47,16 +47,16 @@ func (m *mockStatusResource) GetShard(_ string, _ int64) *resource.Versioned[*mo
 	return &resource.Versioned[*model.ShardMetadata]{}
 }
 
-func (m *mockStatusResource) Swap(_ *model.ClusterStatus, _ metadata.Version) error {
+func (m *mockStatusResource) Swap(state *resource.Versioned[*model.ClusterStatus]) error {
 	return nil
 }
 
-func (m *mockStatusResource) Update(newStatus *model.ClusterStatus, _ metadata.Version) error {
-	m.status = newStatus
+func (m *mockStatusResource) Update(state *resource.Versioned[*model.ClusterStatus]) error {
+	m.status = state.Data
 	return nil
 }
 
-func (m *mockStatusResource) UpdateShard(_ string, _ int64, _ model.ShardMetadata, _ metadata.Version) error {
+func (m *mockStatusResource) UpdateShard(_ string, _ int64, _ *resource.Versioned[*model.ShardMetadata]) error {
 	return nil
 }
 

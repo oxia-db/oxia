@@ -173,7 +173,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	var shardsToDelete []int64
 	for {
 		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(newConfig, state.Data, c.selectNewEnsemble)
-		if err := c.statusResource.Swap(clusterStatus, state.Version); err != nil {
+		if err := c.statusResource.Swap(&resource.Versioned[*model.ClusterStatus]{Data: clusterStatus, Version: state.Version}); err != nil {
 			state = c.statusResource.Get()
 			continue
 		}
@@ -183,7 +183,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
 			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
-				shardMetadata.Clone(), c.configResource, c.statusResource, c.findDataServerFeatures,
+				c.configResource, c.statusResource, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
@@ -563,7 +563,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Persist
-	if err := c.statusResource.Update(cloned, state.Version); err != nil {
+	if err := c.statusResource.Update(&resource.Versioned[*model.ClusterStatus]{Data: cloned, Version: state.Version}); err != nil {
 		return 0, 0, err
 	}
 
@@ -576,9 +576,8 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 
 	// Create shard controllers for children
 	for _, childId := range []int64{leftChildId, rightChildId} {
-		childMeta := nsCloned.Shards[childId]
 		c.shardControllers[childId] = controller.NewShardController(namespace, childId, nsConfig,
-			childMeta, c.configResource, c.statusResource, c.findDataServerFeatures,
+			c.configResource, c.statusResource, c.findDataServerFeatures,
 			c, c.rpc, controller.DefaultPeriodicTasksInterval)
 	}
 
@@ -626,19 +625,7 @@ func (c *coordinator) SplitComplete(parentShard int64, leftChild int64, rightChi
 	// Trigger the parent shard controller's deletion. The shard controller
 	// retries DeleteShard RPCs indefinitely with backoff, handles unreachable
 	// nodes, and removes the parent from cluster status when done.
-	//
-	// First, sync the shard controller's local metadata with the status
-	// resource, since the split controller may have bumped the parent's term
-	// during Cutover.
 	if sc, exists := c.shardControllers[parentShard]; exists {
-		// Sync shard controller metadata from the status resource.
-		state := c.statusResource.Get()
-		for _, ns := range state.Data.Namespaces {
-			if parentMeta, ok := ns.Shards[parentShard]; ok {
-				sc.Metadata().Store(parentMeta)
-				break
-			}
-		}
 		sc.DeleteShard()
 	}
 
@@ -777,7 +764,7 @@ func NewCoordinator(meta metadata.Provider,
 		clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
 
 		for {
-			if err := c.statusResource.Update(clusterStatus, state.Version); err != nil {
+			if err := c.statusResource.Update(&resource.Versioned[*model.ClusterStatus]{Data: clusterStatus, Version: state.Version}); err != nil {
 				state = c.statusResource.Get()
 				clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
 				continue
@@ -794,7 +781,7 @@ func NewCoordinator(meta metadata.Provider,
 
 		if len(shardsToAdd) > 0 || len(shardsToDelete) > 0 {
 			for {
-				if err := c.statusResource.Update(clusterStatus, state.Version); err != nil {
+				if err := c.statusResource.Update(&resource.Versioned[*model.ClusterStatus]{Data: clusterStatus, Version: state.Version}); err != nil {
 					state = c.statusResource.Get()
 					clusterStatus = state.Data
 					clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(clusterConfig, clusterStatus, c.selectNewEnsemble)
@@ -808,14 +795,13 @@ func NewCoordinator(meta metadata.Provider,
 	// init shard controller
 	for ns, shards := range clusterStatus.Namespaces {
 		for shard := range shards.Shards {
-			shardMetadata := shards.Shards[shard]
 			var nsConfig *model.NamespaceConfig
 			var exist bool
 			if nsConfig, exist = c.configResource.NamespaceConfig(ns); !exist {
 				nsConfig = &model.NamespaceConfig{}
 			}
 			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
-				shardMetadata, c.configResource, c.statusResource, c.findDataServerFeatures,
+				c.configResource, c.statusResource, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		}
 	}

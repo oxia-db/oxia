@@ -235,7 +235,7 @@ func (sc *SplitController) updatePhase(newPhase model.SplitPhase) error {
 		}
 	}
 
-	return sc.statusResource.Update(cloned, state.Version)
+	return sc.statusResource.Update(&resource.Versioned[*model.ClusterStatus]{Data: cloned, Version: state.Version})
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects
@@ -719,7 +719,7 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *model.Sh
 	if meta, exists := ns.Shards[shardId]; exists {
 		fn(&meta)
 		ns.Shards[shardId] = meta
-		return sc.statusResource.Update(cloned, state.Version)
+		return sc.statusResource.Update(&resource.Versioned[*model.ClusterStatus]{Data: cloned, Version: state.Version})
 	}
 	return nil
 }

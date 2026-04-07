@@ -22,6 +22,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -61,7 +62,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	}
 	statusResource := coordinatorInstance.StatusResource()
 	cs := statusResource.Get()
-	statusResource.UpdateShard("default", 1, metadata, cs.Version) //nolint:errcheck
+	statusResource.UpdateShard("default", 1, &resource.Versioned[*model.ShardMetadata]{Data: &metadata, Version: cs.Version}) //nolint:errcheck
 
 	status := statusResource.Get()
 	assert.EqualValues(t, status.Status.Namespaces["default"].Shards[1], metadata)

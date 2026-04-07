@@ -63,9 +63,8 @@ type ShardElection struct {
 	configResource                      resource.ClusterConfigResource
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 	leaderSelector                      selector.Selector[*leaderselector.Context, model.Server]
-	eventListener                       ShardEventListener
-	provider                            rpc.Provider
-	meta                                *Metadata
+	eventListener ShardEventListener
+	provider      rpc.Provider
 	// owned status
 	namespace            string
 	shard                int64
@@ -429,14 +428,16 @@ func (e *ShardElection) start() (model.Server, error) {
 	e.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
 
-	mutShardMeta := e.meta.Compute(func(metadata *model.ShardMetadata) {
-		metadata.Status = model.ShardStatusElection
-		metadata.Leader = nil
-		metadata.Term++
-		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
-	})
-	cs := e.statusResource.Get()
-	if err := e.statusResource.UpdateShard(e.namespace, e.shard, mutShardMeta, cs.Version); err != nil {
+	v := e.statusResource.GetShard(e.namespace, e.shard)
+	if v == nil {
+		return model.Server{}, fmt.Errorf("shard %d not found in namespace %s", e.shard, e.namespace)
+	}
+	mutShardMeta := v.Data.Clone()
+	mutShardMeta.Status = model.ShardStatusElection
+	mutShardMeta.Leader = nil
+	mutShardMeta.Term++
+	mutShardMeta.Ensemble = e.refreshedEnsemble(mutShardMeta.Ensemble)
+	if err := e.statusResource.UpdateShard(e.namespace, e.shard, &resource.Versioned[*model.ShardMetadata]{Data: &mutShardMeta, Version: v.Version}); err != nil {
 		return model.Server{}, err
 	}
 
@@ -488,11 +489,10 @@ func (e *ShardElection) start() (model.Server, error) {
 	leader := mutShardMeta.Leader
 	leaderEntry := candidatesStatus[*leader]
 
-	cs = e.statusResource.Get()
-	if err := e.statusResource.UpdateShard(e.namespace, e.shard, mutShardMeta, cs.Version); err != nil {
+	cs := e.statusResource.Get()
+	if err := e.statusResource.UpdateShard(e.namespace, e.shard, &resource.Versioned[*model.ShardMetadata]{Data: &mutShardMeta, Version: cs.Version}); err != nil {
 		return model.Server{}, err
 	}
-	e.meta.Store(mutShardMeta)
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
 	}
@@ -578,9 +578,13 @@ func (e *ShardElection) Start() model.Server {
 		return e.start()
 	}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {
 		e.leaderElectionsFailed.Inc()
+		var currentTerm int64
+		if sv := e.statusResource.GetShard(e.namespace, e.shard); sv != nil {
+			currentTerm = sv.Data.Term
+		}
 		e.Warn(
 			"Leader election has failed, retrying later",
-			slog.Int64("term", e.meta.Term()),
+			slog.Int64("term", currentTerm),
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
@@ -591,7 +595,11 @@ func (e *ShardElection) Start() model.Server {
 func (e *ShardElection) Stop() {
 	e.CancelFunc()
 	e.Wait()
-	e.Info("stopped the election", slog.Any("term", e.meta.Term()))
+	var stopTerm int64
+	if sv := e.statusResource.GetShard(e.namespace, e.shard); sv != nil {
+		stopTerm = sv.Data.Term
+	}
+	e.Info("stopped the election", slog.Any("term", stopTerm))
 }
 
 //nolint:revive
@@ -599,7 +607,7 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 	statusResource resource.StatusResource, configResource resource.ClusterConfigResource,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	leaderSelector selector.Selector[*leaderselector.Context, model.Server],
-	provider rpc.Provider, metadata *Metadata, namespace string, shard int64,
+	provider rpc.Provider, namespace string, shard int64,
 	changeEnsembleAction *action.ChangeEnsembleAction, termOptions *proto.NewTermOptions,
 	leaderElectionLatency metric.LatencyHistogram, newTermQuorumLatency metric.LatencyHistogram,
 	becomeLeaderLatency metric.LatencyHistogram, leaderElectionsFailed metric.Counter) *ShardElection {
@@ -614,7 +622,6 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
 		eventListener:                       eventListener,
 		leaderSelector:                      leaderSelector,
-		meta:                                metadata,
 		provider:                            provider,
 		namespace:                           namespace,
 		shard:                               shard,

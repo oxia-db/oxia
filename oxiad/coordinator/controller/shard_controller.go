@@ -56,8 +56,6 @@ type ShardController interface {
 	io.Closer
 	DataServerEventListener
 
-	Metadata() *Metadata
-
 	SyncServerAddress()
 
 	DeleteShard()
@@ -78,7 +76,6 @@ type shardController struct {
 	shard           int64
 	namespaceConfig *model.NamespaceConfig
 	rpc             rpc.Provider
-	metadata        Metadata
 
 	leaderSelector selector.Selector[*leaderselector.Context, model.Server]
 
@@ -107,10 +104,6 @@ type shardController struct {
 	termGauge             metric.Gauge
 }
 
-func (s *shardController) Metadata() *Metadata {
-	return &s.metadata
-}
-
 func (s *shardController) BecameUnavailable(dataServer model.Server) {
 	s.dataServerFailureOp <- dataServer
 }
@@ -120,7 +113,6 @@ func NewShardController(
 	namespace string,
 	shard int64,
 	nc *model.NamespaceConfig,
-	shardMetadata model.ShardMetadata,
 	configResource resource.ClusterConfigResource,
 	statusResource resource.StatusResource,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
@@ -132,7 +124,6 @@ func NewShardController(
 		namespace:                           namespace,
 		shard:                               shard,
 		namespaceConfig:                     nc,
-		metadata:                            NewMetadata(shardMetadata),
 		rpc:                                 rpcProvider,
 		configResource:                      configResource,
 		statusResource:                      statusResource,
@@ -164,12 +155,20 @@ func NewShardController(
 
 	s.termGauge = metric.NewGauge("oxia_coordinator_term",
 		"The term of the shard", "count", labels, func() int64 {
-			return s.metadata.Term()
+			v := s.statusResource.GetShard(s.namespace, s.shard)
+			if v == nil || v.Data == nil {
+				return 0
+			}
+			return v.Data.Term
 		})
 
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
-	shardMeta := s.metadata.Load()
+	v := s.statusResource.GetShard(s.namespace, s.shard)
+	var shardMeta model.ShardMetadata
+	if v != nil && v.Data != nil {
+		shardMeta = *v.Data
+	}
 	s.log.Info("Started shard controller", slog.Any("shard-metadata", shardMeta))
 
 	s.wg.Go(func() {
@@ -275,8 +274,6 @@ func (s *shardController) waitForSplitComplete() {
 				s.log.Info("Split complete, child shard entering normal operation",
 					slog.Any("leader", meta.Leader),
 				)
-				// Update local metadata to match the status resource
-				s.metadata.Store(meta)
 				return
 			}
 		}
@@ -284,7 +281,11 @@ func (s *shardController) waitForSplitComplete() {
 }
 
 func (s *shardController) handleDataServerFailure(failedDataServer model.Server) {
-	shardMeta := s.metadata.Load()
+	v := s.statusResource.GetShard(s.namespace, s.shard)
+	var shardMeta model.ShardMetadata
+	if v != nil && v.Data != nil {
+		shardMeta = *v.Data
+	}
 	s.log.Debug(
 		"Received notification of failed data server",
 		slog.Any("failed-data-server", failedDataServer.GetIdentifier()),
@@ -369,7 +370,7 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
 		s.statusResource, s.configResource, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
-		s.rpc, &s.metadata, s.namespace, s.shard, changeEnsembleAction,
+		s.rpc, s.namespace, s.shard, changeEnsembleAction,
 		termOptions,
 		s.leaderElectionLatency,
 		s.newTermQuorumLatency,
@@ -380,10 +381,15 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 }
 
 func (s *shardController) deleteShardRpc(ctx context.Context, dataServer model.Server) error {
+	v := s.statusResource.GetShard(s.namespace, s.shard)
+	var term int64
+	if v != nil && v.Data != nil {
+		term = v.Data.Term
+	}
 	_, err := s.rpc.DeleteShard(ctx, dataServer, &proto.DeleteShardRequest{
 		Namespace: s.namespace,
 		Shard:     s.shard,
-		Term:      s.metadata.Term(),
+		Term:      term,
 	})
 
 	return err
@@ -409,7 +415,11 @@ func (s *shardController) deleteShardWithRetries() {
 }
 
 func (s *shardController) deleteShard() error {
-	shardMeta := s.metadata.Load()
+	v := s.statusResource.GetShard(s.namespace, s.shard)
+	var shardMeta model.ShardMetadata
+	if v != nil && v.Data != nil {
+		shardMeta = *v.Data
+	}
 	for _, server := range shardMeta.Ensemble {
 		// We need to save the address because it gets modified in the loop
 		if err := s.deleteShardRpc(s.ctx, server); err != nil {
@@ -477,7 +487,11 @@ func (s *shardController) onChangeEnsemble(changeEnsembleAction *action.ChangeEn
 	s.onElectLeader(changeEnsembleAction)
 }
 func (s *shardController) SyncServerAddress() {
-	shardMeta := s.metadata.Load()
+	v := s.statusResource.GetShard(s.namespace, s.shard)
+	var shardMeta model.ShardMetadata
+	if v != nil && v.Data != nil {
+		shardMeta = *v.Data
+	}
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
 		if newInfo, ok := s.configResource.Node(candidate.GetIdentifier()); ok {
@@ -500,7 +514,11 @@ func (s *shardController) SyncServerAddress() {
 }
 
 func (s *shardController) handlePeriodicTasks() {
-	mutShardMeta := s.metadata.Load()
+	v := s.statusResource.GetShard(s.namespace, s.shard)
+	var mutShardMeta model.ShardMetadata
+	if v != nil && v.Data != nil {
+		mutShardMeta = v.Data.Clone()
+	}
 
 	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
 		var err error
@@ -512,11 +530,10 @@ func (s *shardController) handlePeriodicTasks() {
 
 	// Update the shard status
 	cs := s.statusResource.Get()
-	if err := s.statusResource.UpdateShard(s.namespace, s.shard, mutShardMeta, cs.Version); err != nil {
+	if err := s.statusResource.UpdateShard(s.namespace, s.shard, &resource.Versioned[*model.ShardMetadata]{Data: &mutShardMeta, Version: cs.Version}); err != nil {
 		s.log.Warn("Failed to update shard metadata", "error", err)
 		return
 	}
-	s.metadata.Store(mutShardMeta)
 }
 
 func (s *shardController) handlePendingDeleteShard(mutShardMeta *model.ShardMetadata) error {

@@ -35,11 +35,11 @@ type StatusResource interface {
 
 	GetShard(namespace string, shard int64) *Versioned[*model.ShardMetadata]
 
-	Swap(newStatus *model.ClusterStatus, version metadata.Version) error
+	Swap(state *Versioned[*model.ClusterStatus]) error
 
-	Update(newStatus *model.ClusterStatus, version metadata.Version) error
+	Update(state *Versioned[*model.ClusterStatus]) error
 
-	UpdateShard(namespace string, shard int64, shardMetadata model.ShardMetadata, version metadata.Version) error
+	UpdateShard(namespace string, shard int64, state *Versioned[*model.ShardMetadata]) error
 
 	DeleteShard(namespace string, shard int64, version metadata.Version) error
 
@@ -152,15 +152,15 @@ func (s *status) GetShard(namespace string, shard int64) *Versioned[*model.Shard
 	}
 	defer s.lock.RUnlock()
 	if s.current == nil {
-		return &Versioned[*model.ShardMetadata]{Version: s.currentVersionID}
+		return nil
 	}
 	ns, exist := s.current.Namespaces[namespace]
 	if !exist {
-		return &Versioned[*model.ShardMetadata]{Version: s.currentVersionID}
+		return nil
 	}
 	meta, exist := ns.Shards[shard]
 	if !exist {
-		return &Versioned[*model.ShardMetadata]{Version: s.currentVersionID}
+		return nil
 	}
 	cloned := meta.Clone()
 	return &Versioned[*model.ShardMetadata]{
@@ -169,44 +169,42 @@ func (s *status) GetShard(namespace string, shard int64) *Versioned[*model.Shard
 	}
 }
 
-func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) error {
+func (s *status) Swap(state *Versioned[*model.ClusterStatus]) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if s.currentVersionID != version {
+	if s.currentVersionID != state.Version {
 		return metadata.ErrMetadataBadVersion
 	}
-	versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
+	versionID, err := s.metadata.Store(state.Data, s.currentVersionID)
 	if err != nil {
 		return err
 	}
-	s.current = newStatus
+	s.current = state.Data
 	s.currentVersionID = versionID
 	s.notifyChange()
 	return nil
 }
 
-func (s *status) Update(newStatus *model.ClusterStatus, version metadata.Version) error {
+func (s *status) Update(state *Versioned[*model.ClusterStatus]) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if s.currentVersionID != version {
+	if s.currentVersionID != state.Version {
 		return metadata.ErrMetadataBadVersion
 	}
-	versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
+	versionID, err := s.metadata.Store(state.Data, s.currentVersionID)
 	if err != nil {
 		return err
 	}
-	s.current = newStatus
+	s.current = state.Data
 	s.currentVersionID = versionID
 	s.notifyChange()
 	return nil
 }
 
-func (s *status) UpdateShard(namespace string, shard int64, shardMetadata model.ShardMetadata,
-	version metadata.Version,
-) error {
+func (s *status) UpdateShard(namespace string, shard int64, state *Versioned[*model.ShardMetadata]) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if s.currentVersionID != version {
+	if s.currentVersionID != state.Version {
 		return metadata.ErrMetadataBadVersion
 	}
 	clonedStatus := s.current.Clone()
@@ -214,7 +212,7 @@ func (s *status) UpdateShard(namespace string, shard int64, shardMetadata model.
 	if !exist {
 		return nil
 	}
-	ns.Shards[shard] = shardMetadata.Clone()
+	ns.Shards[shard] = state.Data.Clone()
 	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 	if err != nil {
 		return err

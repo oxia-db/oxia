@@ -137,7 +137,7 @@ func setupSplitTest(t *testing.T, phase model.SplitPhase) (
 	}
 
 	cs := statusRes.Get()
-	if err := statusRes.Update(clusterStatus, cs.Version); err != nil {
+	if err := statusRes.Update(&resource.Versioned[*model.ClusterStatus]{Data: clusterStatus, Version: cs.Version}); err != nil {
 		t.Fatal(err)
 	}
 	listener := newMockSplitEventListener()
@@ -286,7 +286,7 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 	rightMeta.Leader = &rs1
 	rightMeta.Term = 1
 	ns.Shards[2] = rightMeta
-	statusRes.Update(cloned, status.Version) //nolint:errcheck
+	statusRes.Update(&resource.Versioned[*model.ClusterStatus]{Data: cloned, Version: status.Version}) //nolint:errcheck
 
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
@@ -409,7 +409,7 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned, status.Version) //nolint:errcheck
+	statusRes.Update(&resource.Versioned[*model.ClusterStatus]{Data: cloned, Version: status.Version}) //nolint:errcheck
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -474,7 +474,7 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5 // Was 5 during Bootstrap
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned, status.Version) //nolint:errcheck
+	statusRes.Update(&resource.Versioned[*model.ClusterStatus]{Data: cloned, Version: status.Version}) //nolint:errcheck
 
 	// The controller should detect term change and reset to Bootstrap.
 	// Queue Bootstrap responses -- note: parent leader is now ps2 (after election)
@@ -679,7 +679,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned, status.Version) //nolint:errcheck
+	statusRes.Update(&resource.Versioned[*model.ClusterStatus]{Data: cloned, Version: status.Version}) //nolint:errcheck
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -745,7 +745,7 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned, status.Version) //nolint:errcheck
+	statusRes.Update(&resource.Versioned[*model.ClusterStatus]{Data: cloned, Version: status.Version}) //nolint:errcheck
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -822,7 +822,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	}
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned, status.Version) //nolint:errcheck
+	statusRes.Update(&resource.Versioned[*model.ClusterStatus]{Data: cloned, Version: status.Version}) //nolint:errcheck
 
 	// CatchUp detects left child leader changed (ls1 -> ls2).
 	// It RemoveObserver(old leader) on parent, then falls back to Bootstrap.
