@@ -8,4 +8,4 @@ vendor/
 zz_generated.deepcopy.go
 pkg/generated/
 bin/
-mise.toml
+mise.toml.claude/worktrees/

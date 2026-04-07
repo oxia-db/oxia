@@ -40,7 +40,9 @@ var (
 		"file": func(t *testing.T) Provider {
 			t.Helper()
 
-			return NewMetadataProviderFile(filepath.Join(t.TempDir(), "metadata"))
+			p, err := NewMetadataProviderFile(filepath.Join(t.TempDir(), "metadata"))
+			assert.NoError(t, err)
+			return p
 		},
 		"configmap": func(t *testing.T) Provider {
 			t.Helper()

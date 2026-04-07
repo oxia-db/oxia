@@ -40,15 +40,18 @@ type metadataProviderFile struct {
 	fileLock *fslock.Lock
 }
 
-func NewMetadataProviderFile(path string) Provider {
+func NewMetadataProviderFile(path string) (Provider, error) {
 	m := &metadataProviderFile{
 		path:     path,
 		fileLock: fslock.New(path),
 	}
-	if err := m.ensureParentDirectoryExists(); err == nil {
-		_ = m.fileLock.Lock()
+	if err := m.ensureParentDirectoryExists(); err != nil {
+		return nil, err
 	}
-	return m
+	if err := m.fileLock.Lock(); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (m *metadataProviderFile) Close() error {

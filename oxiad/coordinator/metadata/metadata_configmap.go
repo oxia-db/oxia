@@ -57,6 +57,7 @@ type metadataProviderConfigMap struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 	leaseWatch        *concurrent.Watch[LeaseStatus]
+	cancelElection    context.CancelFunc
 
 	log *slog.Logger
 }
@@ -154,6 +155,7 @@ func (m *metadataProviderConfigMap) LeaseWatch() *concurrent.Watch[LeaseStatus] 
 }
 
 func (m *metadataProviderConfigMap) startElection(ctx context.Context) {
+	ctx, m.cancelElection = context.WithCancel(ctx)
 	m.leaseWatch = concurrent.NewWatch(LeaseStatusNotAcquired)
 	myIdentity, _ := os.Hostname()
 
@@ -214,6 +216,10 @@ func (m *metadataProviderConfigMap) startElection(ctx context.Context) {
 }
 
 func (m *metadataProviderConfigMap) Close() error {
+	if m.cancelElection != nil {
+		m.cancelElection()
+		<-m.leaseWatch.Done()
+	}
 	m.log.Info("Closed metadata provider")
 	return nil
 }

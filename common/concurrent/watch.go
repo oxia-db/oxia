@@ -17,10 +17,11 @@ package concurrent
 import "sync"
 
 type Watch[T comparable] struct {
-	mu   sync.RWMutex
-	val  T
-	ch   chan struct{}
-	done chan struct{}
+	mu        sync.RWMutex
+	val       T
+	ch        chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func NewWatch[T comparable](initial T) *Watch[T] {
@@ -51,7 +52,9 @@ func (w *Watch[T]) Changed() <-chan struct{} {
 }
 
 func (w *Watch[T]) Close() {
-	close(w.done)
+	w.closeOnce.Do(func() {
+		close(w.done)
+	})
 }
 
 func (w *Watch[T]) Done() <-chan struct{} {

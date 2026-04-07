@@ -179,7 +179,7 @@ func main() {
 			Servers: servers,
 		}
 
-		metaProvider := metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json"))
+		metaProvider, _ := metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json"))
 		leaseWatch := metaProvider.LeaseWatch()
 		if leaseWatch != nil {
 			for leaseWatch.Get() != metadata.LeaseStatusAcquired {

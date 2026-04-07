@@ -66,9 +66,9 @@ type GrpcServer struct {
 
 	// coordinatorMu protects coordinator, which is
 	// swapped by monitorLease and read by Close.
-	coordinatorMu  sync.RWMutex
-	coordinator    Coordinator
-	leaseWatch *concurrent.Watch[metadata.LeaseStatus]
+	coordinatorMu sync.RWMutex
+	coordinator   Coordinator
+	leaseWatch    *concurrent.Watch[metadata.LeaseStatus]
 
 	metadataProvider                 metadata.Provider
 	clusterConfigProvider            func() (model.ClusterConfig, error)
@@ -128,12 +128,28 @@ func loadClusterConfig(cluster *option.ClusterOptions, v *viper.Viper) (model.Cl
 	return cc, nil
 }
 
+func waitForLease(ctx context.Context, leaseWatch *concurrent.Watch[metadata.LeaseStatus]) error {
+	if leaseWatch == nil {
+		return nil
+	}
+	for leaseWatch.Get() != metadata.LeaseStatusAcquired {
+		select {
+		case <-leaseWatch.Changed():
+		case <-ctx.Done():
+			return errors.Wrap(ctx.Err(), "waiting for lease acquisition")
+		case <-leaseWatch.Done():
+			return errors.New("lease watch closed before lease acquisition")
+		}
+	}
+	return nil
+}
+
 func newMetadataProvider(ctx context.Context, meta *option.MetadataOptions) (metadata.Provider, error) {
 	switch meta.ProviderName {
 	case metadata.ProviderNameMemory:
 		return metadata.NewMetadataProviderMemory(), nil
 	case metadata.ProviderNameFile:
-		return metadata.NewMetadataProviderFile(meta.File.Path), nil
+		return metadata.NewMetadataProviderFile(meta.File.Path)
 	case metadata.ProviderNameConfigmap:
 		k8sConfig := metadata.NewK8SClientConfig()
 		return metadata.NewMetadataProviderConfigMap(ctx, metadata.NewK8SClientset(k8sConfig),
@@ -197,10 +213,8 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
 	leaseWatch := metadataProvider.LeaseWatch()
-	if leaseWatch != nil {
-		for leaseWatch.Get() != metadata.LeaseStatusAcquired {
-			<-leaseWatch.Changed()
-		}
+	if err := waitForLease(parent, leaseWatch); err != nil {
+		return nil, err
 	}
 
 	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
@@ -248,7 +262,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		clusterConfigProvider:            clusterConfigProvider,
 		clusterConfigChangeNotifications: clusterConfigChangeNotifications,
 		rpcProvider:                      rpcClient,
-		leaseWatch: leaseWatch,
+		leaseWatch:                       leaseWatch,
 	}
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
