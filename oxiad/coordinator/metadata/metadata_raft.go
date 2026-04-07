@@ -37,36 +37,19 @@ import (
 type metadataProviderRaft struct {
 	sync.Mutex
 
-	sc    *stateContainer
-	raft  *raft.Raft
-	store *kvRaftStore
-	log   *slog.Logger
+	sc         *stateContainer
+	raft       *raft.Raft
+	store      *kvRaftStore
+	log        *slog.Logger
+	leaseWatch *concurrent.Watch[LeaseStatus]
 }
 
-func (mpr *metadataProviderRaft) RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus] {
-	w := concurrent.NewWatch(LeaseStatusNotAcquired)
-	go func() {
-		defer w.Close()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case hasLease, ok := <-mpr.raft.LeaderCh():
-				if !ok {
-					return
-				}
-				if hasLease {
-					w.Send(LeaseStatusAcquired)
-				} else {
-					w.Send(LeaseStatusNotAcquired)
-				}
-			}
-		}
-	}()
-	return w
+func (mpr *metadataProviderRaft) LeaseWatch() *concurrent.Watch[LeaseStatus] {
+	return mpr.leaseWatch
 }
 
 func NewMetadataProviderRaft(
+	ctx context.Context,
 	raftAddress string,
 	raftBootstrapNodes []string,
 	raftDataDir string,
@@ -131,6 +114,27 @@ func NewMetadataProviderRaft(
 			return nil, errors.Wrap(err, "failed to create raft node")
 		}
 	}
+
+	// Start election monitoring
+	mpr.leaseWatch = concurrent.NewWatch(LeaseStatusNotAcquired)
+	go func() {
+		defer mpr.leaseWatch.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case hasLease, ok := <-mpr.raft.LeaderCh():
+				if !ok {
+					return
+				}
+				if hasLease {
+					mpr.leaseWatch.Send(LeaseStatusAcquired)
+				} else {
+					mpr.leaseWatch.Send(LeaseStatusNotAcquired)
+				}
+			}
+		}
+	}()
 
 	return mpr, nil
 }

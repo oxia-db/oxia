@@ -161,11 +161,11 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		metadataProvider = metadata.NewMetadataProviderFile(meta.File.Path)
 	case metadata.ProviderNameConfigmap:
 		k8sConfig := metadata.NewK8SClientConfig()
-		metadataProvider = metadata.NewMetadataProviderConfigMap(metadata.NewK8SClientset(k8sConfig),
+		metadataProvider = metadata.NewMetadataProviderConfigMap(parent, metadata.NewK8SClientset(k8sConfig),
 			meta.Kubernetes.Namespace, meta.Kubernetes.ConfigMapName)
 	case metadata.ProviderNameRaft:
 		var err error
-		metadataProvider, err = metadata.NewMetadataProviderRaft(
+		metadataProvider, err = metadata.NewMetadataProviderRaft(parent,
 			meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create raft metadata provider")
@@ -196,7 +196,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	leaseWatch := metadataProvider.RunElection(parent)
+	leaseWatch := metadataProvider.LeaseWatch()
 	if leaseWatch != nil {
 		for leaseWatch.Get() != metadata.LeaseStatusAcquired {
 			<-leaseWatch.Changed()

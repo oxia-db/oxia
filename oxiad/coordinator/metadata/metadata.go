@@ -15,7 +15,6 @@
 package metadata
 
 import (
-	"context"
 	"io"
 
 	"github.com/pkg/errors"
@@ -54,5 +53,5 @@ type Provider interface {
 
 	Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
 
-	RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus]
+	LeaseWatch() *concurrent.Watch[LeaseStatus]
 }

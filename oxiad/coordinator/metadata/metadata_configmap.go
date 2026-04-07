@@ -56,11 +56,12 @@ type metadataProviderConfigMap struct {
 	getLatencyHisto   metric.LatencyHistogram
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
+	leaseWatch        *concurrent.Watch[LeaseStatus]
 
 	log *slog.Logger
 }
 
-func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name string) Provider {
+func NewMetadataProviderConfigMap(ctx context.Context, kc kubernetes.Interface, namespace, name string) Provider {
 	m := &metadataProviderConfigMap{
 		kubernetes: kc,
 		namespace:  namespace,
@@ -80,6 +81,8 @@ func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name strin
 
 	logger := logr.FromSlogHandler(m.log.With(slog.String("sub-component", "k8s-client")).Handler())
 	klog.SetLogger(logger)
+
+	m.startElection(ctx)
 	return m
 }
 
@@ -146,11 +149,12 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent.Watch[LeaseStatus] {
-	m.Lock()
-	defer m.Unlock()
+func (m *metadataProviderConfigMap) LeaseWatch() *concurrent.Watch[LeaseStatus] {
+	return m.leaseWatch
+}
 
-	w := concurrent.NewWatch(LeaseStatusNotAcquired)
+func (m *metadataProviderConfigMap) startElection(ctx context.Context) {
+	m.leaseWatch = concurrent.NewWatch(LeaseStatusNotAcquired)
 	myIdentity, _ := os.Hostname()
 
 	// Create a lease lock
@@ -177,12 +181,12 @@ func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				log.Info("Started leading - lease acquired")
-				w.Send(LeaseStatusAcquired)
+				m.leaseWatch.Send(LeaseStatusAcquired)
 				<-ctx.Done()
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
-				w.Send(LeaseStatusNotAcquired)
+				m.leaseWatch.Send(LeaseStatusNotAcquired)
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -205,10 +209,8 @@ func (m *metadataProviderConfigMap) RunElection(ctx context.Context) *concurrent
 		"sub-component": "k8s-leader-elector",
 	}, func() {
 		leaderElector.Run(ctx)
-		w.Close()
+		m.leaseWatch.Close()
 	})
-
-	return w
 }
 
 func (m *metadataProviderConfigMap) Close() error {

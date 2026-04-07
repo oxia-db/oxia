@@ -15,7 +15,6 @@
 package metadata
 
 import (
-	"context"
 	"strconv"
 	"sync"
 
@@ -34,7 +33,7 @@ type metadataProviderMemory struct {
 	version Version
 }
 
-func (*metadataProviderMemory) RunElection(_ context.Context) *concurrent.Watch[LeaseStatus] {
+func (*metadataProviderMemory) LeaseWatch() *concurrent.Watch[LeaseStatus] {
 	return nil
 }
 

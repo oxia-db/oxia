@@ -15,7 +15,6 @@
 package metadata
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -42,10 +41,14 @@ type metadataProviderFile struct {
 }
 
 func NewMetadataProviderFile(path string) Provider {
-	return &metadataProviderFile{
+	m := &metadataProviderFile{
 		path:     path,
 		fileLock: fslock.New(path),
 	}
+	if err := m.ensureParentDirectoryExists(); err == nil {
+		_ = m.fileLock.Lock()
+	}
+	return m
 }
 
 func (m *metadataProviderFile) Close() error {
@@ -59,13 +62,7 @@ func (m *metadataProviderFile) Close() error {
 	return nil
 }
 
-func (m *metadataProviderFile) RunElection(_ context.Context) *concurrent.Watch[LeaseStatus] {
-	if err := m.ensureParentDirectoryExists(); err != nil {
-		return nil
-	}
-	if err := m.fileLock.Lock(); err != nil {
-		return nil
-	}
+func (*metadataProviderFile) LeaseWatch() *concurrent.Watch[LeaseStatus] {
 	return nil
 }
 

@@ -180,9 +180,11 @@ func main() {
 		}
 
 		metaProvider := metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json"))
-		leaseWatch := metaProvider.RunElection(context.Background())
-		for leaseWatch.Get() != metadata.LeaseStatusAcquired {
-			<-leaseWatch.Changed()
+		leaseWatch := metaProvider.LeaseWatch()
+		if leaseWatch != nil {
+			for leaseWatch.Get() != metadata.LeaseStatusAcquired {
+				<-leaseWatch.Changed()
+			}
 		}
 		_, err := coordinator.NewCoordinator(
 			metaProvider,

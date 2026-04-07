@@ -15,6 +15,7 @@
 package metadata
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -44,7 +45,7 @@ var (
 		"configmap": func(t *testing.T) Provider {
 			t.Helper()
 
-			return NewMetadataProviderConfigMap(_fake, "ns", "n")
+			return NewMetadataProviderConfigMap(context.Background(), _fake, "ns", "n")
 		},
 		"raft": func(t *testing.T) Provider {
 			t.Helper()

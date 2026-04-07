@@ -119,6 +119,12 @@ func (s *status) loadFromProvider() {
 	if s.current != nil {
 		return
 	}
+	s.refresh()
+}
+
+// refresh reloads the current state from the metadata provider.
+// Must be called while holding s.lock for writing.
+func (s *status) refresh() {
 	clusterStatus, version, err := s.metadata.Get()
 	if err != nil {
 		s.Warn("failed to load status from metadata provider", slog.Any("error", err))
@@ -130,6 +136,22 @@ func (s *status) loadFromProvider() {
 	if s.current == nil {
 		s.current = &model.ClusterStatus{}
 	}
+	s.notifyChange()
+}
+
+// storeOrRefresh attempts to store the status. On version mismatch from
+// the provider, it refreshes the local cache so callers get fresh data on retry.
+// Must be called while holding s.lock for writing.
+func (s *status) storeOrRefresh(cs *model.ClusterStatus) (metadata.Version, error) {
+	versionID, err := s.metadata.Store(cs, s.currentVersionID)
+	if err != nil {
+		s.refresh()
+		return "", err
+	}
+	s.current = cs
+	s.currentVersionID = versionID
+	s.notifyChange()
+	return versionID, nil
 }
 
 func (s *status) Get() *Versioned[*model.ClusterStatus] {
@@ -197,14 +219,8 @@ func (s *status) Update(state *Versioned[*model.ClusterStatus]) error {
 	if s.currentVersionID != state.Version {
 		return metadata.ErrMetadataBadVersion
 	}
-	versionID, err := s.metadata.Store(state.Data, s.currentVersionID)
-	if err != nil {
-		return err
-	}
-	s.current = state.Data
-	s.currentVersionID = versionID
-	s.notifyChange()
-	return nil
+	_, err := s.storeOrRefresh(state.Data)
+	return err
 }
 
 func (s *status) UpdateShard(namespace string, shard int64, state *Versioned[*model.ShardMetadata]) (metadata.Version, error) {
@@ -219,14 +235,7 @@ func (s *status) UpdateShard(namespace string, shard int64, state *Versioned[*mo
 		return "", nil
 	}
 	ns.Shards[shard] = state.Data.Clone()
-	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
-	if err != nil {
-		return "", err
-	}
-	s.current = clonedStatus
-	s.currentVersionID = versionID
-	s.notifyChange()
-	return versionID, nil
+	return s.storeOrRefresh(clonedStatus)
 }
 
 func (s *status) DeleteShard(namespace string, shard int64,
@@ -246,14 +255,8 @@ func (s *status) DeleteShard(namespace string, shard int64,
 	if len(ns.Shards) == 0 {
 		delete(clonedStatus.Namespaces, namespace)
 	}
-	versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
-	if err != nil {
-		return err
-	}
-	s.current = clonedStatus
-	s.currentVersionID = versionID
-	s.notifyChange()
-	return nil
+	_, err := s.storeOrRefresh(clonedStatus)
+	return err
 }
 
 func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
