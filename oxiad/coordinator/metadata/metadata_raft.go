@@ -48,6 +48,7 @@ func (mpr *metadataProviderRaft) LeaseWatch() *concurrent.Watch[LeaseStatus] {
 	return mpr.leaseWatch
 }
 
+
 func NewMetadataProviderRaft(
 	ctx context.Context,
 	raftAddress string,

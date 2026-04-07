@@ -54,6 +54,7 @@ func (t testRaftClusterProvider) LeaseWatch() *concurrent.Watch[LeaseStatus] {
 	return t.leader.LeaseWatch()
 }
 
+
 func newTestRaftClusterProvider(t *testing.T) Provider {
 	t.Helper()
 

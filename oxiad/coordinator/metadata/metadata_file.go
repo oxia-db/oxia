@@ -66,6 +66,7 @@ func (*metadataProviderFile) LeaseWatch() *concurrent.Watch[LeaseStatus] {
 	return nil
 }
 
+
 func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, err error) {
 	content, err := os.ReadFile(m.path)
 	if err != nil {

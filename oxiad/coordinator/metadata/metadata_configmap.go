@@ -153,6 +153,7 @@ func (m *metadataProviderConfigMap) LeaseWatch() *concurrent.Watch[LeaseStatus] 
 	return m.leaseWatch
 }
 
+
 func (m *metadataProviderConfigMap) startElection(ctx context.Context) {
 	m.leaseWatch = concurrent.NewWatch(LeaseStatusNotAcquired)
 	myIdentity, _ := os.Hostname()

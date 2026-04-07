@@ -140,7 +140,8 @@ func (s *status) refresh() {
 }
 
 // storeOrRefresh attempts to store the status. On version mismatch from
-// the provider, it refreshes the local cache so callers get fresh data on retry.
+// the provider, it revalidates leadership and refreshes the local cache
+// if still the leader, so callers get fresh data on retry.
 // Must be called while holding s.lock for writing.
 func (s *status) storeOrRefresh(cs *model.ClusterStatus) (metadata.Version, error) {
 	versionID, err := s.metadata.Store(cs, s.currentVersionID)

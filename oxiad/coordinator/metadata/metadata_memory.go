@@ -37,6 +37,7 @@ func (*metadataProviderMemory) LeaseWatch() *concurrent.Watch[LeaseStatus] {
 	return nil
 }
 
+
 func NewMetadataProviderMemory() Provider {
 	return &metadataProviderMemory{
 		cs:      nil,
