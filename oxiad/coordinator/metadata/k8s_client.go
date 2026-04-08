@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"time"
 
 	pb "google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
@@ -31,6 +32,7 @@ import (
 )
 
 const fieldManager = "oxia-coordinator"
+const k8sRequestTimeout = 30 * time.Second
 
 func NewK8SClientConfig() *rest.Config {
 	kubeconfigGetter := clientcmd.NewDefaultClientConfigLoadingRules().Load
@@ -94,7 +96,8 @@ type clientImpl[Resource resource] struct {
 }
 
 func (c *clientImpl[Resource]) Upsert(namespace, name string, resource *Resource) (*Resource, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), k8sRequestTimeout)
+	defer cancel()
 	client := c.clientFunc(namespace)
 
 	desiredBytes, err := json.Marshal(resource)
@@ -115,11 +118,13 @@ func (c *clientImpl[Resource]) Upsert(namespace, name string, resource *Resource
 }
 
 func (c *clientImpl[Resource]) Delete(namespace, name string) error {
-	client := c.clientFunc(namespace)
-	return client.Delete(context.Background(), name, metav1.DeleteOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), k8sRequestTimeout)
+	defer cancel()
+	return c.clientFunc(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
 func (c *clientImpl[Resource]) Get(namespace, name string) (*Resource, error) {
-	client := c.clientFunc(namespace)
-	return client.Get(context.Background(), name, metav1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), k8sRequestTimeout)
+	defer cancel()
+	return c.clientFunc(namespace).Get(ctx, name, metav1.GetOptions{})
 }
