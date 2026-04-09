@@ -143,9 +143,7 @@ func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, c
 
 		switch res.Type {
 		case watch.Added, watch.Modified:
-			if configData, exists := cm.Data[filePath]; exists {
-				c.notifyChange(ch, configData)
-			}
+			c.notifyChange(ch, cm.Data[filePath])
 		default:
 			ch <- &viper.RemoteResponse{
 				Value: nil,
