@@ -214,7 +214,7 @@ func (ccf *clusterConfig) waitForUpdates() {
 
 			if reflect.DeepEqual(oldClusterConfig, currentClusterConfig) {
 				ccf.Info("No cluster config changes detected")
-				return
+				continue
 			}
 			ccf.clusterConfigEventListener.ConfigChanged(currentClusterConfig)
 		}

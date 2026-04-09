@@ -65,24 +65,32 @@ type GrpcServer struct {
 	metrics      *metric.PrometheusMetrics
 }
 
-func setConfigPath(cluster *option.ClusterOptions, v *viper.Viper) error {
-	v.SetConfigType("yaml")
+func watchClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper, clusterConfigChangeNotifications chan any) error {
 	configPath := cluster.ConfigPath
+	v.SetConfigType("yaml")
+	onChange := func() { clusterConfigChangeNotifications <- nil }
 
-	if strings.HasPrefix(configPath, "configmap:") {
+	switch {
+	// remote configmap
+	case strings.HasPrefix(configPath, "configmap:"):
 		err := v.AddRemoteProvider("configmap", "endpoint", configPath)
 		if err != nil {
 			slog.Error("Failed to add remote provider", slog.Any("error", err))
 			return err
 		}
+		if watcher, ok := viper.RemoteConfig.(interface{ OnConfigChange(func()) }); ok {
+			watcher.OnConfigChange(onChange)
+		}
 		return v.WatchRemoteConfigOnChannel()
-	}
-	if configPath == "" {
+	// local file
+	case configPath == "":
 		v.AddConfigPath("/oxia/conf")
 		v.AddConfigPath(".")
+	default:
+		v.SetConfigFile(configPath)
 	}
 
-	v.SetConfigFile(configPath)
+	v.OnConfigChange(func(_ fsnotify.Event) { onChange() })
 	v.WatchConfig()
 	return nil
 }
@@ -124,19 +132,16 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	v := viper.New()
 
 	clusterConfigChangeNotifications := make(chan any)
-	v.OnConfigChange(func(_ fsnotify.Event) {
-		clusterConfigChangeNotifications <- nil
-	})
 
 	clusterConfigProvider := func() (model.ClusterConfig, error) {
 		return loadClusterConfig(&options.Cluster, v)
 	}
 
-	if err := setConfigPath(&options.Cluster, v); err != nil {
+	if err := watchClusterConfigProvider(&options.Cluster, v, clusterConfigChangeNotifications); err != nil {
 		return nil, err
 	}
 
-	if _, err := loadClusterConfig(&options.Cluster, v); err != nil {
+	if _, err := clusterConfigProvider(); err != nil {
 		return nil, err
 	}
 
