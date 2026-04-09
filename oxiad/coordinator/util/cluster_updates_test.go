@@ -34,7 +34,8 @@ var (
 
 func TestClientUpdates_ClusterInit(t *testing.T) {
 	servers := []model.Server{s1, s2, s3, s4}
-	newStatus, shardsAdded, shardsToRemove := ApplyClusterChanges(&model.ClusterConfig{
+	status := model.NewClusterStatus()
+	shardsAdded, shardsToRemove := ApplyClusterChanges(&model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              "ns-1",
 			InitialShardCount: 1,
@@ -45,7 +46,7 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 			ReplicationFactor: 3,
 		}},
 		Servers: servers,
-	}, model.NewClusterStatus(), func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error) {
+	}, status, func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
@@ -94,7 +95,7 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 		},
 		ShardIdGenerator: 3,
 		ServerIdx:        1,
-	}, newStatus)
+	}, status)
 
 	assert.Equal(t, []int64{}, shardsToRemove)
 	assert.Equal(t, map[int64]string{
@@ -105,18 +106,7 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 
 func TestClientUpdates_NamespaceAdded(t *testing.T) {
 	servers := []model.Server{s1, s2, s3, s4}
-	newStatus, shardsAdded, shardsToRemove := ApplyClusterChanges(&model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 3,
-		}, {
-			Name:              "ns-2",
-			InitialShardCount: 2,
-			ReplicationFactor: 3,
-		}},
-		Servers: servers,
-	}, &model.ClusterStatus{Namespaces: map[string]model.NamespaceStatus{
+	status := &model.ClusterStatus{Namespaces: map[string]model.NamespaceStatus{
 		"ns-1": {
 			ReplicationFactor: 3,
 			Shards: map[int64]model.ShardMetadata{
@@ -133,7 +123,19 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 			},
 		},
 	}, ShardIdGenerator: 1,
-		ServerIdx: 3}, func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error) {
+		ServerIdx: 3}
+	shardsAdded, shardsToRemove := ApplyClusterChanges(&model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 3,
+		}, {
+			Name:              "ns-2",
+			InitialShardCount: 2,
+			ReplicationFactor: 3,
+		}},
+		Servers: servers,
+	}, status, func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
@@ -147,8 +149,8 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 						Term:                    -1,
 						Leader:                  nil,
 						Ensemble:                []model.Server{s1, s2, s3},
-						RemovedNodes:            []model.Server{},
-						PendingDeleteShardNodes: []model.Server{},
+						RemovedNodes:            nil,
+						PendingDeleteShardNodes: nil,
 						Int32HashRange: model.Int32HashRange{
 							Min: 0,
 							Max: math.MaxUint32,
@@ -184,7 +186,7 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 		},
 		ShardIdGenerator: 3,
 		ServerIdx:        1,
-	}, newStatus)
+	}, status)
 
 	assert.Equal(t, []int64{}, shardsToRemove)
 	assert.Equal(t, map[int64]string{
@@ -194,14 +196,7 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 
 func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 	servers := []model.Server{s1, s2, s3, s4}
-	newStatus, shardsAdded, shardsToRemove := ApplyClusterChanges(&model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 3,
-		}},
-		Servers: servers,
-	}, &model.ClusterStatus{
+	status := &model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"ns-1": {
 				ReplicationFactor: 3,
@@ -245,7 +240,16 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 			},
 		},
 		ShardIdGenerator: 3,
-		ServerIdx:        1}, func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error) {
+		ServerIdx:        1,
+	}
+	shardsAdded, shardsToRemove := ApplyClusterChanges(&model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 3,
+		}},
+		Servers: servers,
+	}, status, func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
@@ -259,8 +263,8 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 						Term:                    -1,
 						Leader:                  nil,
 						Ensemble:                []model.Server{s1, s2, s3},
-						RemovedNodes:            []model.Server{},
-						PendingDeleteShardNodes: []model.Server{},
+						RemovedNodes:            nil,
+						PendingDeleteShardNodes: nil,
 						Int32HashRange: model.Int32HashRange{
 							Min: 0,
 							Max: math.MaxUint32,
@@ -276,8 +280,8 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 						Term:                    -1,
 						Leader:                  nil,
 						Ensemble:                []model.Server{s4, s1, s2},
-						RemovedNodes:            []model.Server{},
-						PendingDeleteShardNodes: []model.Server{},
+						RemovedNodes:            nil,
+						PendingDeleteShardNodes: nil,
 						Int32HashRange: model.Int32HashRange{
 							Min: 0,
 							Max: math.MaxUint32 / 2,
@@ -288,8 +292,8 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 						Term:                    -1,
 						Leader:                  nil,
 						Ensemble:                []model.Server{s3, s4, s1},
-						RemovedNodes:            []model.Server{},
-						PendingDeleteShardNodes: []model.Server{},
+						RemovedNodes:            nil,
+						PendingDeleteShardNodes: nil,
 						Int32HashRange: model.Int32HashRange{
 							Min: math.MaxUint32/2 + 1,
 							Max: math.MaxUint32,
@@ -300,7 +304,7 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 		},
 		ShardIdGenerator: 3,
 		ServerIdx:        1,
-	}, newStatus)
+	}, status)
 
 	sort.Slice(shardsToRemove, func(i, j int) bool { return shardsToRemove[i] < shardsToRemove[j] })
 	assert.Equal(t, []int64{1, 2}, shardsToRemove)

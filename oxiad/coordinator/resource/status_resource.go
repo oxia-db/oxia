@@ -25,14 +25,15 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
+
+type EnsembleSupplier func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error)
 
 type StatusResource interface {
 	Load() *model.ClusterStatus
 
-	LoadWithVersion() (*model.ClusterStatus, metadata.Version)
-
-	Swap(newStatus *model.ClusterStatus, version metadata.Version) bool
+	ApplyChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64)
 
 	Update(newStatus *model.ClusterStatus)
 
@@ -117,9 +118,9 @@ func WaitForCondition(ctx context.Context, sr StatusResource, triggerFn func(), 
 	}
 }
 
-func (s *status) loadWithInitSlow() {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+// ensureLoaded loads the status from the metadata store if not already loaded.
+// Caller must hold s.lock for writing.
+func (s *status) ensureLoaded() {
 	if s.current != nil {
 		return
 	}
@@ -144,28 +145,29 @@ func (s *status) loadWithInitSlow() {
 }
 
 func (s *status) Load() *model.ClusterStatus {
-	current, _ := s.LoadWithVersion()
-	return current
-}
-
-func (s *status) LoadWithVersion() (*model.ClusterStatus, metadata.Version) {
 	s.lock.RLock()
-	defer s.lock.RUnlock()
-	if s.current == nil {
-		s.lock.RUnlock()
-		s.loadWithInitSlow()
-		s.lock.RLock()
+	if s.current != nil {
+		defer s.lock.RUnlock()
+		return s.current
 	}
-	return s.current, s.currentVersionID
-}
+	s.lock.RUnlock()
 
-func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) bool {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if s.currentVersionID != version {
-		return false
+	s.ensureLoaded()
+	return s.current
+}
+
+func (s *status) ApplyChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.ensureLoaded()
+	newStatus := s.current.Clone()
+	shardsToAdd, shardsToDelete := util.ApplyClusterChanges(config, newStatus, ensembleSupplier)
+	if len(shardsToAdd) == 0 && len(shardsToDelete) == 0 {
+		return newStatus, shardsToAdd, shardsToDelete
 	}
-	err := backoff.RetryNotify(func() error {
+	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
 			return s.handleStoreError(err)
@@ -175,15 +177,13 @@ func (s *status) Swap(newStatus *model.ClusterStatus, version metadata.Version) 
 		return nil
 	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
 		s.Warn(
-			"failed to swap status, retrying later",
+			"failed to apply cluster changes, retrying later",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
 	})
-	if err == nil {
-		s.notifyChange()
-	}
-	return err == nil
+	s.notifyChange()
+	return newStatus, shardsToAdd, shardsToDelete
 }
 
 func (s *status) Update(newStatus *model.ClusterStatus) {
