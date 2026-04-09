@@ -90,14 +90,36 @@ func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.
 	}, func() {
 		bo := oxiatime.NewBackOffWithInitialInterval(context.Background(), 1*time.Second)
 		_ = backoff.RetryNotify(func() error {
-			w, err := kubernetes.CoreV1().ConfigMaps(namespace).Watch(context.Background(), metav1.ListOptions{})
+			w, err := kubernetes.CoreV1().ConfigMaps(namespace).Watch(
+				context.Background(),
+				metav1.SingleObject(metav1.ObjectMeta{Name: configmap, Namespace: namespace}),
+			)
 			if err != nil {
 				return errors.Wrap(err, "failed to setup watch on config map")
 			}
+			defer w.Stop()
 
 			bo.Reset()
 
+			// Read the current state after establishing the watch to avoid
+			// missing updates that occurred between disconnect and re-watch.
+			currentCm, err := kubernetes.CoreV1().ConfigMaps(namespace).Get(context.Background(), configmap, metav1.GetOptions{})
+			if err != nil {
+				return errors.Wrap(err, "failed to get current config map after watch setup")
+			}
+			ch <- &viper.RemoteResponse{
+				Value: []byte(currentCm.Data[filePath]),
+				Error: nil,
+			}
+			if c.onConfigChange != nil {
+				c.onConfigChange()
+			}
+
 			for res := range w.ResultChan() {
+				if res.Type == watch.Error {
+					return errors.Errorf("watch error: %v", res.Object)
+				}
+
 				cm, ok := res.Object.(*corev1.ConfigMap)
 				if !ok {
 					slog.Warn("Got wrong type of object notification",
@@ -105,9 +127,6 @@ func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.
 						slog.String("k8s-config-map", configmap),
 						slog.Any("object", res),
 					)
-					continue
-				}
-				if cm.Name != configmap {
 					continue
 				}
 
