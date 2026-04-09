@@ -295,6 +295,12 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []model.Server, leader *mo
 						)
 						return nil
 					}
+					e.Info(
+						"Follower is *not* caught-up yet with the leader",
+						slog.Any("server", server),
+						slog.Int64("leader-head-offset", leaderEntry.Offset),
+						slog.Int64("follower-head-offset", followerHeadOffset),
+					)
 					return ErrFollowerNotCaughtUp
 				}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {
 					switch {
