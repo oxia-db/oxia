@@ -143,7 +143,13 @@ func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, c
 
 		switch res.Type {
 		case watch.Added, watch.Modified:
-			c.notifyChange(ch, cm.Data[filePath])
+			ch <- &viper.RemoteResponse{
+				Value: []byte(cm.Data[filePath]),
+				Error: nil,
+			}
+			if c.onConfigChange != nil {
+				c.onConfigChange()
+			}
 		default:
 			ch <- &viper.RemoteResponse{
 				Value: nil,
@@ -153,16 +159,6 @@ func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, c
 	}
 
 	return nil
-}
-
-func (c *cmConfigProvider) notifyChange(ch chan<- *viper.RemoteResponse, data string) {
-	ch <- &viper.RemoteResponse{
-		Value: []byte(data),
-		Error: nil,
-	}
-	if c.onConfigChange != nil {
-		c.onConfigChange()
-	}
 }
 
 func init() {
