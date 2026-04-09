@@ -141,8 +141,11 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 
 	data := configMap(m.name, status, expectedVersion)
 	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, data)
-	if k8serrors.IsConflict(err) {
-		panic(err)
+	if err != nil {
+		if k8serrors.IsConflict(err) {
+			panic(ErrMetadataBadVersion)
+		}
+		return version, err
 	}
 	version = Version(cm.ResourceVersion)
 	m.metadataSize.Store(int64(len(data.Data["status"])))
