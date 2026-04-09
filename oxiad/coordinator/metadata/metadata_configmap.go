@@ -57,8 +57,6 @@ type metadataProviderConfigMap struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	leadershipLostCh chan struct{}
-
 	ctx     context.Context
 	cancel  context.CancelFunc
 	closeCh chan any
@@ -138,14 +136,14 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 		slog.Error("Store metadata failed for version mismatch",
 			slog.Any("local-version", version),
 			slog.Any("expected-version", expectedVersion))
-		return version, ErrMetadataBadVersion
+		panic(ErrMetadataBadVersion)
 	}
 
 	data := configMap(m.name, status, expectedVersion)
 	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, data)
 	if err != nil {
 		if k8serrors.IsConflict(err) {
-			return version, ErrMetadataBadVersion
+			panic(ErrMetadataBadVersion)
 		}
 		return version, err
 	}
@@ -154,7 +152,7 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error) {
+func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -174,7 +172,6 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error
 
 	log := m.log.With(slog.String("identity", myIdentity))
 	wg := concurrent.NewWaitGroup(1)
-	m.leadershipLostCh = make(chan struct{})
 
 	// Configure leader election
 	leaderElectionConfig := leaderelection.LeaderElectionConfig{
@@ -190,7 +187,6 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error
 			},
 			OnStoppedLeading: func() {
 				log.Warn("Stopped leading - lease lost!")
-				close(m.leadershipLostCh)
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -218,10 +214,7 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() (<-chan struct{}, error
 		close(m.closeCh)
 	})
 
-	if err := wg.Wait(m.ctx); err != nil {
-		return nil, err
-	}
-	return m.leadershipLostCh, nil
+	return wg.Wait(m.ctx)
 }
 
 func (m *metadataProviderConfigMap) Close() error {
