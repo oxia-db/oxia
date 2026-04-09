@@ -118,9 +118,9 @@ func WaitForCondition(ctx context.Context, sr StatusResource, triggerFn func(), 
 	}
 }
 
-func (s *status) loadWithInitSlow() {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+// ensureLoaded loads the status from the metadata store if not already loaded.
+// Caller must hold s.lock for writing.
+func (s *status) ensureLoaded() {
 	if s.current != nil {
 		return
 	}
@@ -146,23 +146,22 @@ func (s *status) loadWithInitSlow() {
 
 func (s *status) Load() *model.ClusterStatus {
 	s.lock.RLock()
-	defer s.lock.RUnlock()
-	if s.current == nil {
-		s.lock.RUnlock()
-		s.loadWithInitSlow()
-		s.lock.RLock()
+	if s.current != nil {
+		defer s.lock.RUnlock()
+		return s.current
 	}
+	s.lock.RUnlock()
+
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.ensureLoaded()
 	return s.current
 }
 
 func (s *status) ApplyChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if s.current == nil {
-		s.lock.Unlock()
-		s.loadWithInitSlow()
-		s.lock.Lock()
-	}
+	s.ensureLoaded()
 	newStatus := s.current.Clone()
 	shardsToAdd, shardsToDelete := util.ApplyClusterChanges(config, newStatus, ensembleSupplier)
 	if len(shardsToAdd) == 0 && len(shardsToDelete) == 0 {
