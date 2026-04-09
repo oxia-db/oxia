@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
+	k8s "k8s.io/client-go/kubernetes"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
@@ -90,69 +91,11 @@ func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.
 	}, func() {
 		bo := oxiatime.NewBackOffWithInitialInterval(context.Background(), 1*time.Second)
 		_ = backoff.RetryNotify(func() error {
-			w, err := kubernetes.CoreV1().ConfigMaps(namespace).Watch(
-				context.Background(),
-				metav1.SingleObject(metav1.ObjectMeta{Name: configmap, Namespace: namespace}),
-			)
+			err := c.watchConfigMap(kubernetes, namespace, configmap, ch)
 			if err != nil {
-				return errors.Wrap(err, "failed to setup watch on config map")
+				return err
 			}
-			defer w.Stop()
-
 			bo.Reset()
-
-			// Read the current state after establishing the watch to avoid
-			// missing updates that occurred between disconnect and re-watch.
-			currentCm, err := kubernetes.CoreV1().ConfigMaps(namespace).Get(context.Background(), configmap, metav1.GetOptions{})
-			if err != nil {
-				return errors.Wrap(err, "failed to get current config map after watch setup")
-			}
-			ch <- &viper.RemoteResponse{
-				Value: []byte(currentCm.Data[filePath]),
-				Error: nil,
-			}
-			if c.onConfigChange != nil {
-				c.onConfigChange()
-			}
-
-			for res := range w.ResultChan() {
-				if res.Type == watch.Error {
-					return errors.Errorf("watch error: %v", res.Object)
-				}
-
-				cm, ok := res.Object.(*corev1.ConfigMap)
-				if !ok {
-					slog.Warn("Got wrong type of object notification",
-						slog.String("k8s-namespace", namespace),
-						slog.String("k8s-config-map", configmap),
-						slog.Any("object", res),
-					)
-					continue
-				}
-
-				slog.Info("Got watch event from K8S",
-					slog.String("k8s-namespace", namespace),
-					slog.String("k8s-config-map", configmap),
-					slog.Any("event-type", res.Type),
-				)
-
-				switch res.Type {
-				case watch.Added, watch.Modified:
-					ch <- &viper.RemoteResponse{
-						Value: []byte(cm.Data[filePath]),
-						Error: nil,
-					}
-					if c.onConfigChange != nil {
-						c.onConfigChange()
-					}
-				default:
-					ch <- &viper.RemoteResponse{
-						Value: nil,
-						Error: errors.Errorf("unexpected event on config map: %v", res.Type),
-					}
-				}
-			}
-
 			return errors.New("K8S config map watch closed")
 		}, bo, func(err error, duration time.Duration) {
 			slog.Warn("K8S config map watch failed, reconnecting",
@@ -165,6 +108,69 @@ func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.
 	})
 
 	return ch, nil
+}
+
+func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, configmap string, ch chan<- *viper.RemoteResponse) error {
+	w, err := kubernetes.CoreV1().ConfigMaps(namespace).Watch(
+		context.Background(),
+		metav1.SingleObject(metav1.ObjectMeta{Name: configmap, Namespace: namespace}),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to setup watch on config map")
+	}
+	defer w.Stop()
+
+	// Read the current state after establishing the watch to avoid
+	// missing updates that occurred between disconnect and re-watch.
+	currentCm, err := kubernetes.CoreV1().ConfigMaps(namespace).Get(context.Background(), configmap, metav1.GetOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to get current config map after watch setup")
+	}
+	c.notifyChange(ch, currentCm.Data[filePath])
+
+	for res := range w.ResultChan() {
+		if res.Type == watch.Error {
+			return errors.Errorf("watch error: %v", res.Object)
+		}
+
+		cm, ok := res.Object.(*corev1.ConfigMap)
+		if !ok {
+			slog.Warn("Got wrong type of object notification",
+				slog.String("k8s-namespace", namespace),
+				slog.String("k8s-config-map", configmap),
+				slog.Any("object", res),
+			)
+			continue
+		}
+
+		slog.Info("Got watch event from K8S",
+			slog.String("k8s-namespace", namespace),
+			slog.String("k8s-config-map", configmap),
+			slog.Any("event-type", res.Type),
+		)
+
+		switch res.Type {
+		case watch.Added, watch.Modified:
+			c.notifyChange(ch, cm.Data[filePath])
+		default:
+			ch <- &viper.RemoteResponse{
+				Value: nil,
+				Error: errors.Errorf("unexpected event on config map: %v", res.Type),
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *cmConfigProvider) notifyChange(ch chan<- *viper.RemoteResponse, data string) {
+	ch <- &viper.RemoteResponse{
+		Value: []byte(data),
+		Error: nil,
+	}
+	if c.onConfigChange != nil {
+		c.onConfigChange()
+	}
 }
 
 func init() {
