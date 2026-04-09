@@ -120,20 +120,6 @@ func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, c
 	}
 	defer w.Stop()
 
-	// Read the current state after establishing the watch to avoid
-	// missing updates that occurred between disconnect and re-watch.
-	getCtx, getCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer getCancel()
-	currentCm, err := kubernetes.CoreV1().ConfigMaps(namespace).Get(getCtx, configmap, metav1.GetOptions{})
-	if err != nil {
-		return errors.Wrap(err, "failed to get current config map after watch setup")
-	}
-	data, ok := currentCm.Data[filePath]
-	if !ok {
-		return errors.Errorf("key %q not found in config map %s/%s", filePath, namespace, configmap)
-	}
-	c.notifyChange(ch, data)
-
 	for res := range w.ResultChan() {
 		if res.Type == watch.Error {
 			return errors.Errorf("watch error: %v", res.Object)
