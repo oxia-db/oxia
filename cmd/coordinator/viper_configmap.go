@@ -122,11 +122,17 @@ func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, c
 
 	// Read the current state after establishing the watch to avoid
 	// missing updates that occurred between disconnect and re-watch.
-	currentCm, err := kubernetes.CoreV1().ConfigMaps(namespace).Get(context.Background(), configmap, metav1.GetOptions{})
+	getCtx, getCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer getCancel()
+	currentCm, err := kubernetes.CoreV1().ConfigMaps(namespace).Get(getCtx, configmap, metav1.GetOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to get current config map after watch setup")
 	}
-	c.notifyChange(ch, currentCm.Data[filePath])
+	data, ok := currentCm.Data[filePath]
+	if !ok {
+		return errors.Errorf("key %q not found in config map %s/%s", filePath, namespace, configmap)
+	}
+	c.notifyChange(ch, data)
 
 	for res := range w.ResultChan() {
 		if res.Type == watch.Error {
@@ -151,7 +157,9 @@ func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, c
 
 		switch res.Type {
 		case watch.Added, watch.Modified:
-			c.notifyChange(ch, cm.Data[filePath])
+			if configData, exists := cm.Data[filePath]; exists {
+				c.notifyChange(ch, configData)
+			}
 		default:
 			ch <- &viper.RemoteResponse{
 				Value: nil,
