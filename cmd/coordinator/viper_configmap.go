@@ -33,6 +33,14 @@ import (
 )
 
 type cmConfigProvider struct {
+	onConfigChange func()
+}
+
+// OnConfigChange sets the event handler that is called when a config map changes.
+// This mirrors viper's OnConfigChange API for file-based configs, filling in
+// the gap where viper's WatchRemoteConfigOnChannel does not trigger callbacks.
+func (c *cmConfigProvider) OnConfigChange(fn func()) {
+	c.onConfigChange = fn
 }
 
 const filePath = "config.yaml"
@@ -68,7 +76,7 @@ func (c *cmConfigProvider) Watch(rp viper.RemoteProvider) (io.Reader, error) {
 	return c.Get(rp)
 }
 
-func (*cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteResponse, chan bool) {
+func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteResponse, chan bool) {
 	kubernetes := metadata.NewK8SClientset(metadata.NewK8SClientConfig())
 	namespace, configmap, _ := getNamespaceAndCmName(rp)
 
@@ -95,6 +103,7 @@ func (*cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.Re
 					slog.String("k8s-config-map", configmap),
 					slog.Any("object", res),
 				)
+				continue
 			}
 			if cm.Name != configmap {
 				continue
@@ -111,6 +120,9 @@ func (*cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.Re
 				ch <- &viper.RemoteResponse{
 					Value: []byte(cm.Data[filePath]),
 					Error: nil,
+				}
+				if c.onConfigChange != nil {
+					c.onConfigChange()
 				}
 			default:
 				ch <- &viper.RemoteResponse{
