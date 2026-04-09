@@ -302,7 +302,19 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []model.Server, leader *mo
 					)
 					return errors.New("follower not caught up yet")
 				}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {
-					e.Warn("Failed to get the follower status. ", slog.Any("error", err.Error()), slog.Any("retry-after", duration))
+					if status.Code(err) == constant.CodeNodeIsNotMember {
+						e.Info("Follower has not been added by leader yet",
+							slog.Any("server", server),
+							slog.Int64("shard", e.shard),
+							slog.Duration("retry-after", duration),
+						)
+					} else {
+						e.Warn("Failed to get the follower status",
+							slog.Any("server", server),
+							slog.Any("error", err),
+							slog.Duration("retry-after", duration),
+						)
+					}
 				})
 				if err != nil {
 					e.Info("Abort data server swap follower status validation due to context canceled", slog.Any("error", err))
