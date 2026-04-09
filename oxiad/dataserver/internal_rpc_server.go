@@ -455,6 +455,10 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 	// If we don't have a follower, fallback to checking the leader controller
 	leader, err := s.shardsDirector.GetLeader(req.Shard)
 	if err != nil {
+		if status.Code(err) == constant.CodeNodeIsNotLeader {
+			// Node is neither follower nor leader for this shard
+			return nil, status.Errorf(constant.CodeNodeIsNotMember, "node is not a member for shard %d", req.Shard)
+		}
 		return nil, err
 	}
 
