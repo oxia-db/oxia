@@ -16,7 +16,6 @@ package resource
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -71,18 +70,6 @@ type status struct {
 	current          *model.ClusterStatus
 	currentVersionID metadata.Version
 	changeCh         chan struct{}
-}
-
-// handleStoreError handles errors from metadata.Store().
-// ErrMetadataBadVersion is treated as permanent — retrying with a
-// re-read version could overwrite valid data written by a new leader.
-// The LeadershipLostCh will trigger a full coordinator restart with
-// clean state.
-func (*status) handleStoreError(err error) error {
-	if errors.Is(err, metadata.ErrMetadataBadVersion) {
-		return backoff.Permanent(err)
-	}
-	return err
 }
 
 // notifyChange wakes all goroutines waiting on ChangeNotify.
@@ -170,7 +157,7 @@ func (s *status) ApplyChanges(config *model.ClusterConfig, ensembleSupplier Ense
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
@@ -192,7 +179,7 @@ func (s *status) Update(newStatus *model.ClusterStatus) {
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = newStatus
 		s.currentVersionID = versionID
@@ -220,7 +207,7 @@ func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadat
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID
@@ -251,7 +238,7 @@ func (s *status) DeleteShardMetadata(namespace string, shard int64) {
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
-			return s.handleStoreError(err)
+			return err
 		}
 		s.current = clonedStatus
 		s.currentVersionID = versionID

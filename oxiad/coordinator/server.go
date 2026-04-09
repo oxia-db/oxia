@@ -60,19 +60,9 @@ type GrpcServer struct {
 	grpcServer   rpc2.GrpcServer
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
+	coordinator  Coordinator
 	clientPool   rpc.ClientPool
 	metrics      *metric.PrometheusMetrics
-
-	// coordinatorMu protects coordinator and leadershipLostCh, which are
-	// swapped by monitorLease and read by Close.
-	coordinatorMu    sync.RWMutex
-	coordinator      Coordinator
-	leadershipLostCh <-chan struct{}
-
-	metadataProvider                 metadata.Provider
-	clusterConfigProvider            func() (model.ClusterConfig, error)
-	clusterConfigChangeNotifications chan any
-	rpcProvider                      coordinatorrpc.Provider
 }
 
 func setConfigPath(cluster *option.ClusterOptions, v *viper.Viper) error {
@@ -195,7 +185,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, leadershipLostCh, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -235,22 +225,11 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		clientPool:       clientPool,
 		coordinator:      coordinatorInstance,
 		metrics:          metricsServer,
-
-		metadataProvider:                 metadataProvider,
-		clusterConfigProvider:            clusterConfigProvider,
-		clusterConfigChangeNotifications: clusterConfigChangeNotifications,
-		rpcProvider:                      rpcClient,
-		leadershipLostCh:                 leadershipLostCh,
 	}
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
 			"component": "configuration-watcher",
 		}, server.backgroundHandleConfChange)
-	})
-	server.wg.Go(func() {
-		process.DoWithLabels(ctx, map[string]string{
-			"component": "lease-monitor",
-		}, server.monitorLease)
 	})
 
 	return &server, nil
@@ -275,72 +254,19 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 	}
 }
 
-func (s *GrpcServer) monitorLease() {
-	for {
-		s.coordinatorMu.RLock()
-		ch := s.leadershipLostCh
-		s.coordinatorMu.RUnlock()
-
-		if ch == nil {
-			// Provider doesn't support leader election (memory, file)
-			return
-		}
-
-		select {
-		case <-ch:
-			s.logger.Info("Leadership lost, closing coordinator and recreating")
-			s.coordinatorMu.Lock()
-			if err := s.coordinator.Close(); err != nil {
-				s.logger.Warn("Failed to close coordinator after leadership loss",
-					slog.Any("error", err))
-			}
-			s.coordinator = nil
-			s.coordinatorMu.Unlock()
-
-			coordinatorInstance, leadershipLostCh, err := NewCoordinator(
-				s.metadataProvider,
-				s.clusterConfigProvider,
-				s.clusterConfigChangeNotifications,
-				s.rpcProvider,
-			)
-			if err != nil {
-				s.logger.Error("Failed to create new coordinator",
-					slog.Any("error", err))
-				return
-			}
-
-			s.coordinatorMu.Lock()
-			s.coordinator = coordinatorInstance
-			s.leadershipLostCh = leadershipLostCh
-			s.coordinatorMu.Unlock()
-
-		case <-s.ctx.Done():
-			return
-		}
-	}
-}
-
 func (s *GrpcServer) Close() error {
-	// Cancel context to signal goroutines to stop.
+	// sync close the background task first
 	s.ctxCancel()
 	s.wg.Wait()
 
 	var err error
 	s.healthServer.Shutdown()
-
-	s.coordinatorMu.RLock()
-	coord := s.coordinator
-	s.coordinatorMu.RUnlock()
-
 	err = multierr.Combine(
 		s.clientPool.Close(),
 		s.grpcServer.Close(),
 		s.adminServer.Close(),
-		s.metadataProvider.Close(),
+		s.coordinator.Close(),
 	)
-	if coord != nil {
-		err = multierr.Append(err, coord.Close())
-	}
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())
 	}
