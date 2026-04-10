@@ -136,19 +136,21 @@ type KV interface {
 	Delete() error
 }
 type FactoryOptions struct {
-	DataDir     string
-	CacheSizeMB int64
-	UseWAL      bool
-	SyncData    bool
-	KvTrap      *KvTrap
+	DataDir        string
+	CacheSizeMB    int64
+	MemTableSizeMB int64
+	UseWAL         bool
+	SyncData       bool
+	KvTrap         *KvTrap
 }
 
 var DefaultFactoryOptions = &FactoryOptions{
-	DataDir:     "data",
-	CacheSizeMB: 100,
-	UseWAL:      true,
-	SyncData:    true,
-	KvTrap:      nil,
+	DataDir:        "data",
+	CacheSizeMB:    100,
+	MemTableSizeMB: 4,
+	UseWAL:         true,
+	SyncData:       true,
+	KvTrap:         nil,
 }
 
 func (fo *FactoryOptions) EnsureDefaults() {
@@ -158,6 +160,10 @@ func (fo *FactoryOptions) EnsureDefaults() {
 
 	if fo.CacheSizeMB == 0 {
 		fo.CacheSizeMB = DefaultFactoryOptions.CacheSizeMB
+	}
+
+	if fo.MemTableSizeMB == 0 {
+		fo.MemTableSizeMB = DefaultFactoryOptions.MemTableSizeMB
 	}
 }
 

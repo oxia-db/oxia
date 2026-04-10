@@ -76,10 +76,11 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 
 	storage := &options.Storage
 	kvFactory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
-		DataDir:     storage.Database.Dir,
-		CacheSizeMB: storage.Database.ReadCacheSizeMB,
-		UseWAL:      false, // WAL is kept outside the KV store
-		SyncData:    false, // WAL is kept outside the KV store
+		DataDir:        storage.Database.Dir,
+		CacheSizeMB:    storage.Database.ReadCacheSizeMB,
+		MemTableSizeMB: storage.Database.MemTableSizeMB,
+		UseWAL:         false, // WAL is kept outside the KV store
+		SyncData:       false, // WAL is kept outside the KV store
 	})
 	if err != nil {
 		return nil, err

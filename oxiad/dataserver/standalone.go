@@ -86,10 +86,11 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 
 	storageOptions := config.DataServerOptions.Storage
 	kvOptions := kvstore.FactoryOptions{
-		DataDir:     storageOptions.Database.Dir,
-		UseWAL:      false, // WAL is kept outside the KV store
-		SyncData:    false, // WAL is kept outside the KV store
-		CacheSizeMB: storageOptions.Database.ReadCacheSizeMB,
+		DataDir:        storageOptions.Database.Dir,
+		UseWAL:         false, // WAL is kept outside the KV store
+		SyncData:       false, // WAL is kept outside the KV store
+		CacheSizeMB:    storageOptions.Database.ReadCacheSizeMB,
+		MemTableSizeMB: storageOptions.Database.MemTableSizeMB,
 	}
 	s.walFactory = wal.NewWalFactory(&wal.FactoryOptions{
 		BaseWalDir:  storageOptions.WAL.Dir,

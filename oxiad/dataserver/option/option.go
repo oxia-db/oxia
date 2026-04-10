@@ -127,6 +127,7 @@ func (*WALOptions) Validate() error {
 type DatabaseOptions struct {
 	Dir             string `yaml:"dir" json:"dir" jsonschema:"description=Directory path for storing database files,example=./data/db"`
 	ReadCacheSizeMB int64  `yaml:"readCacheSizeMB,omitempty" json:"readCacheSizeMB,omitempty" jsonschema:"description=Size of read cache in megabytes for performance optimization,default=100,minimum=1"`
+	MemTableSizeMB  int64  `yaml:"memTableSizeMB,omitempty" json:"memTableSizeMB,omitempty" jsonschema:"description=Size of each memtable in megabytes,default=4,minimum=1"`
 }
 
 func (do *DatabaseOptions) WithDefault() {
@@ -135,6 +136,9 @@ func (do *DatabaseOptions) WithDefault() {
 	}
 	if do.ReadCacheSizeMB == 0 {
 		do.ReadCacheSizeMB = 100
+	}
+	if do.MemTableSizeMB == 0 {
+		do.MemTableSizeMB = 4
 	}
 }
 func (*DatabaseOptions) Validate() error {
