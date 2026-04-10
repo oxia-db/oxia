@@ -73,8 +73,7 @@ func init() {
 	Cmd.Flags().StringVar(&storageDatabase.Dir, "data-dir", "./data/db", "Directory where to store data")
 	Cmd.Flags().Int64Var(&storageDatabase.ReadCacheSizeMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
-	Cmd.Flags().Int64Var(&storageDatabase.MemTableSizeMB, "db-memtable-size-mb", kvstore.DefaultFactoryOptions.MemTableSizeMB,
-		"Size of each memtable in megabytes")
+
 
 	publicAuth := &dataServerOptions.Server.Public.Auth
 	Cmd.Flags().StringVar(&publicAuth.Provider, "auth-provider-name", "", "Authentication provider name. supported: oidc")

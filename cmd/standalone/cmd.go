@@ -68,8 +68,7 @@ func init() {
 	Cmd.Flags().StringVar(&storageOptions.Database.Dir, "data-dir", "./data/db", "Directory where to store data")
 	Cmd.Flags().Int64Var(&storageOptions.Database.ReadCacheSizeMB, "db-cache-size-mb", kvstore.DefaultFactoryOptions.CacheSizeMB,
 		"Max size of the shared DB cache")
-	Cmd.Flags().Int64Var(&storageOptions.Database.MemTableSizeMB, "db-memtable-size-mb", kvstore.DefaultFactoryOptions.MemTableSizeMB,
-		"Size of each memtable in megabytes")
+
 
 	// Convert time.Duration to option.Duration after flag parsing
 	Cmd.PreRun = func(*cobra.Command, []string) {
