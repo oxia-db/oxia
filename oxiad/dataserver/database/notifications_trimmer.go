@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -248,7 +247,7 @@ func (t *notificationsTrimmer) readFrom(offset int64) (int64, time.Time, error) 
 	}
 
 	nb := &proto.NotificationBatch{}
-	if err := pb.Unmarshal(value, nb); err != nil {
+	if err := nb.UnmarshalVT(value); err != nil {
 		return constant.I64NegativeOne, time.Time{}, errors.Wrap(err, "failed to deserialize notification batch")
 	}
 	return actualOffset, time.UnixMilli(int64(nb.Timestamp)), nil
