@@ -210,6 +210,10 @@ func (t *notificationsTrimmer) binarySearch(firstOffset, lastOffset int64, cutof
 		midProbe := firstOffset + (lastOffset-firstOffset+1)/2
 
 		actualMid, tsMid, err := t.readFrom(midProbe)
+		// No notification exists in [midProbe, lastOffset]: either the ceiling
+		// lookup found no entry at all (e.g. concurrent FilterDBForSplit deleted
+		// the rest of the namespace), or it landed on an offset above our
+		// current upper bound. In both cases we shrink the window and retry.
 		if errors.Is(err, kvstore.ErrKeyNotFound) || (err == nil && actualMid > lastOffset) {
 			lastOffset = midProbe - 1
 			continue
