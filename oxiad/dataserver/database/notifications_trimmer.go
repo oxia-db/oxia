@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/concurrent"
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	time2 "github.com/oxia-db/oxia/common/time"
 
@@ -115,14 +117,21 @@ func (t *notificationsTrimmer) trimNotifications() error {
 		slog.Duration("retention-time", t.notificationsRetentionTime),
 	)
 
-	if last == -1 {
+	if last == constant.I64NegativeOne {
 		return nil
 	}
 
 	cutoffTime := t.clock.Now().Add(-t.notificationsRetentionTime)
 
-	// Check if first entry has expired
-	tsFirst, err := t.readAt(first)
+	_, tsFirst, err := t.readFrom(first)
+	if errors.Is(err, kvstore.ErrKeyNotFound) {
+		t.log.Warn(
+			"First notification entry disappeared after range scan",
+			slog.Int64("first-offset", first),
+			slog.Int64("last-offset", last),
+		)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -134,7 +143,6 @@ func (t *notificationsTrimmer) trimNotifications() error {
 	)
 
 	if cutoffTime.Before(tsFirst) {
-		// First entry has not expired. We don't need to check more
 		return nil
 	}
 
@@ -168,12 +176,12 @@ func (t *notificationsTrimmer) trimNotifications() error {
 func (t *notificationsTrimmer) getFirstLast() (first, last int64, err error) {
 	it1, err := t.kv.KeyRangeScan(firstNotificationKey, lastNotificationKey, kvstore.ShowInternalKeys)
 	if err != nil {
-		return -1, -1, err
+		return constant.I64NegativeOne, constant.I64NegativeOne, err
 	}
 	defer it1.Close()
 	if !it1.Valid() {
 		// There are no entries in DB
-		return -1, -1, nil
+		return constant.I64NegativeOne, constant.I64NegativeOne, nil
 	}
 
 	if first, err = parseNotificationKey(it1.Key()); err != nil {
@@ -182,12 +190,12 @@ func (t *notificationsTrimmer) getFirstLast() (first, last int64, err error) {
 
 	it2, err := t.kv.KeyRangeScanReverse(firstNotificationKey, lastNotificationKey, kvstore.ShowInternalKeys)
 	if err != nil {
-		return -1, -1, err
+		return constant.I64NegativeOne, constant.I64NegativeOne, err
 	}
 	defer it2.Close()
 	if !it2.Valid() {
 		// There are no entries in DB
-		return -1, -1, nil
+		return constant.I64NegativeOne, constant.I64NegativeOne, nil
 	}
 
 	if last, err = parseNotificationKey(it2.Key()); err != nil {
@@ -197,43 +205,48 @@ func (t *notificationsTrimmer) getFirstLast() (first, last int64, err error) {
 	return first, last, nil
 }
 
-// Perform binary search to find the highest entry that falls within the cutoff time.
 func (t *notificationsTrimmer) binarySearch(firstOffset, lastOffset int64, cutoffTime time.Time) (int64, error) {
 	for firstOffset < lastOffset {
-		med := (firstOffset + lastOffset) / 2
-		// Take the ceiling
-		if (firstOffset+lastOffset)%2 > 0 {
-			med++
+		midProbe := firstOffset + (lastOffset-firstOffset+1)/2
+
+		actualMid, tsMid, err := t.readFrom(midProbe)
+		if errors.Is(err, kvstore.ErrKeyNotFound) || (err == nil && actualMid > lastOffset) {
+			lastOffset = midProbe - 1
+			continue
 		}
-		tsMed, err := t.readAt(med)
 		if err != nil {
-			return -1, err
+			return constant.I64NegativeOne, err
 		}
 
-		if cutoffTime.Before(tsMed) {
-			// The entry at position `med` has not expired yet
-			lastOffset = med - 1
+		if cutoffTime.Before(tsMid) {
+			lastOffset = midProbe - 1
 		} else {
-			// The entry has expired
-			firstOffset = med
+			firstOffset = actualMid
 		}
 	}
 
 	return firstOffset, nil
 }
 
-func (t *notificationsTrimmer) readAt(offset int64) (time.Time, error) {
-	_, res, closer, err := t.kv.Get(notificationKey(offset), kvstore.ComparisonEqual, kvstore.ShowInternalKeys)
+func (t *notificationsTrimmer) readFrom(offset int64) (int64, time.Time, error) {
+	returnedKey, value, closer, err := t.kv.Get(notificationKey(offset), kvstore.ComparisonCeiling, kvstore.ShowInternalKeys)
 	if err != nil {
-		return time.Time{}, err
+		return constant.I64NegativeOne, time.Time{}, err
 	}
-
 	defer closer.Close()
 
-	nb := &proto.NotificationBatch{}
-	if err := pb.Unmarshal(res, nb); err != nil {
-		return time.Time{}, errors.Wrap(err, "failed to Deserialize notification batch")
+	if !strings.HasPrefix(returnedKey, notificationsPrefix+"/") {
+		return constant.I64NegativeOne, time.Time{}, kvstore.ErrKeyNotFound
 	}
 
-	return time.UnixMilli(int64(nb.Timestamp)), nil
+	actualOffset, err := parseNotificationKey(returnedKey)
+	if err != nil {
+		return constant.I64NegativeOne, time.Time{}, err
+	}
+
+	nb := &proto.NotificationBatch{}
+	if err := pb.Unmarshal(value, nb); err != nil {
+		return constant.I64NegativeOne, time.Time{}, errors.Wrap(err, "failed to deserialize notification batch")
+	}
+	return actualOffset, time.UnixMilli(int64(nb.Timestamp)), nil
 }
