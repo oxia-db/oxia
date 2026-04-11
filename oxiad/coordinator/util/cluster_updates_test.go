@@ -25,6 +25,79 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
+// loadAwareEnsembleSupplier picks the `nc.ReplicationFactor` servers that
+// currently hold the fewest ensemble slots across all already-placed shards in
+// `cs`. It is used to verify that ApplyClusterChanges publishes intermediate
+// shard placements into status during the init loop, so that successive
+// per-shard ensemble selections within the same init cycle observe each
+// other's choices. Without that publication every call sees an empty cluster
+// and returns the same servers, producing wildly uneven initial placement.
+func loadAwareEnsembleSupplier(servers []model.Server) func(*model.NamespaceConfig, *model.ClusterStatus) ([]model.Server, error) {
+	return func(nc *model.NamespaceConfig, cs *model.ClusterStatus) ([]model.Server, error) {
+		load := make(map[string]int, len(servers))
+		for _, s := range servers {
+			load[s.Internal] = 0
+		}
+		for _, ns := range cs.Namespaces {
+			for _, sh := range ns.Shards {
+				for _, m := range sh.Ensemble {
+					load[m.Internal]++
+				}
+			}
+		}
+		ranked := make([]model.Server, len(servers))
+		copy(ranked, servers)
+		sort.SliceStable(ranked, func(i, j int) bool {
+			return load[ranked[i].Internal] < load[ranked[j].Internal]
+		})
+		return ranked[:nc.ReplicationFactor], nil
+	}
+}
+
+// TestClientUpdates_InitialPlacementSeesPriorShards verifies that the
+// per-shard ensembleSupplier called by ApplyClusterChanges during a new
+// namespace's bootstrap can observe shards that were placed earlier in the
+// same call. Regression for an upstream bug where the new NamespaceStatus was
+// only assigned into status.Namespaces *after* the GenerateShards loop, so
+// every shard was selected against an empty cluster snapshot, leading to
+// pseudo-random initial placement that immediately tripped the count-based
+// load-balancer once the cluster came up.
+func TestClientUpdates_InitialPlacementSeesPriorShards(t *testing.T) {
+	servers := []model.Server{s1, s2, s3, s4}
+	const shardCount = 16
+	const rf = 3
+
+	status := model.NewClusterStatus()
+	_, _ = ApplyClusterChanges(&model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              "ns-1",
+			InitialShardCount: shardCount,
+			ReplicationFactor: rf,
+		}},
+		Servers: servers,
+	}, status, loadAwareEnsembleSupplier(servers))
+
+	slots := map[string]int{}
+	for _, s := range servers {
+		slots[s.Internal] = 0
+	}
+	for _, sh := range status.Namespaces["ns-1"].Shards {
+		assert.Len(t, sh.Ensemble, rf)
+		for _, m := range sh.Ensemble {
+			slots[m.Internal]++
+		}
+	}
+
+	// shardCount * rf == 48 ensemble slots distributed across 4 servers ⇒
+	// exactly 12 slots per server when each ensembleSupplier call sees prior
+	// placements.
+	expected := shardCount * rf / len(servers)
+	for _, s := range servers {
+		assert.Equal(t, expected, slots[s.Internal],
+			"server %s should hold exactly %d ensemble slots", s.Internal, expected)
+	}
+}
+
 var (
 	s1 = model.Server{Public: "s1:6648", Internal: "s1:6649"}
 	s2 = model.Server{Public: "s2:6648", Internal: "s2:6649"}

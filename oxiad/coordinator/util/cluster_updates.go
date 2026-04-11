@@ -50,6 +50,10 @@ func ApplyClusterChanges(config *model.ClusterConfig, status *model.ClusterStatu
 			Shards:            map[int64]model.ShardMetadata{},
 			ReplicationFactor: nc.ReplicationFactor,
 		}
+		// Publish the namespace into status *before* placing shards so that
+		// each per-shard ensembleSupplier call sees the placements made earlier
+		// in this same init cycle.
+		status.Namespaces[nc.Name] = nss
 
 		for _, shard := range sharding.GenerateShards(status.ShardIdGenerator, nc.InitialShardCount) {
 			var esm []model.Server
@@ -68,12 +72,10 @@ func ApplyClusterChanges(config *model.ClusterConfig, status *model.ClusterStatu
 				},
 			}
 
-			nss.Shards[shard.Id] = shardMetadata
+			status.Namespaces[nc.Name].Shards[shard.Id] = shardMetadata
 			status.ServerIdx = (status.ServerIdx + nc.ReplicationFactor) % uint32(len(config.Servers))
 			shardsToAdd[shard.Id] = nc.Name
 		}
-		status.Namespaces[nc.Name] = nss
-
 		status.ShardIdGenerator += int64(nc.InitialShardCount)
 	}
 
