@@ -243,16 +243,6 @@ func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
 	return publicKeys, nil
 }
 
-// firstAudience returns the first audience from a comma-separated string, trimmed.
-// Returns empty string if no audiences are configured.
-func firstAudience(audiences string) string {
-	if audiences == "" {
-		return ""
-	}
-	parts := strings.SplitN(audiences, ",", 2)
-	return strings.TrimSpace(parts[0])
-}
-
 // parseAllowedAudiences converts a comma-separated string of audiences into a map.
 func parseAllowedAudiences(audiences string) map[string]string {
 	allowedAudienceMap := map[string]string{}
@@ -265,10 +255,12 @@ func parseAllowedAudiences(audiences string) map[string]string {
 }
 
 // createStaticKeyVerifier creates a verifier using static keys from a file.
-// When allowedAudiences is non-empty, the first audience is used as the expected
-// client ID for the library-level audience check. If empty, the library check is
-// skipped (the custom multi-audience check in Authenticate still applies).
-func createStaticKeyVerifier(issuerURL, keyFile, allowedAudiences string) (*oidc.IDTokenVerifier, error) {
+// Note: SkipClientIDCheck is set because go-oidc only supports validating against
+// a single ClientID, but Oxia supports multiple allowed audiences. Audience validation
+// is enforced by the custom multi-audience check in Authenticate() which verifies that
+// at least one token audience matches the configured AllowedAudiences. The Validate()
+// method on OIDCOptions ensures AllowedAudiences is always non-empty.
+func createStaticKeyVerifier(issuerURL, keyFile string) (*oidc.IDTokenVerifier, error) {
 	publicKeys, err := loadPublicKeysFromFile(keyFile)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to load static key file for issuer %s", issuerURL)
@@ -276,34 +268,26 @@ func createStaticKeyVerifier(issuerURL, keyFile, allowedAudiences string) (*oidc
 
 	staticKeySet := &oidc.StaticKeySet{PublicKeys: publicKeys}
 	config := &oidc.Config{
-		Now: time.Now,
-	}
-	if clientID := firstAudience(allowedAudiences); clientID != "" {
-		config.ClientID = clientID
-	} else {
-		config.SkipClientIDCheck = true
+		SkipClientIDCheck: true,
+		Now:               time.Now,
 	}
 
 	return oidc.NewVerifier(issuerURL, staticKeySet, config), nil
 }
 
 // createRemoteVerifier creates a verifier using remote JWKS.
-// When allowedAudiences is non-empty, the first audience is used as the expected
-// client ID for the library-level audience check. If empty, the library check is
-// skipped (the custom multi-audience check in Authenticate still applies).
-func createRemoteVerifier(ctx context.Context, issuerURL, allowedAudiences string) (*oidc.Provider, *oidc.IDTokenVerifier, error) {
+// Note: SkipClientIDCheck is set because go-oidc only supports validating against
+// a single ClientID, but Oxia supports multiple allowed audiences. Audience validation
+// is enforced by the custom multi-audience check in Authenticate().
+func createRemoteVerifier(ctx context.Context, issuerURL string) (*oidc.Provider, *oidc.IDTokenVerifier, error) {
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
 		return nil, nil, errors.Wrapf(err, "failed to create OIDC provider for issuer %s", issuerURL)
 	}
 
 	config := &oidc.Config{
-		Now: time.Now,
-	}
-	if clientID := firstAudience(allowedAudiences); clientID != "" {
-		config.ClientID = clientID
-	} else {
-		config.SkipClientIDCheck = true
+		SkipClientIDCheck: true,
+		Now:               time.Now,
 	}
 	verifier := provider.Verifier(config)
 
@@ -323,7 +307,7 @@ func setupPerIssuerProviders(ctx context.Context, oidcProvider *OIDCProvider, is
 		}
 
 		if issuerConfig.StaticKeyFile != "" {
-			verifier, err := createStaticKeyVerifier(issuerURL, issuerConfig.StaticKeyFile, issuerConfig.AllowedAudiences)
+			verifier, err := createStaticKeyVerifier(issuerURL, issuerConfig.StaticKeyFile)
 			if err != nil {
 				return err
 			}
@@ -335,7 +319,7 @@ func setupPerIssuerProviders(ctx context.Context, oidcProvider *OIDCProvider, is
 				allowedAudiences: allowedAudienceMap,
 			}
 		} else {
-			provider, verifier, err := createRemoteVerifier(ctx, issuerURL, issuerConfig.AllowedAudiences)
+			provider, verifier, err := createRemoteVerifier(ctx, issuerURL)
 			if err != nil {
 				return err
 			}
@@ -360,7 +344,7 @@ func setupLegacyProviders(ctx context.Context, oidcProvider *OIDCProvider, oidcP
 	urlArr := strings.Split(oidcParams.AllowedIssueURLs, ",")
 	for i := 0; i < len(urlArr); i++ {
 		issueURL := strings.TrimSpace(urlArr[i])
-		provider, verifier, err := createRemoteVerifier(ctx, issueURL, oidcParams.AllowedAudiences)
+		provider, verifier, err := createRemoteVerifier(ctx, issueURL)
 		if err != nil {
 			return err
 		}
