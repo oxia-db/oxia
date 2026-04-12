@@ -243,6 +243,16 @@ func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
 	return publicKeys, nil
 }
 
+// firstAudience returns the first audience from a comma-separated string, trimmed.
+// Returns empty string if no audiences are configured.
+func firstAudience(audiences string) string {
+	if audiences == "" {
+		return ""
+	}
+	parts := strings.SplitN(audiences, ",", 2)
+	return strings.TrimSpace(parts[0])
+}
+
 // parseAllowedAudiences converts a comma-separated string of audiences into a map.
 func parseAllowedAudiences(audiences string) map[string]string {
 	allowedAudienceMap := map[string]string{}
@@ -255,7 +265,10 @@ func parseAllowedAudiences(audiences string) map[string]string {
 }
 
 // createStaticKeyVerifier creates a verifier using static keys from a file.
-func createStaticKeyVerifier(issuerURL, keyFile string) (*oidc.IDTokenVerifier, error) {
+// When allowedAudiences is non-empty, the first audience is used as the expected
+// client ID for the library-level audience check. If empty, the library check is
+// skipped (the custom multi-audience check in Authenticate still applies).
+func createStaticKeyVerifier(issuerURL, keyFile, allowedAudiences string) (*oidc.IDTokenVerifier, error) {
 	publicKeys, err := loadPublicKeysFromFile(keyFile)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to load static key file for issuer %s", issuerURL)
@@ -263,23 +276,34 @@ func createStaticKeyVerifier(issuerURL, keyFile string) (*oidc.IDTokenVerifier, 
 
 	staticKeySet := &oidc.StaticKeySet{PublicKeys: publicKeys}
 	config := &oidc.Config{
-		SkipClientIDCheck: true,
-		Now:               time.Now,
+		Now: time.Now,
+	}
+	if clientID := firstAudience(allowedAudiences); clientID != "" {
+		config.ClientID = clientID
+	} else {
+		config.SkipClientIDCheck = true
 	}
 
 	return oidc.NewVerifier(issuerURL, staticKeySet, config), nil
 }
 
 // createRemoteVerifier creates a verifier using remote JWKS.
-func createRemoteVerifier(ctx context.Context, issuerURL string) (*oidc.Provider, *oidc.IDTokenVerifier, error) {
+// When allowedAudiences is non-empty, the first audience is used as the expected
+// client ID for the library-level audience check. If empty, the library check is
+// skipped (the custom multi-audience check in Authenticate still applies).
+func createRemoteVerifier(ctx context.Context, issuerURL, allowedAudiences string) (*oidc.Provider, *oidc.IDTokenVerifier, error) {
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
 		return nil, nil, errors.Wrapf(err, "failed to create OIDC provider for issuer %s", issuerURL)
 	}
 
 	config := &oidc.Config{
-		SkipClientIDCheck: true,
-		Now:               time.Now,
+		Now: time.Now,
+	}
+	if clientID := firstAudience(allowedAudiences); clientID != "" {
+		config.ClientID = clientID
+	} else {
+		config.SkipClientIDCheck = true
 	}
 	verifier := provider.Verifier(config)
 
@@ -299,7 +323,7 @@ func setupPerIssuerProviders(ctx context.Context, oidcProvider *OIDCProvider, is
 		}
 
 		if issuerConfig.StaticKeyFile != "" {
-			verifier, err := createStaticKeyVerifier(issuerURL, issuerConfig.StaticKeyFile)
+			verifier, err := createStaticKeyVerifier(issuerURL, issuerConfig.StaticKeyFile, issuerConfig.AllowedAudiences)
 			if err != nil {
 				return err
 			}
@@ -311,7 +335,7 @@ func setupPerIssuerProviders(ctx context.Context, oidcProvider *OIDCProvider, is
 				allowedAudiences: allowedAudienceMap,
 			}
 		} else {
-			provider, verifier, err := createRemoteVerifier(ctx, issuerURL)
+			provider, verifier, err := createRemoteVerifier(ctx, issuerURL, issuerConfig.AllowedAudiences)
 			if err != nil {
 				return err
 			}
@@ -336,7 +360,7 @@ func setupLegacyProviders(ctx context.Context, oidcProvider *OIDCProvider, oidcP
 	urlArr := strings.Split(oidcParams.AllowedIssueURLs, ",")
 	for i := 0; i < len(urlArr); i++ {
 		issueURL := strings.TrimSpace(urlArr[i])
-		provider, verifier, err := createRemoteVerifier(ctx, issueURL)
+		provider, verifier, err := createRemoteVerifier(ctx, issueURL, oidcParams.AllowedAudiences)
 		if err != nil {
 			return err
 		}
