@@ -112,6 +112,10 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 		slog.Any("req", write),
 	)
 
+	if err := validateWriteRequest(write); err != nil {
+		return nil, err
+	}
+
 	lc, err := s.getLeader(write.Shard)
 	if err != nil {
 		return nil, err
@@ -147,6 +151,11 @@ func procesWriteStream(streamCtx context.Context, finished chan<- error, stream 
 		}
 		if req == nil {
 			channel.PushNoBlock(finished, errors.New("stream closed"))
+			return
+		}
+
+		if err := validateWriteRequest(req); err != nil {
+			channel.PushNoBlock(finished, err)
 			return
 		}
 
