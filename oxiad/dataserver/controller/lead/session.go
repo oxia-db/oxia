@@ -110,7 +110,11 @@ func (s *session) heartbeat() {
 	s.Lock()
 	defer s.Unlock()
 	if s.heartbeatCh != nil {
-		s.heartbeatCh <- true
+		select {
+		case s.heartbeatCh <- true:
+		default:
+			// A heartbeat is already pending in the buffer; skip.
+		}
 	}
 }
 

@@ -195,8 +195,8 @@ func (sm *sessionManager) getSession(sessionId int64) (*session, error) {
 
 func (sm *sessionManager) KeepAlive(sessionId int64) error {
 	sm.RLock()
+	defer sm.RUnlock()
 	s, err := sm.getSession(sessionId)
-	sm.RUnlock()
 	if err != nil {
 		return err
 	}
