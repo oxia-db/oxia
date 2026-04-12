@@ -44,7 +44,7 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	// Start a Prometheus metrics endpoint to scrape from.
 	// All dataservers in this process share the global OTel MeterProvider,
 	// so metrics recorded by leader/follower controllers are visible here.
-	metricsServer, err := metric.Start("localhost:0")
+	metricsServer, err := metric.Start("localhost:0", nil)
 	assert.NoError(t, err)
 	defer metricsServer.Close()
 	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", metricsServer.Port())

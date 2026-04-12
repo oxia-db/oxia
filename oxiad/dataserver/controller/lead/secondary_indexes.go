@@ -400,6 +400,9 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 			} else {
 				return primaryKey, secondaryKey, err
 			}
+
+		default:
+			return "", "", errors.Errorf("unsupported comparison type: %v", req.ComparisonType)
 		}
 	}
 

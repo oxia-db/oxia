@@ -123,10 +123,14 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 
 	metricOptions := config.DataServerOptions.Observability.Metric
 	if metricOptions.IsEnabled() {
-		s.metrics, err = metric.Start(metricOptions.BindAddress)
-	}
-	if err != nil {
-		return nil, err
+		metricTLS, err := metricOptions.TLS.TryIntoServerTLSConf()
+		if err != nil {
+			return nil, err
+		}
+		s.metrics, err = metric.Start(metricOptions.BindAddress, metricTLS)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return s, nil
