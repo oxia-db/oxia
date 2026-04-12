@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 )
@@ -32,7 +33,7 @@ import (
 func TestInternalHealthCheck(t *testing.T) {
 	healthServer := rpc2.NewClosableHealthServer(t.Context())
 	server, err := newInternalRpcServer(rpc2.Default, "localhost:0", nil,
-		assignment.NewShardAssignmentDispatcher(healthServer), healthServer, nil)
+		assignment.NewShardAssignmentDispatcher(healthServer), healthServer, nil, &auth.Disabled)
 	assert.NoError(t, err)
 
 	target := fmt.Sprintf("localhost:%d", server.grpcServer.Port())

@@ -23,6 +23,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/security"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 )
 
@@ -78,6 +79,7 @@ func (so *ServerOptions) Validate() error {
 
 type InternalServerOptions struct {
 	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for internal server-to-server communication,example=0.0.0.0:6649,format=hostname"`
+	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for internal server-to-server communication"`
 	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing internal cluster communication"`
 }
 
@@ -85,15 +87,20 @@ func (iso *InternalServerOptions) WithDefault() {
 	if iso.BindAddress == "" {
 		iso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort)
 	}
+	iso.Auth.WithDefault()
 	iso.TLS.WithDefault()
 }
 
 func (iso *InternalServerOptions) Validate() error {
-	return iso.TLS.Validate()
+	return multierr.Combine(
+		iso.Auth.Validate(),
+		iso.TLS.Validate(),
+	)
 }
 
 type AdminServerOptions struct {
 	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the admin API server,example=0.0.0.0:6650,format=hostname"`
+	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the admin API"`
 	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing admin API connections"`
 }
 
@@ -101,11 +108,15 @@ func (aso *AdminServerOptions) WithDefault() {
 	if aso.BindAddress == "" {
 		aso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort)
 	}
+	aso.Auth.WithDefault()
 	aso.TLS.WithDefault()
 }
 
 func (aso *AdminServerOptions) Validate() error {
-	return aso.TLS.Validate()
+	return multierr.Combine(
+		aso.Auth.Validate(),
+		aso.TLS.Validate(),
+	)
 }
 
 type ControllerOptions struct {

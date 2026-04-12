@@ -122,7 +122,7 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 		return nil, err
 	}
 	s.internalRpcServer, err = newInternalRpcServer(provider, internalServer.BindAddress,
-		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTLS)
+		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTLS, &internalServer.Auth)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,11 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 
 	observability := options.Observability
 	if observability.Metric.IsEnabled() {
-		s.metrics, err = metric.Start(observability.Metric.BindAddress) //nolint:contextcheck
+		metricTLS, err := observability.Metric.TLS.TryIntoServerTLSConf()
+		if err != nil {
+			return nil, err
+		}
+		s.metrics, err = metric.Start(observability.Metric.BindAddress, metricTLS) //nolint:contextcheck
 		if err != nil {
 			return nil, err
 		}
