@@ -217,7 +217,11 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 
 	var metricsServer *metric.PrometheusMetrics
 	if metrics.IsEnabled() {
-		metricsServer, err = metric.Start(metrics.BindAddress) //nolint:contextcheck
+		metricTLS, err := metrics.TLS.TryIntoServerTLSConf()
+		if err != nil {
+			return nil, err
+		}
+		metricsServer, err = metric.Start(metrics.BindAddress, metricTLS) //nolint:contextcheck
 		if err != nil {
 			return nil, err
 		}
