@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -99,8 +101,27 @@ func walPath(logDir string, namespace string, shard int64) string {
 	return filepath.Join(logDir, namespace, fmt.Sprint("shard-", shard))
 }
 
+var validNamespacePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$`)
+
+func validateNamespace(namespace string) error {
+	if namespace == "" {
+		return errors.New("namespace name must not be empty")
+	}
+	if strings.Contains(namespace, "/") || strings.Contains(namespace, "\\") || strings.Contains(namespace, "..") {
+		return errors.Errorf("namespace name %q contains path traversal characters", namespace)
+	}
+	if !validNamespacePattern.MatchString(namespace) {
+		return errors.Errorf("namespace name %q contains invalid characters", namespace)
+	}
+	return nil
+}
+
 func newWal(namespace string, shard int64, options *FactoryOptions, commitOffsetProvider CommitOffsetProvider,
 	clock time2.Clock, trimmerCheckInterval time.Duration) (Wal, error) {
+	if err := validateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
 	if options.SegmentSize == 0 {
 		options.SegmentSize = DefaultFactoryOptions.SegmentSize
 	}
