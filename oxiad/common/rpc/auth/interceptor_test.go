@@ -26,20 +26,19 @@ func TestRedactToken(t *testing.T) {
 		token    string
 		expected string
 	}{
-		{"empty", "", "***"},
-		{"short", "abc", "***"},
-		{"exactly8", "12345678", "***"},
-		{"9chars", "123456789", "***23456789"},
-		{"long token", "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature", "***ignature"},
+		{"empty", "", "[REDACTED]"},
+		{"short", "abc", "[REDACTED]"},
+		{"exactly8", "12345678", "[REDACTED]"},
+		{"9chars", "123456789", "[REDACTED]23456789"},
+		{"starts with redaction prefix", "[REDACTED]123456789", "[REDACTED]23456789"},
+		{"long token", "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature", "[REDACTED]ignature"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := redactToken(tt.token)
 			assert.Equal(t, tt.expected, result)
-			// Ensure the original token is never fully present in the result
-			if len(tt.token) > 8 {
-				assert.NotContains(t, result, tt.token)
-			}
+			// Ensure the redacted output never equals the original token
+			assert.NotEqual(t, tt.token, result, "redacted output must differ from original token")
 		})
 	}
 }

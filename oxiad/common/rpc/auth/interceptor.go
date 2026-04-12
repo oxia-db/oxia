@@ -105,11 +105,14 @@ func validateTokenWithContext(ctx context.Context, provider AuthenticationProvid
 }
 
 // redactToken returns a redacted version of a token for safe logging.
-// Only the last 8 characters are preserved; the rest is replaced with "***".
+// For tokens longer than 8 characters, at most the last 8 characters are
+// preserved and the rest is replaced with "[REDACTED]". Tokens of 8 characters
+// or fewer are fully redacted to "[REDACTED]".
 func redactToken(token string) string {
 	const suffixLen = 8
+	const prefix = "[REDACTED]"
 	if len(token) <= suffixLen {
-		return "***"
+		return prefix
 	}
-	return "***" + token[len(token)-suffixLen:]
+	return prefix + token[len(token)-suffixLen:]
 }
