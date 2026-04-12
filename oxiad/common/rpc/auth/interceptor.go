@@ -98,8 +98,18 @@ func validateTokenWithContext(ctx context.Context, provider AuthenticationProvid
 	if userName, err = provider.Authenticate(ctx, token); err != nil {
 		slog.Debug("Failed to authenticate token",
 			slog.String("peer", peerMeta.Addr.String()),
-			slog.String("token", token))
+			slog.String("token", redactToken(token)))
 		return "", err
 	}
 	return userName, nil
+}
+
+// redactToken returns a redacted version of a token for safe logging.
+// Only the last 8 characters are preserved; the rest is replaced with "***".
+func redactToken(token string) string {
+	const suffixLen = 8
+	if len(token) <= suffixLen {
+		return "***"
+	}
+	return "***" + token[len(token)-suffixLen:]
 }
