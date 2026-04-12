@@ -140,7 +140,7 @@ jobs:
     with:
       candidate_image: "oxia/oxia:${{ needs.prepare.outputs.rc_tag }}"
       stable_image: "oxia/oxia:${{ needs.prepare.outputs.stable_tag }}"
-      generators: "basic-kv"
+      generators: "basic-kv kv-cas kv-ephemeral-notification kv-secondary-index kv-sequence"
     secrets: inherit
 
   # ── Step 4: Manual approval + promote to official release ──
