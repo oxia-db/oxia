@@ -18,9 +18,12 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
+	"strings"
 	"sync"
 
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
@@ -183,12 +186,40 @@ func (s *shardAssignmentDispatcher) assignmentsInterceptorFunc(clientStream Clie
 	}, nil
 }
 
+func validateAuthorityAddress(addr string) error {
+	if strings.Contains(addr, "://") {
+		return errors.Errorf("authority address %q must not contain a scheme", addr)
+	}
+	if strings.Contains(addr, "/") {
+		return errors.Errorf("authority address %q must not contain a path", addr)
+	}
+	if strings.Contains(addr, "?") {
+		return errors.Errorf("authority address %q must not contain a query string", addr)
+	}
+	if strings.Contains(addr, "#") {
+		return errors.Errorf("authority address %q must not contain a fragment", addr)
+	}
+
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return errors.Errorf("authority address %q is not a valid host:port pair: %v", addr, err)
+	}
+	if host == "" {
+		return errors.Errorf("authority address %q has an empty host", addr)
+	}
+
+	return nil
+}
+
 func authority(ctx context.Context) (string, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
-		authority := md[":authority"]
-		if len(authority) > 0 {
-			return authority[0], nil
+		addr := md[":authority"]
+		if len(addr) > 0 {
+			if err := validateAuthorityAddress(addr[0]); err != nil {
+				return "", status.Errorf(codes.InvalidArgument, "oxia: invalid authority address: %v", err)
+			}
+			return addr[0], nil
 		}
 	}
 	return "", status.Errorf(codes.Internal, "oxia: authority not identified")
