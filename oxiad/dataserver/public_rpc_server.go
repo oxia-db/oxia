@@ -131,6 +131,11 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 
 func procesWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer, lc lead.LeaderController) {
 	for {
+		if streamCtx.Err() != nil {
+			channel.PushNoBlock(finished, streamCtx.Err())
+			return
+		}
+
 		req, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
