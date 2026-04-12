@@ -18,6 +18,8 @@ import (
 	"fmt"
 
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/common/security"
 )
 
 const (
@@ -42,8 +44,9 @@ func (ob *ObservabilityOptions) Validate() error {
 }
 
 type MetricOptions struct {
-	Enabled     *bool  `yaml:"enabled" json:"enabled" jsonschema:"description=Enable metrics collection,default=true"`
-	BindAddress string `yaml:"bindAddress,omitempty" json:"bindAddress,omitempty" jsonschema:"description=Bind address for metrics server,example=0.0.0.0:8080,format=hostname"`
+	Enabled     *bool               `yaml:"enabled" json:"enabled" jsonschema:"description=Enable metrics collection,default=true"`
+	BindAddress string              `yaml:"bindAddress,omitempty" json:"bindAddress,omitempty" jsonschema:"description=Bind address for metrics server,example=0.0.0.0:8080,format=hostname"`
+	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for the metrics endpoint"`
 }
 
 func (mo *MetricOptions) IsEnabled() bool {
@@ -58,10 +61,11 @@ func (mo *MetricOptions) WithDefault() {
 	if mo.BindAddress == "" {
 		mo.BindAddress = fmt.Sprintf("0.0.0.0:%d", DefaultMetricsPort)
 	}
+	mo.TLS.WithDefault()
 }
 
-func (*MetricOptions) Validate() error {
-	return nil
+func (mo *MetricOptions) Validate() error {
+	return mo.TLS.Validate()
 }
 
 type LogOptions struct {
