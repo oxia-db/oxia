@@ -24,6 +24,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func drainChannel(ch <-chan bool) {
+	for range ch { //nolint:revive
+	}
+}
+
 func TestSession_Heartbeat_NonBlocking(t *testing.T) {
 	s := &session{
 		heartbeatCh: make(chan bool, 1),
@@ -61,8 +66,7 @@ func TestSession_Heartbeat_AfterClose(t *testing.T) {
 	// Drain heartbeats using local reference (mirrors waitForHeartbeats pattern)
 	go func() {
 		defer s.latch.Done()
-		for range ch {
-		}
+		drainChannel(ch)
 	}()
 
 	s.close()
@@ -88,20 +92,16 @@ func TestSession_Heartbeat_ConcurrentCloseAndHeartbeat(t *testing.T) {
 		// Drain using local reference (mirrors waitForHeartbeats pattern)
 		go func() {
 			defer s.latch.Done()
-			for range ch {
-			}
+			drainChannel(ch)
 		}()
 
 		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			s.close()
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			s.heartbeat()
-		}()
+		})
 		wg.Wait()
 		s.latch.Wait()
 	}
