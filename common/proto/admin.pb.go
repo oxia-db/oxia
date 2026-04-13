@@ -38,58 +38,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type DataServerStatus int32
-
-const (
-	DataServerStatus_DATA_SERVER_STATUS_UNKNOWN     DataServerStatus = 0
-	DataServerStatus_DATA_SERVER_STATUS_RUNNING     DataServerStatus = 1
-	DataServerStatus_DATA_SERVER_STATUS_NOT_RUNNING DataServerStatus = 2
-	DataServerStatus_DATA_SERVER_STATUS_DRAINING    DataServerStatus = 3
-)
-
-// Enum value maps for DataServerStatus.
-var (
-	DataServerStatus_name = map[int32]string{
-		0: "DATA_SERVER_STATUS_UNKNOWN",
-		1: "DATA_SERVER_STATUS_RUNNING",
-		2: "DATA_SERVER_STATUS_NOT_RUNNING",
-		3: "DATA_SERVER_STATUS_DRAINING",
-	}
-	DataServerStatus_value = map[string]int32{
-		"DATA_SERVER_STATUS_UNKNOWN":     0,
-		"DATA_SERVER_STATUS_RUNNING":     1,
-		"DATA_SERVER_STATUS_NOT_RUNNING": 2,
-		"DATA_SERVER_STATUS_DRAINING":    3,
-	}
-)
-
-func (x DataServerStatus) Enum() *DataServerStatus {
-	p := new(DataServerStatus)
-	*p = x
-	return p
-}
-
-func (x DataServerStatus) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (DataServerStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_admin_proto_enumTypes[0].Descriptor()
-}
-
-func (DataServerStatus) Type() protoreflect.EnumType {
-	return &file_admin_proto_enumTypes[0]
-}
-
-func (x DataServerStatus) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use DataServerStatus.Descriptor instead.
-func (DataServerStatus) EnumDescriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{0}
-}
-
 type ListDataServersRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -127,16 +75,12 @@ func (*ListDataServersRequest) Descriptor() ([]byte, []int) {
 }
 
 type DataServer struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	Name              *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
-	PublicAddress     string                 `protobuf:"bytes,2,opt,name=public_address,json=publicAddress,proto3" json:"public_address,omitempty"`
-	InternalAddress   string                 `protobuf:"bytes,3,opt,name=internal_address,json=internalAddress,proto3" json:"internal_address,omitempty"`
-	Metadata          map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Status            DataServerStatus       `protobuf:"varint,5,opt,name=status,proto3,enum=io.oxia.proto.v1.DataServerStatus" json:"status,omitempty"`
-	FeaturesSupported []Feature              `protobuf:"varint,6,rep,packed,name=features_supported,json=featuresSupported,proto3,enum=replication.Feature" json:"features_supported,omitempty"`
-	ShardCount        uint32                 `protobuf:"varint,7,opt,name=shard_count,json=shardCount,proto3" json:"shard_count,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Name            *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	PublicAddress   string                 `protobuf:"bytes,2,opt,name=public_address,json=publicAddress,proto3" json:"public_address,omitempty"`
+	InternalAddress string                 `protobuf:"bytes,3,opt,name=internal_address,json=internalAddress,proto3" json:"internal_address,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *DataServer) Reset() {
@@ -188,34 +132,6 @@ func (x *DataServer) GetInternalAddress() string {
 		return x.InternalAddress
 	}
 	return ""
-}
-
-func (x *DataServer) GetMetadata() map[string]string {
-	if x != nil {
-		return x.Metadata
-	}
-	return nil
-}
-
-func (x *DataServer) GetStatus() DataServerStatus {
-	if x != nil {
-		return x.Status
-	}
-	return DataServerStatus_DATA_SERVER_STATUS_UNKNOWN
-}
-
-func (x *DataServer) GetFeaturesSupported() []Feature {
-	if x != nil {
-		return x.FeaturesSupported
-	}
-	return nil
-}
-
-func (x *DataServer) GetShardCount() uint32 {
-	if x != nil {
-		return x.ShardCount
-	}
-	return 0
 }
 
 type ListDataServersResponse struct {
@@ -607,21 +523,13 @@ var File_admin_proto protoreflect.FileDescriptor
 
 const file_admin_proto_rawDesc = "" +
 	"\n" +
-	"\vadmin.proto\x12\x10io.oxia.proto.v1\x1a\x11replication.proto\"\x18\n" +
-	"\x16ListDataServersRequest\"\xa7\x03\n" +
+	"\vadmin.proto\x12\x10io.oxia.proto.v1\"\x18\n" +
+	"\x16ListDataServersRequest\"\x80\x01\n" +
 	"\n" +
 	"DataServer\x12\x17\n" +
 	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
 	"\x0epublic_address\x18\x02 \x01(\tR\rpublicAddress\x12)\n" +
-	"\x10internal_address\x18\x03 \x01(\tR\x0finternalAddress\x12F\n" +
-	"\bmetadata\x18\x04 \x03(\v2*.io.oxia.proto.v1.DataServer.MetadataEntryR\bmetadata\x12:\n" +
-	"\x06status\x18\x05 \x01(\x0e2\".io.oxia.proto.v1.DataServerStatusR\x06status\x12C\n" +
-	"\x12features_supported\x18\x06 \x03(\x0e2\x14.replication.FeatureR\x11featuresSupported\x12\x1f\n" +
-	"\vshard_count\x18\a \x01(\rR\n" +
-	"shardCount\x1a;\n" +
-	"\rMetadataEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
+	"\x10internal_address\x18\x03 \x01(\tR\x0finternalAddressB\a\n" +
 	"\x05_name\"Z\n" +
 	"\x17ListDataServersResponse\x12?\n" +
 	"\fdata_servers\x18\x01 \x03(\v2\x1c.io.oxia.proto.v1.DataServerR\vdataServers\"\x17\n" +
@@ -650,12 +558,7 @@ const file_admin_proto_rawDesc = "" +
 	"\f_split_point\"j\n" +
 	"\x12SplitShardResponse\x12(\n" +
 	"\x10left_child_shard\x18\x01 \x01(\x03R\x0eleftChildShard\x12*\n" +
-	"\x11right_child_shard\x18\x02 \x01(\x03R\x0frightChildShard*\x97\x01\n" +
-	"\x10DataServerStatus\x12\x1e\n" +
-	"\x1aDATA_SERVER_STATUS_UNKNOWN\x10\x00\x12\x1e\n" +
-	"\x1aDATA_SERVER_STATUS_RUNNING\x10\x01\x12\"\n" +
-	"\x1eDATA_SERVER_STATUS_NOT_RUNNING\x10\x02\x12\x1f\n" +
-	"\x1bDATA_SERVER_STATUS_DRAINING\x10\x032\x87\x03\n" +
+	"\x11right_child_shard\x18\x02 \x01(\x03R\x0frightChildShard2\x87\x03\n" +
 	"\tOxiaAdmin\x12f\n" +
 	"\x0fListDataServers\x12(.io.oxia.proto.v1.ListDataServersRequest\x1a).io.oxia.proto.v1.ListDataServersResponse\x12c\n" +
 	"\x0eListNamespaces\x12'.io.oxia.proto.v1.ListNamespacesRequest\x1a(.io.oxia.proto.v1.ListNamespacesResponse\x12T\n" +
@@ -675,44 +578,37 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_admin_proto_goTypes = []any{
-	(DataServerStatus)(0),           // 0: io.oxia.proto.v1.DataServerStatus
-	(*ListDataServersRequest)(nil),  // 1: io.oxia.proto.v1.ListDataServersRequest
-	(*DataServer)(nil),              // 2: io.oxia.proto.v1.DataServer
-	(*ListDataServersResponse)(nil), // 3: io.oxia.proto.v1.ListDataServersResponse
-	(*ListNamespacesRequest)(nil),   // 4: io.oxia.proto.v1.ListNamespacesRequest
-	(*ListNamespacesResponse)(nil),  // 5: io.oxia.proto.v1.ListNamespacesResponse
-	(*ListNodesRequest)(nil),        // 6: io.oxia.proto.v1.ListNodesRequest
-	(*Node)(nil),                    // 7: io.oxia.proto.v1.Node
-	(*ListNodesResponse)(nil),       // 8: io.oxia.proto.v1.ListNodesResponse
-	(*SplitShardRequest)(nil),       // 9: io.oxia.proto.v1.SplitShardRequest
-	(*SplitShardResponse)(nil),      // 10: io.oxia.proto.v1.SplitShardResponse
-	nil,                             // 11: io.oxia.proto.v1.DataServer.MetadataEntry
-	nil,                             // 12: io.oxia.proto.v1.Node.MetadataEntry
-	(Feature)(0),                    // 13: replication.Feature
+	(*ListDataServersRequest)(nil),  // 0: io.oxia.proto.v1.ListDataServersRequest
+	(*DataServer)(nil),              // 1: io.oxia.proto.v1.DataServer
+	(*ListDataServersResponse)(nil), // 2: io.oxia.proto.v1.ListDataServersResponse
+	(*ListNamespacesRequest)(nil),   // 3: io.oxia.proto.v1.ListNamespacesRequest
+	(*ListNamespacesResponse)(nil),  // 4: io.oxia.proto.v1.ListNamespacesResponse
+	(*ListNodesRequest)(nil),        // 5: io.oxia.proto.v1.ListNodesRequest
+	(*Node)(nil),                    // 6: io.oxia.proto.v1.Node
+	(*ListNodesResponse)(nil),       // 7: io.oxia.proto.v1.ListNodesResponse
+	(*SplitShardRequest)(nil),       // 8: io.oxia.proto.v1.SplitShardRequest
+	(*SplitShardResponse)(nil),      // 9: io.oxia.proto.v1.SplitShardResponse
+	nil,                             // 10: io.oxia.proto.v1.Node.MetadataEntry
 }
 var file_admin_proto_depIdxs = []int32{
-	11, // 0: io.oxia.proto.v1.DataServer.metadata:type_name -> io.oxia.proto.v1.DataServer.MetadataEntry
-	0,  // 1: io.oxia.proto.v1.DataServer.status:type_name -> io.oxia.proto.v1.DataServerStatus
-	13, // 2: io.oxia.proto.v1.DataServer.features_supported:type_name -> replication.Feature
-	2,  // 3: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServer
-	12, // 4: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
-	7,  // 5: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
-	1,  // 6: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
-	4,  // 7: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
-	6,  // 8: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
-	9,  // 9: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
-	3,  // 10: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
-	5,  // 11: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
-	8,  // 12: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
-	10, // 13: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
-	10, // [10:14] is the sub-list for method output_type
-	6,  // [6:10] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	1,  // 0: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServer
+	10, // 1: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
+	6,  // 2: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
+	0,  // 3: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
+	3,  // 4: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
+	5,  // 5: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
+	8,  // 6: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
+	2,  // 7: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
+	4,  // 8: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
+	7,  // 9: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
+	9,  // 10: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
+	7,  // [7:11] is the sub-list for method output_type
+	3,  // [3:7] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -720,7 +616,6 @@ func file_admin_proto_init() {
 	if File_admin_proto != nil {
 		return
 	}
-	file_replication_proto_init()
 	file_admin_proto_msgTypes[1].OneofWrappers = []any{}
 	file_admin_proto_msgTypes[6].OneofWrappers = []any{}
 	file_admin_proto_msgTypes[8].OneofWrappers = []any{}
@@ -729,14 +624,13 @@ func file_admin_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   12,
+			NumEnums:      0,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_admin_proto_goTypes,
 		DependencyIndexes: file_admin_proto_depIdxs,
-		EnumInfos:         file_admin_proto_enumTypes,
 		MessageInfos:      file_admin_proto_msgTypes,
 	}.Build()
 	File_admin_proto = out.File

@@ -22,7 +22,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
@@ -32,11 +31,6 @@ type ShardSplitter interface {
 	InitiateSplit(namespace string, parentShardId int64, splitPoint *uint32) (leftChild, rightChild int64, err error)
 }
 
-type DataServerInfo struct {
-	Status            controller.DataServerStatus
-	FeaturesSupported []proto.Feature
-}
-
 var _ proto.OxiaAdminServer = (*adminServer)(nil)
 
 type adminServer struct {
@@ -44,7 +38,6 @@ type adminServer struct {
 
 	statusResource resource.StatusResource
 	clusterConfig  func() (model.ClusterConfig, error)
-	dataServers    func() map[string]DataServerInfo
 	shardSplitter  ShardSplitter
 }
 
@@ -54,35 +47,12 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 		return nil, err
 	}
 
-	status := admin.statusResource.Load()
-	runtimeData := map[string]DataServerInfo{}
-	if admin.dataServers != nil {
-		runtimeData = admin.dataServers()
-	}
-	shardCounts := getShardCounts(status)
-
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
-		serverID := server.GetIdentifier()
-		serverMetadata, found := cnf.ServerMetadata[serverID]
-		if !found {
-			serverMetadata = model.ServerMetadata{}
-		}
-
-		runtimeInfo, found := runtimeData[serverID]
-		serverStatus := proto.DataServerStatus_DATA_SERVER_STATUS_UNKNOWN
-		if found {
-			serverStatus = toProtoDataServerStatus(runtimeInfo.Status)
-		}
-
 		dataServers[i] = &proto.DataServer{
-			Name:              server.Name,
-			PublicAddress:     server.Public,
-			InternalAddress:   server.Internal,
-			Metadata:          serverMetadata.Labels,
-			Status:            serverStatus,
-			FeaturesSupported: runtimeInfo.FeaturesSupported,
-			ShardCount:        shardCounts[serverID],
+			Name:            server.Name,
+			PublicAddress:   server.Public,
+			InternalAddress: server.Internal,
 		}
 	}
 
@@ -103,46 +73,6 @@ func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesR
 	return &proto.ListNamespacesResponse{
 		Namespaces: namespaceNames.Values(),
 	}, nil
-}
-
-func getShardCounts(status *model.ClusterStatus) map[string]uint32 {
-	shardCounts := make(map[string]uint32)
-	if status == nil {
-		return shardCounts
-	}
-
-	for _, namespace := range status.Namespaces {
-		for _, shard := range namespace.Shards {
-			servers := hashset.New[string]()
-			for _, member := range shard.Ensemble {
-				servers.Add(member.GetIdentifier())
-			}
-			for _, member := range shard.RemovedNodes {
-				servers.Add(member.GetIdentifier())
-			}
-			for _, member := range shard.PendingDeleteShardNodes {
-				servers.Add(member.GetIdentifier())
-			}
-			for _, serverID := range servers.Values() {
-				shardCounts[serverID]++
-			}
-		}
-	}
-
-	return shardCounts
-}
-
-func toProtoDataServerStatus(status controller.DataServerStatus) proto.DataServerStatus {
-	switch status {
-	case controller.Running:
-		return proto.DataServerStatus_DATA_SERVER_STATUS_RUNNING
-	case controller.NotRunning:
-		return proto.DataServerStatus_DATA_SERVER_STATUS_NOT_RUNNING
-	case controller.Draining:
-		return proto.DataServerStatus_DATA_SERVER_STATUS_DRAINING
-	default:
-		return proto.DataServerStatus_DATA_SERVER_STATUS_UNKNOWN
-	}
 }
 
 func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
@@ -194,13 +124,11 @@ func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardReq
 func newAdminServer(
 	statusResource resource.StatusResource,
 	clusterConfig func() (model.ClusterConfig, error),
-	dataServers func() map[string]DataServerInfo,
 	shardSplitter ShardSplitter,
 ) *adminServer {
 	return &adminServer{
 		statusResource: statusResource,
 		clusterConfig:  clusterConfig,
-		dataServers:    dataServers,
 		shardSplitter:  shardSplitter,
 	}
 }

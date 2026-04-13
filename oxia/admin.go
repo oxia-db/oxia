@@ -16,8 +16,6 @@ package oxia
 
 import (
 	"io"
-
-	"github.com/oxia-db/oxia/common/proto"
 )
 
 type AdminClient interface {
@@ -44,23 +42,10 @@ type Node struct {
 	Metadata        map[string]string
 }
 
-type DataServerStatus int32
-
-const (
-	DataServerStatusUnknown DataServerStatus = iota
-	DataServerStatusRunning
-	DataServerStatusNotRunning
-	DataServerStatusDraining
-)
-
 type DataServer struct {
-	Name              *string
-	PublicAddress     string
-	InternalAddress   string
-	Metadata          map[string]string
-	Status            DataServerStatus
-	FeaturesSupported []proto.Feature
-	ShardCount        uint32
+	Name            *string
+	PublicAddress   string
+	InternalAddress string
 }
 
 type ListDataServersResult struct {

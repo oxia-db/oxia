@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
@@ -54,18 +53,7 @@ func TestAdminServerListDataServers(t *testing.T) {
 				Servers: []model.Server{
 					{Name: &serverName, Public: "public-1", Internal: "internal-1"},
 				},
-				ServerMetadata: map[string]model.ServerMetadata{
-					serverName: {Labels: map[string]string{"rack": "a1"}},
-				},
 			}, nil
-		},
-		func() map[string]DataServerInfo {
-			return map[string]DataServerInfo{
-				serverName: {
-					Status:            controller.Running,
-					FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
-				},
-			}
 		},
 		nil,
 	)
@@ -78,36 +66,4 @@ func TestAdminServerListDataServers(t *testing.T) {
 	assert.Equal(t, &serverName, dataServer.Name)
 	assert.Equal(t, "public-1", dataServer.PublicAddress)
 	assert.Equal(t, "internal-1", dataServer.InternalAddress)
-	assert.Equal(t, map[string]string{"rack": "a1"}, dataServer.Metadata)
-	assert.Equal(t, proto.DataServerStatus_DATA_SERVER_STATUS_RUNNING, dataServer.Status)
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, dataServer.FeaturesSupported)
-	assert.EqualValues(t, 1, dataServer.ShardCount)
-}
-
-func TestAdminServerListDataServersUnknownRuntimeStatus(t *testing.T) {
-	serverName := "server-1"
-	meta := metadata.NewMetadataProviderMemory()
-	_, err := meta.Store(&model.ClusterStatus{}, metadata.NotExists)
-	require.NoError(t, err)
-	statusResource := resource.NewStatusResource(meta)
-
-	admin := newAdminServer(
-		statusResource,
-		func() (model.ClusterConfig, error) {
-			return model.ClusterConfig{
-				Servers: []model.Server{
-					{Name: &serverName, Public: "public-1", Internal: "internal-1"},
-				},
-			}, nil
-		},
-		nil,
-		nil,
-	)
-
-	res, err := admin.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
-	require.NoError(t, err)
-	require.Len(t, res.DataServers, 1)
-	assert.Equal(t, proto.DataServerStatus_DATA_SERVER_STATUS_UNKNOWN, res.DataServers[0].Status)
-	assert.Empty(t, res.DataServers[0].FeaturesSupported)
-	assert.Zero(t, res.DataServers[0].ShardCount)
 }

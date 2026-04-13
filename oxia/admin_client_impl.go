@@ -55,13 +55,9 @@ func (admin *adminClientImpl) ListDataServers() *ListDataServersResult {
 	dataServers := make([]*DataServer, len(response.DataServers))
 	for i, dataServer := range response.DataServers {
 		dataServers[i] = &DataServer{
-			Name:              dataServer.Name,
-			PublicAddress:     dataServer.PublicAddress,
-			InternalAddress:   dataServer.InternalAddress,
-			Metadata:          dataServer.Metadata,
-			Status:            DataServerStatus(dataServer.Status),
-			FeaturesSupported: dataServer.FeaturesSupported,
-			ShardCount:        dataServer.ShardCount,
+			Name:            dataServer.Name,
+			PublicAddress:   dataServer.PublicAddress,
+			InternalAddress: dataServer.InternalAddress,
 		}
 	}
 	return &ListDataServersResult{DataServers: dataServers}
