@@ -75,12 +75,14 @@ func (*ListDataServersRequest) Descriptor() ([]byte, []int) {
 }
 
 type DataServer struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Name            *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
-	PublicAddress   string                 `protobuf:"bytes,2,opt,name=public_address,json=publicAddress,proto3" json:"public_address,omitempty"`
-	InternalAddress string                 `protobuf:"bytes,3,opt,name=internal_address,json=internalAddress,proto3" json:"internal_address,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Name              *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	PublicAddress     string                 `protobuf:"bytes,2,opt,name=public_address,json=publicAddress,proto3" json:"public_address,omitempty"`
+	InternalAddress   string                 `protobuf:"bytes,3,opt,name=internal_address,json=internalAddress,proto3" json:"internal_address,omitempty"`
+	Metadata          map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	SupportedFeatures []Feature              `protobuf:"varint,5,rep,packed,name=supported_features,json=supportedFeatures,proto3,enum=replication.Feature" json:"supported_features,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *DataServer) Reset() {
@@ -132,6 +134,20 @@ func (x *DataServer) GetInternalAddress() string {
 		return x.InternalAddress
 	}
 	return ""
+}
+
+func (x *DataServer) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *DataServer) GetSupportedFeatures() []Feature {
+	if x != nil {
+		return x.SupportedFeatures
+	}
+	return nil
 }
 
 type ListDataServersResponse struct {
@@ -567,13 +583,18 @@ var File_admin_proto protoreflect.FileDescriptor
 
 const file_admin_proto_rawDesc = "" +
 	"\n" +
-	"\vadmin.proto\x12\x10io.oxia.proto.v1\"\x18\n" +
-	"\x16ListDataServersRequest\"\x80\x01\n" +
+	"\vadmin.proto\x12\x10io.oxia.proto.v1\x1a\x11replication.proto\"\x18\n" +
+	"\x16ListDataServersRequest\"\xca\x02\n" +
 	"\n" +
 	"DataServer\x12\x17\n" +
 	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
 	"\x0epublic_address\x18\x02 \x01(\tR\rpublicAddress\x12)\n" +
-	"\x10internal_address\x18\x03 \x01(\tR\x0finternalAddressB\a\n" +
+	"\x10internal_address\x18\x03 \x01(\tR\x0finternalAddress\x12F\n" +
+	"\bmetadata\x18\x04 \x03(\v2*.io.oxia.proto.v1.DataServer.MetadataEntryR\bmetadata\x12C\n" +
+	"\x12supported_features\x18\x05 \x03(\x0e2\x14.replication.FeatureR\x11supportedFeatures\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
 	"\x05_name\"Z\n" +
 	"\x17ListDataServersResponse\x12?\n" +
 	"\fdata_servers\x18\x01 \x03(\v2\x1c.io.oxia.proto.v1.DataServerR\vdataServers\"7\n" +
@@ -626,7 +647,7 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_admin_proto_goTypes = []any{
 	(*ListDataServersRequest)(nil),  // 0: io.oxia.proto.v1.ListDataServersRequest
 	(*DataServer)(nil),              // 1: io.oxia.proto.v1.DataServer
@@ -639,27 +660,31 @@ var file_admin_proto_goTypes = []any{
 	(*ListNodesResponse)(nil),       // 8: io.oxia.proto.v1.ListNodesResponse
 	(*SplitShardRequest)(nil),       // 9: io.oxia.proto.v1.SplitShardRequest
 	(*SplitShardResponse)(nil),      // 10: io.oxia.proto.v1.SplitShardResponse
-	nil,                             // 11: io.oxia.proto.v1.Node.MetadataEntry
+	nil,                             // 11: io.oxia.proto.v1.DataServer.MetadataEntry
+	nil,                             // 12: io.oxia.proto.v1.Node.MetadataEntry
+	(Feature)(0),                    // 13: replication.Feature
 }
 var file_admin_proto_depIdxs = []int32{
-	1,  // 0: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServer
-	11, // 1: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
-	7,  // 2: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
-	0,  // 3: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
-	3,  // 4: io.oxia.proto.v1.OxiaAdmin.GetDataServer:input_type -> io.oxia.proto.v1.GetDataServerRequest
-	4,  // 5: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
-	6,  // 6: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
-	9,  // 7: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
-	2,  // 8: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
-	1,  // 9: io.oxia.proto.v1.OxiaAdmin.GetDataServer:output_type -> io.oxia.proto.v1.DataServer
-	5,  // 10: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
-	8,  // 11: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
-	10, // 12: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
-	8,  // [8:13] is the sub-list for method output_type
-	3,  // [3:8] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	11, // 0: io.oxia.proto.v1.DataServer.metadata:type_name -> io.oxia.proto.v1.DataServer.MetadataEntry
+	13, // 1: io.oxia.proto.v1.DataServer.supported_features:type_name -> replication.Feature
+	1,  // 2: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServer
+	12, // 3: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
+	7,  // 4: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
+	0,  // 5: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
+	3,  // 6: io.oxia.proto.v1.OxiaAdmin.GetDataServer:input_type -> io.oxia.proto.v1.GetDataServerRequest
+	4,  // 7: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
+	6,  // 8: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
+	9,  // 9: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
+	2,  // 10: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
+	1,  // 11: io.oxia.proto.v1.OxiaAdmin.GetDataServer:output_type -> io.oxia.proto.v1.DataServer
+	5,  // 12: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
+	8,  // 13: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
+	10, // 14: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
+	10, // [10:15] is the sub-list for method output_type
+	5,  // [5:10] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -667,6 +692,7 @@ func file_admin_proto_init() {
 	if File_admin_proto != nil {
 		return
 	}
+	file_replication_proto_init()
 	file_admin_proto_msgTypes[1].OneofWrappers = []any{}
 	file_admin_proto_msgTypes[7].OneofWrappers = []any{}
 	file_admin_proto_msgTypes[9].OneofWrappers = []any{}
@@ -676,7 +702,7 @@ func file_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

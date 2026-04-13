@@ -42,9 +42,11 @@ func Test_cmd_getDataServer(t *testing.T) {
 
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServer{
-		Name:            &serverName,
-		PublicAddress:   "public1",
-		InternalAddress: "internal1",
+		Name:              &serverName,
+		PublicAddress:     "public1",
+		InternalAddress:   "internal1",
+		Metadata:          map[string]string{"rack": "r1"},
+		SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 	}, nil)
 
 	out, err := runCmd(Cmd, serverName)
@@ -56,4 +58,6 @@ func Test_cmd_getDataServer(t *testing.T) {
 	assert.Equal(t, serverName, *dataServer.Name)
 	assert.Equal(t, "public1", dataServer.PublicAddress)
 	assert.Equal(t, "internal1", dataServer.InternalAddress)
+	assert.Equal(t, map[string]string{"rack": "r1"}, dataServer.Metadata)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, dataServer.SupportedFeatures)
 }

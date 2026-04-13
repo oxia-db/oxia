@@ -202,6 +202,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		coordinatorInstance.StatusResource(),
 		clusterConfigProvider,
 		coordinatorInstance,
+		coordinatorInstance,
 	)
 	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, admin)

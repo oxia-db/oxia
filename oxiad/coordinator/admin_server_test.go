@@ -24,8 +24,34 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
+
+type testDataServerController struct {
+	features []proto.Feature
+}
+
+func (*testDataServerController) Close() error {
+	return nil
+}
+
+func (*testDataServerController) Status() controller.DataServerStatus {
+	return controller.Running
+}
+
+func (t *testDataServerController) SupportedFeatures() []proto.Feature {
+	return t.features
+}
+
+func (*testDataServerController) SetStatus(controller.DataServerStatus) {
+}
+
+type testDataServerFeatureProvider map[string]controller.DataServerController
+
+func (t testDataServerFeatureProvider) NodeControllers() map[string]controller.DataServerController {
+	return t
+}
 
 func TestAdminServerListDataServers(t *testing.T) {
 	serverName1 := "server-1"
@@ -41,9 +67,15 @@ func TestAdminServerListDataServers(t *testing.T) {
 					{Name: &serverName2, Public: "public-2", Internal: "internal-2"},
 					{Name: &serverName3, Public: "public-3", Internal: "internal-3"},
 				},
+				ServerMetadata: map[string]model.ServerMetadata{
+					serverName2: {Labels: map[string]string{"rack": "r2"}},
+				},
 			}, nil
 		},
 		nil,
+		testDataServerFeatureProvider{
+			serverName2: &testDataServerController{features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
+		},
 	)
 
 	res, err := admin.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
@@ -59,11 +91,15 @@ func TestAdminServerListDataServers(t *testing.T) {
 	assert.Equal(t, serverName2, *res.DataServers[1].Name)
 	assert.Equal(t, "public-2", res.DataServers[1].PublicAddress)
 	assert.Equal(t, "internal-2", res.DataServers[1].InternalAddress)
+	assert.Equal(t, map[string]string{"rack": "r2"}, res.DataServers[1].Metadata)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, res.DataServers[1].SupportedFeatures)
 
 	require.NotNil(t, res.DataServers[2].Name)
 	assert.Equal(t, serverName3, *res.DataServers[2].Name)
 	assert.Equal(t, "public-3", res.DataServers[2].PublicAddress)
 	assert.Equal(t, "internal-3", res.DataServers[2].InternalAddress)
+	assert.Nil(t, res.DataServers[2].Metadata)
+	assert.Nil(t, res.DataServers[2].SupportedFeatures)
 }
 
 func TestAdminServerGetDataServer(t *testing.T) {
@@ -77,9 +113,15 @@ func TestAdminServerGetDataServer(t *testing.T) {
 					{Public: "public-1", Internal: "internal-1"},
 					{Name: &serverName, Public: "public-2", Internal: "internal-2"},
 				},
+				ServerMetadata: map[string]model.ServerMetadata{
+					serverName: {Labels: map[string]string{"zone": "z1"}},
+				},
 			}, nil
 		},
 		nil,
+		testDataServerFeatureProvider{
+			serverName: &testDataServerController{features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
+		},
 	)
 
 	res, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: serverName})
@@ -88,6 +130,8 @@ func TestAdminServerGetDataServer(t *testing.T) {
 	assert.Equal(t, serverName, *res.Name)
 	assert.Equal(t, "public-2", res.PublicAddress)
 	assert.Equal(t, "internal-2", res.InternalAddress)
+	assert.Equal(t, map[string]string{"zone": "z1"}, res.Metadata)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, res.SupportedFeatures)
 }
 
 func TestAdminServerGetDataServerNotFound(t *testing.T) {
@@ -100,6 +144,7 @@ func TestAdminServerGetDataServerNotFound(t *testing.T) {
 				},
 			}, nil
 		},
+		nil,
 		nil,
 	)
 

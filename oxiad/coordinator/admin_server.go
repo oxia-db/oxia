@@ -24,6 +24,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
@@ -31,6 +32,10 @@ import (
 // ShardSplitter is implemented by the coordinator to initiate shard splits.
 type ShardSplitter interface {
 	InitiateSplit(namespace string, parentShardId int64, splitPoint *uint32) (leftChild, rightChild int64, err error)
+}
+
+type DataServerFeatureProvider interface {
+	NodeControllers() map[string]controller.DataServerController
 }
 
 var _ proto.OxiaAdminServer = (*adminServer)(nil)
@@ -41,6 +46,7 @@ type adminServer struct {
 	statusResource resource.StatusResource
 	clusterConfig  func() (model.ClusterConfig, error)
 	shardSplitter  ShardSplitter
+	featureSource  DataServerFeatureProvider
 }
 
 func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
@@ -51,11 +57,7 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
-		dataServers[i] = &proto.DataServer{
-			Name:            server.Name,
-			PublicAddress:   server.Public,
-			InternalAddress: server.Internal,
-		}
+		dataServers[i] = admin.toProtoDataServer(cnf, server)
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
@@ -71,14 +73,36 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 		if server.GetIdentifier() != req.DataServer {
 			continue
 		}
-		return &proto.DataServer{
-			Name:            server.Name,
-			PublicAddress:   server.Public,
-			InternalAddress: server.Internal,
-		}, nil
+		return admin.toProtoDataServer(cnf, server), nil
 	}
 
 	return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
+}
+
+func (admin *adminServer) toProtoDataServer(cnf model.ClusterConfig, server model.Server) *proto.DataServer {
+	identifier := server.GetIdentifier()
+	nodeMeta := cnf.ServerMetadata[identifier]
+
+	return &proto.DataServer{
+		Name:              server.Name,
+		PublicAddress:     server.Public,
+		InternalAddress:   server.Internal,
+		Metadata:          nodeMeta.Labels,
+		SupportedFeatures: admin.supportedFeatures(identifier),
+	}
+}
+
+func (admin *adminServer) supportedFeatures(dataServer string) []proto.Feature {
+	if admin.featureSource == nil {
+		return nil
+	}
+
+	nodeController, ok := admin.featureSource.NodeControllers()[dataServer]
+	if !ok || nodeController == nil {
+		return nil
+	}
+
+	return nodeController.SupportedFeatures()
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
@@ -147,10 +171,12 @@ func newAdminServer(
 	statusResource resource.StatusResource,
 	clusterConfig func() (model.ClusterConfig, error),
 	shardSplitter ShardSplitter,
+	featureSource DataServerFeatureProvider,
 ) *adminServer {
 	return &adminServer{
 		statusResource: statusResource,
 		clusterConfig:  clusterConfig,
 		shardSplitter:  shardSplitter,
+		featureSource:  featureSource,
 	}
 }

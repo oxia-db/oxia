@@ -183,9 +183,11 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
 				getDataServerResponse: &proto.DataServer{
-					Name:            &serverName,
-					PublicAddress:   "public-1",
-					InternalAddress: "internal-1",
+					Name:              &serverName,
+					PublicAddress:     "public-1",
+					InternalAddress:   "internal-1",
+					Metadata:          map[string]string{"rack": "r1"},
+					SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 				},
 			},
 		},
@@ -198,6 +200,8 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	assert.Equal(t, serverName, *dataServer.Name)
 	assert.Equal(t, "public-1", dataServer.PublicAddress)
 	assert.Equal(t, "internal-1", dataServer.InternalAddress)
+	assert.Equal(t, map[string]string{"rack": "r1"}, dataServer.Metadata)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, dataServer.SupportedFeatures)
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

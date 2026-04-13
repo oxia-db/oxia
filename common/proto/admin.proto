@@ -19,6 +19,8 @@ syntax = "proto3";
 
 package io.oxia.proto.v1;
 
+import "replication.proto";
+
 option go_package = "github.com/oxia-db/oxia/common/proto";
 option java_multiple_files = true;
 
@@ -47,6 +49,8 @@ message DataServer {
   optional string name = 1;
   string public_address = 2;
   string internal_address = 3;
+  map<string, string> metadata = 4;
+  repeated replication.Feature supported_features = 5;
 }
 
 message ListDataServersResponse {
