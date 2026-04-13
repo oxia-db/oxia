@@ -64,7 +64,7 @@ func (admin *adminClientImpl) ListNodes() *ListNodesResult {
 		}
 	}
 
-	response, err := client.ListNodes(context.Background(), &proto.ListNodesRequest{})
+	response, err := client.ListNodes(context.Background(), &proto.ListNodesRequest{}) //nolint:staticcheck // Deprecated compatibility path.
 	if err != nil {
 		return &ListNodesResult{Error: err}
 	}
