@@ -213,18 +213,9 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 
-	metrics := options.Observability.Metric
-
-	var metricsServer *metric.PrometheusMetrics
-	if metrics.IsEnabled() {
-		metricTLS, err := metrics.TLS.TryIntoServerTLSConf()
-		if err != nil {
-			return nil, err
-		}
-		metricsServer, err = metric.Start(metrics.BindAddress, metricTLS) //nolint:contextcheck
-		if err != nil {
-			return nil, err
-		}
+	metricsServer, err := startMetricsServer(options.Observability.Metric) //nolint:contextcheck
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
 	server := GrpcServer{
@@ -258,6 +249,17 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	})
 
 	return &server, nil
+}
+
+func startMetricsServer(metrics commonoption.MetricOptions) (*metric.PrometheusMetrics, error) {
+	if !metrics.IsEnabled() {
+		return nil, nil //nolint:nilnil
+	}
+	metricTLS, err := metrics.TLS.TryIntoServerTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	return metric.Start(metrics.BindAddress, metricTLS)
 }
 
 func (s *GrpcServer) backgroundHandleConfChange() {
