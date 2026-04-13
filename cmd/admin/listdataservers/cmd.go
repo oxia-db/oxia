@@ -12,24 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package listnodes
+package listdataservers
 
 import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-
 	cc "github.com/oxia-db/oxia/cmd/client/common"
 	"github.com/oxia-db/oxia/oxia"
 )
 
-func init() {
-}
-
 var Cmd = &cobra.Command{
-	Use:          "list-nodes",
-	Short:        "List nodes (deprecated: use list-data-servers)",
-	Long:         `List nodes (deprecated: use list-data-servers)`,
+	Use:          "list-data-servers",
+	Short:        "List data servers",
+	Long:         `List data servers`,
 	Args:         cobra.ExactArgs(0),
 	RunE:         exec,
 	SilenceUsage: true,
@@ -45,10 +41,10 @@ func exec(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	result := client.ListNodes() //nolint:staticcheck // Deprecated compatibility command.
-	if result.Error != nil {
-		return result.Error
+	dataServers, err := client.ListDataServers()
+	if err != nil {
+		return err
 	}
-	cc.WriteOutput(cmd.OutOrStdout(), result.Nodes)
+	cc.WriteOutput(cmd.OutOrStdout(), dataServers)
 	return nil
 }

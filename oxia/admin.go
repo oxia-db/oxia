@@ -14,13 +14,20 @@
 
 package oxia
 
-import "io"
+import (
+	"io"
+
+	"github.com/oxia-db/oxia/common/proto"
+)
 
 type AdminClient interface {
 	io.Closer
 
+	ListDataServers() ([]*proto.DataServer, error)
+
 	ListNamespaces() *ListNamespacesResult
 
+	// Deprecated: Use ListDataServers instead.
 	ListNodes() *ListNodesResult
 
 	SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult

@@ -41,6 +41,24 @@ type adminServer struct {
 	shardSplitter  ShardSplitter
 }
 
+func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
+	cnf, err := admin.clusterConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	dataServers := make([]*proto.DataServer, len(cnf.Servers))
+	for i, server := range cnf.Servers {
+		dataServers[i] = &proto.DataServer{
+			Name:            server.Name,
+			PublicAddress:   server.Public,
+			InternalAddress: server.Internal,
+		}
+	}
+
+	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
+}
+
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
 	cnf, err := admin.clusterConfig()
 	if err != nil {
