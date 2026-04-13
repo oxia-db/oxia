@@ -36,16 +36,16 @@ type adminClientImpl struct {
 func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
-		return nil, err
+		return nil, mapAdminError(err)
 	}
 
 	if client == nil {
-		return nil, errors.New("unable to connect to admin server")
+		return nil, wrapAdminError(ErrAdminUnavailable, errors.New("unable to connect to admin server"))
 	}
 
 	response, err := client.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
 	if err != nil {
-		return nil, err
+		return nil, mapAdminError(err)
 	}
 	return response.DataServers, nil
 }

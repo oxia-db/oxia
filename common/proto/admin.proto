@@ -28,6 +28,7 @@ service OxiaAdmin {
 
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
 
+  // Deprecated: Use ListDataServers instead.
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
 
   /**

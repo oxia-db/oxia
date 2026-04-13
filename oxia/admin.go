@@ -27,6 +27,7 @@ type AdminClient interface {
 
 	ListNamespaces() *ListNamespacesResult
 
+	// Deprecated: Use ListDataServers instead.
 	ListNodes() *ListNodesResult
 
 	SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
