@@ -112,6 +112,10 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 		slog.Any("req", write),
 	)
 
+	if err := validateWriteRequest(write); err != nil {
+		return nil, err
+	}
+
 	lc, err := s.getLeader(write.Shard)
 	if err != nil {
 		return nil, err
@@ -131,6 +135,11 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 
 func procesWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer, lc lead.LeaderController) {
 	for {
+		if streamCtx.Err() != nil {
+			channel.PushNoBlock(finished, streamCtx.Err())
+			return
+		}
+
 		req, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -142,6 +151,11 @@ func procesWriteStream(streamCtx context.Context, finished chan<- error, stream 
 		}
 		if req == nil {
 			channel.PushNoBlock(finished, errors.New("stream closed"))
+			return
+		}
+
+		if err := validateWriteRequest(req); err != nil {
+			channel.PushNoBlock(finished, err)
 			return
 		}
 
