@@ -62,19 +62,19 @@ func (m *mockAdminClientPool) Close() error {
 }
 
 func (m *mockAdminClientPool) GetClientRpc(string) (proto.OxiaClientClient, error) {
-	return nil, nil
+	return nil, errors.New("unexpected GetClientRpc call")
 }
 
 func (m *mockAdminClientPool) GetHealthRpc(string) (grpc_health_v1.HealthClient, io.Closer, error) {
-	return nil, nil, nil
+	return nil, nil, errors.New("unexpected GetHealthRpc call")
 }
 
 func (m *mockAdminClientPool) GetCoordinationRpc(string) (proto.OxiaCoordinationClient, error) {
-	return nil, nil
+	return nil, errors.New("unexpected GetCoordinationRpc call")
 }
 
 func (m *mockAdminClientPool) GetReplicationRpc(string) (proto.OxiaLogReplicationClient, error) {
-	return nil, nil
+	return nil, errors.New("unexpected GetReplicationRpc call")
 }
 
 func (m *mockAdminClientPool) GetAminRpc(string) (proto.OxiaAdminClient, error) {

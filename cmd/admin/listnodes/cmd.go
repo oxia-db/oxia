@@ -45,7 +45,7 @@ func exec(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	result := client.ListNodes()
+	result := client.ListNodes() //nolint:staticcheck // Deprecated compatibility command.
 	if result.Error != nil {
 		return result.Error
 	}
