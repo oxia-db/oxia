@@ -48,6 +48,7 @@ const (
 type OxiaAdminClient interface {
 	ListDataServers(ctx context.Context, in *ListDataServersRequest, opts ...grpc.CallOption) (*ListDataServersResponse, error)
 	ListNamespaces(ctx context.Context, in *ListNamespacesRequest, opts ...grpc.CallOption) (*ListNamespacesResponse, error)
+	// Deprecated: Use ListDataServers instead.
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	// *
 	// Triggers a shard split. The specified shard is split into two child
@@ -109,6 +110,7 @@ func (c *oxiaAdminClient) SplitShard(ctx context.Context, in *SplitShardRequest,
 type OxiaAdminServer interface {
 	ListDataServers(context.Context, *ListDataServersRequest) (*ListDataServersResponse, error)
 	ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error)
+	// Deprecated: Use ListDataServers instead.
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	// *
 	// Triggers a shard split. The specified shard is split into two child

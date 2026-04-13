@@ -23,9 +23,9 @@ import (
 )
 
 var (
-	ErrUnauthorized   = errors.New("unauthorized")
+	ErrUnauthorized    = errors.New("unauthorized")
 	ErrUnauthenticated = errors.New("unauthenticated")
-	ErrUnknown        = errors.New("unknown")
+	ErrUnknown         = errors.New("unknown")
 )
 
 type adminError struct {
