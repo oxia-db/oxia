@@ -34,10 +34,16 @@ import (
 type mockAdminRpcClient struct {
 	listDataServersResponse *proto.ListDataServersResponse
 	listDataServersErr      error
+	getDataServerResponse   *proto.DataServer
+	getDataServerErr        error
 }
 
 func (m *mockAdminRpcClient) ListDataServers(context.Context, *proto.ListDataServersRequest, ...grpc.CallOption) (*proto.ListDataServersResponse, error) {
 	return m.listDataServersResponse, m.listDataServersErr
+}
+
+func (m *mockAdminRpcClient) GetDataServer(context.Context, *proto.GetDataServerRequest, ...grpc.CallOption) (*proto.DataServer, error) {
+	return m.getDataServerResponse, m.getDataServerErr
 }
 
 func (*mockAdminRpcClient) ListNamespaces(context.Context, *proto.ListNamespacesRequest, ...grpc.CallOption) (*proto.ListNamespacesResponse, error) {
@@ -168,6 +174,30 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 	assert.Equal(t, serverName, *dataServers[0].Name)
 	assert.Equal(t, "public-1", dataServers[0].PublicAddress)
 	assert.Equal(t, "internal-1", dataServers[0].InternalAddress)
+}
+
+func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
+	serverName := "server-1"
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				getDataServerResponse: &proto.DataServer{
+					Name:            &serverName,
+					PublicAddress:   "public-1",
+					InternalAddress: "internal-1",
+				},
+			},
+		},
+	}
+
+	dataServer, err := admin.GetDataServer(serverName)
+	require.NoError(t, err)
+	require.NotNil(t, dataServer)
+	require.NotNil(t, dataServer.Name)
+	assert.Equal(t, serverName, *dataServer.Name)
+	assert.Equal(t, "public-1", dataServer.PublicAddress)
+	assert.Equal(t, "internal-1", dataServer.InternalAddress)
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

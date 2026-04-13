@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
+	"github.com/oxia-db/oxia/cmd/admin/getdataserver"
 	"github.com/oxia-db/oxia/cmd/admin/listdataservers"
 	"github.com/oxia-db/oxia/cmd/admin/listnodes"
 	"github.com/oxia-db/oxia/cmd/admin/splitshard"
@@ -41,6 +42,7 @@ func init() {
 	defaultAdminClientAddress := fmt.Sprintf("localhost:%d", oxiacommon.DefaultAdminPort)
 	Cmd.PersistentFlags().StringVar(&commons.AdminConfig.AdminAddress, "admin-address", defaultAdminClientAddress, "Admin client address")
 
+	Cmd.AddCommand(getdataserver.Cmd)
 	Cmd.AddCommand(listdataservers.Cmd)
 	Cmd.AddCommand(listnamespaces.Cmd)
 	Cmd.AddCommand(listnodes.Cmd)

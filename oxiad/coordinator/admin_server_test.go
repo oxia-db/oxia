@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -62,4 +64,46 @@ func TestAdminServerListDataServers(t *testing.T) {
 	assert.Equal(t, serverName3, *res.DataServers[2].Name)
 	assert.Equal(t, "public-3", res.DataServers[2].PublicAddress)
 	assert.Equal(t, "internal-3", res.DataServers[2].InternalAddress)
+}
+
+func TestAdminServerGetDataServer(t *testing.T) {
+	serverName := "server-2"
+
+	admin := newAdminServer(
+		nil,
+		func() (model.ClusterConfig, error) {
+			return model.ClusterConfig{
+				Servers: []model.Server{
+					{Public: "public-1", Internal: "internal-1"},
+					{Name: &serverName, Public: "public-2", Internal: "internal-2"},
+				},
+			}, nil
+		},
+		nil,
+	)
+
+	res, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: serverName})
+	require.NoError(t, err)
+	require.NotNil(t, res.Name)
+	assert.Equal(t, serverName, *res.Name)
+	assert.Equal(t, "public-2", res.PublicAddress)
+	assert.Equal(t, "internal-2", res.InternalAddress)
+}
+
+func TestAdminServerGetDataServerNotFound(t *testing.T) {
+	admin := newAdminServer(
+		nil,
+		func() (model.ClusterConfig, error) {
+			return model.ClusterConfig{
+				Servers: []model.Server{
+					{Public: "public-1", Internal: "internal-1"},
+				},
+			}, nil
+		},
+		nil,
+	)
+
+	_, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "missing"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }

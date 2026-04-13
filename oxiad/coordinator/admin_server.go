@@ -20,6 +20,8 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
 	"github.com/pkg/errors"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -57,6 +59,26 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
+}
+
+func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.DataServer, error) {
+	cnf, err := admin.clusterConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, server := range cnf.Servers {
+		if server.GetIdentifier() != req.DataServer {
+			continue
+		}
+		return &proto.DataServer{
+			Name:            server.Name,
+			PublicAddress:   server.Public,
+			InternalAddress: server.Internal,
+		}, nil
+	}
+
+	return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
