@@ -97,7 +97,7 @@ func TestAdminClientListDataServersMapsGrpcErrors(t *testing.T) {
 
 	_, err := admin.ListDataServers()
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrAdminNotFound)
+	assert.ErrorIs(t, err, ErrUnknown)
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }
 
@@ -111,8 +111,35 @@ func TestAdminClientListDataServersMapsUnavailableConnection(t *testing.T) {
 
 	_, err := admin.ListDataServers()
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrAdminUnavailable)
+	assert.ErrorIs(t, err, ErrUnknown)
 	assert.Equal(t, codes.Unavailable, grpcstatus.Code(err))
+}
+
+func TestAdminClientListDataServersMapsAuthErrors(t *testing.T) {
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				listDataServersErr: grpcstatus.Error(codes.PermissionDenied, "forbidden"),
+			},
+		},
+	}
+
+	_, err := admin.ListDataServers()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnauthorized)
+	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
+
+	admin.clientPool = &mockAdminClientPool{
+		adminClient: &mockAdminRpcClient{
+			listDataServersErr: grpcstatus.Error(codes.Unauthenticated, "missing token"),
+		},
+	}
+
+	_, err = admin.ListDataServers()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnauthenticated)
+	assert.Equal(t, codes.Unauthenticated, grpcstatus.Code(err))
 }
 
 func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
@@ -149,6 +176,6 @@ func TestWrapAdminErrorPreservesCause(t *testing.T) {
 	err := mapAdminError(cause)
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrAdminInvalidArgument)
+	assert.ErrorIs(t, err, ErrUnknown)
 	assert.True(t, errors.Is(err, cause))
 }

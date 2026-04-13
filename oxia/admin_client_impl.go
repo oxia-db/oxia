@@ -40,7 +40,7 @@ func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
 	}
 
 	if client == nil {
-		return nil, wrapAdminError(ErrAdminUnavailable, errors.New("unable to connect to admin server"))
+		return nil, wrapAdminError(ErrUnknown, errors.New("unable to connect to admin server"))
 	}
 
 	response, err := client.ListDataServers(context.Background(), &proto.ListDataServersRequest{})

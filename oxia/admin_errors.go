@@ -23,13 +23,9 @@ import (
 )
 
 var (
-	ErrAdminInvalidArgument = errors.New("admin invalid argument")
-	ErrAdminNotFound        = errors.New("admin resource not found")
-	ErrAdminAlreadyExists   = errors.New("admin resource already exists")
-	ErrAdminNotLeader       = errors.New("admin request must be handled by leader")
-	ErrAdminUnavailable     = errors.New("admin service unavailable")
-	ErrAdminUnauthorized    = errors.New("admin request unauthorized")
-	ErrAdminUnimplemented   = errors.New("admin operation not implemented")
+	ErrUnauthorized   = errors.New("unauthorized")
+	ErrUnauthenticated = errors.New("unauthenticated")
+	ErrUnknown        = errors.New("unknown")
 )
 
 type adminError struct {
@@ -68,21 +64,11 @@ func mapAdminError(err error) error {
 	}
 
 	switch status.Code(err) {
-	case codes.InvalidArgument:
-		return wrapAdminError(ErrAdminInvalidArgument, err)
-	case codes.NotFound:
-		return wrapAdminError(ErrAdminNotFound, err)
-	case codes.AlreadyExists:
-		return wrapAdminError(ErrAdminAlreadyExists, err)
-	case codes.FailedPrecondition:
-		return wrapAdminError(ErrAdminNotLeader, err)
-	case codes.Unauthenticated, codes.PermissionDenied:
-		return wrapAdminError(ErrAdminUnauthorized, err)
-	case codes.Unimplemented:
-		return wrapAdminError(ErrAdminUnimplemented, err)
-	case codes.Unavailable:
-		return wrapAdminError(ErrAdminUnavailable, err)
+	case codes.PermissionDenied:
+		return wrapAdminError(ErrUnauthorized, err)
+	case codes.Unauthenticated:
+		return wrapAdminError(ErrUnauthenticated, err)
 	default:
-		return err
+		return wrapAdminError(ErrUnknown, err)
 	}
 }
