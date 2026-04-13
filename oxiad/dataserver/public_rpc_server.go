@@ -129,10 +129,9 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 	return wr, err
 }
 
-func procesWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer, lc lead.LeaderController) {
+func processWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer, lc lead.LeaderController) {
 	for {
 		if streamCtx.Err() != nil {
-			channel.PushNoBlock(finished, streamCtx.Err())
 			return
 		}
 
@@ -200,7 +199,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 			"shard":     fmt.Sprintf("%d", lc.ShardID()),
 		},
 		func() {
-			procesWriteStream(streamCtx, finished, stream, lc)
+			processWriteStream(streamCtx, finished, stream, lc)
 		},
 	)
 
