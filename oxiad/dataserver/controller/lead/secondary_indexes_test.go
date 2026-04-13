@@ -353,3 +353,41 @@ func TestSecondaryIndices_MultipleKeysForSameIdx(t *testing.T) {
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
+
+func TestDoSecondaryGet_UnsupportedComparisonType(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+
+	lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+
+	// Write data with a secondary index so the iterator has entries to iterate
+	_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{
+			{Key: "/a", Value: []byte("0"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "my-idx", SecondaryKey: "0"}}},
+		},
+	})
+	assert.NoError(t, err)
+
+	// Call doSecondaryGet with an unsupported ComparisonType to hit the default branch
+	db := lc.(*leaderController).db
+	_, _, err = doSecondaryGet(db, &proto.GetRequest{
+		Key:                "0",
+		SecondaryIndexName: pb.String("my-idx"),
+		ComparisonType:     proto.KeyComparisonType(999),
+	})
+	assert.ErrorContains(t, err, "unsupported comparison type")
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
