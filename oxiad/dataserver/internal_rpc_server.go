@@ -59,6 +59,10 @@ type internalRpcServer struct {
 
 func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc2.HealthServer, tlsConf *tls.Config, authOptions *auth.Options) (*internalRpcServer, error) {
+	if authOptions == nil {
+		authOptions = &auth.Disabled
+	}
+
 	server := &internalRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,
