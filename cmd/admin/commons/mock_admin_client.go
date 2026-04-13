@@ -18,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/mock"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 )
 
@@ -46,9 +47,9 @@ func (m *MockAdminClient) ListNamespaces() *oxia.ListNamespacesResult {
 	}
 }
 
-func (m *MockAdminClient) ListDataServers() ([]*oxia.DataServer, error) {
+func (m *MockAdminClient) ListDataServers() ([]*proto.DataServer, error) {
 	args := m.MethodCalled("ListDataServers")
-	if v, ok := args.Get(0).([]*oxia.DataServer); ok {
+	if v, ok := args.Get(0).([]*proto.DataServer); ok {
 		return v, args.Error(1)
 	}
 	return nil, errors.New("no data servers available")

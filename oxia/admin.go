@@ -16,12 +16,14 @@ package oxia
 
 import (
 	"io"
+
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 type AdminClient interface {
 	io.Closer
 
-	ListDataServers() ([]*DataServer, error)
+	ListDataServers() ([]*proto.DataServer, error)
 
 	ListNamespaces() *ListNamespacesResult
 
@@ -40,12 +42,6 @@ type Node struct {
 	PublicAddress   string
 	InternalAddress string
 	Metadata        map[string]string
-}
-
-type DataServer struct {
-	Name            *string
-	PublicAddress   string
-	InternalAddress string
 }
 
 type ListNodesResult struct {

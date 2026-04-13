@@ -33,7 +33,7 @@ type adminClientImpl struct {
 	clientPool rpc.ClientPool
 }
 
-func (admin *adminClientImpl) ListDataServers() ([]*DataServer, error) {
+func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, err
@@ -47,16 +47,7 @@ func (admin *adminClientImpl) ListDataServers() ([]*DataServer, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	dataServers := make([]*DataServer, len(response.DataServers))
-	for i, dataServer := range response.DataServers {
-		dataServers[i] = &DataServer{
-			Name:            dataServer.Name,
-			PublicAddress:   dataServer.PublicAddress,
-			InternalAddress: dataServer.InternalAddress,
-		}
-	}
-	return dataServers, nil
+	return response.DataServers, nil
 }
 
 func (admin *adminClientImpl) ListNodes() *ListNodesResult {

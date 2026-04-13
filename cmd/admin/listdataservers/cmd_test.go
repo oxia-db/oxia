@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/oxia"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func runCmd(cmd *cobra.Command) (string, error) {
@@ -40,7 +40,7 @@ func Test_cmd_listDataServers(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ListDataServers").Return([]*oxia.DataServer{
+	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServer{
 		{
 			Name:            nil,
 			PublicAddress:   "public1",
@@ -56,7 +56,7 @@ func Test_cmd_listDataServers(t *testing.T) {
 	out, err := runCmd(Cmd)
 
 	assert.NoError(t, err)
-	var dataServers []oxia.DataServer
+	var dataServers []proto.DataServer
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServers))
 	assert.Equal(t, 2, len(dataServers))
 	assert.Equal(t, "public1", dataServers[0].PublicAddress)
