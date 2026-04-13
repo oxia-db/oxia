@@ -56,6 +56,7 @@ type Coordinator interface {
 
 	StatusResource() resource.StatusResource
 	ConfigResource() resource.ClusterConfigResource
+	DataServerInfos() map[string]DataServerInfo
 }
 
 var _ Coordinator = &coordinator{}
@@ -123,6 +124,26 @@ func (c *coordinator) NodeControllers() map[string]controller.DataServerControll
 	res := make(map[string]controller.DataServerController, len(c.nodeControllers))
 	for k, v := range c.nodeControllers {
 		res[k] = v
+	}
+	return res
+}
+
+func (c *coordinator) DataServerInfos() map[string]DataServerInfo {
+	c.RLock()
+	defer c.RUnlock()
+
+	res := make(map[string]DataServerInfo, len(c.nodeControllers)+len(c.drainingNodes))
+	for id, nodeController := range c.nodeControllers {
+		res[id] = DataServerInfo{
+			Status:            nodeController.Status(),
+			FeaturesSupported: nodeController.SupportedFeatures(),
+		}
+	}
+	for id, nodeController := range c.drainingNodes {
+		res[id] = DataServerInfo{
+			Status:            nodeController.Status(),
+			FeaturesSupported: nodeController.SupportedFeatures(),
+		}
 	}
 	return res
 }

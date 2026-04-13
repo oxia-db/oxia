@@ -46,6 +46,16 @@ func (m *MockAdminClient) ListNamespaces() *oxia.ListNamespacesResult {
 	}
 }
 
+func (m *MockAdminClient) ListDataServers() *oxia.ListDataServersResult {
+	args := m.MethodCalled("ListDataServers")
+	if v, ok := args.Get(0).(*oxia.ListDataServersResult); ok {
+		return v
+	}
+	return &oxia.ListDataServersResult{
+		Error: errors.New("no data servers available"),
+	}
+}
+
 func (m *MockAdminClient) ListNodes() *oxia.ListNodesResult {
 	args := m.MethodCalled("ListNodes")
 	if v, ok := args.Get(0).(*oxia.ListNodesResult); ok {

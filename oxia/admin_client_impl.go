@@ -33,6 +33,40 @@ type adminClientImpl struct {
 	clientPool rpc.ClientPool
 }
 
+func (admin *adminClientImpl) ListDataServers() *ListDataServersResult {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return &ListDataServersResult{
+			Error: err,
+		}
+	}
+
+	if client == nil {
+		return &ListDataServersResult{
+			Error: errors.New("unable to connect to admin server"),
+		}
+	}
+
+	response, err := client.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
+	if err != nil {
+		return &ListDataServersResult{Error: err}
+	}
+
+	dataServers := make([]*DataServer, len(response.DataServers))
+	for i, dataServer := range response.DataServers {
+		dataServers[i] = &DataServer{
+			Name:              dataServer.Name,
+			PublicAddress:     dataServer.PublicAddress,
+			InternalAddress:   dataServer.InternalAddress,
+			Metadata:          dataServer.Metadata,
+			Status:            DataServerStatus(dataServer.Status),
+			FeaturesSupported: dataServer.FeaturesSupported,
+			ShardCount:        dataServer.ShardCount,
+		}
+	}
+	return &ListDataServersResult{DataServers: dataServers}
+}
+
 func (admin *adminClientImpl) ListNodes() *ListNodesResult {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {

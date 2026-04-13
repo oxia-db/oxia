@@ -14,10 +14,16 @@
 
 package oxia
 
-import "io"
+import (
+	"io"
+
+	"github.com/oxia-db/oxia/common/proto"
+)
 
 type AdminClient interface {
 	io.Closer
+
+	ListDataServers() *ListDataServersResult
 
 	ListNamespaces() *ListNamespacesResult
 
@@ -36,6 +42,30 @@ type Node struct {
 	PublicAddress   string
 	InternalAddress string
 	Metadata        map[string]string
+}
+
+type DataServerStatus int32
+
+const (
+	DataServerStatusUnknown DataServerStatus = iota
+	DataServerStatusRunning
+	DataServerStatusNotRunning
+	DataServerStatusDraining
+)
+
+type DataServer struct {
+	Name              *string
+	PublicAddress     string
+	InternalAddress   string
+	Metadata          map[string]string
+	Status            DataServerStatus
+	FeaturesSupported []proto.Feature
+	ShardCount        uint32
+}
+
+type ListDataServersResult struct {
+	DataServers []*DataServer
+	Error       error
 }
 
 type ListNodesResult struct {

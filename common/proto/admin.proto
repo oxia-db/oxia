@@ -22,7 +22,11 @@ package io.oxia.proto.v1;
 option go_package = "github.com/oxia-db/oxia/common/proto";
 option java_multiple_files = true;
 
+import "replication.proto";
+
 service OxiaAdmin {
+
+  rpc ListDataServers(ListDataServersRequest) returns (ListDataServersResponse);
 
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
 
@@ -34,6 +38,30 @@ service OxiaAdmin {
    */
   rpc SplitShard(SplitShardRequest) returns (SplitShardResponse);
 
+}
+
+message ListDataServersRequest {
+}
+
+enum DataServerStatus {
+  DATA_SERVER_STATUS_UNKNOWN = 0;
+  DATA_SERVER_STATUS_RUNNING = 1;
+  DATA_SERVER_STATUS_NOT_RUNNING = 2;
+  DATA_SERVER_STATUS_DRAINING = 3;
+}
+
+message DataServer {
+  optional string name = 1;
+  string public_address = 2;
+  string internal_address = 3;
+  map<string, string> metadata = 4;
+  DataServerStatus status = 5;
+  repeated replication.Feature features_supported = 6;
+  uint32 shard_count = 7;
+}
+
+message ListDataServersResponse {
+  repeated DataServer data_servers = 1;
 }
 
 message ListNamespacesRequest {
