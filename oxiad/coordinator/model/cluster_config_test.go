@@ -92,7 +92,7 @@ func TestValidate_NoNamespaces(t *testing.T) {
 func TestValidate_EmptyNamespaceName(t *testing.T) {
 	cc := validConfig()
 	cc.Namespaces[0].Name = ""
-	assert.ErrorContains(t, cc.Validate(), "namespace name must not be empty")
+	assert.ErrorContains(t, cc.Validate(), "namespace must not be empty")
 }
 
 func TestValidate_ReplicationFactorZero(t *testing.T) {
@@ -139,25 +139,25 @@ func TestClusterConfig_Validate_NamespaceNames(t *testing.T) {
 			name:    "path traversal dot-dot-slash",
 			nsName:  "../evil",
 			wantErr: true,
-			errMsg:  "contains invalid characters",
+			errMsg:  "path traversal sequence",
 		},
 		{
 			name:    "forward slash",
 			nsName:  "ns/evil",
 			wantErr: true,
-			errMsg:  "contains invalid characters",
+			errMsg:  "path separator",
 		},
 		{
 			name:    "backslash",
 			nsName:  "ns\\evil",
 			wantErr: true,
-			errMsg:  "contains invalid characters",
+			errMsg:  "path separator",
 		},
 		{
 			name:    "dot-dot only",
 			nsName:  "..",
 			wantErr: true,
-			errMsg:  "contains invalid characters",
+			errMsg:  "path traversal sequence",
 		},
 		{
 			name:    "starts with dot",

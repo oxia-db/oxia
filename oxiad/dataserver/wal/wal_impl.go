@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +35,7 @@ import (
 	"github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/process"
 	time2 "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/common/validation"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
@@ -101,24 +100,9 @@ func walPath(logDir string, namespace string, shard int64) string {
 	return filepath.Join(logDir, namespace, fmt.Sprint("shard-", shard))
 }
 
-var validNamespacePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$`)
-
-func validateNamespace(namespace string) error {
-	if namespace == "" {
-		return errors.New("namespace name must not be empty")
-	}
-	if strings.Contains(namespace, "/") || strings.Contains(namespace, "\\") || strings.Contains(namespace, "..") {
-		return errors.Errorf("namespace name %q contains path traversal characters", namespace)
-	}
-	if !validNamespacePattern.MatchString(namespace) {
-		return errors.Errorf("namespace name %q contains invalid characters", namespace)
-	}
-	return nil
-}
-
 func newWal(namespace string, shard int64, options *FactoryOptions, commitOffsetProvider CommitOffsetProvider,
 	clock time2.Clock, trimmerCheckInterval time.Duration) (Wal, error) {
-	if err := validateNamespace(namespace); err != nil {
+	if err := validation.ValidateNamespace(namespace); err != nil {
 		return nil, err
 	}
 

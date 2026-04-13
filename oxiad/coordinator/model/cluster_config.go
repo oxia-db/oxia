@@ -15,17 +15,15 @@
 package model
 
 import (
-	"regexp"
 	"time"
 
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxiad/coordinator/policy"
 )
-
-var validNamespaceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$`)
 
 type ClusterConfig struct {
 	Namespaces []NamespaceConfig `json:"namespaces" yaml:"namespaces"`
@@ -86,12 +84,8 @@ func (cc *ClusterConfig) Validate() error {
 	}
 
 	for _, ns := range cc.Namespaces {
-		if ns.Name == "" {
-			return errors.New("cluster config: namespace name must not be empty")
-		}
-
-		if !validNamespaceNamePattern.MatchString(ns.Name) {
-			return errors.Errorf("cluster config: namespace name %q contains invalid characters", ns.Name)
+		if err := validation.ValidateNamespace(ns.Name); err != nil {
+			return errors.Wrap(err, "cluster config")
 		}
 
 		if ns.ReplicationFactor < 1 {

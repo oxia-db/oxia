@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package wal
+package validation
 
 import (
 	"testing"
@@ -64,28 +64,34 @@ func TestValidateNamespace(t *testing.T) {
 			errMsg:    "must not be empty",
 		},
 		{
-			name:      "path traversal with dot-dot",
+			name:      "path traversal with dot-dot prefix",
 			namespace: "../evil",
 			wantErr:   true,
-			errMsg:    "path traversal characters",
+			errMsg:    "path traversal sequence",
 		},
 		{
 			name:      "path traversal with dot-dot only",
 			namespace: "..",
 			wantErr:   true,
-			errMsg:    "path traversal characters",
+			errMsg:    "path traversal sequence",
+		},
+		{
+			name:      "path traversal with embedded dot-dot",
+			namespace: "a..b",
+			wantErr:   true,
+			errMsg:    "path traversal sequence",
 		},
 		{
 			name:      "forward slash",
 			namespace: "ns/evil",
 			wantErr:   true,
-			errMsg:    "path traversal characters",
+			errMsg:    "path separator",
 		},
 		{
 			name:      "backslash",
 			namespace: "ns\\evil",
 			wantErr:   true,
-			errMsg:    "path traversal characters",
+			errMsg:    "path separator",
 		},
 		{
 			name:      "starts with dot",
@@ -109,7 +115,7 @@ func TestValidateNamespace(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateNamespace(tt.namespace)
+			err := ValidateNamespace(tt.namespace)
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.ErrorContains(t, err, tt.errMsg)
