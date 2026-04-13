@@ -24,8 +24,8 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
 )
@@ -39,12 +39,8 @@ func (m *mockStatusResource) Load() *model.ClusterStatus {
 	return m.status
 }
 
-func (m *mockStatusResource) LoadWithVersion() (*model.ClusterStatus, metadata.Version) {
-	return m.status, "0"
-}
-
-func (m *mockStatusResource) Swap(_ *model.ClusterStatus, _ metadata.Version) bool {
-	return true
+func (m *mockStatusResource) ApplyChanges(_ *model.ClusterConfig, _ resource.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+	return m.status, nil, nil
 }
 
 func (m *mockStatusResource) Update(newStatus *model.ClusterStatus) {

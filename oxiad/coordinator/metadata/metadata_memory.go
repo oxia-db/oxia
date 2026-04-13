@@ -32,8 +32,8 @@ type metadataProviderMemory struct {
 	version Version
 }
 
-func (*metadataProviderMemory) WaitToBecomeLeader() (<-chan struct{}, error) {
-	return nil, nil //nolint:nilnil
+func (*metadataProviderMemory) WaitToBecomeLeader() error {
+	return nil
 }
 
 func NewMetadataProviderMemory() Provider {
@@ -58,7 +58,7 @@ func (m *metadataProviderMemory) Store(cs *model.ClusterStatus, expectedVersion 
 	defer m.Unlock()
 
 	if expectedVersion != m.version {
-		return "", ErrMetadataBadVersion
+		panic(ErrMetadataBadVersion)
 	}
 
 	m.cs = cs.Clone()

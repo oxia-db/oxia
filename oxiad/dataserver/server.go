@@ -122,7 +122,7 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 		return nil, err
 	}
 	s.internalRpcServer, err = newInternalRpcServer(provider, internalServer.BindAddress,
-		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTLS)
+		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTLS, &internalServer.Auth)
 	if err != nil {
 		return nil, err
 	}

@@ -58,7 +58,11 @@ type internalRpcServer struct {
 }
 
 func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
-	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc2.HealthServer, tlsConf *tls.Config) (*internalRpcServer, error) {
+	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc2.HealthServer, tlsConf *tls.Config, authOptions *auth.Options) (*internalRpcServer, error) {
+	if authOptions == nil {
+		authOptions = &auth.Disabled
+	}
+
 	server := &internalRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,
@@ -73,7 +77,7 @@ func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, sh
 		proto.RegisterOxiaCoordinationServer(registrar, server)
 		proto.RegisterOxiaLogReplicationServer(registrar, server)
 		grpc_health_v1.RegisterHealthServer(registrar, server.healthServer)
-	}, tlsConf, &auth.Disabled)
+	}, tlsConf, authOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -455,6 +459,10 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 	// If we don't have a follower, fallback to checking the leader controller
 	leader, err := s.shardsDirector.GetLeader(req.Shard)
 	if err != nil {
+		if status.Code(err) == constant.CodeNodeIsNotLeader {
+			// Node is neither follower nor leader for this shard
+			return nil, status.Errorf(constant.CodeNodeIsNotMember, "node is not a member for shard %d", req.Shard)
+		}
 		return nil, err
 	}
 

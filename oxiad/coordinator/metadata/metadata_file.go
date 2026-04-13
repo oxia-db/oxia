@@ -58,16 +58,16 @@ func (m *metadataProviderFile) Close() error {
 	return nil
 }
 
-func (m *metadataProviderFile) WaitToBecomeLeader() (<-chan struct{}, error) {
+func (m *metadataProviderFile) WaitToBecomeLeader() error {
 	if err := m.ensureParentDirectoryExists(); err != nil {
-		return nil, err
+		return err
 	}
 
 	if err := m.fileLock.Lock(); err != nil {
-		return nil, errors.Wrapf(err, "failed to acquire lock on %s", m.path)
+		return errors.Wrapf(err, "failed to acquire lock on %s", m.path)
 	}
 
-	return nil, nil //nolint:nilnil
+	return nil
 }
 
 func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, err error) {
@@ -102,7 +102,7 @@ func (m *metadataProviderFile) Store(cs *model.ClusterStatus, expectedVersion Ve
 	}
 
 	if expectedVersion != existingVersion {
-		return NotExists, ErrMetadataBadVersion
+		panic(ErrMetadataBadVersion)
 	}
 
 	newVersion = incrVersion(existingVersion)

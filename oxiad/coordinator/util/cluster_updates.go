@@ -31,39 +31,33 @@ func findNamespaceConfig(config *model.ClusterConfig, ns string) *model.Namespac
 	return nil
 }
 
-func ApplyClusterChanges(config *model.ClusterConfig, currentStatus *model.ClusterStatus, ensembleSupplier func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error)) (
-	newStatus *model.ClusterStatus,
+func ApplyClusterChanges(config *model.ClusterConfig, status *model.ClusterStatus, ensembleSupplier func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error)) (
 	shardsToAdd map[int64]string,
 	shardsToDelete []int64) {
 	shardsToAdd = map[int64]string{}
 	shardsToDelete = []int64{}
 	var err error
 
-	newStatus = &model.ClusterStatus{
-		Namespaces:       map[string]model.NamespaceStatus{},
-		ShardIdGenerator: currentStatus.ShardIdGenerator,
-		ServerIdx:        currentStatus.ServerIdx,
-	}
-	for k, v := range currentStatus.Namespaces {
-		newStatus.Namespaces[k] = v.Clone()
-	}
-
 	// Check for new namespaces
 	for _, nc := range config.Namespaces {
-		nss, existing := currentStatus.Namespaces[nc.Name]
+		_, existing := status.Namespaces[nc.Name]
 		if existing {
 			continue
 		}
 
 		// This is a new namespace
-		nss = model.NamespaceStatus{
+		nss := model.NamespaceStatus{
 			Shards:            map[int64]model.ShardMetadata{},
 			ReplicationFactor: nc.ReplicationFactor,
 		}
+		// Publish the namespace into status *before* placing shards so that
+		// each per-shard ensembleSupplier call sees the placements made earlier
+		// in this same init cycle.
+		status.Namespaces[nc.Name] = nss
 
-		for _, shard := range sharding.GenerateShards(newStatus.ShardIdGenerator, nc.InitialShardCount) {
+		for _, shard := range sharding.GenerateShards(status.ShardIdGenerator, nc.InitialShardCount) {
 			var esm []model.Server
-			if esm, err = ensembleSupplier(&nc, newStatus); err != nil {
+			if esm, err = ensembleSupplier(&nc, status); err != nil {
 				slog.Error("failed to select new ensembles.", slog.Any("shard", shard), slog.Any("error", err))
 				continue
 			}
@@ -78,32 +72,27 @@ func ApplyClusterChanges(config *model.ClusterConfig, currentStatus *model.Clust
 				},
 			}
 
-			nss.Shards[shard.Id] = shardMetadata
-			newStatus.ServerIdx = (newStatus.ServerIdx + nc.ReplicationFactor) % uint32(len(config.Servers))
+			status.Namespaces[nc.Name].Shards[shard.Id] = shardMetadata
+			status.ServerIdx = (status.ServerIdx + nc.ReplicationFactor) % uint32(len(config.Servers))
 			shardsToAdd[shard.Id] = nc.Name
 		}
-		newStatus.Namespaces[nc.Name] = nss
-
-		newStatus.ShardIdGenerator += int64(nc.InitialShardCount)
+		status.ShardIdGenerator += int64(nc.InitialShardCount)
 	}
 
 	// Check for any namespace that was removed
-	for name, ns := range currentStatus.Namespaces {
+	for name, ns := range status.Namespaces {
 		namespaceConfig := findNamespaceConfig(config, name)
 		if namespaceConfig != nil {
 			continue
 		}
 
 		// Keep the shards in the status and mark them as being deleted
-		nss := ns.Clone()
-		for shardId, shard := range nss.Shards {
+		for shardId, shard := range ns.Shards {
 			shard.Status = model.ShardStatusDeleting
-			nss.Shards[shardId] = shard
+			ns.Shards[shardId] = shard
 			shardsToDelete = append(shardsToDelete, shardId)
 		}
-
-		newStatus.Namespaces[name] = nss
 	}
 
-	return newStatus, shardsToAdd, shardsToDelete
+	return shardsToAdd, shardsToDelete
 }

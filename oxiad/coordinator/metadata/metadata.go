@@ -45,8 +45,5 @@ type Provider interface {
 
 	Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
 
-	// WaitToBecomeLeader blocks until this provider becomes the leader.
-	// Returns a channel that is closed when leadership is lost, or nil
-	// for providers without leader election (memory, file).
-	WaitToBecomeLeader() (<-chan struct{}, error)
+	WaitToBecomeLeader() error
 }

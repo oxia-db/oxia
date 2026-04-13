@@ -20,19 +20,31 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
+	k8s "k8s.io/client-go/kubernetes"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
 	"github.com/oxia-db/oxia/common/process"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 )
 
 type cmConfigProvider struct {
+	onConfigChange func()
+}
+
+// OnConfigChange sets the event handler that is called when a config map changes.
+// This mirrors viper's OnConfigChange API for file-based configs, filling in
+// the gap where viper's WatchRemoteConfigOnChannel does not trigger callbacks.
+func (c *cmConfigProvider) OnConfigChange(fn func()) {
+	c.onConfigChange = fn
 }
 
 const filePath = "config.yaml"
@@ -68,60 +80,85 @@ func (c *cmConfigProvider) Watch(rp viper.RemoteProvider) (io.Reader, error) {
 	return c.Get(rp)
 }
 
-func (*cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteResponse, chan bool) {
+func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteResponse, chan bool) {
 	kubernetes := metadata.NewK8SClientset(metadata.NewK8SClientConfig())
 	namespace, configmap, _ := getNamespaceAndCmName(rp)
 
 	ch := make(chan *viper.RemoteResponse)
-	w, err := kubernetes.CoreV1().ConfigMaps(namespace).Watch(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		slog.Error("Failed to setup watch on config map",
-			slog.String("k8s-namespace", namespace),
-			slog.String("k8s-config-map", configmap),
-			slog.Any("error", err))
-		ch <- &viper.RemoteResponse{Error: err}
-		close(ch)
-		return ch, nil
-	}
 
 	go process.DoWithLabels(context.Background(), map[string]string{
 		"component": "k8s-configmap-watch",
 	}, func() {
-		for res := range w.ResultChan() {
-			cm, ok := res.Object.(*corev1.ConfigMap)
-			if !ok {
-				slog.Warn("Got wrong type of object notification",
-					slog.String("k8s-namespace", namespace),
-					slog.String("k8s-config-map", configmap),
-					slog.Any("object", res),
-				)
+		bo := oxiatime.NewBackOffWithInitialInterval(context.Background(), 1*time.Second)
+		_ = backoff.RetryNotify(func() error {
+			err := c.watchConfigMap(kubernetes, namespace, configmap, ch)
+			if err != nil {
+				return err
 			}
-			if cm.Name != configmap {
-				continue
-			}
-
-			slog.Info("Got watch event from K8S",
+			bo.Reset()
+			return errors.New("K8S config map watch closed")
+		}, bo, func(err error, duration time.Duration) {
+			slog.Warn("K8S config map watch failed, reconnecting",
 				slog.String("k8s-namespace", namespace),
 				slog.String("k8s-config-map", configmap),
-				slog.Any("event-type", res.Type),
+				slog.Any("error", err),
+				slog.Duration("retry-after", duration),
 			)
-
-			switch res.Type {
-			case watch.Added, watch.Modified:
-				ch <- &viper.RemoteResponse{
-					Value: []byte(cm.Data[filePath]),
-					Error: nil,
-				}
-			default:
-				ch <- &viper.RemoteResponse{
-					Value: nil,
-					Error: errors.Errorf("unexpected event on config map: %v", res.Type),
-				}
-			}
-		}
+		})
 	})
 
 	return ch, nil
+}
+
+func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, configmap string, ch chan<- *viper.RemoteResponse) error {
+	w, err := kubernetes.CoreV1().ConfigMaps(namespace).Watch(
+		context.Background(),
+		metav1.SingleObject(metav1.ObjectMeta{Name: configmap, Namespace: namespace}),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to setup watch on config map")
+	}
+	defer w.Stop()
+
+	for res := range w.ResultChan() {
+		if res.Type == watch.Error {
+			return errors.Errorf("watch error: %v", res.Object)
+		}
+
+		cm, ok := res.Object.(*corev1.ConfigMap)
+		if !ok {
+			slog.Warn("Got wrong type of object notification",
+				slog.String("k8s-namespace", namespace),
+				slog.String("k8s-config-map", configmap),
+				slog.Any("object", res),
+			)
+			continue
+		}
+
+		slog.Info("Got watch event from K8S",
+			slog.String("k8s-namespace", namespace),
+			slog.String("k8s-config-map", configmap),
+			slog.Any("event-type", res.Type),
+		)
+
+		switch res.Type {
+		case watch.Added, watch.Modified:
+			ch <- &viper.RemoteResponse{
+				Value: []byte(cm.Data[filePath]),
+				Error: nil,
+			}
+			if c.onConfigChange != nil {
+				c.onConfigChange()
+			}
+		default:
+			ch <- &viper.RemoteResponse{
+				Value: nil,
+				Error: errors.Errorf("unexpected event on config map: %v", res.Type),
+			}
+		}
+	}
+
+	return nil
 }
 
 func init() {

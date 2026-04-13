@@ -255,6 +255,11 @@ func parseAllowedAudiences(audiences string) map[string]string {
 }
 
 // createStaticKeyVerifier creates a verifier using static keys from a file.
+// Note: SkipClientIDCheck is set because go-oidc only supports validating against
+// a single ClientID, but Oxia supports multiple allowed audiences. Audience validation
+// is enforced by the custom multi-audience check in Authenticate() which verifies that
+// at least one token audience matches the configured AllowedAudiences. The Validate()
+// method on OIDCOptions ensures AllowedAudiences is always non-empty.
 func createStaticKeyVerifier(issuerURL, keyFile string) (*oidc.IDTokenVerifier, error) {
 	publicKeys, err := loadPublicKeysFromFile(keyFile)
 	if err != nil {
@@ -271,6 +276,9 @@ func createStaticKeyVerifier(issuerURL, keyFile string) (*oidc.IDTokenVerifier, 
 }
 
 // createRemoteVerifier creates a verifier using remote JWKS.
+// Note: SkipClientIDCheck is set because go-oidc only supports validating against
+// a single ClientID, but Oxia supports multiple allowed audiences. Audience validation
+// is enforced by the custom multi-audience check in Authenticate().
 func createRemoteVerifier(ctx context.Context, issuerURL string) (*oidc.Provider, *oidc.IDTokenVerifier, error) {
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {

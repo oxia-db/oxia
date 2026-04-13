@@ -166,19 +166,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		sc.SyncServerAddress()
 	}
 
-	// compare and set
-	currentStatus, version := c.statusResource.LoadWithVersion()
-	var clusterStatus *model.ClusterStatus
-	var shardsToAdd map[int64]string
-	var shardsToDelete []int64
-	for {
-		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(newConfig, currentStatus, c.selectNewEnsemble)
-		if !c.statusResource.Swap(clusterStatus, version) {
-			currentStatus, version = c.statusResource.LoadWithVersion()
-			continue
-		}
-		break
-	}
+	clusterStatus, shardsToAdd, shardsToDelete := c.statusResource.ApplyChanges(newConfig, c.selectNewEnsemble)
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
@@ -715,7 +703,7 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 func NewCoordinator(meta metadata.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
-	rpcProvider rpc.Provider) (Coordinator, <-chan struct{}, error) {
+	rpcProvider rpc.Provider) (Coordinator, error) {
 	c := &coordinator{
 		Logger: slog.With(
 			slog.String("component", "coordinator"),
@@ -734,9 +722,8 @@ func NewCoordinator(meta metadata.Provider,
 
 	// Ensure we are to become the leader coordinator
 	c.Info("Waiting to become leader")
-	leadershipLostCh, err := meta.WaitToBecomeLeader()
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to wait in becoming leader")
+	if err := meta.WaitToBecomeLeader(); err != nil {
+		return nil, errors.Wrap(err, "failed to wait in becoming leader")
 	}
 	c.Info("This coordinator is now leader")
 
@@ -774,22 +761,10 @@ func NewCoordinator(meta metadata.Provider,
 		// of error logs regarding failed leader elections
 		c.waitForAllNodesToBeAvailable()
 		c.Info("Performing initial assignment", slog.Any("clusterConfig", clusterConfig))
-
-		clusterStatus, _, _ = util.ApplyClusterChanges(clusterConfig, model.NewClusterStatus(), c.selectNewEnsemble)
-
-		c.statusResource.Update(clusterStatus)
 	} else {
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
-
-		var shardsToAdd map[int64]string
-		var shardsToDelete []int64
-		clusterStatus, shardsToAdd, shardsToDelete = util.ApplyClusterChanges(clusterConfig,
-			clusterStatus, c.selectNewEnsemble)
-
-		if len(shardsToAdd) > 0 || len(shardsToDelete) > 0 {
-			c.statusResource.Update(clusterStatus)
-		}
 	}
+	clusterStatus, _, _ = c.statusResource.ApplyChanges(clusterConfig, c.selectNewEnsemble)
 
 	// init shard controller
 	for ns, shards := range clusterStatus.Namespaces {
@@ -816,5 +791,5 @@ func NewCoordinator(meta metadata.Provider,
 
 	c.loadBalancer.Start()
 	c.ccrWg.Done()
-	return c, leadershipLostCh, nil
+	return c, nil
 }

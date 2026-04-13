@@ -40,8 +40,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
-	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
-
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -60,39 +58,37 @@ type GrpcServer struct {
 	grpcServer   rpc2.GrpcServer
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
+	coordinator  Coordinator
 	clientPool   rpc.ClientPool
 	metrics      *metric.PrometheusMetrics
-
-	// coordinatorMu protects coordinator and leadershipLostCh, which are
-	// swapped by monitorLease and read by Close.
-	coordinatorMu    sync.RWMutex
-	coordinator      Coordinator
-	leadershipLostCh <-chan struct{}
-
-	metadataProvider                 metadata.Provider
-	clusterConfigProvider            func() (model.ClusterConfig, error)
-	clusterConfigChangeNotifications chan any
-	rpcProvider                      coordinatorrpc.Provider
 }
 
-func setConfigPath(cluster *option.ClusterOptions, v *viper.Viper) error {
-	v.SetConfigType("yaml")
+func watchClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper, clusterConfigChangeNotifications chan any) error {
 	configPath := cluster.ConfigPath
+	v.SetConfigType("yaml")
+	onChange := func() { clusterConfigChangeNotifications <- nil }
 
-	if strings.HasPrefix(configPath, "configmap:") {
+	switch {
+	// remote configmap
+	case strings.HasPrefix(configPath, "configmap:"):
 		err := v.AddRemoteProvider("configmap", "endpoint", configPath)
 		if err != nil {
 			slog.Error("Failed to add remote provider", slog.Any("error", err))
 			return err
 		}
+		if watcher, ok := viper.RemoteConfig.(interface{ OnConfigChange(func()) }); ok {
+			watcher.OnConfigChange(onChange)
+		}
 		return v.WatchRemoteConfigOnChannel()
-	}
-	if configPath == "" {
+	// local file
+	case configPath == "":
 		v.AddConfigPath("/oxia/conf")
 		v.AddConfigPath(".")
+	default:
+		v.SetConfigFile(configPath)
 	}
 
-	v.SetConfigFile(configPath)
+	v.OnConfigChange(func(_ fsnotify.Event) { onChange() })
 	v.WatchConfig()
 	return nil
 }
@@ -134,19 +130,16 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	v := viper.New()
 
 	clusterConfigChangeNotifications := make(chan any)
-	v.OnConfigChange(func(_ fsnotify.Event) {
-		clusterConfigChangeNotifications <- nil
-	})
 
 	clusterConfigProvider := func() (model.ClusterConfig, error) {
 		return loadClusterConfig(&options.Cluster, v)
 	}
 
-	if err := setConfigPath(&options.Cluster, v); err != nil {
+	if err := watchClusterConfigProvider(&options.Cluster, v, clusterConfigChangeNotifications); err != nil {
 		return nil, err
 	}
 
-	if _, err := loadClusterConfig(&options.Cluster, v); err != nil {
+	if _, err := clusterConfigProvider(); err != nil {
 		return nil, err
 	}
 
@@ -182,7 +175,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	}
 	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
-	}, internalServerTLS, &auth.Disabled)
+	}, internalServerTLS, &internalServer.Auth)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +188,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, leadershipLostCh, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +201,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	admin := newAdminServer(coordinatorInstance.StatusResource(), clusterConfigProvider, coordinatorInstance)
 	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, admin)
-	}, adminSvTLS, &auth.Disabled)
+	}, adminSvTLS, &adminSv.Auth)
 	if err != nil {
 		return nil, err
 	}
@@ -230,22 +223,11 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		clientPool:       clientPool,
 		coordinator:      coordinatorInstance,
 		metrics:          metricsServer,
-
-		metadataProvider:                 metadataProvider,
-		clusterConfigProvider:            clusterConfigProvider,
-		clusterConfigChangeNotifications: clusterConfigChangeNotifications,
-		rpcProvider:                      rpcClient,
-		leadershipLostCh:                 leadershipLostCh,
 	}
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
 			"component": "configuration-watcher",
 		}, server.backgroundHandleConfChange)
-	})
-	server.wg.Go(func() {
-		process.DoWithLabels(ctx, map[string]string{
-			"component": "lease-monitor",
-		}, server.monitorLease)
 	})
 
 	return &server, nil
@@ -281,72 +263,19 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 	}
 }
 
-func (s *GrpcServer) monitorLease() {
-	for {
-		s.coordinatorMu.RLock()
-		ch := s.leadershipLostCh
-		s.coordinatorMu.RUnlock()
-
-		if ch == nil {
-			// Provider doesn't support leader election (memory, file)
-			return
-		}
-
-		select {
-		case <-ch:
-			s.logger.Info("Leadership lost, closing coordinator and recreating")
-			s.coordinatorMu.Lock()
-			if err := s.coordinator.Close(); err != nil {
-				s.logger.Warn("Failed to close coordinator after leadership loss",
-					slog.Any("error", err))
-			}
-			s.coordinator = nil
-			s.coordinatorMu.Unlock()
-
-			coordinatorInstance, leadershipLostCh, err := NewCoordinator(
-				s.metadataProvider,
-				s.clusterConfigProvider,
-				s.clusterConfigChangeNotifications,
-				s.rpcProvider,
-			)
-			if err != nil {
-				s.logger.Error("Failed to create new coordinator",
-					slog.Any("error", err))
-				return
-			}
-
-			s.coordinatorMu.Lock()
-			s.coordinator = coordinatorInstance
-			s.leadershipLostCh = leadershipLostCh
-			s.coordinatorMu.Unlock()
-
-		case <-s.ctx.Done():
-			return
-		}
-	}
-}
-
 func (s *GrpcServer) Close() error {
-	// Cancel context to signal goroutines to stop.
+	// sync close the background task first
 	s.ctxCancel()
 	s.wg.Wait()
 
 	var err error
 	s.healthServer.Shutdown()
-
-	s.coordinatorMu.RLock()
-	coord := s.coordinator
-	s.coordinatorMu.RUnlock()
-
 	err = multierr.Combine(
 		s.clientPool.Close(),
 		s.grpcServer.Close(),
 		s.adminServer.Close(),
-		s.metadataProvider.Close(),
+		s.coordinator.Close(),
 	)
-	if coord != nil {
-		err = multierr.Append(err, coord.Close())
-	}
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())
 	}

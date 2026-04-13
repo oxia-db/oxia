@@ -21,6 +21,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxiad/coordinator/policy"
 )
 
@@ -83,8 +84,8 @@ func (cc *ClusterConfig) Validate() error {
 	}
 
 	for _, ns := range cc.Namespaces {
-		if ns.Name == "" {
-			return errors.New("cluster config: namespace name must not be empty")
+		if err := validation.ValidateNamespace(ns.Name); err != nil {
+			return errors.Wrap(err, "cluster config")
 		}
 
 		if ns.ReplicationFactor < 1 {

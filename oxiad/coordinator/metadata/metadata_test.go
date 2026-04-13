@@ -64,10 +64,12 @@ func TestMetadataProvider(t *testing.T) {
 			assert.Equal(t, NotExists, version)
 			assert.Nil(t, res)
 
-			_, err = m.Store(&model.ClusterStatus{
-				Namespaces: map[string]model.NamespaceStatus{},
-			}, "")
-			assert.ErrorIs(t, err, ErrMetadataBadVersion)
+			assert.PanicsWithError(t, ErrMetadataBadVersion.Error(), func() {
+				_, err := m.Store(&model.ClusterStatus{
+					Namespaces: map[string]model.NamespaceStatus{},
+				}, "")
+				assert.NoError(t, err)
+			})
 
 			newVersion, err := m.Store(&model.ClusterStatus{
 				Namespaces: map[string]model.NamespaceStatus{},
