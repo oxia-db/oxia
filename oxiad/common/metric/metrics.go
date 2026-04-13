@@ -113,6 +113,13 @@ type PrometheusMetrics struct {
 }
 
 func Start(bindAddress string, tlsConf *libtls.Config) (*PrometheusMetrics, error) {
+	// Validate that the TLS config has certificates configured
+	if tlsConf != nil {
+		if len(tlsConf.Certificates) == 0 && tlsConf.GetCertificate == nil {
+			return nil, errors.New("metrics TLS config has no certificates configured")
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
