@@ -28,7 +28,9 @@ import (
 )
 
 func TestAdminServerListDataServers(t *testing.T) {
-	serverName := "server-1"
+	serverName1 := "server-1"
+	serverName2 := "server-2"
+	serverName3 := "server-3"
 	meta := metadata.NewMetadataProviderMemory()
 	_, err := meta.Store(&model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
@@ -36,7 +38,9 @@ func TestAdminServerListDataServers(t *testing.T) {
 				Shards: map[int64]model.ShardMetadata{
 					1: {
 						Ensemble: []model.Server{
-							{Name: &serverName, Public: "public-1", Internal: "internal-1"},
+							{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
+							{Name: &serverName2, Public: "public-2", Internal: "internal-2"},
+							{Name: &serverName3, Public: "public-3", Internal: "internal-3"},
 						},
 					},
 				},
@@ -51,7 +55,9 @@ func TestAdminServerListDataServers(t *testing.T) {
 		func() (model.ClusterConfig, error) {
 			return model.ClusterConfig{
 				Servers: []model.Server{
-					{Name: &serverName, Public: "public-1", Internal: "internal-1"},
+					{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
+					{Name: &serverName2, Public: "public-2", Internal: "internal-2"},
+					{Name: &serverName3, Public: "public-3", Internal: "internal-3"},
 				},
 			}, nil
 		},
@@ -60,10 +66,17 @@ func TestAdminServerListDataServers(t *testing.T) {
 
 	res, err := admin.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
 	require.NoError(t, err)
-	require.Len(t, res.DataServers, 1)
+	require.Len(t, res.DataServers, 3)
 
-	dataServer := res.DataServers[0]
-	assert.Equal(t, &serverName, dataServer.Name)
-	assert.Equal(t, "public-1", dataServer.PublicAddress)
-	assert.Equal(t, "internal-1", dataServer.InternalAddress)
+	assert.Equal(t, &serverName1, res.DataServers[0].Name)
+	assert.Equal(t, "public-1", res.DataServers[0].PublicAddress)
+	assert.Equal(t, "internal-1", res.DataServers[0].InternalAddress)
+
+	assert.Equal(t, &serverName2, res.DataServers[1].Name)
+	assert.Equal(t, "public-2", res.DataServers[1].PublicAddress)
+	assert.Equal(t, "internal-2", res.DataServers[1].InternalAddress)
+
+	assert.Equal(t, &serverName3, res.DataServers[2].Name)
+	assert.Equal(t, "public-3", res.DataServers[2].PublicAddress)
+	assert.Equal(t, "internal-3", res.DataServers[2].InternalAddress)
 }
