@@ -21,7 +21,7 @@ import (
 type AdminClient interface {
 	io.Closer
 
-	ListDataServers() *ListDataServersResult
+	ListDataServers() ([]*DataServer, error)
 
 	ListNamespaces() *ListNamespacesResult
 
@@ -46,11 +46,6 @@ type DataServer struct {
 	Name            *string
 	PublicAddress   string
 	InternalAddress string
-}
-
-type ListDataServersResult struct {
-	DataServers []*DataServer
-	Error       error
 }
 
 type ListNodesResult struct {
