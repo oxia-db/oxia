@@ -49,6 +49,7 @@ func (pso *PublicServerOptions) Validate() error {
 
 type InternalServerOptions struct {
 	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for internal server-to-server communication,example=0.0.0.0:6649,format=hostname"`
+	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for internal server-to-server communication"`
 	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing internal cluster communication"`
 }
 
@@ -56,11 +57,13 @@ func (iso *InternalServerOptions) WithDefault() {
 	if iso.BindAddress == "" {
 		iso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort)
 	}
+	iso.Auth.WithDefault()
 	iso.TLS.WithDefault()
 }
 
 func (iso *InternalServerOptions) Validate() error {
 	return multierr.Combine(
+		iso.Auth.Validate(),
 		iso.TLS.Validate(),
 	)
 }

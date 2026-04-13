@@ -40,8 +40,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
-	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
-
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -177,7 +175,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	}
 	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
-	}, internalServerTLS, &auth.Disabled)
+	}, internalServerTLS, &internalServer.Auth)
 	if err != nil {
 		return nil, err
 	}
@@ -203,19 +201,14 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	admin := newAdminServer(coordinatorInstance.StatusResource(), clusterConfigProvider, coordinatorInstance)
 	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, admin)
-	}, adminSvTLS, &auth.Disabled)
+	}, adminSvTLS, &adminSv.Auth)
 	if err != nil {
 		return nil, err
 	}
 
-	metrics := options.Observability.Metric
-
-	var metricsServer *metric.PrometheusMetrics
-	if metrics.IsEnabled() {
-		metricsServer, err = metric.Start(metrics.BindAddress) //nolint:contextcheck
-		if err != nil {
-			return nil, err
-		}
+	metricsServer, err := startMetricsServer(options.Observability.Metric) //nolint:contextcheck
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
 	server := GrpcServer{
@@ -238,6 +231,17 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	})
 
 	return &server, nil
+}
+
+func startMetricsServer(metrics commonoption.MetricOptions) (*metric.PrometheusMetrics, error) {
+	if !metrics.IsEnabled() {
+		return nil, nil //nolint:nilnil
+	}
+	metricTLS, err := metrics.TLS.TryIntoServerTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	return metric.Start(metrics.BindAddress, metricTLS)
 }
 
 func (s *GrpcServer) backgroundHandleConfChange() {
