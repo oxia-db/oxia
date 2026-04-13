@@ -52,5 +52,13 @@ func validateWriteRequest(req *proto.WriteRequest) error {
 			return status.Errorf(codes.InvalidArgument, "key size %d exceeds maximum %d", len(del.Key), MaxKeySize)
 		}
 	}
+	for _, dr := range req.DeleteRanges {
+		if len(dr.StartInclusive) > MaxKeySize {
+			return status.Errorf(codes.InvalidArgument, "delete range start key size %d exceeds maximum %d", len(dr.StartInclusive), MaxKeySize)
+		}
+		if len(dr.EndExclusive) > MaxKeySize {
+			return status.Errorf(codes.InvalidArgument, "delete range end key size %d exceeds maximum %d", len(dr.EndExclusive), MaxKeySize)
+		}
+	}
 	return nil
 }

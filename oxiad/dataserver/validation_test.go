@@ -89,3 +89,56 @@ func TestValidateWriteRequest_TooManyDeletes(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.Contains(t, err.Error(), "too many deletes")
 }
+
+func TestValidateWriteRequest_DeleteKeyTooLarge(t *testing.T) {
+	largeKey := strings.Repeat("k", MaxKeySize+1)
+	req := &proto.WriteRequest{
+		Deletes: []*proto.DeleteRequest{
+			{Key: largeKey},
+		},
+	}
+	err := validateWriteRequest(req)
+	assert.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, err.Error(), "key size")
+}
+
+func TestValidateWriteRequest_TooManyDeleteRanges(t *testing.T) {
+	deleteRanges := make([]*proto.DeleteRangeRequest, MaxDeleteRangesPerWrite+1)
+	for i := range deleteRanges {
+		deleteRanges[i] = &proto.DeleteRangeRequest{StartInclusive: "/a", EndExclusive: "/z"}
+	}
+	req := &proto.WriteRequest{DeleteRanges: deleteRanges}
+	err := validateWriteRequest(req)
+	assert.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, err.Error(), "too many delete ranges")
+}
+
+func TestValidateWriteRequest_DeleteRangeBoundaryKeyTooLarge(t *testing.T) {
+	largeKey := strings.Repeat("k", MaxKeySize+1)
+
+	t.Run("start key too large", func(t *testing.T) {
+		req := &proto.WriteRequest{
+			DeleteRanges: []*proto.DeleteRangeRequest{
+				{StartInclusive: largeKey, EndExclusive: "/z"},
+			},
+		}
+		err := validateWriteRequest(req)
+		assert.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.Contains(t, err.Error(), "delete range start key size")
+	})
+
+	t.Run("end key too large", func(t *testing.T) {
+		req := &proto.WriteRequest{
+			DeleteRanges: []*proto.DeleteRangeRequest{
+				{StartInclusive: "/a", EndExclusive: largeKey},
+			},
+		}
+		err := validateWriteRequest(req)
+		assert.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.Contains(t, err.Error(), "delete range end key size")
+	})
+}
