@@ -17,6 +17,7 @@ package dataserver
 import (
 	"context"
 	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	grpcstatus "google.golang.org/grpc/status"
+	"google.golang.org/protobuf/protoadapt"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
@@ -110,6 +112,7 @@ func TestWriteClientClose(t *testing.T) {
 
 func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {
 	server := &publicRpcServer{
+		log: slog.Default(),
 		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
 			"expected-host:6648": true,
 		}},
@@ -149,4 +152,43 @@ func TestValidateAuthorityCanBeDisabled(t *testing.T) {
 	}))
 
 	require.NoError(t, server.validateAuthority(ctx))
+}
+
+type testShardAssignmentsServer struct {
+	ctx context.Context
+}
+
+func (t *testShardAssignmentsServer) Send(*proto.ShardAssignments) error { return nil }
+func (t *testShardAssignmentsServer) SetHeader(metadata.MD) error        { return nil }
+func (t *testShardAssignmentsServer) SendHeader(metadata.MD) error       { return nil }
+func (t *testShardAssignmentsServer) SetTrailer(metadata.MD)             {}
+func (t *testShardAssignmentsServer) Context() context.Context           { return t.ctx }
+func (t *testShardAssignmentsServer) SendMsg(any) error                  { return nil }
+func (t *testShardAssignmentsServer) RecvMsg(any) error                  { return nil }
+func (t *testShardAssignmentsServer) SendHeaderV2(protoadapt.MessageV2) error {
+	return nil
+}
+func (t *testShardAssignmentsServer) RecvMsgV2(protoadapt.MessageV2) error {
+	return nil
+}
+func (t *testShardAssignmentsServer) SendMsgV2(protoadapt.MessageV2) error {
+	return nil
+}
+
+func TestGetShardAssignmentsValidatesAuthority(t *testing.T) {
+	server := &publicRpcServer{
+		log: slog.Default(),
+		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
+			"expected-host:6648": true,
+		}},
+	}
+
+	err := server.GetShardAssignments(&proto.ShardAssignmentsRequest{}, &testShardAssignmentsServer{
+		ctx: metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+			":authority": "wrong-host:6648",
+		})),
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
 }

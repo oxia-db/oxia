@@ -387,9 +387,10 @@ func (c *coordinator) handleActionChangeEnsemble(ac action.Action) {
 
 // This is called while already holding the lock on the coordinator.
 func (c *coordinator) computeNewAssignments() {
+	config := c.configResource.Load()
 	c.assignments = &proto.ShardAssignments{
 		Namespaces:  map[string]*proto.NamespaceShardsAssignment{},
-		Authorities: mergedAuthorities(c.statusResource.Load(), c.configResource.Load().AllowExtraAuthorities),
+		Authorities: mergedAuthorities(config.Servers, config.AllowExtraAuthorities),
 	}
 	status := c.statusResource.Load()
 	// Update the leader for the shards on all the namespaces
@@ -433,14 +434,10 @@ func (c *coordinator) computeNewAssignments() {
 	c.assignmentsChanged.Broadcast()
 }
 
-func mergedAuthorities(status *model.ClusterStatus, extraAuthorities []string) []string {
+func mergedAuthorities(servers []model.Server, extraAuthorities []string) []string {
 	authorities := make([]string, 0, len(extraAuthorities))
-	for _, namespace := range status.Namespaces {
-		for _, shard := range namespace.Shards {
-			if shard.Leader != nil {
-				authorities = append(authorities, shard.Leader.Public, shard.Leader.Internal)
-			}
-		}
+	for _, server := range servers {
+		authorities = append(authorities, server.Public, server.Internal)
 	}
 	authorities = append(authorities, extraAuthorities...)
 

@@ -115,6 +115,9 @@ func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest
 		"Shard assignments requests",
 		slog.String("peer", rpc.GetPeer(srv.Context())),
 	)
+	if err := s.validateAuthority(srv.Context()); err != nil {
+		return err
+	}
 	err := s.assignmentDispatcher.RegisterForUpdates(req, srv)
 	if err != nil {
 		s.log.Warn(
