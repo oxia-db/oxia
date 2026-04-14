@@ -249,12 +249,13 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	s.assignments = assignments
 
 	shardIndex := redblacktree.New[int64, *proto.ShardAssignment]()
-	validAuthorities := hashset.New[string]()
+	authorities := make([]string, 0, len(assignments.GetAuthorities()))
 	for _, authority := range assignments.GetAuthorities() {
 		if authority != "" {
-			validAuthorities.Add(strings.ToLower(authority))
+			authorities = append(authorities, strings.ToLower(authority))
 		}
 	}
+	validAuthorities := hashset.New[string](authorities...)
 	for _, namespace := range assignments.Namespaces {
 		for idx, shardAssignment := range namespace.Assignments {
 			shardIndex.Put(shardAssignment.GetShard(), namespace.Assignments[idx])
