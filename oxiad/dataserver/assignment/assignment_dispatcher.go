@@ -290,7 +290,7 @@ func (s *shardAssignmentDispatcher) HasAuthority(authority string) bool {
 	if s.standalone {
 		return true
 	}
-	return s.validAuthorities.Contains(strings.ToLower(authority))
+	return s.validAuthorities.Contains(authority)
 }
 
 func NewShardAssignmentDispatcher(healthServer oxiadcommonrpc.HealthServer) ShardAssignmentsDispatcher {
