@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"slices"
 	"sync"
 	"time"
 
+	"github.com/emirpasic/gods/v2/sets/hashset"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
@@ -436,19 +436,24 @@ func (c *coordinator) computeNewAssignments() {
 
 func mergedAuthorities(servers []model.Server, extraAuthorities []string) []string {
 	authorities := make([]string, 0, len(extraAuthorities))
-	for _, server := range servers {
-		authorities = append(authorities, server.Public, server.Internal)
-	}
-	authorities = append(authorities, extraAuthorities...)
+	seen := hashset.New[string]()
 
-	result := make([]string, 0, len(authorities))
-	for _, authority := range authorities {
-		if authority == "" || slices.Contains(result, authority) {
-			continue
+	addAuthority := func(authority string) {
+		if authority == "" || seen.Contains(authority) {
+			return
 		}
-		result = append(result, authority)
+		seen.Add(authority)
+		authorities = append(authorities, authority)
 	}
-	return result
+
+	for _, server := range servers {
+		addAuthority(server.Public)
+		addAuthority(server.Internal)
+	}
+	for _, authority := range extraAuthorities {
+		addAuthority(authority)
+	}
+	return authorities
 }
 
 // InitiateSplit validates and initiates a shard split. It creates child shards
