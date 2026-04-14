@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	grpcstatus "google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
@@ -39,11 +40,14 @@ func init() {
 }
 
 type testAssignmentDispatcher struct {
+	initialized      bool
 	validAuthorities map[string]bool
 }
 
-func (*testAssignmentDispatcher) Close() error      { return nil }
-func (*testAssignmentDispatcher) Initialized() bool { return true }
+func (*testAssignmentDispatcher) Close() error { return nil }
+func (t *testAssignmentDispatcher) Initialized() bool {
+	return t.initialized
+}
 func (*testAssignmentDispatcher) PushShardAssignments(proto.OxiaCoordination_PushShardAssignmentsServer) error {
 	panic("unexpected call")
 }
@@ -106,7 +110,7 @@ func TestWriteClientClose(t *testing.T) {
 
 func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {
 	server := &publicRpcServer{
-		assignmentDispatcher: &testAssignmentDispatcher{validAuthorities: map[string]bool{
+		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
 			"expected-host:6648": true,
 		}},
 	}
@@ -118,4 +122,18 @@ func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {
 	err := server.validateAuthority(ctx)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
+}
+
+func TestValidateAuthorityReturnsNotInitializedBeforeAssignmentsReady(t *testing.T) {
+	server := &publicRpcServer{
+		assignmentDispatcher: &testAssignmentDispatcher{},
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "expected-host:6648",
+	}))
+
+	err := server.validateAuthority(ctx)
+	require.Error(t, err)
+	assert.Equal(t, constant.CodeNotInitialized, grpcstatus.Code(err))
 }

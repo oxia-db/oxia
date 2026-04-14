@@ -88,6 +88,10 @@ func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string
 }
 
 func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
+	if !s.assignmentDispatcher.Initialized() {
+		return constant.ErrNotInitialized
+	}
+
 	actualAuthority, err := oxiadcommonrpc.GetAuthority(ctx)
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "oxia: invalid authority: %v", err)
