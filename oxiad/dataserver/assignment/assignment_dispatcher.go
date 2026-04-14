@@ -29,7 +29,7 @@ import (
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
@@ -62,7 +62,7 @@ type shardAssignmentDispatcher struct {
 	clients      map[int64]chan *proto.ShardAssignments
 	nextClientId int64
 	standalone   bool
-	healthServer rpc2.HealthServer
+	healthServer oxiadcommonrpc.HealthServer
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -187,7 +187,7 @@ func (s *shardAssignmentDispatcher) assignmentsInterceptorFunc(clientStream Clie
 }
 
 func authority(ctx context.Context) (string, error) {
-	addr, err := rpc2.GetAuthority(ctx)
+	addr, err := oxiadcommonrpc.GetAuthority(ctx)
 	if err == nil {
 		return addr, nil
 	}
@@ -227,7 +227,7 @@ func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordi
 func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.ShardAssignments) error {
 	// Once we receive the first update of the shards mapping, this service can be
 	// considered "ready" and it will be able to respond to service discovery requests
-	s.healthServer.SetServingStatus(rpc2.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
+	s.healthServer.SetServingStatus(oxiadcommonrpc.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
 
 	s.Lock()
 	defer s.Unlock()
@@ -291,7 +291,7 @@ func (s *shardAssignmentDispatcher) HasAuthority(authority string) bool {
 	return s.validAuthorities.Contains(strings.ToLower(authority))
 }
 
-func NewShardAssignmentDispatcher(healthServer rpc2.HealthServer) ShardAssignmentsDispatcher {
+func NewShardAssignmentDispatcher(healthServer oxiadcommonrpc.HealthServer) ShardAssignmentsDispatcher {
 	s := &shardAssignmentDispatcher{
 		assignments:           nil,
 		shardAssignmentsIndex: redblacktree.New[int64, *proto.ShardAssignment](),
@@ -318,7 +318,7 @@ func NewShardAssignmentDispatcher(healthServer rpc2.HealthServer) ShardAssignmen
 }
 
 func NewStandaloneShardAssignmentDispatcher(numShards uint32) ShardAssignmentsDispatcher {
-	assignmentDispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(context.Background())).(*shardAssignmentDispatcher) //nolint:revive
+	assignmentDispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(context.Background())).(*shardAssignmentDispatcher) //nolint:revive
 	assignmentDispatcher.standalone = true
 	res := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
