@@ -90,7 +90,7 @@ func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDi
 }
 
 func (s *publicRpcServer) validateAuthority(ctx context.Context, shardId int64) error {
-	actualAuthority, err := requestAuthority(ctx)
+	actualAuthority, err := rpc2.GetAuthority(ctx)
 	if err != nil {
 		return err
 	}
@@ -514,44 +514,6 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 
 func (s *publicRpcServer) Close() error {
 	return s.grpcServer.Close()
-}
-
-func requestAuthority(ctx context.Context) (string, error) {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if ok {
-		if authority := md.Get(":authority"); len(authority) > 0 {
-			if err := validateAuthorityAddress(authority[0]); err != nil {
-				return "", status.Errorf(codes.InvalidArgument, "oxia: invalid authority address: %v", err)
-			}
-			return authority[0], nil
-		}
-	}
-	return "", status.Errorf(codes.InvalidArgument, "oxia: authority not identified")
-}
-
-func validateAuthorityAddress(addr string) error {
-	if strings.Contains(addr, "://") {
-		return errors.Errorf("authority address %q must not contain a scheme", addr)
-	}
-	if strings.Contains(addr, "/") {
-		return errors.Errorf("authority address %q must not contain a path", addr)
-	}
-	if strings.Contains(addr, "?") {
-		return errors.Errorf("authority address %q must not contain a query string", addr)
-	}
-	if strings.Contains(addr, "#") {
-		return errors.Errorf("authority address %q must not contain a fragment", addr)
-	}
-
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return errors.Errorf("authority address %q is not a valid host:port pair: %v", addr, err)
-	}
-	if host == "" {
-		return errors.Errorf("authority address %q has an empty host", addr)
-	}
-
-	return nil
 }
 
 func sameAuthority(left string, right string) bool {
