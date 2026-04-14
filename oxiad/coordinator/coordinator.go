@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emirpasic/gods/v2/sets/hashset"
+	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
@@ -435,25 +435,15 @@ func (c *coordinator) computeNewAssignments() {
 }
 
 func mergedAuthorities(servers []model.Server, extraAuthorities []string) []string {
-	authorities := make([]string, 0, len(extraAuthorities))
-	seen := hashset.New[string]()
-
-	addAuthority := func(authority string) {
-		if seen.Contains(authority) {
-			return
-		}
-		seen.Add(authority)
-		authorities = append(authorities, authority)
-	}
-
+	authorities := linkedhashset.New[string]()
 	for _, server := range servers {
-		addAuthority(server.Public)
-		addAuthority(server.Internal)
+		authorities.Add(server.Public)
+		authorities.Add(server.Internal)
 	}
 	for _, authority := range extraAuthorities {
-		addAuthority(authority)
+		authorities.Add(authority)
 	}
-	return authorities
+	return authorities.Values()
 }
 
 // InitiateSplit validates and initiates a shard split. It creates child shards
