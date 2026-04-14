@@ -30,6 +30,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 )
 
 func init() {
@@ -37,11 +38,25 @@ func init() {
 	logging.ConfigureLogger()
 }
 
+type testAssignmentDispatcher struct {
+	leader string
+}
+
+func (*testAssignmentDispatcher) Close() error      { return nil }
+func (*testAssignmentDispatcher) Initialized() bool { return true }
+func (*testAssignmentDispatcher) PushShardAssignments(proto.OxiaCoordination_PushShardAssignmentsServer) error {
+	panic("unexpected call")
+}
+func (*testAssignmentDispatcher) RegisterForUpdates(*proto.ShardAssignmentsRequest, assignment.Client) error {
+	panic("unexpected call")
+}
+func (t *testAssignmentDispatcher) GetLeader(int64) string { return t.leader }
+func (*testAssignmentDispatcher) ClusterID() string        { return "" }
+
 func TestWriteClientClose(t *testing.T) {
 	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
-	standaloneServer.rpc.expectedAuthority = standaloneServer.ServiceAddr()
 
 	// Connect to the standalone dataserver
 	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -87,26 +102,16 @@ func TestWriteClientClose(t *testing.T) {
 	assert.ErrorIs(t, err, io.EOF)
 }
 
-func TestCreateSessionRejectsWrongAuthority(t *testing.T) {
-	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
-	require.NoError(t, err)
-	defer standaloneServer.Close()
-	standaloneServer.rpc.expectedAuthority = standaloneServer.ServiceAddr()
+func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {
+	server := &publicRpcServer{
+		assignmentDispatcher: &testAssignmentDispatcher{leader: "expected-host:6648"},
+	}
 
-	conn, err := grpc.NewClient(
-		standaloneServer.ServiceAddr(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithAuthority("wrong-host:6648"),
-	)
-	require.NoError(t, err)
-	defer conn.Close()
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "wrong-host:6648",
+	}))
 
-	client := proto.NewOxiaClientClient(conn)
-	_, err = client.CreateSession(context.Background(), &proto.CreateSessionRequest{
-		Shard:            0,
-		SessionTimeoutMs: 1000,
-		ClientIdentity:   "test-client",
-	})
+	err := server.validateAuthority(ctx, 0)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
 }

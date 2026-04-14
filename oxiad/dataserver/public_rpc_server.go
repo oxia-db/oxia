@@ -65,15 +65,13 @@ type publicRpcServer struct {
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
 	grpcServer           rpc2.GrpcServer
 	log                  *slog.Logger
-	expectedAuthority    string
 }
 
 func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
-	expectedAuthority string, tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
+	tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,
-		expectedAuthority:    expectedAuthority,
 		log: slog.With(
 			slog.String("component", "public-rpc-server"),
 		),
@@ -91,19 +89,20 @@ func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDi
 	return server, nil
 }
 
-func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
-	if s.expectedAuthority == "" {
-		return nil
-	}
-
+func (s *publicRpcServer) validateAuthority(ctx context.Context, shardId int64) error {
 	actualAuthority, err := requestAuthority(ctx)
 	if err != nil {
 		return err
 	}
 
-	if !sameAuthority(actualAuthority, s.expectedAuthority) {
+	expectedAuthority := s.assignmentDispatcher.GetLeader(shardId)
+	if expectedAuthority == "" {
+		return nil
+	}
+
+	if !sameAuthority(actualAuthority, expectedAuthority) {
 		return status.Errorf(codes.PermissionDenied, "oxia: authority mismatch: got %q, expected %q",
-			actualAuthority, s.expectedAuthority)
+			actualAuthority, expectedAuthority)
 	}
 
 	return nil
@@ -128,7 +127,10 @@ func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest
 }
 
 func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) (*proto.WriteResponse, error) {
-	if err := s.validateAuthority(ctx); err != nil {
+	if write.Shard == nil {
+		return nil, status.Error(codes.InvalidArgument, "shard id is required")
+	}
+	if err := s.validateAuthority(ctx, *write.Shard); err != nil {
 		return nil, err
 	}
 
@@ -187,10 +189,6 @@ func processWriteStream(streamCtx context.Context, finished chan<- error, stream
 }
 
 func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer) error {
-	if err := s.validateAuthority(stream.Context()); err != nil {
-		return err
-	}
-
 	// Add entries receives an incoming stream of request, the shard_id needs to be encoded
 	// as a property in the metadata
 	md, ok := metadata.FromIncomingContext(stream.Context())
@@ -203,6 +201,9 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	}
 	namespace, err := readHeader(md, constant.MetadataNamespace)
 	if err != nil {
+		return err
+	}
+	if err := s.validateAuthority(stream.Context(), shardId); err != nil {
 		return err
 	}
 	streamCtx := stream.Context()
@@ -249,7 +250,10 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 }
 
 func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClient_ReadServer) error {
-	if err := s.validateAuthority(stream.Context()); err != nil {
+	if request.Shard == nil {
+		return status.Error(codes.InvalidArgument, "shard id is required")
+	}
+	if err := s.validateAuthority(stream.Context(), *request.Shard); err != nil {
 		return err
 	}
 
@@ -290,7 +294,10 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
-	if err := s.validateAuthority(stream.Context()); err != nil {
+	if request.Shard == nil {
+		return status.Error(codes.InvalidArgument, "shard id is required")
+	}
+	if err := s.validateAuthority(stream.Context(), *request.Shard); err != nil {
 		return err
 	}
 
@@ -327,7 +334,10 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream proto.OxiaClient_RangeScanServer) error {
-	if err := s.validateAuthority(stream.Context()); err != nil {
+	if request.Shard == nil {
+		return status.Error(codes.InvalidArgument, "shard id is required")
+	}
+	if err := s.validateAuthority(stream.Context(), *request.Shard); err != nil {
 		return err
 	}
 
@@ -374,7 +384,7 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 }
 
 func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stream proto.OxiaClient_GetNotificationsServer) error {
-	if err := s.validateAuthority(stream.Context()); err != nil {
+	if err := s.validateAuthority(stream.Context(), req.Shard); err != nil {
 		return err
 	}
 
@@ -420,7 +430,7 @@ func (s *publicRpcServer) Port() int {
 }
 
 func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	if err := s.validateAuthority(ctx); err != nil {
+	if err := s.validateAuthority(ctx, req.Shard); err != nil {
 		return nil, err
 	}
 
@@ -445,7 +455,7 @@ func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSe
 }
 
 func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
-	if err := s.validateAuthority(ctx); err != nil {
+	if err := s.validateAuthority(ctx, req.Shard); err != nil {
 		return nil, err
 	}
 
@@ -471,7 +481,7 @@ func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeart
 }
 
 func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
-	if err := s.validateAuthority(ctx); err != nil {
+	if err := s.validateAuthority(ctx, req.Shard); err != nil {
 		return nil, err
 	}
 
@@ -495,7 +505,7 @@ func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSess
 }
 
 func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesRequest, stream proto.OxiaClient_GetSequenceUpdatesServer) error {
-	if err := s.validateAuthority(stream.Context()); err != nil {
+	if err := s.validateAuthority(stream.Context(), req.Shard); err != nil {
 		return err
 	}
 
