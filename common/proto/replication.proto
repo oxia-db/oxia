@@ -63,7 +63,6 @@ message GetInfoResponse {
 
 message CoordinationShardAssignmentsResponse {}
 
-
 message EntryId {
   int64 term = 1;
   int64 offset = 2;
