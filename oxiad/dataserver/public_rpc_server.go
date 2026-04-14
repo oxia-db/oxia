@@ -111,16 +111,20 @@ func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
 }
 
 func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest, srv proto.OxiaClient_GetShardAssignmentsServer) error {
+	streamContext := srv.Context()
 	s.log.Debug(
 		"Shard assignments requests",
-		slog.String("peer", rpc.GetPeer(srv.Context())),
+		slog.String("peer", rpc.GetPeer(streamContext)),
 	)
+	if err := s.validateAuthority(streamContext); err != nil {
+		return err
+	}
 	err := s.assignmentDispatcher.RegisterForUpdates(req, srv)
 	if err != nil {
 		s.log.Warn(
 			"Failed to add client for shards assignments notifications",
 			slog.Any("error", err),
-			slog.String("peer", rpc.GetPeer(srv.Context())),
+			slog.String("peer", rpc.GetPeer(streamContext)),
 		)
 		return err
 	}
@@ -499,6 +503,9 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 	if shardId == nil {
 		return nil, status.Error(codes.InvalidArgument, "shard id is required")
 	}
+	if err := s.validateAuthority(ctx); err != nil {
+		return nil, err
+	}
 	shardID := *shardId
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
@@ -506,9 +513,6 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 			return nil, constant.NewNodeIsNotLeaderWithHint(shardID, s.assignmentDispatcher.GetLeader(shardID))
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
-		return nil, err
-	}
-	if err := s.validateAuthority(ctx); err != nil {
 		return nil, err
 	}
 	return lc, nil

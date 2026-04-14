@@ -151,7 +151,8 @@ func newShardAssignmentClient(ctx context.Context, provider *maelstromCoordinato
 }
 
 func (m *maelstromShardAssignmentClient) Send(response *proto.ShardAssignments) error {
-	m.provider.dispatcher.currentLeader = response.Namespaces[constant.DefaultNamespace].Assignments[0].Leader
+	assignments := response
+	m.provider.dispatcher.currentLeader = assignments.Namespaces[constant.DefaultNamespace].Assignments[0].Leader
 	req := &Message[OxiaStreamMessage]{
 		Src:  thisNode,
 		Dest: m.node,

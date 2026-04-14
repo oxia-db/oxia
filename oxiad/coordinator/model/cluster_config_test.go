@@ -69,12 +69,19 @@ func validConfig() ClusterConfig {
 			{Public: "s2:6648", Internal: "s2:6649"},
 			{Public: "s3:6648", Internal: "s3:6649"},
 		},
+		AllowExtraAuthorities: []string{"extra-1:6648"},
 	}
 }
 
 func TestValidate_ValidConfig(t *testing.T) {
 	cc := validConfig()
 	assert.NoError(t, cc.Validate())
+}
+
+func TestValidate_InvalidAllowExtraAuthorities(t *testing.T) {
+	cc := validConfig()
+	cc.AllowExtraAuthorities = []string{"http://bad:6648"}
+	assert.ErrorContains(t, cc.Validate(), `invalid allowExtraAuthorities entry "http://bad:6648"`)
 }
 
 func TestValidate_NoServers(t *testing.T) {

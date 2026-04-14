@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
@@ -386,10 +387,12 @@ func (c *coordinator) handleActionChangeEnsemble(ac action.Action) {
 
 // This is called while already holding the lock on the coordinator.
 func (c *coordinator) computeNewAssignments() {
-	c.assignments = &proto.ShardAssignments{
-		Namespaces: map[string]*proto.NamespaceShardsAssignment{},
-	}
+	config := c.configResource.Load()
 	status := c.statusResource.Load()
+	c.assignments = &proto.ShardAssignments{
+		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
+		AllowedAuthorities: mergedAuthorities(status, config.Servers, config.AllowExtraAuthorities),
+	}
 	// Update the leader for the shards on all the namespaces
 	for name, ns := range status.Namespaces {
 		nsAssignments := &proto.NamespaceShardsAssignment{
@@ -429,6 +432,31 @@ func (c *coordinator) computeNewAssignments() {
 	}
 
 	c.assignmentsChanged.Broadcast()
+}
+
+func mergedAuthorities(status *model.ClusterStatus, servers []model.Server, extraAuthorities []string) []string {
+	authorities := linkedhashset.New[string]()
+	addServerAuthorities := func(server model.Server) {
+		authorities.Add(server.Public)
+		authorities.Add(server.Internal)
+	}
+	for _, server := range servers {
+		addServerAuthorities(server)
+	}
+	for _, namespace := range status.Namespaces {
+		for _, shard := range namespace.Shards {
+			for _, server := range shard.Ensemble {
+				addServerAuthorities(server)
+			}
+			for _, server := range shard.RemovedNodes {
+				addServerAuthorities(server)
+			}
+		}
+	}
+	for _, authority := range extraAuthorities {
+		authorities.Add(authority)
+	}
+	return authorities.Values()
 }
 
 // InitiateSplit validates and initiates a shard split. It creates child shards

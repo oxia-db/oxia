@@ -310,10 +310,11 @@ func (x *ShardAssignmentsRequest) GetNamespace() string {
 // *
 // The response to a shard assignments request.
 type ShardAssignments struct {
-	state         protoimpl.MessageState                `protogen:"open.v1"`
-	Namespaces    map[string]*NamespaceShardsAssignment `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState                `protogen:"open.v1"`
+	Namespaces         map[string]*NamespaceShardsAssignment `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	AllowedAuthorities []string                              `protobuf:"bytes,2,rep,name=allowed_authorities,json=allowedAuthorities,proto3" json:"allowed_authorities,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ShardAssignments) Reset() {
@@ -349,6 +350,13 @@ func (*ShardAssignments) Descriptor() ([]byte, []int) {
 func (x *ShardAssignments) GetNamespaces() map[string]*NamespaceShardsAssignment {
 	if x != nil {
 		return x.Namespaces
+	}
+	return nil
+}
+
+func (x *ShardAssignments) GetAllowedAuthorities() []string {
+	if x != nil {
+		return x.AllowedAuthorities
 	}
 	return nil
 }
@@ -2386,11 +2394,12 @@ const file_client_proto_rawDesc = "" +
 	"\n" +
 	"\fclient.proto\x12\x10io.oxia.proto.v1\"7\n" +
 	"\x17ShardAssignmentsRequest\x12\x1c\n" +
-	"\tnamespace\x18\x01 \x01(\tR\tnamespace\"\xd2\x01\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\"\x83\x02\n" +
 	"\x10ShardAssignments\x12R\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\v22.io.oxia.proto.v1.ShardAssignments.NamespacesEntryR\n" +
-	"namespaces\x1aj\n" +
+	"namespaces\x12/\n" +
+	"\x13allowed_authorities\x18\x02 \x03(\tR\x12allowedAuthorities\x1aj\n" +
 	"\x0fNamespacesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12A\n" +
 	"\x05value\x18\x02 \x01(\v2+.io.oxia.proto.v1.NamespaceShardsAssignmentR\x05value:\x028\x01\"\xac\x01\n" +
