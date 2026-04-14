@@ -53,12 +53,13 @@ var (
 	ErrNodeIsNotMember         = status.Error(CodeNodeIsNotMember, "oxia: node is not a member")
 )
 
-func NewNodeIsNotLeaderWithHint(shard int64, leader string) error {
+func NewNodeIsNotLeaderWithHint(shard int64, leader string, clusterID string) error {
 	st := status.New(CodeNodeIsNotLeader, fmt.Sprintf("node is not leader for shard %d", shard))
 	if leader != "" {
 		redirect := &proto.LeaderHint{
 			Shard:         shard,
 			LeaderAddress: leader,
+			ClusterId:     clusterID,
 		}
 		stWithDetails, err := st.WithDetails(redirect)
 		if err != nil {

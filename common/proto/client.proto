@@ -128,6 +128,7 @@ message ShardAssignmentsRequest {
  */
 message ShardAssignments {
   map<string, NamespaceShardsAssignment> namespaces = 1;
+  string cluster_id = 2;
 }
 
 /**
@@ -520,4 +521,5 @@ message Notification {
 message LeaderHint {
   int64 shard = 1;
   string leader_address = 2;
+  string cluster_id = 3;
 }

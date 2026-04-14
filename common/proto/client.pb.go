@@ -312,6 +312,7 @@ func (x *ShardAssignmentsRequest) GetNamespace() string {
 type ShardAssignments struct {
 	state         protoimpl.MessageState                `protogen:"open.v1"`
 	Namespaces    map[string]*NamespaceShardsAssignment `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ClusterId     string                                `protobuf:"bytes,2,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -351,6 +352,13 @@ func (x *ShardAssignments) GetNamespaces() map[string]*NamespaceShardsAssignment
 		return x.Namespaces
 	}
 	return nil
+}
+
+func (x *ShardAssignments) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
 }
 
 // *
@@ -2332,6 +2340,7 @@ type LeaderHint struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Shard         int64                  `protobuf:"varint,1,opt,name=shard,proto3" json:"shard,omitempty"`
 	LeaderAddress string                 `protobuf:"bytes,2,opt,name=leader_address,json=leaderAddress,proto3" json:"leader_address,omitempty"`
+	ClusterId     string                 `protobuf:"bytes,3,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2380,17 +2389,26 @@ func (x *LeaderHint) GetLeaderAddress() string {
 	return ""
 }
 
+func (x *LeaderHint) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
 var File_client_proto protoreflect.FileDescriptor
 
 const file_client_proto_rawDesc = "" +
 	"\n" +
 	"\fclient.proto\x12\x10io.oxia.proto.v1\"7\n" +
 	"\x17ShardAssignmentsRequest\x12\x1c\n" +
-	"\tnamespace\x18\x01 \x01(\tR\tnamespace\"\xd2\x01\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\"\xf1\x01\n" +
 	"\x10ShardAssignments\x12R\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\v22.io.oxia.proto.v1.ShardAssignments.NamespacesEntryR\n" +
-	"namespaces\x1aj\n" +
+	"namespaces\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\x02 \x01(\tR\tclusterId\x1aj\n" +
 	"\x0fNamespacesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12A\n" +
 	"\x05value\x18\x02 \x01(\v2+.io.oxia.proto.v1.NamespaceShardsAssignmentR\x05value:\x028\x01\"\xac\x01\n" +
@@ -2548,11 +2566,13 @@ const file_client_proto_rawDesc = "" +
 	"version_id\x18\x02 \x01(\x03H\x00R\tversionId\x88\x01\x01\x12)\n" +
 	"\x0ekey_range_last\x18\x03 \x01(\tH\x01R\fkeyRangeLast\x88\x01\x01B\r\n" +
 	"\v_version_idB\x11\n" +
-	"\x0f_key_range_last\"I\n" +
+	"\x0f_key_range_last\"h\n" +
 	"\n" +
 	"LeaderHint\x12\x14\n" +
 	"\x05shard\x18\x01 \x01(\x03R\x05shard\x12%\n" +
-	"\x0eleader_address\x18\x02 \x01(\tR\rleaderAddress**\n" +
+	"\x0eleader_address\x18\x02 \x01(\tR\rleaderAddress\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\x03 \x01(\tR\tclusterId**\n" +
 	"\x0eShardKeyRouter\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
 	"\aXXHASH3\x10\x01*M\n" +

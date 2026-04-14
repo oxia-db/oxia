@@ -35,12 +35,15 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+var ErrClusterIDMismatch = errors.New("oxia: cluster id mismatch")
+
 type ShardManager interface {
 	io.Closer
 	Get(key string) int64
 	GetAll() []int64
 	Leader(shardId int64) string
 	Exists(shardId int64) bool
+	ClusterID() string
 }
 
 type shardManagerImpl struct {
@@ -56,6 +59,7 @@ type shardManagerImpl struct {
 	cancel         context.CancelFunc
 	logger         *slog.Logger
 	requestTimeout time.Duration
+	clusterID      string
 }
 
 func NewShardManager(shardStrategy ShardStrategy, clientPool rpc.ClientPool,
@@ -147,6 +151,12 @@ func (s *shardManagerImpl) Exists(shardId int64) bool {
 	return ok
 }
 
+func (s *shardManagerImpl) ClusterID() string {
+	s.RLock()
+	defer s.RUnlock()
+	return s.clusterID
+}
+
 func (s *shardManagerImpl) isClosed() bool {
 	return s.ctx.Err() != nil
 }
@@ -212,6 +222,13 @@ func (s *shardManagerImpl) receive(backOff backoff.BackOff) error {
 		if !ok {
 			return errors.New("namespace not found in shards assignments")
 		}
+		clusterID, err := validateClusterID(s.ClusterID(), response.GetClusterId())
+		if err != nil {
+			return err
+		}
+		s.Lock()
+		s.clusterID = clusterID
+		s.Unlock()
 
 		shards := make([]Shard, len(assignments.Assignments))
 		for i, assignment := range assignments.Assignments {
@@ -251,10 +268,27 @@ func overlap(a HashRange, b HashRange) bool {
 }
 
 func isErrorRetryable(err error) bool {
+	if errors.Is(err, ErrClusterIDMismatch) {
+		return false
+	}
 	switch status.Code(err) {
 	case constant.CodeNamespaceNotFound, codes.Unauthenticated:
 		return false
 	default:
 		return true
 	}
+}
+
+func validateClusterID(currentClusterID string, responseClusterID string) (string, error) {
+	if responseClusterID == "" {
+		return currentClusterID, nil
+	}
+	if currentClusterID == "" {
+		return responseClusterID, nil
+	}
+	if currentClusterID != responseClusterID {
+		return currentClusterID, errors.Wrapf(ErrClusterIDMismatch,
+			"expected cluster %q, received cluster %q", currentClusterID, responseClusterID)
+	}
+	return currentClusterID, nil
 }

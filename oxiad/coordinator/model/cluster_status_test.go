@@ -22,6 +22,7 @@ import (
 
 func TestClusterStatus_Clone(t *testing.T) {
 	cs1 := &ClusterStatus{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]NamespaceStatus{
 			"test-ns": {
 				ReplicationFactor: 3,
@@ -65,6 +66,12 @@ func TestClusterStatus_Clone(t *testing.T) {
 
 	assert.Equal(t, cs1.ShardIdGenerator, cs2.ShardIdGenerator)
 	assert.Equal(t, cs1.ServerIdx, cs2.ServerIdx)
+	assert.Equal(t, cs1.ClusterId, cs2.ClusterId)
+}
+
+func TestNewClusterStatusAssignsClusterID(t *testing.T) {
+	cs := NewClusterStatus()
+	assert.NotEmpty(t, cs.ClusterId)
 }
 
 func TestSplitMetadata_Clone(t *testing.T) {

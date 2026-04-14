@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -52,6 +53,7 @@ type ShardAssignmentsDispatcher interface {
 	PushShardAssignments(stream proto.OxiaCoordination_PushShardAssignmentsServer) error
 	RegisterForUpdates(req *proto.ShardAssignmentsRequest, client Client) error
 	GetLeader(shard int64) string
+	ClusterID() string
 }
 
 type shardAssignmentDispatcher struct {
@@ -153,6 +155,7 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 
 func filterByNamespace(assignments *proto.ShardAssignments, namespace string) *proto.ShardAssignments {
 	filtered := &proto.ShardAssignments{
+		ClusterId:  assignments.GetClusterId(),
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{},
 	}
 
@@ -305,6 +308,15 @@ func (s *shardAssignmentDispatcher) GetLeader(shardId int64) string {
 	return shard.GetLeader()
 }
 
+func (s *shardAssignmentDispatcher) ClusterID() string {
+	s.RLock()
+	defer s.RUnlock()
+	if s.assignments == nil {
+		return ""
+	}
+	return s.assignments.GetClusterId()
+}
+
 func NewShardAssignmentDispatcher(healthServer rpc2.HealthServer) ShardAssignmentsDispatcher {
 	s := &shardAssignmentDispatcher{
 		assignments:           nil,
@@ -334,6 +346,7 @@ func NewStandaloneShardAssignmentDispatcher(numShards uint32) ShardAssignmentsDi
 	assignmentDispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(context.Background())).(*shardAssignmentDispatcher) //nolint:revive
 	assignmentDispatcher.standalone = true
 	res := &proto.ShardAssignments{
+		ClusterId: uuid.NewString(),
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,

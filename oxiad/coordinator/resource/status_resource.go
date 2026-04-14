@@ -127,7 +127,7 @@ func (s *status) ensureLoaded() {
 		)
 	})
 	if s.current == nil {
-		s.current = &model.ClusterStatus{}
+		s.current = model.NewClusterStatus()
 	}
 }
 

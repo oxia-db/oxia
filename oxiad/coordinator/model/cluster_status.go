@@ -14,6 +14,8 @@
 
 package model
 
+import "github.com/google/uuid"
+
 type Int32HashRange struct {
 	// The minimum inclusive hash that the shard can contain
 	Min uint32 `json:"min"`
@@ -109,6 +111,7 @@ type NamespaceStatus struct {
 }
 
 type ClusterStatus struct {
+	ClusterId        string                     `json:"clusterId" yaml:"clusterId"`
 	Namespaces       map[string]NamespaceStatus `json:"namespaces" yaml:"namespaces"`
 	ShardIdGenerator int64                      `json:"shardIdGenerator" yaml:"shardIdGenerator"`
 	ServerIdx        uint32                     `json:"serverIdx" yaml:"serverIdx"`
@@ -116,6 +119,7 @@ type ClusterStatus struct {
 
 func NewClusterStatus() *ClusterStatus {
 	return &ClusterStatus{
+		ClusterId:        uuid.NewString(),
 		Namespaces:       map[string]NamespaceStatus{},
 		ShardIdGenerator: 0,
 		ServerIdx:        0,
@@ -163,6 +167,7 @@ func (n NamespaceStatus) Clone() NamespaceStatus {
 
 func (c ClusterStatus) Clone() *ClusterStatus {
 	r := &ClusterStatus{
+		ClusterId:        c.ClusterId,
 		Namespaces:       make(map[string]NamespaceStatus),
 		ShardIdGenerator: c.ShardIdGenerator,
 		ServerIdx:        c.ServerIdx,

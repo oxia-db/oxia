@@ -100,6 +100,9 @@ func (e *executorImpl) ExecuteRangeScan(ctx context.Context, request *proto.Rang
 func (e *executorImpl) rpc(shardId *int64, hint *proto.LeaderHint) (proto.OxiaClientClient, error) {
 	var target string
 	if hint.GetLeaderAddress() != "" {
+		if _, err := validateClusterID(e.ShardManager.ClusterID(), hint.GetClusterId()); err != nil {
+			return nil, err
+		}
 		target = hint.GetLeaderAddress()
 	} else {
 		if shardId != nil {

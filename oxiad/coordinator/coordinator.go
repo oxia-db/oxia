@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
@@ -326,6 +327,18 @@ func (c *coordinator) WaitForNextUpdate(ctx context.Context, currentValue *proto
 	return c.assignments, nil
 }
 
+func (c *coordinator) ensureClusterID() {
+	status := c.statusResource.Load()
+	if status.ClusterId != "" {
+		return
+	}
+
+	cloned := status.Clone()
+	cloned.ClusterId = uuid.NewString()
+	c.Info("Assigning persistent cluster ID", slog.String("cluster-id", cloned.ClusterId))
+	c.statusResource.Update(cloned)
+}
+
 func (c *coordinator) startBackgroundActionWorker() {
 	defer c.Done()
 	for {
@@ -386,10 +399,11 @@ func (c *coordinator) handleActionChangeEnsemble(ac action.Action) {
 
 // This is called while already holding the lock on the coordinator.
 func (c *coordinator) computeNewAssignments() {
+	status := c.statusResource.Load()
 	c.assignments = &proto.ShardAssignments{
+		ClusterId:  status.ClusterId,
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{},
 	}
-	status := c.statusResource.Load()
 	// Update the leader for the shards on all the namespaces
 	for name, ns := range status.Namespaces {
 		nsAssignments := &proto.NamespaceShardsAssignment{
@@ -730,6 +744,7 @@ func NewCoordinator(meta metadata.Provider,
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
 	c.statusResource = resource.NewStatusResource(meta)
+	c.ensureClusterID()
 
 	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 

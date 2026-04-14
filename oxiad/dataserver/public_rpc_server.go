@@ -480,7 +480,7 @@ func (s *publicRpcServer) getLeader(shardId *int64) (lead.LeaderController, erro
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
 		if status.Code(err) == constant.CodeNodeIsNotLeader {
-			return nil, constant.NewNodeIsNotLeaderWithHint(shardID, s.assignmentDispatcher.GetLeader(shardID))
+			return nil, constant.NewNodeIsNotLeaderWithHint(shardID, s.assignmentDispatcher.GetLeader(shardID), s.assignmentDispatcher.ClusterID())
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
 		return nil, err

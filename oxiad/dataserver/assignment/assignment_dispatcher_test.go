@@ -55,6 +55,7 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 
 	assert.False(t, dispatcher.Initialized())
 	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -103,6 +104,7 @@ func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 	assert.Nil(t, resp)
 
 	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -140,6 +142,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	}()
 
 	request := &proto.ShardAssignments{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -170,6 +173,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	assert.True(t, pb.Equal(request, response))
 
 	request = &proto.ShardAssignments{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -220,6 +224,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 	}()
 
 	request := &proto.ShardAssignments{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			"default": {
 				Assignments: []*proto.ShardAssignment{
@@ -265,6 +270,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 
 	response := mockClient.GetResponse()
 	assert.True(t, pb.Equal(&proto.ShardAssignments{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			"test-ns-1": {
 				Assignments: []*proto.ShardAssignment{
@@ -290,6 +296,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 
 	response = mockClient.GetResponse()
 	assert.True(t, pb.Equal(&proto.ShardAssignments{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			"default": {
 				Assignments: []*proto.ShardAssignment{
@@ -326,6 +333,7 @@ func TestShardAssignmentDispatcher_GetLeader(t *testing.T) {
 	}()
 
 	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -346,6 +354,7 @@ func TestShardAssignmentDispatcher_GetLeader(t *testing.T) {
 
 	// Update assignments - shard 1 moves to server3
 	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		ClusterId: "cluster-1",
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{

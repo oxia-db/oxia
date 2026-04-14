@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOverlap(t *testing.T) {
@@ -34,4 +35,22 @@ func TestOverlap(t *testing.T) {
 	} {
 		assert.Equal(t, overlap(item.a, item.b), item.isOverlap)
 	}
+}
+
+func TestValidateClusterID(t *testing.T) {
+	clusterID, err := validateClusterID("", "cluster-a")
+	require.NoError(t, err)
+	assert.Equal(t, "cluster-a", clusterID)
+
+	clusterID, err = validateClusterID("cluster-a", "cluster-a")
+	require.NoError(t, err)
+	assert.Equal(t, "cluster-a", clusterID)
+
+	clusterID, err = validateClusterID("cluster-a", "")
+	require.NoError(t, err)
+	assert.Equal(t, "cluster-a", clusterID)
+
+	_, err = validateClusterID("cluster-a", "cluster-b")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrClusterIDMismatch)
 }
