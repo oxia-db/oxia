@@ -25,7 +25,6 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
-	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
@@ -465,8 +464,8 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 			return err
 		}
 		if resp.Checksum != nil {
-			fc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("commit-offset", entry.Offset))
-			fc.walChecksumGauge.Record(int64(entryCrc), attribute.Int64("commit-offset", entry.Offset))
+			fc.checksumGauge.Record(int64(*resp.Checksum))
+			fc.walChecksumGauge.Record(int64(entryCrc))
 		}
 
 		fc.commitOffset.Store(entry.Offset)
