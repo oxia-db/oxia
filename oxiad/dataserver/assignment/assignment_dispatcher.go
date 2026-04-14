@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/emirpasic/gods/v2/sets/hashset"
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
@@ -52,12 +53,14 @@ type ShardAssignmentsDispatcher interface {
 	PushShardAssignments(stream proto.OxiaCoordination_PushShardAssignmentsServer) error
 	RegisterForUpdates(req *proto.ShardAssignmentsRequest, client Client) error
 	GetLeader(shard int64) string
+	HasAuthority(authority string) bool
 }
 
 type shardAssignmentDispatcher struct {
 	sync.RWMutex
 	assignments           *proto.ShardAssignments
 	shardAssignmentsIndex *redblacktree.Tree[int64, *proto.ShardAssignment]
+	validAuthorities      *hashset.Set[string]
 
 	clients      map[int64]chan *proto.ShardAssignments
 	nextClientId int64
@@ -271,12 +274,17 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	s.assignments = assignments
 
 	shardIndex := redblacktree.New[int64, *proto.ShardAssignment]()
+	validAuthorities := hashset.New[string]()
 	for _, namespace := range assignments.Namespaces {
 		for idx, shardAssignment := range namespace.Assignments {
 			shardIndex.Put(shardAssignment.GetShard(), namespace.Assignments[idx])
+			if leader := shardAssignment.GetLeader(); leader != "" {
+				validAuthorities.Add(strings.ToLower(leader))
+			}
 		}
 	}
 	s.shardAssignmentsIndex = shardIndex
+	s.validAuthorities = validAuthorities
 
 	// Update all the clients, without getting stuck if any client is not responsive
 	for id, clientCh := range s.clients {
@@ -305,10 +313,20 @@ func (s *shardAssignmentDispatcher) GetLeader(shardId int64) string {
 	return shard.GetLeader()
 }
 
+func (s *shardAssignmentDispatcher) HasAuthority(authority string) bool {
+	s.RLock()
+	defer s.RUnlock()
+	if s.standalone {
+		return true
+	}
+	return s.validAuthorities.Contains(strings.ToLower(authority))
+}
+
 func NewShardAssignmentDispatcher(healthServer rpc2.HealthServer) ShardAssignmentsDispatcher {
 	s := &shardAssignmentDispatcher{
 		assignments:           nil,
 		shardAssignmentsIndex: redblacktree.New[int64, *proto.ShardAssignment](),
+		validAuthorities:      hashset.New[string](),
 		healthServer:          healthServer,
 		clients:               make(map[int64]chan *proto.ShardAssignments),
 		log: slog.With(

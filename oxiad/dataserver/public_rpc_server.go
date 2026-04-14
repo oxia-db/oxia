@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
-	"strings"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -89,20 +87,14 @@ func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string
 	return server, nil
 }
 
-func (s *publicRpcServer) validateAuthority(ctx context.Context, shardId int64) error {
+func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
 	actualAuthority, err := oxiadcommonrpc.GetAuthority(ctx)
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "oxia: invalid authority: %v", err)
 	}
 
-	expectedAuthority := s.assignmentDispatcher.GetLeader(shardId)
-	if expectedAuthority == "" {
-		return nil
-	}
-
-	if !sameAuthority(actualAuthority, expectedAuthority) {
-		return status.Errorf(codes.PermissionDenied, "oxia: authority mismatch: got %q, expected %q",
-			actualAuthority, expectedAuthority)
+	if !s.assignmentDispatcher.HasAuthority(actualAuthority) {
+		return status.Errorf(codes.PermissionDenied, "oxia: unexpected authority %q", actualAuthority)
 	}
 
 	return nil
@@ -506,7 +498,7 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
 		return nil, err
 	}
-	if err := s.validateAuthority(ctx, shardID); err != nil {
+	if err := s.validateAuthority(ctx); err != nil {
 		return nil, err
 	}
 	return lc, nil
@@ -514,18 +506,6 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 
 func (s *publicRpcServer) Close() error {
 	return s.grpcServer.Close()
-}
-
-func sameAuthority(left string, right string) bool {
-	leftHost, leftPort, err := net.SplitHostPort(left)
-	if err != nil {
-		return false
-	}
-	rightHost, rightPort, err := net.SplitHostPort(right)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(leftHost, rightHost) && leftPort == rightPort
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

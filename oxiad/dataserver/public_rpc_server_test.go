@@ -39,7 +39,7 @@ func init() {
 }
 
 type testAssignmentDispatcher struct {
-	leader string
+	validAuthorities map[string]bool
 }
 
 func (*testAssignmentDispatcher) Close() error      { return nil }
@@ -50,8 +50,10 @@ func (*testAssignmentDispatcher) PushShardAssignments(proto.OxiaCoordination_Pus
 func (*testAssignmentDispatcher) RegisterForUpdates(*proto.ShardAssignmentsRequest, assignment.Client) error {
 	panic("unexpected call")
 }
-func (t *testAssignmentDispatcher) GetLeader(int64) string { return t.leader }
-func (*testAssignmentDispatcher) ClusterID() string        { return "" }
+func (*testAssignmentDispatcher) GetLeader(int64) string { return "" }
+func (t *testAssignmentDispatcher) HasAuthority(authority string) bool {
+	return t.validAuthorities[authority]
+}
 
 func TestWriteClientClose(t *testing.T) {
 	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
@@ -104,14 +106,16 @@ func TestWriteClientClose(t *testing.T) {
 
 func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {
 	server := &publicRpcServer{
-		assignmentDispatcher: &testAssignmentDispatcher{leader: "expected-host:6648"},
+		assignmentDispatcher: &testAssignmentDispatcher{validAuthorities: map[string]bool{
+			"expected-host:6648": true,
+		}},
 	}
 
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
 		":authority": "wrong-host:6648",
 	}))
 
-	err := server.validateAuthority(ctx, 0)
+	err := server.validateAuthority(ctx)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
 }
