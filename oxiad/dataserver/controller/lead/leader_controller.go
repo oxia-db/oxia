@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pkg/errors"
-	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/status"
 
@@ -661,8 +660,8 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 			return errors.Wrap(err, "failed to applies wal entries to db")
 		}
 		if resp.Checksum != nil {
-			lc.checksumGauge.Record(int64(*resp.Checksum), attribute.Int64("commit-offset", entry.Offset))
-			lc.walChecksumGauge.Record(int64(entryCrc), attribute.Int64("commit-offset", entry.Offset))
+			lc.checksumGauge.Record(int64(*resp.Checksum))
+			lc.walChecksumGauge.Record(int64(entryCrc))
 		}
 	}
 
@@ -1039,8 +1038,8 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 					return
 				}
 				if response.Checksum != nil {
-					lc.checksumGauge.Record(int64(*response.Checksum), attribute.Int64("commit-offset", newOffset))
-					lc.walChecksumGauge.Record(int64(entryCrc), attribute.Int64("commit-offset", newOffset))
+					lc.checksumGauge.Record(int64(*response.Checksum))
+					lc.walChecksumGauge.Record(int64(entryCrc))
 				}
 				cb.OnComplete(response)
 			}, func(err error) {
