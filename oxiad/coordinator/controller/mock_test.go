@@ -50,7 +50,7 @@ var (
 type mockShardAssignmentsProvider struct {
 	sync.Mutex
 	cond    concurrent.ConditionContext
-	current *proto.InternalShardAssignments
+	current *proto.ShardAssignments
 }
 
 func newMockShardAssignmentsProvider() *mockShardAssignmentsProvider {
@@ -62,7 +62,7 @@ func newMockShardAssignmentsProvider() *mockShardAssignmentsProvider {
 	return sap
 }
 
-func (sap *mockShardAssignmentsProvider) set(value *proto.InternalShardAssignments) {
+func (sap *mockShardAssignmentsProvider) set(value *proto.ShardAssignments) {
 	sap.Lock()
 	defer sap.Unlock()
 
@@ -70,7 +70,7 @@ func (sap *mockShardAssignmentsProvider) set(value *proto.InternalShardAssignmen
 	sap.cond.Broadcast()
 }
 
-func (sap *mockShardAssignmentsProvider) WaitForNextUpdate(ctx context.Context, currentValue *proto.InternalShardAssignments) (*proto.InternalShardAssignments, error) {
+func (sap *mockShardAssignmentsProvider) WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error) {
 	sap.Lock()
 	defer sap.Unlock()
 
@@ -583,12 +583,12 @@ type mockShardAssignmentClient struct {
 	sync.Mutex
 
 	err     error
-	updates chan *proto.InternalShardAssignments
+	updates chan *proto.ShardAssignments
 }
 
 func newMockShardAssignmentClient() *mockShardAssignmentClient {
 	return &mockShardAssignmentClient{
-		updates: make(chan *proto.InternalShardAssignments, 100),
+		updates: make(chan *proto.ShardAssignments, 100),
 	}
 }
 
@@ -599,7 +599,7 @@ func (m *mockShardAssignmentClient) SetError(err error) {
 	m.err = err
 }
 
-func (m *mockShardAssignmentClient) Send(response *proto.InternalShardAssignments) error {
+func (m *mockShardAssignmentClient) Send(response *proto.ShardAssignments) error {
 	m.Lock()
 	defer m.Unlock()
 

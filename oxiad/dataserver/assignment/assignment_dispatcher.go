@@ -172,7 +172,7 @@ func (s *shardAssignmentDispatcher) assignmentsInterceptorFunc(clientStream Clie
 			return nil, err
 		}
 		return func(assignments *proto.ShardAssignments) *proto.ShardAssignments {
-			assignments = pb.Clone(assignments).(*proto.ShardAssignments) //nolint:revive
+			assignments = cloneAssignmentsWithoutAuthorities(assignments)
 			for _, nsa := range assignments.Namespaces {
 				for _, assignment := range nsa.Assignments {
 					assignment.Leader = authority
@@ -182,8 +182,14 @@ func (s *shardAssignmentDispatcher) assignmentsInterceptorFunc(clientStream Clie
 		}, nil
 	}
 	return func(assignments *proto.ShardAssignments) *proto.ShardAssignments {
-		return assignments
+		return cloneAssignmentsWithoutAuthorities(assignments)
 	}, nil
+}
+
+func cloneAssignmentsWithoutAuthorities(assignments *proto.ShardAssignments) *proto.ShardAssignments {
+	assignments = pb.Clone(assignments).(*proto.ShardAssignments) //nolint:revive
+	assignments.Authorities = nil
+	return assignments
 }
 
 func authority(ctx context.Context) (string, error) {
@@ -213,7 +219,7 @@ func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordi
 	streamReader := ReadStream(
 		s.ctx,
 		stream,
-		s.updateInternalShardAssignment,
+		s.updateShardAssignment,
 		map[string]string{
 			"oxia": "receive-shards-assignments",
 		},
@@ -224,7 +230,7 @@ func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordi
 	return streamReader.Run()
 }
 
-func (s *shardAssignmentDispatcher) updateInternalShardAssignment(update *proto.InternalShardAssignments) error {
+func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.ShardAssignments) error {
 	// Once we receive the first update of the shards mapping, this service can be
 	// considered "ready" and it will be able to respond to service discovery requests
 	s.healthServer.SetServingStatus(oxiadcommonrpc.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
@@ -235,17 +241,16 @@ func (s *shardAssignmentDispatcher) updateInternalShardAssignment(update *proto.
 	if s.log.Enabled(s.ctx, slog.LevelDebug) {
 		s.log.Debug("Update shard assignments.",
 			slog.Any("previous", s.assignments),
-			slog.Any("current", update))
+			slog.Any("current", assignments))
 	} else {
 		s.log.Info("Update shard assignments.")
 	}
 
-	assignments := update.GetAssignments()
 	s.assignments = assignments
 
 	shardIndex := redblacktree.New[int64, *proto.ShardAssignment]()
 	validAuthorities := hashset.New[string]()
-	for _, authority := range update.GetAuthorities() {
+	for _, authority := range assignments.GetAuthorities() {
 		if authority != "" {
 			validAuthorities.Add(strings.ToLower(authority))
 		}
@@ -332,9 +337,7 @@ func NewStandaloneShardAssignmentDispatcher(numShards uint32) ShardAssignmentsDi
 		},
 	}
 
-	err := assignmentDispatcher.updateInternalShardAssignment(&proto.InternalShardAssignments{
-		Assignments: res,
-	})
+	err := assignmentDispatcher.updateShardAssignment(res)
 	if err != nil {
 		panic(err)
 	}

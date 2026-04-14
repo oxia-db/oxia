@@ -89,8 +89,8 @@ func (d *dispatcher) onOxiaResponseMessage(_ MsgType, res *Message[OxiaMessage],
 func (d *dispatcher) onOxiaStreamRequestMessage(msgType MsgType, m any, message pb.Message) {
 	switch msgType {
 	case MsgTypeShardAssignmentsResponse:
-		r := message.(*proto.InternalShardAssignments)
-		d.currentLeader = r.Assignments.Namespaces[constant.DefaultNamespace].Assignments[0].Leader
+		r := message.(*proto.ShardAssignments)
+		d.currentLeader = r.Namespaces[constant.DefaultNamespace].Assignments[0].Leader
 		slog.Info(
 			"Received notification of new leader",
 			slog.String("leader", d.currentLeader),

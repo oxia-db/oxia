@@ -313,18 +313,18 @@ func (c *coordinator) BecameUnavailable(node model.Server) {
 	}
 }
 
-func (c *coordinator) WaitForNextUpdate(ctx context.Context, currentValue *proto.InternalShardAssignments) (*proto.InternalShardAssignments, error) {
+func (c *coordinator) WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error) {
 	c.Lock()
 	defer c.Unlock()
 
-	for pb.Equal(currentValue, c.internalAssignments()) {
+	for pb.Equal(currentValue, c.assignments) {
 		// Wait on the condition until the assignments get changed
 		if err := c.assignmentsChanged.Wait(ctx); err != nil {
 			return nil, err
 		}
 	}
 
-	return c.internalAssignments(), nil
+	return c.assignments, nil
 }
 
 func (c *coordinator) startBackgroundActionWorker() {
@@ -388,7 +388,8 @@ func (c *coordinator) handleActionChangeEnsemble(ac action.Action) {
 // This is called while already holding the lock on the coordinator.
 func (c *coordinator) computeNewAssignments() {
 	c.assignments = &proto.ShardAssignments{
-		Namespaces: map[string]*proto.NamespaceShardsAssignment{},
+		Namespaces:  map[string]*proto.NamespaceShardsAssignment{},
+		Authorities: mergedAuthorities(c.statusResource.Load(), c.configResource.Load().AllowExtraAuthorities),
 	}
 	status := c.statusResource.Load()
 	// Update the leader for the shards on all the namespaces
@@ -451,13 +452,6 @@ func mergedAuthorities(status *model.ClusterStatus, extraAuthorities []string) [
 		result = append(result, authority)
 	}
 	return result
-}
-
-func (c *coordinator) internalAssignments() *proto.InternalShardAssignments {
-	return &proto.InternalShardAssignments{
-		Assignments: c.assignments,
-		Authorities: mergedAuthorities(c.statusResource.Load(), c.configResource.Load().AllowExtraAuthorities),
-	}
 }
 
 // InitiateSplit validates and initiates a shard split. It creates child shards

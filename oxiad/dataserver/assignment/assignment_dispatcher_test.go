@@ -55,7 +55,7 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 	}()
 
 	assert.False(t, dispatcher.Initialized())
-	coordinatorStream.AddRequest(newInternalShardAssignments(&proto.ShardAssignments{
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -65,7 +65,7 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
 			},
 		},
-	}, nil))
+	})
 	assert.Eventually(t, func() bool {
 		return dispatcher.Initialized()
 	}, 10*time.Second, 10*time.Millisecond)
@@ -103,7 +103,7 @@ func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 	assert.Equal(t, codes.NotFound, status.Code(err))
 	assert.Nil(t, resp)
 
-	coordinatorStream.AddRequest(newInternalShardAssignments(&proto.ShardAssignments{
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -113,7 +113,7 @@ func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
 			},
 		},
-	}, nil))
+	})
 	assert.Eventually(t, func() bool {
 		return dispatcher.Initialized()
 	}, 10*time.Second, 10*time.Millisecond)
@@ -151,7 +151,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 			},
 		},
 	}
-	coordinatorStream.AddRequest(newInternalShardAssignments(request, nil))
+	coordinatorStream.AddRequest(request)
 	// Wait for the dispatcher to process the initializing request
 	assert.Eventually(t, func() bool {
 		return dispatcher.Initialized()
@@ -181,7 +181,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 			},
 		},
 	}
-	coordinatorStream.AddRequest(newInternalShardAssignments(request, nil))
+	coordinatorStream.AddRequest(request)
 
 	// Should get the assignment update as they arrived from controller
 	response = mockClient.GetResponse()
@@ -245,7 +245,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 			},
 		},
 	}
-	coordinatorStream.AddRequest(newInternalShardAssignments(request, nil))
+	coordinatorStream.AddRequest(request)
 	// Wait for the dispatcher to process the initializing request
 	assert.Eventually(t, func() bool {
 		return dispatcher.Initialized()
@@ -326,7 +326,7 @@ func TestShardAssignmentDispatcher_GetLeader(t *testing.T) {
 		assert.NoError(t, err)
 	}()
 
-	coordinatorStream.AddRequest(newInternalShardAssignments(&proto.ShardAssignments{
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -336,7 +336,7 @@ func TestShardAssignmentDispatcher_GetLeader(t *testing.T) {
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
 			},
 		},
-	}, nil))
+	})
 	assert.Eventually(t, func() bool {
 		return dispatcher.Initialized()
 	}, 10*time.Second, 10*time.Millisecond)
@@ -346,7 +346,7 @@ func TestShardAssignmentDispatcher_GetLeader(t *testing.T) {
 	assert.Equal(t, "", dispatcher.GetLeader(999))
 
 	// Update assignments - shard 1 moves to server3
-	coordinatorStream.AddRequest(newInternalShardAssignments(&proto.ShardAssignments{
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -356,7 +356,7 @@ func TestShardAssignmentDispatcher_GetLeader(t *testing.T) {
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
 			},
 		},
-	}, nil))
+	})
 
 	assert.Eventually(t, func() bool {
 		return dispatcher.GetLeader(1) == "server3:6649"
@@ -377,7 +377,7 @@ func TestShardAssignmentDispatcher_HasAuthority(t *testing.T) {
 		assert.NoError(t, err)
 	}()
 
-	coordinatorStream.AddRequest(newInternalShardAssignments(&proto.ShardAssignments{
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				Assignments: []*proto.ShardAssignment{
@@ -386,7 +386,8 @@ func TestShardAssignmentDispatcher_HasAuthority(t *testing.T) {
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
 			},
 		},
-	}, []string{"server1:6648", "server1:6649", "bootstrap:6648"}))
+		Authorities: []string{"server1:6648", "server1:6649", "bootstrap:6648"},
+	})
 
 	assert.Eventually(t, func() bool {
 		return dispatcher.Initialized()
@@ -400,6 +401,49 @@ func TestShardAssignmentDispatcher_HasAuthority(t *testing.T) {
 	assert.NoError(t, dispatcher.Close())
 }
 
+func TestShardAssignmentDispatcher_ClientAssignmentsDoNotIncludeAuthorities(t *testing.T) {
+	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
+
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
+	go func() {
+		err := dispatcher.PushShardAssignments(coordinatorStream)
+		assert.NoError(t, err)
+	}()
+
+	request := &proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{
+					newShardAssignment(0, "server1:6648", 0, math.MaxUint32),
+				},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+		Authorities: []string{"server1:6648", "bootstrap:6648"},
+	}
+	coordinatorStream.AddRequest(request)
+
+	assert.Eventually(t, func() bool {
+		return dispatcher.Initialized()
+	}, 10*time.Second, 10*time.Millisecond)
+
+	mockClient := rpc.NewMockShardAssignmentClientStream()
+	done := make(chan error, 1)
+	go func() {
+		done <- dispatcher.RegisterForUpdates(&proto.ShardAssignmentsRequest{
+			Namespace: constant.DefaultNamespace,
+		}, mockClient)
+	}()
+
+	response := mockClient.GetResponse()
+	assert.Nil(t, response.Authorities)
+	assert.Equal(t, request.Namespaces, response.Namespaces)
+
+	mockClient.Cancel()
+	assert.NoError(t, <-done)
+	assert.NoError(t, dispatcher.Close())
+}
+
 func newShardAssignment(id int64, leader string, minHashInclusive uint32, maxHashInclusive uint32) *proto.ShardAssignment {
 	return &proto.ShardAssignment{
 		Shard:  id,
@@ -410,12 +454,5 @@ func newShardAssignment(id int64, leader string, minHashInclusive uint32, maxHas
 				MaxHashInclusive: maxHashInclusive,
 			},
 		},
-	}
-}
-
-func newInternalShardAssignments(assignments *proto.ShardAssignments, authorities []string) *proto.InternalShardAssignments {
-	return &proto.InternalShardAssignments{
-		Assignments: assignments,
-		Authorities: authorities,
 	}
 }

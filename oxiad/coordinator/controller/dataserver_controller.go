@@ -55,7 +55,7 @@ const (
 )
 
 type ShardAssignmentsProvider interface {
-	WaitForNextUpdate(ctx context.Context, currentValue *proto.InternalShardAssignments) (*proto.InternalShardAssignments, error)
+	WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error)
 }
 
 // The DataServerController takes care of checking the health-status of each dataServer
@@ -162,7 +162,7 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 			return err
 		}
 		streamCtx := stream.Context()
-		var assignments *proto.InternalShardAssignments
+		var assignments *proto.ShardAssignments
 		for {
 			select {
 			case <-n.ctx.Done():

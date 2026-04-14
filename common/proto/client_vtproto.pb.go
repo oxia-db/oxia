@@ -50,6 +50,11 @@ func (m *ShardAssignments) CloneVT() *ShardAssignments {
 		}
 		r.Namespaces = tmpContainer
 	}
+	if rhs := m.Authorities; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.Authorities = tmpContainer
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -886,6 +891,15 @@ func (this *ShardAssignments) EqualVT(that *ShardAssignments) bool {
 			if !p.EqualVT(q) {
 				return false
 			}
+		}
+	}
+	if len(this.Authorities) != len(that.Authorities) {
+		return false
+	}
+	for i, vx := range this.Authorities {
+		vy := that.Authorities[i]
+		if vx != vy {
+			return false
 		}
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1973,6 +1987,15 @@ func (m *ShardAssignments) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.Authorities) > 0 {
+		for iNdEx := len(m.Authorities) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.Authorities[iNdEx])
+			copy(dAtA[i:], m.Authorities[iNdEx])
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Authorities[iNdEx])))
+			i--
+			dAtA[i] = 0x12
+		}
 	}
 	if len(m.Namespaces) > 0 {
 		for k := range m.Namespaces {
@@ -3778,6 +3801,12 @@ func (m *ShardAssignments) SizeVT() (n int) {
 			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
 		}
 	}
+	if len(m.Authorities) > 0 {
+		for _, s := range m.Authorities {
+			l = len(s)
+			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -4705,6 +4734,38 @@ func (m *ShardAssignments) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.Namespaces[mapkey] = mapvalue
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Authorities", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Authorities = append(m.Authorities, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -9061,6 +9122,42 @@ func (m *ShardAssignments) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 			}
 			m.Namespaces[mapkey] = mapvalue
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Authorities", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			var stringValue string
+			if intStringLen > 0 {
+				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
+			}
+			m.Authorities = append(m.Authorities, stringValue)
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

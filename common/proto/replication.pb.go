@@ -300,58 +300,6 @@ func (*CoordinationShardAssignmentsResponse) Descriptor() ([]byte, []int) {
 	return file_replication_proto_rawDescGZIP(), []int{2}
 }
 
-type InternalShardAssignments struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Assignments   *ShardAssignments      `protobuf:"bytes,1,opt,name=assignments,proto3" json:"assignments,omitempty"`
-	Authorities   []string               `protobuf:"bytes,2,rep,name=authorities,proto3" json:"authorities,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *InternalShardAssignments) Reset() {
-	*x = InternalShardAssignments{}
-	mi := &file_replication_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *InternalShardAssignments) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*InternalShardAssignments) ProtoMessage() {}
-
-func (x *InternalShardAssignments) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use InternalShardAssignments.ProtoReflect.Descriptor instead.
-func (*InternalShardAssignments) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *InternalShardAssignments) GetAssignments() *ShardAssignments {
-	if x != nil {
-		return x.Assignments
-	}
-	return nil
-}
-
-func (x *InternalShardAssignments) GetAuthorities() []string {
-	if x != nil {
-		return x.Authorities
-	}
-	return nil
-}
-
 type EntryId struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Term          int64                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
@@ -362,7 +310,7 @@ type EntryId struct {
 
 func (x *EntryId) Reset() {
 	*x = EntryId{}
-	mi := &file_replication_proto_msgTypes[4]
+	mi := &file_replication_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -374,7 +322,7 @@ func (x *EntryId) String() string {
 func (*EntryId) ProtoMessage() {}
 
 func (x *EntryId) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[4]
+	mi := &file_replication_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -387,7 +335,7 @@ func (x *EntryId) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EntryId.ProtoReflect.Descriptor instead.
 func (*EntryId) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{4}
+	return file_replication_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *EntryId) GetTerm() int64 {
@@ -416,7 +364,7 @@ type LogEntry struct {
 
 func (x *LogEntry) Reset() {
 	*x = LogEntry{}
-	mi := &file_replication_proto_msgTypes[5]
+	mi := &file_replication_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -428,7 +376,7 @@ func (x *LogEntry) String() string {
 func (*LogEntry) ProtoMessage() {}
 
 func (x *LogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[5]
+	mi := &file_replication_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -441,7 +389,7 @@ func (x *LogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
 func (*LogEntry) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{5}
+	return file_replication_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *LogEntry) GetTerm() int64 {
@@ -485,7 +433,7 @@ type SnapshotChunk struct {
 
 func (x *SnapshotChunk) Reset() {
 	*x = SnapshotChunk{}
-	mi := &file_replication_proto_msgTypes[6]
+	mi := &file_replication_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -497,7 +445,7 @@ func (x *SnapshotChunk) String() string {
 func (*SnapshotChunk) ProtoMessage() {}
 
 func (x *SnapshotChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[6]
+	mi := &file_replication_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -510,7 +458,7 @@ func (x *SnapshotChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotChunk.ProtoReflect.Descriptor instead.
 func (*SnapshotChunk) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{6}
+	return file_replication_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SnapshotChunk) GetTerm() int64 {
@@ -558,7 +506,7 @@ type NewTermOptions struct {
 
 func (x *NewTermOptions) Reset() {
 	*x = NewTermOptions{}
-	mi := &file_replication_proto_msgTypes[7]
+	mi := &file_replication_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -570,7 +518,7 @@ func (x *NewTermOptions) String() string {
 func (*NewTermOptions) ProtoMessage() {}
 
 func (x *NewTermOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[7]
+	mi := &file_replication_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -583,7 +531,7 @@ func (x *NewTermOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NewTermOptions.ProtoReflect.Descriptor instead.
 func (*NewTermOptions) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{7}
+	return file_replication_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *NewTermOptions) GetEnableNotifications() bool {
@@ -612,7 +560,7 @@ type NewTermRequest struct {
 
 func (x *NewTermRequest) Reset() {
 	*x = NewTermRequest{}
-	mi := &file_replication_proto_msgTypes[8]
+	mi := &file_replication_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -624,7 +572,7 @@ func (x *NewTermRequest) String() string {
 func (*NewTermRequest) ProtoMessage() {}
 
 func (x *NewTermRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[8]
+	mi := &file_replication_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -637,7 +585,7 @@ func (x *NewTermRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NewTermRequest.ProtoReflect.Descriptor instead.
 func (*NewTermRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{8}
+	return file_replication_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *NewTermRequest) GetNamespace() string {
@@ -677,7 +625,7 @@ type NewTermResponse struct {
 
 func (x *NewTermResponse) Reset() {
 	*x = NewTermResponse{}
-	mi := &file_replication_proto_msgTypes[9]
+	mi := &file_replication_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -689,7 +637,7 @@ func (x *NewTermResponse) String() string {
 func (*NewTermResponse) ProtoMessage() {}
 
 func (x *NewTermResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[9]
+	mi := &file_replication_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -702,7 +650,7 @@ func (x *NewTermResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NewTermResponse.ProtoReflect.Descriptor instead.
 func (*NewTermResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{9}
+	return file_replication_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *NewTermResponse) GetHeadEntryId() *EntryId {
@@ -729,7 +677,7 @@ type BecomeLeaderRequest struct {
 
 func (x *BecomeLeaderRequest) Reset() {
 	*x = BecomeLeaderRequest{}
-	mi := &file_replication_proto_msgTypes[10]
+	mi := &file_replication_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -741,7 +689,7 @@ func (x *BecomeLeaderRequest) String() string {
 func (*BecomeLeaderRequest) ProtoMessage() {}
 
 func (x *BecomeLeaderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[10]
+	mi := &file_replication_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -754,7 +702,7 @@ func (x *BecomeLeaderRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BecomeLeaderRequest.ProtoReflect.Descriptor instead.
 func (*BecomeLeaderRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{10}
+	return file_replication_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *BecomeLeaderRequest) GetNamespace() string {
@@ -825,7 +773,7 @@ type AddFollowerRequest struct {
 
 func (x *AddFollowerRequest) Reset() {
 	*x = AddFollowerRequest{}
-	mi := &file_replication_proto_msgTypes[11]
+	mi := &file_replication_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -837,7 +785,7 @@ func (x *AddFollowerRequest) String() string {
 func (*AddFollowerRequest) ProtoMessage() {}
 
 func (x *AddFollowerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[11]
+	mi := &file_replication_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -850,7 +798,7 @@ func (x *AddFollowerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddFollowerRequest.ProtoReflect.Descriptor instead.
 func (*AddFollowerRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{11}
+	return file_replication_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *AddFollowerRequest) GetNamespace() string {
@@ -917,7 +865,7 @@ type BecomeLeaderResponse struct {
 
 func (x *BecomeLeaderResponse) Reset() {
 	*x = BecomeLeaderResponse{}
-	mi := &file_replication_proto_msgTypes[12]
+	mi := &file_replication_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -929,7 +877,7 @@ func (x *BecomeLeaderResponse) String() string {
 func (*BecomeLeaderResponse) ProtoMessage() {}
 
 func (x *BecomeLeaderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[12]
+	mi := &file_replication_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -942,7 +890,7 @@ func (x *BecomeLeaderResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BecomeLeaderResponse.ProtoReflect.Descriptor instead.
 func (*BecomeLeaderResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{12}
+	return file_replication_proto_rawDescGZIP(), []int{11}
 }
 
 type AddFollowerResponse struct {
@@ -953,7 +901,7 @@ type AddFollowerResponse struct {
 
 func (x *AddFollowerResponse) Reset() {
 	*x = AddFollowerResponse{}
-	mi := &file_replication_proto_msgTypes[13]
+	mi := &file_replication_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -965,7 +913,7 @@ func (x *AddFollowerResponse) String() string {
 func (*AddFollowerResponse) ProtoMessage() {}
 
 func (x *AddFollowerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[13]
+	mi := &file_replication_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -978,7 +926,7 @@ func (x *AddFollowerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddFollowerResponse.ProtoReflect.Descriptor instead.
 func (*AddFollowerResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{13}
+	return file_replication_proto_rawDescGZIP(), []int{12}
 }
 
 type TruncateRequest struct {
@@ -993,7 +941,7 @@ type TruncateRequest struct {
 
 func (x *TruncateRequest) Reset() {
 	*x = TruncateRequest{}
-	mi := &file_replication_proto_msgTypes[14]
+	mi := &file_replication_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1005,7 +953,7 @@ func (x *TruncateRequest) String() string {
 func (*TruncateRequest) ProtoMessage() {}
 
 func (x *TruncateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[14]
+	mi := &file_replication_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1018,7 +966,7 @@ func (x *TruncateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TruncateRequest.ProtoReflect.Descriptor instead.
 func (*TruncateRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{14}
+	return file_replication_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *TruncateRequest) GetNamespace() string {
@@ -1058,7 +1006,7 @@ type TruncateResponse struct {
 
 func (x *TruncateResponse) Reset() {
 	*x = TruncateResponse{}
-	mi := &file_replication_proto_msgTypes[15]
+	mi := &file_replication_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1070,7 +1018,7 @@ func (x *TruncateResponse) String() string {
 func (*TruncateResponse) ProtoMessage() {}
 
 func (x *TruncateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[15]
+	mi := &file_replication_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1083,7 +1031,7 @@ func (x *TruncateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TruncateResponse.ProtoReflect.Descriptor instead.
 func (*TruncateResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{15}
+	return file_replication_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *TruncateResponse) GetHeadEntryId() *EntryId {
@@ -1105,7 +1053,7 @@ type Append struct {
 
 func (x *Append) Reset() {
 	*x = Append{}
-	mi := &file_replication_proto_msgTypes[16]
+	mi := &file_replication_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1117,7 +1065,7 @@ func (x *Append) String() string {
 func (*Append) ProtoMessage() {}
 
 func (x *Append) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[16]
+	mi := &file_replication_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1130,7 +1078,7 @@ func (x *Append) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Append.ProtoReflect.Descriptor instead.
 func (*Append) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{16}
+	return file_replication_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Append) GetTerm() int64 {
@@ -1170,7 +1118,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_replication_proto_msgTypes[17]
+	mi := &file_replication_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1182,7 +1130,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[17]
+	mi := &file_replication_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1195,7 +1143,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{17}
+	return file_replication_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Ack) GetOffset() int64 {
@@ -1214,7 +1162,7 @@ type SnapshotResponse struct {
 
 func (x *SnapshotResponse) Reset() {
 	*x = SnapshotResponse{}
-	mi := &file_replication_proto_msgTypes[18]
+	mi := &file_replication_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1226,7 +1174,7 @@ func (x *SnapshotResponse) String() string {
 func (*SnapshotResponse) ProtoMessage() {}
 
 func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[18]
+	mi := &file_replication_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1239,7 +1187,7 @@ func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotResponse.ProtoReflect.Descriptor instead.
 func (*SnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{18}
+	return file_replication_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SnapshotResponse) GetAckOffset() int64 {
@@ -1260,7 +1208,7 @@ type DeleteShardRequest struct {
 
 func (x *DeleteShardRequest) Reset() {
 	*x = DeleteShardRequest{}
-	mi := &file_replication_proto_msgTypes[19]
+	mi := &file_replication_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1272,7 +1220,7 @@ func (x *DeleteShardRequest) String() string {
 func (*DeleteShardRequest) ProtoMessage() {}
 
 func (x *DeleteShardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[19]
+	mi := &file_replication_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1285,7 +1233,7 @@ func (x *DeleteShardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteShardRequest.ProtoReflect.Descriptor instead.
 func (*DeleteShardRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{19}
+	return file_replication_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DeleteShardRequest) GetNamespace() string {
@@ -1317,7 +1265,7 @@ type DeleteShardResponse struct {
 
 func (x *DeleteShardResponse) Reset() {
 	*x = DeleteShardResponse{}
-	mi := &file_replication_proto_msgTypes[20]
+	mi := &file_replication_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1329,7 +1277,7 @@ func (x *DeleteShardResponse) String() string {
 func (*DeleteShardResponse) ProtoMessage() {}
 
 func (x *DeleteShardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[20]
+	mi := &file_replication_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1342,7 +1290,7 @@ func (x *DeleteShardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteShardResponse.ProtoReflect.Descriptor instead.
 func (*DeleteShardResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{20}
+	return file_replication_proto_rawDescGZIP(), []int{19}
 }
 
 type RemoveObserverRequest struct {
@@ -1358,7 +1306,7 @@ type RemoveObserverRequest struct {
 
 func (x *RemoveObserverRequest) Reset() {
 	*x = RemoveObserverRequest{}
-	mi := &file_replication_proto_msgTypes[21]
+	mi := &file_replication_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1370,7 +1318,7 @@ func (x *RemoveObserverRequest) String() string {
 func (*RemoveObserverRequest) ProtoMessage() {}
 
 func (x *RemoveObserverRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[21]
+	mi := &file_replication_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1383,7 +1331,7 @@ func (x *RemoveObserverRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveObserverRequest.ProtoReflect.Descriptor instead.
 func (*RemoveObserverRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{21}
+	return file_replication_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RemoveObserverRequest) GetNamespace() string {
@@ -1429,7 +1377,7 @@ type RemoveObserverResponse struct {
 
 func (x *RemoveObserverResponse) Reset() {
 	*x = RemoveObserverResponse{}
-	mi := &file_replication_proto_msgTypes[22]
+	mi := &file_replication_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1441,7 +1389,7 @@ func (x *RemoveObserverResponse) String() string {
 func (*RemoveObserverResponse) ProtoMessage() {}
 
 func (x *RemoveObserverResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[22]
+	mi := &file_replication_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1454,7 +1402,7 @@ func (x *RemoveObserverResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveObserverResponse.ProtoReflect.Descriptor instead.
 func (*RemoveObserverResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{22}
+	return file_replication_proto_rawDescGZIP(), []int{21}
 }
 
 type GetStatusRequest struct {
@@ -1466,7 +1414,7 @@ type GetStatusRequest struct {
 
 func (x *GetStatusRequest) Reset() {
 	*x = GetStatusRequest{}
-	mi := &file_replication_proto_msgTypes[23]
+	mi := &file_replication_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1478,7 +1426,7 @@ func (x *GetStatusRequest) String() string {
 func (*GetStatusRequest) ProtoMessage() {}
 
 func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[23]
+	mi := &file_replication_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1491,7 +1439,7 @@ func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetStatusRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{23}
+	return file_replication_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *GetStatusRequest) GetShard() int64 {
@@ -1513,7 +1461,7 @@ type GetStatusResponse struct {
 
 func (x *GetStatusResponse) Reset() {
 	*x = GetStatusResponse{}
-	mi := &file_replication_proto_msgTypes[24]
+	mi := &file_replication_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1525,7 +1473,7 @@ func (x *GetStatusResponse) String() string {
 func (*GetStatusResponse) ProtoMessage() {}
 
 func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[24]
+	mi := &file_replication_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1538,7 +1486,7 @@ func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetStatusResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{24}
+	return file_replication_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *GetStatusResponse) GetTerm() int64 {
@@ -1577,10 +1525,7 @@ const file_replication_proto_rawDesc = "" +
 	"\x0eGetInfoRequest\"V\n" +
 	"\x0fGetInfoResponse\x12C\n" +
 	"\x12features_supported\x18\x01 \x03(\x0e2\x14.replication.FeatureR\x11featuresSupported\"&\n" +
-	"$CoordinationShardAssignmentsResponse\"\x82\x01\n" +
-	"\x18InternalShardAssignments\x12D\n" +
-	"\vassignments\x18\x01 \x01(\v2\".io.oxia.proto.v1.ShardAssignmentsR\vassignments\x12 \n" +
-	"\vauthorities\x18\x02 \x03(\tR\vauthorities\"5\n" +
+	"$CoordinationShardAssignmentsResponse\"5\n" +
 	"\aEntryId\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x03R\x04term\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x03R\x06offset\"j\n" +
@@ -1683,9 +1628,9 @@ const file_replication_proto_rawDesc = "" +
 	"\x06FENCED\x10\x01\x12\f\n" +
 	"\bFOLLOWER\x10\x02\x12\n" +
 	"\n" +
-	"\x06LEADER\x10\x032\xb2\x05\n" +
-	"\x10OxiaCoordination\x12r\n" +
-	"\x14PushShardAssignments\x12%.replication.InternalShardAssignments\x1a1.replication.CoordinationShardAssignmentsResponse(\x01\x12D\n" +
+	"\x06LEADER\x10\x032\xaf\x05\n" +
+	"\x10OxiaCoordination\x12o\n" +
+	"\x14PushShardAssignments\x12\".io.oxia.proto.v1.ShardAssignments\x1a1.replication.CoordinationShardAssignmentsResponse(\x01\x12D\n" +
 	"\aNewTerm\x12\x1b.replication.NewTermRequest\x1a\x1c.replication.NewTermResponse\x12S\n" +
 	"\fBecomeLeader\x12 .replication.BecomeLeaderRequest\x1a!.replication.BecomeLeaderResponse\x12P\n" +
 	"\vAddFollower\x12\x1f.replication.AddFollowerRequest\x1a .replication.AddFollowerResponse\x12J\n" +
@@ -1711,7 +1656,7 @@ func file_replication_proto_rawDescGZIP() []byte {
 }
 
 var file_replication_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_replication_proto_goTypes = []any{
 	(Feature)(0),                                 // 0: replication.Feature
 	(KeySortingType)(0),                          // 1: replication.KeySortingType
@@ -1719,74 +1664,72 @@ var file_replication_proto_goTypes = []any{
 	(*GetInfoRequest)(nil),                       // 3: replication.GetInfoRequest
 	(*GetInfoResponse)(nil),                      // 4: replication.GetInfoResponse
 	(*CoordinationShardAssignmentsResponse)(nil), // 5: replication.CoordinationShardAssignmentsResponse
-	(*InternalShardAssignments)(nil),             // 6: replication.InternalShardAssignments
-	(*EntryId)(nil),                              // 7: replication.EntryId
-	(*LogEntry)(nil),                             // 8: replication.LogEntry
-	(*SnapshotChunk)(nil),                        // 9: replication.SnapshotChunk
-	(*NewTermOptions)(nil),                       // 10: replication.NewTermOptions
-	(*NewTermRequest)(nil),                       // 11: replication.NewTermRequest
-	(*NewTermResponse)(nil),                      // 12: replication.NewTermResponse
-	(*BecomeLeaderRequest)(nil),                  // 13: replication.BecomeLeaderRequest
-	(*AddFollowerRequest)(nil),                   // 14: replication.AddFollowerRequest
-	(*BecomeLeaderResponse)(nil),                 // 15: replication.BecomeLeaderResponse
-	(*AddFollowerResponse)(nil),                  // 16: replication.AddFollowerResponse
-	(*TruncateRequest)(nil),                      // 17: replication.TruncateRequest
-	(*TruncateResponse)(nil),                     // 18: replication.TruncateResponse
-	(*Append)(nil),                               // 19: replication.Append
-	(*Ack)(nil),                                  // 20: replication.Ack
-	(*SnapshotResponse)(nil),                     // 21: replication.SnapshotResponse
-	(*DeleteShardRequest)(nil),                   // 22: replication.DeleteShardRequest
-	(*DeleteShardResponse)(nil),                  // 23: replication.DeleteShardResponse
-	(*RemoveObserverRequest)(nil),                // 24: replication.RemoveObserverRequest
-	(*RemoveObserverResponse)(nil),               // 25: replication.RemoveObserverResponse
-	(*GetStatusRequest)(nil),                     // 26: replication.GetStatusRequest
-	(*GetStatusResponse)(nil),                    // 27: replication.GetStatusResponse
-	nil,                                          // 28: replication.BecomeLeaderRequest.FollowerMapsEntry
+	(*EntryId)(nil),                              // 6: replication.EntryId
+	(*LogEntry)(nil),                             // 7: replication.LogEntry
+	(*SnapshotChunk)(nil),                        // 8: replication.SnapshotChunk
+	(*NewTermOptions)(nil),                       // 9: replication.NewTermOptions
+	(*NewTermRequest)(nil),                       // 10: replication.NewTermRequest
+	(*NewTermResponse)(nil),                      // 11: replication.NewTermResponse
+	(*BecomeLeaderRequest)(nil),                  // 12: replication.BecomeLeaderRequest
+	(*AddFollowerRequest)(nil),                   // 13: replication.AddFollowerRequest
+	(*BecomeLeaderResponse)(nil),                 // 14: replication.BecomeLeaderResponse
+	(*AddFollowerResponse)(nil),                  // 15: replication.AddFollowerResponse
+	(*TruncateRequest)(nil),                      // 16: replication.TruncateRequest
+	(*TruncateResponse)(nil),                     // 17: replication.TruncateResponse
+	(*Append)(nil),                               // 18: replication.Append
+	(*Ack)(nil),                                  // 19: replication.Ack
+	(*SnapshotResponse)(nil),                     // 20: replication.SnapshotResponse
+	(*DeleteShardRequest)(nil),                   // 21: replication.DeleteShardRequest
+	(*DeleteShardResponse)(nil),                  // 22: replication.DeleteShardResponse
+	(*RemoveObserverRequest)(nil),                // 23: replication.RemoveObserverRequest
+	(*RemoveObserverResponse)(nil),               // 24: replication.RemoveObserverResponse
+	(*GetStatusRequest)(nil),                     // 25: replication.GetStatusRequest
+	(*GetStatusResponse)(nil),                    // 26: replication.GetStatusResponse
+	nil,                                          // 27: replication.BecomeLeaderRequest.FollowerMapsEntry
+	(*Int32HashRange)(nil),                       // 28: io.oxia.proto.v1.Int32HashRange
 	(*ShardAssignments)(nil),                     // 29: io.oxia.proto.v1.ShardAssignments
-	(*Int32HashRange)(nil),                       // 30: io.oxia.proto.v1.Int32HashRange
 }
 var file_replication_proto_depIdxs = []int32{
 	0,  // 0: replication.GetInfoResponse.features_supported:type_name -> replication.Feature
-	29, // 1: replication.InternalShardAssignments.assignments:type_name -> io.oxia.proto.v1.ShardAssignments
-	1,  // 2: replication.NewTermOptions.key_sorting:type_name -> replication.KeySortingType
-	10, // 3: replication.NewTermRequest.options:type_name -> replication.NewTermOptions
-	7,  // 4: replication.NewTermResponse.head_entry_id:type_name -> replication.EntryId
-	28, // 5: replication.BecomeLeaderRequest.follower_maps:type_name -> replication.BecomeLeaderRequest.FollowerMapsEntry
-	0,  // 6: replication.BecomeLeaderRequest.features_supported:type_name -> replication.Feature
-	7,  // 7: replication.AddFollowerRequest.follower_head_entry_id:type_name -> replication.EntryId
-	30, // 8: replication.AddFollowerRequest.split_hash_range:type_name -> io.oxia.proto.v1.Int32HashRange
-	7,  // 9: replication.TruncateRequest.head_entry_id:type_name -> replication.EntryId
-	7,  // 10: replication.TruncateResponse.head_entry_id:type_name -> replication.EntryId
-	8,  // 11: replication.Append.entry:type_name -> replication.LogEntry
-	2,  // 12: replication.GetStatusResponse.status:type_name -> replication.ServingStatus
-	7,  // 13: replication.BecomeLeaderRequest.FollowerMapsEntry.value:type_name -> replication.EntryId
-	6,  // 14: replication.OxiaCoordination.PushShardAssignments:input_type -> replication.InternalShardAssignments
-	11, // 15: replication.OxiaCoordination.NewTerm:input_type -> replication.NewTermRequest
-	13, // 16: replication.OxiaCoordination.BecomeLeader:input_type -> replication.BecomeLeaderRequest
-	14, // 17: replication.OxiaCoordination.AddFollower:input_type -> replication.AddFollowerRequest
-	26, // 18: replication.OxiaCoordination.GetStatus:input_type -> replication.GetStatusRequest
-	22, // 19: replication.OxiaCoordination.DeleteShard:input_type -> replication.DeleteShardRequest
-	3,  // 20: replication.OxiaCoordination.GetInfo:input_type -> replication.GetInfoRequest
-	24, // 21: replication.OxiaCoordination.RemoveObserver:input_type -> replication.RemoveObserverRequest
-	17, // 22: replication.OxiaLogReplication.Truncate:input_type -> replication.TruncateRequest
-	19, // 23: replication.OxiaLogReplication.Replicate:input_type -> replication.Append
-	9,  // 24: replication.OxiaLogReplication.SendSnapshot:input_type -> replication.SnapshotChunk
-	5,  // 25: replication.OxiaCoordination.PushShardAssignments:output_type -> replication.CoordinationShardAssignmentsResponse
-	12, // 26: replication.OxiaCoordination.NewTerm:output_type -> replication.NewTermResponse
-	15, // 27: replication.OxiaCoordination.BecomeLeader:output_type -> replication.BecomeLeaderResponse
-	16, // 28: replication.OxiaCoordination.AddFollower:output_type -> replication.AddFollowerResponse
-	27, // 29: replication.OxiaCoordination.GetStatus:output_type -> replication.GetStatusResponse
-	23, // 30: replication.OxiaCoordination.DeleteShard:output_type -> replication.DeleteShardResponse
-	4,  // 31: replication.OxiaCoordination.GetInfo:output_type -> replication.GetInfoResponse
-	25, // 32: replication.OxiaCoordination.RemoveObserver:output_type -> replication.RemoveObserverResponse
-	18, // 33: replication.OxiaLogReplication.Truncate:output_type -> replication.TruncateResponse
-	20, // 34: replication.OxiaLogReplication.Replicate:output_type -> replication.Ack
-	21, // 35: replication.OxiaLogReplication.SendSnapshot:output_type -> replication.SnapshotResponse
-	25, // [25:36] is the sub-list for method output_type
-	14, // [14:25] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	1,  // 1: replication.NewTermOptions.key_sorting:type_name -> replication.KeySortingType
+	9,  // 2: replication.NewTermRequest.options:type_name -> replication.NewTermOptions
+	6,  // 3: replication.NewTermResponse.head_entry_id:type_name -> replication.EntryId
+	27, // 4: replication.BecomeLeaderRequest.follower_maps:type_name -> replication.BecomeLeaderRequest.FollowerMapsEntry
+	0,  // 5: replication.BecomeLeaderRequest.features_supported:type_name -> replication.Feature
+	6,  // 6: replication.AddFollowerRequest.follower_head_entry_id:type_name -> replication.EntryId
+	28, // 7: replication.AddFollowerRequest.split_hash_range:type_name -> io.oxia.proto.v1.Int32HashRange
+	6,  // 8: replication.TruncateRequest.head_entry_id:type_name -> replication.EntryId
+	6,  // 9: replication.TruncateResponse.head_entry_id:type_name -> replication.EntryId
+	7,  // 10: replication.Append.entry:type_name -> replication.LogEntry
+	2,  // 11: replication.GetStatusResponse.status:type_name -> replication.ServingStatus
+	6,  // 12: replication.BecomeLeaderRequest.FollowerMapsEntry.value:type_name -> replication.EntryId
+	29, // 13: replication.OxiaCoordination.PushShardAssignments:input_type -> io.oxia.proto.v1.ShardAssignments
+	10, // 14: replication.OxiaCoordination.NewTerm:input_type -> replication.NewTermRequest
+	12, // 15: replication.OxiaCoordination.BecomeLeader:input_type -> replication.BecomeLeaderRequest
+	13, // 16: replication.OxiaCoordination.AddFollower:input_type -> replication.AddFollowerRequest
+	25, // 17: replication.OxiaCoordination.GetStatus:input_type -> replication.GetStatusRequest
+	21, // 18: replication.OxiaCoordination.DeleteShard:input_type -> replication.DeleteShardRequest
+	3,  // 19: replication.OxiaCoordination.GetInfo:input_type -> replication.GetInfoRequest
+	23, // 20: replication.OxiaCoordination.RemoveObserver:input_type -> replication.RemoveObserverRequest
+	16, // 21: replication.OxiaLogReplication.Truncate:input_type -> replication.TruncateRequest
+	18, // 22: replication.OxiaLogReplication.Replicate:input_type -> replication.Append
+	8,  // 23: replication.OxiaLogReplication.SendSnapshot:input_type -> replication.SnapshotChunk
+	5,  // 24: replication.OxiaCoordination.PushShardAssignments:output_type -> replication.CoordinationShardAssignmentsResponse
+	11, // 25: replication.OxiaCoordination.NewTerm:output_type -> replication.NewTermResponse
+	14, // 26: replication.OxiaCoordination.BecomeLeader:output_type -> replication.BecomeLeaderResponse
+	15, // 27: replication.OxiaCoordination.AddFollower:output_type -> replication.AddFollowerResponse
+	26, // 28: replication.OxiaCoordination.GetStatus:output_type -> replication.GetStatusResponse
+	22, // 29: replication.OxiaCoordination.DeleteShard:output_type -> replication.DeleteShardResponse
+	4,  // 30: replication.OxiaCoordination.GetInfo:output_type -> replication.GetInfoResponse
+	24, // 31: replication.OxiaCoordination.RemoveObserver:output_type -> replication.RemoveObserverResponse
+	17, // 32: replication.OxiaLogReplication.Truncate:output_type -> replication.TruncateResponse
+	19, // 33: replication.OxiaLogReplication.Replicate:output_type -> replication.Ack
+	20, // 34: replication.OxiaLogReplication.SendSnapshot:output_type -> replication.SnapshotResponse
+	24, // [24:35] is the sub-list for method output_type
+	13, // [13:24] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_replication_proto_init() }
@@ -1795,15 +1738,15 @@ func file_replication_proto_init() {
 		return
 	}
 	file_client_proto_init()
-	file_replication_proto_msgTypes[11].OneofWrappers = []any{}
-	file_replication_proto_msgTypes[16].OneofWrappers = []any{}
+	file_replication_proto_msgTypes[10].OneofWrappers = []any{}
+	file_replication_proto_msgTypes[15].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_replication_proto_rawDesc), len(file_replication_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   26,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
