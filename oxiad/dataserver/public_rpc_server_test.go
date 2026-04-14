@@ -34,6 +34,9 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 )
 
 func init() {
@@ -60,6 +63,30 @@ func (*testAssignmentDispatcher) GetLeader(int64) string { return "" }
 func (t *testAssignmentDispatcher) HasAuthority(authority string) bool {
 	return t.validAuthorities[authority]
 }
+
+type testShardsDirector struct {
+	getLeader func(int64) (lead.LeaderController, error)
+}
+
+func (t *testShardsDirector) Close() error { return nil }
+func (t *testShardsDirector) GetLeader(shardId int64) (lead.LeaderController, error) {
+	return t.getLeader(shardId)
+}
+func (*testShardsDirector) GetFollower(int64) (follow.FollowerController, error) {
+	panic("unexpected call")
+}
+func (*testShardsDirector) GetOrCreateLeader(string, int64, *proto.NewTermOptions) (lead.LeaderController, error) {
+	panic("unexpected call")
+}
+func (*testShardsDirector) GetOrCreateFollower(string, int64, int64, *proto.NewTermOptions) (follow.FollowerController, error) {
+	panic("unexpected call")
+}
+func (*testShardsDirector) DeleteShard(*proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
+	panic("unexpected call")
+}
+func (*testShardsDirector) GetAllLeaders() []lead.LeaderController { panic("unexpected call") }
+
+var _ controller.ShardsDirector = (*testShardsDirector)(nil)
 
 func TestWriteClientClose(t *testing.T) {
 	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
@@ -188,6 +215,28 @@ func TestGetShardAssignmentsValidatesAuthority(t *testing.T) {
 			":authority": "wrong-host:6648",
 		})),
 	})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
+}
+
+func TestResolveLeaderValidatesAuthorityBeforeLeaderLookup(t *testing.T) {
+	server := &publicRpcServer{
+		log: slog.Default(),
+		shardsDirector: &testShardsDirector{
+			getLeader: func(int64) (lead.LeaderController, error) {
+				return nil, constant.NewNodeIsNotLeaderWithHint(1, "leader:6648")
+			},
+		},
+		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
+			"expected-host:6648": true,
+		}},
+	}
+
+	shardID := int64(1)
+	_, err := server.resolveLeader(metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "wrong-host:6648",
+	})), &shardID)
 
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))

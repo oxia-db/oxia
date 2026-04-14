@@ -502,6 +502,9 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 	if shardId == nil {
 		return nil, status.Error(codes.InvalidArgument, "shard id is required")
 	}
+	if err := s.validateAuthority(ctx); err != nil {
+		return nil, err
+	}
 	shardID := *shardId
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
@@ -509,9 +512,6 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 			return nil, constant.NewNodeIsNotLeaderWithHint(shardID, s.assignmentDispatcher.GetLeader(shardID))
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
-		return nil, err
-	}
-	if err := s.validateAuthority(ctx); err != nil {
 		return nil, err
 	}
 	return lc, nil
