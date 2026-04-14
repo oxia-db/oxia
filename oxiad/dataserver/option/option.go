@@ -27,9 +27,10 @@ import (
 )
 
 type PublicServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public API server,example=0.0.0.0:6648,format=hostname"`
-	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public API"`
-	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public API connections"`
+	BindAddress       string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public API server,example=0.0.0.0:6648,format=hostname"`
+	AdvertisedAddress string              `yaml:"advertisedAddress,omitempty" json:"advertisedAddress,omitempty" jsonschema:"description=Canonical public host:port clients must use for this server,example=oxia-0.oxia-headless.ns.svc.cluster.local:6648,format=hostname"`
+	Auth              auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public API"`
+	TLS               security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public API connections"`
 }
 
 func (pso *PublicServerOptions) WithDefault() {

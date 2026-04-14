@@ -114,7 +114,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 	s.rpc, err = newPublicRpcServer(rpc2.Default, publicServer.BindAddress, s.shardsDirector,
-		nil, serverTLS, &auth.Disabled)
+		nil, publicServer.AdvertisedAddress, serverTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}

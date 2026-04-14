@@ -23,8 +23,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
@@ -39,6 +41,7 @@ func TestWriteClientClose(t *testing.T) {
 	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
 	defer standaloneServer.Close()
+	standaloneServer.rpc.expectedAuthority = standaloneServer.ServiceAddr()
 
 	// Connect to the standalone dataserver
 	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -82,4 +85,28 @@ func TestWriteClientClose(t *testing.T) {
 	t.Logf("resp %v err %v", resp, err)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestCreateSessionRejectsWrongAuthority(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+	standaloneServer.rpc.expectedAuthority = standaloneServer.ServiceAddr()
+
+	conn, err := grpc.NewClient(
+		standaloneServer.ServiceAddr(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithAuthority("wrong-host:6648"),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := proto.NewOxiaClientClient(conn)
+	_, err = client.CreateSession(context.Background(), &proto.CreateSessionRequest{
+		Shard:            0,
+		SessionTimeoutMs: 1000,
+		ClientIdentity:   "test-client",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
 }

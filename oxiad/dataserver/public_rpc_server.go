@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"strings"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -63,13 +65,15 @@ type publicRpcServer struct {
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
 	grpcServer           rpc2.GrpcServer
 	log                  *slog.Logger
+	expectedAuthority    string
 }
 
 func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
-	tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
+	expectedAuthority string, tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,
+		expectedAuthority:    expectedAuthority,
 		log: slog.With(
 			slog.String("component", "public-rpc-server"),
 		),
@@ -85,6 +89,24 @@ func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDi
 	}
 
 	return server, nil
+}
+
+func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
+	if s.expectedAuthority == "" {
+		return nil
+	}
+
+	actualAuthority, err := requestAuthority(ctx)
+	if err != nil {
+		return err
+	}
+
+	if !sameAuthority(actualAuthority, s.expectedAuthority) {
+		return status.Errorf(codes.PermissionDenied, "oxia: authority mismatch: got %q, expected %q",
+			actualAuthority, s.expectedAuthority)
+	}
+
+	return nil
 }
 
 func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest, srv proto.OxiaClient_GetShardAssignmentsServer) error {
@@ -106,6 +128,10 @@ func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest
 }
 
 func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) (*proto.WriteResponse, error) {
+	if err := s.validateAuthority(ctx); err != nil {
+		return nil, err
+	}
+
 	s.log.Debug(
 		"Write request",
 		slog.String("peer", rpc.GetPeer(ctx)),
@@ -161,6 +187,10 @@ func processWriteStream(streamCtx context.Context, finished chan<- error, stream
 }
 
 func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer) error {
+	if err := s.validateAuthority(stream.Context()); err != nil {
+		return err
+	}
+
 	// Add entries receives an incoming stream of request, the shard_id needs to be encoded
 	// as a property in the metadata
 	md, ok := metadata.FromIncomingContext(stream.Context())
@@ -219,6 +249,10 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 }
 
 func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClient_ReadServer) error {
+	if err := s.validateAuthority(stream.Context()); err != nil {
+		return err
+	}
+
 	s.log.Debug(
 		"Read request",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
@@ -256,6 +290,10 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
+	if err := s.validateAuthority(stream.Context()); err != nil {
+		return err
+	}
+
 	s.log.Debug(
 		"List request",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
@@ -289,6 +327,10 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream proto.OxiaClient_RangeScanServer) error {
+	if err := s.validateAuthority(stream.Context()); err != nil {
+		return err
+	}
+
 	s.log.Debug(
 		"RangeScan request",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
@@ -332,6 +374,10 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 }
 
 func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stream proto.OxiaClient_GetNotificationsServer) error {
+	if err := s.validateAuthority(stream.Context()); err != nil {
+		return err
+	}
+
 	s.log.Debug(
 		"Get notifications",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
@@ -374,6 +420,10 @@ func (s *publicRpcServer) Port() int {
 }
 
 func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
+	if err := s.validateAuthority(ctx); err != nil {
+		return nil, err
+	}
+
 	s.log.Debug(
 		"Create session request",
 		slog.String("peer", rpc.GetPeer(ctx)),
@@ -395,6 +445,10 @@ func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSe
 }
 
 func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
+	if err := s.validateAuthority(ctx); err != nil {
+		return nil, err
+	}
+
 	s.log.Debug(
 		"Session keep alive",
 		slog.Int64("shard", req.Shard),
@@ -417,6 +471,10 @@ func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeart
 }
 
 func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
+	if err := s.validateAuthority(ctx); err != nil {
+		return nil, err
+	}
+
 	s.log.Debug(
 		"Close session request",
 		slog.String("peer", rpc.GetPeer(ctx)),
@@ -437,6 +495,10 @@ func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSess
 }
 
 func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesRequest, stream proto.OxiaClient_GetSequenceUpdatesServer) error {
+	if err := s.validateAuthority(stream.Context()); err != nil {
+		return err
+	}
+
 	s.log.Debug(
 		"Get sequence update request",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
@@ -490,6 +552,56 @@ func (s *publicRpcServer) getLeader(shardId *int64) (lead.LeaderController, erro
 
 func (s *publicRpcServer) Close() error {
 	return s.grpcServer.Close()
+}
+
+func requestAuthority(ctx context.Context) (string, error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		if authority := md.Get(":authority"); len(authority) > 0 {
+			if err := validateAuthorityAddress(authority[0]); err != nil {
+				return "", status.Errorf(codes.InvalidArgument, "oxia: invalid authority address: %v", err)
+			}
+			return authority[0], nil
+		}
+	}
+	return "", status.Errorf(codes.InvalidArgument, "oxia: authority not identified")
+}
+
+func validateAuthorityAddress(addr string) error {
+	if strings.Contains(addr, "://") {
+		return errors.Errorf("authority address %q must not contain a scheme", addr)
+	}
+	if strings.Contains(addr, "/") {
+		return errors.Errorf("authority address %q must not contain a path", addr)
+	}
+	if strings.Contains(addr, "?") {
+		return errors.Errorf("authority address %q must not contain a query string", addr)
+	}
+	if strings.Contains(addr, "#") {
+		return errors.Errorf("authority address %q must not contain a fragment", addr)
+	}
+
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return errors.Errorf("authority address %q is not a valid host:port pair: %v", addr, err)
+	}
+	if host == "" {
+		return errors.Errorf("authority address %q has an empty host", addr)
+	}
+
+	return nil
+}
+
+func sameAuthority(left string, right string) bool {
+	leftHost, leftPort, err := net.SplitHostPort(left)
+	if err != nil {
+		return false
+	}
+	rightHost, rightPort, err := net.SplitHostPort(right)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(leftHost, rightHost) && leftPort == rightPort
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
