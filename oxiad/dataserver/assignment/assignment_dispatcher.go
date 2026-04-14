@@ -56,7 +56,7 @@ type shardAssignmentDispatcher struct {
 	sync.RWMutex
 	assignments           *proto.ShardAssignments
 	shardAssignmentsIndex *redblacktree.Tree[int64, *proto.ShardAssignment]
-	validAuthorities      *hashset.Set[string]
+	allowedAuthorities    *hashset.Set[string]
 
 	clients      map[int64]chan *proto.ShardAssignments
 	nextClientId int64
@@ -171,7 +171,7 @@ func (s *shardAssignmentDispatcher) assignmentsInterceptorFunc(clientStream Clie
 			return nil, err
 		}
 		return func(assignments *proto.ShardAssignments) *proto.ShardAssignments {
-			assignments = cloneAssignmentsWithoutAuthorities(assignments)
+			assignments = cloneAssignments(assignments)
 			for _, nsa := range assignments.Namespaces {
 				for _, assignment := range nsa.Assignments {
 					assignment.Leader = authority
@@ -181,14 +181,12 @@ func (s *shardAssignmentDispatcher) assignmentsInterceptorFunc(clientStream Clie
 		}, nil
 	}
 	return func(assignments *proto.ShardAssignments) *proto.ShardAssignments {
-		return cloneAssignmentsWithoutAuthorities(assignments)
+		return assignments
 	}, nil
 }
 
-func cloneAssignmentsWithoutAuthorities(assignments *proto.ShardAssignments) *proto.ShardAssignments {
-	assignments = pb.Clone(assignments).(*proto.ShardAssignments) //nolint:revive
-	assignments.AllowedAuthorities = nil
-	return assignments
+func cloneAssignments(assignments *proto.ShardAssignments) *proto.ShardAssignments {
+	return pb.Clone(assignments).(*proto.ShardAssignments) //nolint:revive
 }
 
 func authority(ctx context.Context) (string, error) {
@@ -248,14 +246,14 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	s.assignments = assignments
 
 	shardIndex := redblacktree.New[int64, *proto.ShardAssignment]()
-	validAuthorities := hashset.New[string](assignments.GetAllowedAuthorities()...)
+	allowedAuthorities := hashset.New[string](assignments.GetAllowedAuthorities()...)
 	for _, namespace := range assignments.Namespaces {
 		for idx, shardAssignment := range namespace.Assignments {
 			shardIndex.Put(shardAssignment.GetShard(), namespace.Assignments[idx])
 		}
 	}
 	s.shardAssignmentsIndex = shardIndex
-	s.validAuthorities = validAuthorities
+	s.allowedAuthorities = allowedAuthorities
 
 	// Update all the clients, without getting stuck if any client is not responsive
 	for id, clientCh := range s.clients {
@@ -290,14 +288,14 @@ func (s *shardAssignmentDispatcher) HasAuthority(authority string) bool {
 	if s.standalone {
 		return true
 	}
-	return s.validAuthorities.Contains(authority)
+	return s.allowedAuthorities.Contains(authority)
 }
 
 func NewShardAssignmentDispatcher(healthServer oxiadcommonrpc.HealthServer) ShardAssignmentsDispatcher {
 	s := &shardAssignmentDispatcher{
 		assignments:           nil,
 		shardAssignmentsIndex: redblacktree.New[int64, *proto.ShardAssignment](),
-		validAuthorities:      hashset.New[string](),
+		allowedAuthorities:    hashset.New[string](),
 		healthServer:          healthServer,
 		clients:               make(map[int64]chan *proto.ShardAssignments),
 		log: slog.With(
