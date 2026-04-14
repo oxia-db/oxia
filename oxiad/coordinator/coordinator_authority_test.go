@@ -86,3 +86,66 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		c.assignments.AllowedAuthorities,
 	)
 }
+
+func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
+	active := model.Server{
+		Public:   "active-public:6648",
+		Internal: "active-internal:6649",
+	}
+	removed := model.Server{
+		Public:   "removed-public:6648",
+		Internal: "removed-internal:6649",
+	}
+
+	statusResource := resource.NewStatusResource(metadata.NewMetadataProviderMemory())
+	statusResource.Update(&model.ClusterStatus{
+		Namespaces: map[string]model.NamespaceStatus{
+			"default": {
+				ReplicationFactor: 1,
+				Shards: map[int64]model.ShardMetadata{
+					0: {
+						Status:       model.ShardStatusUnknown,
+						Leader:       &removed,
+						Ensemble:     []model.Server{removed},
+						RemovedNodes: []model.Server{removed},
+						Int32HashRange: model.Int32HashRange{
+							Min: 0,
+							Max: 100,
+						},
+					},
+				},
+			},
+		},
+	})
+
+	clusterConfig := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              "default",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+		}},
+		Servers: []model.Server{active},
+	}
+	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
+		return clusterConfig, nil
+	}, nil, nil)
+
+	c := &coordinator{
+		RWMutex:            sync.RWMutex{},
+		statusResource:     statusResource,
+		configResource:     configResource,
+		assignmentsChanged: concurrent.NewConditionContext(&sync.Mutex{}),
+	}
+
+	c.computeNewAssignments()
+
+	assert.Equal(t,
+		[]string{
+			"active-public:6648",
+			"active-internal:6649",
+			"removed-public:6648",
+			"removed-internal:6649",
+		},
+		c.assignments.AllowedAuthorities,
+	)
+}

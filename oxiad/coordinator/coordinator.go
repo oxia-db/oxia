@@ -388,11 +388,11 @@ func (c *coordinator) handleActionChangeEnsemble(ac action.Action) {
 // This is called while already holding the lock on the coordinator.
 func (c *coordinator) computeNewAssignments() {
 	config := c.configResource.Load()
+	status := c.statusResource.Load()
 	c.assignments = &proto.ShardAssignments{
 		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
-		AllowedAuthorities: mergedAuthorities(config.Servers, config.AllowExtraAuthorities),
+		AllowedAuthorities: mergedAuthorities(status, config.Servers, config.AllowExtraAuthorities),
 	}
-	status := c.statusResource.Load()
 	// Update the leader for the shards on all the namespaces
 	for name, ns := range status.Namespaces {
 		nsAssignments := &proto.NamespaceShardsAssignment{
@@ -434,11 +434,24 @@ func (c *coordinator) computeNewAssignments() {
 	c.assignmentsChanged.Broadcast()
 }
 
-func mergedAuthorities(servers []model.Server, extraAuthorities []string) []string {
+func mergedAuthorities(status *model.ClusterStatus, servers []model.Server, extraAuthorities []string) []string {
 	authorities := linkedhashset.New[string]()
-	for _, server := range servers {
+	addServerAuthorities := func(server model.Server) {
 		authorities.Add(server.Public)
 		authorities.Add(server.Internal)
+	}
+	for _, server := range servers {
+		addServerAuthorities(server)
+	}
+	for _, namespace := range status.Namespaces {
+		for _, shard := range namespace.Shards {
+			for _, server := range shard.Ensemble {
+				addServerAuthorities(server)
+			}
+			for _, server := range shard.RemovedNodes {
+				addServerAuthorities(server)
+			}
+		}
 	}
 	for _, authority := range extraAuthorities {
 		authorities.Add(authority)
