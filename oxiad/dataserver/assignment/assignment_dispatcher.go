@@ -237,7 +237,7 @@ func (s *shardAssignmentDispatcher) Close() error {
 func (s *shardAssignmentDispatcher) Initialized() bool {
 	s.RLock()
 	defer s.RUnlock()
-	return s.assignments != nil
+	return s.standalone || s.assignments != nil
 }
 
 func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordination_PushShardAssignmentsServer) error {

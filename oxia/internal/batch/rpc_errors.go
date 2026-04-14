@@ -41,6 +41,7 @@ func IsRetriable(err error) bool {
 	switch code {
 	case
 		codes.Unavailable,            // Failure to connect is ok to re-attempt
+		constant.CodeNotInitialized,  // Server is still warming up and should become ready shortly
 		constant.CodeInvalidStatus,   // Leader has fenced the shard, though we expect a new leader to be elected
 		constant.CodeAlreadyClosed,   // Leader is closing, though we expect a new leader to be elected
 		constant.CodeNodeIsNotLeader: /* We're making a request to a node that is not leader anymore. Retry to make
