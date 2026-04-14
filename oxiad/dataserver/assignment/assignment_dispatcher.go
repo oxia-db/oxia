@@ -188,7 +188,7 @@ func (s *shardAssignmentDispatcher) assignmentsInterceptorFunc(clientStream Clie
 
 func cloneAssignmentsWithoutAuthorities(assignments *proto.ShardAssignments) *proto.ShardAssignments {
 	assignments = pb.Clone(assignments).(*proto.ShardAssignments) //nolint:revive
-	assignments.Authorities = nil
+	assignments.AllowedAuthorities = nil
 	return assignments
 }
 
@@ -249,8 +249,8 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	s.assignments = assignments
 
 	shardIndex := redblacktree.New[int64, *proto.ShardAssignment]()
-	authorities := make([]string, 0, len(assignments.GetAuthorities()))
-	for _, authority := range assignments.GetAuthorities() {
+	authorities := make([]string, 0, len(assignments.GetAllowedAuthorities()))
+	for _, authority := range assignments.GetAllowedAuthorities() {
 		if authority != "" {
 			authorities = append(authorities, strings.ToLower(authority))
 		}

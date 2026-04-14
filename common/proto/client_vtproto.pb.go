@@ -50,10 +50,10 @@ func (m *ShardAssignments) CloneVT() *ShardAssignments {
 		}
 		r.Namespaces = tmpContainer
 	}
-	if rhs := m.Authorities; rhs != nil {
+	if rhs := m.AllowedAuthorities; rhs != nil {
 		tmpContainer := make([]string, len(rhs))
 		copy(tmpContainer, rhs)
-		r.Authorities = tmpContainer
+		r.AllowedAuthorities = tmpContainer
 	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -893,11 +893,11 @@ func (this *ShardAssignments) EqualVT(that *ShardAssignments) bool {
 			}
 		}
 	}
-	if len(this.Authorities) != len(that.Authorities) {
+	if len(this.AllowedAuthorities) != len(that.AllowedAuthorities) {
 		return false
 	}
-	for i, vx := range this.Authorities {
-		vy := that.Authorities[i]
+	for i, vx := range this.AllowedAuthorities {
+		vy := that.AllowedAuthorities[i]
 		if vx != vy {
 			return false
 		}
@@ -1988,11 +1988,11 @@ func (m *ShardAssignments) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if len(m.Authorities) > 0 {
-		for iNdEx := len(m.Authorities) - 1; iNdEx >= 0; iNdEx-- {
-			i -= len(m.Authorities[iNdEx])
-			copy(dAtA[i:], m.Authorities[iNdEx])
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Authorities[iNdEx])))
+	if len(m.AllowedAuthorities) > 0 {
+		for iNdEx := len(m.AllowedAuthorities) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.AllowedAuthorities[iNdEx])
+			copy(dAtA[i:], m.AllowedAuthorities[iNdEx])
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.AllowedAuthorities[iNdEx])))
 			i--
 			dAtA[i] = 0x12
 		}
@@ -3801,8 +3801,8 @@ func (m *ShardAssignments) SizeVT() (n int) {
 			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
 		}
 	}
-	if len(m.Authorities) > 0 {
-		for _, s := range m.Authorities {
+	if len(m.AllowedAuthorities) > 0 {
+		for _, s := range m.AllowedAuthorities {
 			l = len(s)
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
@@ -4737,7 +4737,7 @@ func (m *ShardAssignments) UnmarshalVT(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Authorities", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field AllowedAuthorities", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -4765,7 +4765,7 @@ func (m *ShardAssignments) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Authorities = append(m.Authorities, string(dAtA[iNdEx:postIndex]))
+			m.AllowedAuthorities = append(m.AllowedAuthorities, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -9125,7 +9125,7 @@ func (m *ShardAssignments) UnmarshalVTUnsafe(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Authorities", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field AllowedAuthorities", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -9157,7 +9157,7 @@ func (m *ShardAssignments) UnmarshalVTUnsafe(dAtA []byte) error {
 			if intStringLen > 0 {
 				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
 			}
-			m.Authorities = append(m.Authorities, stringValue)
+			m.AllowedAuthorities = append(m.AllowedAuthorities, stringValue)
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

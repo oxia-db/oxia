@@ -389,8 +389,8 @@ func (c *coordinator) handleActionChangeEnsemble(ac action.Action) {
 func (c *coordinator) computeNewAssignments() {
 	config := c.configResource.Load()
 	c.assignments = &proto.ShardAssignments{
-		Namespaces:  map[string]*proto.NamespaceShardsAssignment{},
-		Authorities: mergedAuthorities(config.Servers, config.AllowExtraAuthorities),
+		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
+		AllowedAuthorities: mergedAuthorities(config.Servers, config.AllowExtraAuthorities),
 	}
 	status := c.statusResource.Load()
 	// Update the leader for the shards on all the namespaces

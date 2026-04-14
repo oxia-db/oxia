@@ -128,7 +128,7 @@ message ShardAssignmentsRequest {
  */
 message ShardAssignments {
   map<string, NamespaceShardsAssignment> namespaces = 1;
-  repeated string authorities = 2;
+  repeated string allowed_authorities = 2;
 }
 
 /**

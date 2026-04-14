@@ -83,6 +83,6 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	require.Len(t, nsAssignments.Assignments, 1)
 	assert.Equal(t,
 		[]string{"leader-public:6648", "leader-internal:6649", "bootstrap:6648"},
-		c.assignments.Authorities,
+		c.assignments.AllowedAuthorities,
 	)
 }

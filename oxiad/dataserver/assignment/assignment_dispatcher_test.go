@@ -386,7 +386,7 @@ func TestShardAssignmentDispatcher_HasAuthority(t *testing.T) {
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
 			},
 		},
-		Authorities: []string{"server1:6648", "server1:6649", "bootstrap:6648"},
+		AllowedAuthorities: []string{"server1:6648", "server1:6649", "bootstrap:6648"},
 	})
 
 	assert.Eventually(t, func() bool {
@@ -419,7 +419,7 @@ func TestShardAssignmentDispatcher_ClientAssignmentsDoNotIncludeAuthorities(t *t
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
 			},
 		},
-		Authorities: []string{"server1:6648", "bootstrap:6648"},
+		AllowedAuthorities: []string{"server1:6648", "bootstrap:6648"},
 	}
 	coordinatorStream.AddRequest(request)
 
@@ -436,7 +436,7 @@ func TestShardAssignmentDispatcher_ClientAssignmentsDoNotIncludeAuthorities(t *t
 	}()
 
 	response := mockClient.GetResponse()
-	assert.Nil(t, response.Authorities)
+	assert.Nil(t, response.AllowedAuthorities)
 	assert.Equal(t, request.Namespaces, response.Namespaces)
 
 	mockClient.Cancel()
