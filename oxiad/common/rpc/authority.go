@@ -20,9 +20,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 )
 
 func GetAuthority(ctx context.Context) (string, error) {
@@ -30,12 +28,12 @@ func GetAuthority(ctx context.Context) (string, error) {
 	if ok {
 		if authority := md.Get(":authority"); len(authority) > 0 {
 			if err := validateAuthorityAddress(authority[0]); err != nil {
-				return "", status.Errorf(codes.InvalidArgument, "oxia: invalid authority address: %v", err)
+				return "", err
 			}
 			return authority[0], nil
 		}
 	}
-	return "", status.Errorf(codes.InvalidArgument, "oxia: authority not identified")
+	return "", errors.New("authority not identified")
 }
 
 func validateAuthorityAddress(addr string) error {

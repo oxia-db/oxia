@@ -30,7 +30,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
@@ -63,11 +63,11 @@ type publicRpcServer struct {
 
 	shardsDirector       controller.ShardsDirector
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
-	grpcServer           rpc2.GrpcServer
+	grpcServer           oxiadcommonrpc.GrpcServer
 	log                  *slog.Logger
 }
 
-func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
+func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
 	tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
 		shardsDirector:       shardsDirector,
@@ -90,9 +90,9 @@ func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDi
 }
 
 func (s *publicRpcServer) validateAuthority(ctx context.Context, shardId int64) error {
-	actualAuthority, err := rpc2.GetAuthority(ctx)
+	actualAuthority, err := oxiadcommonrpc.GetAuthority(ctx)
 	if err != nil {
-		return err
+		return status.Errorf(codes.InvalidArgument, "oxia: invalid authority: %v", err)
 	}
 
 	expectedAuthority := s.assignmentDispatcher.GetLeader(shardId)
