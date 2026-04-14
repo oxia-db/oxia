@@ -23,16 +23,40 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 )
 
 func init() {
 	logging.LogJSON = false
 	logging.ConfigureLogger()
+}
+
+type testAssignmentDispatcher struct {
+	initialized      bool
+	validAuthorities map[string]bool
+}
+
+func (*testAssignmentDispatcher) Close() error { return nil }
+func (t *testAssignmentDispatcher) Initialized() bool {
+	return t.initialized
+}
+func (*testAssignmentDispatcher) PushShardAssignments(proto.OxiaCoordination_PushShardAssignmentsServer) error {
+	panic("unexpected call")
+}
+func (*testAssignmentDispatcher) RegisterForUpdates(*proto.ShardAssignmentsRequest, assignment.Client) error {
+	panic("unexpected call")
+}
+func (*testAssignmentDispatcher) GetLeader(int64) string { return "" }
+func (t *testAssignmentDispatcher) HasAuthority(authority string) bool {
+	return t.validAuthorities[authority]
 }
 
 func TestWriteClientClose(t *testing.T) {
@@ -82,4 +106,47 @@ func TestWriteClientClose(t *testing.T) {
 	t.Logf("resp %v err %v", resp, err)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {
+	server := &publicRpcServer{
+		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
+			"expected-host:6648": true,
+		}},
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "wrong-host:6648",
+	}))
+
+	err := server.validateAuthority(ctx)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
+}
+
+func TestValidateAuthorityReturnsNotInitializedBeforeAssignmentsReady(t *testing.T) {
+	server := &publicRpcServer{
+		assignmentDispatcher: &testAssignmentDispatcher{},
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "expected-host:6648",
+	}))
+
+	err := server.validateAuthority(ctx)
+	require.Error(t, err)
+	assert.Equal(t, constant.CodeNotInitialized, grpcstatus.Code(err))
+}
+
+func TestValidateAuthorityCanBeDisabled(t *testing.T) {
+	server := &publicRpcServer{
+		disableAuthorityValidation: true,
+		assignmentDispatcher:       &testAssignmentDispatcher{},
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "wrong-host:6648",
+	}))
+
+	require.NoError(t, server.validateAuthority(ctx))
 }

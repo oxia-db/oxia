@@ -108,18 +108,18 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 
+	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards)
+
 	publicServer := config.DataServerOptions.Server.Public
 	serverTLS, err := publicServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
 	s.rpc, err = newPublicRpcServer(rpc2.Default, publicServer.BindAddress, s.shardsDirector,
-		nil, serverTLS, &auth.Disabled)
+		s.shardAssignmentDispatcher, false, serverTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
-	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards)
-	s.rpc.assignmentDispatcher = s.shardAssignmentDispatcher
 
 	metricOptions := config.DataServerOptions.Observability.Metric
 	if metricOptions.IsEnabled() {
