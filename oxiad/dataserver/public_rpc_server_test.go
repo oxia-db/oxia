@@ -137,3 +137,16 @@ func TestValidateAuthorityReturnsNotInitializedBeforeAssignmentsReady(t *testing
 	require.Error(t, err)
 	assert.Equal(t, constant.CodeNotInitialized, grpcstatus.Code(err))
 }
+
+func TestValidateAuthorityCanBeDisabled(t *testing.T) {
+	server := &publicRpcServer{
+		disableAuthorityValidation: true,
+		assignmentDispatcher:       &testAssignmentDispatcher{},
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "wrong-host:6648",
+	}))
+
+	require.NoError(t, server.validateAuthority(ctx))
+}

@@ -59,17 +59,19 @@ const (
 type publicRpcServer struct {
 	proto.UnimplementedOxiaClientServer
 
-	shardsDirector       controller.ShardsDirector
-	assignmentDispatcher assignment.ShardAssignmentsDispatcher
-	grpcServer           oxiadcommonrpc.GrpcServer
-	log                  *slog.Logger
+	shardsDirector             controller.ShardsDirector
+	assignmentDispatcher       assignment.ShardAssignmentsDispatcher
+	disableAuthorityValidation bool
+	grpcServer                 oxiadcommonrpc.GrpcServer
+	log                        *slog.Logger
 }
 
 func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
-	tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
+	disableAuthorityValidation bool, tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
-		shardsDirector:       shardsDirector,
-		assignmentDispatcher: assignmentDispatcher,
+		shardsDirector:             shardsDirector,
+		assignmentDispatcher:       assignmentDispatcher,
+		disableAuthorityValidation: disableAuthorityValidation,
 		log: slog.With(
 			slog.String("component", "public-rpc-server"),
 		),
@@ -88,6 +90,10 @@ func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string
 }
 
 func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
+	if s.disableAuthorityValidation {
+		return nil
+	}
+
 	if !s.assignmentDispatcher.Initialized() {
 		return constant.ErrNotInitialized
 	}

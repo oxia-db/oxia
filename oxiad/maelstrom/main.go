@@ -196,7 +196,13 @@ func main() {
 		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
 		dataServerOption.Storage.WAL.Dir = filepath.Join(dataDir, thisNode, "wal")
-		_, err := dataserver.NewWithGrpcProvider(context.Background(), commonoption.NewWatch(dataServerOption), grpcProvider, replicationGrpcProvider)
+		_, err := dataserver.NewWithGrpcProvider(
+			context.Background(),
+			commonoption.NewWatch(dataServerOption),
+			grpcProvider,
+			replicationGrpcProvider,
+			true,
+		)
 		if err != nil {
 			return
 		}
