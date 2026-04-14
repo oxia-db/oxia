@@ -127,20 +127,13 @@ func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest
 }
 
 func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) (*proto.WriteResponse, error) {
-	if write.Shard == nil {
-		return nil, status.Error(codes.InvalidArgument, "shard id is required")
-	}
-	if err := s.validateAuthority(ctx, *write.Shard); err != nil {
-		return nil, err
-	}
-
 	s.log.Debug(
 		"Write request",
 		slog.String("peer", rpc.GetPeer(ctx)),
 		slog.Any("req", write),
 	)
 
-	lc, err := s.getLeader(write.Shard)
+	lc, err := s.resolveLeader(ctx, write.Shard)
 	if err != nil {
 		return nil, err
 	}
@@ -203,9 +196,6 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	if err != nil {
 		return err
 	}
-	if err := s.validateAuthority(stream.Context(), shardId); err != nil {
-		return err
-	}
 	streamCtx := stream.Context()
 
 	log := s.log.With(
@@ -216,7 +206,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	log.Debug("Write request")
 
 	var lc lead.LeaderController
-	lc, err = s.getLeader(&shardId)
+	lc, err = s.resolveLeader(stream.Context(), &shardId)
 	if err != nil {
 		return err
 	}
@@ -250,20 +240,13 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 }
 
 func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClient_ReadServer) error {
-	if request.Shard == nil {
-		return status.Error(codes.InvalidArgument, "shard id is required")
-	}
-	if err := s.validateAuthority(stream.Context(), *request.Shard); err != nil {
-		return err
-	}
-
 	s.log.Debug(
 		"Read request",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
 		slog.Any("req", request),
 	)
 
-	lc, err := s.getLeader(request.Shard)
+	lc, err := s.resolveLeader(stream.Context(), request.Shard)
 	if err != nil {
 		return err
 	}
@@ -294,19 +277,12 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
-	if request.Shard == nil {
-		return status.Error(codes.InvalidArgument, "shard id is required")
-	}
-	if err := s.validateAuthority(stream.Context(), *request.Shard); err != nil {
-		return err
-	}
-
 	s.log.Debug(
 		"List request",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
 		slog.Any("req", request),
 	)
-	lc, err := s.getLeader(request.Shard)
+	lc, err := s.resolveLeader(stream.Context(), request.Shard)
 	if err != nil {
 		return err
 	}
@@ -334,13 +310,6 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream proto.OxiaClient_RangeScanServer) error {
-	if request.Shard == nil {
-		return status.Error(codes.InvalidArgument, "shard id is required")
-	}
-	if err := s.validateAuthority(stream.Context(), *request.Shard); err != nil {
-		return err
-	}
-
 	s.log.Debug(
 		"RangeScan request",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
@@ -350,7 +319,7 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 
 	var lc lead.LeaderController
 	var err error
-	if lc, err = s.getLeader(request.Shard); err != nil {
+	if lc, err = s.resolveLeader(stream.Context(), request.Shard); err != nil {
 		return err
 	}
 
@@ -384,10 +353,6 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 }
 
 func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stream proto.OxiaClient_GetNotificationsServer) error {
-	if err := s.validateAuthority(stream.Context(), req.Shard); err != nil {
-		return err
-	}
-
 	s.log.Debug(
 		"Get notifications",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
@@ -396,7 +361,7 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 
 	var lc lead.LeaderController
 	var err error
-	if lc, err = s.getLeader(&req.Shard); err != nil {
+	if lc, err = s.resolveLeader(stream.Context(), &req.Shard); err != nil {
 		return err
 	}
 
@@ -430,16 +395,12 @@ func (s *publicRpcServer) Port() int {
 }
 
 func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	if err := s.validateAuthority(ctx, req.Shard); err != nil {
-		return nil, err
-	}
-
 	s.log.Debug(
 		"Create session request",
 		slog.String("peer", rpc.GetPeer(ctx)),
 		slog.Any("req", req),
 	)
-	lc, err := s.getLeader(&req.Shard)
+	lc, err := s.resolveLeader(ctx, &req.Shard)
 	if err != nil {
 		return nil, err
 	}
@@ -455,17 +416,13 @@ func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSe
 }
 
 func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
-	if err := s.validateAuthority(ctx, req.Shard); err != nil {
-		return nil, err
-	}
-
 	s.log.Debug(
 		"Session keep alive",
 		slog.Int64("shard", req.Shard),
 		slog.Int64("session", req.SessionId),
 		slog.String("peer", rpc.GetPeer(ctx)),
 	)
-	lc, err := s.getLeader(&req.Shard)
+	lc, err := s.resolveLeader(ctx, &req.Shard)
 	if err != nil {
 		return nil, err
 	}
@@ -481,16 +438,12 @@ func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeart
 }
 
 func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
-	if err := s.validateAuthority(ctx, req.Shard); err != nil {
-		return nil, err
-	}
-
 	s.log.Debug(
 		"Close session request",
 		slog.String("peer", rpc.GetPeer(ctx)),
 		slog.Any("req", req),
 	)
-	lc, err := s.getLeader(&req.Shard)
+	lc, err := s.resolveLeader(ctx, &req.Shard)
 	if err != nil {
 		return nil, err
 	}
@@ -505,16 +458,12 @@ func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSess
 }
 
 func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesRequest, stream proto.OxiaClient_GetSequenceUpdatesServer) error {
-	if err := s.validateAuthority(stream.Context(), req.Shard); err != nil {
-		return err
-	}
-
 	s.log.Debug(
 		"Get sequence update request",
 		slog.String("peer", rpc.GetPeer(stream.Context())),
 		slog.Any("req", req),
 	)
-	lc, err := s.getLeader(&req.Shard)
+	lc, err := s.resolveLeader(stream.Context(), &req.Shard)
 	if err != nil {
 		return err
 	}
@@ -544,11 +493,14 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 	}
 }
 
-func (s *publicRpcServer) getLeader(shardId *int64) (lead.LeaderController, error) {
+func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (lead.LeaderController, error) {
 	if shardId == nil {
 		return nil, status.Error(codes.InvalidArgument, "shard id is required")
 	}
 	shardID := *shardId
+	if err := s.validateAuthority(ctx, shardID); err != nil {
+		return nil, err
+	}
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
 		if status.Code(err) == constant.CodeNodeIsNotLeader {
