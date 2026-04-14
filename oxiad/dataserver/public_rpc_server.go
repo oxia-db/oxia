@@ -111,11 +111,12 @@ func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
 }
 
 func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest, srv proto.OxiaClient_GetShardAssignmentsServer) error {
+	streamContext := srv.Context()
 	s.log.Debug(
 		"Shard assignments requests",
-		slog.String("peer", rpc.GetPeer(srv.Context())),
+		slog.String("peer", rpc.GetPeer(streamContext)),
 	)
-	if err := s.validateAuthority(srv.Context()); err != nil {
+	if err := s.validateAuthority(streamContext); err != nil {
 		return err
 	}
 	err := s.assignmentDispatcher.RegisterForUpdates(req, srv)
@@ -123,7 +124,7 @@ func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest
 		s.log.Warn(
 			"Failed to add client for shards assignments notifications",
 			slog.Any("error", err),
-			slog.String("peer", rpc.GetPeer(srv.Context())),
+			slog.String("peer", rpc.GetPeer(streamContext)),
 		)
 		return err
 	}
