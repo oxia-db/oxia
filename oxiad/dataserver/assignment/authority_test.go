@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 )
 
 func TestValidateAuthorityAddress(t *testing.T) {
@@ -88,7 +90,7 @@ func TestValidateAuthorityAddress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateAuthorityAddress(tt.addr)
+			err := rpc2.ValidateAuthorityAddress(tt.addr)
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.ErrorContains(t, err, tt.errMsg)

@@ -27,7 +27,7 @@ func GetAuthority(ctx context.Context) (string, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
 		if authority := md.Get(":authority"); len(authority) > 0 {
-			if err := validateAuthorityAddress(authority[0]); err != nil {
+			if err := ValidateAuthorityAddress(authority[0]); err != nil {
 				return "", err
 			}
 			return authority[0], nil
@@ -36,7 +36,7 @@ func GetAuthority(ctx context.Context) (string, error) {
 	return "", errors.New("authority not identified")
 }
 
-func validateAuthorityAddress(addr string) error {
+func ValidateAuthorityAddress(addr string) error {
 	if strings.Contains(addr, "://") {
 		return errors.Errorf("authority address %q must not contain a scheme", addr)
 	}
