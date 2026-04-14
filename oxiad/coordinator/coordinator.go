@@ -439,7 +439,7 @@ func mergedAuthorities(servers []model.Server, extraAuthorities []string) []stri
 	seen := hashset.New[string]()
 
 	addAuthority := func(authority string) {
-		if authority == "" || seen.Contains(authority) {
+		if seen.Contains(authority) {
 			return
 		}
 		seen.Add(authority)
