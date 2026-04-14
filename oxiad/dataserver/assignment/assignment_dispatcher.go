@@ -213,7 +213,7 @@ func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordi
 	streamReader := ReadStream(
 		s.ctx,
 		stream,
-		s.updateShardAssignment,
+		s.updateInternalShardAssignment,
 		map[string]string{
 			"oxia": "receive-shards-assignments",
 		},
@@ -224,7 +224,7 @@ func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordi
 	return streamReader.Run()
 }
 
-func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.ShardAssignments) error {
+func (s *shardAssignmentDispatcher) updateInternalShardAssignment(update *proto.InternalShardAssignments) error {
 	// Once we receive the first update of the shards mapping, this service can be
 	// considered "ready" and it will be able to respond to service discovery requests
 	s.healthServer.SetServingStatus(oxiadcommonrpc.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
@@ -235,21 +235,24 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	if s.log.Enabled(s.ctx, slog.LevelDebug) {
 		s.log.Debug("Update shard assignments.",
 			slog.Any("previous", s.assignments),
-			slog.Any("current", assignments))
+			slog.Any("current", update))
 	} else {
 		s.log.Info("Update shard assignments.")
 	}
 
+	assignments := update.GetAssignments()
 	s.assignments = assignments
 
 	shardIndex := redblacktree.New[int64, *proto.ShardAssignment]()
 	validAuthorities := hashset.New[string]()
+	for _, authority := range update.GetAuthorities() {
+		if authority != "" {
+			validAuthorities.Add(strings.ToLower(authority))
+		}
+	}
 	for _, namespace := range assignments.Namespaces {
 		for idx, shardAssignment := range namespace.Assignments {
 			shardIndex.Put(shardAssignment.GetShard(), namespace.Assignments[idx])
-			if leader := shardAssignment.GetLeader(); leader != "" {
-				validAuthorities.Add(strings.ToLower(leader))
-			}
 		}
 	}
 	s.shardAssignmentsIndex = shardIndex
@@ -329,7 +332,9 @@ func NewStandaloneShardAssignmentDispatcher(numShards uint32) ShardAssignmentsDi
 		},
 	}
 
-	err := assignmentDispatcher.updateShardAssignment(res)
+	err := assignmentDispatcher.updateInternalShardAssignment(&proto.InternalShardAssignments{
+		Assignments: res,
+	})
 	if err != nil {
 		panic(err)
 	}

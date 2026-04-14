@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -312,18 +313,18 @@ func (c *coordinator) BecameUnavailable(node model.Server) {
 	}
 }
 
-func (c *coordinator) WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error) {
+func (c *coordinator) WaitForNextUpdate(ctx context.Context, currentValue *proto.InternalShardAssignments) (*proto.InternalShardAssignments, error) {
 	c.Lock()
 	defer c.Unlock()
 
-	for pb.Equal(currentValue, c.assignments) {
+	for pb.Equal(currentValue, c.internalAssignments()) {
 		// Wait on the condition until the assignments get changed
 		if err := c.assignmentsChanged.Wait(ctx); err != nil {
 			return nil, err
 		}
 	}
 
-	return c.assignments, nil
+	return c.internalAssignments(), nil
 }
 
 func (c *coordinator) startBackgroundActionWorker() {
@@ -429,6 +430,34 @@ func (c *coordinator) computeNewAssignments() {
 	}
 
 	c.assignmentsChanged.Broadcast()
+}
+
+func mergedAuthorities(status *model.ClusterStatus, extraAuthorities []string) []string {
+	authorities := make([]string, 0, len(extraAuthorities))
+	for _, namespace := range status.Namespaces {
+		for _, shard := range namespace.Shards {
+			if shard.Leader != nil {
+				authorities = append(authorities, shard.Leader.Public, shard.Leader.Internal)
+			}
+		}
+	}
+	authorities = append(authorities, extraAuthorities...)
+
+	result := make([]string, 0, len(authorities))
+	for _, authority := range authorities {
+		if authority == "" || slices.Contains(result, authority) {
+			continue
+		}
+		result = append(result, authority)
+	}
+	return result
+}
+
+func (c *coordinator) internalAssignments() *proto.InternalShardAssignments {
+	return &proto.InternalShardAssignments{
+		Assignments: c.assignments,
+		Authorities: mergedAuthorities(c.statusResource.Load(), c.configResource.Load().AllowExtraAuthorities),
+	}
 }
 
 // InitiateSplit validates and initiates a shard split. It creates child shards

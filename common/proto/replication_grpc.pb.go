@@ -49,7 +49,7 @@ const (
 //
 // coordinator -> node
 type OxiaCoordinationClient interface {
-	PushShardAssignments(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ShardAssignments, CoordinationShardAssignmentsResponse], error)
+	PushShardAssignments(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[InternalShardAssignments, CoordinationShardAssignmentsResponse], error)
 	NewTerm(ctx context.Context, in *NewTermRequest, opts ...grpc.CallOption) (*NewTermResponse, error)
 	BecomeLeader(ctx context.Context, in *BecomeLeaderRequest, opts ...grpc.CallOption) (*BecomeLeaderResponse, error)
 	AddFollower(ctx context.Context, in *AddFollowerRequest, opts ...grpc.CallOption) (*AddFollowerResponse, error)
@@ -69,18 +69,18 @@ func NewOxiaCoordinationClient(cc grpc.ClientConnInterface) OxiaCoordinationClie
 	return &oxiaCoordinationClient{cc}
 }
 
-func (c *oxiaCoordinationClient) PushShardAssignments(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ShardAssignments, CoordinationShardAssignmentsResponse], error) {
+func (c *oxiaCoordinationClient) PushShardAssignments(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[InternalShardAssignments, CoordinationShardAssignmentsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &OxiaCoordination_ServiceDesc.Streams[0], OxiaCoordination_PushShardAssignments_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ShardAssignments, CoordinationShardAssignmentsResponse]{ClientStream: stream}
+	x := &grpc.GenericClientStream[InternalShardAssignments, CoordinationShardAssignmentsResponse]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type OxiaCoordination_PushShardAssignmentsClient = grpc.ClientStreamingClient[ShardAssignments, CoordinationShardAssignmentsResponse]
+type OxiaCoordination_PushShardAssignmentsClient = grpc.ClientStreamingClient[InternalShardAssignments, CoordinationShardAssignmentsResponse]
 
 func (c *oxiaCoordinationClient) NewTerm(ctx context.Context, in *NewTermRequest, opts ...grpc.CallOption) (*NewTermResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -158,7 +158,7 @@ func (c *oxiaCoordinationClient) RemoveObserver(ctx context.Context, in *RemoveO
 //
 // coordinator -> node
 type OxiaCoordinationServer interface {
-	PushShardAssignments(grpc.ClientStreamingServer[ShardAssignments, CoordinationShardAssignmentsResponse]) error
+	PushShardAssignments(grpc.ClientStreamingServer[InternalShardAssignments, CoordinationShardAssignmentsResponse]) error
 	NewTerm(context.Context, *NewTermRequest) (*NewTermResponse, error)
 	BecomeLeader(context.Context, *BecomeLeaderRequest) (*BecomeLeaderResponse, error)
 	AddFollower(context.Context, *AddFollowerRequest) (*AddFollowerResponse, error)
@@ -178,7 +178,7 @@ type OxiaCoordinationServer interface {
 // pointer dereference when methods are called.
 type UnimplementedOxiaCoordinationServer struct{}
 
-func (UnimplementedOxiaCoordinationServer) PushShardAssignments(grpc.ClientStreamingServer[ShardAssignments, CoordinationShardAssignmentsResponse]) error {
+func (UnimplementedOxiaCoordinationServer) PushShardAssignments(grpc.ClientStreamingServer[InternalShardAssignments, CoordinationShardAssignmentsResponse]) error {
 	return status.Error(codes.Unimplemented, "method PushShardAssignments not implemented")
 }
 func (UnimplementedOxiaCoordinationServer) NewTerm(context.Context, *NewTermRequest) (*NewTermResponse, error) {
@@ -224,11 +224,11 @@ func RegisterOxiaCoordinationServer(s grpc.ServiceRegistrar, srv OxiaCoordinatio
 }
 
 func _OxiaCoordination_PushShardAssignments_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(OxiaCoordinationServer).PushShardAssignments(&grpc.GenericServerStream[ShardAssignments, CoordinationShardAssignmentsResponse]{ServerStream: stream})
+	return srv.(OxiaCoordinationServer).PushShardAssignments(&grpc.GenericServerStream[InternalShardAssignments, CoordinationShardAssignmentsResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type OxiaCoordination_PushShardAssignmentsServer = grpc.ClientStreamingServer[ShardAssignments, CoordinationShardAssignmentsResponse]
+type OxiaCoordination_PushShardAssignmentsServer = grpc.ClientStreamingServer[InternalShardAssignments, CoordinationShardAssignmentsResponse]
 
 func _OxiaCoordination_NewTerm_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(NewTermRequest)

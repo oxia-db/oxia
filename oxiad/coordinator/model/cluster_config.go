@@ -22,12 +22,14 @@ import (
 	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/policy"
 )
 
 type ClusterConfig struct {
-	Namespaces []NamespaceConfig `json:"namespaces" yaml:"namespaces"`
-	Servers    []Server          `json:"servers" yaml:"servers"`
+	Namespaces            []NamespaceConfig `json:"namespaces" yaml:"namespaces"`
+	Servers               []Server          `json:"servers" yaml:"servers"`
+	AllowExtraAuthorities []string          `json:"allowExtraAuthorities,omitempty" yaml:"allowExtraAuthorities,omitempty"`
 	// ServerMetadata is a map associating server names with their corresponding metadata.
 	ServerMetadata map[string]ServerMetadata `json:"serverMetadata" yaml:"serverMetadata"`
 	LoadBalancer   *LoadBalancer             `json:"loadBalancer" yaml:"loadBalancer"`
@@ -102,6 +104,12 @@ func (cc *ClusterConfig) Validate() error {
 			return errors.Errorf(
 				"cluster config: namespace %q has replicationFactor=%d but only %d servers are configured",
 				ns.Name, ns.ReplicationFactor, len(cc.Servers))
+		}
+	}
+
+	for _, authority := range cc.AllowExtraAuthorities {
+		if err := oxiadcommonrpc.ValidateAuthorityAddress(authority); err != nil {
+			return errors.Wrapf(err, "cluster config: invalid allowExtraAuthorities entry %q", authority)
 		}
 	}
 

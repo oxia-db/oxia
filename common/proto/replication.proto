@@ -22,7 +22,7 @@ option go_package = "github.com/oxia-db/oxia/common/proto";
 
 // coordinator -> node
 service OxiaCoordination {
-  rpc PushShardAssignments(stream io.oxia.proto.v1.ShardAssignments)
+  rpc PushShardAssignments(stream InternalShardAssignments)
       returns (CoordinationShardAssignmentsResponse);
 
   rpc NewTerm(NewTermRequest) returns (NewTermResponse);
@@ -62,6 +62,11 @@ message GetInfoResponse {
 }
 
 message CoordinationShardAssignmentsResponse {}
+
+message InternalShardAssignments {
+  io.oxia.proto.v1.ShardAssignments assignments = 1;
+  repeated string authorities = 2;
+}
 
 message EntryId {
   int64 term = 1;
