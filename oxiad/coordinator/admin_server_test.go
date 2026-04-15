@@ -28,7 +28,6 @@ import (
 func TestAdminServerListDataServers(t *testing.T) {
 	serverName1 := "server-1"
 	serverName2 := "server-2"
-	serverName3 := "server-3"
 
 	admin := newAdminServer(
 		nil,
@@ -37,7 +36,7 @@ func TestAdminServerListDataServers(t *testing.T) {
 				Servers: []model.Server{
 					{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
 					{Name: &serverName2, Public: "public-2", Internal: "internal-2"},
-					{Name: &serverName3, Public: "public-3", Internal: "internal-3"},
+					{Public: "public-3", Internal: "internal-3"},
 				},
 			}, nil
 		},
@@ -59,7 +58,42 @@ func TestAdminServerListDataServers(t *testing.T) {
 	assert.Equal(t, "internal-2", res.DataServers[1].InternalAddress)
 
 	require.NotNil(t, res.DataServers[2].Name)
-	assert.Equal(t, serverName3, *res.DataServers[2].Name)
+	assert.Equal(t, "internal-3", *res.DataServers[2].Name)
 	assert.Equal(t, "public-3", res.DataServers[2].PublicAddress)
 	assert.Equal(t, "internal-3", res.DataServers[2].InternalAddress)
+}
+
+func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
+	serverName1 := "server-1"
+
+	admin := newAdminServer(
+		nil,
+		func() (model.ClusterConfig, error) {
+			return model.ClusterConfig{
+				Servers: []model.Server{
+					{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
+					{Public: "public-2", Internal: "internal-2"},
+				},
+				ServerMetadata: map[string]model.ServerMetadata{
+					serverName1:  {Labels: map[string]string{"role": "named"}},
+					"internal-2": {Labels: map[string]string{"role": "fallback"}},
+				},
+			}, nil
+		},
+		nil,
+	)
+
+	res, err := admin.ListNodes(context.Background(), &proto.ListNodesRequest{})
+	require.NoError(t, err)
+	require.Len(t, res.Nodes, 2)
+
+	require.NotNil(t, res.Nodes[0].Name)
+	assert.Equal(t, serverName1, *res.Nodes[0].Name)
+	assert.Equal(t, map[string]string{"role": "named"}, res.Nodes[0].Metadata)
+
+	require.NotNil(t, res.Nodes[1].Name)
+	assert.Equal(t, "internal-2", *res.Nodes[1].Name)
+	assert.Equal(t, "public-2", res.Nodes[1].PublicAddress)
+	assert.Equal(t, "internal-2", res.Nodes[1].InternalAddress)
+	assert.Equal(t, map[string]string{"role": "fallback"}, res.Nodes[1].Metadata)
 }
