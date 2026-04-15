@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package listdataservers
+package dataserver
 
 import (
 	"bytes"
@@ -20,23 +20,22 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func runCmd(cmd *cobra.Command) (string, error) {
+func runCmd(args ...string) (string, error) {
 	actual := new(bytes.Buffer)
-	cmd.SetOut(actual)
-	cmd.SetErr(actual)
-	cmd.SetArgs([]string{})
-	err := cmd.Execute()
+	Cmd.SetOut(actual)
+	Cmd.SetErr(actual)
+	Cmd.SetArgs(args)
+	err := Cmd.Execute()
 	return strings.TrimSpace(actual.String()), err
 }
 
-func Test_cmd_listDataServers(t *testing.T) {
+func Test_cmd_dataServerList(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
@@ -53,7 +52,7 @@ func Test_cmd_listDataServers(t *testing.T) {
 		},
 	}, nil)
 
-	out, err := runCmd(Cmd)
+	out, err := runCmd("list")
 
 	assert.NoError(t, err)
 	var dataServers []proto.DataServer

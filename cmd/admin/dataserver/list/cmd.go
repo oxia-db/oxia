@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package listdataservers
+package list
 
 import (
 	"github.com/spf13/cobra"
@@ -23,7 +23,7 @@ import (
 )
 
 var Cmd = &cobra.Command{
-	Use:          "list-data-servers",
+	Use:          "list",
 	Short:        "List data servers",
 	Long:         `List data servers`,
 	Args:         cobra.ExactArgs(0),
