@@ -15,6 +15,7 @@
 package dataserver
 
 import (
+	getcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/get"
 	listcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/list"
 
 	"github.com/spf13/cobra"
@@ -29,5 +30,6 @@ var (
 )
 
 func init() {
+	Cmd.AddCommand(getcmd.Cmd)
 	Cmd.AddCommand(listcmd.Cmd)
 }
