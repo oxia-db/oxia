@@ -235,7 +235,9 @@ func (sc *SplitController) updatePhase(newPhase model.SplitPhase) {
 		}
 	}
 
-	sc.statusResource.Update(cloned)
+	if err := sc.statusResource.Update(cloned); err != nil {
+		sc.log.Warn("Failed to persist split phase", slog.Any("error", err))
+	}
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects
@@ -650,7 +652,11 @@ func (sc *SplitController) abort() {
 
 	// Delete child shards from status.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		sc.statusResource.DeleteShardMetadata(sc.namespace, childId)
+		if err := sc.statusResource.DeleteShardMetadata(sc.namespace, childId); err != nil {
+			sc.log.Warn("Failed to delete child shard metadata during abort",
+				slog.Int64("child-shard", childId),
+				slog.Any("error", err))
+		}
 	}
 
 	// Clear parent split metadata.
@@ -699,7 +705,11 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *model.Sh
 	if meta, exists := ns.Shards[shardId]; exists {
 		fn(&meta)
 		ns.Shards[shardId] = meta
-		sc.statusResource.Update(cloned)
+		if err := sc.statusResource.Update(cloned); err != nil {
+			sc.log.Warn("Failed to persist shard metadata",
+				slog.Int64("shard", shardId),
+				slog.Any("error", err))
+		}
 	}
 }
 

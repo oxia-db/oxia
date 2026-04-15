@@ -167,7 +167,12 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		sc.SyncServerAddress()
 	}
 
-	clusterStatus, shardsToAdd, shardsToDelete := c.statusResource.ApplyChanges(newConfig, c.selectNewEnsemble)
+	clusterStatus, shardsToAdd, shardsToDelete, err := c.statusResource.ApplyChanges(newConfig, c.selectNewEnsemble)
+	if err != nil {
+		c.Error("Failed to apply cluster changes", slog.Any("error", err))
+		c.cancel()
+		return
+	}
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
@@ -286,6 +291,17 @@ func (c *coordinator) Close() error {
 		err = multierr.Append(err, nc.Close())
 	}
 	return err
+}
+
+func (c *coordinator) monitorLeadershipLoss(ch <-chan struct{}) {
+	defer c.Done()
+
+	select {
+	case <-ch:
+		c.Error("Coordinator lost metadata leadership, stopping control loops")
+		c.cancel()
+	case <-c.ctx.Done():
+	}
 }
 
 func (c *coordinator) BecameUnavailable(node model.Server) {
@@ -579,7 +595,9 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Persist
-	c.statusResource.Update(cloned)
+	if err := c.statusResource.Update(cloned); err != nil {
+		return 0, 0, errors.Wrap(err, "failed to persist split metadata")
+	}
 
 	c.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
@@ -746,18 +764,33 @@ func NewCoordinator(meta metadata.Provider,
 		drainingNodes:         make(map[string]controller.DataServerController),
 		rpc:                   rpcProvider,
 	}
+	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.ccrWg.Add(1)
+	var err error
 
 	// Ensure we are to become the leader coordinator
 	c.Info("Waiting to become leader")
 	if err := meta.WaitToBecomeLeader(); err != nil {
+		c.cancel()
 		return nil, errors.Wrap(err, "failed to wait in becoming leader")
 	}
 	c.Info("This coordinator is now leader")
 
-	c.ctx, c.cancel = context.WithCancel(context.Background())
+	if leadershipAware, ok := meta.(metadata.LeadershipAwareProvider); ok {
+		c.Add(1)
+		go c.monitorLeadershipLoss(leadershipAware.LeadershipLost())
+	}
+
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.statusResource = resource.NewStatusResource(meta)
+	if c.statusResource, err = resource.NewStatusResourceWithErrorContext(c.ctx, meta); err != nil {
+		c.cancel()
+		return nil, errors.Wrap(err, "failed to create status resource")
+	}
+	storedClusterStatus, _, err := meta.Get()
+	if err != nil {
+		c.cancel()
+		return nil, errors.Wrap(err, "failed to load persisted cluster status")
+	}
 
 	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
@@ -774,7 +807,7 @@ func NewCoordinator(meta metadata.Provider,
 	})
 
 	clusterConfig := c.configResource.Load()
-	clusterStatus := c.statusResource.Load()
+	_ = c.statusResource.Load()
 
 	// init node controller
 	for _, node := range clusterConfig.Servers {
@@ -782,7 +815,7 @@ func NewCoordinator(meta metadata.Provider,
 	}
 
 	// init status
-	if clusterStatus == nil {
+	if storedClusterStatus == nil {
 		// Before initializing the cluster, it's better to make sure we
 		// have all the nodes available, otherwise the coordinator might be
 		// the first component in getting started and will print out a lot
@@ -792,7 +825,11 @@ func NewCoordinator(meta metadata.Provider,
 	} else {
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 	}
-	clusterStatus, _, _ = c.statusResource.ApplyChanges(clusterConfig, c.selectNewEnsemble)
+	clusterStatus, _, _, err := c.statusResource.ApplyChanges(clusterConfig, c.selectNewEnsemble)
+	if err != nil {
+		c.cancel()
+		return nil, errors.Wrap(err, "failed to initialize cluster status")
+	}
 
 	// init shard controller
 	for ns, shards := range clusterStatus.Namespaces {

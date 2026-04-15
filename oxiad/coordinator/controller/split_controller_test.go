@@ -136,7 +136,7 @@ func setupSplitTest(t *testing.T, phase model.SplitPhase) (
 		ShardIdGenerator: 3,
 	}
 
-	statusRes.Update(clusterStatus)
+	require.NoError(t, statusRes.Update(clusterStatus))
 	listener := newMockSplitEventListener()
 
 	return rpcMock, statusRes, listener
@@ -283,7 +283,7 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 	rightMeta.Leader = &rs1
 	rightMeta.Term = 1
 	ns.Shards[2] = rightMeta
-	statusRes.Update(cloned)
+	require.NoError(t, statusRes.Update(cloned))
 
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
@@ -406,7 +406,7 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned)
+	require.NoError(t, statusRes.Update(cloned))
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -471,7 +471,7 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5 // Was 5 during Bootstrap
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned)
+	require.NoError(t, statusRes.Update(cloned))
 
 	// The controller should detect term change and reset to Bootstrap.
 	// Queue Bootstrap responses -- note: parent leader is now ps2 (after election)
@@ -676,7 +676,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned)
+	require.NoError(t, statusRes.Update(cloned))
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -742,7 +742,7 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned)
+	require.NoError(t, statusRes.Update(cloned))
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -819,7 +819,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	}
 	ns.Shards[0] = parentMeta
 
-	statusRes.Update(cloned)
+	require.NoError(t, statusRes.Update(cloned))
 
 	// CatchUp detects left child leader changed (ls1 -> ls2).
 	// It RemoveObserver(old leader) on parent, then falls back to Bootstrap.

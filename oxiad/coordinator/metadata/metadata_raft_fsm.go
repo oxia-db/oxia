@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/hashicorp/raft"
 	"go.uber.org/multierr"
@@ -31,9 +32,16 @@ type raftOpCmd struct {
 }
 
 type stateContainer struct {
+	sync.RWMutex
+
 	State          *model.ClusterStatus `json:"state"`
 	CurrentVersion int64                `json:"current_version"`
 	log            *slog.Logger
+}
+
+type stateSnapshot struct {
+	State          *model.ClusterStatus `json:"state"`
+	CurrentVersion int64                `json:"current_version"`
 }
 
 func newStateContainer(log *slog.Logger) *stateContainer {
@@ -46,7 +54,6 @@ func newStateContainer(log *slog.Logger) *stateContainer {
 
 // Apply applies a Raft log entry to the FSM.
 func (sc *stateContainer) Apply(logEntry *raft.Log) any {
-	// Each log entry contains the whole state
 	opCmd := raftOpCmd{}
 	err := json.Unmarshal(logEntry.Data, &opCmd)
 	if err != nil {
@@ -54,6 +61,9 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 			slog.Any("error", err))
 		return &applyResult{changeApplied: false}
 	}
+
+	sc.Lock()
+	defer sc.Unlock()
 
 	if opCmd.ExpectedVersion != sc.CurrentVersion {
 		sc.log.Warn("Failed to apply raft state",
@@ -64,7 +74,11 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 		return &applyResult{changeApplied: false}
 	}
 
-	sc.State = opCmd.NewState
+	if opCmd.NewState == nil {
+		sc.State = nil
+	} else {
+		sc.State = opCmd.NewState.Clone()
+	}
 	sc.CurrentVersion++
 
 	sc.log.Info("Applied raft log entry",
@@ -74,31 +88,63 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 
 // Snapshot returns a snapshot of the FSM.
 func (sc *stateContainer) Snapshot() (raft.FSMSnapshot, error) {
+	state, version := sc.CloneState()
 	return &stateContainer{
-		State:          sc.State.Clone(),
-		CurrentVersion: sc.CurrentVersion,
+		State:          state,
+		CurrentVersion: version,
 	}, nil
 }
 
 // Restore stores the key-value pairs from a snapshot.
-func (sc *stateContainer) Restore(rc io.ReadCloser) error {
+func (sc *stateContainer) Restore(rc io.ReadCloser) (err error) {
+	defer func() {
+		err = multierr.Append(err, rc.Close())
+	}()
+
 	dec := json.NewDecoder(rc)
+	snapshot := stateSnapshot{}
+	if err := dec.Decode(&snapshot); err != nil {
+		return err
+	}
+
+	sc.Lock()
+	defer sc.Unlock()
+
+	sc.State = snapshot.State
+	sc.CurrentVersion = snapshot.CurrentVersion
 	sc.log.Info("Restored metadata state from snapshot",
 		slog.Any("cluster-status", sc))
-	return multierr.Combine(
-		dec.Decode(sc),
-		rc.Close(),
-	)
+	return nil
 }
 
 func (sc *stateContainer) Persist(sink raft.SnapshotSink) error {
-	value, err := json.Marshal(sc)
+	state, version := sc.CloneState()
+	value, err := json.Marshal(stateSnapshot{
+		State:          state,
+		CurrentVersion: version,
+	})
 	if err != nil {
 		return multierr.Combine(err, sink.Cancel())
 	}
 
-	_, err = sink.Write(value)
-	return multierr.Combine(err, sink.Cancel(), sink.Close())
+	n, err := sink.Write(value)
+	if err != nil {
+		return multierr.Combine(err, sink.Cancel())
+	}
+	if n != len(value) {
+		return multierr.Combine(io.ErrShortWrite, sink.Cancel())
+	}
+	return sink.Close()
+}
+
+func (sc *stateContainer) CloneState() (*model.ClusterStatus, int64) {
+	sc.RLock()
+	defer sc.RUnlock()
+
+	if sc.State == nil {
+		return nil, sc.CurrentVersion
+	}
+	return sc.State.Clone(), sc.CurrentVersion
 }
 
 func (*stateContainer) Release() {}

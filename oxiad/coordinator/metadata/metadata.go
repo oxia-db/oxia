@@ -47,3 +47,7 @@ type Provider interface {
 
 	WaitToBecomeLeader() error
 }
+
+type LeadershipAwareProvider interface {
+	LeadershipLost() <-chan struct{}
+}

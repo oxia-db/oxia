@@ -39,17 +39,22 @@ func (m *mockStatusResource) Load() *model.ClusterStatus {
 	return m.status
 }
 
-func (m *mockStatusResource) ApplyChanges(_ *model.ClusterConfig, _ resource.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
-	return m.status, nil, nil
+func (m *mockStatusResource) ApplyChanges(_ *model.ClusterConfig, _ resource.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64, error) {
+	return m.status, nil, nil, nil
 }
 
-func (m *mockStatusResource) Update(newStatus *model.ClusterStatus) {
+func (m *mockStatusResource) Update(newStatus *model.ClusterStatus) error {
 	m.status = newStatus
+	return nil
 }
 
-func (m *mockStatusResource) UpdateShardMetadata(_ string, _ int64, _ model.ShardMetadata) {}
+func (*mockStatusResource) UpdateShardMetadata(_ string, _ int64, _ model.ShardMetadata) error {
+	return nil
+}
 
-func (m *mockStatusResource) DeleteShardMetadata(_ string, _ int64) {}
+func (*mockStatusResource) DeleteShardMetadata(_ string, _ int64) error {
+	return nil
+}
 
 func (m *mockStatusResource) IsReady(_ *model.ClusterConfig) bool {
 	return true

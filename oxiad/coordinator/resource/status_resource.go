@@ -32,13 +32,13 @@ type EnsembleSupplier func(namespaceConfig *model.NamespaceConfig, status *model
 type StatusResource interface {
 	Load() *model.ClusterStatus
 
-	ApplyChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64)
+	ApplyChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64, error)
 
-	Update(newStatus *model.ClusterStatus)
+	Update(newStatus *model.ClusterStatus) error
 
-	UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata)
+	UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata) error
 
-	DeleteShardMetadata(namespace string, shard int64)
+	DeleteShardMetadata(namespace string, shard int64) error
 
 	IsReady(clusterConfig *model.ClusterConfig) bool
 
@@ -65,10 +65,12 @@ var _ StatusResource = &status{}
 type status struct {
 	*slog.Logger
 	metadata metadata.Provider
+	ctx      context.Context
 
 	lock             sync.RWMutex
 	current          *model.ClusterStatus
 	currentVersionID metadata.Version
+	loaded           bool
 	changeCh         chan struct{}
 }
 
@@ -107,154 +109,205 @@ func WaitForCondition(ctx context.Context, sr StatusResource, triggerFn func(), 
 
 // ensureLoaded loads the status from the metadata store if not already loaded.
 // Caller must hold s.lock for writing.
-func (s *status) ensureLoaded() {
-	if s.current != nil {
-		return
+func (s *status) ensureLoaded() error {
+	if s.loaded {
+		return nil
 	}
-	_ = backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		clusterStatus, version, err := s.metadata.Get()
 		if err != nil {
 			return err
 		}
 		s.current = clusterStatus
 		s.currentVersionID = version
+		s.loaded = true
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, backoff.WithContext(backoff.NewExponentialBackOff(), s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to load status, retrying later",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
 	})
-	if s.current == nil {
-		s.current = &model.ClusterStatus{}
-	}
+	return err
 }
 
 func (s *status) Load() *model.ClusterStatus {
 	s.lock.RLock()
-	if s.current != nil {
+	if s.loaded {
 		defer s.lock.RUnlock()
-		return s.current
+		if s.current == nil {
+			return model.NewClusterStatus()
+		}
+		return s.current.Clone()
 	}
 	s.lock.RUnlock()
 
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	s.ensureLoaded()
-	return s.current
+	if err := s.ensureLoaded(); err != nil {
+		panic(err)
+	}
+	if s.current == nil {
+		return model.NewClusterStatus()
+	}
+	return s.current.Clone()
 }
 
-func (s *status) ApplyChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+func (s *status) ApplyChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	s.ensureLoaded()
-	newStatus := s.current.Clone()
+	if err := s.ensureLoaded(); err != nil {
+		return nil, nil, nil, err
+	}
+	current := s.current
+	if current == nil {
+		current = model.NewClusterStatus()
+	}
+	newStatus := current.Clone()
 	shardsToAdd, shardsToDelete := util.ApplyClusterChanges(config, newStatus, ensembleSupplier)
 	if len(shardsToAdd) == 0 && len(shardsToDelete) == 0 {
-		return newStatus, shardsToAdd, shardsToDelete
+		return newStatus, shardsToAdd, shardsToDelete, nil
 	}
-	_ = backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
 			return err
 		}
-		s.current = newStatus
+		s.current = newStatus.Clone()
 		s.currentVersionID = versionID
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, backoff.WithContext(backoff.NewExponentialBackOff(), s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to apply cluster changes, retrying later",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
 	})
+	if err != nil {
+		return newStatus, shardsToAdd, shardsToDelete, err
+	}
 	s.notifyChange()
-	return newStatus, shardsToAdd, shardsToDelete
+	return newStatus, shardsToAdd, shardsToDelete, nil
 }
 
-func (s *status) Update(newStatus *model.ClusterStatus) {
+func (s *status) Update(newStatus *model.ClusterStatus) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	_ = backoff.RetryNotify(func() error {
+	if err := s.ensureLoaded(); err != nil {
+		return err
+	}
+	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(newStatus, s.currentVersionID)
 		if err != nil {
 			return err
 		}
-		s.current = newStatus
+		s.current = newStatus.Clone()
 		s.currentVersionID = versionID
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, backoff.WithContext(backoff.NewExponentialBackOff(), s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to update status, retrying later",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
 	})
+	if err != nil {
+		return err
+	}
 	s.notifyChange()
+	return nil
 }
 
-func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata) {
+func (s *status) UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	clonedStatus := s.current.Clone()
-	ns, exist := clonedStatus.Namespaces[namespace]
-	if !exist {
-		return
+	if err := s.ensureLoaded(); err != nil {
+		return err
 	}
-	ns.Shards[shard] = shardMetadata.Clone()
-	_ = backoff.RetryNotify(func() error {
+	if s.current == nil {
+		return nil
+	}
+	_, exist := s.current.Namespaces[namespace]
+	if !exist {
+		return nil
+	}
+	clonedStatus := s.current.Clone()
+	namespaceStatus := clonedStatus.Namespaces[namespace]
+	namespaceStatus.Shards[shard] = shardMetadata.Clone()
+	clonedStatus.Namespaces[namespace] = namespaceStatus
+	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
 			return err
 		}
-		s.current = clonedStatus
+		s.current = clonedStatus.Clone()
 		s.currentVersionID = versionID
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, backoff.WithContext(backoff.NewExponentialBackOff(), s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to update shard metadata, retrying later",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
 	})
+	if err != nil {
+		return err
+	}
 	s.notifyChange()
+	return nil
 }
 
-func (s *status) DeleteShardMetadata(namespace string, shard int64) {
+func (s *status) DeleteShardMetadata(namespace string, shard int64) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	clonedStatus := s.current.Clone()
-	ns, exist := clonedStatus.Namespaces[namespace]
+	if err := s.ensureLoaded(); err != nil {
+		return err
+	}
+	if s.current == nil {
+		return nil
+	}
+	_, exist := s.current.Namespaces[namespace]
 	if !exist {
-		return
+		return nil
 	}
-	delete(ns.Shards, shard)
-	if len(ns.Shards) == 0 {
+	clonedStatus := s.current.Clone()
+	namespaceStatus := clonedStatus.Namespaces[namespace]
+	delete(namespaceStatus.Shards, shard)
+	if len(namespaceStatus.Shards) == 0 {
 		delete(clonedStatus.Namespaces, namespace)
+	} else {
+		clonedStatus.Namespaces[namespace] = namespaceStatus
 	}
-	_ = backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		versionID, err := s.metadata.Store(clonedStatus, s.currentVersionID)
 		if err != nil {
 			return err
 		}
-		s.current = clonedStatus
+		s.current = clonedStatus.Clone()
 		s.currentVersionID = versionID
 		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, backoff.WithContext(backoff.NewExponentialBackOff(), s.ctx), func(err error, duration time.Duration) {
 		s.Warn(
 			"failed to delete shard metadata, retrying later",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
 	})
+	if err != nil {
+		return err
+	}
 	s.notifyChange()
+	return nil
 }
 
 func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
 	currentStatus := s.Load()
+	if currentStatus == nil {
+		return false
+	}
 	for _, namespace := range clusterConfig.Namespaces {
 		count := namespace.InitialShardCount
 		name := namespace.Name
@@ -275,16 +328,41 @@ func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
 }
 
 func NewStatusResource(meta metadata.Provider) StatusResource {
+	s, err := NewStatusResourceWithError(meta)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+func NewStatusResourceWithError(meta metadata.Provider) (StatusResource, error) {
+	return newStatusResource(context.Background(), meta)
+}
+
+func NewStatusResourceWithErrorContext(ctx context.Context, meta metadata.Provider) (StatusResource, error) {
+	return newStatusResource(ctx, meta)
+}
+
+func newStatusResource(ctx context.Context, meta metadata.Provider) (StatusResource, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	s := status{
 		Logger: slog.With(
 			slog.String("component", "status-resource"),
 		),
 		lock:             sync.RWMutex{},
 		metadata:         meta,
+		ctx:              ctx,
 		currentVersionID: metadata.NotExists,
 		current:          nil,
 		changeCh:         make(chan struct{}),
 	}
-	s.Load()
-	return &s
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	if err := s.ensureLoaded(); err != nil {
+		return nil, err
+	}
+	return &s, nil
 }

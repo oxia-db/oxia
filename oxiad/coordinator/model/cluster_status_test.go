@@ -21,6 +21,11 @@ import (
 )
 
 func TestClusterStatus_Clone(t *testing.T) {
+	leaderName := "leader-1"
+	followerName1 := "follower-1"
+	followerName2 := "follower-2"
+	removedName := "removed-1"
+
 	cs1 := &ClusterStatus{
 		Namespaces: map[string]NamespaceStatus{
 			"test-ns": {
@@ -30,18 +35,22 @@ func TestClusterStatus_Clone(t *testing.T) {
 						Status: ShardStatusSteadyState,
 						Term:   1,
 						Leader: &Server{
+							Name:     &leaderName,
 							Public:   "l1",
 							Internal: "l1",
 						},
 						Ensemble: []Server{{
+							Name:     &followerName1,
 							Public:   "f1",
 							Internal: "f1",
 						}, {
+							Name:     &followerName2,
 							Public:   "f2",
 							Internal: "f2",
 						}},
 						Int32HashRange: Int32HashRange{},
 						RemovedNodes: []Server{{
+							Name:     &removedName,
 							Public:   "r1",
 							Internal: "r1",
 						}},
@@ -62,6 +71,9 @@ func TestClusterStatus_Clone(t *testing.T) {
 	assert.NotSame(t, &cs1.Namespaces, &cs2.Namespaces)
 	assert.Equal(t, cs1.Namespaces["test-ns"].Shards, cs2.Namespaces["test-ns"].Shards)
 	assert.Equal(t, cs1.Namespaces["test-ns"].Shards[0], cs2.Namespaces["test-ns"].Shards[0])
+	assert.NotSame(t, cs1.Namespaces["test-ns"].Shards[0].Leader, cs2.Namespaces["test-ns"].Shards[0].Leader)
+	assert.NotSame(t, cs1.Namespaces["test-ns"].Shards[0].Leader.Name, cs2.Namespaces["test-ns"].Shards[0].Leader.Name)
+	assert.NotSame(t, &cs1.Namespaces["test-ns"].Shards[0].Ensemble[0], &cs2.Namespaces["test-ns"].Shards[0].Ensemble[0])
 
 	assert.Equal(t, cs1.ShardIdGenerator, cs2.ShardIdGenerator)
 	assert.Equal(t, cs1.ServerIdx, cs2.ServerIdx)

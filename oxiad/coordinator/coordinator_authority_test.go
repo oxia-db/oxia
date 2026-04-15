@@ -34,7 +34,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	}
 
 	statusResource := resource.NewStatusResource(metadata.NewMetadataProviderMemory())
-	statusResource.Update(&model.ClusterStatus{
+	require.NoError(t, statusResource.Update(&model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,
@@ -51,7 +51,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
@@ -98,7 +98,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 	}
 
 	statusResource := resource.NewStatusResource(metadata.NewMetadataProviderMemory())
-	statusResource.Update(&model.ClusterStatus{
+	require.NoError(t, statusResource.Update(&model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,
@@ -116,7 +116,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
