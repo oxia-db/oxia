@@ -125,6 +125,9 @@ jobs:
           tags: oxia/oxia:${{ needs.prepare.outputs.rc_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Always rebuild the runtime stage so `apk upgrade` picks up the
+          # latest Alpine security patches instead of a cached layer.
+          no-cache-filters: runtime
 
       - name: Summary
         run: |
