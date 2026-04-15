@@ -28,8 +28,8 @@ func init() {
 
 var Cmd = &cobra.Command{
 	Use:          "list-nodes",
-	Short:        "List nodes (deprecated: use list-data-servers)",
-	Long:         `List nodes (deprecated: use list-data-servers)`,
+	Short:        "List nodes (deprecated: use 'dataserver list')",
+	Long:         `List nodes (deprecated: use 'dataserver list')`,
 	Args:         cobra.ExactArgs(0),
 	RunE:         exec,
 	SilenceUsage: true,
