@@ -449,7 +449,9 @@ func (e *ShardElection) start() (model.Server, error) {
 		metadata.Term++
 		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
-	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	if err := e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta); err != nil {
+		return model.Server{}, errors.Wrap(err, "failed to persist election start metadata")
+	}
 
 	if e.changeEnsembleAction != nil {
 		e.prepareIfChangeEnsemble(&mutShardMeta)
@@ -499,7 +501,9 @@ func (e *ShardElection) start() (model.Server, error) {
 	leader := mutShardMeta.Leader
 	leaderEntry := candidatesStatus[*leader]
 
-	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	if err := e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta); err != nil {
+		return model.Server{}, errors.Wrap(err, "failed to persist elected leader metadata")
+	}
 	e.meta.Store(mutShardMeta)
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))

@@ -35,8 +35,15 @@ type kvRaftStore struct {
 }
 
 func newKVRaftStore(path string) (store *kvRaftStore, err error) {
+	return newKVRaftStoreWithFactory(path, kvstore.NewPebbleKVFactory)
+}
+
+func newKVRaftStoreWithFactory(
+	path string,
+	newFactory func(options *kvstore.FactoryOptions) (kvstore.Factory, error),
+) (store *kvRaftStore, err error) {
 	store = &kvRaftStore{}
-	if store.factory, err = kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
+	if store.factory, err = newFactory(&kvstore.FactoryOptions{
 		DataDir:     path,
 		CacheSizeMB: 1,
 		UseWAL:      true,
@@ -46,6 +53,11 @@ func newKVRaftStore(path string) (store *kvRaftStore, err error) {
 	}
 
 	if store.kv, err = store.factory.NewKV("raft", 0, proto.KeySortingType_NATURAL); err != nil {
+		closeErr := store.factory.Close()
+		store.factory = nil
+		if closeErr != nil {
+			return nil, multierr.Combine(err, closeErr)
+		}
 		return nil, err
 	}
 
@@ -68,6 +80,7 @@ const logKeyFormat = "log-%020d"
 var (
 	logKeyMin = fmt.Sprintf(logKeyFormat, 0)
 	logKeyMax = fmt.Sprintf(logKeyFormat, uint64(math.MaxUint64))
+	logKeyEnd = logKeyMax + "\x00"
 )
 
 func (s *kvRaftStore) FirstIndex() (uint64, error) {
@@ -105,6 +118,9 @@ func (s *kvRaftStore) GetLog(index uint64, log *raft.Log) error {
 	key := fmt.Sprintf(logKeyFormat, index)
 	_, value, closer, err := s.kv.Get(key, kvstore.ComparisonEqual, kvstore.NoInternalKeys)
 	if err != nil {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
+			return raft.ErrLogNotFound
+		}
 		return err
 	}
 
@@ -118,8 +134,12 @@ func (s *kvRaftStore) StoreLog(log *raft.Log) error {
 	return s.StoreLogs([]*raft.Log{log})
 }
 
-func (s *kvRaftStore) StoreLogs(logs []*raft.Log) error {
+func (s *kvRaftStore) StoreLogs(logs []*raft.Log) (err error) {
 	wb := s.kv.NewWriteBatch()
+	defer func() {
+		err = multierr.Append(err, wb.Close())
+	}()
+
 	for _, log := range logs {
 		key := fmt.Sprintf(logKeyFormat, log.Index)
 
@@ -133,15 +153,15 @@ func (s *kvRaftStore) StoreLogs(logs []*raft.Log) error {
 		}
 	}
 
-	return multierr.Combine(
-		wb.Commit(),
-		wb.Close(),
-	)
+	return wb.Commit()
 }
 
 func (s *kvRaftStore) DeleteRange(minInclusive, maxInclusive uint64) error {
 	minKeyInclusive := fmt.Sprintf(logKeyFormat, minInclusive)
-	maxKeyExclusive := fmt.Sprintf(logKeyFormat, maxInclusive+1)
+	maxKeyExclusive := logKeyEnd
+	if maxInclusive != math.MaxUint64 {
+		maxKeyExclusive = fmt.Sprintf(logKeyFormat, maxInclusive+1)
+	}
 	wb := s.kv.NewWriteBatch()
 
 	return multierr.Combine(

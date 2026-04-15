@@ -30,6 +30,20 @@ type ServerMetadata struct {
 	Labels map[string]string `json:"labels" yaml:"labels"`
 }
 
+func (sv Server) Clone() Server {
+	var name *string
+	if sv.Name != nil {
+		cloned := *sv.Name
+		name = &cloned
+	}
+
+	return Server{
+		Name:     name,
+		Public:   sv.Public,
+		Internal: sv.Internal,
+	}
+}
+
 func (sv *Server) GetIdentifier() string {
 	if sv.Name == nil {
 		return sv.Internal

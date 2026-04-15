@@ -133,7 +133,7 @@ func (sm ShardMetadata) Clone() ShardMetadata {
 	r := ShardMetadata{
 		Status:                  sm.Status,
 		Term:                    sm.Term,
-		Leader:                  sm.Leader,
+		Leader:                  nil,
 		Ensemble:                make([]Server, len(sm.Ensemble)),
 		RemovedNodes:            make([]Server, len(sm.RemovedNodes)),
 		PendingDeleteShardNodes: make([]Server, len(sm.PendingDeleteShardNodes)),
@@ -141,9 +141,19 @@ func (sm ShardMetadata) Clone() ShardMetadata {
 		Split:                   sm.Split.Clone(),
 	}
 
-	copy(r.Ensemble, sm.Ensemble)
-	copy(r.RemovedNodes, sm.RemovedNodes)
-	copy(r.PendingDeleteShardNodes, sm.PendingDeleteShardNodes)
+	if sm.Leader != nil {
+		leader := sm.Leader.Clone()
+		r.Leader = &leader
+	}
+	for i, server := range sm.Ensemble {
+		r.Ensemble[i] = server.Clone()
+	}
+	for i, server := range sm.RemovedNodes {
+		r.RemovedNodes[i] = server.Clone()
+	}
+	for i, server := range sm.PendingDeleteShardNodes {
+		r.PendingDeleteShardNodes[i] = server.Clone()
+	}
 
 	return r
 }
