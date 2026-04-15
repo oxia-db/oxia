@@ -26,7 +26,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     make
 
-FROM alpine:3.22.3
+FROM alpine:3.22 AS runtime
 
 RUN apk add --no-cache bash bash-completion jq
 RUN apk upgrade --no-cache

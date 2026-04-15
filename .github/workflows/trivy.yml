@@ -41,6 +41,9 @@ jobs:
           tags: oxia:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Always rebuild the runtime stage so `apk upgrade` picks up the
+          # latest Alpine security patches instead of a cached layer.
+          no-cache-filters: runtime
 
 
       - name: Run Trivy vulnerability scanner

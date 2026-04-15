@@ -160,6 +160,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Always rebuild the runtime stage so `apk upgrade` picks up the
+          # latest Alpine security patches instead of a cached layer.
+          no-cache-filters: runtime
 
   # Create GitHub release with binaries and notes
   create-release:
