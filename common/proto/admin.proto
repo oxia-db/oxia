@@ -28,6 +28,7 @@ service OxiaAdmin {
 
   rpc ListDataServers(ListDataServersRequest) returns (ListDataServersResponse);
   rpc GetDataServer(GetDataServerRequest) returns (DataServer);
+  rpc PatchDataServer(PatchDataServerRequest) returns (DataServer);
 
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
 
@@ -59,6 +60,17 @@ message ListDataServersResponse {
 
 message GetDataServerRequest {
   string data_server = 1;
+}
+
+message DataServerMetadata {
+  map<string, string> labels = 1;
+}
+
+message PatchDataServerRequest {
+  string data_server = 1;
+  optional string public_address = 2;
+  optional string internal_address = 3;
+  optional DataServerMetadata metadata = 4;
 }
 
 message ListNamespacesRequest {

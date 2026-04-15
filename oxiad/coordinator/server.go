@@ -143,6 +143,11 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 
+	clusterConfigStore, err := newClusterConfigStore(&options.Cluster, v, clusterConfigProvider)
+	if err != nil {
+		return nil, err
+	}
+
 	meta := &options.Metadata
 
 	var metadataProvider metadata.Provider
@@ -201,6 +206,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	admin := newAdminServer(
 		coordinatorInstance.StatusResource(),
 		clusterConfigProvider,
+		clusterConfigStore,
 		coordinatorInstance,
 		coordinatorInstance,
 	)

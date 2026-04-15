@@ -123,7 +123,9 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
+	assert.NotEmpty(t, status.ClusterId)
 	assert.Equal(t, &model.ClusterStatus{
+		ClusterId: status.ClusterId,
 		Namespaces: map[string]model.NamespaceStatus{
 			"ns-1": {
 				ReplicationFactor: 3,

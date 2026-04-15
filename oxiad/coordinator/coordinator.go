@@ -137,7 +137,15 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 
 	// Check for nodes to add
 	for _, sa := range newConfig.Servers {
-		if _, ok := c.nodeControllers[sa.GetIdentifier()]; ok {
+		if nc, ok := c.nodeControllers[sa.GetIdentifier()]; ok {
+			current := nc.DataServer()
+			if current.Public == sa.Public && current.Internal == sa.Internal {
+				continue
+			}
+
+			c.Info("Detected node address update", slog.Any("before", current), slog.Any("after", sa))
+			_ = nc.Close()
+			c.nodeControllers[sa.GetIdentifier()] = controller.NewDataServerController(c.ctx, sa, c, c, c.rpc)
 			continue
 		}
 		// The node is present in the config, though we don't know it yet,

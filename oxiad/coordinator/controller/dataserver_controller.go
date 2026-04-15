@@ -63,6 +63,8 @@ type ShardAssignmentsProvider interface {
 type DataServerController interface {
 	io.Closer
 
+	DataServer() model.Server
+
 	Status() DataServerStatus
 
 	SupportedFeatures() []proto.Feature
@@ -95,6 +97,10 @@ type dataServerController struct {
 
 	dataServerRunningGauge metric.Gauge
 	failedHealthChecks     metric.Counter
+}
+
+func (n *dataServerController) DataServer() model.Server {
+	return n.dataServer
 }
 
 func (n *dataServerController) Status() DataServerStatus {

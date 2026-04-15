@@ -43,10 +43,11 @@ var _ proto.OxiaAdminServer = (*adminServer)(nil)
 type adminServer struct {
 	proto.UnimplementedOxiaAdminServer
 
-	statusResource resource.StatusResource
-	clusterConfig  func() (model.ClusterConfig, error)
-	shardSplitter  ShardSplitter
-	featureSource  DataServerFeatureProvider
+	statusResource     resource.StatusResource
+	clusterConfig      func() (model.ClusterConfig, error)
+	clusterConfigStore ClusterConfigStore
+	shardSplitter      ShardSplitter
+	featureSource      DataServerFeatureProvider
 }
 
 func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
@@ -69,14 +70,51 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 		return nil, err
 	}
 
-	for _, server := range cnf.Servers {
-		if server.GetIdentifier() != req.DataServer {
-			continue
-		}
+	server, ok := findDataServer(cnf, req.DataServer)
+	if ok {
 		return admin.toProtoDataServer(cnf, server), nil
 	}
 
 	return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
+}
+
+func (admin *adminServer) PatchDataServer(_ context.Context, req *proto.PatchDataServerRequest) (*proto.DataServer, error) {
+	if admin.clusterConfigStore == nil {
+		return nil, grpcstatus.Error(codes.Unimplemented, "patch data server not supported")
+	}
+
+	patch := model.DataServerPatch{}
+	if req.PublicAddress != nil {
+		patch.PublicAddress = req.PublicAddress
+	}
+	if req.InternalAddress != nil {
+		patch.InternalAddress = req.InternalAddress
+	}
+	if req.Metadata != nil {
+		patch.Metadata = &model.ServerMetadata{Labels: req.Metadata.Labels}
+	}
+
+	cnf, err := admin.clusterConfigStore.Update(func(config *model.ClusterConfig) error {
+		_, err := config.PatchDataServer(req.DataServer, patch)
+		return err
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, model.ErrDataServerNotFound):
+			return nil, grpcstatus.Error(codes.NotFound, err.Error())
+		case errors.Is(err, model.ErrInvalidDataServerPatch):
+			return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
+		default:
+			return nil, err
+		}
+	}
+
+	server, ok := findDataServer(cnf, req.DataServer)
+	if !ok {
+		return nil, grpcstatus.Errorf(codes.Internal, "patched data server %q not found in updated cluster config", req.DataServer)
+	}
+
+	return admin.toProtoDataServer(cnf, server), nil
 }
 
 func (admin *adminServer) toProtoDataServer(cnf model.ClusterConfig, server model.Server) *proto.DataServer {
@@ -103,6 +141,16 @@ func (admin *adminServer) supportedFeatures(dataServer string) []proto.Feature {
 	}
 
 	return nodeController.SupportedFeatures()
+}
+
+func findDataServer(cnf model.ClusterConfig, dataServer string) (model.Server, bool) {
+	for _, server := range cnf.Servers {
+		if server.GetIdentifier() == dataServer {
+			return server, true
+		}
+	}
+
+	return model.Server{}, false
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
@@ -170,13 +218,15 @@ func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardReq
 func newAdminServer(
 	statusResource resource.StatusResource,
 	clusterConfig func() (model.ClusterConfig, error),
+	clusterConfigStore ClusterConfigStore,
 	shardSplitter ShardSplitter,
 	featureSource DataServerFeatureProvider,
 ) *adminServer {
 	return &adminServer{
-		statusResource: statusResource,
-		clusterConfig:  clusterConfig,
-		shardSplitter:  shardSplitter,
-		featureSource:  featureSource,
+		statusResource:     statusResource,
+		clusterConfig:      clusterConfig,
+		clusterConfigStore: clusterConfigStore,
+		shardSplitter:      shardSplitter,
+		featureSource:      featureSource,
 	}
 }

@@ -14,6 +14,16 @@
 
 package model
 
+import (
+	"errors"
+	"fmt"
+)
+
+var (
+	ErrDataServerNotFound     = errors.New("data server not found")
+	ErrInvalidDataServerPatch = errors.New("invalid data server patch")
+)
+
 type Server struct {
 	// Name is the unique identification for clusters
 	Name *string `json:"name" yaml:"name"`
@@ -30,9 +40,76 @@ type ServerMetadata struct {
 	Labels map[string]string `json:"labels" yaml:"labels"`
 }
 
+type DataServerPatch struct {
+	PublicAddress   *string
+	InternalAddress *string
+	Metadata        *ServerMetadata
+}
+
 func (sv *Server) GetIdentifier() string {
-	if sv.Name == nil {
+	if sv.Name == nil || *sv.Name == "" {
 		return sv.Internal
 	}
 	return *sv.Name
+}
+
+func (sm *ServerMetadata) Clone() ServerMetadata {
+	if sm == nil {
+		return ServerMetadata{}
+	}
+
+	labels := make(map[string]string, len(sm.Labels))
+	for key, value := range sm.Labels {
+		labels[key] = value
+	}
+	return ServerMetadata{Labels: labels}
+}
+
+func (cc *ClusterConfig) PatchDataServer(dataServer string, patch DataServerPatch) (*Server, error) {
+	if dataServer == "" {
+		return nil, fmt.Errorf("%w: data server must not be empty", ErrInvalidDataServerPatch)
+	}
+	if patch.PublicAddress == nil && patch.InternalAddress == nil && patch.Metadata == nil {
+		return nil, fmt.Errorf("%w: at least one data server patch field must be provided", ErrInvalidDataServerPatch)
+	}
+
+	for i := range cc.Servers {
+		server := &cc.Servers[i]
+		if server.GetIdentifier() != dataServer {
+			continue
+		}
+
+		if patch.PublicAddress != nil {
+			if *patch.PublicAddress == "" {
+				return nil, fmt.Errorf("%w: public address must not be empty", ErrInvalidDataServerPatch)
+			}
+			server.Public = *patch.PublicAddress
+		}
+
+		if patch.InternalAddress != nil {
+			if *patch.InternalAddress == "" {
+				return nil, fmt.Errorf("%w: internal address must not be empty", ErrInvalidDataServerPatch)
+			}
+			if server.Name == nil || *server.Name == "" {
+				return nil, fmt.Errorf("%w: cannot patch internal address for unnamed data server %q", ErrInvalidDataServerPatch, dataServer)
+			}
+			server.Internal = *patch.InternalAddress
+		}
+
+		if patch.Metadata != nil {
+			identifier := server.GetIdentifier()
+			if len(patch.Metadata.Labels) == 0 {
+				delete(cc.ServerMetadata, identifier)
+			} else {
+				if cc.ServerMetadata == nil {
+					cc.ServerMetadata = make(map[string]ServerMetadata)
+				}
+				cc.ServerMetadata[identifier] = patch.Metadata.Clone()
+			}
+		}
+
+		return server, nil
+	}
+
+	return nil, fmt.Errorf("%w: %q", ErrDataServerNotFound, dataServer)
 }

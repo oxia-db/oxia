@@ -36,6 +36,8 @@ type mockAdminRpcClient struct {
 	listDataServersErr      error
 	getDataServerResponse   *proto.DataServer
 	getDataServerErr        error
+	patchDataServerResponse *proto.DataServer
+	patchDataServerErr      error
 }
 
 func (m *mockAdminRpcClient) ListDataServers(context.Context, *proto.ListDataServersRequest, ...grpc.CallOption) (*proto.ListDataServersResponse, error) {
@@ -44,6 +46,10 @@ func (m *mockAdminRpcClient) ListDataServers(context.Context, *proto.ListDataSer
 
 func (m *mockAdminRpcClient) GetDataServer(context.Context, *proto.GetDataServerRequest, ...grpc.CallOption) (*proto.DataServer, error) {
 	return m.getDataServerResponse, m.getDataServerErr
+}
+
+func (m *mockAdminRpcClient) PatchDataServer(context.Context, *proto.PatchDataServerRequest, ...grpc.CallOption) (*proto.DataServer, error) {
+	return m.patchDataServerResponse, m.patchDataServerErr
 }
 
 func (*mockAdminRpcClient) ListNamespaces(context.Context, *proto.ListNamespacesRequest, ...grpc.CallOption) (*proto.ListNamespacesResponse, error) {
@@ -202,6 +208,35 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	assert.Equal(t, "internal-1", dataServer.InternalAddress)
 	assert.Equal(t, map[string]string{"rack": "r1"}, dataServer.Metadata)
 	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, dataServer.SupportedFeatures)
+}
+
+func TestAdminClientPatchDataServerReturnsResponse(t *testing.T) {
+	serverName := "server-1"
+	publicAddress := "public-2"
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				patchDataServerResponse: &proto.DataServer{
+					Name:            &serverName,
+					PublicAddress:   publicAddress,
+					InternalAddress: "internal-1",
+					Metadata:        map[string]string{"rack": "r2"},
+				},
+			},
+		},
+	}
+
+	dataServer, err := admin.PatchDataServer(&proto.PatchDataServerRequest{
+		DataServer:    serverName,
+		PublicAddress: &publicAddress,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, dataServer)
+	require.NotNil(t, dataServer.Name)
+	assert.Equal(t, serverName, *dataServer.Name)
+	assert.Equal(t, publicAddress, dataServer.PublicAddress)
+	assert.Equal(t, map[string]string{"rack": "r2"}, dataServer.Metadata)
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

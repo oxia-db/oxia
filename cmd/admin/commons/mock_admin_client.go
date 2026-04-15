@@ -63,6 +63,14 @@ func (m *MockAdminClient) GetDataServer(dataServer string) (*proto.DataServer, e
 	return nil, errors.New("data server not found")
 }
 
+func (m *MockAdminClient) PatchDataServer(req *proto.PatchDataServerRequest) (*proto.DataServer, error) {
+	args := m.MethodCalled("PatchDataServer", req)
+	if v, ok := args.Get(0).(*proto.DataServer); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("data server patch failed")
+}
+
 func (m *MockAdminClient) ListNodes() *oxia.ListNodesResult {
 	args := m.MethodCalled("ListNodes")
 	if v, ok := args.Get(0).(*oxia.ListNodesResult); ok {

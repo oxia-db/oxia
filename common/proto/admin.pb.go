@@ -238,6 +238,118 @@ func (x *GetDataServerRequest) GetDataServer() string {
 	return ""
 }
 
+type DataServerMetadata struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Labels        map[string]string      `protobuf:"bytes,1,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DataServerMetadata) Reset() {
+	*x = DataServerMetadata{}
+	mi := &file_admin_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DataServerMetadata) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DataServerMetadata) ProtoMessage() {}
+
+func (x *DataServerMetadata) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DataServerMetadata.ProtoReflect.Descriptor instead.
+func (*DataServerMetadata) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *DataServerMetadata) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+type PatchDataServerRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	DataServer      string                 `protobuf:"bytes,1,opt,name=data_server,json=dataServer,proto3" json:"data_server,omitempty"`
+	PublicAddress   *string                `protobuf:"bytes,2,opt,name=public_address,json=publicAddress,proto3,oneof" json:"public_address,omitempty"`
+	InternalAddress *string                `protobuf:"bytes,3,opt,name=internal_address,json=internalAddress,proto3,oneof" json:"internal_address,omitempty"`
+	Metadata        *DataServerMetadata    `protobuf:"bytes,4,opt,name=metadata,proto3,oneof" json:"metadata,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *PatchDataServerRequest) Reset() {
+	*x = PatchDataServerRequest{}
+	mi := &file_admin_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PatchDataServerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PatchDataServerRequest) ProtoMessage() {}
+
+func (x *PatchDataServerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PatchDataServerRequest.ProtoReflect.Descriptor instead.
+func (*PatchDataServerRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *PatchDataServerRequest) GetDataServer() string {
+	if x != nil {
+		return x.DataServer
+	}
+	return ""
+}
+
+func (x *PatchDataServerRequest) GetPublicAddress() string {
+	if x != nil && x.PublicAddress != nil {
+		return *x.PublicAddress
+	}
+	return ""
+}
+
+func (x *PatchDataServerRequest) GetInternalAddress() string {
+	if x != nil && x.InternalAddress != nil {
+		return *x.InternalAddress
+	}
+	return ""
+}
+
+func (x *PatchDataServerRequest) GetMetadata() *DataServerMetadata {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
 type ListNamespacesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -246,7 +358,7 @@ type ListNamespacesRequest struct {
 
 func (x *ListNamespacesRequest) Reset() {
 	*x = ListNamespacesRequest{}
-	mi := &file_admin_proto_msgTypes[4]
+	mi := &file_admin_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -258,7 +370,7 @@ func (x *ListNamespacesRequest) String() string {
 func (*ListNamespacesRequest) ProtoMessage() {}
 
 func (x *ListNamespacesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[4]
+	mi := &file_admin_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -271,7 +383,7 @@ func (x *ListNamespacesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNamespacesRequest.ProtoReflect.Descriptor instead.
 func (*ListNamespacesRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{4}
+	return file_admin_proto_rawDescGZIP(), []int{6}
 }
 
 type ListNamespacesResponse struct {
@@ -283,7 +395,7 @@ type ListNamespacesResponse struct {
 
 func (x *ListNamespacesResponse) Reset() {
 	*x = ListNamespacesResponse{}
-	mi := &file_admin_proto_msgTypes[5]
+	mi := &file_admin_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -295,7 +407,7 @@ func (x *ListNamespacesResponse) String() string {
 func (*ListNamespacesResponse) ProtoMessage() {}
 
 func (x *ListNamespacesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[5]
+	mi := &file_admin_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -308,7 +420,7 @@ func (x *ListNamespacesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNamespacesResponse.ProtoReflect.Descriptor instead.
 func (*ListNamespacesResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{5}
+	return file_admin_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListNamespacesResponse) GetNamespaces() []string {
@@ -326,7 +438,7 @@ type ListNodesRequest struct {
 
 func (x *ListNodesRequest) Reset() {
 	*x = ListNodesRequest{}
-	mi := &file_admin_proto_msgTypes[6]
+	mi := &file_admin_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -338,7 +450,7 @@ func (x *ListNodesRequest) String() string {
 func (*ListNodesRequest) ProtoMessage() {}
 
 func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[6]
+	mi := &file_admin_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -351,7 +463,7 @@ func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesRequest.ProtoReflect.Descriptor instead.
 func (*ListNodesRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{6}
+	return file_admin_proto_rawDescGZIP(), []int{8}
 }
 
 type Node struct {
@@ -366,7 +478,7 @@ type Node struct {
 
 func (x *Node) Reset() {
 	*x = Node{}
-	mi := &file_admin_proto_msgTypes[7]
+	mi := &file_admin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -378,7 +490,7 @@ func (x *Node) String() string {
 func (*Node) ProtoMessage() {}
 
 func (x *Node) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[7]
+	mi := &file_admin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -391,7 +503,7 @@ func (x *Node) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Node.ProtoReflect.Descriptor instead.
 func (*Node) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{7}
+	return file_admin_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Node) GetName() string {
@@ -431,7 +543,7 @@ type ListNodesResponse struct {
 
 func (x *ListNodesResponse) Reset() {
 	*x = ListNodesResponse{}
-	mi := &file_admin_proto_msgTypes[8]
+	mi := &file_admin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -443,7 +555,7 @@ func (x *ListNodesResponse) String() string {
 func (*ListNodesResponse) ProtoMessage() {}
 
 func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[8]
+	mi := &file_admin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -456,7 +568,7 @@ func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesResponse.ProtoReflect.Descriptor instead.
 func (*ListNodesResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{8}
+	return file_admin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ListNodesResponse) GetNodes() []*Node {
@@ -478,7 +590,7 @@ type SplitShardRequest struct {
 
 func (x *SplitShardRequest) Reset() {
 	*x = SplitShardRequest{}
-	mi := &file_admin_proto_msgTypes[9]
+	mi := &file_admin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -490,7 +602,7 @@ func (x *SplitShardRequest) String() string {
 func (*SplitShardRequest) ProtoMessage() {}
 
 func (x *SplitShardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[9]
+	mi := &file_admin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -503,7 +615,7 @@ func (x *SplitShardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SplitShardRequest.ProtoReflect.Descriptor instead.
 func (*SplitShardRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{9}
+	return file_admin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SplitShardRequest) GetNamespace() string {
@@ -537,7 +649,7 @@ type SplitShardResponse struct {
 
 func (x *SplitShardResponse) Reset() {
 	*x = SplitShardResponse{}
-	mi := &file_admin_proto_msgTypes[10]
+	mi := &file_admin_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -549,7 +661,7 @@ func (x *SplitShardResponse) String() string {
 func (*SplitShardResponse) ProtoMessage() {}
 
 func (x *SplitShardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[10]
+	mi := &file_admin_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -562,7 +674,7 @@ func (x *SplitShardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SplitShardResponse.ProtoReflect.Descriptor instead.
 func (*SplitShardResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{10}
+	return file_admin_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SplitShardResponse) GetLeftChildShard() int64 {
@@ -600,7 +712,21 @@ const file_admin_proto_rawDesc = "" +
 	"\fdata_servers\x18\x01 \x03(\v2\x1c.io.oxia.proto.v1.DataServerR\vdataServers\"7\n" +
 	"\x14GetDataServerRequest\x12\x1f\n" +
 	"\vdata_server\x18\x01 \x01(\tR\n" +
-	"dataServer\"\x17\n" +
+	"dataServer\"\x99\x01\n" +
+	"\x12DataServerMetadata\x12H\n" +
+	"\x06labels\x18\x01 \x03(\v20.io.oxia.proto.v1.DataServerMetadata.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x91\x02\n" +
+	"\x16PatchDataServerRequest\x12\x1f\n" +
+	"\vdata_server\x18\x01 \x01(\tR\n" +
+	"dataServer\x12*\n" +
+	"\x0epublic_address\x18\x02 \x01(\tH\x00R\rpublicAddress\x88\x01\x01\x12.\n" +
+	"\x10internal_address\x18\x03 \x01(\tH\x01R\x0finternalAddress\x88\x01\x01\x12E\n" +
+	"\bmetadata\x18\x04 \x01(\v2$.io.oxia.proto.v1.DataServerMetadataH\x02R\bmetadata\x88\x01\x01B\x11\n" +
+	"\x0f_public_addressB\x13\n" +
+	"\x11_internal_addressB\v\n" +
+	"\t_metadata\"\x17\n" +
 	"\x15ListNamespacesRequest\"8\n" +
 	"\x16ListNamespacesResponse\x12\x1e\n" +
 	"\n" +
@@ -626,10 +752,11 @@ const file_admin_proto_rawDesc = "" +
 	"\f_split_point\"j\n" +
 	"\x12SplitShardResponse\x12(\n" +
 	"\x10left_child_shard\x18\x01 \x01(\x03R\x0eleftChildShard\x12*\n" +
-	"\x11right_child_shard\x18\x02 \x01(\x03R\x0frightChildShard2\xde\x03\n" +
+	"\x11right_child_shard\x18\x02 \x01(\x03R\x0frightChildShard2\xb9\x04\n" +
 	"\tOxiaAdmin\x12f\n" +
 	"\x0fListDataServers\x12(.io.oxia.proto.v1.ListDataServersRequest\x1a).io.oxia.proto.v1.ListDataServersResponse\x12U\n" +
-	"\rGetDataServer\x12&.io.oxia.proto.v1.GetDataServerRequest\x1a\x1c.io.oxia.proto.v1.DataServer\x12c\n" +
+	"\rGetDataServer\x12&.io.oxia.proto.v1.GetDataServerRequest\x1a\x1c.io.oxia.proto.v1.DataServer\x12Y\n" +
+	"\x0fPatchDataServer\x12(.io.oxia.proto.v1.PatchDataServerRequest\x1a\x1c.io.oxia.proto.v1.DataServer\x12c\n" +
 	"\x0eListNamespaces\x12'.io.oxia.proto.v1.ListNamespacesRequest\x1a(.io.oxia.proto.v1.ListNamespacesResponse\x12T\n" +
 	"\tListNodes\x12\".io.oxia.proto.v1.ListNodesRequest\x1a#.io.oxia.proto.v1.ListNodesResponse\x12W\n" +
 	"\n" +
@@ -647,44 +774,51 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_admin_proto_goTypes = []any{
 	(*ListDataServersRequest)(nil),  // 0: io.oxia.proto.v1.ListDataServersRequest
 	(*DataServer)(nil),              // 1: io.oxia.proto.v1.DataServer
 	(*ListDataServersResponse)(nil), // 2: io.oxia.proto.v1.ListDataServersResponse
 	(*GetDataServerRequest)(nil),    // 3: io.oxia.proto.v1.GetDataServerRequest
-	(*ListNamespacesRequest)(nil),   // 4: io.oxia.proto.v1.ListNamespacesRequest
-	(*ListNamespacesResponse)(nil),  // 5: io.oxia.proto.v1.ListNamespacesResponse
-	(*ListNodesRequest)(nil),        // 6: io.oxia.proto.v1.ListNodesRequest
-	(*Node)(nil),                    // 7: io.oxia.proto.v1.Node
-	(*ListNodesResponse)(nil),       // 8: io.oxia.proto.v1.ListNodesResponse
-	(*SplitShardRequest)(nil),       // 9: io.oxia.proto.v1.SplitShardRequest
-	(*SplitShardResponse)(nil),      // 10: io.oxia.proto.v1.SplitShardResponse
-	nil,                             // 11: io.oxia.proto.v1.DataServer.MetadataEntry
-	nil,                             // 12: io.oxia.proto.v1.Node.MetadataEntry
-	(Feature)(0),                    // 13: replication.Feature
+	(*DataServerMetadata)(nil),      // 4: io.oxia.proto.v1.DataServerMetadata
+	(*PatchDataServerRequest)(nil),  // 5: io.oxia.proto.v1.PatchDataServerRequest
+	(*ListNamespacesRequest)(nil),   // 6: io.oxia.proto.v1.ListNamespacesRequest
+	(*ListNamespacesResponse)(nil),  // 7: io.oxia.proto.v1.ListNamespacesResponse
+	(*ListNodesRequest)(nil),        // 8: io.oxia.proto.v1.ListNodesRequest
+	(*Node)(nil),                    // 9: io.oxia.proto.v1.Node
+	(*ListNodesResponse)(nil),       // 10: io.oxia.proto.v1.ListNodesResponse
+	(*SplitShardRequest)(nil),       // 11: io.oxia.proto.v1.SplitShardRequest
+	(*SplitShardResponse)(nil),      // 12: io.oxia.proto.v1.SplitShardResponse
+	nil,                             // 13: io.oxia.proto.v1.DataServer.MetadataEntry
+	nil,                             // 14: io.oxia.proto.v1.DataServerMetadata.LabelsEntry
+	nil,                             // 15: io.oxia.proto.v1.Node.MetadataEntry
+	(Feature)(0),                    // 16: replication.Feature
 }
 var file_admin_proto_depIdxs = []int32{
-	11, // 0: io.oxia.proto.v1.DataServer.metadata:type_name -> io.oxia.proto.v1.DataServer.MetadataEntry
-	13, // 1: io.oxia.proto.v1.DataServer.supported_features:type_name -> replication.Feature
+	13, // 0: io.oxia.proto.v1.DataServer.metadata:type_name -> io.oxia.proto.v1.DataServer.MetadataEntry
+	16, // 1: io.oxia.proto.v1.DataServer.supported_features:type_name -> replication.Feature
 	1,  // 2: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServer
-	12, // 3: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
-	7,  // 4: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
-	0,  // 5: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
-	3,  // 6: io.oxia.proto.v1.OxiaAdmin.GetDataServer:input_type -> io.oxia.proto.v1.GetDataServerRequest
-	4,  // 7: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
-	6,  // 8: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
-	9,  // 9: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
-	2,  // 10: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
-	1,  // 11: io.oxia.proto.v1.OxiaAdmin.GetDataServer:output_type -> io.oxia.proto.v1.DataServer
-	5,  // 12: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
-	8,  // 13: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
-	10, // 14: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
-	10, // [10:15] is the sub-list for method output_type
-	5,  // [5:10] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	14, // 3: io.oxia.proto.v1.DataServerMetadata.labels:type_name -> io.oxia.proto.v1.DataServerMetadata.LabelsEntry
+	4,  // 4: io.oxia.proto.v1.PatchDataServerRequest.metadata:type_name -> io.oxia.proto.v1.DataServerMetadata
+	15, // 5: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
+	9,  // 6: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
+	0,  // 7: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
+	3,  // 8: io.oxia.proto.v1.OxiaAdmin.GetDataServer:input_type -> io.oxia.proto.v1.GetDataServerRequest
+	5,  // 9: io.oxia.proto.v1.OxiaAdmin.PatchDataServer:input_type -> io.oxia.proto.v1.PatchDataServerRequest
+	6,  // 10: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
+	8,  // 11: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
+	11, // 12: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
+	2,  // 13: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
+	1,  // 14: io.oxia.proto.v1.OxiaAdmin.GetDataServer:output_type -> io.oxia.proto.v1.DataServer
+	1,  // 15: io.oxia.proto.v1.OxiaAdmin.PatchDataServer:output_type -> io.oxia.proto.v1.DataServer
+	7,  // 16: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
+	10, // 17: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
+	12, // 18: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -694,15 +828,16 @@ func file_admin_proto_init() {
 	}
 	file_replication_proto_init()
 	file_admin_proto_msgTypes[1].OneofWrappers = []any{}
-	file_admin_proto_msgTypes[7].OneofWrappers = []any{}
+	file_admin_proto_msgTypes[5].OneofWrappers = []any{}
 	file_admin_proto_msgTypes[9].OneofWrappers = []any{}
+	file_admin_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
