@@ -49,7 +49,7 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
-		name := server.GetName()
+		name := server.GetIdentifier()
 		dataServers[i] = &proto.DataServer{
 			Name:            &name,
 			PublicAddress:   server.Public,
@@ -90,7 +90,7 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 		if !found {
 			nodeMeta = model.ServerMetadata{}
 		}
-		name := node.GetName()
+		name := node.GetIdentifier()
 		nodes[i] = &proto.Node{
 			Name:            &name,
 			PublicAddress:   node.Public,

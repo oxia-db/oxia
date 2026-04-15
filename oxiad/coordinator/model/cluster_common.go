@@ -30,13 +30,9 @@ type ServerMetadata struct {
 	Labels map[string]string `json:"labels" yaml:"labels"`
 }
 
-func (sv *Server) GetName() string {
+func (sv *Server) GetIdentifier() string {
 	if sv.Name == nil {
 		return sv.Internal
 	}
 	return *sv.Name
-}
-
-func (sv *Server) GetIdentifier() string {
-	return sv.GetName()
 }
