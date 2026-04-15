@@ -32,11 +32,11 @@ type raftOpCmd struct {
 }
 
 type stateContainer struct {
-	sync.RWMutex `json:"-"`
+	sync.RWMutex
 
 	State          *model.ClusterStatus `json:"state"`
 	CurrentVersion int64                `json:"current_version"`
-	log            *slog.Logger         `json:"-"`
+	log            *slog.Logger
 }
 
 type stateSnapshot struct {

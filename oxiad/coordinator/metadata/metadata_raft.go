@@ -146,7 +146,7 @@ func NewMetadataProviderRaft(
 	mpr.raft = raftNode
 	mpr.store = store
 	mpr.transport = transport
-	go mpr.watchLeadershipChanges(mpr.raft.State() == raft.Leader)
+	go mpr.startWatchingLeadershipChanges()
 	cleanup = false
 
 	return mpr, nil
@@ -279,7 +279,13 @@ func (mpr *metadataProviderRaft) waitForAppliedState() error {
 	return mpr.raft.Barrier(30 * time.Second).Error()
 }
 
-func (mpr *metadataProviderRaft) watchLeadershipChanges(wasLeader bool) {
+func (mpr *metadataProviderRaft) startWatchingLeadershipChanges() {
+	initialState := mpr.raft.State()
+	mpr.watchLeadershipChanges(initialState == raft.Leader)
+}
+
+func (mpr *metadataProviderRaft) watchLeadershipChanges(initialIsLeader bool) {
+	wasLeader := initialIsLeader
 	for {
 		select {
 		case <-mpr.leadershipNotifyStopCh:

@@ -36,43 +36,44 @@ func TestCoordinator_RaftMetadataRepeatedNodeRestarts(t *testing.T) {
 	coordinators := newRaftMetadataCoordinatorCluster(t, model.ClusterConfig{})
 	defer coordinators.close(t)
 
-	activeIdx, activeCoordinator := coordinators.requireState(t, model.NewClusterStatus())
+	_, initialCoordinator := coordinators.requireState(t, model.NewClusterStatus())
 
 	expectedStatus := testCoordinatorClusterStatus(1)
-	require.NoError(t, activeCoordinator.StatusResource().Update(expectedStatus))
-	activeIdx, activeCoordinator = coordinators.requireState(t, expectedStatus)
+	require.NoError(t, initialCoordinator.StatusResource().Update(expectedStatus))
+	activeIdx, _ := coordinators.requireState(t, expectedStatus)
 
 	followerA := nextCoordinatorNode(activeIdx, -1)
 	followerB := nextCoordinatorNode(activeIdx, followerA)
 	restartOrder := []int{followerA, followerB, followerA, followerB, followerA}
 
 	seed := 2
+	var activeCoordinator coordinatorpkg.Coordinator
 	for _, nodeIdx := range restartOrder {
 		coordinators.restartNode(t, nodeIdx)
-		activeIdx, activeCoordinator = coordinators.requireState(t, expectedStatus)
+		_, activeCoordinator = coordinators.requireState(t, expectedStatus)
 
 		expectedStatus = testCoordinatorClusterStatus(seed)
 		require.NoError(t, activeCoordinator.StatusResource().Update(expectedStatus))
-		activeIdx, activeCoordinator = coordinators.requireState(t, expectedStatus)
+		coordinators.requireState(t, expectedStatus)
 		seed++
 	}
 
 	for i := 0; i < 5; i++ {
 		coordinators.restartNode(t, activeIdx)
-		activeIdx, activeCoordinator = coordinators.requireState(t, expectedStatus)
+		_, activeCoordinator = coordinators.requireState(t, expectedStatus)
 
 		expectedStatus = testCoordinatorClusterStatus(seed)
 		require.NoError(t, activeCoordinator.StatusResource().Update(expectedStatus))
-		activeIdx, activeCoordinator = coordinators.requireState(t, expectedStatus)
+		activeIdx, _ = coordinators.requireState(t, expectedStatus)
 		seed++
 
 		follower := nextCoordinatorNode(activeIdx, -1)
 		coordinators.restartNode(t, follower)
-		activeIdx, activeCoordinator = coordinators.requireState(t, expectedStatus)
+		_, activeCoordinator = coordinators.requireState(t, expectedStatus)
 
 		expectedStatus = testCoordinatorClusterStatus(seed)
 		require.NoError(t, activeCoordinator.StatusResource().Update(expectedStatus))
-		activeIdx, activeCoordinator = coordinators.requireState(t, expectedStatus)
+		activeIdx, _ = coordinators.requireState(t, expectedStatus)
 		seed++
 	}
 }

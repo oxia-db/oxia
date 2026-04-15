@@ -79,8 +79,10 @@ func (f *fakeFactory) Close() error {
 	return nil
 }
 
+var errNotImplemented = errors.New("not implemented")
+
 func (*fakeFactory) NewSnapshotLoader(string, int64) (kvstore.SnapshotLoader, error) {
-	return nil, nil
+	return nil, errNotImplemented
 }
 
 func (*fakeFactory) NewKV(string, int64, proto.KeySortingType) (kvstore.KV, error) {

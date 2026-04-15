@@ -152,41 +152,52 @@ func (mo *MetadataOptions) Validate() error {
 			return errors.New("k8s-configmap-name must be set with metadata=configmap")
 		}
 	case metadata.ProviderNameRaft:
-		if mo.Raft.Address == "" {
-			return errors.New("raft-address must be set with metadata=raft")
-		}
-		if _, _, err := net.SplitHostPort(mo.Raft.Address); err != nil {
-			return fmt.Errorf("raft-address must be a host:port address: %w", err)
-		}
-		if mo.Raft.DataDir == "" {
-			return errors.New("raft-data-dir must be set with metadata=raft")
-		}
-		if len(mo.Raft.BootstrapNodes) == 0 {
-			return errors.New("raft-bootstrap-nodes must be set with metadata=raft")
-		}
-		seenBootstrapNodes := make(map[string]struct{}, len(mo.Raft.BootstrapNodes))
-		containsLocalNode := false
-		for _, node := range mo.Raft.BootstrapNodes {
-			if node == "" {
-				return errors.New("raft-bootstrap-nodes cannot contain empty entries")
-			}
-			if _, _, err := net.SplitHostPort(node); err != nil {
-				return fmt.Errorf("raft-bootstrap-nodes entry %q must be a host:port address: %w", node, err)
-			}
-			if _, exists := seenBootstrapNodes[node]; exists {
-				return fmt.Errorf("raft-bootstrap-nodes contains duplicate node %q", node)
-			}
-			seenBootstrapNodes[node] = struct{}{}
-			if node == mo.Raft.Address {
-				containsLocalNode = true
-			}
-		}
-		if !containsLocalNode {
-			return fmt.Errorf("raft-address %q must be included in raft-bootstrap-nodes", mo.Raft.Address)
+		if err := mo.validateRaftOptions(); err != nil {
+			return err
 		}
 	case metadata.ProviderNameFile, metadata.ProviderNameMemory:
 	default:
 		return errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
+	}
+	return nil
+}
+
+func (mo *MetadataOptions) validateRaftOptions() error {
+	if mo.Raft.Address == "" {
+		return errors.New("raft-address must be set with metadata=raft")
+	}
+	if _, _, err := net.SplitHostPort(mo.Raft.Address); err != nil {
+		return fmt.Errorf("raft-address must be a host:port address: %w", err)
+	}
+	if mo.Raft.DataDir == "" {
+		return errors.New("raft-data-dir must be set with metadata=raft")
+	}
+	if len(mo.Raft.BootstrapNodes) == 0 {
+		return errors.New("raft-bootstrap-nodes must be set with metadata=raft")
+	}
+	return mo.validateRaftBootstrapNodes()
+}
+
+func (mo *MetadataOptions) validateRaftBootstrapNodes() error {
+	seenBootstrapNodes := make(map[string]struct{}, len(mo.Raft.BootstrapNodes))
+	containsLocalNode := false
+	for _, node := range mo.Raft.BootstrapNodes {
+		if node == "" {
+			return errors.New("raft-bootstrap-nodes cannot contain empty entries")
+		}
+		if _, _, err := net.SplitHostPort(node); err != nil {
+			return fmt.Errorf("raft-bootstrap-nodes entry %q must be a host:port address: %w", node, err)
+		}
+		if _, exists := seenBootstrapNodes[node]; exists {
+			return fmt.Errorf("raft-bootstrap-nodes contains duplicate node %q", node)
+		}
+		seenBootstrapNodes[node] = struct{}{}
+		if node == mo.Raft.Address {
+			containsLocalNode = true
+		}
+	}
+	if !containsLocalNode {
+		return fmt.Errorf("raft-address %q must be included in raft-bootstrap-nodes", mo.Raft.Address)
 	}
 	return nil
 }

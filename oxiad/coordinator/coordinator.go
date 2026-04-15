@@ -807,7 +807,7 @@ func NewCoordinator(meta metadata.Provider,
 	})
 
 	clusterConfig := c.configResource.Load()
-	clusterStatus := c.statusResource.Load()
+	_ = c.statusResource.Load()
 
 	// init node controller
 	for _, node := range clusterConfig.Servers {
@@ -825,7 +825,7 @@ func NewCoordinator(meta metadata.Provider,
 	} else {
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 	}
-	clusterStatus, _, _, err = c.statusResource.ApplyChanges(clusterConfig, c.selectNewEnsemble)
+	clusterStatus, _, _, err := c.statusResource.ApplyChanges(clusterConfig, c.selectNewEnsemble)
 	if err != nil {
 		c.cancel()
 		return nil, errors.Wrap(err, "failed to initialize cluster status")
