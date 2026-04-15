@@ -24,6 +24,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
@@ -66,6 +67,26 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 
 	return &proto.GetDataServerResponse{
 		DataServerInfo: dataServerInfo.ToAdminProto(),
+	}, nil
+}
+
+func (admin *adminServer) CreateDataServer(_ context.Context, req *proto.CreateDataServerRequest) (*proto.CreateDataServerResponse, error) {
+	if req.GetDataServerInfo() == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data_server_info is required")
+	}
+
+	dataServerInfo, err := validateCreateDataServerRequest(req.GetDataServerInfo())
+	if err != nil {
+		return nil, err
+	}
+
+	createdDataServerInfo, err := admin.ccr.CreateDataServer(dataServerInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	return &proto.CreateDataServerResponse{
+		DataServerInfo: createdDataServerInfo.ToAdminProto(),
 	}, nil
 }
 
@@ -136,4 +157,52 @@ func newAdminServer(
 		ccr:            ccr,
 		shardSplitter:  shardSplitter,
 	}
+}
+
+func validateCreateDataServerRequest(dataServerInfo *proto.DataServerInfo) (*model.DataServerInfo, error) {
+	dataServer := dataServerInfo.GetDataServer()
+	if dataServer == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data_server_info.data_server is required")
+	}
+
+	if dataServer.GetPublicAddress() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "public_address is required")
+	}
+	if err := oxiadcommonrpc.ValidateAuthorityAddress(dataServer.GetPublicAddress()); err != nil {
+		return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid public_address: %v", err)
+	}
+
+	if dataServer.GetInternalAddress() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "internal_address is required")
+	}
+	if err := oxiadcommonrpc.ValidateAuthorityAddress(dataServer.GetInternalAddress()); err != nil {
+		return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid internal_address: %v", err)
+	}
+
+	if dataServer.Name != nil && *dataServer.Name == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "name must not be empty")
+	}
+
+	return &model.DataServerInfo{
+		Server: &model.Server{
+			Name:     dataServer.Name,
+			Public:   dataServer.GetPublicAddress(),
+			Internal: dataServer.GetInternalAddress(),
+		},
+		Metadata: model.ServerMetadata{
+			Labels: cloneStringMap(dataServerInfo.GetMetadata()),
+		},
+	}, nil
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }

@@ -16,6 +16,7 @@ package balancer
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"testing"
@@ -111,6 +112,10 @@ func (m *mockClusterConfigResource) GetDataServerInfo(id string) (*model.DataSer
 		Server:   n,
 		Metadata: metadata,
 	}, true
+}
+
+func (*mockClusterConfigResource) CreateDataServer(*model.DataServerInfo) (*model.DataServerInfo, error) {
+	return nil, errors.New("not implemented")
 }
 
 // alwaysErrorSelector is a selector that always returns ErrUnsatisfiedAntiAffinity.

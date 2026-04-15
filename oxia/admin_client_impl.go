@@ -20,7 +20,6 @@ import (
 	"errors"
 
 	"github.com/oxia-db/oxia/common/auth"
-
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/rpc"
 )
@@ -61,6 +60,25 @@ func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServe
 	}
 
 	response, err := client.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: dataServer})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServerInfo, nil
+}
+
+func (admin *adminClientImpl) CreateDataServer(dataServerInfo *proto.DataServerInfo) (*proto.DataServerInfo, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New("unable to connect to admin server"))
+	}
+
+	response, err := client.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{
+		DataServerInfo: dataServerInfo,
+	})
 	if err != nil {
 		return nil, mapAdminError(err)
 	}

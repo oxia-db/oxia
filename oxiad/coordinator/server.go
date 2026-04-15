@@ -42,6 +42,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -130,10 +131,8 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	v := viper.New()
 
 	clusterConfigChangeNotifications := make(chan any)
-
-	clusterConfigProvider := func() (model.ClusterConfig, error) {
-		return loadClusterConfig(&options.Cluster, v)
-	}
+	clusterConfigManager := newClusterConfigManager(&options.Cluster, v, clusterConfigChangeNotifications)
+	clusterConfigProvider := clusterConfigManager.Load
 
 	if err := watchClusterConfigProvider(&options.Cluster, v, clusterConfigChangeNotifications); err != nil {
 		return nil, err
@@ -188,7 +187,13 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
+	coordinatorInstance, err := NewCoordinator(
+		metadataProvider,
+		clusterConfigProvider,
+		clusterConfigChangeNotifications,
+		rpcClient,
+		resource.WithClusterConfigUpdater(clusterConfigManager.Update),
+	) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}

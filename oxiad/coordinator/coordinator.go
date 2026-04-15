@@ -731,7 +731,9 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 func NewCoordinator(meta metadata.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
-	rpcProvider rpc.Provider) (Coordinator, error) {
+	rpcProvider rpc.Provider,
+	configResourceOptions ...resource.ClusterConfigResourceOption,
+) (Coordinator, error) {
 	c := &coordinator{
 		Logger: slog.With(
 			slog.String("component", "coordinator"),
@@ -759,7 +761,13 @@ func NewCoordinator(meta metadata.Provider,
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
 	c.statusResource = resource.NewStatusResource(meta)
 
-	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
+	c.configResource = resource.NewClusterConfigResource(
+		c.ctx,
+		clusterConfigProvider,
+		clusterConfigNotificationsCh,
+		c,
+		configResourceOptions...,
+	)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:               c.ctx,

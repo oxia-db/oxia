@@ -63,6 +63,14 @@ func (m *MockAdminClient) GetDataServer(dataServer string) (*proto.DataServerInf
 	return nil, errors.New("data server not found")
 }
 
+func (m *MockAdminClient) CreateDataServer(dataServerInfo *proto.DataServerInfo) (*proto.DataServerInfo, error) {
+	args := m.MethodCalled("CreateDataServer", dataServerInfo)
+	if v, ok := args.Get(0).(*proto.DataServerInfo); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("create data server failed")
+}
+
 func (m *MockAdminClient) ListNodes() *oxia.ListNodesResult {
 	args := m.MethodCalled("ListNodes")
 	if v, ok := args.Get(0).(*oxia.ListNodesResult); ok {

@@ -16,6 +16,7 @@ package resource
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"reflect"
@@ -25,6 +26,8 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -56,6 +59,18 @@ type ClusterConfigResource interface {
 	Node(id string) (*model.Server, bool)
 
 	GetDataServerInfo(name string) (*model.DataServerInfo, bool)
+
+	CreateDataServer(dataServerInfo *model.DataServerInfo) (*model.DataServerInfo, error)
+}
+
+type ClusterConfigUpdater func(mutator func(*model.ClusterConfig) error) (model.ClusterConfig, error)
+
+type ClusterConfigResourceOption func(*clusterConfig)
+
+func WithClusterConfigUpdater(clusterConfigUpdater ClusterConfigUpdater) ClusterConfigResourceOption {
+	return func(cc *clusterConfig) {
+		cc.clusterConfigUpdater = clusterConfigUpdater
+	}
 }
 
 var _ ClusterConfigResource = &clusterConfig{}
@@ -68,6 +83,7 @@ type clusterConfig struct {
 	cancel context.CancelFunc
 
 	clusterConfigProvider        func() (model.ClusterConfig, error)
+	clusterConfigUpdater         ClusterConfigUpdater
 	clusterConfigNotificationsCh chan any
 	clusterConfigEventListener   ClusterConfigEventListener
 
@@ -216,6 +232,74 @@ func (ccf *clusterConfig) GetDataServerInfo(id string) (*model.DataServerInfo, b
 	return info, true
 }
 
+func (ccf *clusterConfig) CreateDataServer(dataServerInfo *model.DataServerInfo) (*model.DataServerInfo, error) {
+	if ccf.clusterConfigUpdater == nil {
+		return nil, errors.New("cluster config updates are not supported")
+	}
+	if dataServerInfo == nil || dataServerInfo.Server == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server is required")
+	}
+
+	dataServerID := dataServerInfo.Server.GetIdentifier()
+	clusterConfig, err := ccf.clusterConfigUpdater(func(clusterConfig *model.ClusterConfig) error {
+		for _, existing := range clusterConfig.Servers {
+			switch {
+			case existing.GetIdentifier() == dataServerID:
+				return grpcstatus.Errorf(codes.AlreadyExists, "data server %q already exists", dataServerID)
+			case existing.Public == dataServerInfo.Server.Public:
+				return grpcstatus.Errorf(codes.AlreadyExists, "public address %q already exists", dataServerInfo.Server.Public)
+			case existing.Internal == dataServerInfo.Server.Internal:
+				return grpcstatus.Errorf(codes.AlreadyExists, "internal address %q already exists", dataServerInfo.Server.Internal)
+			}
+		}
+
+		clusterConfig.Servers = append(clusterConfig.Servers, *dataServerInfo.Server)
+		if len(dataServerInfo.Metadata.Labels) == 0 {
+			return nil
+		}
+
+		if clusterConfig.ServerMetadata == nil {
+			clusterConfig.ServerMetadata = map[string]model.ServerMetadata{}
+		}
+		clusterConfig.ServerMetadata[dataServerID] = model.ServerMetadata{
+			Labels: cloneStringMap(dataServerInfo.Metadata.Labels),
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	createdDataServerInfo := &model.DataServerInfo{
+		Metadata: model.ServerMetadata{},
+	}
+	for idx := range clusterConfig.Servers {
+		server := &clusterConfig.Servers[idx]
+		if server.GetIdentifier() != dataServerID {
+			continue
+		}
+		createdDataServerInfo.Server = server
+		if metadata, found := clusterConfig.ServerMetadata[dataServerID]; found {
+			createdDataServerInfo.Metadata = metadata
+		}
+		return createdDataServerInfo, nil
+	}
+
+	return nil, errors.New("created data server not found in cluster config")
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
+}
+
 func (ccf *clusterConfig) waitForUpdates() {
 	defer ccf.Done()
 	for {
@@ -249,6 +333,7 @@ func NewClusterConfigResource(ctx context.Context,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
 	clusterConfigEventListener ClusterConfigEventListener,
+	options ...ClusterConfigResourceOption,
 ) ClusterConfigResource {
 	ctx, cancelFunc := context.WithCancel(ctx)
 
@@ -260,6 +345,9 @@ func NewClusterConfigResource(ctx context.Context,
 		clusterConfigProvider:        clusterConfigProvider,
 		clusterConfigNotificationsCh: clusterConfigNotificationsCh,
 		clusterConfigEventListener:   clusterConfigEventListener,
+	}
+	for _, option := range options {
+		option(cc)
 	}
 
 	if clusterConfigNotificationsCh != nil {
