@@ -41,6 +41,15 @@ type adminServer struct {
 	shardSplitter  ShardSplitter
 }
 
+func effectiveServerName(server model.Server) *string {
+	if server.Name != nil {
+		return server.Name
+	}
+
+	identifier := server.GetIdentifier()
+	return &identifier
+}
+
 func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
 	cnf, err := admin.clusterConfig()
 	if err != nil {
@@ -50,7 +59,7 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
 		dataServers[i] = &proto.DataServer{
-			Name:            server.Name,
+			Name:            effectiveServerName(server),
 			PublicAddress:   server.Public,
 			InternalAddress: server.Internal,
 		}
@@ -90,7 +99,7 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 			nodeMeta = model.ServerMetadata{}
 		}
 		nodes[i] = &proto.Node{
-			Name:            node.Name,
+			Name:            effectiveServerName(node),
 			PublicAddress:   node.Public,
 			InternalAddress: node.Internal,
 			Metadata:        nodeMeta.Labels,
