@@ -69,8 +69,16 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 
 	for _, server := range cnf.Servers {
 		if matchesDataServer(server, req.DataServer) {
+			identifier := server.GetIdentifier()
 			return &proto.GetDataServerResponse{
-				DataServer: toProtoDataServerInfo(server, cnf.ServerMetadata),
+				DataServer: &proto.DataServerInfo{
+					DataServer: &proto.DataServer{
+						Name:            &identifier,
+						PublicAddress:   server.Public,
+						InternalAddress: server.Internal,
+					},
+					Metadata: lookupServerMetadata(cnf.ServerMetadata, identifier).Labels,
+				},
 			}, nil
 		}
 	}
@@ -88,18 +96,6 @@ func toProtoDataServer(server model.Server) *proto.DataServer {
 		Name:            &identifier,
 		PublicAddress:   server.Public,
 		InternalAddress: server.Internal,
-	}
-}
-
-func toProtoDataServerInfo(server model.Server, serverMetadata map[string]model.ServerMetadata) *proto.DataServerInfo {
-	identifier := server.GetIdentifier()
-	return &proto.DataServerInfo{
-		DataServer: &proto.DataServer{
-			Name:            &identifier,
-			PublicAddress:   server.Public,
-			InternalAddress: server.Internal,
-		},
-		Metadata: lookupServerMetadata(serverMetadata, identifier).Labels,
 	}
 }
 
