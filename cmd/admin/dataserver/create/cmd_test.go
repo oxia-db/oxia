@@ -70,7 +70,7 @@ func Test_cmd_createDataServer(t *testing.T) {
 		"--name", serverName,
 		"--public-address", "public-4:6648",
 		"--internal-address", "internal-4:6649",
-		"--metadata", "rack=a",
+		"--labels", "rack=a",
 	)
 
 	require.NoError(t, err)

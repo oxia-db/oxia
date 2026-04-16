@@ -30,7 +30,7 @@ var (
 	name            string
 	publicAddress   string
 	internalAddress string
-	metadataFlags   []string
+	labelsFlags     []string
 )
 
 var Cmd = &cobra.Command{
@@ -46,7 +46,7 @@ func init() {
 	Cmd.Flags().StringVar(&name, "name", "", "Unique data server name")
 	Cmd.Flags().StringVar(&publicAddress, "public-address", "", "Public data server address")
 	Cmd.Flags().StringVar(&internalAddress, "internal-address", "", "Internal data server address")
-	Cmd.Flags().StringSliceVar(&metadataFlags, "metadata", nil, "Metadata label in key=value form")
+	Cmd.Flags().StringSliceVar(&labelsFlags, "labels", nil, "Data server labels in key=value form")
 
 	_ = Cmd.MarkFlagRequired("public-address")
 	_ = Cmd.MarkFlagRequired("internal-address")
@@ -61,7 +61,7 @@ func exec(cmd *cobra.Command, _ []string) error {
 		_ = client.Close()
 	}(client)
 
-	metadata, err := parseMetadataFlags(metadataFlags)
+	metadata, err := parseMetadataFlags(labelsFlags)
 	if err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func exec(cmd *cobra.Command, _ []string) error {
 
 func parseMetadataFlags(entries []string) (map[string]string, error) {
 	if len(entries) == 0 {
-		return nil, nil
+		return map[string]string{}, nil
 	}
 
 	metadata := make(map[string]string, len(entries))
