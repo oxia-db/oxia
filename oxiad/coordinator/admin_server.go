@@ -72,12 +72,8 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 			identifier := server.GetIdentifier()
 			return &proto.GetDataServerResponse{
 				DataServer: &proto.DataServerInfo{
-					DataServer: &proto.DataServer{
-						Name:            &identifier,
-						PublicAddress:   server.Public,
-						InternalAddress: server.Internal,
-					},
-					Metadata: lookupServerMetadata(cnf.ServerMetadata, identifier).Labels,
+					DataServer: toProtoDataServer(server),
+					Metadata:   lookupServerMetadata(cnf.ServerMetadata, identifier).Labels,
 				},
 			}, nil
 		}
