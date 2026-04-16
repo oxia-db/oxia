@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+import "google/protobuf/duration.proto";
+
+package metadata;
+option go_package = "github.com/oxia-db/oxia/common/proto";
+
+message DataServer {
+  string name = 1;
+  string public_address = 2;
+  string internal_address = 3;
+  map<string, string> labels = 4;
+}
+
+enum AntiAffinityMode {
+  Strict = 0;
+  Relax = 1;
+}
+
+message AntiAffinity {
+  repeated string labels = 1;
+  AntiAffinityMode mode = 2;
+}
+
+enum KeySorting {
+  Nature = 0;
+  Hierarchical = 1;
+}
+
+message HierarchyPolicies {
+  repeated AntiAffinity anti_affinities = 1;
+  optional uint32 init_shard_count = 2;
+  optional uint32 replication_factor = 3;
+  optional bool notification_enabled = 4;
+  optional string key_sort = 5;
+}
+
+message LoadBalancerPolicies {
+  google.protobuf.Duration schedule_interval = 1;
+  google.protobuf.Duration quarantine_time = 2;
+}
+
+message Namespace {
+  string name = 1;
+  optional HierarchyPolicies policies = 2;
+}
+
+message Cluster {
+  repeated DataServer data_servers = 1;
+  repeated Namespace namespaces = 2;
+  optional HierarchyPolicies policies = 3;
+  optional LoadBalancerPolicies loadBalancer = 4;
+  repeated string allowed_extra_authorities = 5;
+}
+
+
+message Int32HashRange {
+  uint32 min = 1;
+  uint32 max = 2;
+}
+
+enum ShardStatus {
+  Unknown = 0;
+  Steady = 1;
+  Election = 2;
+  Deleting = 3;
+}
+
+enum SplitPhase {
+  Bootstrap = 0;
+  CatchUp = 1;
+  Cutover = 2;
+}
+
+message ShardSplittingState {
+  SplitPhase phase = 1;
+  optional int64 parent_shard_id = 2;
+  repeated int64 child_shard_ids = 3;
+  uint32 split_point = 4;
+  optional int64 snapshot_offset = 5;
+  optional int64 parent_term_at_bootstrap = 6;
+  map<int64, string> child_leaders_at_bootstrap = 7;
+}
+
+message ShardState {
+  ShardStatus status = 1;
+  int64 term = 2;
+  string leader = 3;
+  repeated string ensemble = 4;
+  repeated string removed_nodes = 5;
+  repeated string pending_delete_shard_nodes = 6;
+  Int32HashRange int32_hash_range = 7;
+  optional ShardSplittingState split = 8;
+}
+
+message NamespaceState {
+  uint32 replication_factor = 1;
+  map<int64, ShardState> shards = 2;
+}
+
+message ClusterState {
+  map<string, NamespaceState> namespaces  = 1;
+  int64 shard_id_generator = 2;
+}
