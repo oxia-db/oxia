@@ -55,7 +55,7 @@ type ClusterConfigResource interface {
 
 	Node(id string) (*model.Server, bool)
 
-	NodeWithMetadata(id string) (*model.Server, model.ServerMetadata, bool)
+	DataServerWithMetadata(id string) (*model.Server, model.ServerMetadata, bool)
 }
 
 var _ ClusterConfigResource = &clusterConfig{}
@@ -194,7 +194,7 @@ func (ccf *clusterConfig) Node(id string) (*model.Server, bool) {
 	return ccf.nodesIndex.Get(id)
 }
 
-func (ccf *clusterConfig) NodeWithMetadata(id string) (*model.Server, model.ServerMetadata, bool) {
+func (ccf *clusterConfig) DataServerWithMetadata(id string) (*model.Server, model.ServerMetadata, bool) {
 	ccf.clusterConfigLock.RLock()
 	defer ccf.clusterConfigLock.RUnlock()
 	if ccf.currentClusterConfig == nil {

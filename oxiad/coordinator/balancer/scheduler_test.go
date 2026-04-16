@@ -98,7 +98,7 @@ func (m *mockClusterConfigResource) Node(id string) (*model.Server, bool) {
 	return n, ok
 }
 
-func (m *mockClusterConfigResource) NodeWithMetadata(id string) (*model.Server, model.ServerMetadata, bool) {
+func (m *mockClusterConfigResource) DataServerWithMetadata(id string) (*model.Server, model.ServerMetadata, bool) {
 	n, ok := m.nodeMap[id]
 	if !ok {
 		return nil, model.ServerMetadata{}, false
