@@ -69,7 +69,7 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 				serverMetadata = model.ServerMetadata{}
 			}
 			return &proto.GetDataServerResponse{
-				DataServer: &proto.DataServerInfo{
+				DataServerInfo: &proto.DataServerInfo{
 					DataServer: server.ToAdminProto(),
 					Metadata:   serverMetadata.Labels,
 				},

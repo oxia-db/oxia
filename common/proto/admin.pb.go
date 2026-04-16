@@ -275,10 +275,10 @@ func (x *GetDataServerRequest) GetDataServer() string {
 }
 
 type GetDataServerResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DataServer    *DataServerInfo        `protobuf:"bytes,1,opt,name=data_server,json=dataServer,proto3" json:"data_server,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	DataServerInfo *DataServerInfo        `protobuf:"bytes,1,opt,name=data_server_info,json=dataServerInfo,proto3" json:"data_server_info,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetDataServerResponse) Reset() {
@@ -311,9 +311,9 @@ func (*GetDataServerResponse) Descriptor() ([]byte, []int) {
 	return file_admin_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *GetDataServerResponse) GetDataServer() *DataServerInfo {
+func (x *GetDataServerResponse) GetDataServerInfo() *DataServerInfo {
 	if x != nil {
-		return x.DataServer
+		return x.DataServerInfo
 	}
 	return nil
 }
@@ -682,10 +682,9 @@ const file_admin_proto_rawDesc = "" +
 	"\fdata_servers\x18\x01 \x03(\v2\x1c.io.oxia.proto.v1.DataServerR\vdataServers\"7\n" +
 	"\x14GetDataServerRequest\x12\x1f\n" +
 	"\vdata_server\x18\x01 \x01(\tR\n" +
-	"dataServer\"Z\n" +
-	"\x15GetDataServerResponse\x12A\n" +
-	"\vdata_server\x18\x01 \x01(\v2 .io.oxia.proto.v1.DataServerInfoR\n" +
-	"dataServer\"\x17\n" +
+	"dataServer\"c\n" +
+	"\x15GetDataServerResponse\x12J\n" +
+	"\x10data_server_info\x18\x01 \x01(\v2 .io.oxia.proto.v1.DataServerInfoR\x0edataServerInfo\"\x17\n" +
 	"\x15ListNamespacesRequest\"8\n" +
 	"\x16ListNamespacesResponse\x12\x1e\n" +
 	"\n" +
@@ -754,7 +753,7 @@ var file_admin_proto_depIdxs = []int32{
 	1,  // 0: io.oxia.proto.v1.DataServerInfo.data_server:type_name -> io.oxia.proto.v1.DataServer
 	13, // 1: io.oxia.proto.v1.DataServerInfo.metadata:type_name -> io.oxia.proto.v1.DataServerInfo.MetadataEntry
 	1,  // 2: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServer
-	2,  // 3: io.oxia.proto.v1.GetDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServerInfo
+	2,  // 3: io.oxia.proto.v1.GetDataServerResponse.data_server_info:type_name -> io.oxia.proto.v1.DataServerInfo
 	14, // 4: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
 	9,  // 5: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
 	0,  // 6: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest

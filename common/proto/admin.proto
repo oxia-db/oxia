@@ -63,7 +63,7 @@ message GetDataServerRequest {
 }
 
 message GetDataServerResponse {
-  DataServerInfo data_server = 1;
+  DataServerInfo data_server_info = 1;
 }
 
 message ListNamespacesRequest {

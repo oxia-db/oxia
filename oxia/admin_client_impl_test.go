@@ -183,7 +183,7 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
 				getDataServerResponse: &proto.GetDataServerResponse{
-					DataServer: &proto.DataServerInfo{
+					DataServerInfo: &proto.DataServerInfo{
 						DataServer: &proto.DataServer{
 							Name:            &serverName,
 							PublicAddress:   "public-1",
