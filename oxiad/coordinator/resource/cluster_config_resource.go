@@ -55,7 +55,7 @@ type ClusterConfigResource interface {
 
 	Node(id string) (*model.Server, bool)
 
-	DataServerWithMetadata(id string) (*model.DataServerInfo, bool)
+	GetDataServerInfo(name string) (*model.DataServerInfo, bool)
 }
 
 var _ ClusterConfigResource = &clusterConfig{}
@@ -194,7 +194,7 @@ func (ccf *clusterConfig) Node(id string) (*model.Server, bool) {
 	return ccf.nodesIndex.Get(id)
 }
 
-func (ccf *clusterConfig) DataServerWithMetadata(id string) (*model.DataServerInfo, bool) {
+func (ccf *clusterConfig) GetDataServerInfo(id string) (*model.DataServerInfo, bool) {
 	ccf.clusterConfigLock.RLock()
 	defer ccf.clusterConfigLock.RUnlock()
 	if ccf.currentClusterConfig == nil {
@@ -202,20 +202,18 @@ func (ccf *clusterConfig) DataServerWithMetadata(id string) (*model.DataServerIn
 		ccf.loadWithInitSlow()
 		ccf.clusterConfigLock.RLock()
 	}
-
 	node, found := ccf.nodesIndex.Get(id)
 	if !found {
 		return nil, false
 	}
-
-	metadata, found := ccf.currentClusterConfig.ServerMetadata[id]
-	if !found {
-		metadata = model.ServerMetadata{}
-	}
-	return &model.DataServerInfo{
+	info := &model.DataServerInfo{
 		Server:   node,
-		Metadata: metadata,
-	}, true
+		Metadata: model.ServerMetadata{},
+	}
+	if metadata, found := ccf.currentClusterConfig.ServerMetadata[id]; found {
+		info.Metadata = metadata
+	}
+	return info, true
 }
 
 func (ccf *clusterConfig) waitForUpdates() {

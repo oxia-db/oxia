@@ -45,9 +45,8 @@ func (sv *Server) GetIdentifier() string {
 }
 
 func (sv *Server) ToAdminProto() *proto.DataServer {
-	identifier := sv.GetIdentifier()
 	return &proto.DataServer{
-		Name:            &identifier,
+		Name:            new(sv.GetIdentifier()),
 		PublicAddress:   sv.Public,
 		InternalAddress: sv.Internal,
 	}

@@ -59,7 +59,7 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
 
-	dataServerInfo, found := admin.ccr.DataServerWithMetadata(req.DataServer)
+	dataServerInfo, found := admin.ccr.GetDataServerInfo(req.DataServer)
 	if !found {
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
