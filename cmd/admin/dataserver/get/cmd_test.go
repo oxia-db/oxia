@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/common/proto"
@@ -44,6 +45,7 @@ func Test_cmd_getDataServer(t *testing.T) {
 		Name:            &serverName,
 		PublicAddress:   "public1",
 		InternalAddress: "internal1",
+		Metadata:        map[string]string{"rack": "rack-1"},
 	}, nil)
 
 	out, err := runCmd(serverName)
@@ -55,4 +57,5 @@ func Test_cmd_getDataServer(t *testing.T) {
 	assert.Equal(t, serverName, *dataServer.Name)
 	assert.Equal(t, "public1", dataServer.PublicAddress)
 	assert.Equal(t, "internal1", dataServer.InternalAddress)
+	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata)
 }

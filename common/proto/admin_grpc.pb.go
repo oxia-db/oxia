@@ -48,7 +48,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OxiaAdminClient interface {
 	ListDataServers(ctx context.Context, in *ListDataServersRequest, opts ...grpc.CallOption) (*ListDataServersResponse, error)
-	GetDataServer(ctx context.Context, in *GetDataServerRequest, opts ...grpc.CallOption) (*DataServer, error)
+	GetDataServer(ctx context.Context, in *GetDataServerRequest, opts ...grpc.CallOption) (*GetDataServerResponse, error)
 	ListNamespaces(ctx context.Context, in *ListNamespacesRequest, opts ...grpc.CallOption) (*ListNamespacesResponse, error)
 	// Deprecated: Use ListDataServers instead.
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
@@ -76,9 +76,9 @@ func (c *oxiaAdminClient) ListDataServers(ctx context.Context, in *ListDataServe
 	return out, nil
 }
 
-func (c *oxiaAdminClient) GetDataServer(ctx context.Context, in *GetDataServerRequest, opts ...grpc.CallOption) (*DataServer, error) {
+func (c *oxiaAdminClient) GetDataServer(ctx context.Context, in *GetDataServerRequest, opts ...grpc.CallOption) (*GetDataServerResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DataServer)
+	out := new(GetDataServerResponse)
 	err := c.cc.Invoke(ctx, OxiaAdmin_GetDataServer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func (c *oxiaAdminClient) SplitShard(ctx context.Context, in *SplitShardRequest,
 // for forward compatibility.
 type OxiaAdminServer interface {
 	ListDataServers(context.Context, *ListDataServersRequest) (*ListDataServersResponse, error)
-	GetDataServer(context.Context, *GetDataServerRequest) (*DataServer, error)
+	GetDataServer(context.Context, *GetDataServerRequest) (*GetDataServerResponse, error)
 	ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error)
 	// Deprecated: Use ListDataServers instead.
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
@@ -142,7 +142,7 @@ type UnimplementedOxiaAdminServer struct{}
 func (UnimplementedOxiaAdminServer) ListDataServers(context.Context, *ListDataServersRequest) (*ListDataServersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListDataServers not implemented")
 }
-func (UnimplementedOxiaAdminServer) GetDataServer(context.Context, *GetDataServerRequest) (*DataServer, error) {
+func (UnimplementedOxiaAdminServer) GetDataServer(context.Context, *GetDataServerRequest) (*GetDataServerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDataServer not implemented")
 }
 func (UnimplementedOxiaAdminServer) ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error) {

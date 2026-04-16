@@ -34,7 +34,7 @@ import (
 type mockAdminRpcClient struct {
 	listDataServersResponse *proto.ListDataServersResponse
 	listDataServersErr      error
-	getDataServerResponse   *proto.DataServer
+	getDataServerResponse   *proto.GetDataServerResponse
 	getDataServerErr        error
 }
 
@@ -42,7 +42,7 @@ func (m *mockAdminRpcClient) ListDataServers(context.Context, *proto.ListDataSer
 	return m.listDataServersResponse, m.listDataServersErr
 }
 
-func (m *mockAdminRpcClient) GetDataServer(context.Context, *proto.GetDataServerRequest, ...grpc.CallOption) (*proto.DataServer, error) {
+func (m *mockAdminRpcClient) GetDataServer(context.Context, *proto.GetDataServerRequest, ...grpc.CallOption) (*proto.GetDataServerResponse, error) {
 	return m.getDataServerResponse, m.getDataServerErr
 }
 
@@ -160,6 +160,7 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 							Name:            &serverName,
 							PublicAddress:   "public-1",
 							InternalAddress: "internal-1",
+							Metadata:        map[string]string{"rack": "rack-1"},
 						},
 					},
 				},
@@ -174,6 +175,7 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 	assert.Equal(t, serverName, *dataServers[0].Name)
 	assert.Equal(t, "public-1", dataServers[0].PublicAddress)
 	assert.Equal(t, "internal-1", dataServers[0].InternalAddress)
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServers[0].Metadata)
 }
 
 func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
@@ -182,10 +184,13 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 		adminAddr: "admin-addr",
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
-				getDataServerResponse: &proto.DataServer{
-					Name:            &serverName,
-					PublicAddress:   "public-1",
-					InternalAddress: "internal-1",
+				getDataServerResponse: &proto.GetDataServerResponse{
+					DataServer: &proto.DataServer{
+						Name:            &serverName,
+						PublicAddress:   "public-1",
+						InternalAddress: "internal-1",
+						Metadata:        map[string]string{"rack": "rack-1"},
+					},
 				},
 			},
 		},
@@ -198,6 +203,7 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	assert.Equal(t, serverName, *dataServer.Name)
 	assert.Equal(t, "public-1", dataServer.PublicAddress)
 	assert.Equal(t, "internal-1", dataServer.InternalAddress)
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata)
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

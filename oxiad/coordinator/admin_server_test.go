@@ -40,6 +40,11 @@ func TestAdminServerListDataServers(t *testing.T) {
 					{Name: &serverName2, Public: "public-2", Internal: "internal-2"},
 					{Public: "public-3", Internal: "internal-3"},
 				},
+				ServerMetadata: map[string]model.ServerMetadata{
+					serverName1:  {Labels: map[string]string{"rack": "rack-1"}},
+					serverName2:  {Labels: map[string]string{"rack": "rack-2"}},
+					"internal-3": {Labels: map[string]string{"rack": "rack-3"}},
+				},
 			}, nil
 		},
 		nil,
@@ -53,16 +58,19 @@ func TestAdminServerListDataServers(t *testing.T) {
 	assert.Equal(t, serverName1, *res.DataServers[0].Name)
 	assert.Equal(t, "public-1", res.DataServers[0].PublicAddress)
 	assert.Equal(t, "internal-1", res.DataServers[0].InternalAddress)
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, res.DataServers[0].Metadata)
 
 	require.NotNil(t, res.DataServers[1].Name)
 	assert.Equal(t, serverName2, *res.DataServers[1].Name)
 	assert.Equal(t, "public-2", res.DataServers[1].PublicAddress)
 	assert.Equal(t, "internal-2", res.DataServers[1].InternalAddress)
+	assert.Equal(t, map[string]string{"rack": "rack-2"}, res.DataServers[1].Metadata)
 
 	require.NotNil(t, res.DataServers[2].Name)
 	assert.Equal(t, "internal-3", *res.DataServers[2].Name)
 	assert.Equal(t, "public-3", res.DataServers[2].PublicAddress)
 	assert.Equal(t, "internal-3", res.DataServers[2].InternalAddress)
+	assert.Equal(t, map[string]string{"rack": "rack-3"}, res.DataServers[2].Metadata)
 }
 
 func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
@@ -110,6 +118,9 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 				Servers: []model.Server{
 					{Name: &serverName, Public: "public-2", Internal: "internal-2"},
 				},
+				ServerMetadata: map[string]model.ServerMetadata{
+					serverName: {Labels: map[string]string{"zone": "zone-2"}},
+				},
 			}, nil
 		},
 		nil,
@@ -118,13 +129,15 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 	res, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: serverName})
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	require.NotNil(t, res.Name)
-	assert.Equal(t, serverName, *res.Name)
-	assert.Equal(t, "public-2", res.PublicAddress)
-	assert.Equal(t, "internal-2", res.InternalAddress)
+	require.NotNil(t, res.DataServer)
+	require.NotNil(t, res.DataServer.Name)
+	assert.Equal(t, serverName, *res.DataServer.Name)
+	assert.Equal(t, "public-2", res.DataServer.PublicAddress)
+	assert.Equal(t, "internal-2", res.DataServer.InternalAddress)
+	assert.Equal(t, map[string]string{"zone": "zone-2"}, res.DataServer.Metadata)
 }
 
-func TestAdminServerGetDataServerByInternalAddress(t *testing.T) {
+func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 	serverName := "server-2"
 
 	admin := newAdminServer(
@@ -135,23 +148,28 @@ func TestAdminServerGetDataServerByInternalAddress(t *testing.T) {
 					{Name: &serverName, Public: "public-2", Internal: "internal-2"},
 					{Public: "public-3", Internal: "internal-3"},
 				},
+				ServerMetadata: map[string]model.ServerMetadata{
+					serverName:   {Labels: map[string]string{"role": "named"}},
+					"internal-3": {Labels: map[string]string{"role": "fallback"}},
+				},
 			}, nil
 		},
 		nil,
 	)
 
-	res, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-2"})
+	res, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-3"})
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	require.NotNil(t, res.Name)
-	assert.Equal(t, serverName, *res.Name)
+	require.NotNil(t, res.DataServer)
+	require.NotNil(t, res.DataServer.Name)
+	assert.Equal(t, "internal-3", *res.DataServer.Name)
+	assert.Equal(t, "public-3", res.DataServer.PublicAddress)
+	assert.Equal(t, "internal-3", res.DataServer.InternalAddress)
+	assert.Equal(t, map[string]string{"role": "fallback"}, res.DataServer.Metadata)
 
-	res, err = admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-3"})
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Nil(t, res.Name)
-	assert.Equal(t, "public-3", res.PublicAddress)
-	assert.Equal(t, "internal-3", res.InternalAddress)
+	_, err = admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-2"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }
 
 func TestAdminServerGetDataServerNotFound(t *testing.T) {
@@ -170,4 +188,18 @@ func TestAdminServerGetDataServerNotFound(t *testing.T) {
 	_, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "missing"})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
+}
+
+func TestAdminServerGetDataServerRejectsEmptyLookup(t *testing.T) {
+	admin := newAdminServer(
+		nil,
+		func() (model.ClusterConfig, error) {
+			return model.ClusterConfig{}, nil
+		},
+		nil,
+	)
+
+	_, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
 }

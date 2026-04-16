@@ -64,7 +64,7 @@ func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServe
 	if err != nil {
 		return nil, mapAdminError(err)
 	}
-	return response, nil
+	return response.DataServer, nil
 }
 
 func (admin *adminClientImpl) ListNodes() *ListNodesResult {

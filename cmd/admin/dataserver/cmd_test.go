@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/common/proto"
@@ -36,19 +37,23 @@ func runCmd(args ...string) (string, error) {
 }
 
 func Test_cmd_dataServerList(t *testing.T) {
+	serverName1 := "server-1"
+	serverName2 := "internal2"
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServer{
 		{
-			Name:            nil,
+			Name:            &serverName1,
 			PublicAddress:   "public1",
 			InternalAddress: "internal1",
+			Metadata:        map[string]string{"rack": "rack-1"},
 		},
 		{
-			Name:            nil,
+			Name:            &serverName2,
 			PublicAddress:   "public2",
 			InternalAddress: "internal2",
+			Metadata:        map[string]string{"rack": "rack-2"},
 		},
 	}, nil)
 
@@ -62,6 +67,10 @@ func Test_cmd_dataServerList(t *testing.T) {
 	assert.Equal(t, "public2", dataServers[1].PublicAddress)
 	assert.Equal(t, "internal1", dataServers[0].InternalAddress)
 	assert.Equal(t, "internal2", dataServers[1].InternalAddress)
-	assert.Nil(t, dataServers[0].Name)
-	assert.Nil(t, dataServers[1].Name)
+	require.NotNil(t, dataServers[0].Name)
+	require.NotNil(t, dataServers[1].Name)
+	assert.Equal(t, "server-1", *dataServers[0].Name)
+	assert.Equal(t, "internal2", *dataServers[1].Name)
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServers[0].Metadata)
+	assert.Equal(t, map[string]string{"rack": "rack-2"}, dataServers[1].Metadata)
 }

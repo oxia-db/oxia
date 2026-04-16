@@ -51,18 +51,17 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
-		name := server.GetIdentifier()
-		dataServers[i] = &proto.DataServer{
-			Name:            &name,
-			PublicAddress:   server.Public,
-			InternalAddress: server.Internal,
-		}
+		dataServers[i] = toProtoDataServer(server, cnf.ServerMetadata)
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
 }
 
-func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.DataServer, error) {
+func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
+	if req == nil || req.DataServer == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data_server must not be empty")
+	}
+
 	cnf, err := admin.clusterConfig()
 	if err != nil {
 		return nil, err
@@ -70,10 +69,8 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 
 	for _, server := range cnf.Servers {
 		if matchesDataServer(server, req.DataServer) {
-			return &proto.DataServer{
-				Name:            server.Name,
-				PublicAddress:   server.Public,
-				InternalAddress: server.Internal,
+			return &proto.GetDataServerResponse{
+				DataServer: toProtoDataServer(server, cnf.ServerMetadata),
 			}, nil
 		}
 	}
@@ -82,11 +79,25 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 }
 
 func matchesDataServer(server model.Server, lookup string) bool {
-	if server.GetIdentifier() == lookup {
-		return true
-	}
+	return server.GetIdentifier() == lookup
+}
 
-	return server.Internal == lookup
+func toProtoDataServer(server model.Server, serverMetadata map[string]model.ServerMetadata) *proto.DataServer {
+	identifier := server.GetIdentifier()
+	return &proto.DataServer{
+		Name:            &identifier,
+		PublicAddress:   server.Public,
+		InternalAddress: server.Internal,
+		Metadata:        lookupServerMetadata(serverMetadata, identifier).Labels,
+	}
+}
+
+func lookupServerMetadata(serverMetadata map[string]model.ServerMetadata, identifier string) model.ServerMetadata {
+	metadata, found := serverMetadata[identifier]
+	if !found {
+		return model.ServerMetadata{}
+	}
+	return metadata
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
@@ -115,10 +126,7 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 	cnfMeta := cnf.ServerMetadata
 	nodes := make([]*proto.Node, len(cnfNodes))
 	for i, node := range cnfNodes {
-		nodeMeta, found := cnfMeta[node.GetIdentifier()]
-		if !found {
-			nodeMeta = model.ServerMetadata{}
-		}
+		nodeMeta := lookupServerMetadata(cnfMeta, node.GetIdentifier())
 		name := node.GetIdentifier()
 		nodes[i] = &proto.Node{
 			Name:            &name,
