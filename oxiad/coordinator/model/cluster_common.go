@@ -14,6 +14,8 @@
 
 package model
 
+import "github.com/oxia-db/oxia/common/proto"
+
 type Server struct {
 	// Name is the unique identification for clusters
 	Name *string `json:"name" yaml:"name"`
@@ -35,4 +37,13 @@ func (sv *Server) GetIdentifier() string {
 		return sv.Internal
 	}
 	return *sv.Name
+}
+
+func (sv *Server) ToAdminProto() *proto.DataServer {
+	identifier := sv.GetIdentifier()
+	return &proto.DataServer{
+		Name:            &identifier,
+		PublicAddress:   sv.Public,
+		InternalAddress: sv.Internal,
+	}
 }

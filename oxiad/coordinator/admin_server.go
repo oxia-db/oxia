@@ -48,7 +48,7 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
-		dataServers[i] = toProtoDataServer(server)
+		dataServers[i] = server.ToAdminProto()
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
@@ -70,7 +70,7 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 			}
 			return &proto.GetDataServerResponse{
 				DataServer: &proto.DataServerInfo{
-					DataServer: toProtoDataServer(server),
+					DataServer: server.ToAdminProto(),
 					Metadata:   serverMetadata.Labels,
 				},
 			}, nil
@@ -82,15 +82,6 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 
 func matchesDataServer(server model.Server, lookup string) bool {
 	return server.GetIdentifier() == lookup
-}
-
-func toProtoDataServer(server model.Server) *proto.DataServer {
-	identifier := server.GetIdentifier()
-	return &proto.DataServer{
-		Name:            &identifier,
-		PublicAddress:   server.Public,
-		InternalAddress: server.Internal,
-	}
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
