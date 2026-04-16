@@ -25,6 +25,7 @@ option java_multiple_files = true;
 service OxiaAdmin {
 
   rpc ListDataServers(ListDataServersRequest) returns (ListDataServersResponse);
+  rpc GetDataServer(GetDataServerRequest) returns (GetDataServerResponse);
 
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
 
@@ -48,8 +49,21 @@ message DataServer {
   string internal_address = 3;
 }
 
+message DataServerInfo {
+  DataServer data_server = 1;
+  map<string, string> metadata = 2;
+}
+
 message ListDataServersResponse {
   repeated DataServer data_servers = 1;
+}
+
+message GetDataServerRequest {
+  string data_server = 1;
+}
+
+message GetDataServerResponse {
+  DataServerInfo data_server_info = 1;
 }
 
 message ListNamespacesRequest {

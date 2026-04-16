@@ -20,6 +20,8 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
 	"github.com/pkg/errors"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -37,34 +39,38 @@ type adminServer struct {
 	proto.UnimplementedOxiaAdminServer
 
 	statusResource resource.StatusResource
-	clusterConfig  func() (model.ClusterConfig, error)
+	ccr            resource.ClusterConfigResource
 	shardSplitter  ShardSplitter
 }
 
 func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
-	cnf, err := admin.clusterConfig()
-	if err != nil {
-		return nil, err
-	}
+	cnf := admin.ccr.Load()
 
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
-		name := server.GetIdentifier()
-		dataServers[i] = &proto.DataServer{
-			Name:            &name,
-			PublicAddress:   server.Public,
-			InternalAddress: server.Internal,
-		}
+		dataServers[i] = server.ToAdminProto()
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
 }
 
-func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
-	cnf, err := admin.clusterConfig()
-	if err != nil {
-		return nil, err
+func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
+	if req == nil || req.DataServer == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
+
+	dataServerInfo, found := admin.ccr.GetDataServerInfo(req.DataServer)
+	if !found {
+		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
+	}
+
+	return &proto.GetDataServerResponse{
+		DataServerInfo: dataServerInfo.ToAdminProto(),
+	}, nil
+}
+
+func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
+	cnf := admin.ccr.Load()
 
 	namespaceConfigs := cnf.Namespaces
 	namespaceNames := hashset.New[string]()
@@ -77,10 +83,7 @@ func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesR
 }
 
 func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
-	cnf, err := admin.clusterConfig()
-	if err != nil {
-		return nil, err
-	}
+	cnf := admin.ccr.Load()
 
 	cnfNodes := cnf.Servers
 	cnfMeta := cnf.ServerMetadata
@@ -125,12 +128,12 @@ func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardReq
 
 func newAdminServer(
 	statusResource resource.StatusResource,
-	clusterConfig func() (model.ClusterConfig, error),
+	ccr resource.ClusterConfigResource,
 	shardSplitter ShardSplitter,
 ) *adminServer {
 	return &adminServer{
 		statusResource: statusResource,
-		clusterConfig:  clusterConfig,
+		ccr:            ccr,
 		shardSplitter:  shardSplitter,
 	}
 }

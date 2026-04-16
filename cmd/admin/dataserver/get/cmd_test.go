@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dataserver
+package get
 
 import (
 	"bytes"
@@ -36,37 +36,29 @@ func runCmd(args ...string) (string, error) {
 	return strings.TrimSpace(actual.String()), err
 }
 
-func Test_cmd_dataServerList(t *testing.T) {
-	serverName1 := "server-1"
-	serverName2 := "internal2"
+func Test_cmd_getDataServer(t *testing.T) {
+	serverName := "server-1"
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServer{
-		{
-			Name:            &serverName1,
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServerInfo{
+		DataServer: &proto.DataServer{
+			Name:            &serverName,
 			PublicAddress:   "public1",
 			InternalAddress: "internal1",
 		},
-		{
-			Name:            &serverName2,
-			PublicAddress:   "public2",
-			InternalAddress: "internal2",
-		},
+		Metadata: map[string]string{"rack": "rack-1"},
 	}, nil)
 
-	out, err := runCmd("list")
+	out, err := runCmd(serverName)
 
 	assert.NoError(t, err)
-	var dataServers []proto.DataServer
-	assert.NoError(t, json.Unmarshal([]byte(out), &dataServers))
-	assert.Equal(t, 2, len(dataServers))
-	assert.Equal(t, "public1", dataServers[0].PublicAddress)
-	assert.Equal(t, "public2", dataServers[1].PublicAddress)
-	assert.Equal(t, "internal1", dataServers[0].InternalAddress)
-	assert.Equal(t, "internal2", dataServers[1].InternalAddress)
-	require.NotNil(t, dataServers[0].Name)
-	require.NotNil(t, dataServers[1].Name)
-	assert.Equal(t, "server-1", *dataServers[0].Name)
-	assert.Equal(t, "internal2", *dataServers[1].Name)
+	var dataServer proto.DataServerInfo
+	assert.NoError(t, json.Unmarshal([]byte(out), &dataServer))
+	require.NotNil(t, dataServer.DataServer)
+	assert.NotNil(t, dataServer.DataServer.Name)
+	assert.Equal(t, serverName, *dataServer.DataServer.Name)
+	assert.Equal(t, "public1", dataServer.DataServer.PublicAddress)
+	assert.Equal(t, "internal1", dataServer.DataServer.InternalAddress)
+	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata)
 }
