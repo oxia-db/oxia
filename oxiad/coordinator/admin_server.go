@@ -39,12 +39,12 @@ type adminServer struct {
 	proto.UnimplementedOxiaAdminServer
 
 	statusResource resource.StatusResource
-	clusterConfig  resource.ClusterConfigResource
+	ccr            resource.ClusterConfigResource
 	shardSplitter  ShardSplitter
 }
 
 func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
-	cnf := admin.clusterConfig.Load()
+	cnf := admin.ccr.Load()
 
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
@@ -59,7 +59,7 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data_server must not be empty")
 	}
 
-	cnf := admin.clusterConfig.Load()
+	cnf := admin.ccr.Load()
 
 	for _, server := range cnf.Servers {
 		if matchesDataServer(server, req.DataServer) {
@@ -94,7 +94,7 @@ func toProtoDataServer(server model.Server) *proto.DataServer {
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
-	cnf := admin.clusterConfig.Load()
+	cnf := admin.ccr.Load()
 
 	namespaceConfigs := cnf.Namespaces
 	namespaceNames := hashset.New[string]()
@@ -107,7 +107,7 @@ func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesR
 }
 
 func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
-	cnf := admin.clusterConfig.Load()
+	cnf := admin.ccr.Load()
 
 	cnfNodes := cnf.Servers
 	cnfMeta := cnf.ServerMetadata
@@ -152,12 +152,12 @@ func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardReq
 
 func newAdminServer(
 	statusResource resource.StatusResource,
-	clusterConfig resource.ClusterConfigResource,
+	ccr resource.ClusterConfigResource,
 	shardSplitter ShardSplitter,
 ) *adminServer {
 	return &adminServer{
 		statusResource: statusResource,
-		clusterConfig:  clusterConfig,
+		ccr:            ccr,
 		shardSplitter:  shardSplitter,
 	}
 }
