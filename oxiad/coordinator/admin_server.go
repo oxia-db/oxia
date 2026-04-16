@@ -56,28 +56,27 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 
 func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
 	if req == nil || req.DataServer == "" {
-		return nil, grpcstatus.Error(codes.InvalidArgument, "data_server must not be empty")
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
+	}
+
+	server, found := admin.ccr.Node(req.DataServer)
+	if !found {
+		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
 
 	cnf := admin.ccr.Load()
-
-	for _, server := range cnf.Servers {
-		if server.GetIdentifier() == req.DataServer {
-			identifier := server.GetIdentifier()
-			serverMetadata, found := cnf.ServerMetadata[identifier]
-			if !found {
-				serverMetadata = model.ServerMetadata{}
-			}
-			return &proto.GetDataServerResponse{
-				DataServerInfo: &proto.DataServerInfo{
-					DataServer: server.ToAdminProto(),
-					Metadata:   serverMetadata.Labels,
-				},
-			}, nil
-		}
+	identifier := server.GetIdentifier()
+	serverMetadata, found := cnf.ServerMetadata[identifier]
+	if !found {
+		serverMetadata = model.ServerMetadata{}
 	}
 
-	return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
+	return &proto.GetDataServerResponse{
+		DataServerInfo: &proto.DataServerInfo{
+			DataServer: server.ToAdminProto(),
+			Metadata:   serverMetadata.Labels,
+		},
+	}, nil
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
