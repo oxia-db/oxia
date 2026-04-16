@@ -70,10 +70,14 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 	for _, server := range cnf.Servers {
 		if matchesDataServer(server, req.DataServer) {
 			identifier := server.GetIdentifier()
+			serverMetadata, found := cnf.ServerMetadata[identifier]
+			if !found {
+				serverMetadata = model.ServerMetadata{}
+			}
 			return &proto.GetDataServerResponse{
 				DataServer: &proto.DataServerInfo{
 					DataServer: toProtoDataServer(server),
-					Metadata:   lookupServerMetadata(cnf.ServerMetadata, identifier).Labels,
+					Metadata:   serverMetadata.Labels,
 				},
 			}, nil
 		}
@@ -93,14 +97,6 @@ func toProtoDataServer(server model.Server) *proto.DataServer {
 		PublicAddress:   server.Public,
 		InternalAddress: server.Internal,
 	}
-}
-
-func lookupServerMetadata(serverMetadata map[string]model.ServerMetadata, identifier string) model.ServerMetadata {
-	metadata, found := serverMetadata[identifier]
-	if !found {
-		return model.ServerMetadata{}
-	}
-	return metadata
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
