@@ -37,7 +37,11 @@ type ClusterConfigManager interface {
 	Update(mutator func(*model.ClusterConfig) error) (model.ClusterConfig, error)
 }
 
-const clusterConfigConfigMapKey = "config.yaml"
+const (
+	clusterConfigConfigMapKey = "config.yaml"
+	defaultClusterConfigMode  = 0o644
+	defaultClusterConfigDir   = 0o755
+)
 
 type clusterConfigManager struct {
 	sync.Mutex
@@ -113,14 +117,14 @@ func (c *clusterConfigManager) storeFile(clusterConfig model.ClusterConfig) erro
 		return errors.Wrap(err, "failed to marshal cluster config")
 	}
 
-	mode := os.FileMode(0o644)
+	mode := os.FileMode(defaultClusterConfigMode)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
 	} else if !os.IsNotExist(err) {
 		return errors.Wrap(err, "failed to inspect cluster config file")
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), defaultClusterConfigDir); err != nil {
 		return errors.Wrap(err, "failed to create cluster config directory")
 	}
 

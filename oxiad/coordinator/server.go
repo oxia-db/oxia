@@ -187,6 +187,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
+	//nolint:contextcheck
 	coordinatorInstance, err := NewCoordinator(
 		metadataProvider,
 		clusterConfigProvider,
