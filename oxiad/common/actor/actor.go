@@ -42,6 +42,7 @@ type Actor[T any] struct {
 	wg     sync.WaitGroup
 	mu     sync.Mutex
 	ers    Errors
+	cond   sync.Cond
 
 	queue  []T
 	status Status
@@ -83,6 +84,7 @@ func (a *Actor[T]) Send(item T) error {
 		return a.ers.Shutdown
 	}
 	a.queue = append(a.queue, item)
+	a.cond.Broadcast()
 	return nil
 }
 
@@ -128,6 +130,7 @@ func (a *Actor[T]) run() {
 				}
 			}
 		}
+		a.cond.Wait()
 	}
 }
 
