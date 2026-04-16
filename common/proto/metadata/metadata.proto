@@ -3,7 +3,7 @@ syntax = "proto3";
 import "google/protobuf/duration.proto";
 
 package metadata;
-option go_package = "github.com/oxia-db/oxia/common/proto";
+option go_package = "github.com/oxia-db/oxia/common/proto/metadata";
 
 message DataServer {
   string name = 1;

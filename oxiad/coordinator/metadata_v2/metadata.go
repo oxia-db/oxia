@@ -1,44 +1,44 @@
 package metadata_v2
 
 import (
-	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/proto/metadata"
 	"github.com/oxia-db/oxia/oxiad/common/option"
 )
 
 type Store interface {
-	LeaseWatch() option.Watch[proto.LeaseState]
+	LeaseWatch() *option.Watch[metadata.LeaseState]
 
 	GetAllowedAuthorities() []string
 	DeleteExtraAllowedAuthorities(authorities []string) error
 	AddExtraAllowedAuthorities(authorities []string) error
 	UpdateAllowedAuthorities(authorities []string) error
 
-	GetLoadBalancerPolicies() *proto.LoadBalancerPolicies
-	PatchLoadBalancerPolicies(policies *proto.LoadBalancerPolicies) (*proto.LoadBalancerPolicies, error)
+	GetLoadBalancerPolicies() *metadata.LoadBalancerPolicies
+	PatchLoadBalancerPolicies(policies *metadata.LoadBalancerPolicies) (*metadata.LoadBalancerPolicies, error)
 
-	GetClusterHierarchyPolicies(name string) *proto.HierarchyPolicies
-	PatchClusterHierarchyPolicies(policies *proto.HierarchyPolicies) (*proto.HierarchyPolicies, error)
+	GetClusterHierarchyPolicies() *metadata.HierarchyPolicies
+	PatchClusterHierarchyPolicies(policies *metadata.HierarchyPolicies) (*metadata.HierarchyPolicies, error)
 
-	GetDataServer(name string) (*proto.DataServer, error)
+	GetDataServer(name string) (*metadata.DataServer, error)
 	DeleteDataServers(names []string) error
-	CreateDataServers(dataServers []*proto.DataServer) error
-	ListDataServer() ([]*proto.DataServer, error)
-	PatchDataServer(dataServer *proto.DataServer) (proto.DataServer, error)
+	CreateDataServers(dataServers []*metadata.DataServer) error
+	ListDataServer() ([]*metadata.DataServer, error)
+	PatchDataServer(dataServer *metadata.DataServer) (metadata.DataServer, error)
 
-	GetNamespace(name string) (*proto.Namespace, error)
+	GetNamespace(name string) (*metadata.Namespace, error)
 	DeleteNamespaces(names []string) error
-	CreateNamespaces(namespaces []*proto.Namespace) error
-	ListNamespace() ([]*proto.Namespace, error)
-	PatchNamespace(namespace *proto.Namespace) (proto.Namespace, error)
+	CreateNamespaces(namespaces []*metadata.Namespace) error
+	ListNamespace() ([]*metadata.Namespace, error)
+	PatchNamespace(namespace *metadata.Namespace) (metadata.Namespace, error)
 
-	GetNamespaceHierarchyPolicies(name string) *proto.HierarchyPolicies
-	PatchNamespaceHierarchyPolicies(policy *proto.HierarchyPolicies) (proto.HierarchyPolicies, error)
+	GetNamespaceHierarchyPolicies(name string) *metadata.HierarchyPolicies
+	PatchNamespaceHierarchyPolicies(name string, policy *metadata.HierarchyPolicies) (metadata.HierarchyPolicies, error)
 
-	GetNamespaceState(name string)
+	GetNamespaceState(name string) (*metadata.NamespaceState, error)
 	DeleteNamespaceStates(names []string) error
-	CreateNamespaceStates(namespace []*proto.NamespaceState) error
-	PatchNamespaceState(namespace *proto.NamespaceState) (proto.NamespaceState, error)
+	CreateNamespaceStates(namespace map[string]*metadata.NamespaceState) error
+	PatchNamespaceState(name string, namespace *metadata.NamespaceState) (metadata.NamespaceState, error)
 
-	GetShardState(name string) (*proto.ShardState, error)
-	PatchShardState(shard *proto.ShardState) (proto.ShardState, error)
+	GetShardState(namespace string, shardID int64) (*metadata.ShardState, error)
+	PatchShardState(namespace string, shardID int64, shard *metadata.ShardState) (metadata.ShardState, error)
 }

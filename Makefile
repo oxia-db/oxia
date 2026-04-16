@@ -98,16 +98,16 @@ proto:
     	--plugin protoc-gen-go-grpc="${GOPATH}/bin/protoc-gen-go-grpc" \
       	--go-vtproto_out=. \
       	--go-vtproto_opt paths=source_relative \
-      	--plugin protoc-gen-go-vtproto="${GOPATH}/bin/protoc-gen-go-vtproto" \
-      	--go-vtproto_opt=features=marshal+unmarshal+unmarshal_unsafe+size+pool+equal+clone \
-	    *.proto compat/*.proto
+	  	--plugin protoc-gen-go-vtproto="${GOPATH}/bin/protoc-gen-go-vtproto" \
+	  	--go-vtproto_opt=features=marshal+unmarshal+unmarshal_unsafe+size+pool+equal+clone \
+	    *.proto compat/*.proto metadata/*.proto
 
 proto_clean:
 	rm -f */*.pb.go
 
 proto_format:
 	#brew install clang-format
-	clang-format -i --style=Google proto/*.proto
+	clang-format -i --style=Google proto/*.proto proto/metadata/*.proto
 
 proto_lint:
 	#go install github.com/yoheimuta/protolint/cmd/protoc-gen-protolint
@@ -147,4 +147,3 @@ license-format:
 .PHONY: generate-conf-schema
 generate-conf-schema: build
 	bin/oxia config create-schema -o conf/schema
-

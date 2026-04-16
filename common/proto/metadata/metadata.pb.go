@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v6.33.0
-// source: metadata.proto
+// source: metadata/metadata.proto
 
-package proto
+package metadata
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -52,11 +52,11 @@ func (x AntiAffinityMode) String() string {
 }
 
 func (AntiAffinityMode) Descriptor() protoreflect.EnumDescriptor {
-	return file_metadata_proto_enumTypes[0].Descriptor()
+	return file_metadata_metadata_proto_enumTypes[0].Descriptor()
 }
 
 func (AntiAffinityMode) Type() protoreflect.EnumType {
-	return &file_metadata_proto_enumTypes[0]
+	return &file_metadata_metadata_proto_enumTypes[0]
 }
 
 func (x AntiAffinityMode) Number() protoreflect.EnumNumber {
@@ -65,7 +65,7 @@ func (x AntiAffinityMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AntiAffinityMode.Descriptor instead.
 func (AntiAffinityMode) EnumDescriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{0}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{0}
 }
 
 type KeySorting int32
@@ -98,11 +98,11 @@ func (x KeySorting) String() string {
 }
 
 func (KeySorting) Descriptor() protoreflect.EnumDescriptor {
-	return file_metadata_proto_enumTypes[1].Descriptor()
+	return file_metadata_metadata_proto_enumTypes[1].Descriptor()
 }
 
 func (KeySorting) Type() protoreflect.EnumType {
-	return &file_metadata_proto_enumTypes[1]
+	return &file_metadata_metadata_proto_enumTypes[1]
 }
 
 func (x KeySorting) Number() protoreflect.EnumNumber {
@@ -111,7 +111,7 @@ func (x KeySorting) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use KeySorting.Descriptor instead.
 func (KeySorting) EnumDescriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{1}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{1}
 }
 
 type LeaseState int32
@@ -147,11 +147,11 @@ func (x LeaseState) String() string {
 }
 
 func (LeaseState) Descriptor() protoreflect.EnumDescriptor {
-	return file_metadata_proto_enumTypes[2].Descriptor()
+	return file_metadata_metadata_proto_enumTypes[2].Descriptor()
 }
 
 func (LeaseState) Type() protoreflect.EnumType {
-	return &file_metadata_proto_enumTypes[2]
+	return &file_metadata_metadata_proto_enumTypes[2]
 }
 
 func (x LeaseState) Number() protoreflect.EnumNumber {
@@ -160,7 +160,7 @@ func (x LeaseState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use LeaseState.Descriptor instead.
 func (LeaseState) EnumDescriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{2}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{2}
 }
 
 type ShardStatus int32
@@ -199,11 +199,11 @@ func (x ShardStatus) String() string {
 }
 
 func (ShardStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_metadata_proto_enumTypes[3].Descriptor()
+	return file_metadata_metadata_proto_enumTypes[3].Descriptor()
 }
 
 func (ShardStatus) Type() protoreflect.EnumType {
-	return &file_metadata_proto_enumTypes[3]
+	return &file_metadata_metadata_proto_enumTypes[3]
 }
 
 func (x ShardStatus) Number() protoreflect.EnumNumber {
@@ -212,7 +212,7 @@ func (x ShardStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ShardStatus.Descriptor instead.
 func (ShardStatus) EnumDescriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{3}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{3}
 }
 
 type SplitPhase int32
@@ -248,11 +248,11 @@ func (x SplitPhase) String() string {
 }
 
 func (SplitPhase) Descriptor() protoreflect.EnumDescriptor {
-	return file_metadata_proto_enumTypes[4].Descriptor()
+	return file_metadata_metadata_proto_enumTypes[4].Descriptor()
 }
 
 func (SplitPhase) Type() protoreflect.EnumType {
-	return &file_metadata_proto_enumTypes[4]
+	return &file_metadata_metadata_proto_enumTypes[4]
 }
 
 func (x SplitPhase) Number() protoreflect.EnumNumber {
@@ -261,7 +261,7 @@ func (x SplitPhase) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SplitPhase.Descriptor instead.
 func (SplitPhase) EnumDescriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{4}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{4}
 }
 
 type DataServer struct {
@@ -276,7 +276,7 @@ type DataServer struct {
 
 func (x *DataServer) Reset() {
 	*x = DataServer{}
-	mi := &file_metadata_proto_msgTypes[0]
+	mi := &file_metadata_metadata_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -288,7 +288,7 @@ func (x *DataServer) String() string {
 func (*DataServer) ProtoMessage() {}
 
 func (x *DataServer) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[0]
+	mi := &file_metadata_metadata_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -301,7 +301,7 @@ func (x *DataServer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataServer.ProtoReflect.Descriptor instead.
 func (*DataServer) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{0}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *DataServer) GetName() string {
@@ -342,7 +342,7 @@ type AntiAffinity struct {
 
 func (x *AntiAffinity) Reset() {
 	*x = AntiAffinity{}
-	mi := &file_metadata_proto_msgTypes[1]
+	mi := &file_metadata_metadata_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -354,7 +354,7 @@ func (x *AntiAffinity) String() string {
 func (*AntiAffinity) ProtoMessage() {}
 
 func (x *AntiAffinity) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[1]
+	mi := &file_metadata_metadata_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -367,7 +367,7 @@ func (x *AntiAffinity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AntiAffinity.ProtoReflect.Descriptor instead.
 func (*AntiAffinity) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{1}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *AntiAffinity) GetLabels() []string {
@@ -397,7 +397,7 @@ type HierarchyPolicies struct {
 
 func (x *HierarchyPolicies) Reset() {
 	*x = HierarchyPolicies{}
-	mi := &file_metadata_proto_msgTypes[2]
+	mi := &file_metadata_metadata_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -409,7 +409,7 @@ func (x *HierarchyPolicies) String() string {
 func (*HierarchyPolicies) ProtoMessage() {}
 
 func (x *HierarchyPolicies) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[2]
+	mi := &file_metadata_metadata_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -422,7 +422,7 @@ func (x *HierarchyPolicies) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HierarchyPolicies.ProtoReflect.Descriptor instead.
 func (*HierarchyPolicies) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{2}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *HierarchyPolicies) GetAntiAffinities() []*AntiAffinity {
@@ -470,7 +470,7 @@ type LoadBalancerPolicies struct {
 
 func (x *LoadBalancerPolicies) Reset() {
 	*x = LoadBalancerPolicies{}
-	mi := &file_metadata_proto_msgTypes[3]
+	mi := &file_metadata_metadata_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -482,7 +482,7 @@ func (x *LoadBalancerPolicies) String() string {
 func (*LoadBalancerPolicies) ProtoMessage() {}
 
 func (x *LoadBalancerPolicies) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[3]
+	mi := &file_metadata_metadata_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -495,7 +495,7 @@ func (x *LoadBalancerPolicies) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoadBalancerPolicies.ProtoReflect.Descriptor instead.
 func (*LoadBalancerPolicies) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{3}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *LoadBalancerPolicies) GetScheduleInterval() *durationpb.Duration {
@@ -522,7 +522,7 @@ type Namespace struct {
 
 func (x *Namespace) Reset() {
 	*x = Namespace{}
-	mi := &file_metadata_proto_msgTypes[4]
+	mi := &file_metadata_metadata_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -534,7 +534,7 @@ func (x *Namespace) String() string {
 func (*Namespace) ProtoMessage() {}
 
 func (x *Namespace) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[4]
+	mi := &file_metadata_metadata_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -547,7 +547,7 @@ func (x *Namespace) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Namespace.ProtoReflect.Descriptor instead.
 func (*Namespace) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{4}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Namespace) GetName() string {
@@ -577,7 +577,7 @@ type Cluster struct {
 
 func (x *Cluster) Reset() {
 	*x = Cluster{}
-	mi := &file_metadata_proto_msgTypes[5]
+	mi := &file_metadata_metadata_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -589,7 +589,7 @@ func (x *Cluster) String() string {
 func (*Cluster) ProtoMessage() {}
 
 func (x *Cluster) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[5]
+	mi := &file_metadata_metadata_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -602,7 +602,7 @@ func (x *Cluster) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Cluster.ProtoReflect.Descriptor instead.
 func (*Cluster) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{5}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Cluster) GetDataServers() []*DataServer {
@@ -650,7 +650,7 @@ type Int32HashRange struct {
 
 func (x *Int32HashRange) Reset() {
 	*x = Int32HashRange{}
-	mi := &file_metadata_proto_msgTypes[6]
+	mi := &file_metadata_metadata_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -662,7 +662,7 @@ func (x *Int32HashRange) String() string {
 func (*Int32HashRange) ProtoMessage() {}
 
 func (x *Int32HashRange) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[6]
+	mi := &file_metadata_metadata_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -675,7 +675,7 @@ func (x *Int32HashRange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Int32HashRange.ProtoReflect.Descriptor instead.
 func (*Int32HashRange) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{6}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Int32HashRange) GetMin() uint32 {
@@ -707,7 +707,7 @@ type ShardSplittingState struct {
 
 func (x *ShardSplittingState) Reset() {
 	*x = ShardSplittingState{}
-	mi := &file_metadata_proto_msgTypes[7]
+	mi := &file_metadata_metadata_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -719,7 +719,7 @@ func (x *ShardSplittingState) String() string {
 func (*ShardSplittingState) ProtoMessage() {}
 
 func (x *ShardSplittingState) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[7]
+	mi := &file_metadata_metadata_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -732,7 +732,7 @@ func (x *ShardSplittingState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShardSplittingState.ProtoReflect.Descriptor instead.
 func (*ShardSplittingState) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{7}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ShardSplittingState) GetPhase() SplitPhase {
@@ -800,7 +800,7 @@ type ShardState struct {
 
 func (x *ShardState) Reset() {
 	*x = ShardState{}
-	mi := &file_metadata_proto_msgTypes[8]
+	mi := &file_metadata_metadata_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -812,7 +812,7 @@ func (x *ShardState) String() string {
 func (*ShardState) ProtoMessage() {}
 
 func (x *ShardState) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[8]
+	mi := &file_metadata_metadata_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -825,7 +825,7 @@ func (x *ShardState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShardState.ProtoReflect.Descriptor instead.
 func (*ShardState) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{8}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ShardState) GetStatus() ShardStatus {
@@ -894,7 +894,7 @@ type NamespaceState struct {
 
 func (x *NamespaceState) Reset() {
 	*x = NamespaceState{}
-	mi := &file_metadata_proto_msgTypes[9]
+	mi := &file_metadata_metadata_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -906,7 +906,7 @@ func (x *NamespaceState) String() string {
 func (*NamespaceState) ProtoMessage() {}
 
 func (x *NamespaceState) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[9]
+	mi := &file_metadata_metadata_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -919,7 +919,7 @@ func (x *NamespaceState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NamespaceState.ProtoReflect.Descriptor instead.
 func (*NamespaceState) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{9}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *NamespaceState) GetReplicationFactor() uint32 {
@@ -946,7 +946,7 @@ type ClusterState struct {
 
 func (x *ClusterState) Reset() {
 	*x = ClusterState{}
-	mi := &file_metadata_proto_msgTypes[10]
+	mi := &file_metadata_metadata_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -958,7 +958,7 @@ func (x *ClusterState) String() string {
 func (*ClusterState) ProtoMessage() {}
 
 func (x *ClusterState) ProtoReflect() protoreflect.Message {
-	mi := &file_metadata_proto_msgTypes[10]
+	mi := &file_metadata_metadata_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -971,7 +971,7 @@ func (x *ClusterState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterState.ProtoReflect.Descriptor instead.
 func (*ClusterState) Descriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{10}
+	return file_metadata_metadata_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ClusterState) GetNamespaces() map[string]*NamespaceState {
@@ -988,11 +988,11 @@ func (x *ClusterState) GetShardIdGenerator() int64 {
 	return 0
 }
 
-var File_metadata_proto protoreflect.FileDescriptor
+var File_metadata_metadata_proto protoreflect.FileDescriptor
 
-const file_metadata_proto_rawDesc = "" +
+const file_metadata_metadata_proto_rawDesc = "" +
 	"\n" +
-	"\x0emetadata.proto\x12\bmetadata\x1a\x1egoogle/protobuf/duration.proto\"\xe7\x01\n" +
+	"\x17metadata/metadata.proto\x12\bmetadata\x1a\x1egoogle/protobuf/duration.proto\"\xe7\x01\n" +
 	"\n" +
 	"DataServer\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
@@ -1096,23 +1096,23 @@ const file_metadata_proto_rawDesc = "" +
 	"SplitPhase\x12\x19\n" +
 	"\x15SPLIT_PHASE_BOOTSTRAP\x10\x00\x12\x18\n" +
 	"\x14SPLIT_PHASE_CATCH_UP\x10\x01\x12\x17\n" +
-	"\x13SPLIT_PHASE_CUTOVER\x10\x02B&Z$github.com/oxia-db/oxia/common/protob\x06proto3"
+	"\x13SPLIT_PHASE_CUTOVER\x10\x02B/Z-github.com/oxia-db/oxia/common/proto/metadatab\x06proto3"
 
 var (
-	file_metadata_proto_rawDescOnce sync.Once
-	file_metadata_proto_rawDescData []byte
+	file_metadata_metadata_proto_rawDescOnce sync.Once
+	file_metadata_metadata_proto_rawDescData []byte
 )
 
-func file_metadata_proto_rawDescGZIP() []byte {
-	file_metadata_proto_rawDescOnce.Do(func() {
-		file_metadata_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_metadata_proto_rawDesc), len(file_metadata_proto_rawDesc)))
+func file_metadata_metadata_proto_rawDescGZIP() []byte {
+	file_metadata_metadata_proto_rawDescOnce.Do(func() {
+		file_metadata_metadata_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_metadata_metadata_proto_rawDesc), len(file_metadata_metadata_proto_rawDesc)))
 	})
-	return file_metadata_proto_rawDescData
+	return file_metadata_metadata_proto_rawDescData
 }
 
-var file_metadata_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_metadata_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
-var file_metadata_proto_goTypes = []any{
+var file_metadata_metadata_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_metadata_metadata_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_metadata_metadata_proto_goTypes = []any{
 	(AntiAffinityMode)(0),        // 0: metadata.AntiAffinityMode
 	(KeySorting)(0),              // 1: metadata.KeySorting
 	(LeaseState)(0),              // 2: metadata.LeaseState
@@ -1135,7 +1135,7 @@ var file_metadata_proto_goTypes = []any{
 	nil,                          // 19: metadata.ClusterState.NamespacesEntry
 	(*durationpb.Duration)(nil),  // 20: google.protobuf.Duration
 }
-var file_metadata_proto_depIdxs = []int32{
+var file_metadata_metadata_proto_depIdxs = []int32{
 	16, // 0: metadata.DataServer.labels:type_name -> metadata.DataServer.LabelsEntry
 	0,  // 1: metadata.AntiAffinity.mode:type_name -> metadata.AntiAffinityMode
 	6,  // 2: metadata.HierarchyPolicies.anti_affinities:type_name -> metadata.AntiAffinity
@@ -1162,32 +1162,32 @@ var file_metadata_proto_depIdxs = []int32{
 	0,  // [0:19] is the sub-list for field type_name
 }
 
-func init() { file_metadata_proto_init() }
-func file_metadata_proto_init() {
-	if File_metadata_proto != nil {
+func init() { file_metadata_metadata_proto_init() }
+func file_metadata_metadata_proto_init() {
+	if File_metadata_metadata_proto != nil {
 		return
 	}
-	file_metadata_proto_msgTypes[2].OneofWrappers = []any{}
-	file_metadata_proto_msgTypes[4].OneofWrappers = []any{}
-	file_metadata_proto_msgTypes[5].OneofWrappers = []any{}
-	file_metadata_proto_msgTypes[7].OneofWrappers = []any{}
-	file_metadata_proto_msgTypes[8].OneofWrappers = []any{}
+	file_metadata_metadata_proto_msgTypes[2].OneofWrappers = []any{}
+	file_metadata_metadata_proto_msgTypes[4].OneofWrappers = []any{}
+	file_metadata_metadata_proto_msgTypes[5].OneofWrappers = []any{}
+	file_metadata_metadata_proto_msgTypes[7].OneofWrappers = []any{}
+	file_metadata_metadata_proto_msgTypes[8].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_metadata_proto_rawDesc), len(file_metadata_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_metadata_metadata_proto_rawDesc), len(file_metadata_metadata_proto_rawDesc)),
 			NumEnums:      5,
 			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_metadata_proto_goTypes,
-		DependencyIndexes: file_metadata_proto_depIdxs,
-		EnumInfos:         file_metadata_proto_enumTypes,
-		MessageInfos:      file_metadata_proto_msgTypes,
+		GoTypes:           file_metadata_metadata_proto_goTypes,
+		DependencyIndexes: file_metadata_metadata_proto_depIdxs,
+		EnumInfos:         file_metadata_metadata_proto_enumTypes,
+		MessageInfos:      file_metadata_metadata_proto_msgTypes,
 	}.Build()
-	File_metadata_proto = out.File
-	file_metadata_proto_goTypes = nil
-	file_metadata_proto_depIdxs = nil
+	File_metadata_metadata_proto = out.File
+	file_metadata_metadata_proto_goTypes = nil
+	file_metadata_metadata_proto_depIdxs = nil
 }
