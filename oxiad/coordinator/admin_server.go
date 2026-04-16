@@ -51,7 +51,7 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
-		dataServers[i] = toProtoDataServer(server, cnf.ServerMetadata)
+		dataServers[i] = toProtoDataServer(server)
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
@@ -70,7 +70,7 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 	for _, server := range cnf.Servers {
 		if matchesDataServer(server, req.DataServer) {
 			return &proto.GetDataServerResponse{
-				DataServer: toProtoDataServer(server, cnf.ServerMetadata),
+				DataServer: toProtoDataServerInfo(server, cnf.ServerMetadata),
 			}, nil
 		}
 	}
@@ -82,9 +82,18 @@ func matchesDataServer(server model.Server, lookup string) bool {
 	return server.GetIdentifier() == lookup
 }
 
-func toProtoDataServer(server model.Server, serverMetadata map[string]model.ServerMetadata) *proto.DataServer {
+func toProtoDataServer(server model.Server) *proto.DataServer {
 	identifier := server.GetIdentifier()
 	return &proto.DataServer{
+		Name:            &identifier,
+		PublicAddress:   server.Public,
+		InternalAddress: server.Internal,
+	}
+}
+
+func toProtoDataServerInfo(server model.Server, serverMetadata map[string]model.ServerMetadata) *proto.DataServerInfo {
+	identifier := server.GetIdentifier()
+	return &proto.DataServerInfo{
 		Name:            &identifier,
 		PublicAddress:   server.Public,
 		InternalAddress: server.Internal,

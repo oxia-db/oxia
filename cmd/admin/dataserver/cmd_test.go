@@ -47,13 +47,11 @@ func Test_cmd_dataServerList(t *testing.T) {
 			Name:            &serverName1,
 			PublicAddress:   "public1",
 			InternalAddress: "internal1",
-			Metadata:        map[string]string{"rack": "rack-1"},
 		},
 		{
 			Name:            &serverName2,
 			PublicAddress:   "public2",
 			InternalAddress: "internal2",
-			Metadata:        map[string]string{"rack": "rack-2"},
 		},
 	}, nil)
 
@@ -71,6 +69,4 @@ func Test_cmd_dataServerList(t *testing.T) {
 	require.NotNil(t, dataServers[1].Name)
 	assert.Equal(t, "server-1", *dataServers[0].Name)
 	assert.Equal(t, "internal2", *dataServers[1].Name)
-	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServers[0].Metadata)
-	assert.Equal(t, map[string]string{"rack": "rack-2"}, dataServers[1].Metadata)
 }

@@ -58,19 +58,16 @@ func TestAdminServerListDataServers(t *testing.T) {
 	assert.Equal(t, serverName1, *res.DataServers[0].Name)
 	assert.Equal(t, "public-1", res.DataServers[0].PublicAddress)
 	assert.Equal(t, "internal-1", res.DataServers[0].InternalAddress)
-	assert.Equal(t, map[string]string{"rack": "rack-1"}, res.DataServers[0].Metadata)
 
 	require.NotNil(t, res.DataServers[1].Name)
 	assert.Equal(t, serverName2, *res.DataServers[1].Name)
 	assert.Equal(t, "public-2", res.DataServers[1].PublicAddress)
 	assert.Equal(t, "internal-2", res.DataServers[1].InternalAddress)
-	assert.Equal(t, map[string]string{"rack": "rack-2"}, res.DataServers[1].Metadata)
 
 	require.NotNil(t, res.DataServers[2].Name)
 	assert.Equal(t, "internal-3", *res.DataServers[2].Name)
 	assert.Equal(t, "public-3", res.DataServers[2].PublicAddress)
 	assert.Equal(t, "internal-3", res.DataServers[2].InternalAddress)
-	assert.Equal(t, map[string]string{"rack": "rack-3"}, res.DataServers[2].Metadata)
 }
 
 func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {

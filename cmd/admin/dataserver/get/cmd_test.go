@@ -41,7 +41,7 @@ func Test_cmd_getDataServer(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServer{
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServerInfo{
 		Name:            &serverName,
 		PublicAddress:   "public1",
 		InternalAddress: "internal1",
@@ -51,7 +51,7 @@ func Test_cmd_getDataServer(t *testing.T) {
 	out, err := runCmd(serverName)
 
 	assert.NoError(t, err)
-	var dataServer proto.DataServer
+	var dataServer proto.DataServerInfo
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServer))
 	assert.NotNil(t, dataServer.Name)
 	assert.Equal(t, serverName, *dataServer.Name)

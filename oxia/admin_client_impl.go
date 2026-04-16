@@ -50,7 +50,7 @@ func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
 	return response.DataServers, nil
 }
 
-func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServer, error) {
+func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServerInfo, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)

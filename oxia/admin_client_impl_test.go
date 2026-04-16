@@ -160,7 +160,6 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 							Name:            &serverName,
 							PublicAddress:   "public-1",
 							InternalAddress: "internal-1",
-							Metadata:        map[string]string{"rack": "rack-1"},
 						},
 					},
 				},
@@ -175,7 +174,6 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 	assert.Equal(t, serverName, *dataServers[0].Name)
 	assert.Equal(t, "public-1", dataServers[0].PublicAddress)
 	assert.Equal(t, "internal-1", dataServers[0].InternalAddress)
-	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServers[0].Metadata)
 }
 
 func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
@@ -185,7 +183,7 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
 				getDataServerResponse: &proto.GetDataServerResponse{
-					DataServer: &proto.DataServer{
+					DataServer: &proto.DataServerInfo{
 						Name:            &serverName,
 						PublicAddress:   "public-1",
 						InternalAddress: "internal-1",
