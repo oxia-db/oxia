@@ -133,7 +133,10 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 	cnfMeta := cnf.ServerMetadata
 	nodes := make([]*proto.Node, len(cnfNodes))
 	for i, node := range cnfNodes {
-		nodeMeta := lookupServerMetadata(cnfMeta, node.GetIdentifier())
+		nodeMeta, found := cnfMeta[node.GetIdentifier()]
+		if !found {
+			nodeMeta = model.ServerMetadata{}
+		}
 		name := node.GetIdentifier()
 		nodes[i] = &proto.Node{
 			Name:            &name,
