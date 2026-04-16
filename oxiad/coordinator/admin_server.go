@@ -59,16 +59,9 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
 
-	server, found := admin.ccr.Node(req.DataServer)
+	server, serverMetadata, found := admin.ccr.NodeWithMetadata(req.DataServer)
 	if !found {
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
-	}
-
-	cnf := admin.ccr.Load()
-	identifier := server.GetIdentifier()
-	serverMetadata, found := cnf.ServerMetadata[identifier]
-	if !found {
-		serverMetadata = model.ServerMetadata{}
 	}
 
 	return &proto.GetDataServerResponse{

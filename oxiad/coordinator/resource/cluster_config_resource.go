@@ -54,6 +54,8 @@ type ClusterConfigResource interface {
 	NamespaceConfig(namespace string) (*model.NamespaceConfig, bool)
 
 	Node(id string) (*model.Server, bool)
+
+	NodeWithMetadata(id string) (*model.Server, model.ServerMetadata, bool)
 }
 
 var _ ClusterConfigResource = &clusterConfig{}
@@ -190,6 +192,27 @@ func (ccf *clusterConfig) Node(id string) (*model.Server, bool) {
 		ccf.clusterConfigLock.RLock()
 	}
 	return ccf.nodesIndex.Get(id)
+}
+
+func (ccf *clusterConfig) NodeWithMetadata(id string) (*model.Server, model.ServerMetadata, bool) {
+	ccf.clusterConfigLock.RLock()
+	defer ccf.clusterConfigLock.RUnlock()
+	if ccf.currentClusterConfig == nil {
+		ccf.clusterConfigLock.RUnlock()
+		ccf.loadWithInitSlow()
+		ccf.clusterConfigLock.RLock()
+	}
+
+	node, found := ccf.nodesIndex.Get(id)
+	if !found {
+		return nil, model.ServerMetadata{}, false
+	}
+
+	metadata, found := ccf.currentClusterConfig.ServerMetadata[id]
+	if !found {
+		metadata = model.ServerMetadata{}
+	}
+	return node, metadata, true
 }
 
 func (ccf *clusterConfig) waitForUpdates() {
