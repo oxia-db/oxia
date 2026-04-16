@@ -98,16 +98,19 @@ func (m *mockClusterConfigResource) Node(id string) (*model.Server, bool) {
 	return n, ok
 }
 
-func (m *mockClusterConfigResource) DataServerWithMetadata(id string) (*model.Server, model.ServerMetadata, bool) {
+func (m *mockClusterConfigResource) DataServerWithMetadata(id string) (*model.DataServerInfo, bool) {
 	n, ok := m.nodeMap[id]
 	if !ok {
-		return nil, model.ServerMetadata{}, false
+		return nil, false
 	}
 	metadata, ok := m.metadata[id]
 	if !ok {
 		metadata = model.ServerMetadata{}
 	}
-	return n, metadata, true
+	return &model.DataServerInfo{
+		Server:   n,
+		Metadata: metadata,
+	}, true
 }
 
 // alwaysErrorSelector is a selector that always returns ErrUnsatisfiedAntiAffinity.

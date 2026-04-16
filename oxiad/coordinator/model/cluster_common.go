@@ -32,6 +32,11 @@ type ServerMetadata struct {
 	Labels map[string]string `json:"labels" yaml:"labels"`
 }
 
+type DataServerInfo struct {
+	Server   *Server
+	Metadata ServerMetadata
+}
+
 func (sv *Server) GetIdentifier() string {
 	if sv.Name == nil {
 		return sv.Internal
@@ -45,5 +50,12 @@ func (sv *Server) ToAdminProto() *proto.DataServer {
 		Name:            &identifier,
 		PublicAddress:   sv.Public,
 		InternalAddress: sv.Internal,
+	}
+}
+
+func (dsi *DataServerInfo) ToAdminProto() *proto.DataServerInfo {
+	return &proto.DataServerInfo{
+		DataServer: dsi.Server.ToAdminProto(),
+		Metadata:   dsi.Metadata.Labels,
 	}
 }
