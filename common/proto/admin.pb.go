@@ -135,13 +135,11 @@ func (x *DataServer) GetInternalAddress() string {
 }
 
 type DataServerInfo struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Name            *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
-	PublicAddress   string                 `protobuf:"bytes,2,opt,name=public_address,json=publicAddress,proto3" json:"public_address,omitempty"`
-	InternalAddress string                 `protobuf:"bytes,3,opt,name=internal_address,json=internalAddress,proto3" json:"internal_address,omitempty"`
-	Metadata        map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DataServer    *DataServer            `protobuf:"bytes,1,opt,name=data_server,json=dataServer,proto3" json:"data_server,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,2,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DataServerInfo) Reset() {
@@ -174,25 +172,11 @@ func (*DataServerInfo) Descriptor() ([]byte, []int) {
 	return file_admin_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *DataServerInfo) GetName() string {
-	if x != nil && x.Name != nil {
-		return *x.Name
-	}
-	return ""
-}
-
-func (x *DataServerInfo) GetPublicAddress() string {
+func (x *DataServerInfo) GetDataServer() *DataServer {
 	if x != nil {
-		return x.PublicAddress
+		return x.DataServer
 	}
-	return ""
-}
-
-func (x *DataServerInfo) GetInternalAddress() string {
-	if x != nil {
-		return x.InternalAddress
-	}
-	return ""
+	return nil
 }
 
 func (x *DataServerInfo) GetMetadata() map[string]string {
@@ -686,16 +670,14 @@ const file_admin_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
 	"\x0epublic_address\x18\x02 \x01(\tR\rpublicAddress\x12)\n" +
 	"\x10internal_address\x18\x03 \x01(\tR\x0finternalAddressB\a\n" +
-	"\x05_name\"\x8d\x02\n" +
-	"\x0eDataServerInfo\x12\x17\n" +
-	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
-	"\x0epublic_address\x18\x02 \x01(\tR\rpublicAddress\x12)\n" +
-	"\x10internal_address\x18\x03 \x01(\tR\x0finternalAddress\x12J\n" +
-	"\bmetadata\x18\x04 \x03(\v2..io.oxia.proto.v1.DataServerInfo.MetadataEntryR\bmetadata\x1a;\n" +
+	"\x05_name\"\xd8\x01\n" +
+	"\x0eDataServerInfo\x12=\n" +
+	"\vdata_server\x18\x01 \x01(\v2\x1c.io.oxia.proto.v1.DataServerR\n" +
+	"dataServer\x12J\n" +
+	"\bmetadata\x18\x02 \x03(\v2..io.oxia.proto.v1.DataServerInfo.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
-	"\x05_name\"Z\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Z\n" +
 	"\x17ListDataServersResponse\x12?\n" +
 	"\fdata_servers\x18\x01 \x03(\v2\x1c.io.oxia.proto.v1.DataServerR\vdataServers\"7\n" +
 	"\x14GetDataServerRequest\x12\x1f\n" +
@@ -769,26 +751,27 @@ var file_admin_proto_goTypes = []any{
 	nil,                             // 14: io.oxia.proto.v1.Node.MetadataEntry
 }
 var file_admin_proto_depIdxs = []int32{
-	13, // 0: io.oxia.proto.v1.DataServerInfo.metadata:type_name -> io.oxia.proto.v1.DataServerInfo.MetadataEntry
-	1,  // 1: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServer
-	2,  // 2: io.oxia.proto.v1.GetDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServerInfo
-	14, // 3: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
-	9,  // 4: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
-	0,  // 5: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
-	4,  // 6: io.oxia.proto.v1.OxiaAdmin.GetDataServer:input_type -> io.oxia.proto.v1.GetDataServerRequest
-	6,  // 7: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
-	8,  // 8: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
-	11, // 9: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
-	3,  // 10: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
-	5,  // 11: io.oxia.proto.v1.OxiaAdmin.GetDataServer:output_type -> io.oxia.proto.v1.GetDataServerResponse
-	7,  // 12: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
-	10, // 13: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
-	12, // 14: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
-	10, // [10:15] is the sub-list for method output_type
-	5,  // [5:10] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	1,  // 0: io.oxia.proto.v1.DataServerInfo.data_server:type_name -> io.oxia.proto.v1.DataServer
+	13, // 1: io.oxia.proto.v1.DataServerInfo.metadata:type_name -> io.oxia.proto.v1.DataServerInfo.MetadataEntry
+	1,  // 2: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServer
+	2,  // 3: io.oxia.proto.v1.GetDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServerInfo
+	14, // 4: io.oxia.proto.v1.Node.metadata:type_name -> io.oxia.proto.v1.Node.MetadataEntry
+	9,  // 5: io.oxia.proto.v1.ListNodesResponse.nodes:type_name -> io.oxia.proto.v1.Node
+	0,  // 6: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
+	4,  // 7: io.oxia.proto.v1.OxiaAdmin.GetDataServer:input_type -> io.oxia.proto.v1.GetDataServerRequest
+	6,  // 8: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
+	8,  // 9: io.oxia.proto.v1.OxiaAdmin.ListNodes:input_type -> io.oxia.proto.v1.ListNodesRequest
+	11, // 10: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
+	3,  // 11: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
+	5,  // 12: io.oxia.proto.v1.OxiaAdmin.GetDataServer:output_type -> io.oxia.proto.v1.GetDataServerResponse
+	7,  // 13: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
+	10, // 14: io.oxia.proto.v1.OxiaAdmin.ListNodes:output_type -> io.oxia.proto.v1.ListNodesResponse
+	12, // 15: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
+	11, // [11:16] is the sub-list for method output_type
+	6,  // [6:11] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -797,7 +780,6 @@ func file_admin_proto_init() {
 		return
 	}
 	file_admin_proto_msgTypes[1].OneofWrappers = []any{}
-	file_admin_proto_msgTypes[2].OneofWrappers = []any{}
 	file_admin_proto_msgTypes[9].OneofWrappers = []any{}
 	file_admin_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}

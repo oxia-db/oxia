@@ -184,10 +184,12 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 			adminClient: &mockAdminRpcClient{
 				getDataServerResponse: &proto.GetDataServerResponse{
 					DataServer: &proto.DataServerInfo{
-						Name:            &serverName,
-						PublicAddress:   "public-1",
-						InternalAddress: "internal-1",
-						Metadata:        map[string]string{"rack": "rack-1"},
+						DataServer: &proto.DataServer{
+							Name:            &serverName,
+							PublicAddress:   "public-1",
+							InternalAddress: "internal-1",
+						},
+						Metadata: map[string]string{"rack": "rack-1"},
 					},
 				},
 			},
@@ -197,10 +199,11 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	dataServer, err := admin.GetDataServer(serverName)
 	require.NoError(t, err)
 	require.NotNil(t, dataServer)
-	require.NotNil(t, dataServer.Name)
-	assert.Equal(t, serverName, *dataServer.Name)
-	assert.Equal(t, "public-1", dataServer.PublicAddress)
-	assert.Equal(t, "internal-1", dataServer.InternalAddress)
+	require.NotNil(t, dataServer.DataServer)
+	require.NotNil(t, dataServer.DataServer.Name)
+	assert.Equal(t, serverName, *dataServer.DataServer.Name)
+	assert.Equal(t, "public-1", dataServer.DataServer.PublicAddress)
+	assert.Equal(t, "internal-1", dataServer.DataServer.InternalAddress)
 	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata)
 }
 

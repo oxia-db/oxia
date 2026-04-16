@@ -50,10 +50,8 @@ message DataServer {
 }
 
 message DataServerInfo {
-  optional string name = 1;
-  string public_address = 2;
-  string internal_address = 3;
-  map<string, string> metadata = 4;
+  DataServer data_server = 1;
+  map<string, string> metadata = 2;
 }
 
 message ListDataServersResponse {

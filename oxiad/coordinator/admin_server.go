@@ -94,10 +94,12 @@ func toProtoDataServer(server model.Server) *proto.DataServer {
 func toProtoDataServerInfo(server model.Server, serverMetadata map[string]model.ServerMetadata) *proto.DataServerInfo {
 	identifier := server.GetIdentifier()
 	return &proto.DataServerInfo{
-		Name:            &identifier,
-		PublicAddress:   server.Public,
-		InternalAddress: server.Internal,
-		Metadata:        lookupServerMetadata(serverMetadata, identifier).Labels,
+		DataServer: &proto.DataServer{
+			Name:            &identifier,
+			PublicAddress:   server.Public,
+			InternalAddress: server.Internal,
+		},
+		Metadata: lookupServerMetadata(serverMetadata, identifier).Labels,
 	}
 }
 
