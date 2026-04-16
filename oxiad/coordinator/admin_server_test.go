@@ -25,7 +25,25 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
+
+func newTestClusterConfigResource(t *testing.T, config model.ClusterConfig) resource.ClusterConfigResource {
+	t.Helper()
+
+	configResource := resource.NewClusterConfigResource(
+		t.Context(),
+		func() (model.ClusterConfig, error) {
+			return config, nil
+		},
+		nil,
+		nil,
+	)
+	t.Cleanup(func() {
+		require.NoError(t, configResource.Close())
+	})
+	return configResource
+}
 
 func TestAdminServerListDataServers(t *testing.T) {
 	serverName1 := "server-1"
@@ -33,20 +51,18 @@ func TestAdminServerListDataServers(t *testing.T) {
 
 	admin := newAdminServer(
 		nil,
-		func() (model.ClusterConfig, error) {
-			return model.ClusterConfig{
-				Servers: []model.Server{
-					{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
-					{Name: &serverName2, Public: "public-2", Internal: "internal-2"},
-					{Public: "public-3", Internal: "internal-3"},
-				},
-				ServerMetadata: map[string]model.ServerMetadata{
-					serverName1:  {Labels: map[string]string{"rack": "rack-1"}},
-					serverName2:  {Labels: map[string]string{"rack": "rack-2"}},
-					"internal-3": {Labels: map[string]string{"rack": "rack-3"}},
-				},
-			}, nil
-		},
+		newTestClusterConfigResource(t, model.ClusterConfig{
+			Servers: []model.Server{
+				{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
+				{Name: &serverName2, Public: "public-2", Internal: "internal-2"},
+				{Public: "public-3", Internal: "internal-3"},
+			},
+			ServerMetadata: map[string]model.ServerMetadata{
+				serverName1:  {Labels: map[string]string{"rack": "rack-1"}},
+				serverName2:  {Labels: map[string]string{"rack": "rack-2"}},
+				"internal-3": {Labels: map[string]string{"rack": "rack-3"}},
+			},
+		}),
 		nil,
 	)
 
@@ -75,18 +91,16 @@ func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
 
 	admin := newAdminServer(
 		nil,
-		func() (model.ClusterConfig, error) {
-			return model.ClusterConfig{
-				Servers: []model.Server{
-					{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
-					{Public: "public-2", Internal: "internal-2"},
-				},
-				ServerMetadata: map[string]model.ServerMetadata{
-					serverName1:  {Labels: map[string]string{"role": "named"}},
-					"internal-2": {Labels: map[string]string{"role": "fallback"}},
-				},
-			}, nil
-		},
+		newTestClusterConfigResource(t, model.ClusterConfig{
+			Servers: []model.Server{
+				{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
+				{Public: "public-2", Internal: "internal-2"},
+			},
+			ServerMetadata: map[string]model.ServerMetadata{
+				serverName1:  {Labels: map[string]string{"role": "named"}},
+				"internal-2": {Labels: map[string]string{"role": "fallback"}},
+			},
+		}),
 		nil,
 	)
 
@@ -110,16 +124,14 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 
 	admin := newAdminServer(
 		nil,
-		func() (model.ClusterConfig, error) {
-			return model.ClusterConfig{
-				Servers: []model.Server{
-					{Name: &serverName, Public: "public-2", Internal: "internal-2"},
-				},
-				ServerMetadata: map[string]model.ServerMetadata{
-					serverName: {Labels: map[string]string{"zone": "zone-2"}},
-				},
-			}, nil
-		},
+		newTestClusterConfigResource(t, model.ClusterConfig{
+			Servers: []model.Server{
+				{Name: &serverName, Public: "public-2", Internal: "internal-2"},
+			},
+			ServerMetadata: map[string]model.ServerMetadata{
+				serverName: {Labels: map[string]string{"zone": "zone-2"}},
+			},
+		}),
 		nil,
 	)
 
@@ -140,18 +152,16 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 
 	admin := newAdminServer(
 		nil,
-		func() (model.ClusterConfig, error) {
-			return model.ClusterConfig{
-				Servers: []model.Server{
-					{Name: &serverName, Public: "public-2", Internal: "internal-2"},
-					{Public: "public-3", Internal: "internal-3"},
-				},
-				ServerMetadata: map[string]model.ServerMetadata{
-					serverName:   {Labels: map[string]string{"role": "named"}},
-					"internal-3": {Labels: map[string]string{"role": "fallback"}},
-				},
-			}, nil
-		},
+		newTestClusterConfigResource(t, model.ClusterConfig{
+			Servers: []model.Server{
+				{Name: &serverName, Public: "public-2", Internal: "internal-2"},
+				{Public: "public-3", Internal: "internal-3"},
+			},
+			ServerMetadata: map[string]model.ServerMetadata{
+				serverName:   {Labels: map[string]string{"role": "named"}},
+				"internal-3": {Labels: map[string]string{"role": "fallback"}},
+			},
+		}),
 		nil,
 	)
 
@@ -174,13 +184,11 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 func TestAdminServerGetDataServerNotFound(t *testing.T) {
 	admin := newAdminServer(
 		nil,
-		func() (model.ClusterConfig, error) {
-			return model.ClusterConfig{
-				Servers: []model.Server{
-					{Public: "public-1", Internal: "internal-1"},
-				},
-			}, nil
-		},
+		newTestClusterConfigResource(t, model.ClusterConfig{
+			Servers: []model.Server{
+				{Public: "public-1", Internal: "internal-1"},
+			},
+		}),
 		nil,
 	)
 
@@ -192,9 +200,7 @@ func TestAdminServerGetDataServerNotFound(t *testing.T) {
 func TestAdminServerGetDataServerRejectsEmptyLookup(t *testing.T) {
 	admin := newAdminServer(
 		nil,
-		func() (model.ClusterConfig, error) {
-			return model.ClusterConfig{}, nil
-		},
+		newTestClusterConfigResource(t, model.ClusterConfig{}),
 		nil,
 	)
 

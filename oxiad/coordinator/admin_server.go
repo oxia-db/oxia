@@ -39,15 +39,12 @@ type adminServer struct {
 	proto.UnimplementedOxiaAdminServer
 
 	statusResource resource.StatusResource
-	clusterConfig  func() (model.ClusterConfig, error)
+	clusterConfig  resource.ClusterConfigResource
 	shardSplitter  ShardSplitter
 }
 
 func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
-	cnf, err := admin.clusterConfig()
-	if err != nil {
-		return nil, err
-	}
+	cnf := admin.clusterConfig.Load()
 
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
@@ -62,10 +59,7 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data_server must not be empty")
 	}
 
-	cnf, err := admin.clusterConfig()
-	if err != nil {
-		return nil, err
-	}
+	cnf := admin.clusterConfig.Load()
 
 	for _, server := range cnf.Servers {
 		if matchesDataServer(server, req.DataServer) {
@@ -100,10 +94,7 @@ func toProtoDataServer(server model.Server) *proto.DataServer {
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
-	cnf, err := admin.clusterConfig()
-	if err != nil {
-		return nil, err
-	}
+	cnf := admin.clusterConfig.Load()
 
 	namespaceConfigs := cnf.Namespaces
 	namespaceNames := hashset.New[string]()
@@ -116,10 +107,7 @@ func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesR
 }
 
 func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
-	cnf, err := admin.clusterConfig()
-	if err != nil {
-		return nil, err
-	}
+	cnf := admin.clusterConfig.Load()
 
 	cnfNodes := cnf.Servers
 	cnfMeta := cnf.ServerMetadata
@@ -164,7 +152,7 @@ func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardReq
 
 func newAdminServer(
 	statusResource resource.StatusResource,
-	clusterConfig func() (model.ClusterConfig, error),
+	clusterConfig resource.ClusterConfigResource,
 	shardSplitter ShardSplitter,
 ) *adminServer {
 	return &adminServer{
