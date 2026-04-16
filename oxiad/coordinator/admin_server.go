@@ -62,7 +62,7 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 	cnf := admin.ccr.Load()
 
 	for _, server := range cnf.Servers {
-		if matchesDataServer(server, req.DataServer) {
+		if server.GetIdentifier() == req.DataServer {
 			identifier := server.GetIdentifier()
 			serverMetadata, found := cnf.ServerMetadata[identifier]
 			if !found {
@@ -78,10 +78,6 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 	}
 
 	return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
-}
-
-func matchesDataServer(server model.Server, lookup string) bool {
-	return server.GetIdentifier() == lookup
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
