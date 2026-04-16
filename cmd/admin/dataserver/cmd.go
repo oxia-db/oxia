@@ -15,10 +15,11 @@
 package dataserver
 
 import (
+	"github.com/spf13/cobra"
+
 	createcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/create"
 	getcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/get"
 	listcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/list"
-	"github.com/spf13/cobra"
 )
 
 var (

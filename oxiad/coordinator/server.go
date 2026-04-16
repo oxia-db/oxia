@@ -193,7 +193,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		clusterConfigChangeNotifications,
 		rpcClient,
 		resource.WithClusterConfigUpdater(clusterConfigManager.Update),
-	) //nolint:contextcheck
+	)
 	if err != nil {
 		return nil, err
 	}
