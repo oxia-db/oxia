@@ -1,8 +1,13 @@
 package metadata_v2
 
-import "github.com/oxia-db/oxia/common/proto"
+import (
+	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/option"
+)
 
 type Store interface {
+	LeaseWatch() option.Watch[proto.LeaseState]
+
 	GetAllowedAuthorities() []string
 	DeleteExtraAllowedAuthorities(authorities []string) error
 	AddExtraAllowedAuthorities(authorities []string) error

@@ -25,19 +25,19 @@ const (
 type AntiAffinityMode int32
 
 const (
-	AntiAffinityMode_Strict AntiAffinityMode = 0
-	AntiAffinityMode_Relax  AntiAffinityMode = 1
+	AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT AntiAffinityMode = 0
+	AntiAffinityMode_ANTI_AFFINITY_MODE_RELAX  AntiAffinityMode = 1
 )
 
 // Enum value maps for AntiAffinityMode.
 var (
 	AntiAffinityMode_name = map[int32]string{
-		0: "Strict",
-		1: "Relax",
+		0: "ANTI_AFFINITY_MODE_STRICT",
+		1: "ANTI_AFFINITY_MODE_RELAX",
 	}
 	AntiAffinityMode_value = map[string]int32{
-		"Strict": 0,
-		"Relax":  1,
+		"ANTI_AFFINITY_MODE_STRICT": 0,
+		"ANTI_AFFINITY_MODE_RELAX":  1,
 	}
 )
 
@@ -71,19 +71,19 @@ func (AntiAffinityMode) EnumDescriptor() ([]byte, []int) {
 type KeySorting int32
 
 const (
-	KeySorting_Nature       KeySorting = 0
-	KeySorting_Hierarchical KeySorting = 1
+	KeySorting_KEY_SORTING_NATURE       KeySorting = 0
+	KeySorting_KEY_SORTING_HIERARCHICAL KeySorting = 1
 )
 
 // Enum value maps for KeySorting.
 var (
 	KeySorting_name = map[int32]string{
-		0: "Nature",
-		1: "Hierarchical",
+		0: "KEY_SORTING_NATURE",
+		1: "KEY_SORTING_HIERARCHICAL",
 	}
 	KeySorting_value = map[string]int32{
-		"Nature":       0,
-		"Hierarchical": 1,
+		"KEY_SORTING_NATURE":       0,
+		"KEY_SORTING_HIERARCHICAL": 1,
 	}
 )
 
@@ -114,28 +114,77 @@ func (KeySorting) EnumDescriptor() ([]byte, []int) {
 	return file_metadata_proto_rawDescGZIP(), []int{1}
 }
 
+type LeaseState int32
+
+const (
+	LeaseState_LEASE_STATE_UNSPECIFIED LeaseState = 0
+	LeaseState_LEASE_STATE_HELD        LeaseState = 1
+	LeaseState_LEASE_STATE_UNHELD      LeaseState = 2
+)
+
+// Enum value maps for LeaseState.
+var (
+	LeaseState_name = map[int32]string{
+		0: "LEASE_STATE_UNSPECIFIED",
+		1: "LEASE_STATE_HELD",
+		2: "LEASE_STATE_UNHELD",
+	}
+	LeaseState_value = map[string]int32{
+		"LEASE_STATE_UNSPECIFIED": 0,
+		"LEASE_STATE_HELD":        1,
+		"LEASE_STATE_UNHELD":      2,
+	}
+)
+
+func (x LeaseState) Enum() *LeaseState {
+	p := new(LeaseState)
+	*p = x
+	return p
+}
+
+func (x LeaseState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (LeaseState) Descriptor() protoreflect.EnumDescriptor {
+	return file_metadata_proto_enumTypes[2].Descriptor()
+}
+
+func (LeaseState) Type() protoreflect.EnumType {
+	return &file_metadata_proto_enumTypes[2]
+}
+
+func (x LeaseState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use LeaseState.Descriptor instead.
+func (LeaseState) EnumDescriptor() ([]byte, []int) {
+	return file_metadata_proto_rawDescGZIP(), []int{2}
+}
+
 type ShardStatus int32
 
 const (
-	ShardStatus_Unknown  ShardStatus = 0
-	ShardStatus_Steady   ShardStatus = 1
-	ShardStatus_Election ShardStatus = 2
-	ShardStatus_Deleting ShardStatus = 3
+	ShardStatus_SHARD_STATUS_UNKNOWN  ShardStatus = 0
+	ShardStatus_SHARD_STATUS_STEADY   ShardStatus = 1
+	ShardStatus_SHARD_STATUS_ELECTION ShardStatus = 2
+	ShardStatus_SHARD_STATUS_DELETING ShardStatus = 3
 )
 
 // Enum value maps for ShardStatus.
 var (
 	ShardStatus_name = map[int32]string{
-		0: "Unknown",
-		1: "Steady",
-		2: "Election",
-		3: "Deleting",
+		0: "SHARD_STATUS_UNKNOWN",
+		1: "SHARD_STATUS_STEADY",
+		2: "SHARD_STATUS_ELECTION",
+		3: "SHARD_STATUS_DELETING",
 	}
 	ShardStatus_value = map[string]int32{
-		"Unknown":  0,
-		"Steady":   1,
-		"Election": 2,
-		"Deleting": 3,
+		"SHARD_STATUS_UNKNOWN":  0,
+		"SHARD_STATUS_STEADY":   1,
+		"SHARD_STATUS_ELECTION": 2,
+		"SHARD_STATUS_DELETING": 3,
 	}
 )
 
@@ -150,11 +199,11 @@ func (x ShardStatus) String() string {
 }
 
 func (ShardStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_metadata_proto_enumTypes[2].Descriptor()
+	return file_metadata_proto_enumTypes[3].Descriptor()
 }
 
 func (ShardStatus) Type() protoreflect.EnumType {
-	return &file_metadata_proto_enumTypes[2]
+	return &file_metadata_proto_enumTypes[3]
 }
 
 func (x ShardStatus) Number() protoreflect.EnumNumber {
@@ -163,28 +212,28 @@ func (x ShardStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ShardStatus.Descriptor instead.
 func (ShardStatus) EnumDescriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{2}
+	return file_metadata_proto_rawDescGZIP(), []int{3}
 }
 
 type SplitPhase int32
 
 const (
-	SplitPhase_Bootstrap SplitPhase = 0
-	SplitPhase_CatchUp   SplitPhase = 1
-	SplitPhase_Cutover   SplitPhase = 2
+	SplitPhase_SPLIT_PHASE_BOOTSTRAP SplitPhase = 0
+	SplitPhase_SPLIT_PHASE_CATCH_UP  SplitPhase = 1
+	SplitPhase_SPLIT_PHASE_CUTOVER   SplitPhase = 2
 )
 
 // Enum value maps for SplitPhase.
 var (
 	SplitPhase_name = map[int32]string{
-		0: "Bootstrap",
-		1: "CatchUp",
-		2: "Cutover",
+		0: "SPLIT_PHASE_BOOTSTRAP",
+		1: "SPLIT_PHASE_CATCH_UP",
+		2: "SPLIT_PHASE_CUTOVER",
 	}
 	SplitPhase_value = map[string]int32{
-		"Bootstrap": 0,
-		"CatchUp":   1,
-		"Cutover":   2,
+		"SPLIT_PHASE_BOOTSTRAP": 0,
+		"SPLIT_PHASE_CATCH_UP":  1,
+		"SPLIT_PHASE_CUTOVER":   2,
 	}
 )
 
@@ -199,11 +248,11 @@ func (x SplitPhase) String() string {
 }
 
 func (SplitPhase) Descriptor() protoreflect.EnumDescriptor {
-	return file_metadata_proto_enumTypes[3].Descriptor()
+	return file_metadata_proto_enumTypes[4].Descriptor()
 }
 
 func (SplitPhase) Type() protoreflect.EnumType {
-	return &file_metadata_proto_enumTypes[3]
+	return &file_metadata_proto_enumTypes[4]
 }
 
 func (x SplitPhase) Number() protoreflect.EnumNumber {
@@ -212,7 +261,7 @@ func (x SplitPhase) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SplitPhase.Descriptor instead.
 func (SplitPhase) EnumDescriptor() ([]byte, []int) {
-	return file_metadata_proto_rawDescGZIP(), []int{3}
+	return file_metadata_proto_rawDescGZIP(), []int{4}
 }
 
 type DataServer struct {
@@ -332,7 +381,7 @@ func (x *AntiAffinity) GetMode() AntiAffinityMode {
 	if x != nil {
 		return x.Mode
 	}
-	return AntiAffinityMode_Strict
+	return AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT
 }
 
 type HierarchyPolicies struct {
@@ -690,7 +739,7 @@ func (x *ShardSplittingState) GetPhase() SplitPhase {
 	if x != nil {
 		return x.Phase
 	}
-	return SplitPhase_Bootstrap
+	return SplitPhase_SPLIT_PHASE_BOOTSTRAP
 }
 
 func (x *ShardSplittingState) GetParentShardId() int64 {
@@ -783,7 +832,7 @@ func (x *ShardState) GetStatus() ShardStatus {
 	if x != nil {
 		return x.Status
 	}
-	return ShardStatus_Unknown
+	return ShardStatus_SHARD_STATUS_UNKNOWN
 }
 
 func (x *ShardState) GetTerm() int64 {
@@ -1025,27 +1074,29 @@ const file_metadata_proto_rawDesc = "" +
 	"\x12shard_id_generator\x18\x02 \x01(\x03R\x10shardIdGenerator\x1aW\n" +
 	"\x0fNamespacesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12.\n" +
-	"\x05value\x18\x02 \x01(\v2\x18.metadata.NamespaceStateR\x05value:\x028\x01*)\n" +
-	"\x10AntiAffinityMode\x12\n" +
+	"\x05value\x18\x02 \x01(\v2\x18.metadata.NamespaceStateR\x05value:\x028\x01*O\n" +
+	"\x10AntiAffinityMode\x12\x1d\n" +
+	"\x19ANTI_AFFINITY_MODE_STRICT\x10\x00\x12\x1c\n" +
+	"\x18ANTI_AFFINITY_MODE_RELAX\x10\x01*B\n" +
 	"\n" +
-	"\x06Strict\x10\x00\x12\t\n" +
-	"\x05Relax\x10\x01**\n" +
+	"KeySorting\x12\x16\n" +
+	"\x12KEY_SORTING_NATURE\x10\x00\x12\x1c\n" +
+	"\x18KEY_SORTING_HIERARCHICAL\x10\x01*W\n" +
 	"\n" +
-	"KeySorting\x12\n" +
+	"LeaseState\x12\x1b\n" +
+	"\x17LEASE_STATE_UNSPECIFIED\x10\x00\x12\x14\n" +
+	"\x10LEASE_STATE_HELD\x10\x01\x12\x16\n" +
+	"\x12LEASE_STATE_UNHELD\x10\x02*v\n" +
+	"\vShardStatus\x12\x18\n" +
+	"\x14SHARD_STATUS_UNKNOWN\x10\x00\x12\x17\n" +
+	"\x13SHARD_STATUS_STEADY\x10\x01\x12\x19\n" +
+	"\x15SHARD_STATUS_ELECTION\x10\x02\x12\x19\n" +
+	"\x15SHARD_STATUS_DELETING\x10\x03*Z\n" +
 	"\n" +
-	"\x06Nature\x10\x00\x12\x10\n" +
-	"\fHierarchical\x10\x01*B\n" +
-	"\vShardStatus\x12\v\n" +
-	"\aUnknown\x10\x00\x12\n" +
-	"\n" +
-	"\x06Steady\x10\x01\x12\f\n" +
-	"\bElection\x10\x02\x12\f\n" +
-	"\bDeleting\x10\x03*5\n" +
-	"\n" +
-	"SplitPhase\x12\r\n" +
-	"\tBootstrap\x10\x00\x12\v\n" +
-	"\aCatchUp\x10\x01\x12\v\n" +
-	"\aCutover\x10\x02B&Z$github.com/oxia-db/oxia/common/protob\x06proto3"
+	"SplitPhase\x12\x19\n" +
+	"\x15SPLIT_PHASE_BOOTSTRAP\x10\x00\x12\x18\n" +
+	"\x14SPLIT_PHASE_CATCH_UP\x10\x01\x12\x17\n" +
+	"\x13SPLIT_PHASE_CUTOVER\x10\x02B&Z$github.com/oxia-db/oxia/common/protob\x06proto3"
 
 var (
 	file_metadata_proto_rawDescOnce sync.Once
@@ -1059,50 +1110,51 @@ func file_metadata_proto_rawDescGZIP() []byte {
 	return file_metadata_proto_rawDescData
 }
 
-var file_metadata_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_metadata_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
 var file_metadata_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_metadata_proto_goTypes = []any{
 	(AntiAffinityMode)(0),        // 0: metadata.AntiAffinityMode
 	(KeySorting)(0),              // 1: metadata.KeySorting
-	(ShardStatus)(0),             // 2: metadata.ShardStatus
-	(SplitPhase)(0),              // 3: metadata.SplitPhase
-	(*DataServer)(nil),           // 4: metadata.DataServer
-	(*AntiAffinity)(nil),         // 5: metadata.AntiAffinity
-	(*HierarchyPolicies)(nil),    // 6: metadata.HierarchyPolicies
-	(*LoadBalancerPolicies)(nil), // 7: metadata.LoadBalancerPolicies
-	(*Namespace)(nil),            // 8: metadata.Namespace
-	(*Cluster)(nil),              // 9: metadata.Cluster
-	(*Int32HashRange)(nil),       // 10: metadata.Int32HashRange
-	(*ShardSplittingState)(nil),  // 11: metadata.ShardSplittingState
-	(*ShardState)(nil),           // 12: metadata.ShardState
-	(*NamespaceState)(nil),       // 13: metadata.NamespaceState
-	(*ClusterState)(nil),         // 14: metadata.ClusterState
-	nil,                          // 15: metadata.DataServer.LabelsEntry
-	nil,                          // 16: metadata.ShardSplittingState.ChildLeadersAtBootstrapEntry
-	nil,                          // 17: metadata.NamespaceState.ShardsEntry
-	nil,                          // 18: metadata.ClusterState.NamespacesEntry
-	(*durationpb.Duration)(nil),  // 19: google.protobuf.Duration
+	(LeaseState)(0),              // 2: metadata.LeaseState
+	(ShardStatus)(0),             // 3: metadata.ShardStatus
+	(SplitPhase)(0),              // 4: metadata.SplitPhase
+	(*DataServer)(nil),           // 5: metadata.DataServer
+	(*AntiAffinity)(nil),         // 6: metadata.AntiAffinity
+	(*HierarchyPolicies)(nil),    // 7: metadata.HierarchyPolicies
+	(*LoadBalancerPolicies)(nil), // 8: metadata.LoadBalancerPolicies
+	(*Namespace)(nil),            // 9: metadata.Namespace
+	(*Cluster)(nil),              // 10: metadata.Cluster
+	(*Int32HashRange)(nil),       // 11: metadata.Int32HashRange
+	(*ShardSplittingState)(nil),  // 12: metadata.ShardSplittingState
+	(*ShardState)(nil),           // 13: metadata.ShardState
+	(*NamespaceState)(nil),       // 14: metadata.NamespaceState
+	(*ClusterState)(nil),         // 15: metadata.ClusterState
+	nil,                          // 16: metadata.DataServer.LabelsEntry
+	nil,                          // 17: metadata.ShardSplittingState.ChildLeadersAtBootstrapEntry
+	nil,                          // 18: metadata.NamespaceState.ShardsEntry
+	nil,                          // 19: metadata.ClusterState.NamespacesEntry
+	(*durationpb.Duration)(nil),  // 20: google.protobuf.Duration
 }
 var file_metadata_proto_depIdxs = []int32{
-	15, // 0: metadata.DataServer.labels:type_name -> metadata.DataServer.LabelsEntry
+	16, // 0: metadata.DataServer.labels:type_name -> metadata.DataServer.LabelsEntry
 	0,  // 1: metadata.AntiAffinity.mode:type_name -> metadata.AntiAffinityMode
-	5,  // 2: metadata.HierarchyPolicies.anti_affinities:type_name -> metadata.AntiAffinity
-	19, // 3: metadata.LoadBalancerPolicies.schedule_interval:type_name -> google.protobuf.Duration
-	19, // 4: metadata.LoadBalancerPolicies.quarantine_time:type_name -> google.protobuf.Duration
-	6,  // 5: metadata.Namespace.policies:type_name -> metadata.HierarchyPolicies
-	4,  // 6: metadata.Cluster.data_servers:type_name -> metadata.DataServer
-	8,  // 7: metadata.Cluster.namespaces:type_name -> metadata.Namespace
-	6,  // 8: metadata.Cluster.policies:type_name -> metadata.HierarchyPolicies
-	7,  // 9: metadata.Cluster.loadBalancer:type_name -> metadata.LoadBalancerPolicies
-	3,  // 10: metadata.ShardSplittingState.phase:type_name -> metadata.SplitPhase
-	16, // 11: metadata.ShardSplittingState.child_leaders_at_bootstrap:type_name -> metadata.ShardSplittingState.ChildLeadersAtBootstrapEntry
-	2,  // 12: metadata.ShardState.status:type_name -> metadata.ShardStatus
-	10, // 13: metadata.ShardState.int32_hash_range:type_name -> metadata.Int32HashRange
-	11, // 14: metadata.ShardState.split:type_name -> metadata.ShardSplittingState
-	17, // 15: metadata.NamespaceState.shards:type_name -> metadata.NamespaceState.ShardsEntry
-	18, // 16: metadata.ClusterState.namespaces:type_name -> metadata.ClusterState.NamespacesEntry
-	12, // 17: metadata.NamespaceState.ShardsEntry.value:type_name -> metadata.ShardState
-	13, // 18: metadata.ClusterState.NamespacesEntry.value:type_name -> metadata.NamespaceState
+	6,  // 2: metadata.HierarchyPolicies.anti_affinities:type_name -> metadata.AntiAffinity
+	20, // 3: metadata.LoadBalancerPolicies.schedule_interval:type_name -> google.protobuf.Duration
+	20, // 4: metadata.LoadBalancerPolicies.quarantine_time:type_name -> google.protobuf.Duration
+	7,  // 5: metadata.Namespace.policies:type_name -> metadata.HierarchyPolicies
+	5,  // 6: metadata.Cluster.data_servers:type_name -> metadata.DataServer
+	9,  // 7: metadata.Cluster.namespaces:type_name -> metadata.Namespace
+	7,  // 8: metadata.Cluster.policies:type_name -> metadata.HierarchyPolicies
+	8,  // 9: metadata.Cluster.loadBalancer:type_name -> metadata.LoadBalancerPolicies
+	4,  // 10: metadata.ShardSplittingState.phase:type_name -> metadata.SplitPhase
+	17, // 11: metadata.ShardSplittingState.child_leaders_at_bootstrap:type_name -> metadata.ShardSplittingState.ChildLeadersAtBootstrapEntry
+	3,  // 12: metadata.ShardState.status:type_name -> metadata.ShardStatus
+	11, // 13: metadata.ShardState.int32_hash_range:type_name -> metadata.Int32HashRange
+	12, // 14: metadata.ShardState.split:type_name -> metadata.ShardSplittingState
+	18, // 15: metadata.NamespaceState.shards:type_name -> metadata.NamespaceState.ShardsEntry
+	19, // 16: metadata.ClusterState.namespaces:type_name -> metadata.ClusterState.NamespacesEntry
+	13, // 17: metadata.NamespaceState.ShardsEntry.value:type_name -> metadata.ShardState
+	14, // 18: metadata.ClusterState.NamespacesEntry.value:type_name -> metadata.NamespaceState
 	19, // [19:19] is the sub-list for method output_type
 	19, // [19:19] is the sub-list for method input_type
 	19, // [19:19] is the sub-list for extension type_name
@@ -1125,7 +1177,7 @@ func file_metadata_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_metadata_proto_rawDesc), len(file_metadata_proto_rawDesc)),
-			NumEnums:      4,
+			NumEnums:      5,
 			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,

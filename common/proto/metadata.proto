@@ -13,8 +13,8 @@ message DataServer {
 }
 
 enum AntiAffinityMode {
-  Strict = 0;
-  Relax = 1;
+  ANTI_AFFINITY_MODE_STRICT = 0;
+  ANTI_AFFINITY_MODE_RELAX = 1;
 }
 
 message AntiAffinity {
@@ -23,8 +23,8 @@ message AntiAffinity {
 }
 
 enum KeySorting {
-  Nature = 0;
-  Hierarchical = 1;
+  KEY_SORTING_NATURE = 0;
+  KEY_SORTING_HIERARCHICAL = 1;
 }
 
 message HierarchyPolicies {
@@ -53,6 +53,11 @@ message Cluster {
   repeated string allowed_extra_authorities = 5;
 }
 
+enum LeaseState {
+  LEASE_STATE_UNSPECIFIED = 0;
+  LEASE_STATE_HELD = 1;
+  LEASE_STATE_UNHELD = 2;
+}
 
 message Int32HashRange {
   uint32 min = 1;
@@ -60,16 +65,16 @@ message Int32HashRange {
 }
 
 enum ShardStatus {
-  Unknown = 0;
-  Steady = 1;
-  Election = 2;
-  Deleting = 3;
+  SHARD_STATUS_UNKNOWN = 0;
+  SHARD_STATUS_STEADY = 1;
+  SHARD_STATUS_ELECTION = 2;
+  SHARD_STATUS_DELETING = 3;
 }
 
 enum SplitPhase {
-  Bootstrap = 0;
-  CatchUp = 1;
-  Cutover = 2;
+  SPLIT_PHASE_BOOTSTRAP = 0;
+  SPLIT_PHASE_CATCH_UP = 1;
+  SPLIT_PHASE_CUTOVER = 2;
 }
 
 message ShardSplittingState {
@@ -99,6 +104,6 @@ message NamespaceState {
 }
 
 message ClusterState {
-  map<string, NamespaceState> namespaces  = 1;
+  map<string, NamespaceState> namespaces = 1;
   int64 shard_id_generator = 2;
 }
