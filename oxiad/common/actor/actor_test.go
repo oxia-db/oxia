@@ -24,42 +24,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestActorPauseDrainsPendingRequests(t *testing.T) {
+func TestActorPauseOnlyRejectsNewRequests(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	started := make(chan []int, 1)
 	release := make(chan struct{})
-	processed := make(chan []int, 2)
+	processed := make(chan []int, 3)
 
-	a := New[int](
-		ctx,
-		"test-pause",
-		Errors{},
-		func(items []int) {
-			started <- append([]int(nil), items...)
-			<-release
-			processed <- append([]int(nil), items...)
-		},
-	)
+	a, err := New[int](ctx, "test-pause", func(items []int) {
+		batch := append([]int(nil), items...)
+		started <- batch
+		<-release
+		processed <- batch
+	}, Errors{
+		Pause: errors.New("metadata unavailable"),
+	})
+	require.NoError(t, err)
 	defer func() {
-		_, _ = a.Close()
+		_ = a.Close()
 	}()
 
-	require.NoError(t, a.Add(1))
+	require.NoError(t, a.Send(1))
 	assert.Equal(t, []int{1}, <-started)
 
-	require.NoError(t, a.Add(2))
-	require.NoError(t, a.Add(3))
-
-	pauseErr := errors.New("metadata unavailable")
-	pending, err := a.Pause()
-	assert.Equal(t, []int{2, 3}, pending)
-	assert.ErrorIs(t, err, pauseErr)
-	assert.ErrorIs(t, a.Add(4), pauseErr)
-
-	a.Resume()
-	require.NoError(t, a.Add(5))
+	require.NoError(t, a.Send(2))
+	require.NoError(t, a.Send(3))
+	require.NoError(t, a.Pause())
+	assert.EqualError(t, a.Send(4), "metadata unavailable")
 
 	close(release)
 
@@ -67,103 +59,84 @@ func TestActorPauseDrainsPendingRequests(t *testing.T) {
 		return len(processed) == 2
 	}, time.Second, 10*time.Millisecond)
 
+	assert.Equal(t, []int{2, 3}, <-started)
 	assert.Equal(t, []int{1}, <-processed)
+	assert.Equal(t, []int{2, 3}, <-processed)
+
+	require.NoError(t, a.Resume())
+	release = make(chan struct{})
+	require.NoError(t, a.Send(5))
+	assert.Equal(t, []int{5}, <-started)
+	close(release)
 	assert.Equal(t, []int{5}, <-processed)
 }
 
-func TestActorCloseReturnsPendingRequests(t *testing.T) {
+func TestActorPauseUsesConfiguredError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	started := make(chan []int, 1)
+	pauseErr := errors.New("metadata unavailable")
+	a, err := New[int](ctx, "test-pause-err", func([]int) {}, Errors{
+		Pause: pauseErr,
+	})
+	require.NoError(t, err)
+	defer func() {
+		_ = a.Close()
+	}()
+
+	require.NoError(t, a.Pause())
+	assert.ErrorIs(t, a.Send(1), pauseErr)
+}
+
+func TestActorCloseRejectsNewRequests(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := make(chan struct{}, 1)
 	release := make(chan struct{})
+	closed := make(chan error, 1)
 
 	shutdownErr := errors.New("metadata closed")
-	a := New[int](
-		ctx,
-		"test-close",
-		Errors{
-			Shutdown: shutdownErr,
-		},
-		func(items []int) {
-			started <- append([]int(nil), items...)
-			<-release
-		},
-	)
-	defer close(release)
+	a, err := New[int](ctx, "test-close", func([]int) {
+		started <- struct{}{}
+		<-release
+	}, Errors{
+		Shutdown: shutdownErr,
+	})
+	require.NoError(t, err)
 
-	require.NoError(t, a.Add(1))
-	assert.Equal(t, []int{1}, <-started)
+	require.NoError(t, a.Send(1))
+	<-started
 
-	require.NoError(t, a.Add(2))
-
-	pending, err := a.Close()
-	assert.Equal(t, []int{2}, pending)
-	assert.ErrorIs(t, err, shutdownErr)
-	assert.ErrorIs(t, a.Add(3), shutdownErr)
-}
-
-func TestActorPauseWithoutErrorUsesDefault(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	started := make(chan []int, 1)
-	release := make(chan struct{})
-
-	a := New[int](
-		ctx,
-		"test-default-pause",
-		Errors{},
-		func(items []int) {
-			started <- append([]int(nil), items...)
-			<-release
-		},
-	)
-	defer func() {
-		close(release)
-		_, _ = a.Close()
+	go func() {
+		closed <- a.Close()
 	}()
 
-	require.NoError(t, a.Add(1))
-	assert.Equal(t, []int{1}, <-started)
-	require.NoError(t, a.Add(2))
+	require.Eventually(t, func() bool {
+		return errors.Is(a.Send(2), shutdownErr)
+	}, time.Second, 10*time.Millisecond)
 
-	pending, err := a.Pause()
-	assert.Equal(t, []int{2}, pending)
-	assert.ErrorIs(t, err, ErrPaused)
-	assert.ErrorIs(t, a.Add(3), ErrPaused)
+	assert.ErrorIs(t, a.Send(2), shutdownErr)
+	close(release)
+	require.NoError(t, <-closed)
 }
 
-func TestActorUsesCustomPauseErrorFromErrors(t *testing.T) {
+func TestActorRequiresHandler(t *testing.T) {
+	a, err := New[int](context.Background(), "test-nil", nil, Errors{})
+	assert.Nil(t, a)
+	assert.EqualError(t, err, "handler must not be nil")
+}
+
+func TestActorRejectsSendAfterParentContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	a, err := New[int](ctx, "test-parent-cancel", func([]int) {}, Errors{})
+	require.NoError(t, err)
 
-	started := make(chan []int, 1)
-	release := make(chan struct{})
+	cancel()
 
-	customPauseErr := errors.New("metadata unavailable")
-	a := New[int](
-		ctx,
-		"test-custom-pause",
-		Errors{
-			Pause: customPauseErr,
-		},
-		func(items []int) {
-			started <- append([]int(nil), items...)
-			<-release
-		},
-	)
-	defer func() {
-		close(release)
-		_, _ = a.Close()
-	}()
-
-	require.NoError(t, a.Add(1))
-	assert.Equal(t, []int{1}, <-started)
-	require.NoError(t, a.Add(2))
-
-	pending, err := a.Pause()
-	assert.Equal(t, []int{2}, pending)
-	assert.ErrorIs(t, err, customPauseErr)
-	assert.ErrorIs(t, a.Add(3), customPauseErr)
+	require.Eventually(t, func() bool {
+		return errors.Is(a.Send(1), ErrShuttingDown)
+	}, time.Second, 10*time.Millisecond)
+	assert.ErrorIs(t, a.Pause(), ErrShuttingDown)
+	assert.ErrorIs(t, a.Resume(), ErrShuttingDown)
 }

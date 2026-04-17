@@ -566,8 +566,8 @@ func (x *Namespace) GetPolicies() *HierarchyPolicies {
 
 type Cluster struct {
 	state                   protoimpl.MessageState `protogen:"open.v1"`
-	DataServers             []*DataServer          `protobuf:"bytes,1,rep,name=data_servers,json=dataServers,proto3" json:"data_servers,omitempty"`
-	Namespaces              []*Namespace           `protobuf:"bytes,2,rep,name=namespaces,proto3" json:"namespaces,omitempty"`
+	DataServers             map[string]*DataServer `protobuf:"bytes,1,rep,name=data_servers,json=dataServers,proto3" json:"data_servers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Namespaces              map[string]*Namespace  `protobuf:"bytes,2,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Policies                *HierarchyPolicies     `protobuf:"bytes,3,opt,name=policies,proto3,oneof" json:"policies,omitempty"`
 	LoadBalancer            *LoadBalancerPolicies  `protobuf:"bytes,4,opt,name=loadBalancer,proto3,oneof" json:"loadBalancer,omitempty"`
 	AllowedExtraAuthorities []string               `protobuf:"bytes,5,rep,name=allowed_extra_authorities,json=allowedExtraAuthorities,proto3" json:"allowed_extra_authorities,omitempty"`
@@ -605,14 +605,14 @@ func (*Cluster) Descriptor() ([]byte, []int) {
 	return file_metadata_metadata_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *Cluster) GetDataServers() []*DataServer {
+func (x *Cluster) GetDataServers() map[string]*DataServer {
 	if x != nil {
 		return x.DataServers
 	}
 	return nil
 }
 
-func (x *Cluster) GetNamespaces() []*Namespace {
+func (x *Cluster) GetNamespaces() map[string]*Namespace {
 	if x != nil {
 		return x.Namespaces
 	}
@@ -1021,15 +1021,21 @@ const file_metadata_metadata_proto_rawDesc = "" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12<\n" +
 	"\bpolicies\x18\x02 \x01(\v2\x1b.metadata.HierarchyPoliciesH\x00R\bpolicies\x88\x01\x01B\v\n" +
-	"\t_policies\"\xd8\x02\n" +
-	"\aCluster\x127\n" +
-	"\fdata_servers\x18\x01 \x03(\v2\x14.metadata.DataServerR\vdataServers\x123\n" +
+	"\t_policies\"\x9e\x04\n" +
+	"\aCluster\x12E\n" +
+	"\fdata_servers\x18\x01 \x03(\v2\".metadata.Cluster.DataServersEntryR\vdataServers\x12A\n" +
 	"\n" +
-	"namespaces\x18\x02 \x03(\v2\x13.metadata.NamespaceR\n" +
+	"namespaces\x18\x02 \x03(\v2!.metadata.Cluster.NamespacesEntryR\n" +
 	"namespaces\x12<\n" +
 	"\bpolicies\x18\x03 \x01(\v2\x1b.metadata.HierarchyPoliciesH\x00R\bpolicies\x88\x01\x01\x12G\n" +
 	"\floadBalancer\x18\x04 \x01(\v2\x1e.metadata.LoadBalancerPoliciesH\x01R\floadBalancer\x88\x01\x01\x12:\n" +
-	"\x19allowed_extra_authorities\x18\x05 \x03(\tR\x17allowedExtraAuthoritiesB\v\n" +
+	"\x19allowed_extra_authorities\x18\x05 \x03(\tR\x17allowedExtraAuthorities\x1aT\n" +
+	"\x10DataServersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12*\n" +
+	"\x05value\x18\x02 \x01(\v2\x14.metadata.DataServerR\x05value:\x028\x01\x1aR\n" +
+	"\x0fNamespacesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.metadata.NamespaceR\x05value:\x028\x01B\v\n" +
 	"\t_policiesB\x0f\n" +
 	"\r_loadBalancer\"4\n" +
 	"\x0eInt32HashRange\x12\x10\n" +
@@ -1111,7 +1117,7 @@ func file_metadata_metadata_proto_rawDescGZIP() []byte {
 }
 
 var file_metadata_metadata_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_metadata_metadata_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_metadata_metadata_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_metadata_metadata_proto_goTypes = []any{
 	(AntiAffinityMode)(0),        // 0: metadata.AntiAffinityMode
 	(KeySorting)(0),              // 1: metadata.KeySorting
@@ -1130,36 +1136,40 @@ var file_metadata_metadata_proto_goTypes = []any{
 	(*NamespaceState)(nil),       // 14: metadata.NamespaceState
 	(*ClusterState)(nil),         // 15: metadata.ClusterState
 	nil,                          // 16: metadata.DataServer.LabelsEntry
-	nil,                          // 17: metadata.ShardSplittingState.ChildLeadersAtBootstrapEntry
-	nil,                          // 18: metadata.NamespaceState.ShardsEntry
-	nil,                          // 19: metadata.ClusterState.NamespacesEntry
-	(*durationpb.Duration)(nil),  // 20: google.protobuf.Duration
+	nil,                          // 17: metadata.Cluster.DataServersEntry
+	nil,                          // 18: metadata.Cluster.NamespacesEntry
+	nil,                          // 19: metadata.ShardSplittingState.ChildLeadersAtBootstrapEntry
+	nil,                          // 20: metadata.NamespaceState.ShardsEntry
+	nil,                          // 21: metadata.ClusterState.NamespacesEntry
+	(*durationpb.Duration)(nil),  // 22: google.protobuf.Duration
 }
 var file_metadata_metadata_proto_depIdxs = []int32{
 	16, // 0: metadata.DataServer.labels:type_name -> metadata.DataServer.LabelsEntry
 	0,  // 1: metadata.AntiAffinity.mode:type_name -> metadata.AntiAffinityMode
 	6,  // 2: metadata.HierarchyPolicies.anti_affinities:type_name -> metadata.AntiAffinity
-	20, // 3: metadata.LoadBalancerPolicies.schedule_interval:type_name -> google.protobuf.Duration
-	20, // 4: metadata.LoadBalancerPolicies.quarantine_time:type_name -> google.protobuf.Duration
+	22, // 3: metadata.LoadBalancerPolicies.schedule_interval:type_name -> google.protobuf.Duration
+	22, // 4: metadata.LoadBalancerPolicies.quarantine_time:type_name -> google.protobuf.Duration
 	7,  // 5: metadata.Namespace.policies:type_name -> metadata.HierarchyPolicies
-	5,  // 6: metadata.Cluster.data_servers:type_name -> metadata.DataServer
-	9,  // 7: metadata.Cluster.namespaces:type_name -> metadata.Namespace
+	17, // 6: metadata.Cluster.data_servers:type_name -> metadata.Cluster.DataServersEntry
+	18, // 7: metadata.Cluster.namespaces:type_name -> metadata.Cluster.NamespacesEntry
 	7,  // 8: metadata.Cluster.policies:type_name -> metadata.HierarchyPolicies
 	8,  // 9: metadata.Cluster.loadBalancer:type_name -> metadata.LoadBalancerPolicies
 	4,  // 10: metadata.ShardSplittingState.phase:type_name -> metadata.SplitPhase
-	17, // 11: metadata.ShardSplittingState.child_leaders_at_bootstrap:type_name -> metadata.ShardSplittingState.ChildLeadersAtBootstrapEntry
+	19, // 11: metadata.ShardSplittingState.child_leaders_at_bootstrap:type_name -> metadata.ShardSplittingState.ChildLeadersAtBootstrapEntry
 	3,  // 12: metadata.ShardState.status:type_name -> metadata.ShardStatus
 	11, // 13: metadata.ShardState.int32_hash_range:type_name -> metadata.Int32HashRange
 	12, // 14: metadata.ShardState.split:type_name -> metadata.ShardSplittingState
-	18, // 15: metadata.NamespaceState.shards:type_name -> metadata.NamespaceState.ShardsEntry
-	19, // 16: metadata.ClusterState.namespaces:type_name -> metadata.ClusterState.NamespacesEntry
-	13, // 17: metadata.NamespaceState.ShardsEntry.value:type_name -> metadata.ShardState
-	14, // 18: metadata.ClusterState.NamespacesEntry.value:type_name -> metadata.NamespaceState
-	19, // [19:19] is the sub-list for method output_type
-	19, // [19:19] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	20, // 15: metadata.NamespaceState.shards:type_name -> metadata.NamespaceState.ShardsEntry
+	21, // 16: metadata.ClusterState.namespaces:type_name -> metadata.ClusterState.NamespacesEntry
+	5,  // 17: metadata.Cluster.DataServersEntry.value:type_name -> metadata.DataServer
+	9,  // 18: metadata.Cluster.NamespacesEntry.value:type_name -> metadata.Namespace
+	13, // 19: metadata.NamespaceState.ShardsEntry.value:type_name -> metadata.ShardState
+	14, // 20: metadata.ClusterState.NamespacesEntry.value:type_name -> metadata.NamespaceState
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_metadata_metadata_proto_init() }
@@ -1178,7 +1188,7 @@ func file_metadata_metadata_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_metadata_metadata_proto_rawDesc), len(file_metadata_metadata_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

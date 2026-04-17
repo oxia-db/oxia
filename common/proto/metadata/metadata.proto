@@ -46,8 +46,8 @@ message Namespace {
 }
 
 message Cluster {
-  repeated DataServer data_servers = 1;
-  repeated Namespace namespaces = 2;
+  map<string, DataServer> data_servers = 1;
+  map<string, Namespace> namespaces = 2;
   optional HierarchyPolicies policies = 3;
   optional LoadBalancerPolicies loadBalancer = 4;
   repeated string allowed_extra_authorities = 5;
