@@ -85,24 +85,24 @@ func (b *Backend) LeaseWatch() *commonoption.Watch[metadatapb.LeaseState] {
 	return b.leaseWatch
 }
 
-func (b *Backend) LoadConfig() (*metadatapb.Cluster, error) {
+func (b *Backend) LoadConfig() *metadatapb.Cluster {
 	cluster := &metadatapb.Cluster{}
 	if err := metadata_v2.ReadProtoJSONFile(b.configPath, cluster); err != nil {
-		return nil, err
+		return nil
 	}
-	return cluster, nil
+	return cluster
 }
 
 func (b *Backend) CommitConfig(config *metadatapb.Cluster) error {
 	return metadata_v2.WriteProtoJSONFile(b.configPath, config)
 }
 
-func (b *Backend) LoadStatus() (*metadatapb.ClusterState, error) {
+func (b *Backend) LoadStatus() *metadatapb.ClusterState {
 	status := &metadatapb.ClusterState{}
 	if err := metadata_v2.ReadProtoJSONFile(b.statePath, status); err != nil {
-		return nil, err
+		return nil
 	}
-	return status, nil
+	return status
 }
 
 func (b *Backend) CommitStatus(status *metadatapb.ClusterState) error {

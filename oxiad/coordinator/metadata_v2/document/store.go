@@ -27,10 +27,10 @@ type Backend interface {
 	LeaseWatch() *commonoption.Watch[metadatapb.LeaseState]
 	RevalidateLease() error
 
-	LoadConfig() (*metadatapb.Cluster, error)
+	LoadConfig() *metadatapb.Cluster
 	CommitConfig(*metadatapb.Cluster) error
 
-	LoadStatus() (*metadatapb.ClusterState, error)
+	LoadStatus() *metadatapb.ClusterState
 	CommitStatus(*metadatapb.ClusterState) error
 }
 
@@ -46,8 +46,10 @@ type Store struct {
 	configMutator *Mutator[*metadatapb.Cluster]
 	statusMutator *Mutator[*metadatapb.ClusterState]
 
-	config atomic.Pointer[metadatapb.Cluster]
-	status atomic.Pointer[metadatapb.ClusterState]
+	config          atomic.Pointer[metadatapb.Cluster]
+	configLoadMutex sync.Mutex
+	status          atomic.Pointer[metadatapb.ClusterState]
+	statusLoadMutex sync.Mutex
 }
 
 func NewStore(ctx context.Context, backend Backend) *Store {
@@ -99,10 +101,7 @@ func (s *Store) LeaseWatch() *commonoption.Watch[metadatapb.LeaseState] {
 }
 
 func (s *Store) GetAllowedAuthorities() []string {
-	cfg, err := s.loadConfig()
-	if err != nil {
-		return nil
-	}
+	cfg := s.loadConfig()
 	return slices.Clone(cfg.AllowedExtraAuthorities)
 }
 
@@ -140,10 +139,7 @@ func (s *Store) PatchAllowedAuthorities(authorities []string) error {
 }
 
 func (s *Store) GetLoadBalancerPolicies() *metadatapb.LoadBalancerPolicies {
-	cfg, err := s.loadConfig()
-	if err != nil {
-		return nil
-	}
+	cfg := s.loadConfig()
 	return gproto.CloneOf(cfg.LoadBalancer)
 }
 
@@ -157,10 +153,7 @@ func (s *Store) PatchLoadBalancerPolicies(policies *metadatapb.LoadBalancerPolic
 }
 
 func (s *Store) GetClusterHierarchyPolicies() *metadatapb.HierarchyPolicies {
-	cfg, err := s.loadConfig()
-	if err != nil {
-		return nil
-	}
+	cfg := s.loadConfig()
 	return gproto.CloneOf(cfg.Policies)
 }
 
@@ -178,11 +171,7 @@ func (s *Store) GetDataServer(name string) (*metadatapb.DataServer, error) {
 		return nil, metadata_v2.ErrInvalidInput
 	}
 
-	cfg, err := s.loadConfig()
-	if err != nil {
-		return nil, err
-	}
-
+	cfg := s.loadConfig()
 	dataServer, ok := cfg.DataServers[name]
 	if !ok || dataServer == nil {
 		return nil, metadata_v2.ErrNotFound
@@ -204,27 +193,25 @@ func (s *Store) DeleteDataServers(names []string) error {
 }
 
 func (s *Store) CreateDataServers(dataServers []*metadatapb.DataServer) error {
-	return s.updateConfig(func(cfg *metadatapb.Cluster) {
+	return s.updateConfig(func(cfg *metadatapb.Cluster) error {
 		if cfg.DataServers == nil {
 			cfg.DataServers = make(map[string]*metadatapb.DataServer)
 		}
 		for _, dataServer := range dataServers {
-
+			if dataServer == nil || dataServer.Name == "" {
+				return metadata_v2.ErrInvalidInput
+			}
 			if _, ok := cfg.DataServers[dataServer.Name]; ok {
-				fail(fmt.Errorf("%w: data server %q", metadata_v2.ErrAlreadyExists, dataServer.Name))
-				return
+				return fmt.Errorf("%w: data server %q", metadata_v2.ErrAlreadyExists, dataServer.Name)
 			}
 			cfg.DataServers[dataServer.Name] = gproto.CloneOf(dataServer)
 		}
+		return nil
 	})
 }
 
 func (s *Store) ListDataServer() ([]*metadatapb.DataServer, error) {
-	cfg, err := s.loadConfig()
-	if err != nil {
-		return nil, err
-	}
-
+	cfg := s.loadConfig()
 	dataServers := make([]*metadatapb.DataServer, 0, len(cfg.DataServers))
 	for _, dataServer := range cfg.DataServers {
 		dataServers = append(dataServers, gproto.CloneOf(dataServer))
@@ -250,11 +237,7 @@ func (s *Store) GetNamespace(name string) (*metadatapb.Namespace, error) {
 		return nil, metadata_v2.ErrInvalidInput
 	}
 
-	cfg, err := s.loadConfig()
-	if err != nil {
-		return nil, err
-	}
-
+	cfg := s.loadConfig()
 	namespace, ok := cfg.Namespaces[name]
 	if !ok || namespace == nil {
 		return nil, metadata_v2.ErrNotFound
@@ -276,31 +259,26 @@ func (s *Store) DeleteNamespaces(names []string) error {
 }
 
 func (s *Store) CreateNamespaces(namespaces []*metadatapb.Namespace) error {
-	return s.updateConfig(func(cfg *metadatapb.Cluster, fail func(error)) {
+	return s.updateConfig(func(cfg *metadatapb.Cluster) error {
 		if cfg.Namespaces == nil {
 			cfg.Namespaces = make(map[string]*metadatapb.Namespace)
 		}
 
 		for _, namespace := range namespaces {
 			if namespace == nil || namespace.Name == "" {
-				fail(metadata_v2.ErrInvalidInput)
-				return
+				return metadata_v2.ErrInvalidInput
 			}
 			if _, ok := cfg.Namespaces[namespace.Name]; ok {
-				fail(fmt.Errorf("%w: namespace %q", metadata_v2.ErrAlreadyExists, namespace.Name))
-				return
+				return fmt.Errorf("%w: namespace %q", metadata_v2.ErrAlreadyExists, namespace.Name)
 			}
 			cfg.Namespaces[namespace.Name] = gproto.CloneOf(namespace)
 		}
+		return nil
 	})
 }
 
 func (s *Store) ListNamespace() ([]*metadatapb.Namespace, error) {
-	cfg, err := s.loadConfig()
-	if err != nil {
-		return nil, err
-	}
-
+	cfg := s.loadConfig()
 	namespaces := make([]*metadatapb.Namespace, 0, len(cfg.Namespaces))
 	for _, namespace := range cfg.Namespaces {
 		namespaces = append(namespaces, gproto.CloneOf(namespace))
@@ -326,11 +304,7 @@ func (s *Store) GetNamespaceHierarchyPolicies(name string) *metadatapb.Hierarchy
 		return nil
 	}
 
-	cfg, err := s.loadConfig()
-	if err != nil {
-		return nil
-	}
-
+	cfg := s.loadConfig()
 	namespace, ok := cfg.Namespaces[name]
 	if !ok || namespace == nil {
 		return nil
@@ -344,16 +318,16 @@ func (s *Store) PatchNamespaceHierarchyPolicies(name string, policy *metadatapb.
 	}
 
 	var updated *metadatapb.HierarchyPolicies
-	err := s.updateConfig(func(cfg *metadatapb.Cluster, fail func(error)) {
+	err := s.updateConfig(func(cfg *metadatapb.Cluster) error {
 		namespace, ok := cfg.Namespaces[name]
 		if !ok || namespace == nil {
-			fail(metadata_v2.ErrNotFound)
-			return
+			return metadata_v2.ErrNotFound
 		}
 		namespace.Policies = gproto.CloneOf(policy)
 		if namespace.Policies != nil {
 			updated = gproto.CloneOf(namespace.Policies)
 		}
+		return nil
 	})
 	return updated, err
 }
@@ -363,11 +337,7 @@ func (s *Store) GetNamespaceState(name string) (*metadatapb.NamespaceState, erro
 		return nil, metadata_v2.ErrInvalidInput
 	}
 
-	status, err := s.loadStatus()
-	if err != nil {
-		return nil, err
-	}
-
+	status := s.loadStatus()
 	namespace, ok := status.Namespaces[name]
 	if !ok || namespace == nil {
 		return nil, metadata_v2.ErrNotFound
@@ -389,21 +359,20 @@ func (s *Store) DeleteNamespaceStates(names []string) error {
 }
 
 func (s *Store) CreateNamespaceStates(namespaces map[string]*metadatapb.NamespaceState) error {
-	return s.updateStatus(func(status *metadatapb.ClusterState, fail func(error)) {
+	return s.updateStatus(func(status *metadatapb.ClusterState) error {
 		if status.Namespaces == nil {
 			status.Namespaces = make(map[string]*metadatapb.NamespaceState)
 		}
 		for name, namespace := range namespaces {
 			if name == "" || namespace == nil {
-				fail(metadata_v2.ErrInvalidInput)
-				return
+				return metadata_v2.ErrInvalidInput
 			}
 			if _, ok := status.Namespaces[name]; ok {
-				fail(fmt.Errorf("%w: namespace state %q", metadata_v2.ErrAlreadyExists, name))
-				return
+				return fmt.Errorf("%w: namespace state %q", metadata_v2.ErrAlreadyExists, name)
 			}
 			status.Namespaces[name] = gproto.CloneOf(namespace)
 		}
+		return nil
 	})
 }
 
@@ -429,11 +398,7 @@ func (s *Store) GetShardState(namespace string, shardID int64) (*metadatapb.Shar
 		return nil, metadata_v2.ErrInvalidInput
 	}
 
-	status, err := s.loadStatus()
-	if err != nil {
-		return nil, err
-	}
-
+	status := s.loadStatus()
 	namespaceState, ok := status.Namespaces[namespace]
 	if !ok || namespaceState == nil {
 		return nil, metadata_v2.ErrNotFound
@@ -451,11 +416,10 @@ func (s *Store) PatchShardState(namespace string, shardID int64, shard *metadata
 	}
 
 	var updated *metadatapb.ShardState
-	err := s.updateStatus(func(status *metadatapb.ClusterState, fail func(error)) {
+	err := s.updateStatus(func(status *metadatapb.ClusterState) error {
 		namespaceState, ok := status.Namespaces[namespace]
 		if !ok || namespaceState == nil {
-			fail(metadata_v2.ErrNotFound)
-			return
+			return metadata_v2.ErrNotFound
 		}
 		if namespaceState.Shards == nil {
 			namespaceState.Shards = make(map[int64]*metadatapb.ShardState)
@@ -463,6 +427,7 @@ func (s *Store) PatchShardState(namespace string, shardID int64, shard *metadata
 		cloned := gproto.CloneOf(shard)
 		namespaceState.Shards[shardID] = cloned
 		updated = gproto.CloneOf(cloned)
+		return nil
 	})
 	return updated, err
 }
@@ -496,20 +461,22 @@ func (s *Store) applyLeaseState(state metadatapb.LeaseState) {
 	}
 }
 
-func (s *Store) loadConfig() (*metadatapb.Cluster, error) {
+func (s *Store) loadConfig() *metadatapb.Cluster {
 	if config := s.config.Load(); config != nil {
-		return gproto.CloneOf(config), nil
+		return config
 	}
-
-	cluster, err := s.backend.LoadConfig()
-	if err != nil {
-		return nil, err
+	s.configLoadMutex.Lock()
+	defer s.configLoadMutex.Unlock()
+	// double check with lock
+	if config := s.config.Load(); config != nil {
+		return config
 	}
+	cluster := s.backend.LoadConfig()
 	if cluster == nil {
 		cluster = &metadatapb.Cluster{}
 	}
-	s.config.CompareAndSwap(nil, gproto.CloneOf(cluster))
-	return cluster, nil
+	s.config.Store(gproto.CloneOf(cluster))
+	return cluster
 }
 
 func (s *Store) commitConfigMutationState(config *metadatapb.Cluster) error {
@@ -520,44 +487,45 @@ func (s *Store) commitConfigMutationState(config *metadatapb.Cluster) error {
 	return nil
 }
 
-func (s *Store) handleConfigBadVersion() bool {
+func (s *Store) handleConfigBadVersion() (bool, error) {
 	if err := s.revalidateLease(); err != nil {
-		return false
+		return false, err
 	}
 
-	cluster, err := s.backend.LoadConfig()
-	if err != nil {
-		return false
-	}
+	cluster := s.backend.LoadConfig()
 	if cluster == nil {
 		cluster = &metadatapb.Cluster{}
 	}
 	s.config.Store(gproto.CloneOf(cluster))
-	return true
+	return true, nil
 }
 
-func (s *Store) mutateConfig(apply func(*metadatapb.Cluster) error) error {
-	return s.configMutator.Submit(NewOperation(apply))
+func (s *Store) mutateConfig(apply func(*metadatapb.Cluster)) error {
+	return s.configMutator.Submit(NewOperation(func(cfg *metadatapb.Cluster) error {
+		apply(cfg)
+		return nil
+	}))
 }
 
 func (s *Store) updateConfig(apply func(*metadatapb.Cluster) error) error {
 	return s.configMutator.Submit(NewOperation(apply))
 }
 
-func (s *Store) loadStatus() (*metadatapb.ClusterState, error) {
+func (s *Store) loadStatus() *metadatapb.ClusterState {
 	if status := s.status.Load(); status != nil {
-		return gproto.CloneOf(status), nil
+		return status
 	}
-
-	clusterState, err := s.backend.LoadStatus()
-	if err != nil {
-		return nil, err
+	s.statusLoadMutex.Lock()
+	defer s.statusLoadMutex.Unlock()
+	if status := s.status.Load(); status != nil {
+		return status
 	}
+	clusterState := s.backend.LoadStatus()
 	if clusterState == nil {
 		clusterState = &metadatapb.ClusterState{}
 	}
-	s.status.CompareAndSwap(nil, gproto.CloneOf(clusterState))
-	return clusterState, nil
+	s.status.Store(gproto.CloneOf(clusterState))
+	return clusterState
 }
 
 func (s *Store) commitStatusMutationState(status *metadatapb.ClusterState) error {
@@ -568,28 +536,28 @@ func (s *Store) commitStatusMutationState(status *metadatapb.ClusterState) error
 	return nil
 }
 
-func (s *Store) handleStatusBadVersion() bool {
+func (s *Store) handleStatusBadVersion() (bool, error) {
 	if err := s.revalidateLease(); err != nil {
-		return false
+		return false, err
 	}
 
-	status, err := s.backend.LoadStatus()
-	if err != nil {
-		return false
-	}
+	status := s.backend.LoadStatus()
 	if status == nil {
 		status = &metadatapb.ClusterState{}
 	}
 	s.status.Store(gproto.CloneOf(status))
-	return true
+	return true, nil
 }
 
 func (s *Store) mutateStatus(apply func(*metadatapb.ClusterState)) error {
-	return s.statusMutator.Submit(NewOperation(apply))
+	return s.statusMutator.Submit(NewOperation(func(status *metadatapb.ClusterState) error {
+		apply(status)
+		return nil
+	}))
 }
 
-func (s *Store) updateStatus(apply func(*metadatapb.ClusterState, func(error))) error {
-	return s.statusMutator.Submit(NewErrorOperation(apply))
+func (s *Store) updateStatus(apply func(*metadatapb.ClusterState) error) error {
+	return s.statusMutator.Submit(NewOperation(apply))
 }
 
 func (s *Store) revalidateLease() error {

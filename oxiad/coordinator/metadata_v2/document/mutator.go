@@ -29,7 +29,7 @@ var ErrBadVersion = errors.New("metadata v2 bad version")
 type Hooks[T gproto.Message] struct {
 	Load         func() T
 	Commit       func(T) error
-	OnBadVersion func() bool
+	OnBadVersion func() (bool, error)
 }
 
 type Mutator[T gproto.Message] struct {
@@ -100,8 +100,14 @@ func (m *Mutator[T]) processBatch(ops []*Operation[T]) {
 			}
 		}
 		if err := m.hooks.Commit(state); err != nil {
-			if errors.Is(err, ErrBadVersion) && m.hooks.OnBadVersion() {
-				continue
+			if errors.Is(err, ErrBadVersion) && m.hooks.OnBadVersion != nil {
+				retry, bvErr := m.hooks.OnBadVersion()
+				if retry {
+					continue
+				}
+				if bvErr != nil {
+					err = bvErr
+				}
 			}
 			for _, op := range ops {
 				op.Complete(err)
@@ -111,5 +117,6 @@ func (m *Mutator[T]) processBatch(ops []*Operation[T]) {
 		for _, op := range ops {
 			op.Complete(nil)
 		}
+		return
 	}
 }

@@ -56,10 +56,10 @@ func (b *fakeBackend) RevalidateLease() error {
 	return nil
 }
 
-func (b *fakeBackend) LoadConfig() (*metadatapb.Cluster, error) {
+func (b *fakeBackend) LoadConfig() *metadatapb.Cluster {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return gproto.CloneOf(b.config), nil
+	return gproto.CloneOf(b.config)
 }
 
 func (b *fakeBackend) CommitConfig(config *metadatapb.Cluster) error {
@@ -74,10 +74,10 @@ func (b *fakeBackend) CommitConfig(config *metadatapb.Cluster) error {
 	return nil
 }
 
-func (b *fakeBackend) LoadStatus() (*metadatapb.ClusterState, error) {
+func (b *fakeBackend) LoadStatus() *metadatapb.ClusterState {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return gproto.CloneOf(b.status), nil
+	return gproto.CloneOf(b.status)
 }
 
 func (b *fakeBackend) CommitStatus(status *metadatapb.ClusterState) error {
