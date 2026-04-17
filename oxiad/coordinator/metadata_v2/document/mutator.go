@@ -3,26 +3,33 @@ package document
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 
+	"github.com/oxia-db/oxia/common/channel"
 	gproto "google.golang.org/protobuf/proto"
 
 	commonactor "github.com/oxia-db/oxia/oxiad/common/actor"
 )
 
 type Operation[T gproto.Message] struct {
-	apply func(T)
-	done  chan error
-	err   error
+	apply func(T) error
+	r     chan error
+	c     atomic.Bool
+}
+
+func (m *Operation[T]) Complete(err error) {
+	if !m.c.CompareAndSwap(false, true) {
+		return
+	}
+	channel.PushNoBlock(m.r, err)
 }
 
 var ErrBadVersion = errors.New("metadata v2 bad version")
 
 type Hooks[T gproto.Message] struct {
-	RequireLease func() error
-	Load         func() (T, error)
+	Load         func() T
 	Commit       func(T) error
-	OnBadVersion func() error
-	OnFailure    func(error) error
+	OnBadVersion func() bool
 }
 
 type Mutator[T gproto.Message] struct {
@@ -45,30 +52,20 @@ func NewMutator[T gproto.Message](ctx context.Context, name string, actorErrors 
 	return m
 }
 
-func NewOperation[T gproto.Message](apply func(T)) *Operation[T] {
+func NewOperation[T gproto.Message](apply func(T) error) *Operation[T] {
 	return &Operation[T]{
 		apply: apply,
-		done:  make(chan error, 1),
+		r:     make(chan error, 1),
+		c:     atomic.Bool{},
 	}
 }
-
-func NewErrorOperation[T gproto.Message](apply func(T, func(error))) *Operation[T] {
-	op := &Operation[T]{
-		done: make(chan error, 1),
-	}
-	op.apply = func(value T) {
-		apply(value, op.fail)
-	}
-	return op
-}
-
 func (m *Mutator[T]) Submit(op *Operation[T]) error {
 	if err := m.actor.Send(op); err != nil {
 		return err
 	}
 
 	select {
-	case err := <-op.done:
+	case err := <-op.r:
 		return err
 	case <-m.ctx.Done():
 		return m.ctx.Err()
@@ -91,85 +88,28 @@ func (m *Mutator[T]) handleBatch(ops []*Operation[T]) {
 	if len(ops) == 0 {
 		return
 	}
-
-	results := m.processBatch(ops)
-	for i, op := range ops {
-		op.done <- results[i]
-	}
+	m.processBatch(ops)
 }
 
-func (m *Mutator[T]) processBatch(ops []*Operation[T]) []error {
+func (m *Mutator[T]) processBatch(ops []*Operation[T]) {
 	for {
-		results := make([]error, len(ops))
-
-		if err := m.ctx.Err(); err != nil {
-			for i := range results {
-				results[i] = err
+		state := m.hooks.Load()
+		for _, op := range ops {
+			if err := op.apply(state); err != nil {
+				op.Complete(err)
 			}
-			return results
 		}
-
-		if err := m.hooks.RequireLease(); err != nil {
-			for i := range results {
-				results[i] = err
-			}
-			return results
-		}
-
-		base, err := m.hooks.Load()
-		if err != nil {
-			for i := range results {
-				results[i] = err
-			}
-			return results
-		}
-
-		working := base
-		successful := make([]int, 0, len(ops))
-
-		for i, op := range ops {
-			next := gproto.CloneOf(working)
-			op.err = nil
-			if op.apply != nil {
-				op.apply(next)
-			}
-			if op.err != nil {
-				results[i] = op.err
+		if err := m.hooks.Commit(state); err != nil {
+			if errors.Is(err, ErrBadVersion) && m.hooks.OnBadVersion() {
 				continue
 			}
-			working = next
-			successful = append(successful, i)
-		}
-
-		if gproto.Equal(base, working) {
-			return results
-		}
-
-		if err := m.hooks.Commit(working); err != nil {
-			if errors.Is(err, ErrBadVersion) && m.hooks.OnBadVersion != nil {
-				if recoveryErr := m.hooks.OnBadVersion(); recoveryErr == nil {
-					continue
-				} else {
-					err = recoveryErr
-				}
-			} else if m.hooks.OnFailure != nil {
-				if failureErr := m.hooks.OnFailure(err); failureErr != nil {
-					err = failureErr
-				}
+			for _, op := range ops {
+				op.Complete(err)
 			}
-
-			for _, i := range successful {
-				results[i] = err
-			}
+			return
 		}
-
-		return results
+		for _, op := range ops {
+			op.Complete(nil)
+		}
 	}
-}
-
-func (o *Operation[T]) fail(err error) {
-	if err == nil || o.err != nil {
-		return
-	}
-	o.err = err
 }

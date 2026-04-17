@@ -60,13 +60,11 @@ func NewStore(ctx context.Context, backend Backend) *Store {
 	}
 
 	s.configMutator = NewMutator[*metadatapb.Cluster](s.ctx, "metadata-document-config", actorErrors(), Hooks[*metadatapb.Cluster]{
-		RequireLease: s.requireLease,
 		Load:         s.loadConfig,
 		Commit:       s.commitConfigMutationState,
 		OnBadVersion: s.handleConfigBadVersion,
 	})
 	s.statusMutator = NewMutator[*metadatapb.ClusterState](s.ctx, "metadata-document-status", actorErrors(), Hooks[*metadatapb.ClusterState]{
-		RequireLease: s.requireLease,
 		Load:         s.loadStatus,
 		Commit:       s.commitStatusMutationState,
 		OnBadVersion: s.handleStatusBadVersion,
@@ -206,16 +204,12 @@ func (s *Store) DeleteDataServers(names []string) error {
 }
 
 func (s *Store) CreateDataServers(dataServers []*metadatapb.DataServer) error {
-	return s.updateConfig(func(cfg *metadatapb.Cluster, fail func(error)) {
+	return s.updateConfig(func(cfg *metadatapb.Cluster) {
 		if cfg.DataServers == nil {
 			cfg.DataServers = make(map[string]*metadatapb.DataServer)
 		}
-
 		for _, dataServer := range dataServers {
-			if dataServer == nil || dataServer.Name == "" {
-				fail(metadata_v2.ErrInvalidInput)
-				return
-			}
+
 			if _, ok := cfg.DataServers[dataServer.Name]; ok {
 				fail(fmt.Errorf("%w: data server %q", metadata_v2.ErrAlreadyExists, dataServer.Name))
 				return
@@ -502,14 +496,6 @@ func (s *Store) applyLeaseState(state metadatapb.LeaseState) {
 	}
 }
 
-func (s *Store) requireLease() error {
-	state, _ := s.leaseWatch.Load()
-	if state != metadatapb.LeaseState_LEASE_STATE_HELD {
-		return metadata_v2.ErrLeaseNotHeld
-	}
-	return nil
-}
-
 func (s *Store) loadConfig() (*metadatapb.Cluster, error) {
 	if config := s.config.Load(); config != nil {
 		return gproto.CloneOf(config), nil
@@ -534,28 +520,28 @@ func (s *Store) commitConfigMutationState(config *metadatapb.Cluster) error {
 	return nil
 }
 
-func (s *Store) handleConfigBadVersion() error {
+func (s *Store) handleConfigBadVersion() bool {
 	if err := s.revalidateLease(); err != nil {
-		return err
+		return false
 	}
 
 	cluster, err := s.backend.LoadConfig()
 	if err != nil {
-		return err
+		return false
 	}
 	if cluster == nil {
 		cluster = &metadatapb.Cluster{}
 	}
 	s.config.Store(gproto.CloneOf(cluster))
-	return nil
+	return true
 }
 
-func (s *Store) mutateConfig(apply func(*metadatapb.Cluster)) error {
+func (s *Store) mutateConfig(apply func(*metadatapb.Cluster) error) error {
 	return s.configMutator.Submit(NewOperation(apply))
 }
 
-func (s *Store) updateConfig(apply func(*metadatapb.Cluster, func(error))) error {
-	return s.configMutator.Submit(NewErrorOperation(apply))
+func (s *Store) updateConfig(apply func(*metadatapb.Cluster) error) error {
+	return s.configMutator.Submit(NewOperation(apply))
 }
 
 func (s *Store) loadStatus() (*metadatapb.ClusterState, error) {
@@ -582,20 +568,20 @@ func (s *Store) commitStatusMutationState(status *metadatapb.ClusterState) error
 	return nil
 }
 
-func (s *Store) handleStatusBadVersion() error {
+func (s *Store) handleStatusBadVersion() bool {
 	if err := s.revalidateLease(); err != nil {
-		return err
+		return false
 	}
 
 	status, err := s.backend.LoadStatus()
 	if err != nil {
-		return err
+		return false
 	}
 	if status == nil {
 		status = &metadatapb.ClusterState{}
 	}
 	s.status.Store(gproto.CloneOf(status))
-	return nil
+	return true
 }
 
 func (s *Store) mutateStatus(apply func(*metadatapb.ClusterState)) error {

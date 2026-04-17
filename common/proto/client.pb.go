@@ -317,11 +317,6 @@ type ShardAssignments struct {
 	sizeCache          protoimpl.SizeCache
 }
 
-func (s *ShardAssignments) DeleteNamespaceState(name string) error {
-	//TODO implement me
-	panic("implement me")
-}
-
 func (x *ShardAssignments) Reset() {
 	*x = ShardAssignments{}
 	mi := &file_client_proto_msgTypes[1]
