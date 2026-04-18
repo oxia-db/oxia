@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gproto "google.golang.org/protobuf/proto"
 
 	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -18,12 +17,12 @@ type fakeBackend struct {
 	mu sync.Mutex
 
 	leaseWatch *commonoption.Watch[metadatapb.LeaseState]
-	config     *metadatapb.Cluster
-	status     *metadatapb.ClusterState
+	config     *Versioned[*metadatapb.Cluster]
+	status     *Versioned[*metadatapb.ClusterState]
 
 	revalidateLeaseFn func() error
-	commitConfigFn    func(*metadatapb.Cluster) error
-	commitStatusFn    func(*metadatapb.ClusterState) error
+	commitConfigFn    func(*Versioned[*metadatapb.Cluster]) (*Versioned[*metadatapb.Cluster], error)
+	commitStatusFn    func(*Versioned[*metadatapb.ClusterState]) (*Versioned[*metadatapb.ClusterState], error)
 
 	revalidateLeaseCalls int
 	commitConfigCalls    int
@@ -32,8 +31,8 @@ type fakeBackend struct {
 func newFakeBackend() *fakeBackend {
 	return &fakeBackend{
 		leaseWatch: commonoption.NewWatch(metadatapb.LeaseState_LEASE_STATE_HELD),
-		config:     &metadatapb.Cluster{},
-		status:     &metadatapb.ClusterState{},
+		config:     &Versioned[*metadatapb.Cluster]{Value: &metadatapb.Cluster{}},
+		status:     &Versioned[*metadatapb.ClusterState]{Value: &metadatapb.ClusterState{}},
 	}
 }
 
@@ -56,13 +55,13 @@ func (b *fakeBackend) RevalidateLease() error {
 	return nil
 }
 
-func (b *fakeBackend) LoadConfig() *metadatapb.Cluster {
+func (b *fakeBackend) LoadConfig() *Versioned[*metadatapb.Cluster] {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return gproto.CloneOf(b.config)
+	return cloneVersionedProto(b.config)
 }
 
-func (b *fakeBackend) CommitConfig(config *metadatapb.Cluster) error {
+func (b *fakeBackend) CommitConfig(config *Versioned[*metadatapb.Cluster]) (*Versioned[*metadatapb.Cluster], error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -70,41 +69,48 @@ func (b *fakeBackend) CommitConfig(config *metadatapb.Cluster) error {
 	if b.commitConfigFn != nil {
 		return b.commitConfigFn(config)
 	}
-	b.config = gproto.CloneOf(config)
-	return nil
+	b.config = cloneVersionedProto(config)
+	return cloneVersionedProto(config), nil
 }
 
-func (b *fakeBackend) LoadStatus() *metadatapb.ClusterState {
+func (b *fakeBackend) LoadStatus() *Versioned[*metadatapb.ClusterState] {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return gproto.CloneOf(b.status)
+	return cloneVersionedProto(b.status)
 }
 
-func (b *fakeBackend) CommitStatus(status *metadatapb.ClusterState) error {
+func (b *fakeBackend) CommitStatus(status *Versioned[*metadatapb.ClusterState]) (*Versioned[*metadatapb.ClusterState], error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.commitStatusFn != nil {
 		return b.commitStatusFn(status)
 	}
-	b.status = gproto.CloneOf(status)
-	return nil
+	b.status = cloneVersionedProto(status)
+	return cloneVersionedProto(status), nil
 }
 
 func TestStoreRetriesBadVersionAfterLeaseRevalidation(t *testing.T) {
 	backend := newFakeBackend()
-	backend.config = &metadatapb.Cluster{
-		AllowedExtraAuthorities: []string{"base"},
+	backend.config = &Versioned[*metadatapb.Cluster]{
+		Version: "1",
+		Value: &metadatapb.Cluster{
+			AllowedExtraAuthorities: []string{"base"},
+		},
 	}
-	backend.commitConfigFn = func(config *metadatapb.Cluster) error {
+	backend.commitConfigFn = func(config *Versioned[*metadatapb.Cluster]) (*Versioned[*metadatapb.Cluster], error) {
 		if b := backend.commitConfigCalls; b == 1 {
-			backend.config = &metadatapb.Cluster{
-				AllowedExtraAuthorities: []string{"base", "remote"},
+			backend.config = &Versioned[*metadatapb.Cluster]{
+				Version: "2",
+				Value: &metadatapb.Cluster{
+					AllowedExtraAuthorities: []string{"base", "remote"},
+				},
 			}
-			return ErrBadVersion
+			return nil, ErrBadVersion
 		}
-		backend.config = gproto.CloneOf(config)
-		return nil
+		backend.config = cloneVersionedProto(config)
+		backend.config.Version = "3"
+		return cloneVersionedProto(backend.config), nil
 	}
 
 	store := NewStore(context.Background(), backend)
@@ -120,11 +126,14 @@ func TestStoreRetriesBadVersionAfterLeaseRevalidation(t *testing.T) {
 
 func TestStoreMarksLeaseUnheldWhenBadVersionRevalidationFails(t *testing.T) {
 	backend := newFakeBackend()
-	backend.config = &metadatapb.Cluster{
-		AllowedExtraAuthorities: []string{"base"},
+	backend.config = &Versioned[*metadatapb.Cluster]{
+		Version: "1",
+		Value: &metadatapb.Cluster{
+			AllowedExtraAuthorities: []string{"base"},
+		},
 	}
-	backend.commitConfigFn = func(*metadatapb.Cluster) error {
-		return ErrBadVersion
+	backend.commitConfigFn = func(*Versioned[*metadatapb.Cluster]) (*Versioned[*metadatapb.Cluster], error) {
+		return nil, ErrBadVersion
 	}
 	backend.revalidateLeaseFn = func() error {
 		backend.leaseWatch.Notify(metadatapb.LeaseState_LEASE_STATE_UNHELD)
@@ -145,4 +154,26 @@ func TestStoreMarksLeaseUnheldWhenBadVersionRevalidationFails(t *testing.T) {
 
 	err = store.AddExtraAllowedAuthorities([]string{"after"})
 	require.ErrorIs(t, err, metadata_v2.ErrLeaseNotHeld)
+}
+
+func TestStoreDoesNotExposeUncommittedConfigStateOnCommitFailure(t *testing.T) {
+	backend := newFakeBackend()
+	backend.config = &Versioned[*metadatapb.Cluster]{
+		Version: "1",
+		Value: &metadatapb.Cluster{
+			AllowedExtraAuthorities: []string{"base"},
+		},
+	}
+	backend.commitConfigFn = func(*Versioned[*metadatapb.Cluster]) (*Versioned[*metadatapb.Cluster], error) {
+		return nil, assert.AnError
+	}
+
+	store := NewStore(context.Background(), backend)
+	t.Cleanup(func() {
+		assert.NoError(t, store.Close())
+	})
+
+	err := store.AddExtraAllowedAuthorities([]string{"local"})
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Equal(t, []string{"base"}, store.GetAllowedAuthorities())
 }

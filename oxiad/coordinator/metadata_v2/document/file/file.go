@@ -10,6 +10,7 @@ import (
 
 	"github.com/juju/fslock"
 	"github.com/oxia-db/oxia/common/process"
+	gproto "google.golang.org/protobuf/proto"
 
 	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -19,7 +20,7 @@ import (
 
 var _ document.Backend = (*Backend)(nil)
 
-const leaseAcquireTimeout = 100 * time.Millisecond
+const leaseRetryInterval = 100 * time.Millisecond
 
 const (
 	defaultConfigFileName = "conf"
@@ -85,28 +86,42 @@ func (b *Backend) LeaseWatch() *commonoption.Watch[metadatapb.LeaseState] {
 	return b.leaseWatch
 }
 
-func (b *Backend) LoadConfig() *metadatapb.Cluster {
+func (b *Backend) LoadConfig() *document.Versioned[*metadatapb.Cluster] {
 	cluster := &metadatapb.Cluster{}
 	if err := metadata_v2.ReadProtoJSONFile(b.configPath, cluster); err != nil {
 		return nil
 	}
-	return cluster
+	return &document.Versioned[*metadatapb.Cluster]{
+		Value: cluster,
+	}
 }
 
-func (b *Backend) CommitConfig(config *metadatapb.Cluster) error {
-	return metadata_v2.WriteProtoJSONFile(b.configPath, config)
+func (b *Backend) CommitConfig(config *document.Versioned[*metadatapb.Cluster]) (*document.Versioned[*metadatapb.Cluster], error) {
+	if err := metadata_v2.WriteProtoJSONFile(b.configPath, config.Value); err != nil {
+		return nil, err
+	}
+	return &document.Versioned[*metadatapb.Cluster]{
+		Value: gproto.CloneOf(config.Value),
+	}, nil
 }
 
-func (b *Backend) LoadStatus() *metadatapb.ClusterState {
+func (b *Backend) LoadStatus() *document.Versioned[*metadatapb.ClusterState] {
 	status := &metadatapb.ClusterState{}
 	if err := metadata_v2.ReadProtoJSONFile(b.statePath, status); err != nil {
 		return nil
 	}
-	return status
+	return &document.Versioned[*metadatapb.ClusterState]{
+		Value: status,
+	}
 }
 
-func (b *Backend) CommitStatus(status *metadatapb.ClusterState) error {
-	return metadata_v2.WriteProtoJSONFile(b.statePath, status)
+func (b *Backend) CommitStatus(status *document.Versioned[*metadatapb.ClusterState]) (*document.Versioned[*metadatapb.ClusterState], error) {
+	if err := metadata_v2.WriteProtoJSONFile(b.statePath, status.Value); err != nil {
+		return nil, err
+	}
+	return &document.Versioned[*metadatapb.ClusterState]{
+		Value: gproto.CloneOf(status.Value),
+	}, nil
 }
 
 func (b *Backend) RevalidateLease() error {
@@ -130,8 +145,14 @@ func (b *Backend) runLeaseLoop() {
 		}
 
 		leaseLock := fslock.New(b.leaseLockPath)
-		if err := leaseLock.LockWithTimeout(leaseAcquireTimeout); err != nil {
+		if err := leaseLock.TryLock(); err != nil {
 			b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
+			select {
+			case <-b.ctx.Done():
+				b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
+				return
+			case <-time.After(leaseRetryInterval):
+			}
 			continue
 		}
 

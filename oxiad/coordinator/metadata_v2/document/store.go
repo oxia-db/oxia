@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -27,11 +28,16 @@ type Backend interface {
 	LeaseWatch() *commonoption.Watch[metadatapb.LeaseState]
 	RevalidateLease() error
 
-	LoadConfig() *metadatapb.Cluster
-	CommitConfig(*metadatapb.Cluster) error
+	LoadConfig() *Versioned[*metadatapb.Cluster]
+	CommitConfig(*Versioned[*metadatapb.Cluster]) (*Versioned[*metadatapb.Cluster], error)
 
-	LoadStatus() *metadatapb.ClusterState
-	CommitStatus(*metadatapb.ClusterState) error
+	LoadStatus() *Versioned[*metadatapb.ClusterState]
+	CommitStatus(*Versioned[*metadatapb.ClusterState]) (*Versioned[*metadatapb.ClusterState], error)
+}
+
+type Versioned[T gproto.Message] struct {
+	Version string
+	Value   T
 }
 
 type Store struct {
@@ -46,9 +52,9 @@ type Store struct {
 	configMutator *Mutator[*metadatapb.Cluster]
 	statusMutator *Mutator[*metadatapb.ClusterState]
 
-	config          atomic.Pointer[metadatapb.Cluster]
+	config          atomic.Pointer[Versioned[*metadatapb.Cluster]]
 	configLoadMutex sync.Mutex
-	status          atomic.Pointer[metadatapb.ClusterState]
+	status          atomic.Pointer[Versioned[*metadatapb.ClusterState]]
 	statusLoadMutex sync.Mutex
 }
 
@@ -463,27 +469,49 @@ func (s *Store) applyLeaseState(state metadatapb.LeaseState) {
 
 func (s *Store) loadConfig() *metadatapb.Cluster {
 	if config := s.config.Load(); config != nil {
-		return config
+		return gproto.CloneOf(config.Value)
 	}
 	s.configLoadMutex.Lock()
 	defer s.configLoadMutex.Unlock()
 	// double check with lock
 	if config := s.config.Load(); config != nil {
-		return config
+		return gproto.CloneOf(config.Value)
 	}
 	cluster := s.backend.LoadConfig()
 	if cluster == nil {
-		cluster = &metadatapb.Cluster{}
+		cluster = &Versioned[*metadatapb.Cluster]{}
 	}
-	s.config.Store(gproto.CloneOf(cluster))
-	return cluster
+	if isNilProto(cluster.Value) {
+		cluster.Value = &metadatapb.Cluster{}
+	}
+	s.config.Store(cloneVersionedProto(cluster))
+	return gproto.CloneOf(cluster.Value)
 }
 
 func (s *Store) commitConfigMutationState(config *metadatapb.Cluster) error {
-	if err := s.backend.CommitConfig(config); err != nil {
+	current := s.config.Load()
+	version := ""
+	if current != nil {
+		version = current.Version
+	}
+
+	updated, err := s.backend.CommitConfig(&Versioned[*metadatapb.Cluster]{
+		Version: version,
+		Value:   gproto.CloneOf(config),
+	})
+	if err != nil {
 		return err
 	}
-	s.config.Store(gproto.CloneOf(config))
+	if updated == nil {
+		updated = &Versioned[*metadatapb.Cluster]{
+			Version: version,
+			Value:   gproto.CloneOf(config),
+		}
+	}
+	if isNilProto(updated.Value) {
+		updated.Value = gproto.CloneOf(config)
+	}
+	s.config.Store(cloneVersionedProto(updated))
 	return nil
 }
 
@@ -494,9 +522,12 @@ func (s *Store) handleConfigBadVersion() (bool, error) {
 
 	cluster := s.backend.LoadConfig()
 	if cluster == nil {
-		cluster = &metadatapb.Cluster{}
+		cluster = &Versioned[*metadatapb.Cluster]{}
 	}
-	s.config.Store(gproto.CloneOf(cluster))
+	if isNilProto(cluster.Value) {
+		cluster.Value = &metadatapb.Cluster{}
+	}
+	s.config.Store(cloneVersionedProto(cluster))
 	return true, nil
 }
 
@@ -513,26 +544,48 @@ func (s *Store) updateConfig(apply func(*metadatapb.Cluster) error) error {
 
 func (s *Store) loadStatus() *metadatapb.ClusterState {
 	if status := s.status.Load(); status != nil {
-		return status
+		return gproto.CloneOf(status.Value)
 	}
 	s.statusLoadMutex.Lock()
 	defer s.statusLoadMutex.Unlock()
 	if status := s.status.Load(); status != nil {
-		return status
+		return gproto.CloneOf(status.Value)
 	}
 	clusterState := s.backend.LoadStatus()
 	if clusterState == nil {
-		clusterState = &metadatapb.ClusterState{}
+		clusterState = &Versioned[*metadatapb.ClusterState]{}
 	}
-	s.status.Store(gproto.CloneOf(clusterState))
-	return clusterState
+	if isNilProto(clusterState.Value) {
+		clusterState.Value = &metadatapb.ClusterState{}
+	}
+	s.status.Store(cloneVersionedProto(clusterState))
+	return gproto.CloneOf(clusterState.Value)
 }
 
 func (s *Store) commitStatusMutationState(status *metadatapb.ClusterState) error {
-	if err := s.backend.CommitStatus(status); err != nil {
+	current := s.status.Load()
+	version := ""
+	if current != nil {
+		version = current.Version
+	}
+
+	updated, err := s.backend.CommitStatus(&Versioned[*metadatapb.ClusterState]{
+		Version: version,
+		Value:   gproto.CloneOf(status),
+	})
+	if err != nil {
 		return err
 	}
-	s.status.Store(gproto.CloneOf(status))
+	if updated == nil {
+		updated = &Versioned[*metadatapb.ClusterState]{
+			Version: version,
+			Value:   gproto.CloneOf(status),
+		}
+	}
+	if isNilProto(updated.Value) {
+		updated.Value = gproto.CloneOf(status)
+	}
+	s.status.Store(cloneVersionedProto(updated))
 	return nil
 }
 
@@ -543,9 +596,12 @@ func (s *Store) handleStatusBadVersion() (bool, error) {
 
 	status := s.backend.LoadStatus()
 	if status == nil {
-		status = &metadatapb.ClusterState{}
+		status = &Versioned[*metadatapb.ClusterState]{}
 	}
-	s.status.Store(gproto.CloneOf(status))
+	if isNilProto(status.Value) {
+		status.Value = &metadatapb.ClusterState{}
+	}
+	s.status.Store(cloneVersionedProto(status))
 	return true, nil
 }
 
@@ -572,5 +628,33 @@ func actorErrors() commonactor.Errors {
 	return commonactor.Errors{
 		Pause:    metadata_v2.ErrLeaseNotHeld,
 		Shutdown: metadata_v2.ErrLeaseNotHeld,
+	}
+}
+
+func cloneVersionedProto[T gproto.Message](value *Versioned[T]) *Versioned[T] {
+	if value == nil {
+		return nil
+	}
+
+	cloned := &Versioned[T]{
+		Version: value.Version,
+	}
+	if !isNilProto(value.Value) {
+		cloned.Value = gproto.CloneOf(value.Value)
+	}
+	return cloned
+}
+
+func isNilProto[T gproto.Message](value T) bool {
+	if any(value) == nil {
+		return true
+	}
+
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
 	}
 }
