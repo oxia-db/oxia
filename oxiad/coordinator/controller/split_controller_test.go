@@ -23,9 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v1"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -72,15 +70,13 @@ var (
 // two child shards ready for split, and returns the test resources.
 func setupSplitTest(t *testing.T, phase model.SplitPhase) (
 	*mockRpcProvider,
-	resource.StatusResource,
+	*testStatusResource,
 	*mockSplitEventListener,
 ) {
 	t.Helper()
 
 	rpcMock := newMockRpcProvider()
-	metaProvider := metadata.NewMetadataProviderMemory()
-	t.Cleanup(func() { metaProvider.Close() })
-	statusRes := resource.NewStatusResource(metaProvider)
+	statusRes := newTestStatusResource(nil)
 
 	clusterStatus := &model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
@@ -205,11 +201,11 @@ func TestSplitController_FullLifecycle(t *testing.T) {
 	queueCutoverResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
 	})
 	defer sc.Close()
 
@@ -249,11 +245,11 @@ func TestSplitController_ResumeFromBootstrap(t *testing.T) {
 	queueCutoverResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
 	})
 	defer sc.Close()
 
@@ -289,11 +285,11 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 	queueCutoverResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
 	})
 	defer sc.Close()
 
@@ -313,11 +309,11 @@ func TestSplitController_PhaseTransitions(t *testing.T) {
 	queueCutoverResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
 	})
 	defer sc.Close()
 
@@ -350,12 +346,12 @@ func TestSplitController_TimeoutDuringBootstrap(t *testing.T) {
 	_, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    newMockRpcProvider(), // fresh mock, no responses queued
-		EventListener:  listener,
-		SplitTimeout:   2 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   newMockRpcProvider(), // fresh mock, no responses queued
+		EventListener: listener,
+		SplitTimeout:  2 * time.Second,
 	})
 	defer sc.Close()
 
@@ -415,12 +411,12 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	// Don't queue CatchUp responses -- it will hang and timeout
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
-		SplitTimeout:   2 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  2 * time.Second,
 	})
 	defer sc.Close()
 
@@ -500,12 +496,12 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 	queueCutoverResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
-		SplitTimeout:   30 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
 	})
 	defer sc.Close()
 
@@ -546,12 +542,12 @@ func TestSplitController_ChildFencingPartialSuccess(t *testing.T) {
 	queueCutoverResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
-		SplitTimeout:   30 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
 	})
 	defer sc.Close()
 
@@ -589,12 +585,12 @@ func TestSplitController_ParentFencingPartialFailure(t *testing.T) {
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
-		SplitTimeout:   30 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
 	})
 	defer sc.Close()
 
@@ -637,12 +633,12 @@ func TestSplitController_ChildQuorumCommitRetry(t *testing.T) {
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
-		SplitTimeout:   30 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
 	})
 	defer sc.Close()
 
@@ -687,12 +683,12 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	rpcMock.GetNode(ls1).EnqueueGetStatusError(errors.New("connection refused"))    // child-L dead
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
-		SplitTimeout:   2 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  2 * time.Second,
 	})
 	defer sc.Close()
 
@@ -759,12 +755,12 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	}
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
-		SplitTimeout:   2 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  2 * time.Second,
 	})
 	defer sc.Close()
 
@@ -855,12 +851,12 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
-		SplitTimeout:   30 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
 	})
 	defer sc.Close()
 
@@ -915,12 +911,12 @@ func TestSplitController_ChildEnsembleMemberDiesDuringBootstrap(t *testing.T) {
 	queueCutoverResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
-		Namespace:      constant.DefaultNamespace,
-		ParentShardId:  0,
-		StatusResource: statusRes,
-		RpcProvider:    rpcMock,
-		EventListener:  listener,
-		SplitTimeout:   30 * time.Second,
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Status:        statusRes.callbacks(),
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
 	})
 	defer sc.Close()
 

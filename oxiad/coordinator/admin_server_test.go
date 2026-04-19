@@ -25,24 +25,10 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
 
-func newTestClusterConfigResource(t *testing.T, config model.ClusterConfig) resource.ClusterConfigResource {
-	t.Helper()
-
-	configResource := resource.NewClusterConfigResource(
-		t.Context(),
-		func() (model.ClusterConfig, error) {
-			return config, nil
-		},
-		nil,
-		nil,
-	)
-	t.Cleanup(func() {
-		require.NoError(t, configResource.Close())
-	})
-	return configResource
+func newTestClusterConfig(config model.ClusterConfig) *model.ClusterConfig {
+	return &config
 }
 
 func TestAdminServerListDataServers(t *testing.T) {
@@ -50,8 +36,7 @@ func TestAdminServerListDataServers(t *testing.T) {
 	serverName2 := "server-2"
 
 	admin := newAdminServer(
-		nil,
-		newTestClusterConfigResource(t, model.ClusterConfig{
+		newTestClusterConfig(model.ClusterConfig{
 			Servers: []model.Server{
 				{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
 				{Name: &serverName2, Public: "public-2", Internal: "internal-2"},
@@ -90,8 +75,7 @@ func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
 	serverName1 := "server-1"
 
 	admin := newAdminServer(
-		nil,
-		newTestClusterConfigResource(t, model.ClusterConfig{
+		newTestClusterConfig(model.ClusterConfig{
 			Servers: []model.Server{
 				{Name: &serverName1, Public: "public-1", Internal: "internal-1"},
 				{Public: "public-2", Internal: "internal-2"},
@@ -123,8 +107,7 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 	serverName := "server-2"
 
 	admin := newAdminServer(
-		nil,
-		newTestClusterConfigResource(t, model.ClusterConfig{
+		newTestClusterConfig(model.ClusterConfig{
 			Servers: []model.Server{
 				{Name: &serverName, Public: "public-2", Internal: "internal-2"},
 			},
@@ -151,8 +134,7 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 	serverName := "server-2"
 
 	admin := newAdminServer(
-		nil,
-		newTestClusterConfigResource(t, model.ClusterConfig{
+		newTestClusterConfig(model.ClusterConfig{
 			Servers: []model.Server{
 				{Name: &serverName, Public: "public-2", Internal: "internal-2"},
 				{Public: "public-3", Internal: "internal-3"},
@@ -183,8 +165,7 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 
 func TestAdminServerGetDataServerNotFound(t *testing.T) {
 	admin := newAdminServer(
-		nil,
-		newTestClusterConfigResource(t, model.ClusterConfig{
+		newTestClusterConfig(model.ClusterConfig{
 			Servers: []model.Server{
 				{Public: "public-1", Internal: "internal-1"},
 			},
@@ -199,8 +180,7 @@ func TestAdminServerGetDataServerNotFound(t *testing.T) {
 
 func TestAdminServerGetDataServerRejectsEmptyLookup(t *testing.T) {
 	admin := newAdminServer(
-		nil,
-		newTestClusterConfigResource(t, model.ClusterConfig{}),
+		newTestClusterConfig(model.ClusterConfig{}),
 		nil,
 	)
 

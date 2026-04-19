@@ -12,36 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balancer
+package controller
 
-import (
-	"context"
-	"io"
+import "github.com/oxia-db/oxia/oxiad/coordinator/model"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
-)
-
-type Options struct {
-	context.Context
-
-	LoadStatus    func() *model.ClusterStatus
-	ClusterConfig *model.ClusterConfig
-
-	NodeAvailableJudger func(nodeID string) bool
+type StatusCallbacks struct {
+	Load                func() *model.ClusterStatus
+	Update              func(newStatus *model.ClusterStatus)
+	UpdateShardMetadata func(namespace string, shard int64, shardMetadata model.ShardMetadata)
+	DeleteShardMetadata func(namespace string, shard int64)
 }
 
-type LoadBalancer interface {
-	io.Closer
-
-	Start()
-
-	Trigger()
-
-	Action() <-chan action.Action
-
-	IsBalanced() bool
-
-	LoadRatioAlgorithm() selector.LoadRatioAlgorithm
+type ClusterConfigCallbacks struct {
+	NamespaceConfig func(namespace string) (*model.NamespaceConfig, bool)
+	Node            func(id string) (*model.Server, bool)
 }

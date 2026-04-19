@@ -22,9 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/concurrent"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v1"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
 
 func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
@@ -33,8 +31,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		Internal: "leader-internal:6649",
 	}
 
-	statusResource := resource.NewStatusResource(metadata.NewMetadataProviderMemory())
-	statusResource.Update(&model.ClusterStatus{
+	status := &model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,
@@ -51,7 +48,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 				},
 			},
 		},
-	})
+	}
 
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
@@ -65,14 +62,10 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 			leader.Public,
 		},
 	}
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return clusterConfig, nil
-	}, nil, nil)
-
 	c := &coordinator{
 		RWMutex:            sync.RWMutex{},
-		statusResource:     statusResource,
-		configResource:     configResource,
+		clusterConfig:      &clusterConfig,
+		currentStatus:      status,
 		assignmentsChanged: concurrent.NewConditionContext(&sync.Mutex{}),
 	}
 
@@ -97,8 +90,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		Internal: "removed-internal:6649",
 	}
 
-	statusResource := resource.NewStatusResource(metadata.NewMetadataProviderMemory())
-	statusResource.Update(&model.ClusterStatus{
+	status := &model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,
@@ -116,7 +108,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 				},
 			},
 		},
-	})
+	}
 
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
@@ -126,14 +118,10 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		}},
 		Servers: []model.Server{active},
 	}
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return clusterConfig, nil
-	}, nil, nil)
-
 	c := &coordinator{
 		RWMutex:            sync.RWMutex{},
-		statusResource:     statusResource,
-		configResource:     configResource,
+		clusterConfig:      &clusterConfig,
+		currentStatus:      status,
 		assignmentsChanged: concurrent.NewConditionContext(&sync.Mutex{}),
 	}
 

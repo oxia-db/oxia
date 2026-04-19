@@ -25,9 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v1"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 
@@ -108,20 +106,15 @@ func TestShardController(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
-	defer configResource.Close()
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource.callbacks(), statusResource.callbacks(), NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -192,19 +185,15 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	n2 := rpc.GetNode(s2)
 	n3 := rpc.GetNode(s3)
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
 		Term:     1,
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource.callbacks(), statusResource.callbacks(), NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, shard)
 	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
@@ -228,20 +217,15 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
-	defer configResource.Close()
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource.callbacks(), statusResource.callbacks(), NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	timeStart := time.Now()
 
@@ -281,20 +265,15 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
-	defer configResource.Close()
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource.callbacks(), statusResource.callbacks(), NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// s3 is failing, though we can still elect a leader
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -342,20 +321,15 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 	n2 := rpc.GetNode(s2)
 	n3 := rpc.GetNode(s3)
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
-	defer configResource.Close()
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
 		Term:     4,
 		Leader:   &s1,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource.callbacks(), statusResource.callbacks(), NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, 5)
 	n1.GetStatusResponse(4, proto.ServingStatus_LEADER, 0, 0)
@@ -384,29 +358,24 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{
-			Namespaces: []model.NamespaceConfig{
-				{
-					Name:                 "default",
-					InitialShardCount:    1,
-					ReplicationFactor:    1,
-					NotificationsEnabled: entity.Bool(false),
-				},
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{
+			{
+				Name:                 "default",
+				InitialShardCount:    1,
+				ReplicationFactor:    1,
+				NotificationsEnabled: entity.Bool(false),
 			},
-		}, nil
-	}, nil, nil)
-	defer configResource.Close()
+		},
+	})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource.callbacks(), statusResource.callbacks(), NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -432,21 +401,15 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
-	defer configResource.Close()
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource.callbacks(), statusResource.callbacks(), NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -537,21 +500,15 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
-	defer configResource.Close()
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	}, configResource.callbacks(), statusResource.callbacks(), NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -664,19 +621,14 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	s5 := model.Server{Public: "s5:9091", Internal: "s5:8191"}
 	s6 := model.Server{Public: "s6:9091", Internal: "s6:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
-	defer configResource.Close()
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 	sc := NewShardController(constant.DefaultNamespace, shardId, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	}, configResource.callbacks(), statusResource.callbacks(), NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -768,13 +720,8 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	rpc.GetNode(s2).SetNodeFeatures(feature.SupportedFeatures())
 	rpc.GetNode(s3).SetNodeFeatures(feature.SupportedFeatures())
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
-	defer configResource.Close()
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 
 	// Create a feature supplier that queries the mock RPC
 	featureSupplier := func(servers []model.Server) map[string][]proto.Feature {
@@ -793,7 +740,7 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource.callbacks(), statusResource.callbacks(), featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
@@ -830,13 +777,8 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	// s3 is an old node without feature support
 	rpc.GetNode(s3).SetNodeFeatures([]proto.Feature{})
 
-	meta := metadata.NewMetadataProviderMemory()
-	defer meta.Close()
-	statusResource := resource.NewStatusResource(meta)
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
-	}, nil, nil)
-	defer configResource.Close()
+	statusResource := newTestStatusResource(nil)
+	configResource := newTestClusterConfigResource(model.ClusterConfig{})
 
 	featureSupplier := func(servers []model.Server) map[string][]proto.Feature {
 		result := make(map[string][]proto.Feature)
@@ -854,7 +796,7 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []model.Server{s1, s2, s3},
-	}, configResource, statusResource, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, configResource.callbacks(), statusResource.callbacks(), featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
 
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)

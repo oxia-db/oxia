@@ -25,7 +25,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
 
 // ShardSplitter is implemented by the coordinator to initiate shard splits.
@@ -38,13 +37,12 @@ var _ proto.OxiaAdminServer = (*adminServer)(nil)
 type adminServer struct {
 	proto.UnimplementedOxiaAdminServer
 
-	statusResource resource.StatusResource
-	ccr            resource.ClusterConfigResource
+	config         *model.ClusterConfig
 	shardSplitter  ShardSplitter
 }
 
 func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
-	cnf := admin.ccr.Load()
+	cnf := admin.config
 
 	dataServers := make([]*proto.DataServer, len(cnf.Servers))
 	for i, server := range cnf.Servers {
@@ -59,7 +57,7 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
 
-	dataServerInfo, found := admin.ccr.GetDataServerInfo(req.DataServer)
+	dataServerInfo, found := getDataServerInfo(admin.config, req.DataServer)
 	if !found {
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
@@ -70,7 +68,7 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
-	cnf := admin.ccr.Load()
+	cnf := admin.config
 
 	namespaceConfigs := cnf.Namespaces
 	namespaceNames := hashset.New[string]()
@@ -83,7 +81,7 @@ func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesR
 }
 
 func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
-	cnf := admin.ccr.Load()
+	cnf := admin.config
 
 	cnfNodes := cnf.Servers
 	cnfMeta := cnf.ServerMetadata
@@ -127,13 +125,31 @@ func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardReq
 }
 
 func newAdminServer(
-	statusResource resource.StatusResource,
-	ccr resource.ClusterConfigResource,
+	config *model.ClusterConfig,
 	shardSplitter ShardSplitter,
 ) *adminServer {
 	return &adminServer{
-		statusResource: statusResource,
-		ccr:            ccr,
-		shardSplitter:  shardSplitter,
+		config:        config,
+		shardSplitter: shardSplitter,
 	}
+}
+
+func getDataServerInfo(config *model.ClusterConfig, id string) (*model.DataServerInfo, bool) {
+	if config == nil {
+		return nil, false
+	}
+	for idx := range config.Servers {
+		server := &config.Servers[idx]
+		if server.GetIdentifier() != id {
+			continue
+		}
+		info := &model.DataServerInfo{
+			Server: server,
+		}
+		if metadata, ok := config.ServerMetadata[id]; ok {
+			info.Metadata = metadata
+		}
+		return info, true
+	}
+	return nil, false
 }

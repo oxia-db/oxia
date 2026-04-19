@@ -26,7 +26,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
@@ -50,8 +49,8 @@ type nodeBasedBalancer struct {
 	cancel context.CancelFunc
 
 	loadBalancerConf    *model.LoadBalancer
-	statusResource      resource.StatusResource
-	configResource      resource.ClusterConfigResource
+	loadStatus          func() *model.ClusterStatus
+	clusterConfig       *model.ClusterConfig
 	nodeAvailableJudger func(nodeID string) bool
 
 	selector           selector.Selector[*single.Context, string]
@@ -98,8 +97,8 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	r.checkQuarantineNodes()
 
 	swapGroup := &sync.WaitGroup{}
-	currentStatus := r.statusResource.Load()
-	candidates, metadata := r.configResource.NodesWithMetadata()
+	currentStatus := r.loadStatus()
+	candidates, metadata := nodesWithMetadata(r.clusterConfig)
 	groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
@@ -223,7 +222,7 @@ func (r *nodeBasedBalancer) swapShard(
 	var exist bool
 	var err error
 
-	if nsc, exist = r.configResource.NamespaceConfig(candidateShard.Namespace); !exist {
+	if nsc, exist = namespaceConfig(r.clusterConfig, candidateShard.Namespace); !exist {
 		return false, nil
 	}
 
@@ -262,7 +261,7 @@ func (r *nodeBasedBalancer) swapShard(
 		return false, nil
 	}
 	var targetNode *model.Server
-	if targetNode, exist = r.configResource.Node(targetNodeID); !exist {
+	if targetNode, exist = nodeByID(r.clusterConfig, targetNodeID); !exist {
 		return false, errors.New("target node does not exist")
 	}
 
@@ -313,8 +312,8 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 }
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
-	status := r.statusResource.Load()
-	candidates := r.configResource.Nodes()
+	status := r.loadStatus()
+	candidates := nodes(r.clusterConfig)
 	groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(candidates, status)
 	return r.loadRatioAlgorithm(
 		&model.RatioParams{
@@ -381,8 +380,8 @@ func (r *nodeBasedBalancer) startBackgroundNotifier() {
 func (r *nodeBasedBalancer) rebalanceLeader() {
 	r.checkQuarantineShards()
 
-	status := r.statusResource.Load()
-	candidates := r.configResource.Nodes()
+	status := r.loadStatus()
+	candidates := nodes(r.clusterConfig)
 	totalShards, electedShards, nodeLeaders := util.NodeShardLeaders(candidates, status)
 
 	electedRate := float64(electedShards) / float64(totalShards)
@@ -505,15 +504,84 @@ func NewLoadBalancer(options Options) LoadBalancer {
 		Logger:                  logger,
 		ctx:                     ctx,
 		cancel:                  cancelFunc,
-		loadBalancerConf:        options.ClusterConfigResource.LoadLoadBalancer(),
+		loadBalancerConf:        loadBalancerConfig(options.ClusterConfig),
 		actionCh:                make(chan action.Action, 1000),
 		nodeAvailableJudger:     options.NodeAvailableJudger,
-		statusResource:          options.StatusResource,
-		configResource:          options.ClusterConfigResource,
+		loadStatus:              options.LoadStatus,
+		clusterConfig:           options.ClusterConfig,
 		selector:                single.NewSelector(),
 		loadRatioAlgorithm:      single.DefaultShardsRank,
 		nodeQuarantineNodeMap:   &sync.Map{},
 		shardQuarantineShardMap: &sync.Map{},
 		triggerCh:               make(chan any, 1),
 	}
+}
+
+const (
+	defaultLoadBalancerScheduleInterval = 30 * time.Second
+	defaultLoadBalancerQuarantineTime   = 5 * time.Minute
+)
+
+func loadBalancerConfig(clusterConfig *model.ClusterConfig) *model.LoadBalancer {
+	config := &model.LoadBalancer{
+		ScheduleInterval: defaultLoadBalancerScheduleInterval,
+		QuarantineTime:   defaultLoadBalancerQuarantineTime,
+	}
+	if clusterConfig == nil || clusterConfig.LoadBalancer == nil {
+		return config
+	}
+	config = &model.LoadBalancer{
+		ScheduleInterval: clusterConfig.LoadBalancer.ScheduleInterval,
+		QuarantineTime:   clusterConfig.LoadBalancer.QuarantineTime,
+	}
+	if config.ScheduleInterval == 0 {
+		config.ScheduleInterval = defaultLoadBalancerScheduleInterval
+	}
+	if config.QuarantineTime == 0 {
+		config.QuarantineTime = defaultLoadBalancerQuarantineTime
+	}
+	return config
+}
+
+func nodes(clusterConfig *model.ClusterConfig) *linkedhashset.Set[string] {
+	candidates := linkedhashset.New[string]()
+	if clusterConfig == nil {
+		return candidates
+	}
+	for _, server := range clusterConfig.Servers {
+		candidates.Add(server.GetIdentifier())
+	}
+	return candidates
+}
+
+func nodesWithMetadata(clusterConfig *model.ClusterConfig) (*linkedhashset.Set[string], map[string]model.ServerMetadata) {
+	candidates := nodes(clusterConfig)
+	if clusterConfig == nil {
+		return candidates, map[string]model.ServerMetadata{}
+	}
+	return candidates, clusterConfig.ServerMetadata
+}
+
+func namespaceConfig(clusterConfig *model.ClusterConfig, namespace string) (*model.NamespaceConfig, bool) {
+	if clusterConfig == nil {
+		return nil, false
+	}
+	for idx := range clusterConfig.Namespaces {
+		if clusterConfig.Namespaces[idx].Name == namespace {
+			return &clusterConfig.Namespaces[idx], true
+		}
+	}
+	return nil, false
+}
+
+func nodeByID(clusterConfig *model.ClusterConfig, id string) (*model.Server, bool) {
+	if clusterConfig == nil {
+		return nil, false
+	}
+	for idx := range clusterConfig.Servers {
+		if clusterConfig.Servers[idx].GetIdentifier() == id {
+			return &clusterConfig.Servers[idx], true
+		}
+	}
+	return nil, false
 }

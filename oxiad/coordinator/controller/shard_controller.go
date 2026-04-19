@@ -26,7 +26,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/selector/leader"
@@ -83,8 +82,8 @@ type shardController struct {
 	leaderSelector selector.Selector[*leaderselector.Context, model.Server]
 
 	eventListener                       ShardEventListener
-	configResource                      resource.ClusterConfigResource
-	statusResource                      resource.StatusResource
+	config                              ClusterConfigCallbacks
+	status                              StatusCallbacks
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 
 	electionOp          chan *action.ElectionAction
@@ -121,8 +120,8 @@ func NewShardController(
 	shard int64,
 	nc *model.NamespaceConfig,
 	shardMetadata model.ShardMetadata,
-	configResource resource.ClusterConfigResource,
-	statusResource resource.StatusResource,
+	config ClusterConfigCallbacks,
+	status StatusCallbacks,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	eventListener ShardEventListener,
 	rpcProvider rpc.Provider,
@@ -134,8 +133,8 @@ func NewShardController(
 		namespaceConfig:                     nc,
 		metadata:                            NewMetadata(shardMetadata),
 		rpc:                                 rpcProvider,
-		configResource:                      configResource,
-		statusResource:                      statusResource,
+		config:                              config,
+		status:                              status,
 		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
 		eventListener:                       eventListener,
 		leaderSelector:                      leaderselector.NewSelector(),
@@ -262,7 +261,7 @@ func (s *shardController) waitForSplitComplete() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			status := s.statusResource.Load()
+			status := s.status.Load()
 			ns, exists := status.Namespaces[s.namespace]
 			if !exists {
 				continue
@@ -362,13 +361,13 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		EnableNotifications: true,
 		KeySorting:          proto.KeySortingType_UNKNOWN,
 	}
-	nsConfig, exist := s.configResource.NamespaceConfig(s.namespace)
+	nsConfig, exist := s.config.NamespaceConfig(s.namespace)
 	if exist {
 		termOptions.EnableNotifications = nsConfig.NotificationsEnabled.Get()
 		termOptions.KeySorting = nsConfig.KeySorting.ToProto()
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
-		s.statusResource, s.configResource, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
+		s.status, s.config, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
 		s.rpc, &s.metadata, s.namespace, s.shard, changeEnsembleAction,
 		termOptions,
 		s.leaderElectionLatency,
@@ -427,7 +426,7 @@ func (s *shardController) deleteShard() error {
 		)
 	}
 
-	s.statusResource.DeleteShardMetadata(s.namespace, s.shard)
+	s.status.DeleteShardMetadata(s.namespace, s.shard)
 	s.eventListener.ShardDeleted(s.shard)
 	return s.close()
 }
@@ -477,7 +476,7 @@ func (s *shardController) SyncServerAddress() {
 	shardMeta := s.metadata.Load()
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
-		if newInfo, ok := s.configResource.Node(candidate.GetIdentifier()); ok {
+		if newInfo, ok := s.config.Node(candidate.GetIdentifier()); ok {
 			if newInfo.Public != candidate.Public || newInfo.Internal != candidate.Internal {
 				needSync = true
 				break
@@ -508,7 +507,7 @@ func (s *shardController) handlePeriodicTasks() {
 	}
 
 	// Update the shard status
-	s.statusResource.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta)
+	s.status.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta)
 	s.metadata.Store(mutShardMeta)
 }
 

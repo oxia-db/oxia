@@ -20,7 +20,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
@@ -63,10 +62,9 @@ type GrpcServer struct {
 	metrics      *metric.PrometheusMetrics
 }
 
-func watchClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper, clusterConfigChangeNotifications chan any) error {
+func configureClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper) error {
 	configPath := cluster.ConfigPath
 	v.SetConfigType("yaml")
-	onChange := func() { clusterConfigChangeNotifications <- nil }
 
 	switch {
 	// remote configmap
@@ -76,10 +74,7 @@ func watchClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper, 
 			slog.Error("Failed to add remote provider", slog.Any("error", err))
 			return err
 		}
-		if watcher, ok := viper.RemoteConfig.(interface{ OnConfigChange(func()) }); ok {
-			watcher.OnConfigChange(onChange)
-		}
-		return v.WatchRemoteConfigOnChannel()
+		return nil
 	// local file
 	case configPath == "":
 		v.AddConfigPath("/oxia/conf")
@@ -88,8 +83,6 @@ func watchClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper, 
 		v.SetConfigFile(configPath)
 	}
 
-	v.OnConfigChange(func(_ fsnotify.Event) { onChange() })
-	v.WatchConfig()
 	return nil
 }
 
@@ -129,17 +122,12 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 
 	v := viper.New()
 
-	clusterConfigChangeNotifications := make(chan any)
-
-	clusterConfigProvider := func() (model.ClusterConfig, error) {
-		return loadClusterConfig(&options.Cluster, v)
-	}
-
-	if err := watchClusterConfigProvider(&options.Cluster, v, clusterConfigChangeNotifications); err != nil {
+	if err := configureClusterConfigProvider(&options.Cluster, v); err != nil {
 		return nil, err
 	}
 
-	if _, err := clusterConfigProvider(); err != nil {
+	clusterConfig, err := loadClusterConfig(&options.Cluster, v)
+	if err != nil {
 		return nil, err
 	}
 
@@ -188,7 +176,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfig, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -199,8 +187,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 	admin := newAdminServer(
-		coordinatorInstance.StatusResource(),
-		coordinatorInstance.ConfigResource(),
+		&clusterConfig,
 		coordinatorInstance,
 	)
 	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck

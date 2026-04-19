@@ -25,12 +25,10 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
 )
 
-// mockStatusResource implements resource.StatusResource for testing.
 type mockStatusResource struct {
 	status *model.ClusterStatus
 }
@@ -39,27 +37,6 @@ func (m *mockStatusResource) Load() *model.ClusterStatus {
 	return m.status
 }
 
-func (m *mockStatusResource) ApplyChanges(_ *model.ClusterConfig, _ resource.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
-	return m.status, nil, nil
-}
-
-func (m *mockStatusResource) Update(newStatus *model.ClusterStatus) {
-	m.status = newStatus
-}
-
-func (m *mockStatusResource) UpdateShardMetadata(_ string, _ int64, _ model.ShardMetadata) {}
-
-func (m *mockStatusResource) DeleteShardMetadata(_ string, _ int64) {}
-
-func (m *mockStatusResource) IsReady(_ *model.ClusterConfig) bool {
-	return true
-}
-
-func (m *mockStatusResource) ChangeNotify() <-chan struct{} {
-	return make(chan struct{})
-}
-
-// mockClusterConfigResource implements resource.ClusterConfigResource for testing.
 type mockClusterConfigResource struct {
 	nodes     *linkedhashset.Set[string]
 	metadata  map[string]model.ServerMetadata
@@ -68,11 +45,7 @@ type mockClusterConfigResource struct {
 	lbConfig  *model.LoadBalancer
 }
 
-func (m *mockClusterConfigResource) Close() error { return nil }
-
-func (m *mockClusterConfigResource) Load() *model.ClusterConfig { return nil }
-
-func (m *mockClusterConfigResource) LoadLoadBalancer() *model.LoadBalancer {
+func (m *mockClusterConfigResource) loadLoadBalancer() *model.LoadBalancer {
 	if m.lbConfig != nil {
 		return m.lbConfig
 	}
@@ -82,35 +55,21 @@ func (m *mockClusterConfigResource) LoadLoadBalancer() *model.LoadBalancer {
 	}
 }
 
-func (m *mockClusterConfigResource) Nodes() *linkedhashset.Set[string] { return m.nodes }
-
-func (m *mockClusterConfigResource) NodesWithMetadata() (*linkedhashset.Set[string], map[string]model.ServerMetadata) {
-	return m.nodes, m.metadata
-}
-
-func (m *mockClusterConfigResource) NamespaceConfig(namespace string) (*model.NamespaceConfig, bool) {
-	nc, ok := m.nsConfigs[namespace]
-	return nc, ok
-}
-
-func (m *mockClusterConfigResource) Node(id string) (*model.Server, bool) {
-	n, ok := m.nodeMap[id]
-	return n, ok
-}
-
-func (m *mockClusterConfigResource) GetDataServerInfo(id string) (*model.DataServerInfo, bool) {
-	n, ok := m.nodeMap[id]
-	if !ok {
-		return nil, false
+func (m *mockClusterConfigResource) clusterConfig() *model.ClusterConfig {
+	servers := make([]model.Server, 0, len(m.nodeMap))
+	for _, node := range m.nodeMap {
+		servers = append(servers, *node)
 	}
-	metadata, ok := m.metadata[id]
-	if !ok {
-		metadata = model.ServerMetadata{}
+	namespaces := make([]model.NamespaceConfig, 0, len(m.nsConfigs))
+	for _, nsConfig := range m.nsConfigs {
+		namespaces = append(namespaces, *nsConfig)
 	}
-	return &model.DataServerInfo{
-		Server:   n,
-		Metadata: metadata,
-	}, true
+	return &model.ClusterConfig{
+		Servers:        servers,
+		ServerMetadata: m.metadata,
+		Namespaces:     namespaces,
+		LoadBalancer:   m.loadLoadBalancer(),
+	}
 }
 
 // alwaysErrorSelector is a selector that always returns ErrUnsatisfiedAntiAffinity.
@@ -132,9 +91,9 @@ func newTestBalancer(
 		WaitGroup:               &sync.WaitGroup{},
 		ctx:                     ctx,
 		cancel:                  cancel,
-		loadBalancerConf:        configRes.LoadLoadBalancer(),
-		statusResource:          statusRes,
-		configResource:          configRes,
+		loadBalancerConf:        configRes.loadLoadBalancer(),
+		loadStatus:              statusRes.Load,
+		clusterConfig:           configRes.clusterConfig(),
 		selector:                sel,
 		loadRatioAlgorithm:      single.DefaultShardsRank,
 		nodeQuarantineNodeMap:   &sync.Map{},
