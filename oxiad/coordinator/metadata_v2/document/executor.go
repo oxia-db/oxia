@@ -77,6 +77,7 @@ func (m *Executor[T]) Pause() error {
 }
 
 func (m *Executor[T]) Resume() error {
+	m.record.SyncLoad()
 	return m.actor.Resume()
 }
 
