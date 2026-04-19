@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/process"
 )
 
@@ -36,11 +37,6 @@ const (
 	StatusClosed
 )
 
-type Errors struct {
-	Pause    error
-	Shutdown error
-}
-
 type Actor[T any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -48,7 +44,6 @@ type Actor[T any] struct {
 	wg sync.WaitGroup
 	mu sync.Mutex
 
-	ers    Errors
 	queue  []T
 	status Status
 
@@ -56,33 +51,25 @@ type Actor[T any] struct {
 	notify  chan struct{}
 }
 
-func New[T any](ctx context.Context, name string, handler func([]T), ers Errors) (*Actor[T], error) {
-	if handler == nil {
-		return nil, errors.New("handler must not be nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
+func New[T any](ctx context.Context, name string, handler func([]T), status Status) (*Actor[T], error) {
 	actorCtx, cancel := context.WithCancel(ctx)
-	ers = withDefaults(ers)
+	if name == "" {
+		name = "actor"
+	}
 
 	a := &Actor[T]{
 		ctx:     actorCtx,
 		cancel:  cancel,
-		ers:     ers,
 		queue:   make([]T, 0),
-		status:  StatusActive,
+		status:  status,
 		handler: handler,
 		notify:  make(chan struct{}, 1),
 	}
 
-	a.wg.Add(1)
-	go process.DoWithLabels(actorCtx, map[string]string{
-		"oxia": fmt.Sprintf("actor-%s", actorName(name)),
-	}, func() {
-		defer a.wg.Done()
-		a.run()
+	a.wg.Go(func() {
+		process.DoWithLabels(actorCtx, map[string]string{
+			"oxia": fmt.Sprintf("actor-%s", name),
+		}, a.run)
 	})
 
 	return a, nil
@@ -92,19 +79,18 @@ func (a *Actor[T]) Send(item T) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.ctx.Err() != nil {
-		return a.ers.Shutdown
-	}
-
 	switch a.status {
+	case StatusActive:
 	case StatusPaused:
-		return a.ers.Pause
+		return ErrPaused
 	case StatusClosed:
-		return a.ers.Shutdown
+		return ErrShuttingDown
+	default:
+		panic("unknown actor status")
 	}
 
 	a.queue = append(a.queue, item)
-	a.signalLocked()
+	channel.PushNoBlock(a.notify, struct{}{})
 	return nil
 }
 
@@ -112,12 +98,8 @@ func (a *Actor[T]) Pause() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.ctx.Err() != nil {
-		return a.ers.Shutdown
-	}
-
 	if a.status == StatusClosed {
-		return a.ers.Shutdown
+		return ErrShuttingDown
 	}
 
 	a.status = StatusPaused
@@ -128,17 +110,13 @@ func (a *Actor[T]) Resume() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.ctx.Err() != nil {
-		return a.ers.Shutdown
-	}
-
 	if a.status == StatusClosed {
-		return a.ers.Shutdown
+		return ErrShuttingDown
 	}
 
 	a.status = StatusActive
 	if len(a.queue) > 0 {
-		a.signalLocked()
+		channel.PushNoBlock(a.notify, struct{}{})
 	}
 	return nil
 }
@@ -147,7 +125,8 @@ func (a *Actor[T]) Close() error {
 	a.mu.Lock()
 	if a.status == StatusClosed {
 		a.mu.Unlock()
-		return a.ers.Shutdown
+		a.wg.Wait()
+		return nil
 	}
 	a.status = StatusClosed
 	a.mu.Unlock()
@@ -161,6 +140,9 @@ func (a *Actor[T]) run() {
 	for {
 		select {
 		case <-a.ctx.Done():
+			a.mu.Lock()
+			a.status = StatusClosed
+			a.mu.Unlock()
 			return
 		case <-a.notify:
 		}
@@ -192,28 +174,4 @@ func (a *Actor[T]) take() ([]T, bool) {
 	batch := a.queue
 	a.queue = make([]T, 0)
 	return batch, false
-}
-
-func (a *Actor[T]) signalLocked() {
-	select {
-	case a.notify <- struct{}{}:
-	default:
-	}
-}
-
-func actorName(name string) string {
-	if name == "" {
-		return "actor"
-	}
-	return name
-}
-
-func withDefaults(ers Errors) Errors {
-	if ers.Pause == nil {
-		ers.Pause = ErrPaused
-	}
-	if ers.Shutdown == nil {
-		ers.Shutdown = ErrShuttingDown
-	}
-	return ers
 }

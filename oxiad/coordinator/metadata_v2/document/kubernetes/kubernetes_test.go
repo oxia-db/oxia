@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"sync/atomic"
@@ -10,15 +11,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 	coordinationv1 "k8s.io/api/coordination/v1"
+	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	kubernetesclient "k8s.io/client-go/kubernetes"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
 	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -28,66 +33,70 @@ import (
 
 func TestBackendCommitLoadAndBadVersion(t *testing.T) {
 	client := newVersionedClientset()
-	backend := NewBackend(context.Background(), client, "default", "metadata")
+	backend := newBackend(context.Background(), client, "default", "backend")
 	t.Cleanup(func() {
 		assert.NoError(t, backend.Close())
 	})
 
-	_, err := backend.CommitConfig(&document.Versioned[*metadatapb.Cluster]{
+	config := &document.Versioned[gproto.Message]{
 		Value: &metadatapb.Cluster{
 			AllowedExtraAuthorities: []string{"ca-1"},
 		},
-	})
+	}
+	err := backend.Store(document.ConfigRecordName, config)
 	require.NoError(t, err)
 
-	loadedConfig := backend.LoadConfig()
+	loadedConfig := loadBackendRecord[*metadatapb.Cluster](t, backend, document.ConfigRecordName)
 	require.NotNil(t, loadedConfig)
 	require.NotNil(t, loadedConfig.Value)
 	assert.Equal(t, []string{"ca-1"}, loadedConfig.Value.AllowedExtraAuthorities)
 
-	_, err = backend.CommitStatus(&document.Versioned[*metadatapb.ClusterState]{
+	status := &document.Versioned[gproto.Message]{
 		Value: &metadatapb.ClusterState{
 			Namespaces: map[string]*metadatapb.NamespaceState{
 				"ns-1": {ReplicationFactor: 3},
 			},
 		},
-	})
+	}
+	err = backend.Store(document.StatusRecordName, status)
 	require.NoError(t, err)
 
-	loadedStatus := backend.LoadStatus()
+	loadedStatus := loadBackendRecord[*metadatapb.ClusterState](t, backend, document.StatusRecordName)
 	require.NotNil(t, loadedStatus)
 	require.NotNil(t, loadedStatus.Value)
 	require.Contains(t, loadedStatus.Value.Namespaces, "ns-1")
 	assert.EqualValues(t, 3, loadedStatus.Value.Namespaces["ns-1"].ReplicationFactor)
 
-	configMap, err := client.CoreV1().ConfigMaps("default").Get(context.Background(), "metadata-conf", metav1.GetOptions{})
+	configMap, err := client.CoreV1().ConfigMaps("default").Get(context.Background(), string(document.ConfigRecordName), metav1.GetOptions{})
 	require.NoError(t, err)
 	configMap.Data[documentDataKey] = "{\n  \"allowedExtraAuthorities\": [\n    \"remote\"\n  ]\n}\n"
 	_, err = client.CoreV1().ConfigMaps("default").Update(context.Background(), configMap, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
-	_, err = backend.CommitConfig(&document.Versioned[*metadatapb.Cluster]{
+	config = &document.Versioned[gproto.Message]{
 		Version: loadedConfig.Version,
 		Value: &metadatapb.Cluster{
 			AllowedExtraAuthorities: []string{"local"},
 		},
-	})
+	}
+	err = backend.Store(document.ConfigRecordName, config)
 	require.ErrorIs(t, err, document.ErrBadVersion)
 
-	reloaded := backend.LoadConfig()
+	reloaded := loadBackendRecord[*metadatapb.Cluster](t, backend, document.ConfigRecordName)
 	require.NotNil(t, reloaded)
 	require.NotNil(t, reloaded.Value)
 	assert.Equal(t, []string{"remote"}, reloaded.Value.AllowedExtraAuthorities)
 
-	_, err = backend.CommitConfig(&document.Versioned[*metadatapb.Cluster]{
+	config = &document.Versioned[gproto.Message]{
 		Version: reloaded.Version,
 		Value: &metadatapb.Cluster{
 			AllowedExtraAuthorities: []string{"final"},
 		},
-	})
+	}
+	err = backend.Store(document.ConfigRecordName, config)
 	require.NoError(t, err)
 
-	finalConfig := backend.LoadConfig()
+	finalConfig := loadBackendRecord[*metadatapb.Cluster](t, backend, document.ConfigRecordName)
 	require.NotNil(t, finalConfig)
 	require.NotNil(t, finalConfig.Value)
 	assert.Equal(t, []string{"final"}, finalConfig.Value.AllowedExtraAuthorities)
@@ -97,7 +106,7 @@ func TestStoreLeaseHandoff(t *testing.T) {
 	restoreLeaseTimings(t, 1500*time.Millisecond, time.Second, 200*time.Millisecond)
 
 	client := newVersionedClientset()
-	primary := NewStore(context.Background(), client, "default", "metadata")
+	primary := document.NewStore(context.Background(), newBackend(context.Background(), client, "default", "primary"))
 	primaryClosed := false
 	t.Cleanup(func() {
 		if !primaryClosed {
@@ -106,9 +115,11 @@ func TestStoreLeaseHandoff(t *testing.T) {
 	})
 
 	waitForLeaseState(t, primary, metadatapb.LeaseState_LEASE_STATE_HELD)
-	require.NoError(t, primary.CreateNamespaces([]*metadatapb.Namespace{{Name: "primary"}}))
+	requireEventuallyLeaseReady(t, func() error {
+		return primary.CreateNamespaces([]*metadatapb.Namespace{{Name: "primary"}})
+	})
 
-	secondary := NewStore(context.Background(), client, "default", "metadata")
+	secondary := document.NewStore(context.Background(), newBackend(context.Background(), client, "default", "secondary"))
 	t.Cleanup(func() {
 		assert.NoError(t, secondary.Close())
 	})
@@ -121,7 +132,9 @@ func TestStoreLeaseHandoff(t *testing.T) {
 	primaryClosed = true
 
 	waitForLeaseState(t, secondary, metadatapb.LeaseState_LEASE_STATE_HELD)
-	require.NoError(t, secondary.CreateNamespaces([]*metadatapb.Namespace{{Name: "secondary"}}))
+	requireEventuallyLeaseReady(t, func() error {
+		return secondary.CreateNamespaces([]*metadatapb.Namespace{{Name: "secondary"}})
+	})
 
 	namespace, err := secondary.GetNamespace("secondary")
 	require.NoError(t, err)
@@ -148,7 +161,7 @@ func TestBackendRevalidateLeaseRenewsHeldLease(t *testing.T) {
 	before, err := client.CoordinationV1().Leases("default").Get(context.Background(), "metadata-lease", metav1.GetOptions{})
 	require.NoError(t, err)
 
-	require.NoError(t, backend.RevalidateLease())
+	require.NoError(t, backend.LeaseRevalidate())
 
 	after, err := client.CoordinationV1().Leases("default").Get(context.Background(), "metadata-lease", metav1.GetOptions{})
 	require.NoError(t, err)
@@ -175,7 +188,7 @@ func TestBackendRevalidateLeaseFailsWhenHolderChanges(t *testing.T) {
 	require.NoError(t, err)
 
 	backend := newBackendForRevalidateTest(t, client, "holder")
-	err = backend.RevalidateLease()
+	err = backend.LeaseRevalidate()
 	require.ErrorIs(t, err, metadata_v2.ErrLeaseNotHeld)
 
 	state, _ := backend.LeaseWatch().Load()
@@ -209,12 +222,27 @@ func TestBackendRevalidateLeaseFailsOnRenewConflict(t *testing.T) {
 	})
 
 	backend := newBackendForRevalidateTest(t, client, "holder")
-	err = backend.RevalidateLease()
+	err = backend.LeaseRevalidate()
 	require.ErrorIs(t, err, metadata_v2.ErrLeaseNotHeld)
 	assert.True(t, conflicted.Load())
 
 	state, _ := backend.LeaseWatch().Load()
 	assert.Equal(t, metadatapb.LeaseState_LEASE_STATE_UNHELD, state)
+}
+
+func loadBackendRecord[T gproto.Message](t *testing.T, backend *Backend, name document.MetaRecordName) *document.Versioned[T] {
+	t.Helper()
+
+	record := backend.Load(name)
+	require.NotNil(t, record)
+
+	value, ok := record.Value.(T)
+	require.Truef(t, ok, "unexpected record type for %q: %T", name, record.Value)
+
+	return &document.Versioned[T]{
+		Version: record.Version,
+		Value:   value,
+	}
 }
 
 func restoreLeaseTimings(t *testing.T, duration time.Duration, deadline time.Duration, period time.Duration) {
@@ -246,6 +274,24 @@ func waitForLeaseState(t *testing.T, store *Store, expected metadatapb.LeaseStat
 		state, version, err = watch.Wait(ctx, version)
 		require.NoError(t, err)
 	}
+}
+
+func requireEventuallyLeaseReady(t *testing.T, op func() error) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		lastErr = op()
+		if lastErr == nil {
+			return
+		}
+		if !errors.Is(lastErr, metadata_v2.ErrLeaseNotHeld) {
+			require.NoError(t, lastErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.NoError(t, lastErr)
 }
 
 func newVersionedClientset(objects ...runtime.Object) *kubernetesfake.Clientset {
@@ -302,6 +348,53 @@ func newVersionedClientset(objects ...runtime.Object) *kubernetesfake.Clientset 
 		return false, nil, nil
 	})
 
+	client.PrependReactor("patch", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		patchAction, ok := action.(ktesting.PatchAction)
+		if !ok {
+			return false, nil, nil
+		}
+		if patchAction.GetPatchType() != types.ApplyPatchType {
+			return true, nil, errors.New("expected apply patch")
+		}
+
+		existing, err := client.Tracker().Get(action.GetResource(), action.GetNamespace(), patchAction.GetName())
+		if err != nil {
+			return true, nil, err
+		}
+
+		existingConfigMap, ok := existing.(*corev1.ConfigMap)
+		if !ok {
+			return true, nil, errors.New("expected ConfigMap for patch")
+		}
+
+		var patch struct {
+			Metadata struct {
+				ResourceVersion string `json:"resourceVersion"`
+			} `json:"metadata"`
+			Data map[string]string `json:"data"`
+		}
+		if err := json.Unmarshal(patchAction.GetPatch(), &patch); err != nil {
+			return true, nil, err
+		}
+
+		if patch.Metadata.ResourceVersion != existingConfigMap.ResourceVersion {
+			return true, nil, k8serrors.NewConflict(schema.GroupResource{
+				Group:    action.GetResource().Group,
+				Resource: action.GetResource().Resource,
+			}, patchAction.GetName(), errors.New("resourceVersion mismatch"))
+		}
+
+		updated := existingConfigMap.DeepCopy()
+		if patch.Data != nil {
+			updated.Data = patch.Data
+		}
+		updated.ResourceVersion = nextVersion()
+		if err := client.Tracker().Update(action.GetResource(), updated, action.GetNamespace()); err != nil {
+			return true, nil, err
+		}
+		return true, updated, nil
+	})
+
 	return client
 }
 
@@ -314,10 +407,19 @@ func newBackendForRevalidateTest(t *testing.T, client kubernetesclient.Interface
 		namespace:  "default",
 		identity:   identity,
 		leaseName:  "metadata-lease",
-		leaseLock:  newBackendLeaseLock(client, "default", "metadata-lease", identity),
 		leaseWatch: commonoption.NewWatch(metadatapb.LeaseState_LEASE_STATE_HELD),
 	}
-	_, _, err := backend.leaseLock.Get(context.Background())
+	backend.leaseLock = &resourcelock.LeaseLock{
+		LeaseMeta: metav1.ObjectMeta{
+			Name:      "metadata-lease",
+			Namespace: "default",
+		},
+		Client: client.CoordinationV1(),
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity: identity,
+		},
+	}
+	_, _, err := backend.Get(context.Background())
 	require.NoError(t, err)
 	return backend
 }

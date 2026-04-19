@@ -37,9 +37,7 @@ func TestActorPauseOnlyRejectsNewRequests(t *testing.T) {
 		started <- batch
 		<-release
 		processed <- batch
-	}, Errors{
-		Pause: errors.New("metadata unavailable"),
-	})
+	}, StatusActive)
 	require.NoError(t, err)
 	defer func() {
 		_ = a.Close()
@@ -51,7 +49,7 @@ func TestActorPauseOnlyRejectsNewRequests(t *testing.T) {
 	require.NoError(t, a.Send(2))
 	require.NoError(t, a.Send(3))
 	require.NoError(t, a.Pause())
-	assert.EqualError(t, a.Send(4), "metadata unavailable")
+	assert.ErrorIs(t, a.Send(4), ErrPaused)
 
 	close(release)
 
@@ -71,21 +69,23 @@ func TestActorPauseOnlyRejectsNewRequests(t *testing.T) {
 	assert.Equal(t, []int{5}, <-processed)
 }
 
-func TestActorPauseUsesConfiguredError(t *testing.T) {
+func TestActorCanStartPaused(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pauseErr := errors.New("metadata unavailable")
-	a, err := New[int](ctx, "test-pause-err", func([]int) {}, Errors{
-		Pause: pauseErr,
-	})
+	started := make(chan []int, 1)
+	a, err := New[int](ctx, "test-start-paused", func(items []int) {
+		started <- append([]int(nil), items...)
+	}, StatusPaused)
 	require.NoError(t, err)
 	defer func() {
 		_ = a.Close()
 	}()
 
-	require.NoError(t, a.Pause())
-	assert.ErrorIs(t, a.Send(1), pauseErr)
+	assert.ErrorIs(t, a.Send(1), ErrPaused)
+	require.NoError(t, a.Resume())
+	require.NoError(t, a.Send(2))
+	assert.Equal(t, []int{2}, <-started)
 }
 
 func TestActorCloseRejectsNewRequests(t *testing.T) {
@@ -96,13 +96,10 @@ func TestActorCloseRejectsNewRequests(t *testing.T) {
 	release := make(chan struct{})
 	closed := make(chan error, 1)
 
-	shutdownErr := errors.New("metadata closed")
 	a, err := New[int](ctx, "test-close", func([]int) {
 		started <- struct{}{}
 		<-release
-	}, Errors{
-		Shutdown: shutdownErr,
-	})
+	}, StatusActive)
 	require.NoError(t, err)
 
 	require.NoError(t, a.Send(1))
@@ -113,23 +110,17 @@ func TestActorCloseRejectsNewRequests(t *testing.T) {
 	}()
 
 	require.Eventually(t, func() bool {
-		return errors.Is(a.Send(2), shutdownErr)
+		return errors.Is(a.Send(2), ErrShuttingDown)
 	}, time.Second, 10*time.Millisecond)
 
-	assert.ErrorIs(t, a.Send(2), shutdownErr)
+	assert.ErrorIs(t, a.Send(2), ErrShuttingDown)
 	close(release)
 	require.NoError(t, <-closed)
 }
 
-func TestActorRequiresHandler(t *testing.T) {
-	a, err := New[int](context.Background(), "test-nil", nil, Errors{})
-	assert.Nil(t, a)
-	assert.EqualError(t, err, "handler must not be nil")
-}
-
 func TestActorRejectsSendAfterParentContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	a, err := New[int](ctx, "test-parent-cancel", func([]int) {}, Errors{})
+	a, err := New[int](ctx, "test-parent-cancel", func([]int) {}, StatusActive)
 	require.NoError(t, err)
 
 	cancel()

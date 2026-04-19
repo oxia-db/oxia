@@ -2,6 +2,7 @@ package file
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,9 +10,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document"
 )
 
 func TestFileStorePersistsConfigAndStatus(t *testing.T) {
@@ -27,37 +30,51 @@ func TestFileStorePersistsConfigAndStatus(t *testing.T) {
 
 	waitForLeaseState(t, store, metadatapb.LeaseState_LEASE_STATE_HELD)
 
-	require.NoError(t, store.AddExtraAllowedAuthorities([]string{"ca-1"}))
-	require.NoError(t, store.CreateDataServers([]*metadatapb.DataServer{
+	requireEventuallyLeaseReady(t, func() error {
+		return store.AddExtraAllowedAuthorities([]string{"ca-1"})
+	})
+	requireEventuallyLeaseReady(t, func() error {
+		return store.CreateDataServers([]*metadatapb.DataServer{
 		{
 			Name:            "ds-1",
 			PublicAddress:   "public:6648",
 			InternalAddress: "internal:6649",
 		},
-	}))
-	require.NoError(t, store.CreateNamespaces([]*metadatapb.Namespace{
-		{Name: "ns-1"},
-	}))
-	require.NoError(t, store.CreateNamespaceStates(map[string]*metadatapb.NamespaceState{
-		"ns-1": {ReplicationFactor: 3},
-	}))
-
-	shard, err := store.PatchShardState("ns-1", 1, &metadatapb.ShardState{
-		Status: metadatapb.ShardStatus_SHARD_STATUS_STEADY,
-		Term:   7,
-		Leader: "ds-1",
+		})
 	})
-	require.NoError(t, err)
+	requireEventuallyLeaseReady(t, func() error {
+		return store.CreateNamespaces([]*metadatapb.Namespace{
+		{Name: "ns-1"},
+		})
+	})
+	requireEventuallyLeaseReady(t, func() error {
+		return store.CreateNamespaceStates(map[string]*metadatapb.NamespaceState{
+		"ns-1": {ReplicationFactor: 3},
+		})
+	})
+
+	var (
+		shard *metadatapb.ShardState
+		err   error
+	)
+	requireEventuallyLeaseReady(t, func() error {
+		shard, err = store.PatchShardState("ns-1", 1, &metadatapb.ShardState{
+			Status: metadatapb.ShardStatus_SHARD_STATUS_STEADY,
+			Term:   7,
+			Leader: "ds-1",
+		})
+		return err
+	})
 	assert.Equal(t, metadatapb.ShardStatus_SHARD_STATUS_STEADY, shard.Status)
 	assert.Equal(t, int64(7), shard.Term)
 
-	configContent, err := os.ReadFile(filepath.Join(dir, defaultConfigFileName))
+	configContent, err := os.ReadFile(filepath.Join(dir, string(document.ConfigRecordName)))
 	require.NoError(t, err)
 	assert.Contains(t, string(configContent), "allowedExtraAuthorities")
 	assert.NotContains(t, string(configContent), "allowed_extra_authorities")
 
-	require.FileExists(t, filepath.Join(dir, defaultConfigFileName))
-	require.FileExists(t, filepath.Join(dir, defaultStateFileName))
+	require.FileExists(t, filepath.Join(dir, string(document.ConfigRecordName)))
+	require.FileExists(t, filepath.Join(dir, string(document.StatusRecordName)))
 	require.NoError(t, store.Close())
 	storeClosed = true
 
@@ -102,7 +119,9 @@ func TestFileStoreLeaseHandoff(t *testing.T) {
 	})
 
 	waitForLeaseState(t, primary, metadatapb.LeaseState_LEASE_STATE_HELD)
-	require.NoError(t, primary.CreateNamespaces([]*metadatapb.Namespace{{Name: "primary"}}))
+	requireEventuallyLeaseReady(t, func() error {
+		return primary.CreateNamespaces([]*metadatapb.Namespace{{Name: "primary"}})
+	})
 
 	secondary := NewStore(context.Background(), dir)
 	t.Cleanup(func() {
@@ -118,12 +137,14 @@ func TestFileStoreLeaseHandoff(t *testing.T) {
 
 	waitForLeaseState(t, secondary, metadatapb.LeaseState_LEASE_STATE_HELD)
 
-	require.NoError(t, secondary.CreateNamespaces([]*metadatapb.Namespace{{Name: "secondary"}}))
+	requireEventuallyLeaseReady(t, func() error {
+		return secondary.CreateNamespaces([]*metadatapb.Namespace{{Name: "secondary"}})
+	})
 	created, err := secondary.GetNamespace("secondary")
 	require.NoError(t, err)
 	assert.Equal(t, "secondary", created.Name)
 
-	content, err := os.ReadFile(filepath.Join(dir, defaultConfigFileName))
+	content, err := os.ReadFile(filepath.Join(dir, string(document.ConfigRecordName)))
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "secondary")
 }
@@ -153,6 +174,29 @@ func TestFileStoreCloseWhileWaitingForLease(t *testing.T) {
 	}
 }
 
+func TestFileBackendUsesPrivatePermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "metadata")
+
+	backend := NewBackend(context.Background(), dir)
+	t.Cleanup(func() {
+		assert.NoError(t, backend.Close())
+	})
+
+	require.NoError(t, backend.Store(document.ConfigRecordName, &document.Versioned[gproto.Message]{
+		Value: &metadatapb.Cluster{
+			AllowedExtraAuthorities: []string{"ca-1"},
+		},
+	}))
+
+	dirInfo, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
+
+	recordInfo, err := os.Stat(filepath.Join(dir, string(document.ConfigRecordName)))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), recordInfo.Mode().Perm())
+}
+
 func waitForLeaseState(t *testing.T, store *Store, expected metadatapb.LeaseState) {
 	t.Helper()
 
@@ -166,4 +210,22 @@ func waitForLeaseState(t *testing.T, store *Store, expected metadatapb.LeaseStat
 		state, version, err = watch.Wait(ctx, version)
 		require.NoError(t, err)
 	}
+}
+
+func requireEventuallyLeaseReady(t *testing.T, op func() error) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		lastErr = op()
+		if lastErr == nil {
+			return
+		}
+		if !errors.Is(lastErr, metadata_v2.ErrLeaseNotHeld) {
+			require.NoError(t, lastErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.NoError(t, lastErr)
 }

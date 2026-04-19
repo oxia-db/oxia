@@ -4,88 +4,49 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"reflect"
 	"slices"
 	"sync"
-	"sync/atomic"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/process"
 	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
-	commonactor "github.com/oxia-db/oxia/oxiad/common/actor"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2"
 )
 
 var _ metadata_v2.Store = (*Store)(nil)
 
-type Backend interface {
-	io.Closer
-
-	LeaseWatch() *commonoption.Watch[metadatapb.LeaseState]
-	RevalidateLease() error
-
-	LoadConfig() *Versioned[*metadatapb.Cluster]
-	CommitConfig(*Versioned[*metadatapb.Cluster]) (*Versioned[*metadatapb.Cluster], error)
-
-	LoadStatus() *Versioned[*metadatapb.ClusterState]
-	CommitStatus(*Versioned[*metadatapb.ClusterState]) (*Versioned[*metadatapb.ClusterState], error)
-}
-
-type Versioned[T gproto.Message] struct {
-	Version string
-	Value   T
-}
-
 type Store struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-
+	ctx     context.Context
+	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	backend Backend
 
-	leaseWatch *commonoption.Watch[metadatapb.LeaseState]
+	configExecutor *Executor[*metadatapb.Cluster]
+	statusExecutor *Executor[*metadatapb.ClusterState]
 
-	configMutator *Mutator[*metadatapb.Cluster]
-	statusMutator *Mutator[*metadatapb.ClusterState]
-
-	config          atomic.Pointer[Versioned[*metadatapb.Cluster]]
-	configLoadMutex sync.Mutex
-	status          atomic.Pointer[Versioned[*metadatapb.ClusterState]]
-	statusLoadMutex sync.Mutex
+	config MetaRecord[*metadatapb.Cluster]
+	status MetaRecord[*metadatapb.ClusterState]
 }
 
 func NewStore(ctx context.Context, backend Backend) *Store {
 	storeCtx, cancel := context.WithCancel(ctx)
 	s := &Store{
-		ctx:        storeCtx,
-		cancel:     cancel,
-		backend:    backend,
-		leaseWatch: commonoption.NewWatch(metadatapb.LeaseState_LEASE_STATE_UNHELD),
+		ctx:     storeCtx,
+		cancel:  cancel,
+		backend: backend,
+		config:  newLazyMetaRecord[*metadatapb.Cluster](backend, ConfigRecordName),
+		status:  newLazyMetaRecord[*metadatapb.ClusterState](backend, StatusRecordName),
 	}
-
-	s.configMutator = NewMutator[*metadatapb.Cluster](s.ctx, "metadata-document-config", actorErrors(), Hooks[*metadatapb.Cluster]{
-		Load:         s.loadConfig,
-		Commit:       s.commitConfigMutationState,
-		OnBadVersion: s.handleConfigBadVersion,
-	})
-	s.statusMutator = NewMutator[*metadatapb.ClusterState](s.ctx, "metadata-document-status", actorErrors(), Hooks[*metadatapb.ClusterState]{
-		Load:         s.loadStatus,
-		Commit:       s.commitStatusMutationState,
-		OnBadVersion: s.handleStatusBadVersion,
-	})
-
-	state, _ := s.backend.LeaseWatch().Load()
-	s.leaseWatch = commonoption.NewWatch(state)
-	s.applyLeaseState(state)
+	s.configExecutor = NewExecutor(s.ctx, "config_executor", &s.config, s.revalidateLease)
+	s.statusExecutor = NewExecutor(s.ctx, "status_executor", &s.status, s.revalidateLease)
 
 	s.wg.Go(func() {
 		process.DoWithLabels(s.ctx, map[string]string{
 			"oxia": "metadata-v2-document-lease-observer",
-		}, s.observeLeaseLoop)
+		}, s.onLeaseChanged)
 	})
 
 	return s
@@ -94,8 +55,8 @@ func NewStore(ctx context.Context, backend Backend) *Store {
 func (s *Store) Close() error {
 	s.cancel()
 	closeErr := errors.Join(
-		s.configMutator.Close(),
-		s.statusMutator.Close(),
+		s.configExecutor.Close(),
+		s.statusExecutor.Close(),
 		s.backend.Close(),
 	)
 	s.wg.Wait()
@@ -103,18 +64,18 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) LeaseWatch() *commonoption.Watch[metadatapb.LeaseState] {
-	return s.leaseWatch
+	return s.backend.LeaseWatch()
 }
 
 func (s *Store) GetAllowedAuthorities() []string {
-	cfg := s.loadConfig()
+	cfg := s.config.Load()
 	return slices.Clone(cfg.AllowedExtraAuthorities)
 }
 
 func (s *Store) DeleteExtraAllowedAuthorities(authorities []string) error {
 	toDelete := hashset.New(authorities...)
 	toDelete.Remove("")
-	return s.mutateConfig(func(cfg *metadatapb.Cluster) {
+	return s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		filtered := make([]string, 0, len(cfg.AllowedExtraAuthorities))
 		for _, authority := range cfg.AllowedExtraAuthorities {
 			if !toDelete.Contains(authority) {
@@ -122,11 +83,12 @@ func (s *Store) DeleteExtraAllowedAuthorities(authorities []string) error {
 			}
 		}
 		cfg.AllowedExtraAuthorities = filtered
-	})
+		return nil
+	}))
 }
 
 func (s *Store) AddExtraAllowedAuthorities(authorities []string) error {
-	return s.mutateConfig(func(cfg *metadatapb.Cluster) {
+	return s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		existing := hashset.New(cfg.AllowedExtraAuthorities...)
 		for _, authority := range authorities {
 			if authority == "" || existing.Contains(authority) {
@@ -135,71 +97,82 @@ func (s *Store) AddExtraAllowedAuthorities(authorities []string) error {
 			cfg.AllowedExtraAuthorities = append(cfg.AllowedExtraAuthorities, authority)
 			existing.Add(authority)
 		}
-	})
+		return nil
+	}))
 }
 
 func (s *Store) PatchAllowedAuthorities(authorities []string) error {
-	return s.mutateConfig(func(cfg *metadatapb.Cluster) {
+	return s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		cfg.AllowedExtraAuthorities = slices.Clone(authorities)
-	})
+		return nil
+	}))
 }
 
 func (s *Store) GetLoadBalancerPolicies() *metadatapb.LoadBalancerPolicies {
-	cfg := s.loadConfig()
-	return gproto.CloneOf(cfg.LoadBalancer)
+	cfg := s.config.Load()
+	return cfg.LoadBalancer
 }
 
 func (s *Store) PatchLoadBalancerPolicies(policies *metadatapb.LoadBalancerPolicies) (*metadatapb.LoadBalancerPolicies, error) {
 	var updated *metadatapb.LoadBalancerPolicies
-	err := s.mutateConfig(func(cfg *metadatapb.Cluster) {
-		cfg.LoadBalancer = gproto.CloneOf(policies)
+	err := s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
+		switch {
+		case cfg.LoadBalancer == nil:
+			cfg.LoadBalancer = gproto.CloneOf(policies)
+		case policies != nil:
+			gproto.Merge(cfg.LoadBalancer, policies)
+		}
 		updated = gproto.CloneOf(cfg.LoadBalancer)
-	})
+		return nil
+	}))
 	return updated, err
 }
 
 func (s *Store) GetClusterHierarchyPolicies() *metadatapb.HierarchyPolicies {
-	cfg := s.loadConfig()
-	return gproto.CloneOf(cfg.Policies)
+	cfg := s.config.Load()
+	return cfg.Policies
 }
 
 func (s *Store) PatchClusterHierarchyPolicies(policies *metadatapb.HierarchyPolicies) (*metadatapb.HierarchyPolicies, error) {
 	var updated *metadatapb.HierarchyPolicies
-	err := s.mutateConfig(func(cfg *metadatapb.Cluster) {
-		cfg.Policies = gproto.CloneOf(policies)
+	err := s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
+		switch {
+		case cfg.Policies == nil:
+			cfg.Policies = gproto.CloneOf(policies)
+		case policies != nil:
+			gproto.Merge(cfg.Policies, policies)
+		}
 		updated = gproto.CloneOf(cfg.Policies)
-	})
+		return nil
+	}))
 	return updated, err
 }
 
 func (s *Store) GetDataServer(name string) (*metadatapb.DataServer, error) {
-	if name == "" {
-		return nil, metadata_v2.ErrInvalidInput
-	}
-
-	cfg := s.loadConfig()
+	cfg := s.config.Load()
 	dataServer, ok := cfg.DataServers[name]
 	if !ok || dataServer == nil {
 		return nil, metadata_v2.ErrNotFound
 	}
-	return gproto.CloneOf(dataServer), nil
+	return dataServer, nil
 }
 
 func (s *Store) DeleteDataServers(names []string) error {
 	toDelete := hashset.New(names...)
 	toDelete.Remove("")
-	return s.mutateConfig(func(cfg *metadatapb.Cluster) {
+	return s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		if toDelete.Empty() || cfg.DataServers == nil {
-			return
+			return nil
 		}
 		for _, name := range toDelete.Values() {
 			delete(cfg.DataServers, name)
 		}
-	})
+		return nil
+	}))
 }
 
 func (s *Store) CreateDataServers(dataServers []*metadatapb.DataServer) error {
-	return s.updateConfig(func(cfg *metadatapb.Cluster) error {
+	return s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		if cfg.DataServers == nil {
 			cfg.DataServers = make(map[string]*metadatapb.DataServer)
 		}
@@ -213,59 +186,57 @@ func (s *Store) CreateDataServers(dataServers []*metadatapb.DataServer) error {
 			cfg.DataServers[dataServer.Name] = gproto.CloneOf(dataServer)
 		}
 		return nil
-	})
+	}))
 }
 
 func (s *Store) ListDataServer() ([]*metadatapb.DataServer, error) {
-	cfg := s.loadConfig()
+	cfg := s.config.Load()
 	dataServers := make([]*metadatapb.DataServer, 0, len(cfg.DataServers))
 	for _, dataServer := range cfg.DataServers {
-		dataServers = append(dataServers, gproto.CloneOf(dataServer))
+		dataServers = append(dataServers, dataServer)
 	}
 	return dataServers, nil
 }
 
 func (s *Store) PatchDataServer(dataServer *metadatapb.DataServer) (*metadatapb.DataServer, error) {
 	var updated *metadatapb.DataServer
-	err := s.mutateConfig(func(cfg *metadatapb.Cluster) {
+	err := s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		if cfg.DataServers == nil {
 			cfg.DataServers = make(map[string]*metadatapb.DataServer)
 		}
 		cloned := gproto.CloneOf(dataServer)
 		cfg.DataServers[dataServer.Name] = cloned
 		updated = gproto.CloneOf(cloned)
-	})
+		return nil
+	}))
 	return updated, err
 }
 
 func (s *Store) GetNamespace(name string) (*metadatapb.Namespace, error) {
-	if name == "" {
-		return nil, metadata_v2.ErrInvalidInput
-	}
-
-	cfg := s.loadConfig()
+	cfg := s.config.Load()
 	namespace, ok := cfg.Namespaces[name]
 	if !ok || namespace == nil {
 		return nil, metadata_v2.ErrNotFound
 	}
-	return gproto.CloneOf(namespace), nil
+	return namespace, nil
 }
 
 func (s *Store) DeleteNamespaces(names []string) error {
 	toDelete := hashset.New(names...)
 	toDelete.Remove("")
-	return s.mutateConfig(func(cfg *metadatapb.Cluster) {
+	return s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		if toDelete.Empty() || cfg.Namespaces == nil {
-			return
+			return nil
 		}
 		for _, name := range toDelete.Values() {
 			delete(cfg.Namespaces, name)
 		}
-	})
+		return nil
+	}))
 }
 
 func (s *Store) CreateNamespaces(namespaces []*metadatapb.Namespace) error {
-	return s.updateConfig(func(cfg *metadatapb.Cluster) error {
+	return s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		if cfg.Namespaces == nil {
 			cfg.Namespaces = make(map[string]*metadatapb.Namespace)
 		}
@@ -280,61 +251,59 @@ func (s *Store) CreateNamespaces(namespaces []*metadatapb.Namespace) error {
 			cfg.Namespaces[namespace.Name] = gproto.CloneOf(namespace)
 		}
 		return nil
-	})
+	}))
 }
 
 func (s *Store) ListNamespace() ([]*metadatapb.Namespace, error) {
-	cfg := s.loadConfig()
+	cfg := s.config.Load()
 	namespaces := make([]*metadatapb.Namespace, 0, len(cfg.Namespaces))
 	for _, namespace := range cfg.Namespaces {
-		namespaces = append(namespaces, gproto.CloneOf(namespace))
+		namespaces = append(namespaces, namespace)
 	}
 	return namespaces, nil
 }
 
 func (s *Store) PatchNamespace(namespace *metadatapb.Namespace) (*metadatapb.Namespace, error) {
 	var updated *metadatapb.Namespace
-	err := s.mutateConfig(func(cfg *metadatapb.Cluster) {
+	err := s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		if cfg.Namespaces == nil {
 			cfg.Namespaces = make(map[string]*metadatapb.Namespace)
 		}
 		cloned := gproto.CloneOf(namespace)
 		cfg.Namespaces[namespace.Name] = cloned
 		updated = gproto.CloneOf(cloned)
-	})
+		return nil
+	}))
 	return updated, err
 }
 
 func (s *Store) GetNamespaceHierarchyPolicies(name string) *metadatapb.HierarchyPolicies {
-	if name == "" {
-		return nil
-	}
-
-	cfg := s.loadConfig()
+	cfg := s.config.Load()
 	namespace, ok := cfg.Namespaces[name]
 	if !ok || namespace == nil {
 		return nil
 	}
-	return gproto.CloneOf(namespace.Policies)
+	return namespace.Policies
 }
 
 func (s *Store) PatchNamespaceHierarchyPolicies(name string, policy *metadatapb.HierarchyPolicies) (*metadatapb.HierarchyPolicies, error) {
-	if name == "" {
-		return nil, metadata_v2.ErrInvalidInput
-	}
-
 	var updated *metadatapb.HierarchyPolicies
-	err := s.updateConfig(func(cfg *metadatapb.Cluster) error {
+	err := s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		namespace, ok := cfg.Namespaces[name]
 		if !ok || namespace == nil {
 			return metadata_v2.ErrNotFound
 		}
-		namespace.Policies = gproto.CloneOf(policy)
+		switch {
+		case namespace.Policies == nil:
+			namespace.Policies = gproto.CloneOf(policy)
+		case policy != nil:
+			gproto.Merge(namespace.Policies, policy)
+		}
 		if namespace.Policies != nil {
 			updated = gproto.CloneOf(namespace.Policies)
 		}
 		return nil
-	})
+	}))
 	return updated, err
 }
 
@@ -343,29 +312,30 @@ func (s *Store) GetNamespaceState(name string) (*metadatapb.NamespaceState, erro
 		return nil, metadata_v2.ErrInvalidInput
 	}
 
-	status := s.loadStatus()
+	status := s.status.Load()
 	namespace, ok := status.Namespaces[name]
 	if !ok || namespace == nil {
 		return nil, metadata_v2.ErrNotFound
 	}
-	return gproto.CloneOf(namespace), nil
+	return namespace, nil
 }
 
 func (s *Store) DeleteNamespaceStates(names []string) error {
 	toDelete := hashset.New(names...)
 	toDelete.Remove("")
-	return s.mutateStatus(func(status *metadatapb.ClusterState) {
+	return s.statusExecutor.Execute(NewInflight(func(status *metadatapb.ClusterState) error {
 		if toDelete.Empty() || status.Namespaces == nil {
-			return
+			return nil
 		}
 		for _, name := range toDelete.Values() {
 			delete(status.Namespaces, name)
 		}
-	})
+		return nil
+	}))
 }
 
 func (s *Store) CreateNamespaceStates(namespaces map[string]*metadatapb.NamespaceState) error {
-	return s.updateStatus(func(status *metadatapb.ClusterState) error {
+	return s.statusExecutor.Execute(NewInflight(func(status *metadatapb.ClusterState) error {
 		if status.Namespaces == nil {
 			status.Namespaces = make(map[string]*metadatapb.NamespaceState)
 		}
@@ -379,32 +349,26 @@ func (s *Store) CreateNamespaceStates(namespaces map[string]*metadatapb.Namespac
 			status.Namespaces[name] = gproto.CloneOf(namespace)
 		}
 		return nil
-	})
+	}))
 }
 
 func (s *Store) PatchNamespaceState(name string, namespace *metadatapb.NamespaceState) (*metadatapb.NamespaceState, error) {
-	if name == "" || namespace == nil {
-		return nil, metadata_v2.ErrInvalidInput
-	}
 
 	var updated *metadatapb.NamespaceState
-	err := s.mutateStatus(func(status *metadatapb.ClusterState) {
+	err := s.statusExecutor.Execute(NewInflight(func(status *metadatapb.ClusterState) error {
 		if status.Namespaces == nil {
 			status.Namespaces = make(map[string]*metadatapb.NamespaceState)
 		}
 		cloned := gproto.CloneOf(namespace)
 		status.Namespaces[name] = cloned
 		updated = gproto.CloneOf(cloned)
-	})
+		return nil
+	}))
 	return updated, err
 }
 
 func (s *Store) GetShardState(namespace string, shardID int64) (*metadatapb.ShardState, error) {
-	if namespace == "" {
-		return nil, metadata_v2.ErrInvalidInput
-	}
-
-	status := s.loadStatus()
+	status := s.status.Load()
 	namespaceState, ok := status.Namespaces[namespace]
 	if !ok || namespaceState == nil {
 		return nil, metadata_v2.ErrNotFound
@@ -413,16 +377,12 @@ func (s *Store) GetShardState(namespace string, shardID int64) (*metadatapb.Shar
 	if !ok || shard == nil {
 		return nil, metadata_v2.ErrNotFound
 	}
-	return gproto.CloneOf(shard), nil
+	return shard, nil
 }
 
 func (s *Store) PatchShardState(namespace string, shardID int64, shard *metadatapb.ShardState) (*metadatapb.ShardState, error) {
-	if namespace == "" || shard == nil {
-		return nil, metadata_v2.ErrInvalidInput
-	}
-
 	var updated *metadatapb.ShardState
-	err := s.updateStatus(func(status *metadatapb.ClusterState) error {
+	err := s.statusExecutor.Execute(NewInflight(func(status *metadatapb.ClusterState) error {
 		namespaceState, ok := status.Namespaces[namespace]
 		if !ok || namespaceState == nil {
 			return metadata_v2.ErrNotFound
@@ -434,16 +394,28 @@ func (s *Store) PatchShardState(namespace string, shardID int64, shard *metadata
 		namespaceState.Shards[shardID] = cloned
 		updated = gproto.CloneOf(cloned)
 		return nil
-	})
+	}))
 	return updated, err
 }
 
-func (s *Store) observeLeaseLoop() {
+func (s *Store) revalidateLease() error {
+	if err := s.backend.LeaseRevalidate(); err != nil {
+		s.applyLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
+		return err
+	}
+	return nil
+}
+
+func (s *Store) onLeaseChanged() {
 	watch := s.backend.LeaseWatch()
-	_, version := watch.Load()
+	// init apply
+	state, version := watch.Load()
+	s.applyLeaseState(state)
+	// watching
 	for {
 		state, nextVersion, err := watch.Wait(s.ctx, version)
 		if err != nil {
+			// CODEX: add logs here
 			return
 		}
 		s.applyLeaseState(state)
@@ -454,207 +426,10 @@ func (s *Store) observeLeaseLoop() {
 func (s *Store) applyLeaseState(state metadatapb.LeaseState) {
 	switch state {
 	case metadatapb.LeaseState_LEASE_STATE_HELD:
-		_ = s.configMutator.Resume()
-		_ = s.statusMutator.Resume()
+		_ = s.configExecutor.Resume()
+		_ = s.statusExecutor.Resume()
 	default:
-		_ = s.configMutator.Pause()
-		_ = s.statusMutator.Pause()
-	}
-
-	current, _ := s.leaseWatch.Load()
-	if current != state {
-		s.leaseWatch.Notify(state)
-	}
-}
-
-func (s *Store) loadConfig() *metadatapb.Cluster {
-	if config := s.config.Load(); config != nil {
-		return gproto.CloneOf(config.Value)
-	}
-	s.configLoadMutex.Lock()
-	defer s.configLoadMutex.Unlock()
-	// double check with lock
-	if config := s.config.Load(); config != nil {
-		return gproto.CloneOf(config.Value)
-	}
-	cluster := s.backend.LoadConfig()
-	if cluster == nil {
-		cluster = &Versioned[*metadatapb.Cluster]{}
-	}
-	if isNilProto(cluster.Value) {
-		cluster.Value = &metadatapb.Cluster{}
-	}
-	s.config.Store(cloneVersionedProto(cluster))
-	return gproto.CloneOf(cluster.Value)
-}
-
-func (s *Store) commitConfigMutationState(config *metadatapb.Cluster) error {
-	current := s.config.Load()
-	version := ""
-	if current != nil {
-		version = current.Version
-	}
-
-	updated, err := s.backend.CommitConfig(&Versioned[*metadatapb.Cluster]{
-		Version: version,
-		Value:   gproto.CloneOf(config),
-	})
-	if err != nil {
-		return err
-	}
-	if updated == nil {
-		updated = &Versioned[*metadatapb.Cluster]{
-			Version: version,
-			Value:   gproto.CloneOf(config),
-		}
-	}
-	if isNilProto(updated.Value) {
-		updated.Value = gproto.CloneOf(config)
-	}
-	s.config.Store(cloneVersionedProto(updated))
-	return nil
-}
-
-func (s *Store) handleConfigBadVersion() (bool, error) {
-	if err := s.revalidateLease(); err != nil {
-		return false, err
-	}
-
-	cluster := s.backend.LoadConfig()
-	if cluster == nil {
-		cluster = &Versioned[*metadatapb.Cluster]{}
-	}
-	if isNilProto(cluster.Value) {
-		cluster.Value = &metadatapb.Cluster{}
-	}
-	s.config.Store(cloneVersionedProto(cluster))
-	return true, nil
-}
-
-func (s *Store) mutateConfig(apply func(*metadatapb.Cluster)) error {
-	return s.configMutator.Submit(NewOperation(func(cfg *metadatapb.Cluster) error {
-		apply(cfg)
-		return nil
-	}))
-}
-
-func (s *Store) updateConfig(apply func(*metadatapb.Cluster) error) error {
-	return s.configMutator.Submit(NewOperation(apply))
-}
-
-func (s *Store) loadStatus() *metadatapb.ClusterState {
-	if status := s.status.Load(); status != nil {
-		return gproto.CloneOf(status.Value)
-	}
-	s.statusLoadMutex.Lock()
-	defer s.statusLoadMutex.Unlock()
-	if status := s.status.Load(); status != nil {
-		return gproto.CloneOf(status.Value)
-	}
-	clusterState := s.backend.LoadStatus()
-	if clusterState == nil {
-		clusterState = &Versioned[*metadatapb.ClusterState]{}
-	}
-	if isNilProto(clusterState.Value) {
-		clusterState.Value = &metadatapb.ClusterState{}
-	}
-	s.status.Store(cloneVersionedProto(clusterState))
-	return gproto.CloneOf(clusterState.Value)
-}
-
-func (s *Store) commitStatusMutationState(status *metadatapb.ClusterState) error {
-	current := s.status.Load()
-	version := ""
-	if current != nil {
-		version = current.Version
-	}
-
-	updated, err := s.backend.CommitStatus(&Versioned[*metadatapb.ClusterState]{
-		Version: version,
-		Value:   gproto.CloneOf(status),
-	})
-	if err != nil {
-		return err
-	}
-	if updated == nil {
-		updated = &Versioned[*metadatapb.ClusterState]{
-			Version: version,
-			Value:   gproto.CloneOf(status),
-		}
-	}
-	if isNilProto(updated.Value) {
-		updated.Value = gproto.CloneOf(status)
-	}
-	s.status.Store(cloneVersionedProto(updated))
-	return nil
-}
-
-func (s *Store) handleStatusBadVersion() (bool, error) {
-	if err := s.revalidateLease(); err != nil {
-		return false, err
-	}
-
-	status := s.backend.LoadStatus()
-	if status == nil {
-		status = &Versioned[*metadatapb.ClusterState]{}
-	}
-	if isNilProto(status.Value) {
-		status.Value = &metadatapb.ClusterState{}
-	}
-	s.status.Store(cloneVersionedProto(status))
-	return true, nil
-}
-
-func (s *Store) mutateStatus(apply func(*metadatapb.ClusterState)) error {
-	return s.statusMutator.Submit(NewOperation(func(status *metadatapb.ClusterState) error {
-		apply(status)
-		return nil
-	}))
-}
-
-func (s *Store) updateStatus(apply func(*metadatapb.ClusterState) error) error {
-	return s.statusMutator.Submit(NewOperation(apply))
-}
-
-func (s *Store) revalidateLease() error {
-	if err := s.backend.RevalidateLease(); err != nil {
-		s.applyLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
-		return err
-	}
-	return nil
-}
-
-func actorErrors() commonactor.Errors {
-	return commonactor.Errors{
-		Pause:    metadata_v2.ErrLeaseNotHeld,
-		Shutdown: metadata_v2.ErrLeaseNotHeld,
-	}
-}
-
-func cloneVersionedProto[T gproto.Message](value *Versioned[T]) *Versioned[T] {
-	if value == nil {
-		return nil
-	}
-
-	cloned := &Versioned[T]{
-		Version: value.Version,
-	}
-	if !isNilProto(value.Value) {
-		cloned.Value = gproto.CloneOf(value.Value)
-	}
-	return cloned
-}
-
-func isNilProto[T gproto.Message](value T) bool {
-	if any(value) == nil {
-		return true
-	}
-
-	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
+		_ = s.configExecutor.Pause()
+		_ = s.statusExecutor.Pause()
 	}
 }

@@ -22,11 +22,7 @@ var _ document.Backend = (*Backend)(nil)
 
 const leaseRetryInterval = 100 * time.Millisecond
 
-const (
-	defaultConfigFileName = "conf"
-	defaultStateFileName  = "status"
-	defaultLockFileName   = "lease.lock"
-)
+const defaultLockFileName = "lease.lock"
 
 type Store = document.Store
 
@@ -35,9 +31,7 @@ type Backend struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	configPath string
-	statePath  string
-
+	dir           string
 	leaseLockPath string
 	leaseLock     *fslock.Lock
 	leaseWatch    *commonoption.Watch[metadatapb.LeaseState]
@@ -53,7 +47,7 @@ func NewBackend(ctx context.Context, dir string) *Backend {
 	}
 
 	dir = filepath.Clean(dir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := ensurePrivateDir(dir); err != nil {
 		panic(err)
 	}
 
@@ -61,8 +55,7 @@ func NewBackend(ctx context.Context, dir string) *Backend {
 	b := &Backend{
 		ctx:           backendCtx,
 		cancel:        cancel,
-		configPath:    filepath.Join(dir, defaultConfigFileName),
-		statePath:     filepath.Join(dir, defaultStateFileName),
+		dir:           dir,
 		leaseLockPath: filepath.Join(dir, defaultLockFileName),
 		leaseWatch:    commonoption.NewWatch(metadatapb.LeaseState_LEASE_STATE_UNHELD),
 	}
@@ -76,6 +69,13 @@ func NewBackend(ctx context.Context, dir string) *Backend {
 	return b
 }
 
+func ensurePrivateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o700)
+}
+
 func (b *Backend) Close() error {
 	b.cancel()
 	b.wg.Wait()
@@ -86,45 +86,7 @@ func (b *Backend) LeaseWatch() *commonoption.Watch[metadatapb.LeaseState] {
 	return b.leaseWatch
 }
 
-func (b *Backend) LoadConfig() *document.Versioned[*metadatapb.Cluster] {
-	cluster := &metadatapb.Cluster{}
-	if err := metadata_v2.ReadProtoJSONFile(b.configPath, cluster); err != nil {
-		return nil
-	}
-	return &document.Versioned[*metadatapb.Cluster]{
-		Value: cluster,
-	}
-}
-
-func (b *Backend) CommitConfig(config *document.Versioned[*metadatapb.Cluster]) (*document.Versioned[*metadatapb.Cluster], error) {
-	if err := metadata_v2.WriteProtoJSONFile(b.configPath, config.Value); err != nil {
-		return nil, err
-	}
-	return &document.Versioned[*metadatapb.Cluster]{
-		Value: gproto.CloneOf(config.Value),
-	}, nil
-}
-
-func (b *Backend) LoadStatus() *document.Versioned[*metadatapb.ClusterState] {
-	status := &metadatapb.ClusterState{}
-	if err := metadata_v2.ReadProtoJSONFile(b.statePath, status); err != nil {
-		return nil
-	}
-	return &document.Versioned[*metadatapb.ClusterState]{
-		Value: status,
-	}
-}
-
-func (b *Backend) CommitStatus(status *document.Versioned[*metadatapb.ClusterState]) (*document.Versioned[*metadatapb.ClusterState], error) {
-	if err := metadata_v2.WriteProtoJSONFile(b.statePath, status.Value); err != nil {
-		return nil, err
-	}
-	return &document.Versioned[*metadatapb.ClusterState]{
-		Value: gproto.CloneOf(status.Value),
-	}, nil
-}
-
-func (b *Backend) RevalidateLease() error {
+func (b *Backend) LeaseRevalidate() error {
 	if b.ctx.Err() != nil {
 		return metadata_v2.ErrLeaseNotHeld
 	}
@@ -133,6 +95,59 @@ func (b *Backend) RevalidateLease() error {
 		return metadata_v2.ErrLeaseNotHeld
 	}
 	return nil
+}
+
+func (b *Backend) Load(name document.MetaRecordName) *document.Versioned[gproto.Message] {
+	msg := b.newRecordMessage(name)
+	if err := metadata_v2.ReadProtoJSONFile(b.recordPath(name), msg); err != nil {
+		return nil
+	}
+	return &document.Versioned[gproto.Message]{
+		Value: msg,
+	}
+}
+
+func (b *Backend) Store(name document.MetaRecordName, record *document.Versioned[gproto.Message]) error {
+	msg := b.assertRecordMessage(name, record.Value)
+	if err := metadata_v2.WriteProtoJSONFile(b.recordPath(name), msg); err != nil {
+		return err
+	}
+	record.Value = gproto.Clone(msg)
+	return nil
+}
+
+func (b *Backend) recordPath(name document.MetaRecordName) string {
+	return filepath.Join(b.dir, string(name))
+}
+
+func (b *Backend) newRecordMessage(name document.MetaRecordName) gproto.Message {
+	switch name {
+	case document.ConfigRecordName:
+		return &metadatapb.Cluster{}
+	case document.StatusRecordName:
+		return &metadatapb.ClusterState{}
+	default:
+		panic(fmt.Sprintf("unknown metadata record %q", name))
+	}
+}
+
+func (b *Backend) assertRecordMessage(name document.MetaRecordName, value gproto.Message) gproto.Message {
+	switch name {
+	case document.ConfigRecordName:
+		msg, ok := value.(*metadatapb.Cluster)
+		if !ok {
+			panic(fmt.Sprintf("unexpected metadata record type for %q: %T", name, value))
+		}
+		return msg
+	case document.StatusRecordName:
+		msg, ok := value.(*metadatapb.ClusterState)
+		if !ok {
+			panic(fmt.Sprintf("unexpected metadata record type for %q: %T", name, value))
+		}
+		return msg
+	default:
+		panic(fmt.Sprintf("unknown metadata record %q", name))
+	}
 }
 
 func (b *Backend) runLeaseLoop() {
