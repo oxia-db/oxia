@@ -86,17 +86,6 @@ func (b *Backend) LeaseWatch() *commonoption.Watch[metadatapb.LeaseState] {
 	return b.leaseWatch
 }
 
-func (b *Backend) LeaseRevalidate() error {
-	if b.ctx.Err() != nil {
-		return metadata_v2.ErrLeaseNotHeld
-	}
-	state, _ := b.leaseWatch.Load()
-	if state != metadatapb.LeaseState_LEASE_STATE_HELD {
-		return metadata_v2.ErrLeaseNotHeld
-	}
-	return nil
-}
-
 func (b *Backend) Load(name document.MetaRecordName) *document.Versioned[gproto.Message] {
 	msg := b.newRecordMessage(name)
 	if err := metadata_v2.ReadProtoJSONFile(b.recordPath(name), msg); err != nil {

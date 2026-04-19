@@ -36,19 +36,17 @@ func NewInflight[T gproto.Message](apply func(T) error) *Inflight[T] {
 var ErrBadVersion = errors.New("metadata bad version")
 
 type Executor[T gproto.Message] struct {
-	ctx             context.Context
-	name            string
-	actor           *commonactor.Actor[*Inflight[T]]
-	record          *MetaRecord[T]
-	leaseRevalidate func() error
+	ctx    context.Context
+	name   string
+	actor  *commonactor.Actor[*Inflight[T]]
+	record *MetaRecord[T]
 }
 
-func NewExecutor[T gproto.Message](ctx context.Context, name string, record *MetaRecord[T], leaseRevalidate func() error) *Executor[T] {
+func NewExecutor[T gproto.Message](ctx context.Context, name string, record *MetaRecord[T]) *Executor[T] {
 	m := &Executor[T]{
-		ctx:             ctx,
-		name:            name,
-		record:          record,
-		leaseRevalidate: leaseRevalidate,
+		ctx:    ctx,
+		name:   name,
+		record: record,
 	}
 
 	var err error
@@ -105,16 +103,12 @@ func (m *Executor[T]) bgApply(ops []*Inflight[T]) {
 		}
 		if err := m.record.Store(state); err != nil {
 			if errors.Is(err, ErrBadVersion) {
-				if retryErr := m.leaseRevalidate(); retryErr == nil {
-					state = m.record.SyncLoad()
-					slog.Warn("metadata document commit hit bad version, retrying",
-						slog.String("executor", m.name),
-						slog.Int("ops", len(ops)),
-					)
-					continue
-				} else {
-					err = retryErr
-				}
+				_ = m.actor.Pause()
+				slog.Warn("metadata document commit hit bad version, pausing executor",
+					slog.String("executor", m.name),
+					slog.Int("ops", len(ops)),
+				)
+				err = metadata_v2.ErrLeaseNotHeld
 			}
 			for _, op := range ops {
 				op.Complete(err)

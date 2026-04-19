@@ -46,7 +46,9 @@ func (v *MetaRecord[T]) Load() T {
 	if current := v.value.Load(); current != nil {
 		return gproto.CloneOf(current.Value)
 	}
-	return v.SyncLoad()
+	refreshed := v.slowLoad()
+	v.value.Store(refreshed)
+	return gproto.CloneOf(refreshed.Value)
 }
 
 func (v *MetaRecord[T]) Store(value T) error {
@@ -69,12 +71,6 @@ func (v *MetaRecord[T]) Store(value T) error {
 		Value:   gproto.CloneOf(value),
 	})
 	return nil
-}
-
-func (v *MetaRecord[T]) SyncLoad() T {
-	refreshed := v.slowLoad()
-	v.value.Store(refreshed)
-	return gproto.CloneOf(refreshed.Value)
 }
 
 func (v *MetaRecord[T]) slowLoad() *Versioned[T] {

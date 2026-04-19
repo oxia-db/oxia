@@ -33,7 +33,7 @@ import (
 
 func TestBackendCommitLoadAndBadVersion(t *testing.T) {
 	client := newVersionedClientset()
-	backend := newBackend(context.Background(), client, "default", "backend")
+	backend := NewBackend(context.Background(), client, "default", "backend")
 	t.Cleanup(func() {
 		assert.NoError(t, backend.Close())
 	})
@@ -106,7 +106,7 @@ func TestStoreLeaseHandoff(t *testing.T) {
 	restoreLeaseTimings(t, 1500*time.Millisecond, time.Second, 200*time.Millisecond)
 
 	client := newVersionedClientset()
-	primary := document.NewStore(context.Background(), newBackend(context.Background(), client, "default", "primary"))
+	primary := document.NewStore(context.Background(), NewBackend(context.Background(), client, "default", "primary"))
 	primaryClosed := false
 	t.Cleanup(func() {
 		if !primaryClosed {
@@ -119,7 +119,7 @@ func TestStoreLeaseHandoff(t *testing.T) {
 		return primary.CreateNamespaces([]*metadatapb.Namespace{{Name: "primary"}})
 	})
 
-	secondary := document.NewStore(context.Background(), newBackend(context.Background(), client, "default", "secondary"))
+	secondary := document.NewStore(context.Background(), NewBackend(context.Background(), client, "default", "secondary"))
 	t.Cleanup(func() {
 		assert.NoError(t, secondary.Close())
 	})
@@ -409,7 +409,7 @@ func newBackendForRevalidateTest(t *testing.T, client kubernetesclient.Interface
 		leaseName:  "metadata-lease",
 		leaseWatch: commonoption.NewWatch(metadatapb.LeaseState_LEASE_STATE_HELD),
 	}
-	backend.leaseLock = &resourcelock.LeaseLock{
+	backend.LeaseLock = &resourcelock.LeaseLock{
 		LeaseMeta: metav1.ObjectMeta{
 			Name:      "metadata-lease",
 			Namespace: "default",

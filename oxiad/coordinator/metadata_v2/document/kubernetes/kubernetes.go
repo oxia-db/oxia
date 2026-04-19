@@ -1,7 +1,6 @@
 package kubernetes
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,7 +23,6 @@ import (
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	coordinatormetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document"
 )
 
@@ -41,7 +39,7 @@ var (
 const (
 	documentDataKey  = "document"
 	defaultLeaseName = "metadata-lease"
-	fieldManager     = "oxia-coordinator"
+	fieldManager     = "oxia-metadata"
 )
 
 type Store = document.Store
@@ -55,22 +53,14 @@ type Backend struct {
 	namespace string
 	identity  string
 
-	leaseName   string
-	leaseLock   *resourcelock.LeaseLock
+	leaseName string
+	*resourcelock.LeaseLock
 	leaseRecord *resourcelock.LeaderElectionRecord
 	leaseWatch  *commonoption.Watch[metadatapb.LeaseState]
-	leaseMutex  sync.Mutex
-}
-
-func NewStore(ctx context.Context, namespace string, identity string) *Store {
-	return document.NewStore(ctx, newBackend(ctx, coordinatormetadata.NewK8SClientset(coordinatormetadata.NewK8SClientConfig()), namespace, identity))
 }
 
 func NewBackend(ctx context.Context, namespace string, identity string) *Backend {
-	return newBackend(ctx, coordinatormetadata.NewK8SClientset(coordinatormetadata.NewK8SClientConfig()), namespace, identity)
-}
-
-func newBackend(ctx context.Context, client kubernetesclient.Interface, namespace string, identity string) *Backend {
+	client := coordinatormetadata.NewK8SClientset(coordinatormetadata.NewK8SClientConfig())
 	backendCtx, cancel := context.WithCancel(ctx)
 	b := &Backend{
 		ctx:        backendCtx,
@@ -81,7 +71,7 @@ func newBackend(ctx context.Context, client kubernetesclient.Interface, namespac
 		leaseName:  defaultLeaseName,
 		leaseWatch: commonoption.NewWatch(metadatapb.LeaseState_LEASE_STATE_UNHELD),
 	}
-	b.leaseLock = &resourcelock.LeaseLock{
+	b.LeaseLock = &resourcelock.LeaseLock{
 		LeaseMeta: metav1.ObjectMeta{
 			Name:      b.leaseName,
 			Namespace: b.namespace,
@@ -111,95 +101,33 @@ func (b *Backend) LeaseWatch() *commonoption.Watch[metadatapb.LeaseState] {
 	return b.leaseWatch
 }
 
-func (b *Backend) LeaseRevalidate() error {
-	state, _ := b.leaseWatch.Load()
-	if state != metadatapb.LeaseState_LEASE_STATE_HELD {
-		b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
-		return metadata_v2.ErrLeaseNotHeld
-	}
-
-	ctx, cancel := b.requestContext()
-	defer cancel()
-
-	b.leaseMutex.Lock()
-	defer b.leaseMutex.Unlock()
-
-	if b.leaseRecord == nil {
-		b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
-		return metadata_v2.ErrLeaseNotHeld
-	}
-
-	record := cloneLeaderElectionRecord(b.leaseRecord)
-	if record.HolderIdentity != b.identity {
-		b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
-		return metadata_v2.ErrLeaseNotHeld
-	}
-
-	record.HolderIdentity = b.identity
-	record.RenewTime = metav1.Now()
-	if record.LeaseDurationSeconds == 0 {
-		record.LeaseDurationSeconds = int(leaseDuration / time.Second)
-	}
-
-	err := backoff.Retry(func() error {
-		err := b.leaseLock.Update(ctx, *record)
-		if err == nil {
-			return nil
-		}
-		if k8serrors.IsConflict(err) || k8serrors.IsNotFound(err) {
-			return backoff.Permanent(err)
-		}
-		return err
-	}, oxiatime.NewBackOff(ctx))
-	if err == nil {
-		b.leaseRecord = cloneLeaderElectionRecord(record)
-		b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_HELD)
-		return nil
-	}
-	if k8serrors.IsConflict(err) || k8serrors.IsNotFound(err) || err == metadata_v2.ErrLeaseNotHeld {
-		b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
-		return metadata_v2.ErrLeaseNotHeld
-	}
-	return err
-}
-
 func (b *Backend) Load(name document.MetaRecordName) *document.Versioned[gproto.Message] {
 	configMapName := string(name)
-	msg := b.newRecordMessage(name)
+	var msg gproto.Message
+	switch name {
+	case document.ConfigRecordName:
+		msg = &metadatapb.Cluster{}
+	case document.StatusRecordName:
+		msg = &metadatapb.ClusterState{}
+	default:
+		panic(fmt.Sprintf("unknown metadata record %q", name))
+	}
 
-	ctx, cancel := b.requestContext()
+	ctx, cancel := context.WithTimeout(b.ctx, k8sRequestTimeout)
 	defer cancel()
 
 	var cm *corev1.ConfigMap
-	err := backoff.Retry(func() error {
+	// CODEX: add retry logs
+	_ = backoff.Retry(func() error {
 		var err error
 		cm, err = b.client.CoreV1().ConfigMaps(b.namespace).Get(ctx, configMapName, metav1.GetOptions{})
-		if err == nil {
-			return nil
-		}
-		if k8serrors.IsNotFound(err) {
-			return backoff.Permanent(err)
-		}
 		return err
 	}, oxiatime.NewBackOff(ctx))
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil
-		}
-		return nil
-	}
 
 	payload := ""
 	if cm.Data != nil {
 		payload = cm.Data[documentDataKey]
 	}
-	if len(bytes.TrimSpace([]byte(payload))) == 0 {
-		return &document.Versioned[gproto.Message]{
-			Version: cm.ResourceVersion,
-			Value:   msg,
-		}
-	}
-
 	if err := (protojson.UnmarshalOptions{
 		DiscardUnknown: true,
 	}).Unmarshal([]byte(payload), msg); err != nil {
@@ -226,10 +154,25 @@ func (b *Backend) Store(name document.MetaRecordName, record *document.Versioned
 	}
 	content = append(content, '\n')
 
-	ctx, cancel := b.requestContext()
+	ctx, cancel := context.WithTimeout(b.ctx, k8sRequestTimeout)
 	defer cancel()
 
-	cm := b.makeDesiredConfigMap(configMapName, string(content), record.Version)
+	cm := &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ConfigMap",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      configMapName,
+			Namespace: b.namespace,
+		},
+		Data: map[string]string{
+			documentDataKey: string(content),
+		},
+	}
+	if record.Version != "" {
+		cm.ResourceVersion = record.Version
+	}
 
 	var updated *corev1.ConfigMap
 	patch, err := json.Marshal(cm)
@@ -297,17 +240,6 @@ func (b *Backend) makeDesiredConfigMap(name string, payload string, version stri
 	return cm
 }
 
-func (b *Backend) newRecordMessage(name document.MetaRecordName) gproto.Message {
-	switch name {
-	case document.ConfigRecordName:
-		return &metadatapb.Cluster{}
-	case document.StatusRecordName:
-		return &metadatapb.ClusterState{}
-	default:
-		panic(fmt.Sprintf("unknown metadata record %q", name))
-	}
-}
-
 func (b *Backend) runLeaseLoop() {
 	for {
 		select {
@@ -317,125 +249,32 @@ func (b *Backend) runLeaseLoop() {
 		default:
 		}
 
-		b.newLeaderElector().Run(b.ctx)
-		if b.ctx.Err() != nil {
-			b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
-			return
-		}
-	}
-}
-
-func (b *Backend) newLeaderElector() *leaderelection.LeaderElector {
-	leaderElector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
-		Lock:            b,
-		ReleaseOnCancel: true,
-		LeaseDuration:   leaseDuration,
-		RenewDeadline:   renewDeadline,
-		RetryPeriod:     retryPeriod,
-		Name:            b.leaseName,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(context.Context) {
-				b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_HELD)
+		leaderElector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
+			Lock:            b,
+			ReleaseOnCancel: true,
+			LeaseDuration:   leaseDuration,
+			RenewDeadline:   renewDeadline,
+			RetryPeriod:     retryPeriod,
+			Name:            b.leaseName,
+			Callbacks: leaderelection.LeaderCallbacks{
+				OnStartedLeading: func(context.Context) {
+					// CODEX: add logs
+					b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_HELD)
+				},
+				OnStoppedLeading: func() {
+					// CODEX: add logs
+					b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
+				},
+				OnNewLeader: func(string) {
+					// CODEX: add logs
+				},
 			},
-			OnStoppedLeading: func() {
-				b.setLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
-			},
-			OnNewLeader: func(string) {},
-		},
-	})
-	if err != nil {
-		panic(err)
+		})
+		if err != nil {
+			panic(err)
+		}
+		leaderElector.Run(b.ctx)
 	}
-	return leaderElector
-}
-
-func (b *Backend) requestContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(b.ctx, k8sRequestTimeout)
-}
-
-func (b *Backend) Get(ctx context.Context) (*resourcelock.LeaderElectionRecord, []byte, error) {
-	b.leaseMutex.Lock()
-	defer b.leaseMutex.Unlock()
-
-	var (
-		record *resourcelock.LeaderElectionRecord
-		raw    []byte
-	)
-	err := backoff.Retry(func() error {
-		var err error
-		record, raw, err = b.leaseLock.Get(ctx)
-		if err == nil {
-			return nil
-		}
-		if k8serrors.IsNotFound(err) {
-			return backoff.Permanent(err)
-		}
-		return err
-	}, oxiatime.NewBackOff(ctx))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	b.leaseRecord = cloneLeaderElectionRecord(record)
-	return record, raw, nil
-}
-
-func (b *Backend) Create(ctx context.Context, record resourcelock.LeaderElectionRecord) error {
-	b.leaseMutex.Lock()
-	defer b.leaseMutex.Unlock()
-
-	err := backoff.Retry(func() error {
-		err := b.leaseLock.Create(ctx, record)
-		if err == nil {
-			return nil
-		}
-		if k8serrors.IsAlreadyExists(err) || k8serrors.IsConflict(err) {
-			return backoff.Permanent(err)
-		}
-		return err
-	}, oxiatime.NewBackOff(ctx))
-	if err != nil {
-		return err
-	}
-
-	b.leaseRecord = cloneLeaderElectionRecord(&record)
-	return nil
-}
-
-func (b *Backend) Update(ctx context.Context, record resourcelock.LeaderElectionRecord) error {
-	b.leaseMutex.Lock()
-	defer b.leaseMutex.Unlock()
-
-	err := backoff.Retry(func() error {
-		err := b.leaseLock.Update(ctx, record)
-		if err == nil {
-			return nil
-		}
-		if k8serrors.IsConflict(err) || k8serrors.IsNotFound(err) {
-			return backoff.Permanent(err)
-		}
-		return err
-	}, oxiatime.NewBackOff(ctx))
-	if err != nil {
-		return err
-	}
-
-	b.leaseRecord = cloneLeaderElectionRecord(&record)
-	return nil
-}
-
-func (b *Backend) RecordEvent(message string) {
-	b.leaseMutex.Lock()
-	defer b.leaseMutex.Unlock()
-	b.leaseLock.RecordEvent(message)
-}
-
-func (b *Backend) Identity() string {
-	return b.identity
-}
-
-func (b *Backend) Describe() string {
-	return b.leaseLock.Describe()
 }
 
 func (b *Backend) setLeaseState(state metadatapb.LeaseState) {
@@ -443,12 +282,4 @@ func (b *Backend) setLeaseState(state metadatapb.LeaseState) {
 	if current != state {
 		b.leaseWatch.Notify(state)
 	}
-}
-
-func cloneLeaderElectionRecord(record *resourcelock.LeaderElectionRecord) *resourcelock.LeaderElectionRecord {
-	if record == nil {
-		return nil
-	}
-	cloned := *record
-	return &cloned
 }

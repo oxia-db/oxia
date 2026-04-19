@@ -40,8 +40,8 @@ func NewStore(ctx context.Context, backend Backend) *Store {
 		config:  newLazyMetaRecord[*metadatapb.Cluster](backend, ConfigRecordName),
 		status:  newLazyMetaRecord[*metadatapb.ClusterState](backend, StatusRecordName),
 	}
-	s.configExecutor = NewExecutor(s.ctx, "config_executor", &s.config, s.revalidateLease)
-	s.statusExecutor = NewExecutor(s.ctx, "status_executor", &s.status, s.revalidateLease)
+	s.configExecutor = NewExecutor(s.ctx, "config_executor", &s.config)
+	s.statusExecutor = NewExecutor(s.ctx, "status_executor", &s.status)
 
 	s.wg.Go(func() {
 		process.DoWithLabels(s.ctx, map[string]string{
@@ -396,14 +396,6 @@ func (s *Store) PatchShardState(namespace string, shardID int64, shard *metadata
 		return nil
 	}))
 	return updated, err
-}
-
-func (s *Store) revalidateLease() error {
-	if err := s.backend.LeaseRevalidate(); err != nil {
-		s.applyLeaseState(metadatapb.LeaseState_LEASE_STATE_UNHELD)
-		return err
-	}
-	return nil
 }
 
 func (s *Store) onLeaseChanged() {
