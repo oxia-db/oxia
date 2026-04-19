@@ -20,8 +20,8 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend"
-	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/error"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
+	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/error"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 

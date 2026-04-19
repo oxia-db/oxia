@@ -24,7 +24,7 @@ import (
 	"github.com/oxia-db/oxia/common/security"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v1"
 )
 
 type Options struct {

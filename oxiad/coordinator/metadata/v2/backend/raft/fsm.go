@@ -10,8 +10,8 @@ import (
 	hashicorpraft "github.com/hashicorp/raft"
 	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/document"
 )
 
 type raftCommand struct {

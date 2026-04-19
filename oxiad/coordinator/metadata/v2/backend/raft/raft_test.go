@@ -13,9 +13,9 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
-	documentbackend "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document"
-	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/error"
+	documentbackend "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/document"
+	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/error"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 

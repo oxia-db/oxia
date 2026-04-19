@@ -10,7 +10,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"google.golang.org/protobuf/encoding/protojson"
 	gproto "google.golang.org/protobuf/proto"
@@ -26,8 +26,8 @@ import (
 	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
-	coordinatormetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document"
+	coordinatormetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v1"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/document"
 )
 
 var (

@@ -1,4 +1,4 @@
-package metadata_v2
+package metadata
 
 import (
 	"io"

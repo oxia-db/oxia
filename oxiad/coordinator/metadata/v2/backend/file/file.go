@@ -11,7 +11,7 @@ import (
 
 	"github.com/juju/fslock"
 	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"google.golang.org/protobuf/encoding/protojson"
 	gproto "google.golang.org/protobuf/proto"

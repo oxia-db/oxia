@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend"
-	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/error"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
+	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/error"
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/process"

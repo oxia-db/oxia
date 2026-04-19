@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 
 	"github.com/oxia-db/oxia/common/channel"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend"
-	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/error"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
+	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/error"
 	gproto "google.golang.org/protobuf/proto"
 
 	commonactor "github.com/oxia-db/oxia/oxiad/common/actor"
