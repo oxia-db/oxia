@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	documentfile "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend/file"
+	documentkubernetes "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend/kubernetes"
+	documentraft "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend/raft"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document"
-	documentfile "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document/backend/file"
-	documentkubernetes "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document/backend/kubernetes"
 	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/error"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/raft"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
@@ -25,7 +25,7 @@ func NewMetadata(ctx context.Context, options option.MetadataOptions) Store {
 	case MetadataProviderNameConfigmap:
 		return document.NewStore(ctx, documentkubernetes.NewBackend(ctx, options.Kubernetes))
 	case MetadataProviderNameRaft:
-		return raft.NewStore(ctx, options.Raft)
+		return document.NewStore(ctx, documentraft.NewBackend(ctx, options.Raft))
 	default:
 		panic(fmt.Errorf("%w: unsupported metadata provider %q", metadataerr.ErrInvalidInput, options.ProviderName))
 	}

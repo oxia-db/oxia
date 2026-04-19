@@ -10,7 +10,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document/backend"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/backend"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"google.golang.org/protobuf/encoding/protojson"
 	gproto "google.golang.org/protobuf/proto"
