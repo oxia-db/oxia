@@ -7,10 +7,11 @@ import (
 	"sync/atomic"
 
 	"github.com/oxia-db/oxia/common/channel"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document/backend"
+	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/error"
 	gproto "google.golang.org/protobuf/proto"
 
 	commonactor "github.com/oxia-db/oxia/oxiad/common/actor"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2"
 )
 
 type Inflight[T gproto.Message] struct {
@@ -39,10 +40,10 @@ type Executor[T gproto.Message] struct {
 	ctx    context.Context
 	name   string
 	actor  *commonactor.Actor[*Inflight[T]]
-	record *MetaRecord[T]
+	record *backend.MetaRecord[T]
 }
 
-func NewExecutor[T gproto.Message](ctx context.Context, name string, record *MetaRecord[T]) *Executor[T] {
+func NewExecutor[T gproto.Message](ctx context.Context, name string, record *backend.MetaRecord[T]) *Executor[T] {
 	m := &Executor[T]{
 		ctx:    ctx,
 		name:   name,
@@ -59,7 +60,7 @@ func NewExecutor[T gproto.Message](ctx context.Context, name string, record *Met
 func (m *Executor[T]) Execute(op *Inflight[T]) error {
 	if err := m.actor.Send(op); err != nil {
 		if errors.Is(err, commonactor.ErrPaused) || errors.Is(err, commonactor.ErrShuttingDown) {
-			return metadata_v2.ErrLeaseNotHeld
+			return metadataerr.ErrLeaseNotHeld
 		}
 		return err
 	}
@@ -109,7 +110,7 @@ func (m *Executor[T]) bgApply(ops []*Inflight[T]) {
 					slog.String("executor", m.name),
 					slog.Int("ops", len(ops)),
 				)
-				err = metadata_v2.ErrLeaseNotHeld
+				err = metadataerr.ErrLeaseNotHeld
 			}
 			for _, op := range ops {
 				op.Complete(err)

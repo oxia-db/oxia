@@ -8,37 +8,36 @@ import (
 	"sync"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document/backend"
+	metadataerr "github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/error"
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/process"
 	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2"
 )
-
-var _ metadata_v2.Store = (*Store)(nil)
 
 type Store struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
-	backend Backend
+	backend backend.Backend
 
 	configExecutor *Executor[*metadatapb.Cluster]
 	statusExecutor *Executor[*metadatapb.ClusterState]
 
-	config MetaRecord[*metadatapb.Cluster]
-	status MetaRecord[*metadatapb.ClusterState]
+	config backend.MetaRecord[*metadatapb.Cluster]
+	status backend.MetaRecord[*metadatapb.ClusterState]
 }
 
-func NewStore(ctx context.Context, backend Backend) *Store {
+func NewStore(ctx context.Context, backendInstance backend.Backend) *Store {
 	storeCtx, cancel := context.WithCancel(ctx)
 	s := &Store{
 		ctx:     storeCtx,
 		cancel:  cancel,
-		backend: backend,
-		config:  newLazyMetaRecord[*metadatapb.Cluster](backend, ConfigRecordName),
-		status:  newLazyMetaRecord[*metadatapb.ClusterState](backend, StatusRecordName),
+		backend: backendInstance,
+		config:  backend.NewLazyMetaRecord[*metadatapb.Cluster](backendInstance, backend.ConfigRecordName),
+		status:  backend.NewLazyMetaRecord[*metadatapb.ClusterState](backendInstance, backend.StatusRecordName),
 	}
 	s.configExecutor = NewExecutor(s.ctx, "config_executor", &s.config)
 	s.statusExecutor = NewExecutor(s.ctx, "status_executor", &s.status)
@@ -152,7 +151,7 @@ func (s *Store) GetDataServer(name string) (*metadatapb.DataServer, error) {
 	cfg := s.config.Load()
 	dataServer, ok := cfg.DataServers[name]
 	if !ok || dataServer == nil {
-		return nil, metadata_v2.ErrNotFound
+		return nil, metadataerr.ErrNotFound
 	}
 	return dataServer, nil
 }
@@ -178,10 +177,10 @@ func (s *Store) CreateDataServers(dataServers []*metadatapb.DataServer) error {
 		}
 		for _, dataServer := range dataServers {
 			if dataServer == nil || dataServer.Name == "" {
-				return metadata_v2.ErrInvalidInput
+				return metadataerr.ErrInvalidInput
 			}
 			if _, ok := cfg.DataServers[dataServer.Name]; ok {
-				return fmt.Errorf("%w: data server %q", metadata_v2.ErrAlreadyExists, dataServer.Name)
+				return fmt.Errorf("%w: data server %q", metadataerr.ErrAlreadyExists, dataServer.Name)
 			}
 			cfg.DataServers[dataServer.Name] = gproto.CloneOf(dataServer)
 		}
@@ -216,7 +215,7 @@ func (s *Store) GetNamespace(name string) (*metadatapb.Namespace, error) {
 	cfg := s.config.Load()
 	namespace, ok := cfg.Namespaces[name]
 	if !ok || namespace == nil {
-		return nil, metadata_v2.ErrNotFound
+		return nil, metadataerr.ErrNotFound
 	}
 	return namespace, nil
 }
@@ -243,10 +242,10 @@ func (s *Store) CreateNamespaces(namespaces []*metadatapb.Namespace) error {
 
 		for _, namespace := range namespaces {
 			if namespace == nil || namespace.Name == "" {
-				return metadata_v2.ErrInvalidInput
+				return metadataerr.ErrInvalidInput
 			}
 			if _, ok := cfg.Namespaces[namespace.Name]; ok {
-				return fmt.Errorf("%w: namespace %q", metadata_v2.ErrAlreadyExists, namespace.Name)
+				return fmt.Errorf("%w: namespace %q", metadataerr.ErrAlreadyExists, namespace.Name)
 			}
 			cfg.Namespaces[namespace.Name] = gproto.CloneOf(namespace)
 		}
@@ -291,7 +290,7 @@ func (s *Store) PatchNamespaceHierarchyPolicies(name string, policy *metadatapb.
 	err := s.configExecutor.Execute(NewInflight(func(cfg *metadatapb.Cluster) error {
 		namespace, ok := cfg.Namespaces[name]
 		if !ok || namespace == nil {
-			return metadata_v2.ErrNotFound
+			return metadataerr.ErrNotFound
 		}
 		switch {
 		case namespace.Policies == nil:
@@ -309,13 +308,13 @@ func (s *Store) PatchNamespaceHierarchyPolicies(name string, policy *metadatapb.
 
 func (s *Store) GetNamespaceState(name string) (*metadatapb.NamespaceState, error) {
 	if name == "" {
-		return nil, metadata_v2.ErrInvalidInput
+		return nil, metadataerr.ErrInvalidInput
 	}
 
 	status := s.status.Load()
 	namespace, ok := status.Namespaces[name]
 	if !ok || namespace == nil {
-		return nil, metadata_v2.ErrNotFound
+		return nil, metadataerr.ErrNotFound
 	}
 	return namespace, nil
 }
@@ -341,10 +340,10 @@ func (s *Store) CreateNamespaceStates(namespaces map[string]*metadatapb.Namespac
 		}
 		for name, namespace := range namespaces {
 			if name == "" || namespace == nil {
-				return metadata_v2.ErrInvalidInput
+				return metadataerr.ErrInvalidInput
 			}
 			if _, ok := status.Namespaces[name]; ok {
-				return fmt.Errorf("%w: namespace state %q", metadata_v2.ErrAlreadyExists, name)
+				return fmt.Errorf("%w: namespace state %q", metadataerr.ErrAlreadyExists, name)
 			}
 			status.Namespaces[name] = gproto.CloneOf(namespace)
 		}
@@ -371,11 +370,11 @@ func (s *Store) GetShardState(namespace string, shardID int64) (*metadatapb.Shar
 	status := s.status.Load()
 	namespaceState, ok := status.Namespaces[namespace]
 	if !ok || namespaceState == nil {
-		return nil, metadata_v2.ErrNotFound
+		return nil, metadataerr.ErrNotFound
 	}
 	shard, ok := namespaceState.Shards[shardID]
 	if !ok || shard == nil {
-		return nil, metadata_v2.ErrNotFound
+		return nil, metadataerr.ErrNotFound
 	}
 	return shard, nil
 }
@@ -385,7 +384,7 @@ func (s *Store) PatchShardState(namespace string, shardID int64, shard *metadata
 	err := s.statusExecutor.Execute(NewInflight(func(status *metadatapb.ClusterState) error {
 		namespaceState, ok := status.Namespaces[namespace]
 		if !ok || namespaceState == nil {
-			return metadata_v2.ErrNotFound
+			return metadataerr.ErrNotFound
 		}
 		if namespaceState.Shards == nil {
 			namespaceState.Shards = make(map[int64]*metadatapb.ShardState)

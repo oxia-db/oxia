@@ -1,18 +1,10 @@
 package metadata_v2
 
 import (
-	"errors"
 	"io"
 
 	"github.com/oxia-db/oxia/common/proto/metadata"
 	"github.com/oxia-db/oxia/oxiad/common/option"
-)
-
-var (
-	ErrAlreadyExists = errors.New("metadata resource already exists")
-	ErrInvalidInput  = errors.New("metadata invalid input")
-	ErrLeaseNotHeld  = errors.New("metadata lease not held")
-	ErrNotFound      = errors.New("metadata resource not found")
 )
 
 type Store interface {

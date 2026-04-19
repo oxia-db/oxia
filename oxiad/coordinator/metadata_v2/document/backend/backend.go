@@ -1,12 +1,25 @@
-package document
+package backend
 
 import (
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 
 	gproto "google.golang.org/protobuf/proto"
+
+	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 )
+
+type Backend interface {
+	io.Closer
+
+	LeaseWatch() *commonoption.Watch[metadatapb.LeaseState]
+
+	Load(name MetaRecordName) *Versioned[gproto.Message]
+	Store(name MetaRecordName, record *Versioned[gproto.Message]) error
+}
 
 type MetaRecordName string
 
@@ -27,7 +40,7 @@ type MetaRecord[T gproto.Message] struct {
 	name    MetaRecordName
 }
 
-func newLazyMetaRecord[T gproto.Message](backend Backend, name MetaRecordName) MetaRecord[T] {
+func NewLazyMetaRecord[T gproto.Message](backend Backend, name MetaRecordName) MetaRecord[T] {
 	return MetaRecord[T]{
 		backend: backend,
 		name:    name,

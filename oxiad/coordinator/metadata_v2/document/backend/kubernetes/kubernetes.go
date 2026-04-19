@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/google/uuid"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document/backend"
+	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"google.golang.org/protobuf/encoding/protojson"
 	gproto "google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
@@ -26,9 +30,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata_v2/document"
 )
 
-var _ document.Backend = (*Backend)(nil)
-var _ resourcelock.Interface = (*Backend)(nil)
-
 var (
 	leaseDuration     = 15 * time.Second
 	renewDeadline     = 10 * time.Second
@@ -41,8 +42,6 @@ const (
 	defaultLeaseName = "metadata-lease"
 	fieldManager     = "oxia-metadata"
 )
-
-type Store = document.Store
 
 type Backend struct {
 	ctx    context.Context
@@ -59,14 +58,19 @@ type Backend struct {
 	leaseWatch  *commonoption.Watch[metadatapb.LeaseState]
 }
 
-func NewBackend(ctx context.Context, namespace string, identity string) *Backend {
+func NewBackend(ctx context.Context, kubernetes option.K8sMetadata) *Backend {
 	client := coordinatormetadata.NewK8SClientset(coordinatormetadata.NewK8SClientConfig())
 	backendCtx, cancel := context.WithCancel(ctx)
+	var identity string
+	var err error
+	if identity, err = os.Hostname(); err != nil {
+		identity = uuid.NewString()
+	}
 	b := &Backend{
 		ctx:        backendCtx,
 		cancel:     cancel,
 		client:     client,
-		namespace:  namespace,
+		namespace:  kubernetes.Namespace,
 		identity:   identity,
 		leaseName:  defaultLeaseName,
 		leaseWatch: commonoption.NewWatch(metadatapb.LeaseState_LEASE_STATE_UNHELD),
@@ -101,13 +105,12 @@ func (b *Backend) LeaseWatch() *commonoption.Watch[metadatapb.LeaseState] {
 	return b.leaseWatch
 }
 
-func (b *Backend) Load(name document.MetaRecordName) *document.Versioned[gproto.Message] {
-	configMapName := string(name)
+func (b *Backend) Load(name backend.MetaRecordName) *backend.Versioned[gproto.Message] {
 	var msg gproto.Message
 	switch name {
-	case document.ConfigRecordName:
+	case backend.ConfigRecordName:
 		msg = &metadatapb.Cluster{}
-	case document.StatusRecordName:
+	case backend.StatusRecordName:
 		msg = &metadatapb.ClusterState{}
 	default:
 		panic(fmt.Sprintf("unknown metadata record %q", name))
@@ -120,7 +123,7 @@ func (b *Backend) Load(name document.MetaRecordName) *document.Versioned[gproto.
 	// CODEX: add retry logs
 	_ = backoff.Retry(func() error {
 		var err error
-		cm, err = b.client.CoreV1().ConfigMaps(b.namespace).Get(ctx, configMapName, metav1.GetOptions{})
+		cm, err = b.client.CoreV1().ConfigMaps(b.namespace).Get(ctx, string(name), metav1.GetOptions{})
 		return err
 	}, oxiatime.NewBackOff(ctx))
 
@@ -131,20 +134,18 @@ func (b *Backend) Load(name document.MetaRecordName) *document.Versioned[gproto.
 	if err := (protojson.UnmarshalOptions{
 		DiscardUnknown: true,
 	}).Unmarshal([]byte(payload), msg); err != nil {
-		return &document.Versioned[gproto.Message]{
+		return &backend.Versioned[gproto.Message]{
 			Version: cm.ResourceVersion,
 			Value:   msg,
 		}
 	}
-	return &document.Versioned[gproto.Message]{
+	return &backend.Versioned[gproto.Message]{
 		Version: cm.ResourceVersion,
 		Value:   msg,
 	}
 }
 
-func (b *Backend) Store(name document.MetaRecordName, record *document.Versioned[gproto.Message]) error {
-	configMapName := string(name)
-
+func (b *Backend) Store(name backend.MetaRecordName, record *backend.Versioned[gproto.Message]) error {
 	content, err := protojson.MarshalOptions{
 		Indent:    "  ",
 		Multiline: true,
@@ -163,7 +164,7 @@ func (b *Backend) Store(name document.MetaRecordName, record *document.Versioned
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
+			Name:      string(name),
 			Namespace: b.namespace,
 		},
 		Data: map[string]string{
@@ -183,7 +184,7 @@ func (b *Backend) Store(name document.MetaRecordName, record *document.Versioned
 	force := true
 	err = backoff.Retry(func() error {
 		var err error
-		updated, err = b.client.CoreV1().ConfigMaps(b.namespace).Patch(ctx, configMapName, types.ApplyPatchType, patch, metav1.PatchOptions{
+		updated, err = b.client.CoreV1().ConfigMaps(b.namespace).Patch(ctx, string(name), types.ApplyPatchType, patch, metav1.PatchOptions{
 			FieldManager: fieldManager,
 			Force:        &force,
 		})
