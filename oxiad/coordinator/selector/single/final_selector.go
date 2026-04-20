@@ -31,7 +31,7 @@ func (*finalSelector) Select(ssContext *Context) (string, error) {
 		return "", selector.ErrNoFunctioning
 	}
 	if status != nil {
-		startIdx := ssContext.Status.ServerIdx
+		startIdx := status.ServerIdx
 		return candidatesArr[int(startIdx)%len(candidatesArr)], nil
 	}
 	return candidatesArr[rand.IntN(len(candidatesArr))], nil //nolint:gosec

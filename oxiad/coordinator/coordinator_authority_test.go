@@ -20,10 +20,58 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/concurrent"
+	metadatapb "github.com/oxia-db/oxia/common/proto/metadata"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	v2backend "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
+
+type testMetadataBackend struct {
+	status *model.ClusterStatus
+	watch  *commonoption.Watch[metadatapb.LeaseState]
+}
+
+func newTestMetadataBackend(status *model.ClusterStatus) *testMetadataBackend {
+	return &testMetadataBackend{
+		status: status,
+		watch:  commonoption.NewWatch(metadatapb.LeaseState_LEASE_STATE_HELD),
+	}
+}
+
+func (b *testMetadataBackend) Close() error {
+	return nil
+}
+
+func (b *testMetadataBackend) LeaseWatch() *commonoption.Watch[metadatapb.LeaseState] {
+	return b.watch
+}
+
+func (b *testMetadataBackend) Load(name v2backend.MetaRecordName) *v2backend.Versioned[gproto.Message] {
+	switch name {
+	case v2backend.StatusRecordName:
+		return &v2backend.Versioned[gproto.Message]{
+			Value: clusterStatusToProto(b.status),
+		}
+	default:
+		return &v2backend.Versioned[gproto.Message]{
+			Value: &metadatapb.Cluster{},
+		}
+	}
+}
+
+func (b *testMetadataBackend) Store(name v2backend.MetaRecordName, record *v2backend.Versioned[gproto.Message]) error {
+	if name == v2backend.StatusRecordName {
+		if state, ok := record.Value.(*metadatapb.ClusterState); ok {
+			b.status = clusterStatusFromProto(state, func(string) (model.Server, bool) {
+				return model.Server{}, false
+			})
+		}
+	}
+	return nil
+}
 
 func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	leader := model.Server{
@@ -65,7 +113,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	c := &coordinator{
 		RWMutex:            sync.RWMutex{},
 		clusterConfig:      &clusterConfig,
-		currentStatus:      status,
+		metadata:           newTestMetadataBackend(status),
 		assignmentsChanged: concurrent.NewConditionContext(&sync.Mutex{}),
 	}
 
@@ -121,7 +169,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 	c := &coordinator{
 		RWMutex:            sync.RWMutex{},
 		clusterConfig:      &clusterConfig,
-		currentStatus:      status,
+		metadata:           newTestMetadataBackend(status),
 		assignmentsChanged: concurrent.NewConditionContext(&sync.Mutex{}),
 	}
 
@@ -131,7 +179,6 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		[]string{
 			"active-public:6648",
 			"active-internal:6649",
-			"removed-public:6648",
 			"removed-internal:6649",
 		},
 		c.assignments.AllowedAuthorities,

@@ -17,6 +17,7 @@ package coordinator
 import (
 	"context"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 
@@ -40,7 +41,10 @@ import (
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v1"
+	v2backend "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
+	metadatafile "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend/file"
+	metadatakubernetes "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend/kubernetes"
+	metadataraft "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend/raft"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -54,12 +58,13 @@ type GrpcServer struct {
 	logger           *slog.Logger
 	watchableOptions *commonoption.Watch[*option.Options]
 
-	grpcServer   rpc2.GrpcServer
-	adminServer  rpc2.GrpcServer
-	healthServer *health.Server
-	coordinator  Coordinator
-	clientPool   rpc.ClientPool
-	metrics      *metric.PrometheusMetrics
+	grpcServer      rpc2.GrpcServer
+	adminServer     rpc2.GrpcServer
+	healthServer    *health.Server
+	coordinator     Coordinator
+	clientPool      rpc.ClientPool
+	metrics         *metric.PrometheusMetrics
+	metadataTempDir string
 }
 
 func configureClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper) error {
@@ -133,23 +138,24 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 
 	meta := &options.Metadata
 
-	var metadataProvider metadata.Provider
+	var metadataBackend v2backend.Backend
+	metadataTempDir := ""
 	switch meta.ProviderName {
-	case metadata.ProviderNameMemory:
-		metadataProvider = metadata.NewMetadataProviderMemory()
-	case metadata.ProviderNameFile:
-		metadataProvider = metadata.NewMetadataProviderFile(meta.File.Path)
-	case metadata.ProviderNameConfigmap:
-		k8sConfig := metadata.NewK8SClientConfig()
-		metadataProvider = metadata.NewMetadataProviderConfigMap(metadata.NewK8SClientset(k8sConfig),
-			meta.Kubernetes.Namespace, meta.Kubernetes.ConfigMapName)
-	case metadata.ProviderNameRaft:
-		var err error
-		metadataProvider, err = metadata.NewMetadataProviderRaft(
-			meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
+	case option.MetadataProviderNameMemory:
+		metadataTempDir, err = os.MkdirTemp("", "oxia-coordinator-metadata-*")
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to create raft metadata provider")
+			return nil, errors.Wrap(err, "failed to create temporary metadata dir")
 		}
+		metadataBackend = metadatafile.NewBackend(parent, option.FileMetadata{Path: metadataTempDir})
+	case option.MetadataProviderNameFile:
+		if err := os.MkdirAll(meta.File.Path, 0o755); err != nil {
+			return nil, errors.Wrap(err, "failed to create metadata directory")
+		}
+		metadataBackend = metadatafile.NewBackend(parent, meta.File)
+	case option.MetadataProviderNameConfigmap:
+		metadataBackend = metadatakubernetes.NewBackend(parent, meta.Kubernetes)
+	case option.MetadataProviderNameRaft:
+		metadataBackend = metadataraft.NewBackend(parent, meta.Raft)
 	default:
 		return nil, errors.New(`must be one of "memory", "configmap" or "file"`)
 	}
@@ -176,7 +182,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clientPool := rpc.NewClientPool(controllerTLS, nil)
 	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfig, rpcClient) //nolint:contextcheck
+	coordinatorInstance, err := NewCoordinator(metadataBackend, clusterConfig, rpcClient) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +220,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		clientPool:       clientPool,
 		coordinator:      coordinatorInstance,
 		metrics:          metricsServer,
+		metadataTempDir:  metadataTempDir,
 	}
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
@@ -269,6 +276,9 @@ func (s *GrpcServer) Close() error {
 	)
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())
+	}
+	if s.metadataTempDir != "" {
+		err = multierr.Append(err, os.RemoveAll(s.metadataTempDir))
 	}
 	return err
 }

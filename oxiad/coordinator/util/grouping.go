@@ -65,7 +65,10 @@ func NodeShardLeaders(candidates *linkedhashset.Set[string], status *model.Clust
 	return totalShards, electedShards, result
 }
 
-func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *model.ClusterStatus) (map[string][]model.ShardInfo, map[string]model.Server) {
+func GroupingShardsNodeByStatus(
+	candidates *linkedhashset.Set[string],
+	status *model.ClusterStatus,
+) (map[string][]model.ShardInfo, map[string]model.Server) {
 	groupingShardByNode := make(map[string][]model.ShardInfo)
 	historyNodes := make(map[string]model.Server)
 	if status != nil {

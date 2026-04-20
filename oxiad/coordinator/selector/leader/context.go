@@ -14,9 +14,7 @@
 
 package leader
 
-import (
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-)
+import "github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 type Context struct {
 	Candidates []model.Server

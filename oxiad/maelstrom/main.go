@@ -27,10 +27,11 @@ import (
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/option"
+	metadatafile "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend/file"
+	coordinatoroption "github.com/oxia-db/oxia/oxiad/coordinator/option"
+	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v1"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 
@@ -180,8 +181,8 @@ func main() {
 		}
 
 		_, err := coordinator.NewCoordinator(
-			metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json")),
-			func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil,
+			metadatafile.NewBackend(context.Background(), coordinatoroption.FileMetadata{Path: filepath.Join(dataDir, "cluster-status")}),
+			clusterConfig,
 			newRpcProvider(dispatcher))
 		if err != nil {
 			slog.Error(
@@ -192,7 +193,7 @@ func main() {
 		}
 	} else {
 		// Any other node will be a storage node
-		dataServerOption := option.NewDefaultOptions()
+		dataServerOption := dataserveroption.NewDefaultOptions()
 		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
 		dataServerOption.Storage.WAL.Dir = filepath.Join(dataDir, thisNode, "wal")

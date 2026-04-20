@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+	pbmetadata "github.com/oxia-db/oxia/common/proto/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
@@ -30,7 +32,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/v1"
+	v2backend "github.com/oxia-db/oxia/oxiad/coordinator/metadata/v2/backend"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
@@ -64,11 +66,7 @@ type coordinator struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	metadata         metadata.Provider
-	clusterConfig    *model.ClusterConfig
-	statusLock       sync.RWMutex
-	currentStatus    *model.ClusterStatus
-	currentVersionID metadata.Version
+	metadata metadata.Store
 
 	shardControllers map[int64]controller.ShardController
 	splitControllers map[int64]*controller.SplitController // keyed by parent shard ID
@@ -162,9 +160,13 @@ func (c *coordinator) waitForAllNodesToBeAvailable() {
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 func (c *coordinator) selectNewEnsemble(ns *model.NamespaceConfig, editingStatus *model.ClusterStatus) ([]model.Server, error) {
-	nodes, nodesMetadata := c.nodesWithMetadata()
+	var dataServers []*pbmetadata.DataServer
+	var err error
+	if dataServers, err = c.metadata.ListDataServer(); err != nil {
+		return nil, err
+	}
 	ensembleContext := &ensemble.Context{
-		Candidates:         nodes,
+		Candidates:         dataServers,
 		CandidatesMetadata: nodesMetadata,
 		Policies:           ns.Policies,
 		Status:             editingStatus,
@@ -209,6 +211,7 @@ func (c *coordinator) Close() error {
 	for _, nc := range c.drainingNodes {
 		err = multierr.Append(err, nc.Close())
 	}
+	err = multierr.Append(err, c.metadata.Close())
 	return err
 }
 
@@ -652,7 +655,7 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 	}
 }
 
-func NewCoordinator(meta metadata.Provider, clusterConfig model.ClusterConfig, rpcProvider rpc.Provider) (Coordinator, error) {
+func NewCoordinator(meta v2backend.Backend, clusterConfig model.ClusterConfig, rpcProvider rpc.Provider) (Coordinator, error) {
 	c := &coordinator{
 		Logger: slog.With(
 			slog.String("component", "coordinator"),
@@ -660,7 +663,6 @@ func NewCoordinator(meta metadata.Provider, clusterConfig model.ClusterConfig, r
 		WaitGroup:        sync.WaitGroup{},
 		metadata:         meta,
 		clusterConfig:    &clusterConfig,
-		currentVersionID: metadata.NotExists,
 		ensembleSelector: ensemble.NewSelector(),
 		shardControllers: make(map[int64]controller.ShardController),
 		splitControllers: make(map[int64]*controller.SplitController),
@@ -671,7 +673,7 @@ func NewCoordinator(meta metadata.Provider, clusterConfig model.ClusterConfig, r
 
 	// Ensure we are to become the leader coordinator
 	c.Info("Waiting to become leader")
-	if err := meta.WaitToBecomeLeader(); err != nil {
+	if err := waitForMetadataLease(context.Background(), meta.LeaseWatch()); err != nil {
 		return nil, errors.Wrap(err, "failed to wait in becoming leader")
 	}
 	c.Info("This coordinator is now leader")
