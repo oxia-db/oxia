@@ -22,9 +22,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 

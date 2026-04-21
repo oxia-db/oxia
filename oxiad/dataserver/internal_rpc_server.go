@@ -153,8 +153,8 @@ func (s *internalRpcServer) Handshake(c context.Context, req *proto.HandshakeReq
 	}
 
 	currentInstanceID := s.manifest.GetInstanceID()
-	switch {
-	case currentInstanceID == "":
+	switch currentInstanceID {
+	case "":
 		if err := s.manifest.SetInstanceID(req.InstanceId); err != nil {
 			if errors.Is(err, manifestpkg.ErrInstanceIDMismatch) {
 				return &proto.HandshakeResponse{
@@ -169,7 +169,7 @@ func (s *internalRpcServer) Handshake(c context.Context, req *proto.HandshakeReq
 			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_BOUND,
 			FeaturesSupported: feature.SupportedFeatures(),
 		}, nil
-	case currentInstanceID == req.InstanceId:
+	case req.InstanceId:
 		return &proto.HandshakeResponse{
 			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
 			FeaturesSupported: feature.SupportedFeatures(),
