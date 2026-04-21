@@ -59,7 +59,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc.NewRpcProvider(nil, rpc.InstanceIDFromMetadata(metadataProvider)),
+		rpc.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()

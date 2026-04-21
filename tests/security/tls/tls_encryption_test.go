@@ -132,7 +132,7 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(tlsConf, rpc2.InstanceIDFromMetadata(metadataProvider)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 }
@@ -159,7 +159,7 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(tlsConf, rpc2.InstanceIDFromMetadata(metadataProvider)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -190,7 +190,7 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(tlsConf, rpc2.InstanceIDFromMetadata(metadataProvider)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -227,7 +227,7 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(tlsConf, rpc2.InstanceIDFromMetadata(metadataProvider)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -265,7 +265,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(tlsConf, rpc2.InstanceIDFromMetadata(metadataProvider)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -300,7 +300,7 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 

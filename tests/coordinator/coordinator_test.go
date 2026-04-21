@@ -47,7 +47,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)),
+		rpc2.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()

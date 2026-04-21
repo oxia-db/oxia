@@ -116,7 +116,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 
 	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
+		nil, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
 
 	return s1Addr.Public, func() {
@@ -312,7 +312,7 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 
 	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
+		nil, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -470,7 +470,7 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 
 	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
+		nil, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 

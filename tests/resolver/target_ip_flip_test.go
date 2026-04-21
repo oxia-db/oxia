@@ -78,7 +78,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 			}, nil
 		},
 		nil,
-		coordinatorrpc.NewRpcProvider(nil, coordinatorrpc.InstanceIDFromMetadata(metadataProvider)),
+		coordinatorrpc.NewRpcProviderFactory(nil),
 	)
 	require.NoError(t, err)
 

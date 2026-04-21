@@ -52,7 +52,7 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc.NewRpcProvider(nil, rpc.InstanceIDFromMetadata(metadataProvider)),
+		rpc.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
@@ -115,7 +115,7 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc.NewRpcProvider(nil, rpc.InstanceIDFromMetadata(metadataProvider)),
+		rpc.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
@@ -178,7 +178,7 @@ func TestLeaderHintListWithClient(t *testing.T) {
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc.NewRpcProvider(nil, rpc.InstanceIDFromMetadata(metadataProvider)),
+		rpc.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
@@ -232,7 +232,7 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc.NewRpcProvider(nil, rpc.InstanceIDFromMetadata(metadataProvider)),
+		rpc.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
@@ -295,7 +295,7 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc.NewRpcProvider(nil, rpc.InstanceIDFromMetadata(metadataProvider)),
+		rpc.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
@@ -353,7 +353,7 @@ func TestLeaderHintWithClient(t *testing.T) {
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc.NewRpcProvider(nil, rpc.InstanceIDFromMetadata(metadataProvider)),
+		rpc.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()

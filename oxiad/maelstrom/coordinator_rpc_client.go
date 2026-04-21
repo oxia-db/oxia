@@ -46,6 +46,10 @@ type maelstromCoordinatorRpcProvider struct {
 	assignmentStreams map[int64]*maelstromShardAssignmentClient
 }
 
+func (m *maelstromCoordinatorRpcProvider) Close() error {
+	return nil
+}
+
 func (m *maelstromCoordinatorRpcProvider) ClearPooledConnections(node model.Server) {
 }
 

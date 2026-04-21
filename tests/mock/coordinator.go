@@ -17,7 +17,6 @@ package mock
 import (
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
@@ -33,7 +32,7 @@ func NewCoordinator(t *testing.T, config *model.ClusterConfig, clusterConfigNoti
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return *config, nil },
 		clusterConfigNotificationCh,
-		rpc2.NewRpcProvider(nil, uuid.NewString()),
+		rpc2.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	return coordinatorInstance
