@@ -23,8 +23,6 @@ import (
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-
-	"github.com/oxia-db/oxia/common/rpc"
 )
 
 func TestCoordinatorInitiateLeaderElection(t *testing.T) {
@@ -44,9 +42,13 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(
+		metadataProvider,
+		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		nil,
+		rpc2.NewRpcProviderFactory(nil),
+	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 

@@ -12,15 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package io
+package rpc
 
-import "io"
+import "crypto/tls"
 
-var _ io.Closer = &NopCloser{}
+type ProviderFactory = func(instanceID string) Provider
 
-type NopCloser struct {
-}
-
-func (*NopCloser) Close() error {
-	return nil
+func NewRpcProviderFactory(tlsConf *tls.Config) ProviderFactory {
+	return func(instanceID string) Provider {
+		return NewRpcProvider(tlsConf, instanceID)
+	}
 }

@@ -55,7 +55,7 @@ func newMaelstromGrpcProvider() *maelstromGrpcProvider {
 }
 
 func (m *maelstromGrpcProvider) StartGrpcServer(name, _ string, registerFunc func(grpc.ServiceRegistrar),
-	_ *tls.Config, _ *auth.Options) (rpc.GrpcServer, error) {
+	_ *tls.Config, _ *auth.Options, _ *rpc.Interceptors) (rpc.GrpcServer, error) {
 	slog.Info(
 		"Start Grpc server",
 		slog.String("name", name),

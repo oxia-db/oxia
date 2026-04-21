@@ -12,27 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package constant
+package commonio
 
-import "time"
+import "io"
 
-const I64NegativeOne int64 = -1
-const I64Zero int64 = 0
-const U32Zero uint32 = 0
+var _ io.Closer = &NopCloser{}
 
-const (
-	MetadataTerm              = "term"
-	MetadataNamespace         = "namespace"
-	MetadataShardId           = "shard-id"
-	MetadataSplitHashRangeMin = "split-hash-range-min"
-	MetadataSplitHashRangeMax = "split-hash-range-max"
-	MetadataInstanceId        = "instance-id"
-	DefaultNamespace          = "default"
+type NopCloser struct {
+}
 
-	DefaultPublicPort   = 6648
-	DefaultInternalPort = 6649
-	DefaultAdminPort    = 6651
-
-	MaxSessionTimeout = 5 * time.Minute
-	MinSessionTimeout = 2 * time.Second
-)
+func (*NopCloser) Close() error {
+	return nil
+}

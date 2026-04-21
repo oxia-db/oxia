@@ -29,6 +29,8 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -42,9 +44,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-
-	"github.com/oxia-db/oxia/common/rpc"
 )
 
 type GrpcServer struct {
@@ -59,7 +58,6 @@ type GrpcServer struct {
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
 	coordinator  Coordinator
-	clientPool   rpc.ClientPool
 	metrics      *metric.PrometheusMetrics
 }
 
@@ -175,20 +173,19 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	}
 	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
-	}, internalServerTLS, &internalServer.Auth)
+	}, internalServerTLS, &internalServer.Auth, nil)
 	if err != nil {
 		return nil, err
 	}
-
 	controller := &options.Controller
 	controllerTLS, err := controller.TLS.TryIntoClientTLSConf()
 	if err != nil {
 		return nil, err
 	}
-	clientPool := rpc.NewClientPool(controllerTLS, nil)
-	rpcClient := coordinatorrpc.NewRpcProvider(clientPool)
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpcClient) //nolint:contextcheck
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, func(instanceID string) rpc.Provider { //nolint:contextcheck // Provider factory is configuration-only and does not accept a caller context.
+		return rpc.NewRpcProvider(controllerTLS, instanceID)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +202,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	)
 	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, admin)
-	}, adminSvTLS, &adminSv.Auth)
+	}, adminSvTLS, &adminSv.Auth, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +221,6 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		grpcServer:       grpcServer,
 		adminServer:      adminGrpcServer,
 		healthServer:     healthServer,
-		clientPool:       clientPool,
 		coordinator:      coordinatorInstance,
 		metrics:          metricsServer,
 	}
@@ -275,7 +271,6 @@ func (s *GrpcServer) Close() error {
 	var err error
 	s.healthServer.Shutdown()
 	err = multierr.Combine(
-		s.clientPool.Close(),
 		s.grpcServer.Close(),
 		s.adminServer.Close(),
 		s.coordinator.Close(),

@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
-	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -56,7 +55,12 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	coordinatorInstance, err := coordinator.NewCoordinator(
+		metadataProvider,
+		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		nil,
+		rpc.NewRpcProviderFactory(nil),
+	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 

@@ -63,15 +63,15 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
 	coordinatorInstance, err := coordinator.NewCoordinator(
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc2.NewRpcProvider(clientPool),
+		rpc2.NewRpcProviderFactory(nil),
 	)
 	require.NoError(t, err)
+	clientPool := rpc.NewClientPool(nil, nil)
 
 	statusResource := coordinatorInstance.StatusResource()
 
@@ -302,7 +302,6 @@ type splitTestCluster struct {
 	sa1                 model.Server
 	coordinator         coordinator.Coordinator
 	statusResource      resource.StatusResource
-	clientPool          rpc.ClientPool
 	leftChild           int64
 	rightChild          int64
 	leftMeta, rightMeta model.ShardMetadata
@@ -329,13 +328,12 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
 	coordinatorInstance, err := coordinator.NewCoordinator(
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		rpc2.NewRpcProvider(clientPool),
+		rpc2.NewRpcProviderFactory(nil),
 	)
 	require.NoError(t, err)
 
@@ -351,7 +349,6 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		sa1:            sa1,
 		coordinator:    coordinatorInstance,
 		statusResource: statusResource,
-		clientPool:     clientPool,
 	}
 }
 
@@ -423,7 +420,6 @@ func (c *splitTestCluster) reconnectClient(t *testing.T, old oxia.SyncClient, te
 func (c *splitTestCluster) close(t *testing.T) {
 	t.Helper()
 	assert.NoError(t, c.coordinator.Close())
-	assert.NoError(t, c.clientPool.Close())
 	for _, s := range c.servers {
 		assert.NoError(t, s.Close())
 	}
@@ -858,9 +854,8 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				}},
 				Servers: []model.Server{sa1},
 			}
-			clientPool := rpc.NewClientPool(nil, nil)
 
-			coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+			coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 			assert.NoError(t, err)
 
 			statusResource := coordinatorInstance.StatusResource()
@@ -895,7 +890,6 @@ func TestCoordinator_KeySorting(t *testing.T) {
 
 			assert.NoError(t, client.Close())
 			assert.NoError(t, coordinatorInstance.Close())
-			assert.NoError(t, clientPool.Close())
 
 			assert.NoError(t, s1.Close())
 		})

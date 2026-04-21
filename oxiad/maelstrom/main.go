@@ -25,6 +25,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -33,6 +35,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
+	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
@@ -182,7 +185,9 @@ func main() {
 		_, err := coordinator.NewCoordinator(
 			metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json")),
 			func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil,
-			newRpcProvider(dispatcher))
+			func(instanceID string) rpc.Provider {
+				return newRpcProvider(dispatcher)
+			})
 		if err != nil {
 			slog.Error(
 				"failed to create coordinator",
@@ -196,11 +201,20 @@ func main() {
 		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
 		dataServerOption.Storage.WAL.Dir = filepath.Join(dataDir, thisNode, "wal")
-		_, err := dataserver.NewWithGrpcProvider(
+		manifest, err := manifestpkg.NewManifest(dataServerOption.Storage.Database.Dir)
+		if err != nil {
+			slog.Error(
+				"failed to create dataserver manifest",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+		_, err = dataserver.NewWithGrpcProvider(
 			context.Background(),
 			commonoption.NewWatch(dataServerOption),
 			grpcProvider,
 			replicationGrpcProvider,
+			manifest,
 			true,
 		)
 		if err != nil {

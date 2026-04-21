@@ -16,14 +16,18 @@ package rpc
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"time"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	grpcstatus "google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
+
+	commonrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-
-	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -31,14 +35,16 @@ import (
 const rpcTimeout = 30 * time.Second
 
 type Provider interface {
+	io.Closer
+
 	PushShardAssignments(ctx context.Context, node model.Server) (proto.OxiaCoordination_PushShardAssignmentsClient, error)
 	NewTerm(ctx context.Context, node model.Server, req *proto.NewTermRequest) (*proto.NewTermResponse, error)
 	BecomeLeader(ctx context.Context, node model.Server, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error)
 	AddFollower(ctx context.Context, node model.Server, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error)
 	GetStatus(ctx context.Context, node model.Server, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
 	DeleteShard(ctx context.Context, node model.Server, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
+	Handshake(ctx context.Context, node model.Server, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error)
 	RemoveObserver(ctx context.Context, node model.Server, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error)
-	GetInfo(ctx context.Context, node model.Server, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error)
 
 	GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, io.Closer, error)
 
@@ -46,11 +52,21 @@ type Provider interface {
 }
 
 type rpcProvider struct {
-	pool rpc.ClientPool
+	pool commonrpc.ClientPool
 }
 
-func NewRpcProvider(pool rpc.ClientPool) Provider {
-	return &rpcProvider{pool: pool}
+func NewRpcProvider(tlsConf *tls.Config, instanceID string) Provider {
+	return &rpcProvider{
+		pool: commonrpc.NewClientPool(tlsConf, nil, commonrpc.MetadataInjectionDialOptions(func() map[string]string {
+			return map[string]string{
+				constant.MetadataInstanceId: instanceID,
+			}
+		})...),
+	}
+}
+
+func (r *rpcProvider) Close() error {
+	return r.pool.Close()
 }
 
 func (r *rpcProvider) PushShardAssignments(ctx context.Context, node model.Server) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
@@ -110,7 +126,7 @@ func (r *rpcProvider) GetStatus(ctx context.Context, node model.Server, req *pro
 	return client.GetStatus(ctx, req)
 }
 
-func (r *rpcProvider) GetInfo(ctx context.Context, node model.Server, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+func (r *rpcProvider) Handshake(ctx context.Context, node model.Server, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
 		return nil, err
@@ -119,7 +135,24 @@ func (r *rpcProvider) GetInfo(ctx context.Context, node model.Server, req *proto
 	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 
-	return client.GetInfo(ctx, req)
+	res, err := client.Handshake(ctx, &proto.HandshakeRequest{
+		InstanceId: req.InstanceId,
+	})
+	if grpcstatus.Code(err) != codes.Unimplemented {
+		return res, err
+	}
+
+	// Deprecated GetInfo fallback for older dataservers that do not implement
+	// Handshake. Remove this branch in the next major version together with the
+	// GetInfo RPC.
+	info, legacyErr := client.GetInfo(ctx, &proto.GetInfoRequest{}) //nolint:staticcheck // Deprecated rolling-upgrade fallback for older dataservers.
+	if legacyErr != nil {
+		return nil, legacyErr
+	}
+	return &proto.HandshakeResponse{
+		Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
+		FeaturesSupported: info.FeaturesSupported,
+	}, nil
 }
 
 func (r *rpcProvider) DeleteShard(ctx context.Context, node model.Server, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {

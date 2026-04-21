@@ -46,6 +46,10 @@ type maelstromCoordinatorRpcProvider struct {
 	assignmentStreams map[int64]*maelstromShardAssignmentClient
 }
 
+func (m *maelstromCoordinatorRpcProvider) Close() error {
+	return nil
+}
+
 func (m *maelstromCoordinatorRpcProvider) ClearPooledConnections(node model.Server) {
 }
 
@@ -108,8 +112,9 @@ func (m *maelstromCoordinatorRpcProvider) RemoveObserver(ctx context.Context, no
 	return &proto.RemoveObserverResponse{}, nil
 }
 
-func (m *maelstromCoordinatorRpcProvider) GetInfo(ctx context.Context, node model.Server, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
-	return &proto.GetInfoResponse{
+func (m *maelstromCoordinatorRpcProvider) Handshake(ctx context.Context, node model.Server, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+	return &proto.HandshakeResponse{
+		Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
 		FeaturesSupported: make([]proto.Feature, 0),
 	}, nil
 }

@@ -112,6 +112,7 @@ type ClusterStatus struct {
 	Namespaces       map[string]NamespaceStatus `json:"namespaces" yaml:"namespaces"`
 	ShardIdGenerator int64                      `json:"shardIdGenerator" yaml:"shardIdGenerator"`
 	ServerIdx        uint32                     `json:"serverIdx" yaml:"serverIdx"`
+	InstanceId       string                     `json:"instanceId,omitempty" yaml:"instanceId,omitempty"`
 }
 
 func NewClusterStatus() *ClusterStatus {
@@ -119,6 +120,7 @@ func NewClusterStatus() *ClusterStatus {
 		Namespaces:       map[string]NamespaceStatus{},
 		ShardIdGenerator: 0,
 		ServerIdx:        0,
+		InstanceId:       "",
 	}
 }
 
@@ -166,6 +168,7 @@ func (c ClusterStatus) Clone() *ClusterStatus {
 		Namespaces:       make(map[string]NamespaceStatus),
 		ShardIdGenerator: c.ShardIdGenerator,
 		ServerIdx:        c.ServerIdx,
+		InstanceId:       c.InstanceId,
 	}
 
 	for name, n := range c.Namespaces {

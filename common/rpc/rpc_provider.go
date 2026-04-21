@@ -25,6 +25,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/security"
+	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 )
 
 const rpcTimeout = 30 * time.Second
@@ -48,13 +49,17 @@ type replicationRpcProvider struct {
 	pool ClientPool
 }
 
-func NewReplicationRpcProvider(tlsOptions *security.TLSOptions) (ReplicationRpcProvider, error) {
+func NewReplicationRpcProvider(tlsOptions *security.TLSOptions, manifest *manifestpkg.Manifest) (ReplicationRpcProvider, error) {
 	tlsConf, err := tlsOptions.TryIntoClientTLSConf()
 	if err != nil {
 		return nil, err
 	}
 	return &replicationRpcProvider{
-		pool: NewClientPool(tlsConf, nil),
+		pool: NewClientPool(tlsConf, nil, MetadataInjectionDialOptions(func() map[string]string {
+			return map[string]string{
+				constant.MetadataInstanceId: manifest.GetInstanceID(),
+			}
+		})...),
 	}, nil
 }
 

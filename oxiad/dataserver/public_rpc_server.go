@@ -81,7 +81,7 @@ func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string
 	server.grpcServer, err = provider.StartGrpcServer("public", bindAddress, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaClientServer(registrar, server)
 		compat.RegisterOxiaClientServer(registrar, &compatPublicRpcServer{impl: server})
-	}, tlsConf, options)
+	}, tlsConf, options, nil)
 	if err != nil {
 		return nil, err
 	}

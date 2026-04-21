@@ -12,28 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mock
+package manifest
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/stretchr/testify/require"
 )
 
-func NewCoordinator(t *testing.T, config *model.ClusterConfig, clusterConfigNotificationCh chan any) coordinator.Coordinator {
-	t.Helper()
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	coordinatorInstance, err := coordinator.NewCoordinator(
-		metadataProvider,
-		func() (model.ClusterConfig, error) { return *config, nil },
-		clusterConfigNotificationCh,
-		rpc2.NewRpcProviderFactory(nil),
-	)
+func TestNewManifestCreatesDirectoryAndFile(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "db")
+
+	m, err := NewManifest(baseDir)
+	require.NoError(t, err)
+	require.NotNil(t, m)
+
+	_, err = os.Stat(baseDir)
 	assert.NoError(t, err)
-	return coordinatorInstance
+
+	info, err := os.Stat(filepath.Join(baseDir, filename))
+	require.NoError(t, err)
+	assert.False(t, info.IsDir())
+
+	assert.Empty(t, m.GetInstanceID())
 }

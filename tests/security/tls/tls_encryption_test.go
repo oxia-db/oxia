@@ -34,7 +34,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/common/security"
 	"github.com/oxia-db/oxia/oxia"
@@ -133,10 +132,7 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 }
@@ -163,10 +159,7 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -197,10 +190,7 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -237,10 +227,7 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -278,10 +265,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -315,10 +299,8 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
-	defer clientPool.Close()
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
