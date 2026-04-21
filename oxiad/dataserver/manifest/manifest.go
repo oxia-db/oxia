@@ -1,7 +1,6 @@
 package manifest
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -37,10 +36,10 @@ func NewManifest(dir string) (*Manifest, error) {
 }
 
 func (m *Manifest) doRecovery() error {
-	data, err := os.ReadFile(m.path)
+	doc := &Document{}
+	_, err := commonio.ReadJSONFromFile(m.path, doc)
 	if err != nil {
 		if os.IsNotExist(err) {
-			doc := &Document{}
 			if err := commonio.WriteJSONToFile(m.path, doc); err != nil {
 				return err
 			}
@@ -50,12 +49,6 @@ func (m *Manifest) doRecovery() error {
 		return err
 	}
 
-	doc := &Document{}
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, doc); err != nil {
-			return err
-		}
-	}
 	m.document.Store(doc)
 	return nil
 }

@@ -20,6 +20,19 @@ import (
 	"path/filepath"
 )
 
+func ReadJSONFromFile(path string, value any) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+
+	if len(data) == 0 {
+		return false, nil
+	}
+
+	return true, json.Unmarshal(data, value)
+}
+
 func WriteJSONToFile(path string, value any) error {
 	parentDir := filepath.Dir(path)
 	if err := os.MkdirAll(parentDir, 0o755); err != nil {

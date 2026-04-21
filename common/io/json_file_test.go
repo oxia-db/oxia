@@ -23,6 +23,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestReadJSONFromFile(t *testing.T) {
+	t.Run("read existing json", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state.json")
+		require.NoError(t, os.WriteFile(path, []byte(`{"hello":"world"}`), 0o600))
+
+		value := map[string]string{}
+		hasContent, err := ReadJSONFromFile(path, &value)
+		require.NoError(t, err)
+		assert.True(t, hasContent)
+		assert.Equal(t, map[string]string{"hello": "world"}, value)
+	})
+
+	t.Run("empty file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state.json")
+		require.NoError(t, os.WriteFile(path, nil, 0o600))
+
+		value := map[string]string{"existing": "value"}
+		hasContent, err := ReadJSONFromFile(path, &value)
+		require.NoError(t, err)
+		assert.False(t, hasContent)
+		assert.Equal(t, map[string]string{"existing": "value"}, value)
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "missing.json")
+
+		value := map[string]string{}
+		hasContent, err := ReadJSONFromFile(path, &value)
+		require.Error(t, err)
+		assert.True(t, os.IsNotExist(err))
+		assert.False(t, hasContent)
+	})
+}
+
 func TestWriteJSONAtomicallyCreatesParentDirectoryAndFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "state.json")
 

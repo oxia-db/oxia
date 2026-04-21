@@ -23,6 +23,7 @@ import (
 	"github.com/juju/fslock"
 	"github.com/pkg/errors"
 
+	commonio "github.com/oxia-db/oxia/common/io"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
@@ -71,7 +72,8 @@ func (m *metadataProviderFile) WaitToBecomeLeader() error {
 }
 
 func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, err error) {
-	content, err := os.ReadFile(m.path)
+	mc := container{}
+	hasContent, err := commonio.ReadJSONFromFile(m.path, &mc)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, NotExists, nil
@@ -79,13 +81,8 @@ func (m *metadataProviderFile) Get() (cs *model.ClusterStatus, version Version, 
 		return nil, NotExists, err
 	}
 
-	if len(content) == 0 {
+	if !hasContent {
 		return nil, NotExists, nil
-	}
-
-	mc := container{}
-	if err = json.Unmarshal(content, &mc); err != nil {
-		return nil, NotExists, err
 	}
 
 	return mc.ClusterStatus, mc.Version, nil
