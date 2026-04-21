@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package io
+package commonio
 
 import (
 	"encoding/json"
@@ -35,7 +35,7 @@ func ReadJSONFromFile(path string, value any) (bool, error) {
 
 func WriteJSONToFile(path string, value any) error {
 	parentDir := filepath.Dir(path)
-	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
 		return err
 	}
 

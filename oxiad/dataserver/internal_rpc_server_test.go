@@ -129,7 +129,7 @@ func TestInternalGetInfoRejectedWhileUninitialized(t *testing.T) {
 	cnx := newInternalTestConn(t, server, "")
 
 	client := proto.NewOxiaCoordinationClient(cnx)
-	_, err := client.GetInfo(context.Background(), &proto.GetInfoRequest{})
+	_, err := client.GetInfo(context.Background(), &proto.GetInfoRequest{}) //nolint:staticcheck // Deprecated endpoint coverage.
 	require.Error(t, err)
 	assert.Equal(t, constant.CodeNotInitialized, grpcstatus.Code(err))
 }
@@ -197,7 +197,7 @@ func TestInternalGetInfoAcceptsMatchingInstanceID(t *testing.T) {
 	cnx := newInternalTestConn(t, server, "cluster-a")
 
 	client := proto.NewOxiaCoordinationClient(cnx)
-	response, err := client.GetInfo(context.Background(), &proto.GetInfoRequest{})
+	response, err := client.GetInfo(context.Background(), &proto.GetInfoRequest{}) //nolint:staticcheck // Deprecated endpoint coverage.
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 }

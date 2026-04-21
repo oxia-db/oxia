@@ -31,7 +31,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
-	commonio "github.com/oxia-db/oxia/common/io"
+	"github.com/oxia-db/oxia/common/commonio"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"

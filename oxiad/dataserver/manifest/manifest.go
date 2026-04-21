@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	commonio "github.com/oxia-db/oxia/common/io"
+	"github.com/oxia-db/oxia/common/commonio"
 )
 
 const filename = "MANIFEST"

@@ -20,7 +20,6 @@ import (
 	"io"
 	"log/slog"
 	"sync"
-	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
@@ -211,35 +210,6 @@ func (c *coordinator) findDataServerFeatures(dataServers []model.Server) map[str
 		}
 	}
 	return features
-}
-
-func (c *coordinator) waitForAllNodesToBeAvailable() {
-	c.Info("Waiting for all the nodes to be available")
-	for {
-		select {
-		case <-time.After(1 * time.Second):
-			c.Info("Start to check unavailable nodes")
-
-			var unavailableNodes []string
-			for nodeName, nc := range c.nodeControllers {
-				if nc.Status() != controller.Running {
-					unavailableNodes = append(unavailableNodes, nodeName)
-				}
-			}
-			if len(unavailableNodes) == 0 {
-				c.Info("All nodes are now available")
-				return
-			}
-
-			c.Info(
-				"A part of nodes is not available",
-				slog.Any("UnavailableNodeNames", unavailableNodes),
-			)
-		case <-c.ctx.Done():
-			// Give up if we're closing the coordinator
-			return
-		}
-	}
 }
 
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.

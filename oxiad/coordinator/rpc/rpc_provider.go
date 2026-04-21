@@ -20,10 +20,11 @@ import (
 	"io"
 	"time"
 
-	"github.com/oxia-db/oxia/common/constant"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	grpcstatus "google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/common/constant"
 
 	commonrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -142,7 +143,7 @@ func (r *rpcProvider) Handshake(ctx context.Context, node model.Server, req *pro
 	// Deprecated GetInfo fallback for older dataservers that do not implement
 	// Handshake. Remove this branch in the next major version together with the
 	// GetInfo RPC.
-	info, legacyErr := client.GetInfo(ctx, &proto.GetInfoRequest{})
+	info, legacyErr := client.GetInfo(ctx, &proto.GetInfoRequest{}) //nolint:staticcheck // Deprecated rolling-upgrade fallback for older dataservers.
 	if legacyErr != nil {
 		return nil, legacyErr
 	}

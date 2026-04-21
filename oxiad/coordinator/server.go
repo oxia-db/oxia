@@ -22,13 +22,14 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
-	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
@@ -182,9 +183,9 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, func(instanceID string) rpc.Provider {
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, func(instanceID string) rpc.Provider { //nolint:contextcheck // Provider factory is configuration-only and does not accept a caller context.
 		return rpc.NewRpcProvider(controllerTLS, instanceID)
-	}) //nolint:contextcheck
+	})
 	if err != nil {
 		return nil, err
 	}
