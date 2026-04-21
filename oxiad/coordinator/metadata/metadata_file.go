@@ -15,7 +15,6 @@
 package metadata
 
 import (
-	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -103,15 +102,10 @@ func (m *metadataProviderFile) Store(cs *model.ClusterStatus, expectedVersion Ve
 	}
 
 	newVersion = incrVersion(existingVersion)
-	newContent, err := json.Marshal(container{
+	if err := commonio.WriteJSONToFile(m.path, container{
 		ClusterStatus: cs,
 		Version:       newVersion,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	if err := os.WriteFile(m.path, newContent, 0600); err != nil {
+	}); err != nil {
 		return NotExists, err
 	}
 

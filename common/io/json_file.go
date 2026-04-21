@@ -57,9 +57,23 @@ func WriteJSONToFile(path string, value any) error {
 		_ = tmp.Close()
 		return err
 	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err = tmp.Close(); err != nil {
 		return err
 	}
 
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+
+	dir, err := os.Open(parentDir)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+
+	return dir.Sync()
 }
