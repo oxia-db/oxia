@@ -3058,6 +3058,10 @@ func (m *GetInfoResponse) UnmarshalVT(dAtA []byte) error {
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
 				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
+				}
 				for iNdEx < postIndex {
 					var v Feature
 					for shift := uint(0); ; shift += 7 {
@@ -3275,6 +3279,10 @@ func (m *HandshakeResponse) UnmarshalVT(dAtA []byte) error {
 				}
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
 				}
 				for iNdEx < postIndex {
 					var v Feature
@@ -4390,6 +4398,10 @@ func (m *BecomeLeaderRequest) UnmarshalVT(dAtA []byte) error {
 				}
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
 				}
 				for iNdEx < postIndex {
 					var v Feature
@@ -6046,6 +6058,10 @@ func (m *GetInfoResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
 				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
+				}
 				for iNdEx < postIndex {
 					var v Feature
 					for shift := uint(0); ; shift += 7 {
@@ -6267,6 +6283,10 @@ func (m *HandshakeResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
 				}
 				for iNdEx < postIndex {
 					var v Feature
@@ -7392,6 +7412,10 @@ func (m *BecomeLeaderRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				if elementCount != 0 && len(m.FeaturesSupported) == 0 {
+					m.FeaturesSupported = make([]Feature, 0, elementCount)
 				}
 				for iNdEx < postIndex {
 					var v Feature
