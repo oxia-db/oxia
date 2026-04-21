@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 
@@ -78,7 +78,7 @@ func setupSplitTest(t *testing.T, phase model.SplitPhase) (
 	t.Helper()
 
 	rpcMock := newMockRpcProvider()
-	metaProvider := metadata.NewMetadataProviderMemory()
+	metaProvider := memory.NewProvider()
 	t.Cleanup(func() { metaProvider.Close() })
 	statusRes := resource.NewStatusResource(metaProvider)
 

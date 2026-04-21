@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metadata
+package raft
 
 import (
 	"encoding/json"
@@ -26,13 +26,14 @@ import (
 
 	"github.com/hashicorp/raft"
 	"github.com/magodo/slog2hclog"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
-type metadataProviderRaft struct {
+type Provider struct {
 	sync.Mutex
 
 	sc    *stateContainer
@@ -41,17 +42,17 @@ type metadataProviderRaft struct {
 	log   *slog.Logger
 }
 
-func (mpr *metadataProviderRaft) WaitToBecomeLeader() error {
+func (mpr *Provider) WaitToBecomeLeader() error {
 	<-mpr.raft.LeaderCh()
 	return nil
 }
 
-func NewMetadataProviderRaft(
+func NewProvider(
 	raftAddress string,
 	raftBootstrapNodes []string,
 	raftDataDir string,
-) (Provider, error) {
-	mpr := &metadataProviderRaft{
+) (provider.Provider, error) {
+	mpr := &Provider{
 		sc:  newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
 		log: slog.With(slog.String("component", "metadata-provider-raft")),
 	}
@@ -127,23 +128,23 @@ func getRaftServers(bootstrapNodes []string) []raft.Server {
 	return servers
 }
 
-func (mpr *metadataProviderRaft) Close() error {
+func (mpr *Provider) Close() error {
 	return multierr.Combine(
 		mpr.raft.Shutdown().Error(),
 		mpr.store.Close(),
 	)
 }
 
-func toVersion(v int64) Version {
-	return Version(strconv.FormatInt(v, 10))
+func toVersion(v int64) provider.Version {
+	return provider.Version(strconv.FormatInt(v, 10))
 }
 
-func fromVersion(v Version) int64 {
+func fromVersion(v provider.Version) int64 {
 	n, _ := strconv.ParseInt(string(v), 10, 64)
 	return n
 }
 
-func (mpr *metadataProviderRaft) Get() (cs *model.ClusterStatus, version Version, err error) {
+func (mpr *Provider) Get() (cs *model.ClusterStatus, version provider.Version, err error) {
 	mpr.Lock()
 	defer mpr.Unlock()
 
@@ -153,12 +154,12 @@ func (mpr *metadataProviderRaft) Get() (cs *model.ClusterStatus, version Version
 	return mpr.sc.State, toVersion(mpr.sc.CurrentVersion), nil
 }
 
-func (mpr *metadataProviderRaft) Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error) {
+func (mpr *Provider) Store(cs *model.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	mpr.Lock()
 	defer mpr.Unlock()
 
 	if err = mpr.raft.VerifyLeader().Error(); err != nil {
-		return NotExists, err
+		return provider.NotExists, err
 	}
 
 	mpr.log.Debug("Store into raft",
@@ -173,21 +174,21 @@ func (mpr *metadataProviderRaft) Store(cs *model.ClusterStatus, expectedVersion 
 
 	serializedCmd, err := json.Marshal(cmd)
 	if err != nil {
-		return NotExists, err
+		return provider.NotExists, err
 	}
 
 	future := mpr.raft.Apply(serializedCmd, 30*time.Second)
 	if err := future.Error(); err != nil {
-		return NotExists, errors.Wrap(err, "failed to apply new cluster state")
+		return provider.NotExists, errors.Wrap(err, "failed to apply new cluster state")
 	}
 
 	applyRes, ok := future.Response().(*applyResult)
 	if !ok {
-		return NotExists, errors.Wrap(err, "failed to apply new cluster state")
+		return provider.NotExists, errors.Wrap(err, "failed to apply new cluster state")
 	}
 
 	if !applyRes.changeApplied {
-		panic(ErrMetadataBadVersion)
+		panic(provider.ErrBadVersion)
 	}
 
 	return toVersion(applyRes.newVersion), nil

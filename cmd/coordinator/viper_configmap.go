@@ -23,14 +23,13 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	k8s "k8s.io/client-go/kubernetes"
-
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
 	"github.com/oxia-db/oxia/common/process"
 	oxiatime "github.com/oxia-db/oxia/common/time"
@@ -59,12 +58,12 @@ func getNamespaceAndCmName(rp viper.RemoteProvider) (namespace, cmName string, e
 }
 
 func (*cmConfigProvider) Get(rp viper.RemoteProvider) (io.Reader, error) {
-	kubernetes := metadata.NewK8SClientset(metadata.NewK8SClientConfig())
+	k8sClient := kubernetes.NewK8SClientset(kubernetes.NewK8SClientConfig())
 	namespace, configmap, err := getNamespaceAndCmName(rp)
 	if err != nil {
 		return nil, err
 	}
-	cmValue, err := metadata.K8SConfigMaps(kubernetes).Get(namespace, configmap)
+	cmValue, err := kubernetes.K8SConfigMaps(k8sClient).Get(namespace, configmap)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +80,7 @@ func (c *cmConfigProvider) Watch(rp viper.RemoteProvider) (io.Reader, error) {
 }
 
 func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteResponse, chan bool) {
-	kubernetes := metadata.NewK8SClientset(metadata.NewK8SClientConfig())
+	k8sClient := kubernetes.NewK8SClientset(kubernetes.NewK8SClientConfig())
 	namespace, configmap, _ := getNamespaceAndCmName(rp)
 
 	ch := make(chan *viper.RemoteResponse)
@@ -91,7 +90,7 @@ func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.
 	}, func() {
 		bo := oxiatime.NewBackOffWithInitialInterval(context.Background(), 1*time.Second)
 		_ = backoff.RetryNotify(func() error {
-			err := c.watchConfigMap(kubernetes, namespace, configmap, ch)
+			err := c.watchConfigMap(k8sClient, namespace, configmap, ch)
 			if err != nil {
 				return err
 			}

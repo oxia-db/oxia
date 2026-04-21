@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metadata
+package provider
 
 import (
 	"io"
+	"strconv"
 
 	"github.com/pkg/errors"
 
@@ -23,20 +24,30 @@ import (
 )
 
 var (
-	ErrMetadataNotInitialized = errors.New("metadata not initialized")
-	ErrMetadataBadVersion     = errors.New("metadata bad version")
+	ErrNotInitialized = errors.New("metadata not initialized")
+	ErrBadVersion     = errors.New("metadata bad version")
 )
 
 var (
-	ProviderNameMemory    = "memory"
-	ProviderNameConfigmap = "configmap"
-	ProviderNameRaft      = "raft"
-	ProviderNameFile      = "file"
+	NameMemory    = "memory"
+	NameConfigMap = "configmap"
+	NameRaft      = "raft"
+	NameFile      = "file"
 )
 
 type Version string
 
 const NotExists Version = "-1"
+
+func NextVersion(version Version) Version {
+	i, err := strconv.ParseInt(string(version), 10, 64)
+	if err != nil {
+		return ""
+	}
+
+	i++
+	return Version(strconv.FormatInt(i, 10))
+}
 
 type Provider interface {
 	io.Closer

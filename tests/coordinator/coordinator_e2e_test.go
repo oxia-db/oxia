@@ -16,7 +16,6 @@ package coordinator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -24,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/stretchr/testify/assert"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -31,7 +31,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
@@ -68,7 +67,7 @@ func TestCoordinatorE2E(t *testing.T) {
 	s2, sa2 := newServer(t)
 	s3, sa3 := newServer(t)
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -106,7 +105,7 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 	s2, sa2 := newServer(t)
 	s3, sa3 := newServer(t)
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -158,7 +157,7 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 		sa3: s3,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -199,21 +198,10 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 		slog.Any("follower", follower),
 	)
 
-	ctx := context.Background()
-
-	assert.Eventually(t, func() bool {
-		probeClient, err := oxia.NewSyncClient(follower.Public, oxia.WithRequestTimeout(1*time.Second))
-		if err != nil {
-			return false
-		}
-		defer probeClient.Close()
-
-		_, _, _, err = probeClient.Get(ctx, "my-key")
-		return errors.Is(err, oxia.ErrKeyNotFound)
-	}, 30*time.Second, 1*time.Second)
-
-	client, err := oxia.NewSyncClient(follower.Public, oxia.WithRequestTimeout(1*time.Second))
+	client, err := oxia.NewSyncClient(follower.Public)
 	assert.NoError(t, err)
+
+	ctx := context.Background()
 
 	_, version1, err := client.Put(ctx, "my-key", []byte("my-value"))
 	assert.NoError(t, err)
@@ -237,18 +225,11 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 
 	// Wait for the client to receive the updated assignment list
 	assert.Eventually(t, func() bool {
-		probeClient, err := oxia.NewSyncClient(follower.Public, oxia.WithRequestTimeout(1*time.Second))
-		if err != nil {
-			return false
-		}
-		defer probeClient.Close()
-
-		_, _, _, err = probeClient.Get(ctx, "my-key")
+		client, _ = oxia.NewSyncClient(follower.Public)
+		_, _, _, err := client.Get(ctx, "my-key")
 		return err == nil
-	}, 30*time.Second, 1*time.Second)
+	}, 10*time.Second, 10*time.Millisecond)
 
-	client, err = oxia.NewSyncClient(follower.Public, oxia.WithRequestTimeout(1*time.Second))
-	assert.NoError(t, err)
 	_, res, version3, err := client.Get(ctx, "my-key")
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("my-value"), res)
@@ -272,7 +253,7 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 		sa3: s3,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -371,7 +352,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 		sa3: s3,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              "my-ns-1",
@@ -457,7 +438,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		sa3: s3,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              "my-ns-1",
@@ -547,7 +528,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 		sa5: s5,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              "my-ns-1",
@@ -607,7 +588,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 		sa4: s4,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              "my-ns-1",
@@ -685,7 +666,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	s2, sa2 := newServer(t)
 	s3, sa3 := newServer(t)
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              "my-ns-1",

@@ -22,14 +22,18 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
+	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
-
-	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
@@ -43,7 +47,6 @@ import (
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 )
 
 type GrpcServer struct {
@@ -143,19 +146,19 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 
 	meta := &options.Metadata
 
-	var metadataProvider metadata.Provider
+	var metadataProvider provider.Provider
 	switch meta.ProviderName {
-	case metadata.ProviderNameMemory:
-		metadataProvider = metadata.NewMetadataProviderMemory()
-	case metadata.ProviderNameFile:
-		metadataProvider = metadata.NewMetadataProviderFile(meta.File.Path)
-	case metadata.ProviderNameConfigmap:
-		k8sConfig := metadata.NewK8SClientConfig()
-		metadataProvider = metadata.NewMetadataProviderConfigMap(metadata.NewK8SClientset(k8sConfig),
+	case provider.NameMemory:
+		metadataProvider = memory.NewProvider()
+	case provider.NameFile:
+		metadataProvider = file.NewProvider(meta.File.Path)
+	case provider.NameConfigMap:
+		k8sConfig := kubernetes.NewK8SClientConfig()
+		metadataProvider = kubernetes.NewConfigMapProvider(kubernetes.NewK8SClientset(k8sConfig),
 			meta.Kubernetes.Namespace, meta.Kubernetes.ConfigMapName)
-	case metadata.ProviderNameRaft:
+	case provider.NameRaft:
 		var err error
-		metadataProvider, err = metadata.NewMetadataProviderRaft(
+		metadataProvider, err = raft.NewProvider(
 			meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create raft metadata provider")
@@ -183,9 +186,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, func(instanceID string) rpc.Provider { //nolint:contextcheck // Provider factory is configuration-only and does not accept a caller context.
-		return rpc.NewRpcProvider(controllerTLS, instanceID)
-	})
+	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}

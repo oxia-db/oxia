@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metadata
+package raft
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -28,8 +29,8 @@ import (
 )
 
 type testRaftClusterProvider struct {
-	providers []Provider
-	leader    Provider
+	providers []provider.Provider
+	leader    provider.Provider
 }
 
 func (t testRaftClusterProvider) Close() error {
@@ -42,11 +43,11 @@ func (t testRaftClusterProvider) Close() error {
 	return nil
 }
 
-func (t testRaftClusterProvider) Get() (cs *model.ClusterStatus, version Version, err error) {
+func (t testRaftClusterProvider) Get() (cs *model.ClusterStatus, version provider.Version, err error) {
 	return t.leader.Get()
 }
 
-func (t testRaftClusterProvider) Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error) {
+func (t testRaftClusterProvider) Store(cs *model.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	return t.leader.Store(cs, expectedVersion)
 }
 
@@ -54,7 +55,7 @@ func (t testRaftClusterProvider) WaitToBecomeLeader() error {
 	return t.leader.WaitToBecomeLeader()
 }
 
-func newTestRaftClusterProvider(t *testing.T) Provider {
+func newTestRaftClusterProvider(t *testing.T) provider.Provider {
 	t.Helper()
 
 	// start a cluster
@@ -65,13 +66,13 @@ func newTestRaftClusterProvider(t *testing.T) Provider {
 	for i := 0; i < 3; i++ {
 		addr := fmt.Sprintf("127.0.0.1:%d", 9000+i)
 		dataDir := filepath.Join(baseDir, fmt.Sprintf("data-%d", i))
-		p, err := NewMetadataProviderRaft(addr, bootstrapServers, dataDir)
+		p, err := NewProvider(addr, bootstrapServers, dataDir)
 		assert.NoError(t, err)
 
 		trc.providers = append(trc.providers, p)
 	}
 
-	leaderFuture := concurrent.NewFuture[Provider]()
+	leaderFuture := concurrent.NewFuture[provider.Provider]()
 
 	for i := 0; i < 3; i++ {
 		idx := i

@@ -18,11 +18,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/concurrent"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
@@ -33,7 +33,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		Internal: "leader-internal:6649",
 	}
 
-	statusResource := resource.NewStatusResource(metadata.NewMetadataProviderMemory())
+	statusResource := resource.NewStatusResource(memory.NewProvider())
 	statusResource.Update(&model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {
@@ -97,7 +97,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		Internal: "removed-internal:6649",
 	}
 
-	statusResource := resource.NewStatusResource(metadata.NewMetadataProviderMemory())
+	statusResource := resource.NewStatusResource(memory.NewProvider())
 	statusResource.Update(&model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {

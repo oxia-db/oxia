@@ -18,13 +18,13 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/security"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 )
 
 type Options struct {
@@ -143,18 +143,18 @@ func (*MetadataOptions) WithDefault() {
 
 func (mo *MetadataOptions) Validate() error {
 	switch mo.ProviderName {
-	case metadata.ProviderNameConfigmap:
+	case provider.NameConfigMap:
 		if mo.Kubernetes.Namespace == "" {
 			return errors.New("k8s-namespace must be set with metadata=configmap")
 		}
 		if mo.Kubernetes.ConfigMapName == "" {
 			return errors.New("k8s-configmap-name must be set with metadata=configmap")
 		}
-	case metadata.ProviderNameRaft:
+	case provider.NameRaft:
 		if mo.Raft.Address == "" {
 			return errors.New("raft-address must be set with metadata=raft")
 		}
-	case metadata.ProviderNameFile, metadata.ProviderNameMemory:
+	case provider.NameFile, provider.NameMemory:
 	default:
 		return errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
 	}

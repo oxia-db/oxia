@@ -12,65 +12,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metadata
+package memory
 
 import (
-	"strconv"
 	"sync"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
-var _ Provider = &metadataProviderMemory{}
+var _ provider.Provider = &Provider{}
 
-// MetadataProviderMemory is a provider that just keeps the cluster status in memory
-// Used for unit tests.
-type metadataProviderMemory struct {
+type Provider struct {
 	sync.Mutex
 
 	cs      *model.ClusterStatus
-	version Version
+	version provider.Version
 }
 
-func (*metadataProviderMemory) WaitToBecomeLeader() error {
+func (*Provider) WaitToBecomeLeader() error {
 	return nil
 }
 
-func NewMetadataProviderMemory() Provider {
-	return &metadataProviderMemory{
+func NewProvider() provider.Provider {
+	return &Provider{
 		cs:      nil,
-		version: NotExists,
+		version: provider.NotExists,
 	}
 }
 
-func (*metadataProviderMemory) Close() error {
+func (*Provider) Close() error {
 	return nil
 }
 
-func (m *metadataProviderMemory) Get() (cs *model.ClusterStatus, version Version, err error) {
+func (m *Provider) Get() (cs *model.ClusterStatus, version provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 	return m.cs, m.version, nil
 }
 
-func (m *metadataProviderMemory) Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error) {
+func (m *Provider) Store(cs *model.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
 	if expectedVersion != m.version {
-		panic(ErrMetadataBadVersion)
+		panic(provider.ErrBadVersion)
 	}
 
 	m.cs = cs.Clone()
-	m.version = incrVersion(m.version)
+	m.version = provider.NextVersion(m.version)
 	return m.version, nil
-}
-
-func incrVersion(version Version) Version {
-	i, err := strconv.ParseInt(string(version), 10, 64)
-	if err != nil {
-		return ""
-	}
-	i++
-	return Version(strconv.FormatInt(i, 10))
 }
