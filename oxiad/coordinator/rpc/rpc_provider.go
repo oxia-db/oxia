@@ -57,8 +57,10 @@ type rpcProvider struct {
 
 func NewRpcProvider(tlsConf *tls.Config, instanceID string) Provider {
 	return &rpcProvider{
-		pool: commonrpc.NewClientPool(tlsConf, nil, commonrpc.MetadataInjectionDialOptions(map[string]string{
-			constant.MetadataInstanceId: instanceID,
+		pool: commonrpc.NewClientPool(tlsConf, nil, commonrpc.MetadataInjectionDialOptions(func() map[string]string {
+			return map[string]string{
+				constant.MetadataInstanceId: instanceID,
+			}
 		})...),
 	}
 }

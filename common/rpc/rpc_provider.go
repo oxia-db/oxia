@@ -55,8 +55,10 @@ func NewReplicationRpcProvider(tlsOptions *security.TLSOptions, manifest *manife
 		return nil, err
 	}
 	return &replicationRpcProvider{
-		pool: NewClientPool(tlsConf, nil, MetadataInjectionDialOptions(map[string]string{
-			constant.MetadataInstanceId: manifest.GetInstanceID(),
+		pool: NewClientPool(tlsConf, nil, MetadataInjectionDialOptions(func() map[string]string {
+			return map[string]string{
+				constant.MetadataInstanceId: manifest.GetInstanceID(),
+			}
 		})...),
 	}, nil
 }

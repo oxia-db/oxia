@@ -21,23 +21,25 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-func MetadataInjectionDialOptions(values map[string]string) []grpc.DialOption {
+type MetadataValueSupplier = func() map[string]string
+
+func MetadataInjectionDialOptions(valuesSupplier MetadataValueSupplier) []grpc.DialOption {
 	return []grpc.DialOption{
 		grpc.WithChainUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-			return invoker(withOutgoingMetadata(ctx, values), method, req, reply, cc, opts...)
+			return invoker(withOutgoingMetadata(ctx, valuesSupplier), method, req, reply, cc, opts...)
 		}),
 		grpc.WithChainStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-			return streamer(withOutgoingMetadata(ctx, values), desc, cc, method, opts...)
+			return streamer(withOutgoingMetadata(ctx, valuesSupplier), desc, cc, method, opts...)
 		}),
 	}
 }
 
-func withOutgoingMetadata(ctx context.Context, values map[string]string) context.Context {
+func withOutgoingMetadata(ctx context.Context, valuesSupplier MetadataValueSupplier) context.Context {
 	merged, _ := metadata.FromOutgoingContext(ctx)
 	if merged == nil {
 		merged = metadata.MD{}
 	}
-	for key, value := range values {
+	for key, value := range valuesSupplier() {
 		merged.Set(key, value)
 	}
 	if len(merged) == 0 {

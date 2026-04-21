@@ -99,8 +99,10 @@ func newInternalTestConn(t *testing.T, server *internalRpcServer, instanceID str
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 	if instanceID != "" {
-		options = append(options, clientrpc.MetadataInjectionDialOptions(map[string]string{
-			constant.MetadataInstanceId: instanceID,
+		options = append(options, clientrpc.MetadataInjectionDialOptions(func() map[string]string {
+			return map[string]string{
+				constant.MetadataInstanceId: instanceID,
+			}
 		})...)
 	}
 

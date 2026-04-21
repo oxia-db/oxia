@@ -29,7 +29,7 @@ import (
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 )
 
-var InsIDValidationMethodsWhiteList = hashset.New(
+var insIDValidationMethodsWhiteList = hashset.New(
 	proto.OxiaCoordination_Handshake_FullMethodName,
 	grpc_health_v1.Health_Check_FullMethodName,
 	grpc_health_v1.Health_Watch_FullMethodName,
@@ -37,7 +37,7 @@ var InsIDValidationMethodsWhiteList = hashset.New(
 
 func NewGrpcInsIDVerifyInterceptors(manifest *manifestpkg.Manifest) *Interceptors {
 	validate := func(ctx context.Context, fullMethod string) error {
-		if InsIDValidationMethodsWhiteList.Contains(fullMethod) {
+		if insIDValidationMethodsWhiteList.Contains(fullMethod) {
 			return nil
 		}
 
