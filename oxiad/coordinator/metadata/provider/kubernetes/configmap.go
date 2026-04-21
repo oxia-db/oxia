@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -32,6 +31,8 @@ import (
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 

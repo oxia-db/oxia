@@ -23,13 +23,14 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	k8s "k8s.io/client-go/kubernetes"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
 
 	"github.com/oxia-db/oxia/common/process"
 	oxiatime "github.com/oxia-db/oxia/common/time"
@@ -109,8 +110,8 @@ func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.
 	return ch, nil
 }
 
-func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, configmap string, ch chan<- *viper.RemoteResponse) error {
-	w, err := kubernetes.CoreV1().ConfigMaps(namespace).Watch(
+func (c *cmConfigProvider) watchConfigMap(client k8s.Interface, namespace, configmap string, ch chan<- *viper.RemoteResponse) error {
+	w, err := client.CoreV1().ConfigMaps(namespace).Watch(
 		context.Background(),
 		metav1.SingleObject(metav1.ObjectMeta{Name: configmap, Namespace: namespace}),
 	)

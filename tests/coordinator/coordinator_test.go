@@ -17,8 +17,9 @@ package coordinator
 import (
 	"testing"
 
-	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/stretchr/testify/assert"
+
+	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"

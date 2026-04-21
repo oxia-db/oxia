@@ -17,8 +17,9 @@ package mock
 import (
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"

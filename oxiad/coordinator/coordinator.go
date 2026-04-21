@@ -22,10 +22,11 @@ import (
 	"sync"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"

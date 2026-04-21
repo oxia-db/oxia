@@ -23,8 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"

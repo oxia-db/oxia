@@ -26,9 +26,10 @@ import (
 
 	"github.com/hashicorp/raft"
 	"github.com/magodo/slog2hclog"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )

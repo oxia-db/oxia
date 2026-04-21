@@ -18,8 +18,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/security"

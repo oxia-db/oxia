@@ -21,8 +21,9 @@ import (
 	"path/filepath"
 
 	"github.com/juju/fslock"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/pkg/errors"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )

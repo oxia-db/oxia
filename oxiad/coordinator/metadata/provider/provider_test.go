@@ -21,11 +21,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
 	"github.com/stretchr/testify/assert"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -33,6 +28,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
@@ -130,6 +131,8 @@ func k8sResourceVersionSupport(tracker k8stesting.ObjectTracker) k8stesting.Reac
 			objMeta := accessor(action.GetObject())
 			existing, err := tracker.Get(gvr, namespace, objMeta.GetName())
 			if err != nil {
+				// Match the in-package fake client helper behavior for update misses.
+				//nolint:nilerr
 				return false, action.GetObject(), nil
 			}
 

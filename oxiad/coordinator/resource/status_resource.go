@@ -22,6 +22,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
