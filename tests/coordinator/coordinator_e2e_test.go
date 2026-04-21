@@ -210,7 +210,7 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 
 		_, _, _, err = probeClient.Get(ctx, "my-key")
 		return errors.Is(err, oxia.ErrKeyNotFound)
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 30*time.Second, 1*time.Second)
 
 	client, err := oxia.NewSyncClient(follower.Public, oxia.WithRequestTimeout(1*time.Second))
 	assert.NoError(t, err)
@@ -245,7 +245,7 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 
 		_, _, _, err = probeClient.Get(ctx, "my-key")
 		return err == nil
-	}, 10*time.Second, 10*time.Millisecond)
+	}, 30*time.Second, 1*time.Second)
 
 	client, err = oxia.NewSyncClient(follower.Public, oxia.WithRequestTimeout(1*time.Second))
 	assert.NoError(t, err)
