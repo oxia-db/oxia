@@ -20,7 +20,6 @@ import (
 	"io"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -56,22 +55,9 @@ func NewReplicationRpcProvider(tlsOptions *security.TLSOptions, manifest *manife
 		return nil, err
 	}
 	return &replicationRpcProvider{
-		pool: NewClientPool(tlsConf, nil,
-			grpc.WithChainUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-				values := map[string]string{}
-				if instanceID := manifest.GetInstanceID(); instanceID != "" {
-					values[constant.MetadataInstanceId] = instanceID
-				}
-				return invoker(withOutgoingMetadata(ctx, values), method, req, reply, cc, opts...)
-			}),
-			grpc.WithChainStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-				values := map[string]string{}
-				if instanceID := manifest.GetInstanceID(); instanceID != "" {
-					values[constant.MetadataInstanceId] = instanceID
-				}
-				return streamer(withOutgoingMetadata(ctx, values), desc, cc, method, opts...)
-			}),
-		),
+		pool: NewClientPool(tlsConf, nil, MetadataInjectionDialOptions(map[string]string{
+			constant.MetadataInstanceId: manifest.GetInstanceID(),
+		})...),
 	}, nil
 }
 
