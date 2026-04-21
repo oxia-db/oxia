@@ -327,9 +327,10 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 	return res, err
 }
 
-// GetInfo is kept only for rolling-upgrade compatibility with older
-// coordinators. New coordinators should use Handshake instead and remove this
-// endpoint in the next major version.
+// GetInfo is a deprecated legacy endpoint kept for rolling-upgrade
+// compatibility. New coordinators should use Handshake, and this endpoint
+// still follows the normal instance-id validation flow until removal in the
+// next major version.
 func (s *internalRpcServer) GetInfo(c context.Context, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
 	log := s.log.With(
 		slog.Any("request", req),

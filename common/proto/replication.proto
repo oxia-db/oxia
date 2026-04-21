@@ -33,8 +33,8 @@ service OxiaCoordination {
   rpc DeleteShard(DeleteShardRequest) returns (DeleteShardResponse);
   rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
   // Deprecated: use Handshake for node initialization and feature discovery.
-  // Keep GetInfo only for rolling-upgrade compatibility and remove it in the
-  // next major version.
+  // Keep GetInfo only so new coordinators can fall back to older dataservers
+  // during rolling upgrades, and remove it in the next major version.
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
 
   // Removes an observer follower from the parent leader without fencing.

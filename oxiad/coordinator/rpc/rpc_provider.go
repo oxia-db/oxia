@@ -139,8 +139,9 @@ func (r *rpcProvider) Handshake(ctx context.Context, node model.Server, req *pro
 		return res, err
 	}
 
-	// Deprecated GetInfo fallback for pre-handshake data servers. Remove this
-	// branch in the next major version together with the GetInfo RPC.
+	// Deprecated GetInfo fallback for older dataservers that do not implement
+	// Handshake. Remove this branch in the next major version together with the
+	// GetInfo RPC.
 	info, legacyErr := client.GetInfo(ctx, &proto.GetInfoRequest{})
 	if legacyErr != nil {
 		return nil, legacyErr
