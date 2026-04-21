@@ -33,10 +33,9 @@ func MetadataInjectionDialOptions(values map[string]string) []grpc.DialOption {
 }
 
 func withOutgoingMetadata(ctx context.Context, values map[string]string) context.Context {
-	existing, _ := metadata.FromOutgoingContext(ctx)
-	merged := metadata.MD{}
-	if existing != nil {
-		merged = existing.Copy()
+	merged, _ := metadata.FromOutgoingContext(ctx)
+	if merged == nil {
+		merged = metadata.MD{}
 	}
 	for key, value := range values {
 		merged.Set(key, value)
