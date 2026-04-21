@@ -17,6 +17,7 @@ package rpc
 import (
 	"context"
 
+	"github.com/emirpasic/gods/v2/sets/hashset"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -28,15 +29,15 @@ import (
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 )
 
-var DefaultOpenInstanceIDMethods = []string{
+var InsIDValidationMethodsWhiteList = hashset.New(
 	proto.OxiaCoordination_Handshake_FullMethodName,
 	grpc_health_v1.Health_Check_FullMethodName,
 	grpc_health_v1.Health_Watch_FullMethodName,
-}
+)
 
-func NewGrpcInsIDVerifyInterceptors(manifest *manifestpkg.Manifest, excludedMethods ...string) *Interceptors {
+func NewGrpcInsIDVerifyInterceptors(manifest *manifestpkg.Manifest) *Interceptors {
 	validate := func(ctx context.Context, fullMethod string) error {
-		if matchesAnyMethod(fullMethod, excludedMethods) {
+		if InsIDValidationMethodsWhiteList.Contains(fullMethod) {
 			return nil
 		}
 
@@ -93,13 +94,4 @@ func getIncomingInstanceID(ctx context.Context) (string, error) {
 	default:
 		return "", status.Errorf(codes.InvalidArgument, "oxia: instance id metadata %q must be provided only once", constant.MetadataInstanceId)
 	}
-}
-
-func matchesAnyMethod(fullMethod string, methods []string) bool {
-	for _, method := range methods {
-		if fullMethod == method {
-			return true
-		}
-	}
-	return false
 }

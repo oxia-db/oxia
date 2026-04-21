@@ -32,7 +32,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	dcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
@@ -54,13 +54,13 @@ type internalRpcServer struct {
 	shardsDirector       controller.ShardsDirector
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
 	manifest             *manifestpkg.Manifest
-	grpcServer           rpc2.GrpcServer
-	healthServer         rpc2.HealthServer
+	grpcServer           dcommonrpc.GrpcServer
+	healthServer         dcommonrpc.HealthServer
 	log                  *slog.Logger
 }
 
-func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
-	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc2.HealthServer,
+func newInternalRpcServer(grpcProvider dcommonrpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
+	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer dcommonrpc.HealthServer,
 	tlsConf *tls.Config, authOptions *auth.Options, manifest *manifestpkg.Manifest) (*internalRpcServer, error) {
 	if authOptions == nil {
 		authOptions = &auth.Disabled
@@ -77,15 +77,13 @@ func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, sh
 	}
 
 	var err error
-	interceptors := rpc2.NewGrpcInsIDVerifyInterceptors(
-		server.manifest,
-		rpc2.DefaultOpenInstanceIDMethods...,
-	)
 	server.grpcServer, err = grpcProvider.StartGrpcServer("internal", bindAddress, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaCoordinationServer(registrar, server)
 		proto.RegisterOxiaLogReplicationServer(registrar, server)
 		grpc_health_v1.RegisterHealthServer(registrar, server.healthServer)
-	}, tlsConf, authOptions, interceptors)
+	}, tlsConf, authOptions, dcommonrpc.NewGrpcInsIDVerifyInterceptors(
+		server.manifest,
+	))
 	if err != nil {
 		return nil, err
 	}
