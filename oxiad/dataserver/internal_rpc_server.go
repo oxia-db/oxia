@@ -77,7 +77,7 @@ func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, sh
 	}
 
 	var err error
-	interceptors := rpc2.NewInstanceIDValidationInterceptors(
+	interceptors := rpc2.NewGrpcInsIDVerifyInterceptors(
 		server.manifest,
 		rpc2.DefaultOpenInstanceIDMethods...,
 	)

@@ -34,7 +34,7 @@ var DefaultOpenInstanceIDMethods = []string{
 	grpc_health_v1.Health_Watch_FullMethodName,
 }
 
-func NewInstanceIDValidationInterceptors(manifest *manifestpkg.Manifest, excludedMethods ...string) *Interceptors {
+func NewGrpcInsIDVerifyInterceptors(manifest *manifestpkg.Manifest, excludedMethods ...string) *Interceptors {
 	validate := func(ctx context.Context, fullMethod string) error {
 		if matchesAnyMethod(fullMethod, excludedMethods) {
 			return nil
