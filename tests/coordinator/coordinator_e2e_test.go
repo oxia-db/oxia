@@ -36,7 +36,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
 )
 
@@ -77,9 +76,8 @@ func TestCoordinatorE2E(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -96,7 +94,6 @@ func TestCoordinatorE2E(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	assert.NoError(t, coordinatorInstance.Close())
-	assert.NoError(t, clientPool.Close())
 
 	assert.NoError(t, s1.Close())
 	assert.NoError(t, s2.Close())
@@ -117,9 +114,8 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -145,7 +141,6 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 	assert.EqualValues(t, math.MaxUint32, nsStatus.Shards[3].Int32HashRange.Max)
 
 	assert.NoError(t, coordinatorInstance.Close())
-	assert.NoError(t, clientPool.Close())
 
 	assert.NoError(t, s1.Close())
 	assert.NoError(t, s2.Close())
@@ -171,9 +166,8 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -243,7 +237,6 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 	assert.NoError(t, client.Close())
 
 	assert.NoError(t, coordinatorInstance.Close())
-	assert.NoError(t, clientPool.Close())
 
 	for _, serverObj := range servers {
 		assert.NoError(t, serverObj.Close())
@@ -277,9 +270,8 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -344,7 +336,6 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 	assert.EqualValues(t, 0, version3.ModificationsCount)
 
 	assert.NoError(t, coordinatorInstance.Close())
-	assert.NoError(t, clientPool.Close())
 
 	for _, serverObj := range servers {
 		assert.NoError(t, serverObj.Close())
@@ -370,9 +361,8 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -420,7 +410,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}
 
 	slog.Info("Restarting coordinator")
-	coordinatorInstance, err = coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return newClusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err = coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return newClusterConfig, nil }, nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	statusResource = coordinatorInstance.StatusResource()
@@ -432,7 +422,6 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	assert.NoError(t, coordinatorInstance.Close())
-	assert.NoError(t, clientPool.Close())
 
 	for _, serverObj := range servers {
 		assert.NoError(t, serverObj.Close())
@@ -458,14 +447,13 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
 	configChangesCh := make(chan any)
 	configProvider := func() (model.ClusterConfig, error) {
 		return clusterConfig, nil
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	statusResource := coordinatorInstance.StatusResource()
@@ -520,7 +508,6 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 	assert.EqualValues(t, 1, ns1Status.ReplicationFactor)
 
 	assert.NoError(t, coordinatorInstance.Close())
-	assert.NoError(t, clientPool.Close())
 
 	for _, serverObj := range servers {
 		assert.NoError(t, serverObj.Close())
@@ -550,14 +537,13 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
 	configProvider := func() (model.ClusterConfig, error) {
 		return clusterConfig, nil
 	}
 
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(clientPool))
+	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	assert.Equal(t, 3, len(c.NodeControllers()))
@@ -584,7 +570,6 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	assert.True(t, ok)
 
 	assert.NoError(t, c.Close())
-	assert.NoError(t, clientPool.Close())
 
 	for _, serverObj := range servers {
 		assert.NoError(t, serverObj.Close())
@@ -612,14 +597,13 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3, sa4},
 	}
-	clientPool := rpc.NewClientPool(nil, nil)
 
 	configProvider := func() (model.ClusterConfig, error) {
 		return clusterConfig, nil
 	}
 
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(clientPool))
+	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	statusResource := c.StatusResource()
@@ -671,7 +655,6 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 
 	assert.NoError(t, client.Close())
 	assert.NoError(t, c.Close())
-	assert.NoError(t, clientPool.Close())
 
 	for _, serverObj := range servers {
 		assert.NoError(t, serverObj.Close())
@@ -696,7 +679,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	c, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) {
 		return clusterConfig, nil
 	}, configChangesCh,
-		rpc2.NewRpcProvider(rpc.NewClientPool(nil, nil)))
+		rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	statusResource := c.StatusResource()

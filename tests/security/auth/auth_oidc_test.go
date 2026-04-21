@@ -44,7 +44,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/oxia"
 
@@ -115,11 +114,9 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
 	}
 
-	clientPool := rpc.NewClientPool(nil, nil)
-
 	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProvider(clientPool))
+		nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 
 	return s1Addr.Public, func() {
@@ -127,7 +124,6 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		s2.Close()
 		s3.Close()
 
-		clientPool.Close()
 		coordinatorInstance.Close()
 	}
 }
@@ -314,12 +310,9 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
 	}
 
-	clientPool := rpc.NewClientPool(nil, nil)
-	defer clientPool.Close()
-
 	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProvider(clientPool))
+		nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
@@ -475,12 +468,9 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
 	}
 
-	clientPool := rpc.NewClientPool(nil, nil)
-	defer clientPool.Close()
-
 	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProvider(clientPool))
+		nil, rpc2.NewRpcProvider(nil, rpc2.InstanceIDFromMetadata(metadataProvider)))
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 

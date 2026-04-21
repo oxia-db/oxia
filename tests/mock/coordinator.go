@@ -17,21 +17,24 @@ package mock
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-
-	"github.com/oxia-db/oxia/common/rpc"
 )
 
 func NewCoordinator(t *testing.T, config *model.ClusterConfig, clusterConfigNotificationCh chan any) coordinator.Coordinator {
 	t.Helper()
 	metadataProvider := metadata.NewMetadataProviderMemory()
-	clientPool := rpc.NewClientPool(nil, nil)
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return *config, nil }, clusterConfigNotificationCh, rpc2.NewRpcProvider(clientPool))
+	coordinatorInstance, err := coordinator.NewCoordinator(
+		metadataProvider,
+		func() (model.ClusterConfig, error) { return *config, nil },
+		clusterConfigNotificationCh,
+		rpc2.NewRpcProvider(nil, uuid.NewString()),
+	)
 	assert.NoError(t, err)
 	return coordinatorInstance
 }

@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/constant"
-	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -39,7 +38,6 @@ type testCluster struct {
 	name        string
 	authority   string
 	coordinator coordinator.Coordinator
-	clientPool  clientrpc.ClientPool
 	servers     map[string]*dataserver.Server
 	addresses   []model.Server
 }
@@ -64,10 +62,10 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		cluster.addresses = append(cluster.addresses, addr)
 	}
 
-	cluster.clientPool = clientrpc.NewClientPool(nil, nil)
+	metadataProvider := metadata.NewMetadataProviderMemory()
 	var err error
 	cluster.coordinator, err = coordinator.NewCoordinator(
-		metadata.NewMetadataProviderMemory(),
+		metadataProvider,
 		func() (model.ClusterConfig, error) {
 			return model.ClusterConfig{
 				Namespaces: []model.NamespaceConfig{{
@@ -80,7 +78,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 			}, nil
 		},
 		nil,
-		coordinatorrpc.NewRpcProvider(cluster.clientPool),
+		coordinatorrpc.NewRpcProvider(nil, coordinatorrpc.InstanceIDFromMetadata(metadataProvider)),
 	)
 	require.NoError(t, err)
 
@@ -96,9 +94,6 @@ func (c *testCluster) close(t *testing.T) {
 	t.Helper()
 	if c.coordinator != nil {
 		assert.NoError(t, c.coordinator.Close())
-	}
-	if c.clientPool != nil {
-		assert.NoError(t, c.clientPool.Close())
 	}
 	for _, server := range c.servers {
 		assert.NoError(t, server.Close())

@@ -50,7 +50,6 @@ const (
 const (
 	healthCheckProbeInterval   = 2 * time.Second
 	healthCheckProbeTimeout    = 2 * time.Second
-	getInfoTimeout             = 10 * time.Second
 	defaultInitialRetryBackoff = 10 * time.Second
 )
 
@@ -80,6 +79,7 @@ type dataServerController struct {
 	cancel     context.CancelFunc
 	dataServer model.Server
 	rpc        rpc.Provider
+	insID      string
 	closed     atomic.Bool
 
 	statusLock        sync.RWMutex
@@ -289,10 +289,7 @@ func (n *dataServerController) becomeUnavailable() {
 }
 
 func (n *dataServerController) becomeAvailable() {
-	n.statusLock.Lock()
-	if n.status != NotRunning {
-		n.status = Running
-		n.statusLock.Unlock()
+	if n.Status() != NotRunning {
 		return
 	}
 
@@ -302,37 +299,39 @@ func (n *dataServerController) becomeAvailable() {
 	// dataServer went down, we interrupt the current stream when the ping on the dataServer fails
 	n.rpc.ClearPooledConnections(n.dataServer)
 	n.healthCheckBackoff.Reset()
-	n.status = Running
-	n.statusLock.Unlock()
 
-	// sync the latest info
+	// Bind the node before it can receive other internal traffic.
 	bo := commontime.NewBackOffWithInitialInterval(n.ctx, defaultInitialRetryBackoff)
-	_ = backoff.RetryNotify(func() error {
-		return n.syncDataServerInfo()
+	if err := backoff.RetryNotify(func() error {
+		handshake, err := n.rpc.Handshake(n.ctx, n.dataServer, &proto.HandshakeRequest{
+			InstanceId: n.insID,
+		})
+		if err != nil {
+			return err
+		}
+		switch handshake.Status {
+		case proto.HandshakeStatus_HANDSHAKE_STATUS_BOUND, proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND:
+			n.supportedFeatures.Store(handshake.FeaturesSupported)
+			return nil
+		case proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH:
+			return errors.New("data server instance id mismatch")
+		default:
+			return errors.Errorf("unexpected handshake status: %s", handshake.Status.String())
+		}
 	}, bo, func(err error, duration time.Duration) {
-		n.Warn("Failed to get data server info",
+		n.Warn("Failed to handshake with data server",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
-		n.becomeUnavailable()
-	})
-}
-
-func (n *dataServerController) syncDataServerInfo() error {
-	ctx, cancelFunc := context.WithTimeout(n.ctx, getInfoTimeout)
-	info, err := n.rpc.GetInfo(ctx, n.dataServer, &proto.GetInfoRequest{})
-	cancelFunc()
-	if err != nil {
-		code := grpcstatus.Code(err)
-		if code == codes.Unimplemented {
-			// The old data server might not have this endpoint, we should treat it as success.
-			n.Warn("the storage data server is too old without info endpoint.")
-			return nil
-		}
-		return err
+	}); err != nil {
+		return
 	}
-	n.supportedFeatures.Store(info.FeaturesSupported)
-	return nil
+
+	n.statusLock.Lock()
+	if n.status == NotRunning {
+		n.status = Running
+	}
+	n.statusLock.Unlock()
 }
 
 func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
@@ -352,14 +351,16 @@ func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.Healt
 func NewDataServerController(ctx context.Context, dataServer model.Server,
 	shardAssignmentsProvider ShardAssignmentsProvider,
 	dataServerEventListener DataServerEventListener,
-	rpcProvider rpc.Provider) DataServerController {
-	return newDataServerController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, defaultInitialRetryBackoff)
+	rpcProvider rpc.Provider,
+	insID string) DataServerController {
+	return newDataServerController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, insID, defaultInitialRetryBackoff)
 }
 
 func newDataServerController(ctx context.Context, dataServer model.Server,
 	shardAssignmentsProvider ShardAssignmentsProvider,
 	dataServerEventListener DataServerEventListener,
 	rpcProvider rpc.Provider,
+	insID string,
 	initialRetryBackoff time.Duration) DataServerController {
 	dataServerCtx, cancel := context.WithCancel(ctx)
 	dataServerID := dataServer.GetIdentifier()
@@ -375,6 +376,7 @@ func newDataServerController(ctx context.Context, dataServer model.Server,
 		ShardAssignmentsProvider: shardAssignmentsProvider,
 		DataServerEventListener:  dataServerEventListener,
 		rpc:                      rpcProvider,
+		insID:                    insID,
 		statusLock:               sync.RWMutex{},
 		status:                   NotRunning,
 		supportedFeatures:        supportedFeatures,

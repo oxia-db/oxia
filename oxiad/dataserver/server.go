@@ -33,6 +33,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
+	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
@@ -62,16 +63,20 @@ type Server struct {
 
 func New(parent context.Context, watchableOption *commonoption.Watch[*option.Options]) (*Server, error) {
 	options, _ := watchableOption.Load()
-	provider, err := rpc.NewReplicationRpcProvider(&options.Replication.TLS)
+	manifest, err := manifestpkg.NewManifest(options.Storage.Database.Dir)
 	if err != nil {
 		return nil, err
 	}
-	grpcProvider, err := NewWithGrpcProvider(parent, watchableOption, rpc2.Default, provider, false)
+	provider, err := rpc.NewReplicationRpcProvider(&options.Replication.TLS, manifest)
+	if err != nil {
+		return nil, err
+	}
+	grpcProvider, err := NewWithGrpcProvider(parent, watchableOption, rpc2.Default, provider, manifest, false)
 	return grpcProvider, err
 }
 
 func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.Watch[*option.Options], provider rpc2.GrpcProvider,
-	replicationRpcProvider rpc.ReplicationRpcProvider, disableAuthorityValidation bool) (*Server, error) {
+	replicationRpcProvider rpc.ReplicationRpcProvider, manifest *manifestpkg.Manifest, disableAuthorityValidation bool) (*Server, error) {
 	options, _ := watchableOption.Load()
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
@@ -123,7 +128,7 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 		return nil, err
 	}
 	s.internalRpcServer, err = newInternalRpcServer(provider, internalServer.BindAddress,
-		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTLS, &internalServer.Auth)
+		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTLS, &internalServer.Auth, manifest)
 	if err != nil {
 		return nil, err
 	}

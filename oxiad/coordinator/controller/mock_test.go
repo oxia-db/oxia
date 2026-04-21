@@ -140,6 +140,9 @@ type mockPerNodeChannels struct {
 
 	// Feature negotiation support
 	supportedFeatures []proto.Feature
+	handshakeStatus   proto.HandshakeStatus
+	handshakeErr      error
+	handshakeCount    atomic.Int64
 	getInfoErr        error
 	getInfoCount      atomic.Int64
 }
@@ -348,6 +351,7 @@ func newMockPerNodeChannels() *mockPerNodeChannels {
 		shardAssignmentsStream: newMockShardAssignmentClient(),
 		healthClient:           newMockHealthClient(),
 		supportedFeatures:      feature.SupportedFeatures(), // Default to current version
+		handshakeStatus:        proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
 	}
 }
 
@@ -358,6 +362,7 @@ func (m *mockPerNodeChannels) SetNodeFeatures(features []proto.Feature) {
 
 // SetOldNode simulates an old node that doesn't support the GetInfo RPC.
 func (m *mockPerNodeChannels) SetOldNode() {
+	m.handshakeErr = ErrNotImplement
 	m.getInfoErr = ErrNotImplement
 	m.supportedFeatures = nil
 }
@@ -365,6 +370,10 @@ func (m *mockPerNodeChannels) SetOldNode() {
 type mockRpcProvider struct {
 	sync.Mutex
 	channels map[string]*mockPerNodeChannels
+}
+
+func (r *mockRpcProvider) Close() error {
+	return nil
 }
 
 func (r *mockRpcProvider) ClearPooledConnections(node model.Server) {
@@ -393,6 +402,21 @@ func (r *mockRpcProvider) GetInfo(_ context.Context, node model.Server, _ *proto
 		return nil, n.getInfoErr
 	}
 	return &proto.GetInfoResponse{
+		FeaturesSupported: n.supportedFeatures,
+	}, nil
+}
+
+func (r *mockRpcProvider) Handshake(_ context.Context, node model.Server, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+	r.Lock()
+	defer r.Unlock()
+
+	n := r.getNode(node)
+	n.handshakeCount.Add(1)
+	if n.handshakeErr != nil {
+		return nil, n.handshakeErr
+	}
+	return &proto.HandshakeResponse{
+		Status:            n.handshakeStatus,
 		FeaturesSupported: n.supportedFeatures,
 	}, nil
 }

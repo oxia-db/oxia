@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/google/uuid"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -105,12 +106,7 @@ func WaitForCondition(ctx context.Context, sr StatusResource, triggerFn func(), 
 	}
 }
 
-// ensureLoaded loads the status from the metadata store if not already loaded.
-// Caller must hold s.lock for writing.
-func (s *status) ensureLoaded() {
-	if s.current != nil {
-		return
-	}
+func (s *status) doRecovery() {
 	_ = backoff.RetryNotify(func() error {
 		clusterStatus, version, err := s.metadata.Get()
 		if err != nil {
@@ -127,28 +123,24 @@ func (s *status) ensureLoaded() {
 		)
 	})
 	if s.current == nil {
-		s.current = &model.ClusterStatus{}
+		s.current = model.NewClusterStatus()
+	}
+	if s.current.InstanceId == "" {
+		clonedStatus := s.current.Clone()
+		clonedStatus.InstanceId = uuid.NewString()
+		s.Update(clonedStatus)
 	}
 }
 
 func (s *status) Load() *model.ClusterStatus {
 	s.lock.RLock()
-	if s.current != nil {
-		defer s.lock.RUnlock()
-		return s.current
-	}
-	s.lock.RUnlock()
-
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	s.ensureLoaded()
+	defer s.lock.RUnlock()
 	return s.current
 }
 
 func (s *status) ApplyChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	s.ensureLoaded()
 	newStatus := s.current.Clone()
 	shardsToAdd, shardsToDelete := util.ApplyClusterChanges(config, newStatus, ensembleSupplier)
 	if len(shardsToAdd) == 0 && len(shardsToDelete) == 0 {
@@ -285,6 +277,8 @@ func NewStatusResource(meta metadata.Provider) StatusResource {
 		current:          nil,
 		changeCh:         make(chan struct{}),
 	}
-	s.Load()
+
+	s.doRecovery()
+
 	return &s
 }

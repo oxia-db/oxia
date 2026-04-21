@@ -31,6 +31,10 @@ service OxiaCoordination {
 
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
   rpc DeleteShard(DeleteShardRequest) returns (DeleteShardResponse);
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  // Deprecated: use Handshake for node initialization and feature discovery.
+  // Keep GetInfo only for rolling-upgrade compatibility and remove it in the
+  // next major version.
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
 
   // Removes an observer follower from the parent leader without fencing.
@@ -59,6 +63,22 @@ message GetInfoRequest {
 
 message GetInfoResponse {
     repeated Feature features_supported = 1;
+}
+
+enum HandshakeStatus {
+  HANDSHAKE_STATUS_UNKNOWN = 0;
+  HANDSHAKE_STATUS_BOUND = 1;
+  HANDSHAKE_STATUS_ALREADY_BOUND = 2;
+  HANDSHAKE_STATUS_MISMATCH = 3;
+}
+
+message HandshakeRequest {
+  string instance_id = 1;
+}
+
+message HandshakeResponse {
+  HandshakeStatus status = 1;
+  repeated Feature features_supported = 2;
 }
 
 message CoordinationShardAssignmentsResponse {}

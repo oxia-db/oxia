@@ -71,6 +71,7 @@ type coordinator struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+	insID  string
 
 	statusResource resource.StatusResource
 	configResource resource.ClusterConfigResource
@@ -149,7 +150,14 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 			_ = nc.Close()
 			delete(c.drainingNodes, sa.GetIdentifier())
 		}
-		c.nodeControllers[sa.GetIdentifier()] = controller.NewDataServerController(c.ctx, sa, c, c, c.rpc)
+		c.nodeControllers[sa.GetIdentifier()] = controller.NewDataServerController(
+			c.ctx,
+			sa,
+			c,
+			c,
+			c.rpc,
+			c.insID,
+		)
 	}
 
 	// Check for nodes to remove
@@ -285,6 +293,7 @@ func (c *coordinator) Close() error {
 	for _, nc := range c.drainingNodes {
 		err = multierr.Append(err, nc.Close())
 	}
+	err = multierr.Append(err, c.rpc.Close())
 	return err
 }
 
@@ -731,7 +740,7 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 func NewCoordinator(meta metadata.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
-	rpcProvider rpc.Provider) (Coordinator, error) {
+	rpcProvider rpc.ProviderFactory) (Coordinator, error) {
 	c := &coordinator{
 		Logger: slog.With(
 			slog.String("component", "coordinator"),
@@ -744,7 +753,6 @@ func NewCoordinator(meta metadata.Provider,
 		splitControllers:      make(map[int64]*controller.SplitController),
 		nodeControllers:       make(map[string]controller.DataServerController),
 		drainingNodes:         make(map[string]controller.DataServerController),
-		rpc:                   rpcProvider,
 	}
 	c.ccrWg.Add(1)
 
@@ -775,23 +783,22 @@ func NewCoordinator(meta metadata.Provider,
 
 	clusterConfig := c.configResource.Load()
 	clusterStatus := c.statusResource.Load()
+	c.insID = clusterStatus.InstanceId
+
+	c.rpc = rpcProvider(c.insID)
 
 	// init node controller
 	for _, node := range clusterConfig.Servers {
-		c.nodeControllers[node.GetIdentifier()] = controller.NewDataServerController(c.ctx, node, c, c, c.rpc)
+		c.nodeControllers[node.GetIdentifier()] = controller.NewDataServerController(
+			c.ctx,
+			node,
+			c,
+			c,
+			c.rpc,
+			c.insID,
+		)
 	}
-
-	// init status
-	if clusterStatus == nil {
-		// Before initializing the cluster, it's better to make sure we
-		// have all the nodes available, otherwise the coordinator might be
-		// the first component in getting started and will print out a lot
-		// of error logs regarding failed leader elections
-		c.waitForAllNodesToBeAvailable()
-		c.Info("Performing initial assignment", slog.Any("clusterConfig", clusterConfig))
-	} else {
-		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
-	}
+	c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 	clusterStatus, _, _ = c.statusResource.ApplyChanges(clusterConfig, c.selectNewEnsemble)
 
 	// init shard controller

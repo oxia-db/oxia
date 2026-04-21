@@ -12,27 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package constant
+package io
 
-import "time"
+import (
+	"os"
+	"path/filepath"
+	"testing"
 
-const I64NegativeOne int64 = -1
-const I64Zero int64 = 0
-const U32Zero uint32 = 0
-
-const (
-	MetadataTerm              = "term"
-	MetadataNamespace         = "namespace"
-	MetadataShardId           = "shard-id"
-	MetadataSplitHashRangeMin = "split-hash-range-min"
-	MetadataSplitHashRangeMax = "split-hash-range-max"
-	MetadataInstanceId        = "instance-id"
-	DefaultNamespace          = "default"
-
-	DefaultPublicPort   = 6648
-	DefaultInternalPort = 6649
-	DefaultAdminPort    = 6651
-
-	MaxSessionTimeout = 5 * time.Minute
-	MinSessionTimeout = 2 * time.Second
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestWriteJSONAtomicallyCreatesParentDirectoryAndFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "state.json")
+
+	err := WriteJSONToFile(path, map[string]string{
+		"hello": "world",
+	})
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"hello":"world"}`, string(content))
+}

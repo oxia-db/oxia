@@ -37,6 +37,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
+	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
@@ -52,13 +53,15 @@ type internalRpcServer struct {
 
 	shardsDirector       controller.ShardsDirector
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
+	manifest             *manifestpkg.Manifest
 	grpcServer           rpc2.GrpcServer
 	healthServer         rpc2.HealthServer
 	log                  *slog.Logger
 }
 
 func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
-	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc2.HealthServer, tlsConf *tls.Config, authOptions *auth.Options) (*internalRpcServer, error) {
+	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc2.HealthServer,
+	tlsConf *tls.Config, authOptions *auth.Options, manifest *manifestpkg.Manifest) (*internalRpcServer, error) {
 	if authOptions == nil {
 		authOptions = &auth.Disabled
 	}
@@ -66,6 +69,7 @@ func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, sh
 	server := &internalRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,
+		manifest:             manifest,
 		healthServer:         healthServer,
 		log: slog.With(
 			slog.String("component", "internal-rpc-server"),
@@ -73,11 +77,15 @@ func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, sh
 	}
 
 	var err error
+	interceptors := rpc2.NewInstanceIDValidationInterceptors(
+		server.manifest,
+		rpc2.DefaultOpenInstanceIDMethods...,
+	)
 	server.grpcServer, err = grpcProvider.StartGrpcServer("internal", bindAddress, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaCoordinationServer(registrar, server)
 		proto.RegisterOxiaLogReplicationServer(registrar, server)
 		grpc_health_v1.RegisterHealthServer(registrar, server.healthServer)
-	}, tlsConf, authOptions)
+	}, tlsConf, authOptions, interceptors)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +140,48 @@ func (s *internalRpcServer) PushShardAssignments(srv proto.OxiaCoordination_Push
 	}
 
 	return err
+}
+
+func (s *internalRpcServer) Handshake(c context.Context, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+	log := s.log.With(
+		slog.Any("request", req),
+		slog.String("peer", rpc.GetPeer(c)),
+	)
+
+	log.Info("Received Handshake request")
+
+	if req.InstanceId == "" {
+		return nil, status.Error(codes.InvalidArgument, "instance id must not be empty")
+	}
+
+	currentInstanceID := s.manifest.GetInstanceID()
+	switch {
+	case currentInstanceID == "":
+		if err := s.manifest.SetInstanceID(req.InstanceId); err != nil {
+			if errors.Is(err, manifestpkg.ErrInstanceIDMismatch) {
+				return &proto.HandshakeResponse{
+					Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH,
+					FeaturesSupported: feature.SupportedFeatures(),
+				}, nil
+			}
+			log.Warn("Failed to bind instance id", slog.Any("error", err))
+			return nil, err
+		}
+		return &proto.HandshakeResponse{
+			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_BOUND,
+			FeaturesSupported: feature.SupportedFeatures(),
+		}, nil
+	case currentInstanceID == req.InstanceId:
+		return &proto.HandshakeResponse{
+			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
+			FeaturesSupported: feature.SupportedFeatures(),
+		}, nil
+	default:
+		return &proto.HandshakeResponse{
+			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH,
+			FeaturesSupported: feature.SupportedFeatures(),
+		}, nil
+	}
 }
 
 func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
@@ -279,6 +329,9 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 	return res, err
 }
 
+// GetInfo is kept only for rolling-upgrade compatibility with older
+// coordinators. New coordinators should use Handshake instead and remove this
+// endpoint in the next major version.
 func (s *internalRpcServer) GetInfo(c context.Context, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
 	log := s.log.With(
 		slog.Any("request", req),
