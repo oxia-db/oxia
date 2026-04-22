@@ -25,7 +25,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 // ShardSplitter is implemented by the coordinator to initiate shard splits.
@@ -45,9 +44,17 @@ type adminServer struct {
 func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
 	cnf := admin.metadata.LoadConfig()
 
-	dataServers := make([]*proto.DataServer, len(cnf.Servers))
-	for i, server := range cnf.Servers {
-		dataServers[i] = server.ToAdminProto()
+	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
+	for _, server := range cnf.GetServers() {
+		dataServer := server
+		if server.GetName() == "" {
+			dataServer = &proto.DataServer{
+				Name:            new(server.GetIdentifier()),
+				PublicAddress:   server.GetPublicAddress(),
+				InternalAddress: server.GetInternalAddress(),
+			}
+		}
+		dataServers = append(dataServers, dataServer)
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
@@ -64,17 +71,16 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 	}
 
 	return &proto.GetDataServerResponse{
-		DataServerInfo: dataServerInfo.ToAdminProto(),
+		DataServerInfo: dataServerInfo,
 	}, nil
 }
 
 func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
 	cnf := admin.metadata.LoadConfig()
 
-	namespaceConfigs := cnf.Namespaces
 	namespaceNames := hashset.New[string]()
-	for _, nsConfig := range namespaceConfigs {
-		namespaceNames.Add(nsConfig.Name)
+	for _, nsConfig := range cnf.GetNamespaces() {
+		namespaceNames.Add(nsConfig.GetName())
 	}
 	return &proto.ListNamespacesResponse{
 		Namespaces: namespaceNames.Values(),
@@ -84,20 +90,19 @@ func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesR
 func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
 	cnf := admin.metadata.LoadConfig()
 
-	cnfNodes := cnf.Servers
-	cnfMeta := cnf.ServerMetadata
+	cnfNodes := cnf.GetServers()
+	cnfMeta := cnf.GetServerMetadata()
 	nodes := make([]*proto.Node, len(cnfNodes))
 	for i, node := range cnfNodes {
-		nodeMeta, found := cnfMeta[node.GetIdentifier()]
-		if !found {
-			nodeMeta = model.ServerMetadata{}
-		}
 		name := node.GetIdentifier()
 		nodes[i] = &proto.Node{
 			Name:            &name,
-			PublicAddress:   node.Public,
-			InternalAddress: node.Internal,
-			Metadata:        nodeMeta.Labels,
+			PublicAddress:   node.GetPublicAddress(),
+			InternalAddress: node.GetInternalAddress(),
+			Metadata:        map[string]string{},
+		}
+		if nodeMeta, found := cnfMeta[node.GetIdentifier()]; found {
+			nodes[i].Metadata = nodeMeta.GetLabels()
 		}
 	}
 	return &proto.ListNodesResponse{Nodes: nodes}, nil

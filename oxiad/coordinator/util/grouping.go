@@ -21,6 +21,7 @@ import (
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
@@ -100,7 +101,7 @@ func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *m
 	return groupingShardByNode, historyNodes
 }
 
-func GroupingCandidatesWithLabelValue(candidates *linkedhashset.Set[string], candidatesMetadata map[string]model.ServerMetadata) map[string]map[string]*linkedhashset.Set[string] {
+func GroupingCandidatesWithLabelValue(candidates *linkedhashset.Set[string], candidatesMetadata map[string]*proto.DataServerMetadata) map[string]map[string]*linkedhashset.Set[string] {
 	groupedCandidates := make(map[string]map[string]*linkedhashset.Set[string])
 	for iterator := candidates.Iterator(); iterator.Next(); {
 		candidate := iterator.Value()
@@ -108,7 +109,7 @@ func GroupingCandidatesWithLabelValue(candidates *linkedhashset.Set[string], can
 		if !exist {
 			continue
 		}
-		for label, labelValue := range metadata.Labels {
+		for label, labelValue := range metadata.GetLabels() {
 			labelGroup, exist := groupedCandidates[label]
 			if !exist {
 				tmp := make(map[string]*linkedhashset.Set[string])
@@ -127,12 +128,12 @@ func GroupingCandidatesWithLabelValue(candidates *linkedhashset.Set[string], can
 	return groupedCandidates
 }
 
-func GroupingValueWithLabel(candidates *linkedhashset.Set[string], candidatesMetadata map[string]model.ServerMetadata) map[string]*linkedhashset.Set[string] {
+func GroupingValueWithLabel(candidates *linkedhashset.Set[string], candidatesMetadata map[string]*proto.DataServerMetadata) map[string]*linkedhashset.Set[string] {
 	selectedLabelValues := make(map[string]*linkedhashset.Set[string])
 	for selectedIter := candidates.Iterator(); selectedIter.Next(); {
 		nodeID := selectedIter.Value()
 		if metadata, exist := candidatesMetadata[nodeID]; exist {
-			for label, labelValue := range metadata.Labels {
+			for label, labelValue := range metadata.GetLabels() {
 				collection := selectedLabelValues[label]
 				if collection == nil {
 					collection = linkedhashset.New(labelValue)

@@ -80,8 +80,8 @@ func setupSplitTest(t *testing.T, phase model.SplitPhase) (
 
 	rpcMock := newMockRpcProvider()
 	metaProvider := memory.NewProvider()
-	metadata := coordmetadata.New(t.Context(), metaProvider, func() (model.ClusterConfig, error) {
-		return model.ClusterConfig{}, nil
+	metadata := coordmetadata.New(t.Context(), metaProvider, func() (*proto.ClusterConfiguration, error) {
+		return &proto.ClusterConfiguration{}, nil
 	}, nil)
 	t.Cleanup(func() { assert.NoError(t, metadata.Close()) })
 

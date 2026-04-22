@@ -17,7 +17,7 @@ package single
 import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/policy"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 )
 
@@ -26,7 +26,7 @@ var _ selector.Selector[*Context, string] = &serverAntiAffinitiesSelector{}
 type serverAntiAffinitiesSelector struct{}
 
 func (*serverAntiAffinitiesSelector) Select(ssContext *Context) (string, error) { //nolint:revive
-	nsPolicies := ssContext.Policies
+	nsPolicies := ssContext.HierarchyPolicies
 	if nsPolicies == nil || len(nsPolicies.AntiAffinities) == 0 {
 		return "", selector.ErrNoFunctioning
 	}
@@ -56,9 +56,8 @@ func (*serverAntiAffinitiesSelector) Select(ssContext *Context) (string, error) 
 			}
 			if labelSatisfiedCandidates.Size() < 1 {
 				switch affinity.Mode {
-				case policy.Strict:
+				case proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT:
 					return "", selector.ErrUnsatisfiedAntiAffinity
-				// case p.Relaxed:
 				default:
 					return "", selector.ErrUnsupportedAntiAffinityMode
 				}

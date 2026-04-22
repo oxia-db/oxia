@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -26,10 +28,18 @@ import (
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
+func dataServer(server model.Server) *proto.DataServer {
+	return &proto.DataServer{
+		Name:            server.Name,
+		PublicAddress:   server.Public,
+		InternalAddress: server.Internal,
+	}
+}
+
 func newCoordinatorInstance(
 	t *testing.T,
 	metadataProvider provider.Provider,
-	clusterConfigProvider func() (model.ClusterConfig, error),
+	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc2.ProviderFactory,
 ) coordinator.Coordinator {
@@ -43,4 +53,19 @@ func newCoordinatorInstance(
 	coordinatorInstance, err := coordinator.NewCoordinator(metadata, rpcProvider)
 	require.NoError(t, err)
 	return coordinatorInstance
+}
+
+func newDefaultClusterConfig(servers ...model.Server) *proto.ClusterConfiguration {
+	dataServers := make([]*proto.DataServer, 0, len(servers))
+	for _, server := range servers {
+		dataServers = append(dataServers, dataServer(server))
+	}
+	return &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 3,
+			InitialShardCount: 1,
+		}},
+		Servers: dataServers,
+	}
 }

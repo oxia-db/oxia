@@ -1,0 +1,74 @@
+// Copyright 2023-2025 The Oxia Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package io.oxia.proto.v1;
+
+option go_package = "github.com/oxia-db/oxia/common/proto";
+
+import "google/protobuf/duration.proto";
+import "replication.proto";
+
+message DataServer {
+  optional string name = 1;
+  string public_address = 2;
+  string internal_address = 3;
+}
+
+message DataServerMetadata {
+  map<string, string> labels = 1;
+}
+
+message DataServerInfo {
+  DataServer data_server = 1;
+  DataServerMetadata metadata = 2;
+}
+
+enum AntiAffinityMode {
+  ANTI_AFFINITY_MODE_UNKNOWN = 0;
+  ANTI_AFFINITY_MODE_STRICT = 1;
+  ANTI_AFFINITY_MODE_RELAXED = 2;
+}
+
+message AntiAffinity {
+  repeated string labels = 1;
+  AntiAffinityMode mode = 2;
+}
+
+message HierarchyPolicies {
+  repeated AntiAffinity anti_affinities = 1;
+}
+
+message Namespace {
+  string name = 1;
+  uint32 initial_shard_count = 2;
+  uint32 replication_factor = 3;
+  optional bool notifications_enabled = 4;
+  replication.KeySortingType key_sorting = 5;
+  HierarchyPolicies hierarchy_policies = 6;
+}
+
+message LoadBalancer {
+  google.protobuf.Duration schedule_interval = 1;
+  google.protobuf.Duration quarantine_time = 2;
+}
+
+message ClusterConfiguration {
+  repeated Namespace namespaces = 1;
+  repeated DataServer servers = 2;
+  repeated string allow_extra_authorities = 3;
+  map<string, DataServerMetadata> server_metadata = 4;
+  LoadBalancer load_balancer = 5;
+}

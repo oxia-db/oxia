@@ -56,19 +56,16 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newClusterConfig([]*proto.Namespace{{
+		Name:              constant.DefaultNamespace,
+		ReplicationFactor: 3,
+		InitialShardCount: 1,
+	}}, []model.Server{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 		rpc2.NewRpcProviderFactory(nil),
 	)
@@ -321,19 +318,16 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 	}
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newClusterConfig([]*proto.Namespace{{
+		Name:              constant.DefaultNamespace,
+		ReplicationFactor: 3,
+		InitialShardCount: 1,
+	}}, []model.Server{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 		rpc2.NewRpcProviderFactory(nil),
 	)
@@ -846,17 +840,20 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			}
 
 			metadataProvider := memory.NewProvider()
-			clusterConfig := model.ClusterConfig{
-				Namespaces: []model.NamespaceConfig{{
-					Name:              constant.DefaultNamespace,
-					ReplicationFactor: 1,
-					InitialShardCount: 1,
-					KeySorting:        model.KeySorting(test.sorting),
-				}},
-				Servers: []model.Server{sa1},
+			var keySorting proto.KeySortingType
+			if test.sorting == "natural" {
+				keySorting = proto.KeySortingType_NATURAL
+			} else {
+				keySorting = proto.KeySortingType_HIERARCHICAL
 			}
+			clusterConfig := newClusterConfig([]*proto.Namespace{{
+				Name:              constant.DefaultNamespace,
+				ReplicationFactor: 1,
+				InitialShardCount: 1,
+				KeySorting:        keySorting,
+			}}, []model.Server{sa1})
 
-			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
+			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
 			metadata := coordinatorInstance.Metadata()
 			status := metadata.LoadStatus()
@@ -881,8 +878,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			list, err := client.List(context.Background(), "", "")
 			assert.NoError(t, err)
 
-			ks := model.KeySorting(test.sorting)
-			if ks.ToProto() == proto.KeySortingType_HIERARCHICAL {
+			if keySorting == proto.KeySortingType_HIERARCHICAL {
 				assert.Equal(t, []string{"/a", "/b", "/a/b"}, list)
 			} else {
 				assert.Equal(t, []string{"/a", "/a/b", "/b"}, list)

@@ -21,7 +21,6 @@ import (
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/multierr"
@@ -40,9 +39,6 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
-
-	"github.com/oxia-db/oxia/common/entity"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
@@ -67,7 +63,7 @@ type GrpcServer struct {
 	metrics      *metric.PrometheusMetrics
 }
 
-func watchClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper, clusterConfigChangeNotifications chan any) error {
+func watchClusterConfigurationProvider(cluster *option.ClusterOptions, v *viper.Viper, clusterConfigChangeNotifications chan any) error {
 	configPath := cluster.ConfigPath
 	v.SetConfigType("yaml")
 	onChange := func() { clusterConfigChangeNotifications <- nil }
@@ -97,9 +93,7 @@ func watchClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper, 
 	return nil
 }
 
-func loadClusterConfig(cluster *option.ClusterOptions, v *viper.Viper) (model.ClusterConfig, error) {
-	cc := model.ClusterConfig{}
-
+func loadClusterConfiguration(cluster *option.ClusterOptions, v *viper.Viper) (*proto.ClusterConfiguration, error) {
 	var err error
 
 	if strings.HasPrefix(cluster.ConfigPath, "configmap:") {
@@ -109,22 +103,10 @@ func loadClusterConfig(cluster *option.ClusterOptions, v *viper.Viper) (model.Cl
 	}
 
 	if err != nil {
-		return cc, err
+		return nil, err
 	}
 
-	if err := v.Unmarshal(&cc, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
-		entity.OptBooleanViperHook(),
-		mapstructure.StringToTimeDurationHookFunc(), // default hook
-		mapstructure.StringToSliceHookFunc(","),     // default hook
-	))); err != nil {
-		return cc, errors.Wrap(err, "failed to load cluster config")
-	}
-
-	if err := cc.Validate(); err != nil {
-		return cc, err
-	}
-
-	return cc, nil
+	return decodeClusterConfigurationViper(v)
 }
 
 func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[*option.Options]) (*GrpcServer, error) {
@@ -135,11 +117,11 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 
 	clusterConfigChangeNotifications := make(chan any)
 
-	clusterConfigProvider := func() (model.ClusterConfig, error) {
-		return loadClusterConfig(&options.Cluster, v)
+	clusterConfigProvider := func() (*proto.ClusterConfiguration, error) {
+		return loadClusterConfiguration(&options.Cluster, v)
 	}
 
-	if err := watchClusterConfigProvider(&options.Cluster, v, clusterConfigChangeNotifications); err != nil {
+	if err := watchClusterConfigurationProvider(&options.Cluster, v, clusterConfigChangeNotifications); err != nil {
 		return nil, err
 	}
 

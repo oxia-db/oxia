@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -34,23 +35,19 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/entity"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
-
-	"github.com/oxia-db/oxia/common/proto"
 )
 
-var namespaceConfig = &model.NamespaceConfig{
-	Name:                 "my-namespace",
-	InitialShardCount:    1,
-	ReplicationFactor:    3,
-	NotificationsEnabled: entity.OptBooleanDefaultTrue{},
+var namespaceConfig = &proto.Namespace{
+	Name:              "my-namespace",
+	InitialShardCount: 1,
+	ReplicationFactor: 3,
 }
 
-func newTestMetadata(t *testing.T, metadataProvider provider.Provider, clusterConfig model.ClusterConfig) coordmetadata.Metadata {
+func newTestMetadata(t *testing.T, metadataProvider provider.Provider, clusterConfig *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
-	metadata := coordmetadata.New(t.Context(), metadataProvider, func() (model.ClusterConfig, error) {
+	metadata := coordmetadata.New(t.Context(), metadataProvider, func() (*proto.ClusterConfiguration, error) {
 		return clusterConfig, nil
 	}, nil)
 	t.Cleanup(func() {
@@ -122,7 +119,7 @@ func TestShardController(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
@@ -200,7 +197,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	n2 := rpc.GetNode(s2)
 	n3 := rpc.GetNode(s3)
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
@@ -231,7 +228,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
@@ -278,7 +275,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
@@ -333,7 +330,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 	n2 := rpc.GetNode(s2)
 	n3 := rpc.GetNode(s3)
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
@@ -369,13 +366,14 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	notificationsEnabled := false
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:                 "default",
 				InitialShardCount:    1,
 				ReplicationFactor:    1,
-				NotificationsEnabled: entity.Bool(false),
+				NotificationsEnabled: &notificationsEnabled,
 			},
 		},
 	})
@@ -411,7 +409,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
@@ -509,7 +507,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
@@ -629,7 +627,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	s5 := model.Server{Public: "s5:9091", Internal: "s5:8191"}
 	s6 := model.Server{Public: "s6:9091", Internal: "s6:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 	sc := NewShardController(constant.DefaultNamespace, shardId, namespaceConfig, model.ShardMetadata{
 		Status:   model.ShardStatusUnknown,
 		Term:     1,
@@ -727,7 +725,7 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	rpc.GetNode(s2).SetNodeFeatures(feature.SupportedFeatures())
 	rpc.GetNode(s3).SetNodeFeatures(feature.SupportedFeatures())
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 
 	// Create a feature supplier that queries the mock RPC
 	featureSupplier := func(servers []model.Server) map[string][]proto.Feature {
@@ -783,7 +781,7 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	// s3 is an old node without feature support
 	rpc.GetNode(s3).SetNodeFeatures([]proto.Feature{})
 
-	metadata := newTestMetadata(t, memory.NewProvider(), model.ClusterConfig{})
+	metadata := newTestMetadata(t, memory.NewProvider(), &proto.ClusterConfiguration{})
 
 	featureSupplier := func(servers []model.Server) map[string][]proto.Feature {
 		result := make(map[string][]proto.Feature)

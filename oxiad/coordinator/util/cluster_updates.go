@@ -18,20 +18,21 @@ package util
 import (
 	"log/slog"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
-func findNamespaceConfig(config *model.ClusterConfig, ns string) *model.NamespaceConfig {
-	for _, cns := range config.Namespaces {
-		if cns.Name == ns {
-			return &cns
+func findNamespaceConfig(config *proto.ClusterConfiguration, ns string) *proto.Namespace {
+	for _, cns := range config.GetNamespaces() {
+		if cns.GetName() == ns {
+			return cns
 		}
 	}
 	return nil
 }
 
-func ApplyClusterChanges(config *model.ClusterConfig, status *model.ClusterStatus, ensembleSupplier func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error)) (
+func ApplyClusterChanges(config *proto.ClusterConfiguration, status *model.ClusterStatus, ensembleSupplier func(namespaceConfig *proto.Namespace, status *model.ClusterStatus) ([]model.Server, error)) (
 	shardsToAdd map[int64]string,
 	shardsToDelete []int64) {
 	shardsToAdd = map[int64]string{}
@@ -39,8 +40,8 @@ func ApplyClusterChanges(config *model.ClusterConfig, status *model.ClusterStatu
 	var err error
 
 	// Check for new namespaces
-	for _, nc := range config.Namespaces {
-		_, existing := status.Namespaces[nc.Name]
+	for _, nc := range config.GetNamespaces() {
+		_, existing := status.Namespaces[nc.GetName()]
 		if existing {
 			continue
 		}
@@ -48,16 +49,16 @@ func ApplyClusterChanges(config *model.ClusterConfig, status *model.ClusterStatu
 		// This is a new namespace
 		nss := model.NamespaceStatus{
 			Shards:            map[int64]model.ShardMetadata{},
-			ReplicationFactor: nc.ReplicationFactor,
+			ReplicationFactor: nc.GetReplicationFactor(),
 		}
 		// Publish the namespace into status *before* placing shards so that
 		// each per-shard ensembleSupplier call sees the placements made earlier
 		// in this same init cycle.
-		status.Namespaces[nc.Name] = nss
+		status.Namespaces[nc.GetName()] = nss
 
-		for _, shard := range sharding.GenerateShards(status.ShardIdGenerator, nc.InitialShardCount) {
+		for _, shard := range sharding.GenerateShards(status.ShardIdGenerator, nc.GetInitialShardCount()) {
 			var esm []model.Server
-			if esm, err = ensembleSupplier(&nc, status); err != nil {
+			if esm, err = ensembleSupplier(nc, status); err != nil {
 				slog.Error("failed to select new ensembles.", slog.Any("shard", shard), slog.Any("error", err))
 				continue
 			}
@@ -72,17 +73,16 @@ func ApplyClusterChanges(config *model.ClusterConfig, status *model.ClusterStatu
 				},
 			}
 
-			status.Namespaces[nc.Name].Shards[shard.Id] = shardMetadata
-			status.ServerIdx = (status.ServerIdx + nc.ReplicationFactor) % uint32(len(config.Servers))
-			shardsToAdd[shard.Id] = nc.Name
+			status.Namespaces[nc.GetName()].Shards[shard.Id] = shardMetadata
+			status.ServerIdx = (status.ServerIdx + nc.GetReplicationFactor()) % uint32(len(config.GetServers()))
+			shardsToAdd[shard.Id] = nc.GetName()
 		}
-		status.ShardIdGenerator += int64(nc.InitialShardCount)
+		status.ShardIdGenerator += int64(nc.GetInitialShardCount())
 	}
 
 	// Check for any namespace that was removed
 	for name, ns := range status.Namespaces {
-		namespaceConfig := findNamespaceConfig(config, name)
-		if namespaceConfig != nil {
+		if namespaceConfig := findNamespaceConfig(config, name); namespaceConfig != nil {
 			continue
 		}
 

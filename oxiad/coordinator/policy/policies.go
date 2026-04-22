@@ -14,7 +14,7 @@
 
 package policy
 
-type Policies struct {
+type HierarchyPolicies struct {
 	// AntiAffinities defines a list of anti-affinity rules for placement policy, ensuring resource don't coexist undesirably.
 	AntiAffinities []AntiAffinity `json:"antiAffinities,omitempty" yaml:"antiAffinities,omitempty"`
 }

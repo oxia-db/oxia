@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	coordconvert "github.com/oxia-db/oxia/oxiad/coordinator/internal/convert"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -80,7 +81,7 @@ func (e *ShardElection) refreshedEnsemble(ensemble []model.Server) []model.Serve
 	refreshedEnsembleDataServerAddress := make([]model.Server, len(ensemble))
 	for idx, candidate := range ensemble {
 		if refreshedAddress, exist := e.metadataStore.Node(candidate.GetIdentifier()); exist {
-			refreshedEnsembleDataServerAddress[idx] = *refreshedAddress
+			refreshedEnsembleDataServerAddress[idx] = coordconvert.DataServer(refreshedAddress)
 			continue
 		}
 		refreshedEnsembleDataServerAddress[idx] = candidate

@@ -14,8 +14,6 @@
 
 package model
 
-import "github.com/oxia-db/oxia/common/proto"
-
 type Server struct {
 	// Name is the unique identification for clusters
 	Name *string `json:"name" yaml:"name"`
@@ -27,34 +25,9 @@ type Server struct {
 	Internal string `json:"internal" yaml:"internal"`
 }
 
-type ServerMetadata struct {
-	// Labels represents a key-value map to store metadata associated with a server.
-	Labels map[string]string `json:"labels" yaml:"labels"`
-}
-
-type DataServerInfo struct {
-	Server   *Server
-	Metadata ServerMetadata
-}
-
 func (sv *Server) GetIdentifier() string {
 	if sv.Name == nil {
 		return sv.Internal
 	}
 	return *sv.Name
-}
-
-func (sv *Server) ToAdminProto() *proto.DataServer {
-	return &proto.DataServer{
-		Name:            new(sv.GetIdentifier()),
-		PublicAddress:   sv.Public,
-		InternalAddress: sv.Internal,
-	}
-}
-
-func (dsi *DataServerInfo) ToAdminProto() *proto.DataServerInfo {
-	return &proto.DataServerInfo{
-		DataServer: dsi.Server.ToAdminProto(),
-		Metadata:   dsi.Metadata.Labels,
-	}
 }

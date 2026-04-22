@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//revive:disable-next-line:var-naming
-package util
+package convert
 
 import (
-	"github.com/oxia-db/oxia/common/proto"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
-func SimpleEnsembleSupplier(candidates []model.Server, nc *proto.Namespace, cs *model.ClusterStatus) []model.Server {
-	n := len(candidates)
-	res := make([]model.Server, nc.GetReplicationFactor())
-	for i := uint32(0); i < nc.GetReplicationFactor(); i++ {
-		res[i] = candidates[int(cs.ServerIdx+i)%n]
+func DataServer(server *commonproto.DataServer) model.Server {
+	if server == nil {
+		return model.Server{}
 	}
-	return res
+	return model.Server{
+		Name:     server.Name,
+		Public:   server.GetPublicAddress(),
+		Internal: server.GetInternalAddress(),
+	}
 }

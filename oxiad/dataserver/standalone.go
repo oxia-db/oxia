@@ -22,7 +22,6 @@ import (
 
 	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
@@ -48,7 +47,7 @@ type StandaloneConfig struct {
 
 	NumShards            uint32
 	NotificationsEnabled bool
-	KeySorting           model.KeySorting
+	KeySorting           proto.KeySortingType
 }
 
 type Standalone struct {
@@ -141,7 +140,7 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 
 	newTermOptions := &proto.NewTermOptions{
 		EnableNotifications: s.config.NotificationsEnabled,
-		KeySorting:          s.config.KeySorting.ToProto(),
+		KeySorting:          s.config.KeySorting,
 	}
 
 	for i := int64(0); i < int64(numShards); i++ {

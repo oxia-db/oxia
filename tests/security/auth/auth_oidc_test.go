@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -105,17 +106,10 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	}
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
-	}
+	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil, rpc2.NewRpcProviderFactory(nil))
 
 	return s1Addr.Public, func() {
@@ -300,17 +294,10 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
-	}
+	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
@@ -457,17 +444,10 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
-	}
+	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
