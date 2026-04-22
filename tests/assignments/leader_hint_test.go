@@ -26,7 +26,6 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/tests/mock"
@@ -49,22 +48,22 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -112,22 +111,22 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -175,22 +174,22 @@ func TestLeaderHintListWithClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -229,22 +228,22 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -292,22 +291,22 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -350,22 +349,22 @@ func TestLeaderHintWithClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public

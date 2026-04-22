@@ -12,34 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mock
+package tls
 
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
-	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
-func NewCoordinator(t *testing.T, config *model.ClusterConfig, clusterConfigNotificationCh chan any) coordinator.Coordinator {
+func newCoordinatorInstance(
+	t *testing.T,
+	metadataProvider provider.Provider,
+	clusterConfigProvider func() (model.ClusterConfig, error),
+	clusterConfigNotificationsCh chan any,
+	rpcProvider rpc2.ProviderFactory,
+) coordinator.Coordinator {
 	t.Helper()
-	metadataProvider := memory.NewProvider()
-	metadata := coordmetadata.New(
-		t.Context(),
-		metadataProvider,
-		func() (model.ClusterConfig, error) { return *config, nil },
-		clusterConfigNotificationCh,
-	)
+
+	metadata := coordmetadata.New(t.Context(), metadataProvider, clusterConfigProvider, clusterConfigNotificationsCh)
 	t.Cleanup(func() {
-		assert.NoError(t, metadata.Close())
+		require.NoError(t, metadata.Close())
 	})
-	coordinatorInstance, err := coordinator.NewCoordinator(metadata, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+
+	coordinatorInstance, err := coordinator.NewCoordinator(metadata, rpcProvider)
+	require.NoError(t, err)
 	return coordinatorInstance
 }

@@ -78,11 +78,10 @@ func TestCoordinatorE2E(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
-	statusResource := coordinatorInstance.StatusResource()
-	status := statusResource.Load()
+	metadata := coordinatorInstance.Metadata()
+	status := metadata.LoadStatus()
 
 	assert.EqualValues(t, 1, len(status.Namespaces))
 	nsStatus := status.Namespaces[constant.DefaultNamespace]
@@ -90,7 +89,7 @@ func TestCoordinatorE2E(t *testing.T) {
 	assert.EqualValues(t, 3, nsStatus.ReplicationFactor)
 
 	assert.Eventually(t, func() bool {
-		shard := statusResource.Load().Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := metadata.LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState
 	}, 10*time.Second, 10*time.Millisecond)
 
@@ -116,11 +115,10 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
-	statusResource := coordinatorInstance.StatusResource()
-	status := statusResource.Load()
+	metadata := coordinatorInstance.Metadata()
+	status := metadata.LoadStatus()
 	nsStatus := status.Namespaces[constant.DefaultNamespace]
 	assert.EqualValues(t, 4, len(nsStatus.Shards))
 	assert.EqualValues(t, 3, nsStatus.ReplicationFactor)
@@ -168,22 +166,21 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
-	statusResource := coordinatorInstance.StatusResource()
-	status := statusResource.Load()
+	metadata := coordinatorInstance.Metadata()
+	status := metadata.LoadStatus()
 
 	nsStatus := status.Namespaces[constant.DefaultNamespace]
 	assert.EqualValues(t, 1, len(nsStatus.Shards))
 	assert.EqualValues(t, 3, nsStatus.ReplicationFactor)
 
 	assert.Eventually(t, func() bool {
-		shard := statusResource.Load().Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := metadata.LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState
 	}, 10*time.Second, 10*time.Millisecond)
 
-	nsStatus = statusResource.Load().Namespaces[constant.DefaultNamespace]
+	nsStatus = metadata.LoadStatus().Namespaces[constant.DefaultNamespace]
 
 	leader := *nsStatus.Shards[0].Leader
 	var follower model.Server
@@ -220,7 +217,7 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 	delete(servers, leader)
 
 	assert.Eventually(t, func() bool {
-		shard := statusResource.Load().Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := metadata.LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState
 	}, 10*time.Second, 10*time.Millisecond)
 
@@ -272,11 +269,10 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
-	statusResource := coordinatorInstance.StatusResource()
-	status := statusResource.Load()
+	metadata := coordinatorInstance.Metadata()
+	status := metadata.LoadStatus()
 	nsDefaultStatus := status.Namespaces[constant.DefaultNamespace]
 	assert.EqualValues(t, 1, len(nsDefaultStatus.Shards))
 	assert.EqualValues(t, 3, nsDefaultStatus.ReplicationFactor)
@@ -291,7 +287,7 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -363,18 +359,17 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
-	statusResource := coordinatorInstance.StatusResource()
-	status := statusResource.Load()
+	metadata := coordinatorInstance.Metadata()
+	status := metadata.LoadStatus()
 	ns1Status := status.Namespaces["my-ns-1"]
 	assert.EqualValues(t, 2, len(ns1Status.Shards))
 	assert.EqualValues(t, 1, ns1Status.ReplicationFactor)
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -385,12 +380,12 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// Trigger new leader election in order to have a new term
-	ns1Status = statusResource.Load().Namespaces["my-ns-1"]
+	ns1Status = metadata.LoadStatus().Namespaces["my-ns-1"]
 	coordinatorInstance.BecameUnavailable(*ns1Status.Shards[0].Leader)
 
 	// Wait (again) for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -411,13 +406,18 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}
 
 	slog.Info("Restarting coordinator")
-	coordinatorInstance, err = coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return newClusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
+	newMetadata := createCoordinatorMetadata(t, metadataProvider, func() (model.ClusterConfig, error) { return newClusterConfig, nil }, nil)
+	t.Cleanup(func() {
+		assert.NoError(t, newMetadata.Close())
+	})
+	restartedCoordinator, err := coordinator.NewCoordinator(newMetadata, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
+	coordinatorInstance = restartedCoordinator
 
-	statusResource = coordinatorInstance.StatusResource()
+	metadata = coordinatorInstance.Metadata()
 	// Wait for all shards to be deleted
 	assert.Eventually(t, func() bool {
-		load := statusResource.Load()
+		load := metadata.LoadStatus()
 		slog.Info("load", slog.Any("load", load))
 		return len(load.Namespaces) == 0
 	}, 10*time.Second, 10*time.Millisecond)
@@ -454,18 +454,17 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		return clusterConfig, nil
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
 
-	statusResource := coordinatorInstance.StatusResource()
-	status := statusResource.Load()
+	metadata := coordinatorInstance.Metadata()
+	status := metadata.LoadStatus()
 	ns1Status := status.Namespaces["my-ns-1"]
 	assert.EqualValues(t, 2, len(ns1Status.Shards))
 	assert.EqualValues(t, 1, ns1Status.ReplicationFactor)
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -487,7 +486,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
 		foundNS2 := false
-		for name, ns := range statusResource.Load().Namespaces {
+		for name, ns := range metadata.LoadStatus().Namespaces {
 			if name == "my-ns-2" {
 				foundNS2 = true
 			}
@@ -500,11 +499,11 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		return foundNS2
 	}, 10*time.Second, 10*time.Millisecond)
 
-	ns1Status = statusResource.Load().Namespaces["my-ns-1"]
+	ns1Status = metadata.LoadStatus().Namespaces["my-ns-1"]
 	assert.EqualValues(t, 2, len(ns1Status.Shards))
 	assert.EqualValues(t, 1, ns1Status.ReplicationFactor)
 
-	ns2Status := statusResource.Load().Namespaces["my-ns-2"]
+	ns2Status := metadata.LoadStatus().Namespaces["my-ns-2"]
 	assert.EqualValues(t, 2, len(ns2Status.Shards))
 	assert.EqualValues(t, 1, ns1Status.ReplicationFactor)
 
@@ -544,8 +543,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	}
 
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	c := newCoordinatorInstance(t, metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
 
 	assert.Equal(t, 3, len(c.NodeControllers()))
 
@@ -604,14 +602,13 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	}
 
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	c := newCoordinatorInstance(t, metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
 
-	statusResource := c.StatusResource()
+	metadata := c.Metadata()
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -624,7 +621,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	assert.Equal(t, 4, len(c.NodeControllers()))
 
 	// Remove leader dataserver
-	leaderID := statusResource.Load().Namespaces["my-ns-1"].Shards[0].Leader.GetIdentifier()
+	leaderID := metadata.LoadStatus().Namespaces["my-ns-1"].Shards[0].Leader.GetIdentifier()
 	d := make([]model.Server, 0)
 	for _, sv := range clusterConfig.Servers {
 		if sv.GetIdentifier() != leaderID {
@@ -640,7 +637,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				return shard.Term > 0 && shard.Status == model.ShardStatusSteadyState
 			}
@@ -677,16 +674,15 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) {
+	c := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) {
 		return clusterConfig, nil
 	}, configChangesCh,
 		rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
 
-	statusResource := c.StatusResource()
+	metadata := c.Metadata()
 	// wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -709,7 +705,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	configChangesCh <- nil
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -724,12 +720,8 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 		return true
 	}, 10*time.Second, 10*time.Millisecond)
 
-	err = s1.Close()
-	assert.NoError(t, err)
-	err = s2.Close()
-	assert.NoError(t, err)
-	err = s3.Close()
-	assert.NoError(t, err)
-	err = c.Close()
-	assert.NoError(t, err)
+	assert.NoError(t, s1.Close())
+	assert.NoError(t, s2.Close())
+	assert.NoError(t, s3.Close())
+	assert.NoError(t, c.Close())
 }

@@ -25,8 +25,8 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
@@ -50,8 +50,7 @@ type nodeBasedBalancer struct {
 	cancel context.CancelFunc
 
 	loadBalancerConf    *model.LoadBalancer
-	statusResource      resource.StatusResource
-	configResource      resource.ClusterConfigResource
+	metadata            coordmetadata.Metadata
 	nodeAvailableJudger func(nodeID string) bool
 
 	selector           selector.Selector[*single.Context, string]
@@ -98,8 +97,8 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	r.checkQuarantineNodes()
 
 	swapGroup := &sync.WaitGroup{}
-	currentStatus := r.statusResource.Load()
-	candidates, metadata := r.configResource.NodesWithMetadata()
+	currentStatus := r.metadata.LoadStatus()
+	candidates, metadata := r.metadata.NodesWithMetadata()
 	groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
@@ -223,7 +222,7 @@ func (r *nodeBasedBalancer) swapShard(
 	var exist bool
 	var err error
 
-	if nsc, exist = r.configResource.NamespaceConfig(candidateShard.Namespace); !exist {
+	if nsc, exist = r.metadata.NamespaceConfig(candidateShard.Namespace); !exist {
 		return false, nil
 	}
 
@@ -262,7 +261,7 @@ func (r *nodeBasedBalancer) swapShard(
 		return false, nil
 	}
 	var targetNode *model.Server
-	if targetNode, exist = r.configResource.Node(targetNodeID); !exist {
+	if targetNode, exist = r.metadata.Node(targetNodeID); !exist {
 		return false, errors.New("target node does not exist")
 	}
 
@@ -313,8 +312,8 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 }
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
-	status := r.statusResource.Load()
-	candidates := r.configResource.Nodes()
+	status := r.metadata.LoadStatus()
+	candidates := r.metadata.Nodes()
 	groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(candidates, status)
 	return r.loadRatioAlgorithm(
 		&model.RatioParams{
@@ -381,8 +380,8 @@ func (r *nodeBasedBalancer) startBackgroundNotifier() {
 func (r *nodeBasedBalancer) rebalanceLeader() {
 	r.checkQuarantineShards()
 
-	status := r.statusResource.Load()
-	candidates := r.configResource.Nodes()
+	status := r.metadata.LoadStatus()
+	candidates := r.metadata.Nodes()
 	totalShards, electedShards, nodeLeaders := util.NodeShardLeaders(candidates, status)
 
 	electedRate := float64(electedShards) / float64(totalShards)
@@ -505,11 +504,10 @@ func NewLoadBalancer(options Options) LoadBalancer {
 		Logger:                  logger,
 		ctx:                     ctx,
 		cancel:                  cancelFunc,
-		loadBalancerConf:        options.ClusterConfigResource.LoadLoadBalancer(),
+		loadBalancerConf:        options.Metadata.LoadLoadBalancer(),
 		actionCh:                make(chan action.Action, 1000),
 		nodeAvailableJudger:     options.NodeAvailableJudger,
-		statusResource:          options.StatusResource,
-		configResource:          options.ClusterConfigResource,
+		metadata:                options.Metadata,
 		selector:                single.NewSelector(),
 		loadRatioAlgorithm:      single.DefaultShardsRank,
 		nodeQuarantineNodeMap:   &sync.Map{},

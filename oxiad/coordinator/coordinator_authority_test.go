@@ -21,11 +21,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 )
 
 func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
@@ -34,8 +34,28 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		Internal: "leader-internal:6649",
 	}
 
-	statusResource := resource.NewStatusResource(memory.NewProvider())
-	statusResource.Update(&model.ClusterStatus{
+	clusterConfig := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              "default",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+		}},
+		Servers: []model.Server{leader},
+		AllowExtraAuthorities: []string{
+			"bootstrap:6648",
+			leader.Public,
+		},
+	}
+	metadata := coordmetadata.New(
+		t.Context(),
+		memory.NewProvider(),
+		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		nil,
+	)
+	t.Cleanup(func() {
+		require.NoError(t, metadata.Close())
+	})
+	metadata.UpdateStatus(&model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,
@@ -53,27 +73,9 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 			},
 		},
 	})
-
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
-		}},
-		Servers: []model.Server{leader},
-		AllowExtraAuthorities: []string{
-			"bootstrap:6648",
-			leader.Public,
-		},
-	}
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return clusterConfig, nil
-	}, nil, nil)
-
 	c := &coordinator{
 		RWMutex:            sync.RWMutex{},
-		statusResource:     statusResource,
-		configResource:     configResource,
+		metadata:           metadata,
 		assignmentsChanged: concurrent.NewConditionContext(&sync.Mutex{}),
 	}
 
@@ -98,8 +100,24 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		Internal: "removed-internal:6649",
 	}
 
-	statusResource := resource.NewStatusResource(memory.NewProvider())
-	statusResource.Update(&model.ClusterStatus{
+	clusterConfig := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              "default",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+		}},
+		Servers: []model.Server{active},
+	}
+	metadata := coordmetadata.New(
+		t.Context(),
+		memory.NewProvider(),
+		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		nil,
+	)
+	t.Cleanup(func() {
+		require.NoError(t, metadata.Close())
+	})
+	metadata.UpdateStatus(&model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,
@@ -118,23 +136,9 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 			},
 		},
 	})
-
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
-		}},
-		Servers: []model.Server{active},
-	}
-	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
-		return clusterConfig, nil
-	}, nil, nil)
-
 	c := &coordinator{
 		RWMutex:            sync.RWMutex{},
-		statusResource:     statusResource,
-		configResource:     configResource,
+		metadata:           metadata,
 		assignmentsChanged: concurrent.NewConditionContext(&sync.Mutex{}),
 	}
 

@@ -23,44 +23,16 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
 )
 
-// mockStatusResource implements resource.StatusResource for testing.
-type mockStatusResource struct {
-	status *model.ClusterStatus
-}
-
-func (m *mockStatusResource) Load() *model.ClusterStatus {
-	return m.status
-}
-
-func (m *mockStatusResource) ApplyChanges(_ *model.ClusterConfig, _ resource.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
-	return m.status, nil, nil
-}
-
-func (m *mockStatusResource) Update(newStatus *model.ClusterStatus) {
-	m.status = newStatus
-}
-
-func (m *mockStatusResource) UpdateShardMetadata(_ string, _ int64, _ model.ShardMetadata) {}
-
-func (m *mockStatusResource) DeleteShardMetadata(_ string, _ int64) {}
-
-func (m *mockStatusResource) IsReady(_ *model.ClusterConfig) bool {
-	return true
-}
-
-func (m *mockStatusResource) ChangeNotify() <-chan struct{} {
-	return make(chan struct{})
-}
-
-// mockClusterConfigResource implements resource.ClusterConfigResource for testing.
-type mockClusterConfigResource struct {
+type mockMetadata struct {
+	status    *model.ClusterStatus
 	nodes     *linkedhashset.Set[string]
 	metadata  map[string]model.ServerMetadata
 	nsConfigs map[string]*model.NamespaceConfig
@@ -68,11 +40,33 @@ type mockClusterConfigResource struct {
 	lbConfig  *model.LoadBalancer
 }
 
-func (m *mockClusterConfigResource) Close() error { return nil }
+var _ coordmetadata.Metadata = (*mockMetadata)(nil)
 
-func (m *mockClusterConfigResource) Load() *model.ClusterConfig { return nil }
+func (*mockMetadata) Close() error { return nil }
 
-func (m *mockClusterConfigResource) LoadLoadBalancer() *model.LoadBalancer {
+func (m *mockMetadata) LoadStatus() *model.ClusterStatus { return m.status }
+
+func (m *mockMetadata) ApplyStatusChanges(*model.ClusterConfig, coordmetadata.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+	return m.status, nil, nil
+}
+
+func (m *mockMetadata) UpdateStatus(newStatus *model.ClusterStatus) { m.status = newStatus }
+
+func (*mockMetadata) UpdateShardMetadata(string, int64, model.ShardMetadata) {}
+
+func (*mockMetadata) DeleteShardMetadata(string, int64) {}
+
+func (*mockMetadata) IsReady(*model.ClusterConfig) bool { return true }
+
+func (*mockMetadata) StatusChangeNotify() <-chan struct{} { return make(chan struct{}) }
+
+func (*mockMetadata) LoadConfig() *model.ClusterConfig { return nil }
+
+func (*mockMetadata) ConfigWatch() *commonoption.Watch[*model.ClusterConfig] {
+	return commonoption.NewWatch[*model.ClusterConfig](nil)
+}
+
+func (m *mockMetadata) LoadLoadBalancer() *model.LoadBalancer {
 	if m.lbConfig != nil {
 		return m.lbConfig
 	}
@@ -82,23 +76,23 @@ func (m *mockClusterConfigResource) LoadLoadBalancer() *model.LoadBalancer {
 	}
 }
 
-func (m *mockClusterConfigResource) Nodes() *linkedhashset.Set[string] { return m.nodes }
+func (m *mockMetadata) Nodes() *linkedhashset.Set[string] { return m.nodes }
 
-func (m *mockClusterConfigResource) NodesWithMetadata() (*linkedhashset.Set[string], map[string]model.ServerMetadata) {
+func (m *mockMetadata) NodesWithMetadata() (*linkedhashset.Set[string], map[string]model.ServerMetadata) {
 	return m.nodes, m.metadata
 }
 
-func (m *mockClusterConfigResource) NamespaceConfig(namespace string) (*model.NamespaceConfig, bool) {
+func (m *mockMetadata) NamespaceConfig(namespace string) (*model.NamespaceConfig, bool) {
 	nc, ok := m.nsConfigs[namespace]
 	return nc, ok
 }
 
-func (m *mockClusterConfigResource) Node(id string) (*model.Server, bool) {
+func (m *mockMetadata) Node(id string) (*model.Server, bool) {
 	n, ok := m.nodeMap[id]
 	return n, ok
 }
 
-func (m *mockClusterConfigResource) GetDataServerInfo(id string) (*model.DataServerInfo, bool) {
+func (m *mockMetadata) GetDataServerInfo(id string) (*model.DataServerInfo, bool) {
 	n, ok := m.nodeMap[id]
 	if !ok {
 		return nil, false
@@ -123,8 +117,7 @@ func (*alwaysErrorSelector) Select(_ *single.Context) (string, error) {
 func newTestBalancer(
 	ctx context.Context,
 	cancel context.CancelFunc,
-	statusRes *mockStatusResource,
-	configRes *mockClusterConfigResource,
+	metadata *mockMetadata,
 	sel selector.Selector[*single.Context, string],
 ) *nodeBasedBalancer {
 	return &nodeBasedBalancer{
@@ -132,9 +125,8 @@ func newTestBalancer(
 		WaitGroup:               &sync.WaitGroup{},
 		ctx:                     ctx,
 		cancel:                  cancel,
-		loadBalancerConf:        configRes.LoadLoadBalancer(),
-		statusResource:          statusRes,
-		configResource:          configRes,
+		loadBalancerConf:        metadata.LoadLoadBalancer(),
+		metadata:                metadata,
 		selector:                sel,
 		loadRatioAlgorithm:      single.DefaultShardsRank,
 		nodeQuarantineNodeMap:   &sync.Map{},
@@ -177,7 +169,8 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 
 	nodes := linkedhashset.New("sv-1", "sv-2")
 	sel := &selectRecordingSelector{}
-	configRes := &mockClusterConfigResource{
+	metadata := &mockMetadata{
+		status:   status,
 		nodes:    nodes,
 		metadata: map[string]model.ServerMetadata{},
 		nsConfigs: map[string]*model.NamespaceConfig{
@@ -192,7 +185,7 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	b := newTestBalancer(ctx, cancel, &mockStatusResource{status: status}, configRes, sel)
+	b := newTestBalancer(ctx, cancel, metadata, sel)
 
 	b.rebalanceEnsemble()
 
@@ -231,7 +224,8 @@ func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
 	}
 
 	nodes := linkedhashset.New("sv-1", "sv-2", "sv-3")
-	configRes := &mockClusterConfigResource{
+	metadata := &mockMetadata{
+		status:   status,
 		nodes:    nodes,
 		metadata: map[string]model.ServerMetadata{},
 		nsConfigs: map[string]*model.NamespaceConfig{
@@ -247,7 +241,7 @@ func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	b := newTestBalancer(ctx, cancel, &mockStatusResource{status: status}, configRes, &alwaysErrorSelector{})
+	b := newTestBalancer(ctx, cancel, metadata, &alwaysErrorSelector{})
 
 	// rebalanceEnsemble should complete without hanging, even though
 	// the selector always returns an error.

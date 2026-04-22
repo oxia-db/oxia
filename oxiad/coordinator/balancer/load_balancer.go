@@ -19,15 +19,14 @@ import (
 	"io"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 )
 
 type Options struct {
 	context.Context
 
-	StatusResource        resource.StatusResource
-	ClusterConfigResource resource.ClusterConfigResource
+	Metadata coordmetadata.Metadata
 
 	NodeAvailableJudger func(nodeID string) bool
 }
