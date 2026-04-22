@@ -15,17 +15,15 @@
 package provider
 
 import (
+	"errors"
 	"io"
 	"strconv"
-
-	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 var (
-	ErrNotInitialized = errors.New("metadata not initialized")
-	ErrBadVersion     = errors.New("metadata bad version")
+	ErrBadVersion = errors.New("metadata bad version")
 )
 
 var (
