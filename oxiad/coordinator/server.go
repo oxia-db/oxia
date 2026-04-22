@@ -198,8 +198,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 	admin := newAdminServer(
-		coordinatorInstance.StatusResource(),
-		coordinatorInstance.ConfigResource(),
+		coordinatorInstance.Metadata(),
 		coordinatorInstance,
 	)
 	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck

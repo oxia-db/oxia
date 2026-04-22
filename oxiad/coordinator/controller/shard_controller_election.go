@@ -31,8 +31,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/selector/leader"
@@ -60,8 +60,7 @@ type ShardElection struct {
 	becomeLeaderLatency   metric.LatencyHistogram
 	leaderElectionsFailed metric.Counter
 	// borrowed resource
-	statusResource                      resource.StatusResource
-	configResource                      resource.ClusterConfigResource
+	metadataProvider                    coordmetadata.Metadata
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 	leaderSelector                      selector.Selector[*leaderselector.Context, model.Server]
 	eventListener                       ShardEventListener
@@ -80,7 +79,7 @@ type ShardElection struct {
 func (e *ShardElection) refreshedEnsemble(ensemble []model.Server) []model.Server {
 	refreshedEnsembleDataServerAddress := make([]model.Server, len(ensemble))
 	for idx, candidate := range ensemble {
-		if refreshedAddress, exist := e.configResource.Node(candidate.GetIdentifier()); exist {
+		if refreshedAddress, exist := e.metadataProvider.Node(candidate.GetIdentifier()); exist {
 			refreshedEnsembleDataServerAddress[idx] = *refreshedAddress
 			continue
 		}
@@ -227,7 +226,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto
 	candidates := chooseCandidates(candidatesStatus)
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Status:     e.statusResource.Load(),
+		Status:     e.metadataProvider.LoadStatus(),
 	})
 	if err != nil {
 		return model.Server{}, nil, err
@@ -449,7 +448,7 @@ func (e *ShardElection) start() (model.Server, error) {
 		metadata.Term++
 		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
-	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	e.metadataProvider.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
 
 	if e.changeEnsembleAction != nil {
 		e.prepareIfChangeEnsemble(&mutShardMeta)
@@ -499,7 +498,7 @@ func (e *ShardElection) start() (model.Server, error) {
 	leader := mutShardMeta.Leader
 	leaderEntry := candidatesStatus[*leader]
 
-	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	e.metadataProvider.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
 	e.meta.Store(mutShardMeta)
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
@@ -604,7 +603,7 @@ func (e *ShardElection) Stop() {
 
 //nolint:revive
 func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener ShardEventListener,
-	statusResource resource.StatusResource, configResource resource.ClusterConfigResource,
+	metadataProvider coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	leaderSelector selector.Selector[*leaderselector.Context, model.Server],
 	provider rpc.Provider, metadata *Metadata, namespace string, shard int64,
@@ -617,8 +616,7 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 		WaitGroup:                           sync.WaitGroup{},
 		Context:                             current,
 		CancelFunc:                          cancelFunc,
-		statusResource:                      statusResource,
-		configResource:                      configResource,
+		metadataProvider:                    metadataProvider,
 		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
 		eventListener:                       eventListener,
 		leaderSelector:                      leaderSelector,

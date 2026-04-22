@@ -26,6 +26,7 @@ import (
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
@@ -55,8 +56,7 @@ type Coordinator interface {
 
 	LoadBalancer() balancer.LoadBalancer
 
-	StatusResource() resource.StatusResource
-	ConfigResource() resource.ClusterConfigResource
+	Metadata() coordmetadata.Metadata
 }
 
 var _ Coordinator = &coordinator{}
@@ -73,8 +73,7 @@ type coordinator struct {
 	cancel context.CancelFunc
 	insID  string
 
-	statusResource resource.StatusResource
-	configResource resource.ClusterConfigResource
+	metadata coordmetadata.Metadata
 
 	shardControllers map[int64]controller.ShardController
 	splitControllers map[int64]*controller.SplitController // keyed by parent shard ID
@@ -111,12 +110,8 @@ func (c *coordinator) LoadBalancer() balancer.LoadBalancer {
 	return c.loadBalancer
 }
 
-func (c *coordinator) StatusResource() resource.StatusResource {
-	return c.statusResource
-}
-
-func (c *coordinator) ConfigResource() resource.ClusterConfigResource {
-	return c.configResource
+func (c *coordinator) Metadata() coordmetadata.Metadata {
+	return c.metadata
 }
 
 func (c *coordinator) NodeControllers() map[string]controller.DataServerController {
@@ -162,7 +157,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 
 	// Check for nodes to remove
 	for serverID, nc := range c.nodeControllers {
-		if _, exist := c.configResource.Node(serverID); exist {
+		if _, exist := c.metadata.Node(serverID); exist {
 			continue
 		}
 		c.Info("Detected a removed node", slog.Any("server", serverID))
@@ -175,12 +170,12 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 		sc.SyncServerAddress()
 	}
 
-	clusterStatus, shardsToAdd, shardsToDelete := c.statusResource.ApplyChanges(newConfig, c.selectNewEnsemble)
+	clusterStatus, shardsToAdd, shardsToDelete := c.metadata.ApplyStatusChanges(newConfig, c.selectNewEnsemble)
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
-		if namespaceConfig, exist := c.configResource.NamespaceConfig(namespace); exist {
+		if namespaceConfig, exist := c.metadata.NamespaceConfig(namespace); exist {
 			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
-				shardMetadata.Clone(), c.configResource, c.statusResource, c.findDataServerFeatures,
+				shardMetadata.Clone(), c.metadata, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
@@ -216,7 +211,7 @@ func (c *coordinator) findDataServerFeatures(dataServers []model.Server) map[str
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 func (c *coordinator) selectNewEnsemble(ns *model.NamespaceConfig, editingStatus *model.ClusterStatus) ([]model.Server, error) {
-	nodes, nodesMetadata := c.configResource.NodesWithMetadata()
+	nodes, nodesMetadata := c.metadata.NodesWithMetadata()
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
 		CandidatesMetadata: nodesMetadata,
@@ -237,7 +232,7 @@ func (c *coordinator) selectNewEnsemble(ns *model.NamespaceConfig, editingStatus
 	for _, id := range ensembles {
 		var node *model.Server
 		var exist bool
-		if node, exist = c.configResource.Node(id); !exist {
+		if node, exist = c.metadata.Node(id); !exist {
 			return nil, fmt.Errorf("failed to find node %s", id)
 		}
 		esm = append(esm, *node)
@@ -249,7 +244,7 @@ func (c *coordinator) Close() error {
 	c.cancel()
 	c.Wait()
 
-	err := c.configResource.Close()
+	err := c.metadata.Close()
 	for _, sc := range c.splitControllers {
 		sc.Close()
 	}
@@ -367,8 +362,8 @@ func (c *coordinator) handleActionChangeEnsemble(ac action.Action) {
 
 // This is called while already holding the lock on the coordinator.
 func (c *coordinator) computeNewAssignments() {
-	config := c.configResource.Load()
-	status := c.statusResource.Load()
+	config := c.metadata.LoadConfig()
+	status := c.metadata.LoadStatus()
 	c.assignments = &proto.ShardAssignments{
 		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
 		AllowedAuthorities: mergedAuthorities(status, config.Servers, config.AllowExtraAuthorities),
@@ -445,7 +440,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	c.Lock()
 	defer c.Unlock()
 
-	status := c.statusResource.Load()
+	status := c.metadata.LoadStatus()
 
 	// Validate namespace
 	ns, exists := status.Namespaces[namespace]
@@ -559,7 +554,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Persist
-	c.statusResource.Update(cloned)
+	c.metadata.UpdateStatus(cloned)
 
 	c.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
@@ -572,19 +567,19 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	for _, childId := range []int64{leftChildId, rightChildId} {
 		childMeta := nsCloned.Shards[childId]
 		c.shardControllers[childId] = controller.NewShardController(namespace, childId, nsConfig,
-			childMeta, c.configResource, c.statusResource, c.findDataServerFeatures,
+			childMeta, c.metadata, c.findDataServerFeatures,
 			c, c.rpc, controller.DefaultPeriodicTasksInterval)
 	}
 
 	// Start split controller
 	sc := controller.NewSplitController(controller.SplitControllerConfig{
-		Namespace:      namespace,
-		ParentShardId:  parentShardId,
-		StatusResource: c.statusResource,
-		RpcProvider:    c.rpc,
-		EventListener:  c,
+		Namespace:     namespace,
+		ParentShardId: parentShardId,
+		Metadata:      c.metadata,
+		RpcProvider:   c.rpc,
+		EventListener: c,
 		EnsembleSelector: func(ns string) ([]model.Server, error) {
-			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.statusResource.Load())
+			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.metadata.LoadStatus())
 		},
 	})
 	c.splitControllers[parentShardId] = sc
@@ -625,7 +620,7 @@ func (c *coordinator) SplitComplete(parentShard int64, leftChild int64, rightChi
 	// during Cutover.
 	if sc, exists := c.shardControllers[parentShard]; exists {
 		// Sync shard controller metadata from the status resource.
-		status := c.statusResource.Load()
+		status := c.metadata.LoadStatus()
 		for _, ns := range status.Namespaces {
 			if parentMeta, ok := ns.Shards[parentShard]; ok {
 				sc.Metadata().Store(parentMeta)
@@ -667,7 +662,7 @@ func (c *coordinator) SplitAborted(parentShard int64, leftChild int64, rightChil
 }
 
 func (c *coordinator) namespaceConfigForSplit(namespace string) *model.NamespaceConfig {
-	nsConfig, exist := c.configResource.NamespaceConfig(namespace)
+	nsConfig, exist := c.metadata.NamespaceConfig(namespace)
 	if !exist {
 		nsConfig = &model.NamespaceConfig{}
 	}
@@ -694,13 +689,13 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 			)
 
 			sc := controller.NewSplitController(controller.SplitControllerConfig{
-				Namespace:      ns,
-				ParentShardId:  shardId,
-				StatusResource: c.statusResource,
-				RpcProvider:    c.rpc,
-				EventListener:  c,
+				Namespace:     ns,
+				ParentShardId: shardId,
+				Metadata:      c.metadata,
+				RpcProvider:   c.rpc,
+				EventListener: c,
 				EnsembleSelector: func(namespace string) ([]model.Server, error) {
-					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.statusResource.Load())
+					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.metadata.LoadStatus())
 				},
 			})
 			c.splitControllers[shardId] = sc
@@ -708,7 +703,7 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 	}
 }
 
-func NewCoordinator(meta provider.Provider,
+func NewCoordinator(statusProvider provider.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc.ProviderFactory) (Coordinator, error) {
@@ -729,21 +724,18 @@ func NewCoordinator(meta provider.Provider,
 
 	// Ensure we are to become the leader coordinator
 	c.Info("Waiting to become leader")
-	if err := meta.WaitToBecomeLeader(); err != nil {
+	if err := statusProvider.WaitToBecomeLeader(); err != nil {
 		return nil, errors.Wrap(err, "failed to wait in becoming leader")
 	}
 	c.Info("This coordinator is now leader")
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.statusResource = resource.NewStatusResource(meta)
-
-	c.configResource = resource.NewClusterConfigResource(c.ctx, clusterConfigProvider, clusterConfigNotificationsCh, c)
+	c.metadata = coordmetadata.New(c.ctx, statusProvider, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
-		Context:               c.ctx,
-		StatusResource:        c.statusResource,
-		ClusterConfigResource: c.configResource,
+		Context:  c.ctx,
+		Metadata: c.metadata,
 		NodeAvailableJudger: func(nodeID string) bool {
 			c.RLock()
 			defer c.RUnlock()
@@ -752,8 +744,8 @@ func NewCoordinator(meta provider.Provider,
 		},
 	})
 
-	clusterConfig := c.configResource.Load()
-	clusterStatus := c.statusResource.Load()
+	clusterConfig := c.metadata.LoadConfig()
+	clusterStatus := c.metadata.LoadStatus()
 	c.insID = clusterStatus.InstanceId
 
 	c.rpc = rpcProvider(c.insID)
@@ -770,7 +762,7 @@ func NewCoordinator(meta provider.Provider,
 		)
 	}
 	c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
-	clusterStatus, _, _ = c.statusResource.ApplyChanges(clusterConfig, c.selectNewEnsemble)
+	clusterStatus, _, _ = c.metadata.ApplyStatusChanges(clusterConfig, c.selectNewEnsemble)
 
 	// init shard controller
 	for ns, shards := range clusterStatus.Namespaces {
@@ -778,11 +770,11 @@ func NewCoordinator(meta provider.Provider,
 			shardMetadata := shards.Shards[shard]
 			var nsConfig *model.NamespaceConfig
 			var exist bool
-			if nsConfig, exist = c.configResource.NamespaceConfig(ns); !exist {
+			if nsConfig, exist = c.metadata.NamespaceConfig(ns); !exist {
 				nsConfig = &model.NamespaceConfig{}
 			}
 			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
-				shardMetadata, c.configResource, c.statusResource, c.findDataServerFeatures,
+				shardMetadata, c.metadata, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		}
 	}

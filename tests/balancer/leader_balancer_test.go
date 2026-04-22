@@ -21,17 +21,17 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/require"
 
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
-func waitForSteadyState(t *testing.T, statusResource resource.StatusResource, expectedNamespaces int) {
+func waitForSteadyState(t *testing.T, metadata coordmetadata.Metadata, expectedNamespaces int) {
 	t.Helper()
 	ctx := t.Context()
-	err := resource.WaitForCondition(ctx, statusResource, nil, func(status *model.ClusterStatus) bool {
+	err := coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *model.ClusterStatus) bool {
 		if len(status.Namespaces) != expectedNamespaces {
 			return false
 		}
@@ -47,10 +47,10 @@ func waitForSteadyState(t *testing.T, statusResource resource.StatusResource, ex
 	require.NoError(t, err, "timed out waiting for shards to reach steady state")
 }
 
-func waitForLeadersBalanced(t *testing.T, statusResource resource.StatusResource, balancer interface{ Trigger() }, candidates *linkedhashset.Set[string], expectedPerNode int) {
+func waitForLeadersBalanced(t *testing.T, metadata coordmetadata.Metadata, balancer interface{ Trigger() }, candidates *linkedhashset.Set[string], expectedPerNode int) {
 	t.Helper()
 	ctx := t.Context()
-	err := resource.WaitForCondition(ctx, statusResource, balancer.Trigger, func(status *model.ClusterStatus) bool {
+	err := coordmetadata.WaitForCondition(ctx, metadata, balancer.Trigger, func(status *model.ClusterStatus) bool {
 		shardLeaders, electedShards, nodeShards := util.NodeShardLeaders(candidates, status)
 		if shardLeaders != electedShards {
 			return false
@@ -102,11 +102,11 @@ func TestLeaderBalanced(t *testing.T) {
 	coordinator := mock.NewCoordinator(t, cc, ch)
 	defer coordinator.Close()
 
-	statusResource := coordinator.StatusResource()
-	waitForSteadyState(t, statusResource, 3)
+	metadata := coordinator.Metadata()
+	waitForSteadyState(t, metadata, 3)
 
 	balancer := coordinator.LoadBalancer()
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 4)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 }
 
 func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
@@ -145,18 +145,18 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	coordinator := mock.NewCoordinator(t, cc, ch)
 	defer coordinator.Close()
 
-	statusResource := coordinator.StatusResource()
-	waitForSteadyState(t, statusResource, 3)
+	metadata := coordinator.Metadata()
+	waitForSteadyState(t, metadata, 3)
 
 	balancer := coordinator.LoadBalancer()
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 4)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 
 	// close s3
 	require.NoError(t, s3.Close())
 
 	// wait for leader moved
 	ctx := t.Context()
-	err := resource.WaitForCondition(ctx, statusResource, nil, func(status *model.ClusterStatus) bool {
+	err := coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *model.ClusterStatus) bool {
 		_, _, nodeShards := util.NodeShardLeaders(candidates, status)
 		shards := nodeShards[s3ad.GetIdentifier()]
 		return shards.Size() == 0
@@ -168,7 +168,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	defer s3.Close()
 
 	// wait for leader balanced
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 4)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 }
 
 func TestLeaderBalancedNodeAdded(t *testing.T) {
@@ -215,16 +215,16 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	coordinator := mock.NewCoordinator(t, cc, ch)
 	defer coordinator.Close()
 
-	statusResource := coordinator.StatusResource()
-	waitForSteadyState(t, statusResource, 3)
+	metadata := coordinator.Metadata()
+	waitForSteadyState(t, metadata, 3)
 
 	balancer := coordinator.LoadBalancer()
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 4)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 
 	cc.Servers = append(cc.Servers, s4ad, s5ad, s6ad)
 	ch <- nil
 	candidates = linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier(), s4ad.GetIdentifier(), s5ad.GetIdentifier(), s6ad.GetIdentifier())
 
 	// wait for leader balanced
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 2)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 2)
 }

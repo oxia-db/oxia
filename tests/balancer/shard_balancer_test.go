@@ -68,11 +68,10 @@ func TestNormalShardBalancer(t *testing.T) {
 	coordinator := mock.NewCoordinator(t, &cc, ch)
 	defer coordinator.Close()
 
-	statusResource := coordinator.StatusResource()
-	configResource := coordinator.ConfigResource()
+	metadata := coordinator.Metadata()
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -86,7 +85,7 @@ func TestNormalShardBalancer(t *testing.T) {
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
-		_, exist := configResource.Node(s4ad.GetIdentifier())
+		_, exist := metadata.Node(s4ad.GetIdentifier())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 
@@ -166,11 +165,10 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	coordinator := mock.NewCoordinator(t, &cc, ch)
 	defer coordinator.Close()
 
-	statusResource := coordinator.StatusResource()
-	configResource := coordinator.ConfigResource()
+	metadata := coordinator.Metadata()
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range statusResource.Load().Namespaces {
+		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.Status != model.ShardStatusSteadyState {
 					return false
@@ -184,7 +182,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
-		_, exist := configResource.Node(s4ad.GetIdentifier())
+		_, exist := metadata.Node(s4ad.GetIdentifier())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 
@@ -195,7 +193,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}, 30*time.Second, 50*time.Millisecond)
 
 	// check if follow the policy
-	for name, ns := range statusResource.Load().Namespaces {
+	for name, ns := range metadata.LoadStatus().Namespaces {
 		for _, shard := range ns.Shards {
 			nodeIDs := linkedhashset.New[string]()
 			nodeZones := linkedhashset.New[string]()
@@ -253,10 +251,9 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	coordinator := mock.NewCoordinator(t, &cc, ch)
 	defer coordinator.Close()
 
-	statusResource := coordinator.StatusResource()
-	configResource := coordinator.ConfigResource()
+	metadata := coordinator.Metadata()
 	assert.Eventually(t, func() bool {
-		return statusResource.IsReady(configResource.Load())
+		return metadata.IsReady(metadata.LoadConfig())
 	}, 60*time.Second, 1*time.Second)
 
 	namespaces := []string{"ns-1", "ns-2", "ns-3"}
@@ -274,7 +271,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
-		_, exist := configResource.Node(s4ad.GetIdentifier())
+		_, exist := metadata.Node(s4ad.GetIdentifier())
 		return exist
 	}, 60*time.Second, 1*time.Second)
 

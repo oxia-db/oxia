@@ -59,12 +59,12 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -122,12 +122,12 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -185,12 +185,12 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -239,12 +239,12 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -302,12 +302,12 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public
@@ -360,12 +360,12 @@ func TestLeaderHintWithClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		shard := coordinatorInstance.Metadata().LoadStatus().Namespaces["default"].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().LoadStatus()
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
 		target = sa2.Public

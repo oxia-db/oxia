@@ -27,8 +27,8 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
@@ -56,9 +56,9 @@ type SplitController struct {
 	rightChildId  int64
 	splitPoint    uint32
 
-	statusResource resource.StatusResource
-	rpcProvider    rpc.Provider
-	eventListener  SplitEventListener
+	metadata      coordmetadata.Metadata
+	rpcProvider   rpc.Provider
+	eventListener SplitEventListener
 
 	// ensembleSelector selects server ensembles for new shards.
 	ensembleSelector func(namespace string) ([]model.Server, error)
@@ -75,7 +75,7 @@ const DefaultSplitTimeout = 5 * time.Minute
 type SplitControllerConfig struct {
 	Namespace        string
 	ParentShardId    int64
-	StatusResource   resource.StatusResource
+	Metadata         coordmetadata.Metadata
 	RpcProvider      rpc.Provider
 	EventListener    SplitEventListener
 	EnsembleSelector func(namespace string) ([]model.Server, error)
@@ -93,7 +93,7 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 	sc := &SplitController{
 		namespace:        cfg.Namespace,
 		parentShardId:    cfg.ParentShardId,
-		statusResource:   cfg.StatusResource,
+		metadata:         cfg.Metadata,
 		rpcProvider:      cfg.RpcProvider,
 		eventListener:    cfg.EventListener,
 		ensembleSelector: cfg.EnsembleSelector,
@@ -111,7 +111,7 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 	sc.ctx, sc.cancel = context.WithTimeout(context.Background(), splitTimeout)
 
 	// Load the current split metadata from cluster status
-	status := sc.statusResource.Load()
+	status := sc.metadata.LoadStatus()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
 		sc.log.Error("Namespace not found in cluster status")
@@ -202,7 +202,7 @@ func (sc *SplitController) driveStateMachine() error {
 }
 
 func (sc *SplitController) currentPhase() *model.SplitPhase {
-	status := sc.statusResource.Load()
+	status := sc.metadata.LoadStatus()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
 		return nil
@@ -216,7 +216,7 @@ func (sc *SplitController) currentPhase() *model.SplitPhase {
 
 // updatePhase atomically updates the split phase on both parent and children.
 func (sc *SplitController) updatePhase(newPhase model.SplitPhase) {
-	status := sc.statusResource.Load()
+	status := sc.metadata.LoadStatus()
 	cloned := status.Clone()
 
 	ns := cloned.Namespaces[sc.namespace]
@@ -235,7 +235,7 @@ func (sc *SplitController) updatePhase(newPhase model.SplitPhase) {
 		}
 	}
 
-	sc.statusResource.Update(cloned)
+	sc.metadata.UpdateStatus(cloned)
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects
@@ -650,7 +650,7 @@ func (sc *SplitController) abort() {
 
 	// Delete child shards from status.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		sc.statusResource.DeleteShardMetadata(sc.namespace, childId)
+		sc.metadata.DeleteShardMetadata(sc.namespace, childId)
 	}
 
 	// Clear parent split metadata.
@@ -671,7 +671,7 @@ func (sc *SplitController) loadParentMeta() *model.ShardMetadata {
 }
 
 func (sc *SplitController) loadShardMeta(shardId int64) *model.ShardMetadata {
-	status := sc.statusResource.Load()
+	status := sc.metadata.LoadStatus()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
 		return nil
@@ -693,13 +693,13 @@ func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *model.Sh
 }
 
 func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *model.ShardMetadata)) {
-	status := sc.statusResource.Load()
+	status := sc.metadata.LoadStatus()
 	cloned := status.Clone()
 	ns := cloned.Namespaces[sc.namespace]
 	if meta, exists := ns.Shards[shardId]; exists {
 		fn(&meta)
 		ns.Shards[shardId] = meta
-		sc.statusResource.Update(cloned)
+		sc.metadata.UpdateStatus(cloned)
 	}
 }
 

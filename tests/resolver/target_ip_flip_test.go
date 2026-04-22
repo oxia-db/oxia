@@ -84,7 +84,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		shard := cluster.coordinator.StatusResource().Load().Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := cluster.coordinator.Metadata().LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
@@ -110,7 +110,7 @@ func (c *testCluster) stopAllServers(t *testing.T) {
 }
 
 func (c *testCluster) leader() model.Server {
-	return *c.coordinator.StatusResource().Load().Namespaces[constant.DefaultNamespace].Shards[0].Leader
+	return *c.coordinator.Metadata().LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0].Leader
 }
 
 func (c *testCluster) bootstrapTargetExcluding(excluded model.Server) model.Server {
