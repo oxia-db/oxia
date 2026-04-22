@@ -35,8 +35,8 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 	}
 	nsPolicies := &proto.HierarchyPolicies{
 		AntiAffinities: []*proto.AntiAffinity{
-			{Labels: []string{"region"}, Mode: proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT},
-			{Labels: []string{"type"}, Mode: proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT},
+			{Labels: []string{"region"}, Mode: proto.AntiAffinityModeStrict},
+			{Labels: []string{"type"}, Mode: proto.AntiAffinityModeStrict},
 		},
 	}
 

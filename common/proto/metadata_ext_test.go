@@ -75,9 +75,9 @@ loadBalancer:
 	require.False(t, config.GetNamespaces()[1].NotificationsEnabledOrDefault())
 	require.Equal(t, "natural", config.GetNamespaces()[1].GetKeySorting())
 	require.Len(t, config.GetNamespaces()[1].GetHierarchyPolicies().GetAntiAffinities(), 2)
-	require.Equal(t, AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
+	require.Equal(t, AntiAffinityModeStrict,
 		config.GetNamespaces()[1].GetHierarchyPolicies().GetAntiAffinities()[0].GetMode())
-	require.Equal(t, AntiAffinityMode_ANTI_AFFINITY_MODE_RELAXED,
+	require.Equal(t, AntiAffinityModeRelaxed,
 		config.GetNamespaces()[1].GetHierarchyPolicies().GetAntiAffinities()[1].GetMode())
 
 	require.Len(t, config.GetServers(), 3)
@@ -160,7 +160,7 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 					AntiAffinities: []*AntiAffinity{
 						{
 							Labels: []string{"zone"},
-							Mode:   AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
+							Mode:   AntiAffinityModeStrict,
 						},
 					},
 				},

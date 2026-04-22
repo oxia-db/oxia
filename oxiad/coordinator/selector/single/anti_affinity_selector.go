@@ -56,7 +56,7 @@ func (*serverAntiAffinitiesSelector) Select(ssContext *Context) (string, error) 
 			}
 			if labelSatisfiedCandidates.Size() < 1 {
 				switch affinity.ModeOrDefault() {
-				case proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT:
+				case proto.AntiAffinityModeStrict:
 					return "", selector.ErrUnsatisfiedAntiAffinity
 				default:
 					return "", selector.ErrUnsupportedAntiAffinityMode

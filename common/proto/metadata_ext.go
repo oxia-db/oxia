@@ -29,9 +29,9 @@ const (
 	defaultLoadBalancerScheduleString   = "30s"
 	defaultLoadBalancerQuarantineString = "5m"
 
-	AntiAffinityMode_ANTI_AFFINITY_MODE_UNKNOWN = ""
-	AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT  = "strict"
-	AntiAffinityMode_ANTI_AFFINITY_MODE_RELAXED = "relaxed"
+	AntiAffinityModeUnknown = ""
+	AntiAffinityModeStrict  = "strict"
+	AntiAffinityModeRelaxed = "relaxed"
 )
 
 func (ds *DataServer) GetIdentifier() string {
@@ -102,20 +102,18 @@ func (ns *Namespace) KeySortingTypeOrDefault() KeySortingType {
 
 func ParseAntiAffinityMode(value string) string {
 	switch strings.ToLower(value) {
-	case "", "unknown":
-		return AntiAffinityMode_ANTI_AFFINITY_MODE_UNKNOWN
-	case AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT:
-		return AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT
-	case AntiAffinityMode_ANTI_AFFINITY_MODE_RELAXED:
-		return AntiAffinityMode_ANTI_AFFINITY_MODE_RELAXED
+	case AntiAffinityModeStrict:
+		return AntiAffinityModeStrict
+	case AntiAffinityModeRelaxed:
+		return AntiAffinityModeRelaxed
 	default:
-		return AntiAffinityMode_ANTI_AFFINITY_MODE_UNKNOWN
+		return AntiAffinityModeUnknown
 	}
 }
 
 func (a *AntiAffinity) ModeOrDefault() string {
 	if a == nil {
-		return AntiAffinityMode_ANTI_AFFINITY_MODE_UNKNOWN
+		return AntiAffinityModeUnknown
 	}
 	return ParseAntiAffinityMode(a.GetMode())
 }

@@ -156,7 +156,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 					AntiAffinities: []*proto.AntiAffinity{
 						{
 							Labels: []string{"zone"},
-							Mode:   proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
+							Mode:   proto.AntiAffinityModeStrict,
 						},
 					},
 				},
@@ -169,7 +169,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 					AntiAffinities: []*proto.AntiAffinity{
 						{
 							Labels: []string{"zone"},
-							Mode:   proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
+							Mode:   proto.AntiAffinityModeStrict,
 						},
 					},
 				},

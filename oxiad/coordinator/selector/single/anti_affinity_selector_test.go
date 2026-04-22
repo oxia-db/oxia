@@ -63,7 +63,7 @@ func TestSelectSatisfiedAntiAffinities(t *testing.T) {
 		AntiAffinities: []*proto.AntiAffinity{
 			{
 				Labels: []string{"region"},
-				Mode:   proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
+				Mode:   proto.AntiAffinityModeStrict,
 			},
 		},
 	}
@@ -118,7 +118,7 @@ func TestSelectUnsatisfiedAntiAffinitiesStrict(t *testing.T) {
 		AntiAffinities: []*proto.AntiAffinity{
 			{
 				Labels: []string{"region"},
-				Mode:   proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
+				Mode:   proto.AntiAffinityModeStrict,
 			},
 		},
 	}
@@ -159,7 +159,7 @@ func TestSelectUnsatisfiedAntiAffinitiesRelax(t *testing.T) {
 		AntiAffinities: []*proto.AntiAffinity{
 			{
 				Labels: []string{"region"},
-				Mode:   proto.AntiAffinityMode_ANTI_AFFINITY_MODE_RELAXED,
+				Mode:   proto.AntiAffinityModeRelaxed,
 			},
 		},
 	}
@@ -197,8 +197,8 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 	}
 	nsPolicies := &proto.HierarchyPolicies{
 		AntiAffinities: []*proto.AntiAffinity{
-			{Labels: []string{"region"}, Mode: proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT},
-			{Labels: []string{"type"}, Mode: proto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT},
+			{Labels: []string{"region"}, Mode: proto.AntiAffinityModeStrict},
+			{Labels: []string{"type"}, Mode: proto.AntiAffinityModeStrict},
 		},
 	}
 
