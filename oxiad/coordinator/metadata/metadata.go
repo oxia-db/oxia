@@ -30,7 +30,6 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
 
@@ -43,7 +42,7 @@ type Metadata interface {
 	io.Closer
 
 	LoadStatus() *model.ClusterStatus
-	ApplyStatusChanges(config *model.ClusterConfig, ensembleSupplier resource.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64)
+	ApplyStatusChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64)
 	UpdateStatus(newStatus *model.ClusterStatus)
 	UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata)
 	DeleteShardMetadata(namespace string, shard int64)
@@ -57,6 +56,12 @@ type Metadata interface {
 	NamespaceConfig(namespace string) (*model.NamespaceConfig, bool)
 	Node(id string) (*model.Server, bool)
 	GetDataServerInfo(name string) (*model.DataServerInfo, bool)
+}
+
+type EnsembleSupplier func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error)
+
+type ClusterConfigEventListener interface {
+	ConfigChanged(newConfig *model.ClusterConfig)
 }
 
 type coordinatorMetadata struct {
@@ -75,7 +80,7 @@ type coordinatorMetadata struct {
 
 	clusterConfigProvider        func() (model.ClusterConfig, error)
 	clusterConfigNotificationsCh chan any
-	clusterConfigEventListener   resource.ClusterConfigEventListener
+	clusterConfigEventListener   ClusterConfigEventListener
 
 	clusterConfigLock     sync.RWMutex
 	currentClusterConfig  *model.ClusterConfig
@@ -88,7 +93,7 @@ func New(
 	statusProvider provider.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
-	clusterConfigEventListener resource.ClusterConfigEventListener,
+	clusterConfigEventListener ClusterConfigEventListener,
 ) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
@@ -185,7 +190,7 @@ func (m *coordinatorMetadata) LoadStatus() *model.ClusterStatus {
 	return m.currentStatus
 }
 
-func (m *coordinatorMetadata) ApplyStatusChanges(config *model.ClusterConfig, ensembleSupplier resource.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+func (m *coordinatorMetadata) ApplyStatusChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 

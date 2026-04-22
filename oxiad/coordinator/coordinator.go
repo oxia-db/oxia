@@ -33,7 +33,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector/ensemble"
@@ -50,7 +49,7 @@ type Coordinator interface {
 	controller.ShardEventListener
 	controller.ShardAssignmentsProvider
 	controller.DataServerEventListener
-	resource.ClusterConfigEventListener
+	coordmetadata.ClusterConfigEventListener
 
 	NodeControllers() map[string]controller.DataServerController
 

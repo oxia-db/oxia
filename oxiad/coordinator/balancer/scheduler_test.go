@@ -26,7 +26,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
 )
@@ -46,7 +45,7 @@ func (*mockMetadata) Close() error { return nil }
 
 func (m *mockMetadata) LoadStatus() *model.ClusterStatus { return m.status }
 
-func (m *mockMetadata) ApplyStatusChanges(*model.ClusterConfig, resource.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+func (m *mockMetadata) ApplyStatusChanges(*model.ClusterConfig, coordmetadata.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
 	return m.status, nil, nil
 }
 
