@@ -188,9 +188,10 @@ func getKeyEncoder(dbPath string, keySorting proto.KeySortingType) (compare.Enco
 
 	keyEncodingMarker = string(markerData)
 
-	if keyEncodingMarker == "natural" {
+	switch keyEncodingMarker {
+	case "natural":
 		return compare.EncoderNatural, nil
-	} else if keyEncodingMarker == "hierarchical" {
+	case "hierarchical":
 		return compare.EncoderHierarchical, nil
 	}
 
