@@ -19,7 +19,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -75,12 +74,4 @@ func newClusterConfig(namespaces []*proto.Namespace, servers []model.Server) *pr
 		Namespaces: namespaces,
 		Servers:    dataServers,
 	}
-}
-
-func newDefaultClusterConfig(servers ...model.Server) *proto.ClusterConfiguration {
-	return newClusterConfig([]*proto.Namespace{{
-		Name:              constant.DefaultNamespace,
-		ReplicationFactor: 3,
-		InitialShardCount: 1,
-	}}, servers)
 }

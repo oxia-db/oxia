@@ -189,7 +189,9 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 							PublicAddress:   "public-1",
 							InternalAddress: "internal-1",
 						},
-						Metadata: map[string]string{"rack": "rack-1"},
+						Metadata: &proto.DataServerMetadata{
+							Labels: map[string]string{"rack": "rack-1"},
+						},
 					},
 				},
 			},
@@ -204,7 +206,7 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	assert.Equal(t, serverName, *dataServer.DataServer.Name)
 	assert.Equal(t, "public-1", dataServer.DataServer.PublicAddress)
 	assert.Equal(t, "internal-1", dataServer.DataServer.InternalAddress)
-	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata)
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

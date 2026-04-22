@@ -47,7 +47,9 @@ func Test_cmd_getDataServer(t *testing.T) {
 			PublicAddress:   "public1",
 			InternalAddress: "internal1",
 		},
-		Metadata: map[string]string{"rack": "rack-1"},
+		Metadata: &proto.DataServerMetadata{
+			Labels: map[string]string{"rack": "rack-1"},
+		},
 	}, nil)
 
 	out, err := runCmd(serverName)
@@ -60,5 +62,5 @@ func Test_cmd_getDataServer(t *testing.T) {
 	assert.Equal(t, serverName, *dataServer.DataServer.Name)
 	assert.Equal(t, "public1", dataServer.DataServer.PublicAddress)
 	assert.Equal(t, "internal1", dataServer.DataServer.InternalAddress)
-	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata)
+	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
 }

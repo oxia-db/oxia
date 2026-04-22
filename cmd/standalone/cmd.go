@@ -15,13 +15,16 @@
 package standalone
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/proto"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -43,12 +46,13 @@ var (
 
 func init() {
 	dataServerOptions := &conf.DataServerOptions
+	keySorting := "hierarchical"
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultPublicPort), "Public service bind address")
 	observability := &dataServerOptions.Observability
 	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")
 
 	Cmd.Flags().BoolVar(&conf.NotificationsEnabled, "notifications-enabled", true, "Whether notifications are enabled")
-	Cmd.Flags().Var(&conf.KeySorting, "key-sorting", `Key sorting. allowed: "hierarchical", "natural". Default: "hierarchical"`)
+	Cmd.Flags().StringVar(&keySorting, "key-sorting", keySorting, `Key sorting. allowed: "hierarchical", "natural". Default: "hierarchical"`)
 	_ = Cmd.RegisterFlagCompletionFunc("key-sorting", keySortingCompletion)
 
 	Cmd.Flags().Uint32VarP(&conf.NumShards, "shards", "s", 1, "Number of shards")
@@ -70,9 +74,15 @@ func init() {
 		"Max size of the shared DB cache")
 
 	// Convert time.Duration to option.Duration after flag parsing
-	Cmd.PreRun = func(*cobra.Command, []string) {
+	Cmd.PreRunE = func(*cobra.Command, []string) error {
 		storageOptions.WAL.Retention = oxiadcommonoption.Duration(walRetention)
 		storageOptions.Notification.Retention = oxiadcommonoption.Duration(notificationRetention)
+		keySortingType, err := parseKeySorting(keySorting)
+		if err != nil {
+			return err
+		}
+		conf.KeySorting = keySortingType
+		return nil
 	}
 }
 
@@ -87,4 +97,15 @@ func keySortingCompletion(_ *cobra.Command, _ []string, _ string) ([]string, cob
 		"hierarchical\tUse file-system like hierarchical sorting based on `/`",
 		"natural\tUse natural, byte-wise sorting",
 	}, cobra.ShellCompDirectiveDefault
+}
+
+func parseKeySorting(value string) (proto.KeySortingType, error) {
+	switch strings.ToLower(value) {
+	case "", "hierarchical":
+		return proto.KeySortingType_HIERARCHICAL, nil
+	case "natural":
+		return proto.KeySortingType_NATURAL, nil
+	default:
+		return proto.KeySortingType_UNKNOWN, errors.New(`invalid key sorting, allowed values: "hierarchical", "natural"`)
+	}
 }
