@@ -48,10 +48,11 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 	for _, server := range cnf.GetServers() {
 		dataServer := server
 		if server.GetName() == "" {
+			name := server.GetIdentifier()
 			dataServer = &proto.DataServer{
-				Name:            new(server.GetIdentifier()),
-				PublicAddress:   server.GetPublicAddress(),
-				InternalAddress: server.GetInternalAddress(),
+				Name:     &name,
+				Public:   server.GetPublicAddress(),
+				Internal: server.GetInternalAddress(),
 			}
 		}
 		dataServers = append(dataServers, dataServer)

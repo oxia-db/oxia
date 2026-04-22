@@ -29,9 +29,9 @@ import (
 
 func dataServer(server model.Server) *proto.DataServer {
 	return &proto.DataServer{
-		Name:            server.Name,
-		PublicAddress:   server.Public,
-		InternalAddress: server.Internal,
+		Name:     server.Name,
+		Public:   server.Public,
+		Internal: server.Internal,
 	}
 }
 

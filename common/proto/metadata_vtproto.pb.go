@@ -7,10 +7,8 @@ package proto
 import (
 	fmt "fmt"
 	protohelpers "github.com/planetscale/vtprotobuf/protohelpers"
-	durationpb1 "github.com/planetscale/vtprotobuf/types/known/durationpb"
 	proto "google.golang.org/protobuf/proto"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	io "io"
 	unsafe "unsafe"
 )
@@ -27,8 +25,8 @@ func (m *DataServer) CloneVT() *DataServer {
 		return (*DataServer)(nil)
 	}
 	r := new(DataServer)
-	r.PublicAddress = m.PublicAddress
-	r.InternalAddress = m.InternalAddress
+	r.Public = m.Public
+	r.Internal = m.Internal
 	if rhs := m.Name; rhs != nil {
 		tmpVal := *rhs
 		r.Name = &tmpVal
@@ -139,7 +137,7 @@ func (m *Namespace) CloneVT() *Namespace {
 	r.InitialShardCount = m.InitialShardCount
 	r.ReplicationFactor = m.ReplicationFactor
 	r.KeySorting = m.KeySorting
-	r.HierarchyPolicies = m.HierarchyPolicies.CloneVT()
+	r.Policy = m.Policy.CloneVT()
 	if rhs := m.NotificationsEnabled; rhs != nil {
 		tmpVal := *rhs
 		r.NotificationsEnabled = &tmpVal
@@ -160,8 +158,8 @@ func (m *LoadBalancer) CloneVT() *LoadBalancer {
 		return (*LoadBalancer)(nil)
 	}
 	r := new(LoadBalancer)
-	r.ScheduleInterval = (*durationpb.Duration)((*durationpb1.Duration)(m.ScheduleInterval).CloneVT())
-	r.QuarantineTime = (*durationpb.Duration)((*durationpb1.Duration)(m.QuarantineTime).CloneVT())
+	r.ScheduleInterval = m.ScheduleInterval
+	r.QuarantineTime = m.QuarantineTime
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -225,10 +223,10 @@ func (this *DataServer) EqualVT(that *DataServer) bool {
 	if p, q := this.Name, that.Name; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
 	}
-	if this.PublicAddress != that.PublicAddress {
+	if this.Public != that.Public {
 		return false
 	}
-	if this.InternalAddress != that.InternalAddress {
+	if this.Internal != that.Internal {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -373,7 +371,7 @@ func (this *Namespace) EqualVT(that *Namespace) bool {
 	if this.KeySorting != that.KeySorting {
 		return false
 	}
-	if !this.HierarchyPolicies.EqualVT(that.HierarchyPolicies) {
+	if !this.Policy.EqualVT(that.Policy) {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -392,10 +390,10 @@ func (this *LoadBalancer) EqualVT(that *LoadBalancer) bool {
 	} else if this == nil || that == nil {
 		return false
 	}
-	if !(*durationpb1.Duration)(this.ScheduleInterval).EqualVT((*durationpb1.Duration)(that.ScheduleInterval)) {
+	if this.ScheduleInterval != that.ScheduleInterval {
 		return false
 	}
-	if !(*durationpb1.Duration)(this.QuarantineTime).EqualVT((*durationpb1.Duration)(that.QuarantineTime)) {
+	if this.QuarantineTime != that.QuarantineTime {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -520,17 +518,17 @@ func (m *DataServer) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if len(m.InternalAddress) > 0 {
-		i -= len(m.InternalAddress)
-		copy(dAtA[i:], m.InternalAddress)
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.InternalAddress)))
+	if len(m.Internal) > 0 {
+		i -= len(m.Internal)
+		copy(dAtA[i:], m.Internal)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Internal)))
 		i--
 		dAtA[i] = 0x1a
 	}
-	if len(m.PublicAddress) > 0 {
-		i -= len(m.PublicAddress)
-		copy(dAtA[i:], m.PublicAddress)
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.PublicAddress)))
+	if len(m.Public) > 0 {
+		i -= len(m.Public)
+		copy(dAtA[i:], m.Public)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Public)))
 		i--
 		dAtA[i] = 0x12
 	}
@@ -679,10 +677,12 @@ func (m *AntiAffinity) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if m.Mode != 0 {
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Mode))
+	if len(m.Mode) > 0 {
+		i -= len(m.Mode)
+		copy(dAtA[i:], m.Mode)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Mode)))
 		i--
-		dAtA[i] = 0x10
+		dAtA[i] = 0x12
 	}
 	if len(m.Labels) > 0 {
 		for iNdEx := len(m.Labels) - 1; iNdEx >= 0; iNdEx-- {
@@ -771,8 +771,8 @@ func (m *Namespace) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if m.HierarchyPolicies != nil {
-		size, err := m.HierarchyPolicies.MarshalToSizedBufferVT(dAtA[:i])
+	if m.Policy != nil {
+		size, err := m.Policy.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -781,10 +781,12 @@ func (m *Namespace) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x32
 	}
-	if m.KeySorting != 0 {
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.KeySorting))
+	if len(m.KeySorting) > 0 {
+		i -= len(m.KeySorting)
+		copy(dAtA[i:], m.KeySorting)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.KeySorting)))
 		i--
-		dAtA[i] = 0x28
+		dAtA[i] = 0x2a
 	}
 	if m.NotificationsEnabled != nil {
 		i--
@@ -846,23 +848,17 @@ func (m *LoadBalancer) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if m.QuarantineTime != nil {
-		size, err := (*durationpb1.Duration)(m.QuarantineTime).MarshalToSizedBufferVT(dAtA[:i])
-		if err != nil {
-			return 0, err
-		}
-		i -= size
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+	if len(m.QuarantineTime) > 0 {
+		i -= len(m.QuarantineTime)
+		copy(dAtA[i:], m.QuarantineTime)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.QuarantineTime)))
 		i--
 		dAtA[i] = 0x12
 	}
-	if m.ScheduleInterval != nil {
-		size, err := (*durationpb1.Duration)(m.ScheduleInterval).MarshalToSizedBufferVT(dAtA[:i])
-		if err != nil {
-			return 0, err
-		}
-		i -= size
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+	if len(m.ScheduleInterval) > 0 {
+		i -= len(m.ScheduleInterval)
+		copy(dAtA[i:], m.ScheduleInterval)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.ScheduleInterval)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -977,11 +973,11 @@ func (m *DataServer) SizeVT() (n int) {
 		l = len(*m.Name)
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
-	l = len(m.PublicAddress)
+	l = len(m.Public)
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
-	l = len(m.InternalAddress)
+	l = len(m.Internal)
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
@@ -1037,8 +1033,9 @@ func (m *AntiAffinity) SizeVT() (n int) {
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
 	}
-	if m.Mode != 0 {
-		n += 1 + protohelpers.SizeOfVarint(uint64(m.Mode))
+	l = len(m.Mode)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -1079,11 +1076,12 @@ func (m *Namespace) SizeVT() (n int) {
 	if m.NotificationsEnabled != nil {
 		n += 2
 	}
-	if m.KeySorting != 0 {
-		n += 1 + protohelpers.SizeOfVarint(uint64(m.KeySorting))
+	l = len(m.KeySorting)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
-	if m.HierarchyPolicies != nil {
-		l = m.HierarchyPolicies.SizeVT()
+	if m.Policy != nil {
+		l = m.Policy.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
@@ -1096,12 +1094,12 @@ func (m *LoadBalancer) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	if m.ScheduleInterval != nil {
-		l = (*durationpb1.Duration)(m.ScheduleInterval).SizeVT()
+	l = len(m.ScheduleInterval)
+	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
-	if m.QuarantineTime != nil {
-		l = (*durationpb1.Duration)(m.QuarantineTime).SizeVT()
+	l = len(m.QuarantineTime)
+	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
@@ -1217,7 +1215,7 @@ func (m *DataServer) UnmarshalVT(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field PublicAddress", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Public", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -1245,11 +1243,11 @@ func (m *DataServer) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PublicAddress = string(dAtA[iNdEx:postIndex])
+			m.Public = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field InternalAddress", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Internal", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -1277,7 +1275,7 @@ func (m *DataServer) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.InternalAddress = string(dAtA[iNdEx:postIndex])
+			m.Internal = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -1664,10 +1662,10 @@ func (m *AntiAffinity) UnmarshalVT(dAtA []byte) error {
 			m.Labels = append(m.Labels, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
-			if wireType != 0 {
+			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Mode", wireType)
 			}
-			m.Mode = 0
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -1677,11 +1675,24 @@ func (m *AntiAffinity) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Mode |= AntiAffinityMode(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Mode = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -1910,10 +1921,10 @@ func (m *Namespace) UnmarshalVT(dAtA []byte) error {
 			b := bool(v != 0)
 			m.NotificationsEnabled = &b
 		case 5:
-			if wireType != 0 {
+			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field KeySorting", wireType)
 			}
-			m.KeySorting = 0
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -1923,14 +1934,27 @@ func (m *Namespace) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.KeySorting |= KeySortingType(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.KeySorting = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field HierarchyPolicies", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Policy", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -1957,10 +1981,10 @@ func (m *Namespace) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.HierarchyPolicies == nil {
-				m.HierarchyPolicies = &HierarchyPolicies{}
+			if m.Policy == nil {
+				m.Policy = &HierarchyPolicies{}
 			}
-			if err := m.HierarchyPolicies.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Policy.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -2019,7 +2043,7 @@ func (m *LoadBalancer) UnmarshalVT(dAtA []byte) error {
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ScheduleInterval", wireType)
 			}
-			var msglen int
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -2029,33 +2053,29 @@ func (m *LoadBalancer) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= int(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if msglen < 0 {
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
 				return protohelpers.ErrInvalidLength
 			}
-			postIndex := iNdEx + msglen
+			postIndex := iNdEx + intStringLen
 			if postIndex < 0 {
 				return protohelpers.ErrInvalidLength
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.ScheduleInterval == nil {
-				m.ScheduleInterval = &durationpb.Duration{}
-			}
-			if err := (*durationpb1.Duration)(m.ScheduleInterval).UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
+			m.ScheduleInterval = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field QuarantineTime", wireType)
 			}
-			var msglen int
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -2065,27 +2085,23 @@ func (m *LoadBalancer) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= int(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if msglen < 0 {
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
 				return protohelpers.ErrInvalidLength
 			}
-			postIndex := iNdEx + msglen
+			postIndex := iNdEx + intStringLen
 			if postIndex < 0 {
 				return protohelpers.ErrInvalidLength
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.QuarantineTime == nil {
-				m.QuarantineTime = &durationpb.Duration{}
-			}
-			if err := (*durationpb1.Duration)(m.QuarantineTime).UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
+			m.QuarantineTime = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -2493,7 +2509,7 @@ func (m *DataServer) UnmarshalVTUnsafe(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field PublicAddress", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Public", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -2525,11 +2541,11 @@ func (m *DataServer) UnmarshalVTUnsafe(dAtA []byte) error {
 			if intStringLen > 0 {
 				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
 			}
-			m.PublicAddress = stringValue
+			m.Public = stringValue
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field InternalAddress", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Internal", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -2561,7 +2577,7 @@ func (m *DataServer) UnmarshalVTUnsafe(dAtA []byte) error {
 			if intStringLen > 0 {
 				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
 			}
-			m.InternalAddress = stringValue
+			m.Internal = stringValue
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -2960,10 +2976,10 @@ func (m *AntiAffinity) UnmarshalVTUnsafe(dAtA []byte) error {
 			m.Labels = append(m.Labels, stringValue)
 			iNdEx = postIndex
 		case 2:
-			if wireType != 0 {
+			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Mode", wireType)
 			}
-			m.Mode = 0
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -2973,11 +2989,28 @@ func (m *AntiAffinity) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Mode |= AntiAffinityMode(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			var stringValue string
+			if intStringLen > 0 {
+				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
+			}
+			m.Mode = stringValue
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -3210,10 +3243,10 @@ func (m *Namespace) UnmarshalVTUnsafe(dAtA []byte) error {
 			b := bool(v != 0)
 			m.NotificationsEnabled = &b
 		case 5:
-			if wireType != 0 {
+			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field KeySorting", wireType)
 			}
-			m.KeySorting = 0
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -3223,14 +3256,31 @@ func (m *Namespace) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.KeySorting |= KeySortingType(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			var stringValue string
+			if intStringLen > 0 {
+				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
+			}
+			m.KeySorting = stringValue
+			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field HierarchyPolicies", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Policy", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -3257,10 +3307,10 @@ func (m *Namespace) UnmarshalVTUnsafe(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.HierarchyPolicies == nil {
-				m.HierarchyPolicies = &HierarchyPolicies{}
+			if m.Policy == nil {
+				m.Policy = &HierarchyPolicies{}
 			}
-			if err := m.HierarchyPolicies.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Policy.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -3319,7 +3369,7 @@ func (m *LoadBalancer) UnmarshalVTUnsafe(dAtA []byte) error {
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ScheduleInterval", wireType)
 			}
-			var msglen int
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -3329,33 +3379,33 @@ func (m *LoadBalancer) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= int(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if msglen < 0 {
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
 				return protohelpers.ErrInvalidLength
 			}
-			postIndex := iNdEx + msglen
+			postIndex := iNdEx + intStringLen
 			if postIndex < 0 {
 				return protohelpers.ErrInvalidLength
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.ScheduleInterval == nil {
-				m.ScheduleInterval = &durationpb.Duration{}
+			var stringValue string
+			if intStringLen > 0 {
+				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
 			}
-			if err := (*durationpb1.Duration)(m.ScheduleInterval).UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
+			m.ScheduleInterval = stringValue
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field QuarantineTime", wireType)
 			}
-			var msglen int
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -3365,27 +3415,27 @@ func (m *LoadBalancer) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= int(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if msglen < 0 {
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
 				return protohelpers.ErrInvalidLength
 			}
-			postIndex := iNdEx + msglen
+			postIndex := iNdEx + intStringLen
 			if postIndex < 0 {
 				return protohelpers.ErrInvalidLength
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.QuarantineTime == nil {
-				m.QuarantineTime = &durationpb.Duration{}
+			var stringValue string
+			if intStringLen > 0 {
+				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
 			}
-			if err := (*durationpb1.Duration)(m.QuarantineTime).UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
+			m.QuarantineTime = stringValue
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

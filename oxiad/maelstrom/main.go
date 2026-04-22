@@ -157,8 +157,8 @@ func main() {
 	for _, node := range allNodes {
 		if node != thisNode {
 			servers = append(servers, &commonproto.DataServer{
-				PublicAddress:   node,
-				InternalAddress: node,
+				Public:   node,
+				Internal: node,
 			})
 		}
 	}

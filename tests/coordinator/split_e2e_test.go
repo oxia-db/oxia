@@ -846,11 +846,15 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			} else {
 				keySorting = proto.KeySortingType_HIERARCHICAL
 			}
+			keySortingValue := "hierarchical"
+			if keySorting == proto.KeySortingType_NATURAL {
+				keySortingValue = "natural"
+			}
 			clusterConfig := newClusterConfig([]*proto.Namespace{{
 				Name:              constant.DefaultNamespace,
 				ReplicationFactor: 1,
 				InitialShardCount: 1,
-				KeySorting:        keySorting,
+				KeySorting:        keySortingValue,
 			}}, []model.Server{sa1})
 
 			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))

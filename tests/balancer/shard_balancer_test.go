@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/oxia"
@@ -35,9 +36,9 @@ func shardBalancerDataServers(servers ...model.Server) []*proto.DataServer {
 	dataServers := make([]*proto.DataServer, 0, len(servers))
 	for _, server := range servers {
 		dataServers = append(dataServers, &proto.DataServer{
-			Name:            server.Name,
-			PublicAddress:   server.Public,
-			InternalAddress: server.Internal,
+			Name:     server.Name,
+			Public:   server.Public,
+			Internal: server.Internal,
 		})
 	}
 	return dataServers
@@ -100,6 +101,14 @@ func TestNormalShardBalancer(t *testing.T) {
 		_, exist := metadata.Node(s4ad.GetIdentifier())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
+	assert.Eventually(t, func() bool {
+		controllers := coordinator.NodeControllers()
+		s4Controller, s4Ok := controllers[s4ad.GetIdentifier()]
+		s5Controller, s5Ok := controllers[s5ad.GetIdentifier()]
+		return s4Ok && s5Ok &&
+			s4Controller.Status() == controller.Running &&
+			s5Controller.Status() == controller.Running
+	}, 30*time.Second, 50*time.Millisecond)
 
 	balancer := coordinator.LoadBalancer()
 	assert.Eventually(t, func() bool {
@@ -143,7 +152,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 				Name:              "ns-1",
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
-				HierarchyPolicies: &proto.HierarchyPolicies{
+				Policy: &proto.HierarchyPolicies{
 					AntiAffinities: []*proto.AntiAffinity{
 						{
 							Labels: []string{"zone"},
@@ -156,7 +165,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 				Name:              "ns-2",
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
-				HierarchyPolicies: &proto.HierarchyPolicies{
+				Policy: &proto.HierarchyPolicies{
 					AntiAffinities: []*proto.AntiAffinity{
 						{
 							Labels: []string{"zone"},
@@ -199,6 +208,14 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 		_, exist := metadata.Node(s4ad.GetIdentifier())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
+	assert.Eventually(t, func() bool {
+		controllers := coordinator.NodeControllers()
+		s4Controller, s4Ok := controllers[s4ad.GetIdentifier()]
+		s5Controller, s5Ok := controllers[s5ad.GetIdentifier()]
+		return s4Ok && s5Ok &&
+			s4Controller.Status() == controller.Running &&
+			s5Controller.Status() == controller.Running
+	}, 30*time.Second, 50*time.Millisecond)
 
 	balancer := coordinator.LoadBalancer()
 	assert.Eventually(t, func() bool {

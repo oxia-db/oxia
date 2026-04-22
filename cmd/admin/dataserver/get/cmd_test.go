@@ -43,9 +43,9 @@ func Test_cmd_getDataServer(t *testing.T) {
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServerInfo{
 		DataServer: &proto.DataServer{
-			Name:            &serverName,
-			PublicAddress:   "public1",
-			InternalAddress: "internal1",
+			Name:     &serverName,
+			Public:   "public1",
+			Internal: "internal1",
 		},
 		Metadata: &proto.DataServerMetadata{
 			Labels: map[string]string{"rack": "rack-1"},
@@ -60,7 +60,7 @@ func Test_cmd_getDataServer(t *testing.T) {
 	require.NotNil(t, dataServer.DataServer)
 	assert.NotNil(t, dataServer.DataServer.Name)
 	assert.Equal(t, serverName, *dataServer.DataServer.Name)
-	assert.Equal(t, "public1", dataServer.DataServer.PublicAddress)
-	assert.Equal(t, "internal1", dataServer.DataServer.InternalAddress)
+	assert.Equal(t, "public1", dataServer.DataServer.GetPublicAddress())
+	assert.Equal(t, "internal1", dataServer.DataServer.GetInternalAddress())
 	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
 }

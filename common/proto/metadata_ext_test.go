@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package coordinator
+package proto
 
 import (
 	"testing"
@@ -20,13 +20,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/durationpb"
-
-	commonproto "github.com/oxia-db/oxia/common/proto"
+	"gopkg.in/yaml.v3"
 )
 
 func TestDecodeYAMLCompatibility(t *testing.T) {
-	config, err := decodeClusterConfigurationYAML([]byte(`
+	var config ClusterConfiguration
+	err := yaml.Unmarshal([]byte(`
 namespaces:
   - name: default
     initialShardCount: 1
@@ -62,8 +61,10 @@ serverMetadata:
 loadBalancer:
   scheduleInterval: 15s
   quarantineTime: 3m
-`))
+`), &config)
 	require.NoError(t, err)
+	config.Normalize()
+	require.NoError(t, config.Validate())
 
 	require.Len(t, config.GetNamespaces(), 2)
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
@@ -72,11 +73,11 @@ loadBalancer:
 
 	require.Equal(t, "analytics", config.GetNamespaces()[1].GetName())
 	require.False(t, config.GetNamespaces()[1].NotificationsEnabledOrDefault())
-	require.Equal(t, commonproto.KeySortingType_NATURAL, config.GetNamespaces()[1].GetKeySorting())
+	require.Equal(t, "natural", config.GetNamespaces()[1].GetKeySorting())
 	require.Len(t, config.GetNamespaces()[1].GetHierarchyPolicies().GetAntiAffinities(), 2)
-	require.Equal(t, commonproto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
+	require.Equal(t, AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
 		config.GetNamespaces()[1].GetHierarchyPolicies().GetAntiAffinities()[0].GetMode())
-	require.Equal(t, commonproto.AntiAffinityMode_ANTI_AFFINITY_MODE_RELAXED,
+	require.Equal(t, AntiAffinityMode_ANTI_AFFINITY_MODE_RELAXED,
 		config.GetNamespaces()[1].GetHierarchyPolicies().GetAntiAffinities()[1].GetMode())
 
 	require.Len(t, config.GetServers(), 3)
@@ -85,12 +86,15 @@ loadBalancer:
 	require.Equal(t, map[string]string{"zone": "us-east-1"}, config.GetServerMetadata()["node-1"].GetLabels())
 	require.Equal(t, map[string]string{"zone": "us-west-1"}, config.GetServerMetadata()["localhost:7659"].GetLabels())
 	require.Equal(t, []string{"bootstrap:6648"}, config.GetAllowExtraAuthorities())
-	require.Equal(t, 15*time.Second, config.GetLoadBalancer().GetScheduleInterval().AsDuration())
-	require.Equal(t, 3*time.Minute, config.GetLoadBalancer().GetQuarantineTime().AsDuration())
+	require.Equal(t, "15s", config.GetLoadBalancer().GetScheduleInterval())
+	require.Equal(t, "3m", config.GetLoadBalancer().GetQuarantineTime())
+	require.Equal(t, 15*time.Second, config.GetLoadBalancer().ScheduleIntervalDurationOrDefault())
+	require.Equal(t, 3*time.Minute, config.GetLoadBalancer().QuarantineTimeDurationOrDefault())
 }
 
 func TestDecodeJSONCompatibility(t *testing.T) {
-	config, err := decodeClusterConfigurationYAML([]byte(`{
+	var config ClusterConfiguration
+	err := yaml.Unmarshal([]byte(`{
   "namespaces": [
     {
       "name": "default",
@@ -113,65 +117,89 @@ func TestDecodeJSONCompatibility(t *testing.T) {
       }
     }
   }
-}`))
+}`), &config)
 	require.NoError(t, err)
+	config.Normalize()
+	require.NoError(t, config.Validate())
 	require.Len(t, config.GetNamespaces(), 1)
-	require.Equal(t, commonproto.KeySortingType_HIERARCHICAL, config.GetNamespaces()[0].GetKeySorting())
+	require.Equal(t, "hierarchical", config.GetNamespaces()[0].GetKeySorting())
 	require.Equal(t, map[string]string{"rack": "rack-a"}, config.GetServerMetadata()["node-1"].GetLabels())
+}
+
+func TestDecodeYAMLOmittedKeySortingCompatibility(t *testing.T) {
+	var config ClusterConfiguration
+	err := yaml.Unmarshal([]byte(`
+namespaces:
+  - name: default
+    initialShardCount: 1
+    replicationFactor: 1
+servers:
+  - public: localhost:6648
+    internal: localhost:6649
+`), &config)
+	require.NoError(t, err)
+	config.Normalize()
+	require.NoError(t, config.Validate())
+	require.Len(t, config.GetNamespaces(), 1)
+	require.Empty(t, config.GetNamespaces()[0].GetKeySorting())
+	require.Equal(t, KeySortingType_UNKNOWN, config.GetNamespaces()[0].KeySortingTypeOrDefault())
 }
 
 func TestEncodeYAMLRoundTrip(t *testing.T) {
 	name := "node-1"
 	notificationsEnabled := false
-	config := &commonproto.ClusterConfiguration{
-		Namespaces: []*commonproto.Namespace{
+	config := &ClusterConfiguration{
+		Namespaces: []*Namespace{
 			{
 				Name:                 "default",
 				InitialShardCount:    1,
 				ReplicationFactor:    3,
-				KeySorting:           commonproto.KeySortingType_HIERARCHICAL,
+				KeySorting:           "hierarchical",
 				NotificationsEnabled: &notificationsEnabled,
-				HierarchyPolicies: &commonproto.HierarchyPolicies{
-					AntiAffinities: []*commonproto.AntiAffinity{
+				Policy: &HierarchyPolicies{
+					AntiAffinities: []*AntiAffinity{
 						{
 							Labels: []string{"zone"},
-							Mode:   commonproto.AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
+							Mode:   AntiAffinityMode_ANTI_AFFINITY_MODE_STRICT,
 						},
 					},
 				},
 			},
 		},
-		Servers: []*commonproto.DataServer{
+		Servers: []*DataServer{
 			{
-				Name:            &name,
-				PublicAddress:   "localhost:6648",
-				InternalAddress: "localhost:6649",
+				Name:     &name,
+				Public:   "localhost:6648",
+				Internal: "localhost:6649",
 			},
 			{
-				PublicAddress:   "localhost:7658",
-				InternalAddress: "localhost:7659",
+				Public:   "localhost:7658",
+				Internal: "localhost:7659",
 			},
 			{
-				PublicAddress:   "localhost:8658",
-				InternalAddress: "localhost:8659",
+				Public:   "localhost:8658",
+				Internal: "localhost:8659",
 			},
 		},
 		AllowExtraAuthorities: []string{"bootstrap:6648"},
-		ServerMetadata: map[string]*commonproto.DataServerMetadata{
+		ServerMetadata: map[string]*DataServerMetadata{
 			"node-1": {
 				Labels: map[string]string{"zone": "us-east-1"},
 			},
 		},
-		LoadBalancer: &commonproto.LoadBalancer{
-			ScheduleInterval: durationpb.New(30 * time.Second),
-			QuarantineTime:   durationpb.New(5 * time.Minute),
+		LoadBalancer: &LoadBalancer{
+			ScheduleInterval: "30s",
+			QuarantineTime:   "5m",
 		},
 	}
 
-	data, err := encodeClusterConfigurationYAML(config)
+	data, err := yaml.Marshal(config)
 	require.NoError(t, err)
 
-	decoded, err := decodeClusterConfigurationYAML(data)
+	var decoded ClusterConfiguration
+	err = yaml.Unmarshal(data, &decoded)
 	require.NoError(t, err)
-	require.True(t, gproto.Equal(config, decoded))
+	decoded.Normalize()
+	require.NoError(t, decoded.Validate())
+	require.True(t, gproto.Equal(config, &decoded))
 }

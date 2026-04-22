@@ -30,9 +30,9 @@ func dataServers(servers []model.Server) []*proto.DataServer {
 	dataServers := make([]*proto.DataServer, 0, len(servers))
 	for _, server := range servers {
 		dataServers = append(dataServers, &proto.DataServer{
-			Name:            server.Name,
-			PublicAddress:   server.Public,
-			InternalAddress: server.Internal,
+			Name:     server.Name,
+			Public:   server.Public,
+			Internal: server.Internal,
 		})
 	}
 	return dataServers

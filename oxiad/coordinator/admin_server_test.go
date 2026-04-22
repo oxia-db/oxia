@@ -31,9 +31,9 @@ import (
 
 func dataServer(server model.Server) *proto.DataServer {
 	return &proto.DataServer{
-		Name:            server.Name,
-		PublicAddress:   server.Public,
-		InternalAddress: server.Internal,
+		Name:     server.Name,
+		Public:   server.Public,
+		Internal: server.Internal,
 	}
 }
 
@@ -80,18 +80,18 @@ func TestAdminServerListDataServers(t *testing.T) {
 
 	require.NotNil(t, res.DataServers[0].Name)
 	assert.Equal(t, serverName1, *res.DataServers[0].Name)
-	assert.Equal(t, "public-1", res.DataServers[0].PublicAddress)
-	assert.Equal(t, "internal-1", res.DataServers[0].InternalAddress)
+	assert.Equal(t, "public-1", res.DataServers[0].GetPublicAddress())
+	assert.Equal(t, "internal-1", res.DataServers[0].GetInternalAddress())
 
 	require.NotNil(t, res.DataServers[1].Name)
 	assert.Equal(t, serverName2, *res.DataServers[1].Name)
-	assert.Equal(t, "public-2", res.DataServers[1].PublicAddress)
-	assert.Equal(t, "internal-2", res.DataServers[1].InternalAddress)
+	assert.Equal(t, "public-2", res.DataServers[1].GetPublicAddress())
+	assert.Equal(t, "internal-2", res.DataServers[1].GetInternalAddress())
 
 	require.NotNil(t, res.DataServers[2].Name)
 	assert.Equal(t, "internal-3", *res.DataServers[2].Name)
-	assert.Equal(t, "public-3", res.DataServers[2].PublicAddress)
-	assert.Equal(t, "internal-3", res.DataServers[2].InternalAddress)
+	assert.Equal(t, "public-3", res.DataServers[2].GetPublicAddress())
+	assert.Equal(t, "internal-3", res.DataServers[2].GetInternalAddress())
 }
 
 func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
@@ -148,8 +148,8 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 	require.NotNil(t, res.DataServerInfo.DataServer)
 	require.NotNil(t, res.DataServerInfo.DataServer.Name)
 	assert.Equal(t, serverName, *res.DataServerInfo.DataServer.Name)
-	assert.Equal(t, "public-2", res.DataServerInfo.DataServer.PublicAddress)
-	assert.Equal(t, "internal-2", res.DataServerInfo.DataServer.InternalAddress)
+	assert.Equal(t, "public-2", res.DataServerInfo.DataServer.GetPublicAddress())
+	assert.Equal(t, "internal-2", res.DataServerInfo.DataServer.GetInternalAddress())
 	assert.Equal(t, map[string]string{"zone": "zone-2"}, res.DataServerInfo.Metadata.GetLabels())
 }
 
@@ -177,8 +177,8 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 	require.NotNil(t, res.DataServerInfo.DataServer)
 	require.NotNil(t, res.DataServerInfo.DataServer.Name)
 	assert.Equal(t, "internal-3", *res.DataServerInfo.DataServer.Name)
-	assert.Equal(t, "public-3", res.DataServerInfo.DataServer.PublicAddress)
-	assert.Equal(t, "internal-3", res.DataServerInfo.DataServer.InternalAddress)
+	assert.Equal(t, "public-3", res.DataServerInfo.DataServer.GetPublicAddress())
+	assert.Equal(t, "internal-3", res.DataServerInfo.DataServer.GetInternalAddress())
 	assert.Equal(t, map[string]string{"role": "fallback"}, res.DataServerInfo.Metadata.GetLabels())
 
 	_, err = admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-2"})

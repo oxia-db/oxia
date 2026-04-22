@@ -283,7 +283,7 @@ func (r *nodeBasedBalancer) checkQuarantineNodes() {
 	deletedKeys := make([]string, 0)
 	r.nodeQuarantineNodeMap.Range(func(key, value any) bool {
 		timestamp := value.(time.Time) //nolint: revive
-		if time.Since(timestamp) >= r.loadBalancerConf.GetQuarantineTime().AsDuration() {
+		if time.Since(timestamp) >= r.loadBalancerConf.QuarantineTimeDurationOrDefault() {
 			deletedKeys = append(deletedKeys, key.(string))
 		}
 		return true
@@ -297,7 +297,7 @@ func (r *nodeBasedBalancer) checkQuarantineShards() {
 	deletedKeys := make([]int64, 0)
 	r.shardQuarantineShardMap.Range(func(key, value any) bool {
 		timestamp := value.(time.Time) //nolint: revive
-		if time.Since(timestamp) >= r.loadBalancerConf.GetQuarantineTime().AsDuration() {
+		if time.Since(timestamp) >= r.loadBalancerConf.QuarantineTimeDurationOrDefault() {
 			deletedKeys = append(deletedKeys, key.(int64))
 		}
 		return true
@@ -339,7 +339,7 @@ func (r *nodeBasedBalancer) startBackgroundScheduler() {
 	go process.DoWithLabels(r.ctx, map[string]string{
 		"component": "load-balancer-scheduler",
 	}, func() {
-		timer := time.NewTicker(r.loadBalancerConf.GetScheduleInterval().AsDuration())
+		timer := time.NewTicker(r.loadBalancerConf.ScheduleIntervalDurationOrDefault())
 		defer timer.Stop()
 		defer r.Done()
 		for {

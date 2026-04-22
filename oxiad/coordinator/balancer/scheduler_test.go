@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
-	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/oxia-db/oxia/common/proto"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -44,9 +43,9 @@ type mockMetadata struct {
 
 func dataServer(server model.Server) *proto.DataServer {
 	return &proto.DataServer{
-		Name:            server.Name,
-		PublicAddress:   server.Public,
-		InternalAddress: server.Internal,
+		Name:     server.Name,
+		Public:   server.Public,
+		Internal: server.Internal,
 	}
 }
 
@@ -81,8 +80,8 @@ func (m *mockMetadata) LoadLoadBalancer() *proto.LoadBalancer {
 		return m.lbConfig
 	}
 	return &proto.LoadBalancer{
-		ScheduleInterval: durationpb.New(30 * time.Second),
-		QuarantineTime:   durationpb.New(5 * time.Minute),
+		ScheduleInterval: "30s",
+		QuarantineTime:   "5m",
 	}
 }
 

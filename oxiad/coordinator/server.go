@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"gopkg.in/yaml.v3"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -106,7 +107,25 @@ func loadClusterConfiguration(cluster *option.ClusterOptions, v *viper.Viper) (*
 		return nil, err
 	}
 
-	return decodeClusterConfigurationViper(v)
+	data, err := yaml.Marshal(v.AllSettings())
+	if err != nil {
+		return nil, err
+	}
+
+	var config proto.ClusterConfiguration
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+	config.Normalize()
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	for _, authority := range config.GetAllowExtraAuthorities() {
+		if err := rpc2.ValidateAuthorityAddress(authority); err != nil {
+			return nil, errors.Wrapf(err, "cluster configuration: invalid allowExtraAuthorities entry %q", authority)
+		}
+	}
+	return &config, nil
 }
 
 func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[*option.Options]) (*GrpcServer, error) {

@@ -18,13 +18,10 @@ package io.oxia.proto.v1;
 
 option go_package = "github.com/oxia-db/oxia/common/proto";
 
-import "google/protobuf/duration.proto";
-import "replication.proto";
-
 message DataServer {
   optional string name = 1;
-  string public_address = 2;
-  string internal_address = 3;
+  string public = 2;
+  string internal = 3;
 }
 
 message DataServerMetadata {
@@ -32,43 +29,37 @@ message DataServerMetadata {
 }
 
 message DataServerInfo {
-  DataServer data_server = 1;
+  DataServer dataServer = 1;
   DataServerMetadata metadata = 2;
-}
-
-enum AntiAffinityMode {
-  ANTI_AFFINITY_MODE_UNKNOWN = 0;
-  ANTI_AFFINITY_MODE_STRICT = 1;
-  ANTI_AFFINITY_MODE_RELAXED = 2;
 }
 
 message AntiAffinity {
   repeated string labels = 1;
-  AntiAffinityMode mode = 2;
+  string mode = 2;
 }
 
 message HierarchyPolicies {
-  repeated AntiAffinity anti_affinities = 1;
+  repeated AntiAffinity antiAffinities = 1;
 }
 
 message Namespace {
   string name = 1;
-  uint32 initial_shard_count = 2;
-  uint32 replication_factor = 3;
-  optional bool notifications_enabled = 4;
-  replication.KeySortingType key_sorting = 5;
-  HierarchyPolicies hierarchy_policies = 6;
+  uint32 initialShardCount = 2;
+  uint32 replicationFactor = 3;
+  optional bool notificationsEnabled = 4;
+  string keySorting = 5;
+  HierarchyPolicies policy = 6;
 }
 
 message LoadBalancer {
-  google.protobuf.Duration schedule_interval = 1;
-  google.protobuf.Duration quarantine_time = 2;
+  string scheduleInterval = 1;
+  string quarantineTime = 2;
 }
 
 message ClusterConfiguration {
   repeated Namespace namespaces = 1;
   repeated DataServer servers = 2;
-  repeated string allow_extra_authorities = 3;
-  map<string, DataServerMetadata> server_metadata = 4;
-  LoadBalancer load_balancer = 5;
+  repeated string allowExtraAuthorities = 3;
+  map<string, DataServerMetadata> serverMetadata = 4;
+  LoadBalancer loadBalancer = 5;
 }

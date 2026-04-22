@@ -16,11 +16,9 @@ package balancer
 
 import (
 	"testing"
-	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -34,9 +32,9 @@ func dataServers(servers ...model.Server) []*proto.DataServer {
 	dataServers := make([]*proto.DataServer, 0, len(servers))
 	for _, server := range servers {
 		dataServers = append(dataServers, &proto.DataServer{
-			Name:            server.Name,
-			PublicAddress:   server.Public,
-			InternalAddress: server.Internal,
+			Name:     server.Name,
+			Public:   server.Public,
+			Internal: server.Internal,
 		})
 	}
 	return dataServers
@@ -108,7 +106,7 @@ func TestLeaderBalanced(t *testing.T) {
 		},
 		Servers: dataServers(s1ad, s2ad, s3ad),
 		LoadBalancer: &proto.LoadBalancer{
-			QuarantineTime: durationpb.New(1 * time.Millisecond),
+			QuarantineTime: "1ms",
 		},
 	}
 
@@ -151,7 +149,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 		},
 		Servers: dataServers(s1ad, s2ad, s3ad),
 		LoadBalancer: &proto.LoadBalancer{
-			QuarantineTime: durationpb.New(1 * time.Millisecond),
+			QuarantineTime: "1ms",
 		},
 	}
 
@@ -221,7 +219,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 		},
 		Servers: dataServers(s1ad, s2ad, s3ad),
 		LoadBalancer: &proto.LoadBalancer{
-			QuarantineTime: durationpb.New(1 * time.Millisecond),
+			QuarantineTime: "1ms",
 		},
 	}
 

@@ -42,8 +42,8 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 			ReplicationFactor: 1,
 		}},
 		Servers: []*proto.DataServer{{
-			PublicAddress:   leader.Public,
-			InternalAddress: leader.Internal,
+			Public:   leader.Public,
+			Internal: leader.Internal,
 		}},
 		AllowExtraAuthorities: []string{
 			"bootstrap:6648",
@@ -111,8 +111,8 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 			ReplicationFactor: 1,
 		}},
 		Servers: []*proto.DataServer{{
-			PublicAddress:   active.Public,
-			InternalAddress: active.Internal,
+			Public:   active.Public,
+			Internal: active.Internal,
 		}},
 	}
 	metadata := coordmetadata.New(

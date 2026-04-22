@@ -526,8 +526,8 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 
 	// Add s4, s5
 	clusterConfig.Servers = append(clusterConfig.Servers,
-		&proto.DataServer{Name: sa4.Name, PublicAddress: sa4.Public, InternalAddress: sa4.Internal},
-		&proto.DataServer{Name: sa5.Name, PublicAddress: sa5.Public, InternalAddress: sa5.Internal},
+		&proto.DataServer{Name: sa4.Name, Public: sa4.Public, Internal: sa4.Internal},
+		&proto.DataServer{Name: sa5.Name, Public: sa5.Public, Internal: sa5.Internal},
 	)
 	// Remove s1
 	clusterConfig.Servers = clusterConfig.Servers[1:]
@@ -670,9 +670,9 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	clusterServer := make([]*proto.DataServer, 0, len(clusterConfig.Servers))
 	for _, sv := range clusterConfig.Servers {
 		clusterServer = append(clusterServer, &proto.DataServer{
-			Name:            sv.Name,
-			PublicAddress:   strings.ReplaceAll(sv.GetPublicAddress(), "localhost", "127.0.0.1"),
-			InternalAddress: sv.GetInternalAddress(),
+			Name:     sv.Name,
+			Public:   strings.ReplaceAll(sv.GetPublicAddress(), "localhost", "127.0.0.1"),
+			Internal: sv.GetInternalAddress(),
 		})
 	}
 
