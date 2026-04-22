@@ -79,11 +79,11 @@ type coordinatorMetadata struct {
 	clusterConfigProvider        func() (model.ClusterConfig, error)
 	clusterConfigNotificationsCh chan any
 
-	clusterConfigLock       sync.RWMutex
-	currentClusterConfig    *model.ClusterConfig
-	clusterConfigWatch      *commonoption.Watch[*model.ClusterConfig]
-	nodesIndex              *redblacktree.Tree[string, *model.Server]
-	namespaceConfigsIndex   *redblacktree.Tree[string, *model.NamespaceConfig]
+	clusterConfigLock     sync.RWMutex
+	currentClusterConfig  *model.ClusterConfig
+	clusterConfigWatch    *commonoption.Watch[*model.ClusterConfig]
+	nodesIndex            *redblacktree.Tree[string, *model.Server]
+	namespaceConfigsIndex *redblacktree.Tree[string, *model.NamespaceConfig]
 }
 
 func New(
