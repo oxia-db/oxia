@@ -71,7 +71,7 @@ type coordinatorMetadata struct {
 	cancel context.CancelFunc
 	wg     *sync.WaitGroup
 
-	statusProvider provider.Provider
+	metadataProvider provider.Provider
 
 	statusLock       sync.RWMutex
 	currentStatus    *model.ClusterStatus
@@ -90,7 +90,7 @@ type coordinatorMetadata struct {
 
 func New(
 	ctx context.Context,
-	statusProvider provider.Provider,
+	metadataProvider provider.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
 	clusterConfigEventListener ClusterConfigEventListener,
@@ -101,7 +101,7 @@ func New(
 		ctx:                          metadataCtx,
 		cancel:                       cancel,
 		wg:                           &sync.WaitGroup{},
-		statusProvider:               statusProvider,
+		metadataProvider:             metadataProvider,
 		currentVersionID:             provider.NotExists,
 		changeCh:                     make(chan struct{}),
 		clusterConfigProvider:        clusterConfigProvider,
@@ -127,7 +127,7 @@ func New(
 func (m *coordinatorMetadata) Close() error {
 	m.cancel()
 	m.wg.Wait()
-	return m.statusProvider.Close()
+	return m.metadataProvider.Close()
 }
 
 func (m *coordinatorMetadata) notifyStatusChange() {
@@ -140,7 +140,7 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 	defer m.statusLock.Unlock()
 
 	_ = backoff.RetryNotify(func() error {
-		clusterStatus, version, err := m.statusProvider.Get()
+		clusterStatus, version, err := m.metadataProvider.Get()
 		if err != nil {
 			return err
 		}
@@ -168,7 +168,7 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 
 func (m *coordinatorMetadata) persistStatusLocked(newStatus *model.ClusterStatus, warnMessage string) {
 	_ = backoff.RetryNotify(func() error {
-		versionID, err := m.statusProvider.Store(newStatus, m.currentVersionID)
+		versionID, err := m.metadataProvider.Store(newStatus, m.currentVersionID)
 		if err != nil {
 			return err
 		}

@@ -47,10 +47,10 @@ var namespaceConfig = &model.NamespaceConfig{
 	NotificationsEnabled: entity.OptBooleanDefaultTrue{},
 }
 
-func newTestMetadata(t *testing.T, statusProvider provider.Provider, clusterConfig model.ClusterConfig) coordmetadata.Metadata {
+func newTestMetadata(t *testing.T, metadataProvider provider.Provider, clusterConfig model.ClusterConfig) coordmetadata.Metadata {
 	t.Helper()
 
-	metadata := coordmetadata.New(t.Context(), statusProvider, func() (model.ClusterConfig, error) {
+	metadata := coordmetadata.New(t.Context(), metadataProvider, func() (model.ClusterConfig, error) {
 		return clusterConfig, nil
 	}, nil, nil)
 	t.Cleanup(func() {

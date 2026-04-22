@@ -702,7 +702,7 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 	}
 }
 
-func NewCoordinator(statusProvider provider.Provider,
+func NewCoordinator(metadataProvider provider.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc.ProviderFactory) (Coordinator, error) {
@@ -723,14 +723,14 @@ func NewCoordinator(statusProvider provider.Provider,
 
 	// Ensure we are to become the leader coordinator
 	c.Info("Waiting to become leader")
-	if err := statusProvider.WaitToBecomeLeader(); err != nil {
+	if err := metadataProvider.WaitToBecomeLeader(); err != nil {
 		return nil, errors.Wrap(err, "failed to wait in becoming leader")
 	}
 	c.Info("This coordinator is now leader")
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.metadata = coordmetadata.New(c.ctx, statusProvider, clusterConfigProvider, clusterConfigNotificationsCh, c)
+	c.metadata = coordmetadata.New(c.ctx, metadataProvider, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:  c.ctx,

@@ -60,7 +60,7 @@ type ShardElection struct {
 	becomeLeaderLatency   metric.LatencyHistogram
 	leaderElectionsFailed metric.Counter
 	// borrowed resource
-	metadataProvider                    coordmetadata.Metadata
+	metadataStore                       coordmetadata.Metadata
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 	leaderSelector                      selector.Selector[*leaderselector.Context, model.Server]
 	eventListener                       ShardEventListener
@@ -79,7 +79,7 @@ type ShardElection struct {
 func (e *ShardElection) refreshedEnsemble(ensemble []model.Server) []model.Server {
 	refreshedEnsembleDataServerAddress := make([]model.Server, len(ensemble))
 	for idx, candidate := range ensemble {
-		if refreshedAddress, exist := e.metadataProvider.Node(candidate.GetIdentifier()); exist {
+		if refreshedAddress, exist := e.metadataStore.Node(candidate.GetIdentifier()); exist {
 			refreshedEnsembleDataServerAddress[idx] = *refreshedAddress
 			continue
 		}
@@ -226,7 +226,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[model.Server]*proto
 	candidates := chooseCandidates(candidatesStatus)
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Status:     e.metadataProvider.LoadStatus(),
+		Status:     e.metadataStore.LoadStatus(),
 	})
 	if err != nil {
 		return model.Server{}, nil, err
@@ -448,7 +448,7 @@ func (e *ShardElection) start() (model.Server, error) {
 		metadata.Term++
 		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
-	e.metadataProvider.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	e.metadataStore.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
 
 	if e.changeEnsembleAction != nil {
 		e.prepareIfChangeEnsemble(&mutShardMeta)
@@ -498,7 +498,7 @@ func (e *ShardElection) start() (model.Server, error) {
 	leader := mutShardMeta.Leader
 	leaderEntry := candidatesStatus[*leader]
 
-	e.metadataProvider.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	e.metadataStore.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
 	e.meta.Store(mutShardMeta)
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
@@ -603,7 +603,7 @@ func (e *ShardElection) Stop() {
 
 //nolint:revive
 func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener ShardEventListener,
-	metadataProvider coordmetadata.Metadata,
+	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	leaderSelector selector.Selector[*leaderselector.Context, model.Server],
 	provider rpc.Provider, metadata *Metadata, namespace string, shard int64,
@@ -616,7 +616,7 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 		WaitGroup:                           sync.WaitGroup{},
 		Context:                             current,
 		CancelFunc:                          cancelFunc,
-		metadataProvider:                    metadataProvider,
+		metadataStore:                       metadataStore,
 		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
 		eventListener:                       eventListener,
 		leaderSelector:                      leaderSelector,
