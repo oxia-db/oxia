@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -32,7 +33,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
@@ -183,7 +183,7 @@ func main() {
 		}
 
 		_, err := coordinator.NewCoordinator(
-			metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json")),
+			file.NewProvider(filepath.Join(dataDir, "cluster-status.json")),
 			func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil,
 			func(instanceID string) rpc.Provider {
 				return newRpcProvider(dispatcher)

@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -37,7 +39,6 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -54,7 +55,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		sa3: s3,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -319,7 +320,7 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		sa1: s1, sa2: s2, sa3: s3,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -844,7 +845,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 			}
 
-			metadataProvider := metadata.NewMetadataProviderMemory()
+			metadataProvider := memory.NewProvider()
 			clusterConfig := model.ClusterConfig{
 				Namespaces: []model.NamespaceConfig{{
 					Name:              constant.DefaultNamespace,

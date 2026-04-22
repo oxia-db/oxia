@@ -23,7 +23,8 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
@@ -65,11 +66,11 @@ var _ StatusResource = &status{}
 
 type status struct {
 	*slog.Logger
-	metadata metadata.Provider
+	metadata provider.Provider
 
 	lock             sync.RWMutex
 	current          *model.ClusterStatus
-	currentVersionID metadata.Version
+	currentVersionID provider.Version
 	changeCh         chan struct{}
 }
 
@@ -266,14 +267,14 @@ func (s *status) IsReady(clusterConfig *model.ClusterConfig) bool {
 	return true
 }
 
-func NewStatusResource(meta metadata.Provider) StatusResource {
+func NewStatusResource(meta provider.Provider) StatusResource {
 	s := status{
 		Logger: slog.With(
 			slog.String("component", "status-resource"),
 		),
 		lock:             sync.RWMutex{},
 		metadata:         meta,
-		currentVersionID: metadata.NotExists,
+		currentVersionID: provider.NotExists,
 		current:          nil,
 		changeCh:         make(chan struct{}),
 	}

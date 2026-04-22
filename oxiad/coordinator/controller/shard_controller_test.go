@@ -24,8 +24,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 
@@ -108,7 +109,7 @@ func TestShardController(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 	statusResource := resource.NewStatusResource(meta)
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
@@ -192,7 +193,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	n2 := rpc.GetNode(s2)
 	n3 := rpc.GetNode(s3)
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 	statusResource := resource.NewStatusResource(meta)
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
@@ -228,7 +229,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 	statusResource := resource.NewStatusResource(meta)
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
@@ -281,7 +282,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 	statusResource := resource.NewStatusResource(meta)
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
@@ -342,7 +343,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 	n2 := rpc.GetNode(s2)
 	n3 := rpc.GetNode(s3)
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 	statusResource := resource.NewStatusResource(meta)
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
@@ -384,7 +385,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	s2 := model.Server{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 	statusResource := resource.NewStatusResource(meta)
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
@@ -432,7 +433,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 
 	statusResource := resource.NewStatusResource(meta)
@@ -537,7 +538,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	s3 := model.Server{Public: "s3:9091", Internal: "s3:8191"}
 	s4 := model.Server{Public: "s4:9091", Internal: "s4:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 
 	statusResource := resource.NewStatusResource(meta)
@@ -664,7 +665,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	s5 := model.Server{Public: "s5:9091", Internal: "s5:8191"}
 	s6 := model.Server{Public: "s6:9091", Internal: "s6:8191"}
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 	statusResource := resource.NewStatusResource(meta)
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
@@ -768,7 +769,7 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	rpc.GetNode(s2).SetNodeFeatures(feature.SupportedFeatures())
 	rpc.GetNode(s3).SetNodeFeatures(feature.SupportedFeatures())
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 	statusResource := resource.NewStatusResource(meta)
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {
@@ -830,7 +831,7 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	// s3 is an old node without feature support
 	rpc.GetNode(s3).SetNodeFeatures([]proto.Feature{})
 
-	meta := metadata.NewMetadataProviderMemory()
+	meta := memory.NewProvider()
 	defer meta.Close()
 	statusResource := resource.NewStatusResource(meta)
 	configResource := resource.NewClusterConfigResource(t.Context(), func() (model.ClusterConfig, error) {

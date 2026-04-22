@@ -19,15 +19,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
 func NewCoordinator(t *testing.T, config *model.ClusterConfig, clusterConfigNotificationCh chan any) coordinator.Coordinator {
 	t.Helper()
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	coordinatorInstance, err := coordinator.NewCoordinator(
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return *config, nil },

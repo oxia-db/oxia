@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metadata
+package kubernetes
 
 import (
 	"context"
@@ -32,6 +32,8 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/common/concurrent"
@@ -39,7 +41,7 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 )
 
-var _ Provider = &metadataProviderConfigMap{}
+var _ provider.Provider = &Provider{}
 
 const (
 	leaseDuration = 15 * time.Second
@@ -47,7 +49,7 @@ const (
 	retryPeriod   = 2 * time.Second
 )
 
-type metadataProviderConfigMap struct {
+type Provider struct {
 	sync.Mutex
 	kubernetes      kubernetes.Interface
 	namespace, name string
@@ -64,8 +66,8 @@ type metadataProviderConfigMap struct {
 	log *slog.Logger
 }
 
-func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name string) Provider {
-	m := &metadataProviderConfigMap{
+func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string) provider.Provider {
+	m := &Provider{
 		kubernetes: kc,
 		namespace:  namespace,
 		name:       name,
@@ -89,7 +91,7 @@ func NewMetadataProviderConfigMap(kc kubernetes.Interface, namespace, name strin
 	return m
 }
 
-func (m *metadataProviderConfigMap) Get() (status *model.ClusterStatus, version Version, err error) {
+func (m *Provider) Get() (status *model.ClusterStatus, version provider.Version, err error) {
 	timer := m.getLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -98,11 +100,11 @@ func (m *metadataProviderConfigMap) Get() (status *model.ClusterStatus, version 
 	return m.getWithoutLock()
 }
 
-func (m *metadataProviderConfigMap) getWithoutLock() (*model.ClusterStatus, Version, error) {
+func (m *Provider) getWithoutLock() (*model.ClusterStatus, provider.Version, error) {
 	cm, err := K8SConfigMaps(m.kubernetes).Get(m.namespace, m.name)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			return nil, NotExists, nil
+			return nil, provider.NotExists, nil
 		}
 		return nil, "", err
 	}
@@ -113,14 +115,14 @@ func (m *metadataProviderConfigMap) getWithoutLock() (*model.ClusterStatus, Vers
 		return nil, "", err
 	}
 
-	version := Version(cm.ResourceVersion)
+	version := provider.Version(cm.ResourceVersion)
 	slog.Debug("Get metadata successful",
 		slog.String("version", cm.ResourceVersion))
 	m.metadataSize.Store(int64(len(data)))
 	return status, version, nil
 }
 
-func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedVersion Version) (Version, error) {
+func (m *Provider) Store(status *model.ClusterStatus, expectedVersion provider.Version) (provider.Version, error) {
 	timer := m.storeLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -136,23 +138,23 @@ func (m *metadataProviderConfigMap) Store(status *model.ClusterStatus, expectedV
 		slog.Error("Store metadata failed for version mismatch",
 			slog.Any("local-version", version),
 			slog.Any("expected-version", expectedVersion))
-		panic(ErrMetadataBadVersion)
+		panic(provider.ErrBadVersion)
 	}
 
 	data := configMap(m.name, status, expectedVersion)
 	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, data)
 	if err != nil {
 		if k8serrors.IsConflict(err) {
-			panic(ErrMetadataBadVersion)
+			panic(provider.ErrBadVersion)
 		}
 		return version, err
 	}
-	version = Version(cm.ResourceVersion)
+	version = provider.Version(cm.ResourceVersion)
 	m.metadataSize.Store(int64(len(data.Data["status"])))
 	return version, nil
 }
 
-func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
+func (m *Provider) WaitToBecomeLeader() error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -217,7 +219,7 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 	return wg.Wait(m.ctx)
 }
 
-func (m *metadataProviderConfigMap) Close() error {
+func (m *Provider) Close() error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -229,7 +231,7 @@ func (m *metadataProviderConfigMap) Close() error {
 	return nil
 }
 
-func configMap(name string, status *model.ClusterStatus, version Version) *corev1.ConfigMap {
+func configMap(name string, status *model.ClusterStatus, version provider.Version) *corev1.ConfigMap {
 	bytes, err := yaml.Marshal(status)
 	if err != nil {
 		slog.Error(
@@ -250,7 +252,7 @@ func configMap(name string, status *model.ClusterStatus, version Version) *corev
 		},
 	}
 
-	if version != NotExists {
+	if version != provider.NotExists {
 		cm.ResourceVersion = string(version)
 	}
 

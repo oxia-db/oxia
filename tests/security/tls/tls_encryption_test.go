@@ -23,12 +23,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
@@ -118,7 +119,7 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -145,7 +146,7 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -176,7 +177,7 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -213,7 +214,7 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -251,7 +252,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,
@@ -290,7 +291,7 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	s3, sa3 := newTLSServerWithInterceptor(t, disableInternalTLS)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              constant.DefaultNamespace,

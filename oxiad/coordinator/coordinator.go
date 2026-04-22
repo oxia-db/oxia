@@ -26,10 +26,11 @@ import (
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -707,7 +708,7 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 	}
 }
 
-func NewCoordinator(meta metadata.Provider,
+func NewCoordinator(meta provider.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc.ProviderFactory) (Coordinator, error) {

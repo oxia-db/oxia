@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	k8s "k8s.io/client-go/kubernetes"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
 
 	"github.com/oxia-db/oxia/common/process"
 	oxiatime "github.com/oxia-db/oxia/common/time"
@@ -59,12 +59,12 @@ func getNamespaceAndCmName(rp viper.RemoteProvider) (namespace, cmName string, e
 }
 
 func (*cmConfigProvider) Get(rp viper.RemoteProvider) (io.Reader, error) {
-	kubernetes := metadata.NewK8SClientset(metadata.NewK8SClientConfig())
+	k8sClient := kubernetes.NewK8SClientset(kubernetes.NewK8SClientConfig())
 	namespace, configmap, err := getNamespaceAndCmName(rp)
 	if err != nil {
 		return nil, err
 	}
-	cmValue, err := metadata.K8SConfigMaps(kubernetes).Get(namespace, configmap)
+	cmValue, err := kubernetes.K8SConfigMaps(k8sClient).Get(namespace, configmap)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (c *cmConfigProvider) Watch(rp viper.RemoteProvider) (io.Reader, error) {
 }
 
 func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteResponse, chan bool) {
-	kubernetes := metadata.NewK8SClientset(metadata.NewK8SClientConfig())
+	k8sClient := kubernetes.NewK8SClientset(kubernetes.NewK8SClientConfig())
 	namespace, configmap, _ := getNamespaceAndCmName(rp)
 
 	ch := make(chan *viper.RemoteResponse)
@@ -91,7 +91,7 @@ func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.
 	}, func() {
 		bo := oxiatime.NewBackOffWithInitialInterval(context.Background(), 1*time.Second)
 		_ = backoff.RetryNotify(func() error {
-			err := c.watchConfigMap(kubernetes, namespace, configmap, ch)
+			err := c.watchConfigMap(k8sClient, namespace, configmap, ch)
 			if err != nil {
 				return err
 			}
@@ -110,8 +110,8 @@ func (c *cmConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.
 	return ch, nil
 }
 
-func (c *cmConfigProvider) watchConfigMap(kubernetes k8s.Interface, namespace, configmap string, ch chan<- *viper.RemoteResponse) error {
-	w, err := kubernetes.CoreV1().ConfigMaps(namespace).Watch(
+func (c *cmConfigProvider) watchConfigMap(client k8s.Interface, namespace, configmap string, ch chan<- *viper.RemoteResponse) error {
+	w, err := client.CoreV1().ConfigMaps(namespace).Watch(
 		context.Background(),
 		metav1.SingleObject(metav1.ObjectMeta{Name: configmap, Namespace: namespace}),
 	)

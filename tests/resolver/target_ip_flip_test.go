@@ -24,10 +24,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
@@ -62,7 +63,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		cluster.addresses = append(cluster.addresses, addr)
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
+	metadataProvider := memory.NewProvider()
 	var err error
 	cluster.coordinator, err = coordinator.NewCoordinator(
 		metadataProvider,
