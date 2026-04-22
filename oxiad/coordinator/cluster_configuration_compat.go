@@ -105,7 +105,7 @@ func clusterConfigurationFromCompat(compat *clusterConfigurationCompat) (*common
 	}
 
 	for _, ns := range compat.Namespaces {
-		keySorting, err := parseKeySorting(ns.KeySorting)
+		keySorting, err := commonproto.ParseKeySortingType(ns.KeySorting)
 		if err != nil {
 			return nil, err
 		}
@@ -235,19 +235,6 @@ func keySortingToCompat(value commonproto.KeySortingType) string {
 		return "hierarchical"
 	default:
 		return ""
-	}
-}
-
-func parseKeySorting(value string) (commonproto.KeySortingType, error) {
-	switch value {
-	case "", "unknown":
-		return commonproto.KeySortingType_UNKNOWN, nil
-	case "natural":
-		return commonproto.KeySortingType_NATURAL, nil
-	case "hierarchical":
-		return commonproto.KeySortingType_HIERARCHICAL, nil
-	default:
-		return commonproto.KeySortingType_UNKNOWN, errors.New(`must be one of "natural" or "hierarchical"`)
 	}
 }
 

@@ -15,10 +15,8 @@
 package standalone
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -77,7 +75,7 @@ func init() {
 	Cmd.PreRunE = func(*cobra.Command, []string) error {
 		storageOptions.WAL.Retention = oxiadcommonoption.Duration(walRetention)
 		storageOptions.Notification.Retention = oxiadcommonoption.Duration(notificationRetention)
-		keySortingType, err := parseKeySorting(keySorting)
+		keySortingType, err := proto.ParseKeySortingType(keySorting)
 		if err != nil {
 			return err
 		}
@@ -97,15 +95,4 @@ func keySortingCompletion(_ *cobra.Command, _ []string, _ string) ([]string, cob
 		"hierarchical\tUse file-system like hierarchical sorting based on `/`",
 		"natural\tUse natural, byte-wise sorting",
 	}, cobra.ShellCompDirectiveDefault
-}
-
-func parseKeySorting(value string) (proto.KeySortingType, error) {
-	switch strings.ToLower(value) {
-	case "", "hierarchical":
-		return proto.KeySortingType_HIERARCHICAL, nil
-	case "natural":
-		return proto.KeySortingType_NATURAL, nil
-	default:
-		return proto.KeySortingType_UNKNOWN, errors.New(`invalid key sorting, allowed values: "hierarchical", "natural"`)
-	}
 }
