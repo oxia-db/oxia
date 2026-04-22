@@ -39,7 +39,6 @@ func newTestMetadata(t *testing.T, config model.ClusterConfig) coordmetadata.Met
 			return config, nil
 		},
 		nil,
-		nil,
 	)
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())

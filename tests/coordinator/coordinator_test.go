@@ -44,16 +44,18 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
+	metadata := createCoordinatorMetadata(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil)
+	defer func() {
+		assert.NoError(t, metadata.Close())
+	}()
 	coordinatorInstance, err := coordinator.NewCoordinator(
-		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil,
+		metadata,
 		rpc2.NewRpcProviderFactory(nil),
 	)
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
-	metadata := model.ShardMetadata{
+	shardMetadata := model.ShardMetadata{
 		Status:                  model.ShardStatusSteadyState,
 		Term:                    999,
 		Leader:                  nil,
@@ -63,8 +65,8 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		Int32HashRange:          model.Int32HashRange{Min: 2000, Max: 100000},
 	}
 	metadataView := coordinatorInstance.Metadata()
-	metadataView.UpdateShardMetadata("default", 1, metadata)
+	metadataView.UpdateShardMetadata("default", 1, shardMetadata)
 
 	status := metadataView.LoadStatus()
-	assert.EqualValues(t, status.Namespaces["default"].Shards[1], metadata)
+	assert.EqualValues(t, status.Namespaces["default"].Shards[1], shardMetadata)
 }

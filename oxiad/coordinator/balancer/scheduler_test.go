@@ -24,6 +24,7 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
@@ -60,6 +61,10 @@ func (*mockMetadata) IsReady(*model.ClusterConfig) bool { return true }
 func (*mockMetadata) StatusChangeNotify() <-chan struct{} { return make(chan struct{}) }
 
 func (*mockMetadata) LoadConfig() *model.ClusterConfig { return nil }
+
+func (*mockMetadata) ConfigWatch() *commonoption.Watch[*model.ClusterConfig] {
+	return commonoption.NewWatch[*model.ClusterConfig](nil)
+}
 
 func (m *mockMetadata) LoadLoadBalancer() *model.LoadBalancer {
 	if m.lbConfig != nil {

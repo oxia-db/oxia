@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
@@ -182,9 +183,17 @@ func main() {
 			Servers: servers,
 		}
 
+		metadataProvider := file.NewProvider(filepath.Join(dataDir, "cluster-status.json"))
+		if err := metadataProvider.WaitToBecomeLeader(); err != nil {
+			slog.Error(
+				"failed to wait for coordinator metadata leadership",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+		metadata := coordmetadata.New(context.Background(), metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil)
 		_, err := coordinator.NewCoordinator(
-			file.NewProvider(filepath.Join(dataDir, "cluster-status.json")),
-			func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil,
+			metadata,
 			func(instanceID string) rpc.Provider {
 				return newRpcProvider(dispatcher)
 			})

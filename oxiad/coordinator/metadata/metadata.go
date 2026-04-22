@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/oxia-db/oxia/common/process"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
@@ -50,6 +51,7 @@ type Metadata interface {
 	StatusChangeNotify() <-chan struct{}
 
 	LoadConfig() *model.ClusterConfig
+	ConfigWatch() *commonoption.Watch[*model.ClusterConfig]
 	LoadLoadBalancer() *model.LoadBalancer
 	Nodes() *linkedhashset.Set[string]
 	NodesWithMetadata() (*linkedhashset.Set[string], map[string]model.ServerMetadata)
@@ -59,10 +61,6 @@ type Metadata interface {
 }
 
 type EnsembleSupplier func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error)
-
-type ClusterConfigEventListener interface {
-	ConfigChanged(newConfig *model.ClusterConfig)
-}
 
 type coordinatorMetadata struct {
 	*slog.Logger
@@ -80,12 +78,12 @@ type coordinatorMetadata struct {
 
 	clusterConfigProvider        func() (model.ClusterConfig, error)
 	clusterConfigNotificationsCh chan any
-	clusterConfigEventListener   ClusterConfigEventListener
 
-	clusterConfigLock     sync.RWMutex
-	currentClusterConfig  *model.ClusterConfig
-	nodesIndex            *redblacktree.Tree[string, *model.Server]
-	namespaceConfigsIndex *redblacktree.Tree[string, *model.NamespaceConfig]
+	clusterConfigLock       sync.RWMutex
+	currentClusterConfig    *model.ClusterConfig
+	clusterConfigWatch      *commonoption.Watch[*model.ClusterConfig]
+	nodesIndex              *redblacktree.Tree[string, *model.Server]
+	namespaceConfigsIndex   *redblacktree.Tree[string, *model.NamespaceConfig]
 }
 
 func New(
@@ -93,7 +91,6 @@ func New(
 	metadataProvider provider.Provider,
 	clusterConfigProvider func() (model.ClusterConfig, error),
 	clusterConfigNotificationsCh chan any,
-	clusterConfigEventListener ClusterConfigEventListener,
 ) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
@@ -106,19 +103,17 @@ func New(
 		changeCh:                     make(chan struct{}),
 		clusterConfigProvider:        clusterConfigProvider,
 		clusterConfigNotificationsCh: clusterConfigNotificationsCh,
-		clusterConfigEventListener:   clusterConfigEventListener,
+		clusterConfigWatch:           commonoption.NewWatch[*model.ClusterConfig](nil),
 	}
 
 	m.doStatusRecovery()
 
 	if clusterConfigNotificationsCh != nil {
-		m.wg.Add(1)
-		go func() {
-			defer m.wg.Done()
+		m.wg.Go(func() {
 			process.DoWithLabels(metadataCtx, map[string]string{
 				"component": "coordinator-metadata-config-watcher",
 			}, m.waitForConfigUpdates)
-		}()
+		})
 	}
 
 	return m
@@ -283,6 +278,10 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 		}
 		m.currentClusterConfig = &newConfig
 		m.rebuildConfigIndexesLocked()
+		watchedConfig, _ := m.clusterConfigWatch.Load()
+		if watchedConfig == nil {
+			m.clusterConfigWatch.Notify(m.currentClusterConfig)
+		}
 		return nil
 	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
 		m.Warn(
@@ -335,9 +334,7 @@ func (m *coordinatorMetadata) waitForConfigUpdates() {
 				m.Info("No cluster config changes detected")
 				continue
 			}
-			if m.clusterConfigEventListener != nil {
-				m.clusterConfigEventListener.ConfigChanged(currentClusterConfig)
-			}
+			m.clusterConfigWatch.Notify(currentClusterConfig)
 		}
 	}
 }
@@ -351,6 +348,10 @@ func (m *coordinatorMetadata) LoadConfig() *model.ClusterConfig {
 		m.clusterConfigLock.RLock()
 	}
 	return m.currentClusterConfig
+}
+
+func (m *coordinatorMetadata) ConfigWatch() *commonoption.Watch[*model.ClusterConfig] {
+	return m.clusterConfigWatch
 }
 
 func (m *coordinatorMetadata) LoadLoadBalancer() *model.LoadBalancer {

@@ -64,8 +64,8 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 	}
 
 	metadataProvider := memory.NewProvider()
-	var err error
-	cluster.coordinator, err = coordinator.NewCoordinator(
+	cluster.coordinator = newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) {
 			return model.ClusterConfig{
@@ -81,7 +81,6 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		nil,
 		coordinatorrpc.NewRpcProviderFactory(nil),
 	)
-	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
 		shard := cluster.coordinator.Metadata().LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0]

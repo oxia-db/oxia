@@ -26,7 +26,6 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/tests/mock"
@@ -49,13 +48,13 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
@@ -112,13 +111,13 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
@@ -175,13 +174,13 @@ func TestLeaderHintListWithClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
@@ -229,13 +228,13 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
@@ -292,13 +291,13 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
@@ -350,13 +349,13 @@ func TestLeaderHintWithClient(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {

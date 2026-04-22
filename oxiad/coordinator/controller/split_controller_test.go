@@ -82,7 +82,7 @@ func setupSplitTest(t *testing.T, phase model.SplitPhase) (
 	metaProvider := memory.NewProvider()
 	metadata := coordmetadata.New(t.Context(), metaProvider, func() (model.ClusterConfig, error) {
 		return model.ClusterConfig{}, nil
-	}, nil, nil)
+	}, nil)
 	t.Cleanup(func() { assert.NoError(t, metadata.Close()) })
 
 	clusterStatus := &model.ClusterStatus{

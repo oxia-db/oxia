@@ -52,7 +52,7 @@ func newTestMetadata(t *testing.T, metadataProvider provider.Provider, clusterCo
 
 	metadata := coordmetadata.New(t.Context(), metadataProvider, func() (model.ClusterConfig, error) {
 		return clusterConfig, nil
-	}, nil, nil)
+	}, nil)
 	t.Cleanup(func() {
 		assert.NoError(t, metadata.Close())
 	})

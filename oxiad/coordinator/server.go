@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
@@ -62,6 +63,7 @@ type GrpcServer struct {
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
 	coordinator  Coordinator
+	metadata     coordmetadata.Metadata
 	metrics      *metric.PrometheusMetrics
 }
 
@@ -187,8 +189,16 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 
-	coordinatorInstance, err := NewCoordinator(metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
+	slog.Info("Waiting to become leader", slog.String("component", "coordinator"))
+	if err := metadataProvider.WaitToBecomeLeader(); err != nil {
+		return nil, errors.Wrap(err, "failed to wait in becoming leader")
+	}
+	slog.Info("This coordinator is now leader", slog.String("component", "coordinator"))
+
+	metadata := coordmetadata.New(parent, metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications)
+	coordinatorInstance, err := NewCoordinator(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err != nil {
+		_ = metadata.Close()
 		return nil, err
 	}
 
@@ -223,6 +233,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		adminServer:      adminGrpcServer,
 		healthServer:     healthServer,
 		coordinator:      coordinatorInstance,
+		metadata:         metadata,
 		metrics:          metricsServer,
 	}
 	server.wg.Go(func() {
@@ -275,6 +286,7 @@ func (s *GrpcServer) Close() error {
 		s.grpcServer.Close(),
 		s.adminServer.Close(),
 		s.coordinator.Close(),
+		s.metadata.Close(),
 	)
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())

@@ -51,8 +51,10 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		memory.NewProvider(),
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		nil,
 	)
+	t.Cleanup(func() {
+		require.NoError(t, metadata.Close())
+	})
 	metadata.UpdateStatus(&model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {
@@ -111,8 +113,10 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		memory.NewProvider(),
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
-		nil,
 	)
+	t.Cleanup(func() {
+		require.NoError(t, metadata.Close())
+	})
 	metadata.UpdateStatus(&model.ClusterStatus{
 		Namespaces: map[string]model.NamespaceStatus{
 			"default": {

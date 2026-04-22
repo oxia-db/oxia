@@ -31,7 +31,6 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
@@ -77,13 +76,13 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 		}},
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithNamespace("default"))

@@ -39,7 +39,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
@@ -115,10 +114,9 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
 
 	return s1Addr.Public, func() {
 		s1.Close()
@@ -311,10 +309,9 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	// Test authentication with issuer 1
@@ -469,10 +466,9 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider,
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
 	// Create a valid token

@@ -78,8 +78,7 @@ func TestCoordinatorE2E(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := metadata.LoadStatus()
@@ -116,8 +115,7 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := metadata.LoadStatus()
@@ -168,8 +166,7 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := metadata.LoadStatus()
@@ -272,8 +269,7 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := metadata.LoadStatus()
@@ -363,8 +359,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := metadata.LoadStatus()
@@ -411,8 +406,13 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}
 
 	slog.Info("Restarting coordinator")
-	coordinatorInstance, err = coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return newClusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
+	newMetadata := createCoordinatorMetadata(t, metadataProvider, func() (model.ClusterConfig, error) { return newClusterConfig, nil }, nil)
+	t.Cleanup(func() {
+		assert.NoError(t, newMetadata.Close())
+	})
+	restartedCoordinator, err := coordinator.NewCoordinator(newMetadata, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
+	coordinatorInstance = restartedCoordinator
 
 	metadata = coordinatorInstance.Metadata()
 	// Wait for all shards to be deleted
@@ -454,8 +454,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		return clusterConfig, nil
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := metadata.LoadStatus()
@@ -544,8 +543,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	}
 
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	c := newCoordinatorInstance(t, metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
 
 	assert.Equal(t, 3, len(c.NodeControllers()))
 
@@ -604,8 +602,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	}
 
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	c := newCoordinatorInstance(t, metadataProvider, configProvider, configChangesCh, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := c.Metadata()
 
@@ -677,11 +674,10 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 	configChangesCh := make(chan any)
-	c, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) {
+	c := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) {
 		return clusterConfig, nil
 	}, configChangesCh,
 		rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
 
 	metadata := c.Metadata()
 	// wait for all shards to be ready
@@ -724,12 +720,8 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 		return true
 	}, 10*time.Second, 10*time.Millisecond)
 
-	err = s1.Close()
-	assert.NoError(t, err)
-	err = s2.Close()
-	assert.NoError(t, err)
-	err = s3.Close()
-	assert.NoError(t, err)
-	err = c.Close()
-	assert.NoError(t, err)
+	assert.NoError(t, s1.Close())
+	assert.NoError(t, s2.Close())
+	assert.NoError(t, s3.Close())
+	assert.NoError(t, c.Close())
 }

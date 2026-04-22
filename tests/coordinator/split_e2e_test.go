@@ -65,13 +65,13 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc2.NewRpcProviderFactory(nil),
 	)
-	require.NoError(t, err)
 	clientPool := rpc.NewClientPool(nil, nil)
 
 	metadata := coordinatorInstance.Metadata()
@@ -330,13 +330,13 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		Servers: []model.Server{sa1, sa2, sa3},
 	}
 
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance := newCoordinatorInstance(
+		t,
 		metadataProvider,
 		func() (model.ClusterConfig, error) { return clusterConfig, nil },
 		nil,
 		rpc2.NewRpcProviderFactory(nil),
 	)
-	require.NoError(t, err)
 
 	metadata := coordinatorInstance.Metadata()
 	require.Eventually(t, func() bool {
@@ -856,8 +856,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				Servers: []model.Server{sa1},
 			}
 
-			coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
-			assert.NoError(t, err)
+			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
 			metadata := coordinatorInstance.Metadata()
 			status := metadata.LoadStatus()

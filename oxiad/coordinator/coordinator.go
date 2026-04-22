@@ -27,7 +27,6 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
@@ -49,7 +48,6 @@ type Coordinator interface {
 	controller.ShardEventListener
 	controller.ShardAssignmentsProvider
 	controller.DataServerEventListener
-	coordmetadata.ClusterConfigEventListener
 
 	NodeControllers() map[string]controller.DataServerController
 
@@ -64,9 +62,6 @@ type coordinator struct {
 	*slog.Logger
 	sync.WaitGroup
 	sync.RWMutex
-
-	// Cluster config resource wg, ConfigChanged method should be called after NewCoordinator finished.
-	ccrWg sync.WaitGroup
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -84,8 +79,6 @@ type coordinator struct {
 
 	loadBalancer     balancer.LoadBalancer
 	ensembleSelector selector.Selector[*ensemble.Context, []string]
-
-	clusterConfigChangeCh chan any
 
 	assignmentsChanged concurrent.ConditionContext
 	assignments        *proto.ShardAssignments
@@ -124,7 +117,6 @@ func (c *coordinator) NodeControllers() map[string]controller.DataServerControll
 }
 
 func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
-	c.ccrWg.Wait()
 	c.Lock()
 	defer c.Unlock()
 
@@ -243,7 +235,7 @@ func (c *coordinator) Close() error {
 	c.cancel()
 	c.Wait()
 
-	err := c.metadata.Close()
+	var err error
 	for _, sc := range c.splitControllers {
 		sc.Close()
 	}
@@ -302,7 +294,6 @@ func (c *coordinator) WaitForNextUpdate(ctx context.Context, currentValue *proto
 }
 
 func (c *coordinator) startBackgroundActionWorker() {
-	defer c.Done()
 	for {
 		select {
 		case ac := <-c.loadBalancer.Action():
@@ -318,6 +309,22 @@ func (c *coordinator) startBackgroundActionWorker() {
 		case <-c.ctx.Done():
 			return
 		}
+	}
+}
+
+func (c *coordinator) startBackgroundConfigWatcher() {
+	configWatch := c.metadata.ConfigWatch()
+	_, ver := configWatch.Load()
+	for {
+		newConfig, nextVer, err := configWatch.Wait(c.ctx, ver)
+		if err != nil {
+			return
+		}
+		ver = nextVer
+		if newConfig == nil {
+			continue
+		}
+		c.ConfigChanged(newConfig)
 	}
 }
 
@@ -702,35 +709,25 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 	}
 }
 
-func NewCoordinator(metadataProvider provider.Provider,
-	clusterConfigProvider func() (model.ClusterConfig, error),
-	clusterConfigNotificationsCh chan any,
-	rpcProvider rpc.ProviderFactory) (Coordinator, error) {
+func newCoordinator(
+	metadata coordmetadata.Metadata,
+	rpcProvider rpc.ProviderFactory,
+) (Coordinator, error) {
 	c := &coordinator{
 		Logger: slog.With(
 			slog.String("component", "coordinator"),
 		),
-		WaitGroup:             sync.WaitGroup{},
-		ccrWg:                 sync.WaitGroup{},
-		clusterConfigChangeCh: clusterConfigNotificationsCh,
-		ensembleSelector:      ensemble.NewSelector(),
-		shardControllers:      make(map[int64]controller.ShardController),
-		splitControllers:      make(map[int64]*controller.SplitController),
-		nodeControllers:       make(map[string]controller.DataServerController),
-		drainingNodes:         make(map[string]controller.DataServerController),
+		WaitGroup:        sync.WaitGroup{},
+		ensembleSelector: ensemble.NewSelector(),
+		shardControllers: make(map[int64]controller.ShardController),
+		splitControllers: make(map[int64]*controller.SplitController),
+		nodeControllers:  make(map[string]controller.DataServerController),
+		drainingNodes:    make(map[string]controller.DataServerController),
+		metadata:         metadata,
 	}
-	c.ccrWg.Add(1)
-
-	// Ensure we are to become the leader coordinator
-	c.Info("Waiting to become leader")
-	if err := metadataProvider.WaitToBecomeLeader(); err != nil {
-		return nil, errors.Wrap(err, "failed to wait in becoming leader")
-	}
-	c.Info("This coordinator is now leader")
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
-	c.metadata = coordmetadata.New(c.ctx, metadataProvider, clusterConfigProvider, clusterConfigNotificationsCh, c)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:  c.ctx,
@@ -781,12 +778,24 @@ func NewCoordinator(metadataProvider provider.Provider,
 	// Restart any in-progress splits from persisted state
 	c.restartInProgressSplits(clusterStatus)
 
-	c.Add(1)
-	go process.DoWithLabels(c.ctx, map[string]string{
-		"component": "coordinator-action-worker",
-	}, c.startBackgroundActionWorker)
+	c.Go(func() {
+		process.DoWithLabels(c.ctx, map[string]string{
+			"component": "coordinator-action-worker",
+		}, c.startBackgroundActionWorker)
+	})
+	c.Go(func() {
+		process.DoWithLabels(c.ctx, map[string]string{
+			"component": "coordinator-config-watcher",
+		}, c.startBackgroundConfigWatcher)
+	})
 
 	c.loadBalancer.Start()
-	c.ccrWg.Done()
 	return c, nil
+}
+
+func NewCoordinator(
+	metadata coordmetadata.Metadata,
+	rpcProvider rpc.ProviderFactory,
+) (Coordinator, error) {
+	return newCoordinator(metadata, rpcProvider)
 }
