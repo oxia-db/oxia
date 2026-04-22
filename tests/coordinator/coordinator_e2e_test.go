@@ -671,8 +671,8 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	for _, sv := range clusterConfig.Servers {
 		clusterServer = append(clusterServer, &proto.DataServer{
 			Name:     sv.Name,
-			Public:   strings.ReplaceAll(sv.GetPublicAddress(), "localhost", "127.0.0.1"),
-			Internal: sv.GetInternalAddress(),
+			Public:   strings.ReplaceAll(sv.GetPublic(), "localhost", "127.0.0.1"),
+			Internal: sv.GetInternal(),
 		})
 	}
 

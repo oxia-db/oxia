@@ -423,7 +423,7 @@ func mergedAuthorities(status *model.ClusterStatus, servers []*proto.DataServer,
 		authorities.Add(internal)
 	}
 	for _, server := range servers {
-		addServerAuthorities(server.GetPublicAddress(), server.GetInternalAddress())
+		addServerAuthorities(server.GetPublic(), server.GetInternal())
 	}
 	for _, namespace := range status.Namespaces {
 		for _, shard := range namespace.Shards {

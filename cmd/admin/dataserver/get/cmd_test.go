@@ -60,7 +60,7 @@ func Test_cmd_getDataServer(t *testing.T) {
 	require.NotNil(t, dataServer.DataServer)
 	assert.NotNil(t, dataServer.DataServer.Name)
 	assert.Equal(t, serverName, *dataServer.DataServer.Name)
-	assert.Equal(t, "public1", dataServer.DataServer.GetPublicAddress())
-	assert.Equal(t, "internal1", dataServer.DataServer.GetInternalAddress())
+	assert.Equal(t, "public1", dataServer.DataServer.GetPublic())
+	assert.Equal(t, "internal1", dataServer.DataServer.GetInternal())
 	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
 }

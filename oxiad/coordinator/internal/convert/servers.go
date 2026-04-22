@@ -25,7 +25,7 @@ func DataServer(server *commonproto.DataServer) model.Server {
 	}
 	return model.Server{
 		Name:     server.Name,
-		Public:   server.GetPublicAddress(),
-		Internal: server.GetInternalAddress(),
+		Public:   server.GetPublic(),
+		Internal: server.GetInternal(),
 	}
 }

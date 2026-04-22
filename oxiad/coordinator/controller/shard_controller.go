@@ -475,7 +475,7 @@ func (s *shardController) SyncServerAddress() {
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
 		if newInfo, ok := s.metadataStore.Node(candidate.GetIdentifier()); ok {
-			if newInfo.GetPublicAddress() != candidate.Public || newInfo.GetInternalAddress() != candidate.Internal {
+			if newInfo.GetPublic() != candidate.Public || newInfo.GetInternal() != candidate.Internal {
 				needSync = true
 				break
 			}

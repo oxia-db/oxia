@@ -172,8 +172,8 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 	require.Len(t, dataServers, 1)
 	require.NotNil(t, dataServers[0].Name)
 	assert.Equal(t, serverName, *dataServers[0].Name)
-	assert.Equal(t, "public-1", dataServers[0].GetPublicAddress())
-	assert.Equal(t, "internal-1", dataServers[0].GetInternalAddress())
+	assert.Equal(t, "public-1", dataServers[0].GetPublic())
+	assert.Equal(t, "internal-1", dataServers[0].GetInternal())
 }
 
 func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
@@ -204,8 +204,8 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	require.NotNil(t, dataServer.DataServer)
 	require.NotNil(t, dataServer.DataServer.Name)
 	assert.Equal(t, serverName, *dataServer.DataServer.Name)
-	assert.Equal(t, "public-1", dataServer.DataServer.GetPublicAddress())
-	assert.Equal(t, "internal-1", dataServer.DataServer.GetInternalAddress())
+	assert.Equal(t, "public-1", dataServer.DataServer.GetPublic())
+	assert.Equal(t, "internal-1", dataServer.DataServer.GetInternal())
 	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
 }
 

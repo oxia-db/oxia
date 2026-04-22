@@ -51,8 +51,8 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 			name := server.GetIdentifier()
 			dataServer = &proto.DataServer{
 				Name:     &name,
-				Public:   server.GetPublicAddress(),
-				Internal: server.GetInternalAddress(),
+				Public:   server.GetPublic(),
+				Internal: server.GetInternal(),
 			}
 		}
 		dataServers = append(dataServers, dataServer)
@@ -98,8 +98,8 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 		name := node.GetIdentifier()
 		nodes[i] = &proto.Node{
 			Name:            &name,
-			PublicAddress:   node.GetPublicAddress(),
-			InternalAddress: node.GetInternalAddress(),
+			PublicAddress:   node.GetPublic(),
+			InternalAddress: node.GetInternal(),
 			Metadata:        map[string]string{},
 		}
 		if nodeMeta, found := cnfMeta[node.GetIdentifier()]; found {

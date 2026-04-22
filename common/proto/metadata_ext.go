@@ -41,20 +41,6 @@ func (ds *DataServer) GetIdentifier() string {
 	if ds.Name != nil {
 		return ds.GetName()
 	}
-	return ds.GetInternalAddress()
-}
-
-func (ds *DataServer) GetPublicAddress() string {
-	if ds == nil {
-		return ""
-	}
-	return ds.GetPublic()
-}
-
-func (ds *DataServer) GetInternalAddress() string {
-	if ds == nil {
-		return ""
-	}
 	return ds.GetInternal()
 }
 
@@ -133,8 +119,8 @@ func (cc *ClusterConfiguration) GetDataServerInfo(id string) (*DataServerInfo, b
 			name := server.GetIdentifier()
 			dataServer = &DataServer{
 				Name:     &name,
-				Public:   server.GetPublicAddress(),
-				Internal: server.GetInternalAddress(),
+				Public:   server.GetPublic(),
+				Internal: server.GetInternal(),
 			}
 		}
 
