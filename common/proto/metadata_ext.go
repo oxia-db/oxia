@@ -34,7 +34,7 @@ const (
 	AntiAffinityModeRelaxed = "relaxed"
 )
 
-func (ds *DataServer) GetIdentifier() string {
+func (ds *DataServer) GetNameOrDefault() string {
 	if ds == nil {
 		return ""
 	}
@@ -49,13 +49,6 @@ func (ns *Namespace) NotificationsEnabledOrDefault() bool {
 		return true
 	}
 	return ns.GetNotificationsEnabled()
-}
-
-func (ns *Namespace) GetHierarchyPolicies() *HierarchyPolicies {
-	if ns == nil {
-		return nil
-	}
-	return ns.GetPolicy()
 }
 
 func (ns *Namespace) KeySortingType() (KeySortingType, error) {
@@ -78,14 +71,6 @@ func ParseKeySortingType(value string) (KeySortingType, error) {
 	}
 }
 
-func (ns *Namespace) KeySortingTypeOrDefault() KeySortingType {
-	keySorting, err := ns.KeySortingType()
-	if err != nil {
-		return KeySortingType_UNKNOWN
-	}
-	return keySorting
-}
-
 func ParseAntiAffinityMode(value string) string {
 	switch strings.ToLower(value) {
 	case AntiAffinityModeStrict:
@@ -97,26 +82,19 @@ func ParseAntiAffinityMode(value string) string {
 	}
 }
 
-func (a *AntiAffinity) ModeOrDefault() string {
-	if a == nil {
-		return AntiAffinityModeUnknown
-	}
-	return ParseAntiAffinityMode(a.GetMode())
-}
-
 func (cc *ClusterConfiguration) GetDataServerInfo(id string) (*DataServerInfo, bool) {
 	if cc == nil {
 		return nil, false
 	}
 
 	for _, server := range cc.GetServers() {
-		if server.GetIdentifier() != id {
+		if server.GetNameOrDefault() != id {
 			continue
 		}
 
 		dataServer := server
 		if server.GetName() == "" {
-			name := server.GetIdentifier()
+			name := server.GetNameOrDefault()
 			dataServer = &DataServer{
 				Name:     &name,
 				Public:   server.GetPublic(),
@@ -143,7 +121,7 @@ func (cc *ClusterConfiguration) Normalize() {
 	}
 
 	for _, ns := range cc.GetNamespaces() {
-		for _, antiAffinity := range ns.GetHierarchyPolicies().GetAntiAffinities() {
+		for _, antiAffinity := range ns.GetPolicy().GetAntiAffinities() {
 			antiAffinity.Mode = ParseAntiAffinityMode(antiAffinity.GetMode())
 		}
 	}

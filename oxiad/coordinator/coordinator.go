@@ -125,19 +125,19 @@ func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 
 	// Check for nodes to add
 	for _, sa := range newConfig.GetServers() {
-		if _, ok := c.nodeControllers[sa.GetIdentifier()]; ok {
+		if _, ok := c.nodeControllers[sa.GetNameOrDefault()]; ok {
 			continue
 		}
 		// The node is present in the config, though we don't know it yet,
 		// therefore it must be a newly added node
 		c.Info("Detected new node", slog.Any("server", sa))
-		if nc, ok := c.drainingNodes[sa.GetIdentifier()]; ok {
+		if nc, ok := c.drainingNodes[sa.GetNameOrDefault()]; ok {
 			// If there were any controller for a draining node, close it
 			// and recreate it as a new node
 			_ = nc.Close()
-			delete(c.drainingNodes, sa.GetIdentifier())
+			delete(c.drainingNodes, sa.GetNameOrDefault())
 		}
-		c.nodeControllers[sa.GetIdentifier()] = controller.NewDataServerController(
+		c.nodeControllers[sa.GetNameOrDefault()] = controller.NewDataServerController(
 			c.ctx,
 			coordconvert.DataServer(sa),
 			c,
@@ -207,7 +207,7 @@ func (c *coordinator) selectNewEnsemble(ns *proto.Namespace, editingStatus *mode
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
 		CandidatesMetadata: nodesMetadata,
-		HierarchyPolicies:  ns.GetHierarchyPolicies(),
+		HierarchyPolicies:  ns.GetPolicy(),
 		Status:             editingStatus,
 		Replicas:           int(ns.GetReplicationFactor()),
 		LoadRatioSupplier: func() *model.Ratio {
@@ -749,7 +749,7 @@ func newCoordinator(
 
 	// init node controller
 	for _, node := range clusterConfig.GetServers() {
-		c.nodeControllers[node.GetIdentifier()] = controller.NewDataServerController(
+		c.nodeControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
 			c.ctx,
 			coordconvert.DataServer(node),
 			c,

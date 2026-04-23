@@ -237,7 +237,7 @@ func (r *nodeBasedBalancer) swapShard(
 	sContext := &single.Context{
 		Candidates:         candidates,
 		CandidatesMetadata: metadata,
-		HierarchyPolicies:  nsc.GetHierarchyPolicies(),
+		HierarchyPolicies:  nsc.GetPolicy(),
 		Status:             currentStatus,
 		LoadRatioSupplier:  func() *model.Ratio { return loadRatios },
 	}

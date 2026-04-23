@@ -601,7 +601,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	leaderID := metadata.LoadStatus().Namespaces["my-ns-1"].Shards[0].Leader.GetIdentifier()
 	d := make([]*proto.DataServer, 0)
 	for _, sv := range clusterConfig.Servers {
-		if sv.GetIdentifier() != leaderID {
+		if sv.GetNameOrDefault() != leaderID {
 			d = append(d, sv)
 		}
 	}

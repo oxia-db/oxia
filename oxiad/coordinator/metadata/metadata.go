@@ -291,7 +291,7 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
 	nodes := redblacktree.New[string, *commonproto.DataServer]()
 	for _, server := range m.currentClusterConfig.GetServers() {
-		nodes.Put(server.GetIdentifier(), server)
+		nodes.Put(server.GetNameOrDefault(), server)
 	}
 	m.nodesIndex = nodes
 
@@ -363,7 +363,7 @@ func (m *coordinatorMetadata) Nodes() *linkedhashset.Set[string] {
 
 	nodes := linkedhashset.New[string]()
 	for _, server := range m.currentClusterConfig.GetServers() {
-		nodes.Add(server.GetIdentifier())
+		nodes.Add(server.GetNameOrDefault())
 	}
 	return nodes
 }
@@ -379,7 +379,7 @@ func (m *coordinatorMetadata) NodesWithMetadata() (*linkedhashset.Set[string], m
 
 	nodes := linkedhashset.New[string]()
 	for _, server := range m.currentClusterConfig.GetServers() {
-		nodes.Add(server.GetIdentifier())
+		nodes.Add(server.GetNameOrDefault())
 	}
 
 	metadata := make(map[string]*commonproto.DataServerMetadata, len(m.currentClusterConfig.GetServerMetadata()))

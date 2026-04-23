@@ -362,7 +362,7 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 	nsConfig, exist := s.metadataStore.Namespace(s.namespace)
 	if exist {
 		termOptions.EnableNotifications = nsConfig.NotificationsEnabledOrDefault()
-		termOptions.KeySorting = nsConfig.KeySortingTypeOrDefault()
+		termOptions.KeySorting, _ = nsConfig.KeySortingType()
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
 		s.metadataStore, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,

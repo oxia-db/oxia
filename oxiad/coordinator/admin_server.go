@@ -46,16 +46,11 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 
 	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
 	for _, server := range cnf.GetServers() {
-		dataServer := server
-		if server.GetName() == "" {
-			name := server.GetIdentifier()
-			dataServer = &proto.DataServer{
-				Name:     &name,
-				Public:   server.GetPublic(),
-				Internal: server.GetInternal(),
-			}
-		}
-		dataServers = append(dataServers, dataServer)
+		dataServers = append(dataServers, &proto.DataServer{
+			Name:     new(server.GetNameOrDefault()),
+			Public:   server.GetPublic(),
+			Internal: server.GetInternal(),
+		})
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
@@ -95,14 +90,14 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 	cnfMeta := cnf.GetServerMetadata()
 	nodes := make([]*proto.Node, len(cnfNodes))
 	for i, node := range cnfNodes {
-		name := node.GetIdentifier()
+		name := node.GetNameOrDefault()
 		nodes[i] = &proto.Node{
 			Name:            &name,
 			PublicAddress:   node.GetPublic(),
 			InternalAddress: node.GetInternal(),
 			Metadata:        map[string]string{},
 		}
-		if nodeMeta, found := cnfMeta[node.GetIdentifier()]; found {
+		if nodeMeta, found := cnfMeta[node.GetNameOrDefault()]; found {
 			nodes[i].Metadata = nodeMeta.GetLabels()
 		}
 	}

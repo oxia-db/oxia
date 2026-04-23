@@ -74,15 +74,15 @@ loadBalancer:
 	require.Equal(t, "analytics", config.GetNamespaces()[1].GetName())
 	require.False(t, config.GetNamespaces()[1].NotificationsEnabledOrDefault())
 	require.Equal(t, "natural", config.GetNamespaces()[1].GetKeySorting())
-	require.Len(t, config.GetNamespaces()[1].GetHierarchyPolicies().GetAntiAffinities(), 2)
+	require.Len(t, config.GetNamespaces()[1].GetPolicy().GetAntiAffinities(), 2)
 	require.Equal(t, AntiAffinityModeStrict,
-		config.GetNamespaces()[1].GetHierarchyPolicies().GetAntiAffinities()[0].GetMode())
+		config.GetNamespaces()[1].GetPolicy().GetAntiAffinities()[0].GetMode())
 	require.Equal(t, AntiAffinityModeRelaxed,
-		config.GetNamespaces()[1].GetHierarchyPolicies().GetAntiAffinities()[1].GetMode())
+		config.GetNamespaces()[1].GetPolicy().GetAntiAffinities()[1].GetMode())
 
 	require.Len(t, config.GetServers(), 3)
-	require.Equal(t, "node-1", config.GetServers()[0].GetIdentifier())
-	require.Equal(t, "localhost:7659", config.GetServers()[1].GetIdentifier())
+	require.Equal(t, "node-1", config.GetServers()[0].GetNameOrDefault())
+	require.Equal(t, "localhost:7659", config.GetServers()[1].GetNameOrDefault())
 	require.Equal(t, map[string]string{"zone": "us-east-1"}, config.GetServerMetadata()["node-1"].GetLabels())
 	require.Equal(t, map[string]string{"zone": "us-west-1"}, config.GetServerMetadata()["localhost:7659"].GetLabels())
 	require.Equal(t, []string{"bootstrap:6648"}, config.GetAllowExtraAuthorities())
@@ -142,7 +142,9 @@ servers:
 	require.NoError(t, config.Validate())
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Empty(t, config.GetNamespaces()[0].GetKeySorting())
-	require.Equal(t, KeySortingType_UNKNOWN, config.GetNamespaces()[0].KeySortingTypeOrDefault())
+	keySorting, err := config.GetNamespaces()[0].KeySortingType()
+	require.NoError(t, err)
+	require.Equal(t, KeySortingType_UNKNOWN, keySorting)
 }
 
 func TestEncodeYAMLRoundTrip(t *testing.T) {
