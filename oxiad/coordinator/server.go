@@ -21,14 +21,6 @@ import (
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/pkg/errors"
-	"github.com/spf13/viper"
-	"go.uber.org/multierr"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/health"
-	"google.golang.org/grpc/health/grpc_health_v1"
-	"gopkg.in/yaml.v3"
-
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
@@ -36,6 +28,13 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/pkg/errors"
+	"github.com/spf13/viper"
+	"go.uber.org/multierr"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"gopkg.in/yaml.v3"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
@@ -112,11 +111,10 @@ func loadClusterConfiguration(cluster *option.ClusterOptions, v *viper.Viper) (*
 		return nil, err
 	}
 
-	var config proto.ClusterConfiguration
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	config, err := proto.UnmarshalClusterConfigurationYAML(data)
+	if err != nil {
 		return nil, err
 	}
-	config.Normalize()
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -125,7 +123,7 @@ func loadClusterConfiguration(cluster *option.ClusterOptions, v *viper.Viper) (*
 			return nil, errors.Wrapf(err, "cluster configuration: invalid allowExtraAuthorities entry %q", authority)
 		}
 	}
-	return &config, nil
+	return config, nil
 }
 
 func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[*option.Options]) (*GrpcServer, error) {

@@ -349,7 +349,7 @@ func (m *coordinatorMetadata) ConfigWatch() *commonoption.Watch[*commonproto.Clu
 }
 
 func (m *coordinatorMetadata) LoadLoadBalancer() *commonproto.LoadBalancer {
-	return m.LoadConfig().LoadBalancerWithDefaults()
+	return m.LoadConfig().GetLoadBalancerWithDefaults()
 }
 
 func (m *coordinatorMetadata) Nodes() *linkedhashset.Set[string] {

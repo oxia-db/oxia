@@ -20,12 +20,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
-	"gopkg.in/yaml.v3"
 )
 
 func TestDecodeYAMLCompatibility(t *testing.T) {
-	var config ClusterConfiguration
-	err := yaml.Unmarshal([]byte(`
+	config, err := UnmarshalClusterConfigurationYAML([]byte(`
 namespaces:
   - name: default
     initialShardCount: 1
@@ -61,9 +59,8 @@ serverMetadata:
 loadBalancer:
   scheduleInterval: 15s
   quarantineTime: 3m
-`), &config)
+`))
 	require.NoError(t, err)
-	config.Normalize()
 	require.NoError(t, config.Validate())
 
 	require.Len(t, config.GetNamespaces(), 2)
@@ -88,13 +85,12 @@ loadBalancer:
 	require.Equal(t, []string{"bootstrap:6648"}, config.GetAllowExtraAuthorities())
 	require.Equal(t, "15s", config.GetLoadBalancer().GetScheduleInterval())
 	require.Equal(t, "3m", config.GetLoadBalancer().GetQuarantineTime())
-	require.Equal(t, 15*time.Second, config.GetLoadBalancer().ScheduleIntervalDurationOrDefault())
-	require.Equal(t, 3*time.Minute, config.GetLoadBalancer().QuarantineTimeDurationOrDefault())
+	require.Equal(t, 15*time.Second, config.GetLoadBalancer().GetScheduleIntervalDurationOrDefault())
+	require.Equal(t, 3*time.Minute, config.GetLoadBalancer().GetQuarantineTimeDurationOrDefault())
 }
 
 func TestDecodeJSONCompatibility(t *testing.T) {
-	var config ClusterConfiguration
-	err := yaml.Unmarshal([]byte(`{
+	config, err := UnmarshalClusterConfigurationYAML([]byte(`{
   "namespaces": [
     {
       "name": "default",
@@ -117,9 +113,8 @@ func TestDecodeJSONCompatibility(t *testing.T) {
       }
     }
   }
-}`), &config)
+}`))
 	require.NoError(t, err)
-	config.Normalize()
 	require.NoError(t, config.Validate())
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Equal(t, "hierarchical", config.GetNamespaces()[0].GetKeySorting())
@@ -127,8 +122,7 @@ func TestDecodeJSONCompatibility(t *testing.T) {
 }
 
 func TestDecodeYAMLOmittedKeySortingCompatibility(t *testing.T) {
-	var config ClusterConfiguration
-	err := yaml.Unmarshal([]byte(`
+	config, err := UnmarshalClusterConfigurationYAML([]byte(`
 namespaces:
   - name: default
     initialShardCount: 1
@@ -136,13 +130,12 @@ namespaces:
 servers:
   - public: localhost:6648
     internal: localhost:6649
-`), &config)
+`))
 	require.NoError(t, err)
-	config.Normalize()
 	require.NoError(t, config.Validate())
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Empty(t, config.GetNamespaces()[0].GetKeySorting())
-	keySorting, err := config.GetNamespaces()[0].KeySortingType()
+	keySorting, err := config.GetNamespaces()[0].GetKeySortingType()
 	require.NoError(t, err)
 	require.Equal(t, KeySortingType_UNKNOWN, keySorting)
 }
@@ -195,13 +188,11 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 		},
 	}
 
-	data, err := yaml.Marshal(config)
+	data, err := MarshalClusterConfigurationYAML(config)
 	require.NoError(t, err)
 
-	var decoded ClusterConfiguration
-	err = yaml.Unmarshal(data, &decoded)
+	decoded, err := UnmarshalClusterConfigurationYAML(data)
 	require.NoError(t, err)
-	decoded.Normalize()
 	require.NoError(t, decoded.Validate())
-	require.True(t, gproto.Equal(config, &decoded))
+	require.True(t, gproto.Equal(config, decoded))
 }

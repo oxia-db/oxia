@@ -51,11 +51,18 @@ func (ns *Namespace) NotificationsEnabledOrDefault() bool {
 	return ns.GetNotificationsEnabled()
 }
 
-func (ns *Namespace) KeySortingType() (KeySortingType, error) {
+func (ns *Namespace) GetKeySortingType() (KeySortingType, error) {
 	if ns == nil {
 		return KeySortingType_UNKNOWN, nil
 	}
 	return ParseKeySortingType(ns.GetKeySorting())
+}
+
+func (ns *Namespace) SetKeySortingType(value KeySortingType) {
+	if ns == nil {
+		return
+	}
+	ns.KeySorting = formatKeySortingType(value)
 }
 
 func ParseKeySortingType(value string) (KeySortingType, error) {
@@ -80,6 +87,20 @@ func ParseAntiAffinityMode(value string) string {
 	default:
 		return AntiAffinityModeUnknown
 	}
+}
+
+func (a *AntiAffinity) GetModeOrDefault() string {
+	if a == nil {
+		return AntiAffinityModeUnknown
+	}
+	return ParseAntiAffinityMode(a.GetMode())
+}
+
+func (a *AntiAffinity) SetModeOrDefault(value string) {
+	if a == nil {
+		return
+	}
+	a.Mode = ParseAntiAffinityMode(value)
 }
 
 func (cc *ClusterConfiguration) GetDataServerInfo(id string) (*DataServerInfo, bool) {
@@ -115,18 +136,6 @@ func (cc *ClusterConfiguration) GetDataServerInfo(id string) (*DataServerInfo, b
 	return nil, false
 }
 
-func (cc *ClusterConfiguration) Normalize() {
-	if cc == nil {
-		return
-	}
-
-	for _, ns := range cc.GetNamespaces() {
-		for _, antiAffinity := range ns.GetPolicy().GetAntiAffinities() {
-			antiAffinity.Mode = ParseAntiAffinityMode(antiAffinity.GetMode())
-		}
-	}
-}
-
 func (cc *ClusterConfiguration) Validate() error {
 	if cc == nil {
 		return errors.New("cluster configuration: must not be nil")
@@ -155,7 +164,7 @@ func (cc *ClusterConfiguration) Validate() error {
 				ns.GetName(), ns.GetInitialShardCount())
 		}
 
-		if _, err := ns.KeySortingType(); err != nil {
+		if _, err := ns.GetKeySortingType(); err != nil {
 			return fmt.Errorf("cluster configuration: namespace %q has invalid keySorting: %w", ns.GetName(), err)
 		}
 
@@ -166,10 +175,10 @@ func (cc *ClusterConfiguration) Validate() error {
 	}
 
 	if loadBalancer := cc.GetLoadBalancer(); loadBalancer != nil {
-		if _, err := loadBalancer.ScheduleIntervalDuration(); err != nil {
+		if _, err := loadBalancer.GetScheduleIntervalDuration(); err != nil {
 			return fmt.Errorf("cluster configuration: invalid loadBalancer.scheduleInterval: %w", err)
 		}
-		if _, err := loadBalancer.QuarantineTimeDuration(); err != nil {
+		if _, err := loadBalancer.GetQuarantineTimeDuration(); err != nil {
 			return fmt.Errorf("cluster configuration: invalid loadBalancer.quarantineTime: %w", err)
 		}
 	}
@@ -177,43 +186,57 @@ func (cc *ClusterConfiguration) Validate() error {
 	return nil
 }
 
-func (lb *LoadBalancer) ScheduleIntervalDuration() (time.Duration, error) {
+func (lb *LoadBalancer) GetScheduleIntervalDuration() (time.Duration, error) {
 	if lb == nil || lb.GetScheduleInterval() == "" {
 		return 0, nil
 	}
 	return time.ParseDuration(lb.GetScheduleInterval())
 }
 
-func (lb *LoadBalancer) QuarantineTimeDuration() (time.Duration, error) {
+func (lb *LoadBalancer) SetScheduleIntervalDuration(value time.Duration) {
+	if lb == nil {
+		return
+	}
+	lb.ScheduleInterval = value.String()
+}
+
+func (lb *LoadBalancer) GetQuarantineTimeDuration() (time.Duration, error) {
 	if lb == nil || lb.GetQuarantineTime() == "" {
 		return 0, nil
 	}
 	return time.ParseDuration(lb.GetQuarantineTime())
 }
 
-func (lb *LoadBalancer) ScheduleIntervalDurationOrDefault() time.Duration {
+func (lb *LoadBalancer) SetQuarantineTimeDuration(value time.Duration) {
+	if lb == nil {
+		return
+	}
+	lb.QuarantineTime = value.String()
+}
+
+func (lb *LoadBalancer) GetScheduleIntervalDurationOrDefault() time.Duration {
 	if lb == nil {
 		return defaultLoadBalancerScheduleInterval
 	}
-	duration, err := lb.ScheduleIntervalDuration()
+	duration, err := lb.GetScheduleIntervalDuration()
 	if err != nil || duration == 0 {
 		return defaultLoadBalancerScheduleInterval
 	}
 	return duration
 }
 
-func (lb *LoadBalancer) QuarantineTimeDurationOrDefault() time.Duration {
+func (lb *LoadBalancer) GetQuarantineTimeDurationOrDefault() time.Duration {
 	if lb == nil {
 		return defaultLoadBalancerQuarantineTime
 	}
-	duration, err := lb.QuarantineTimeDuration()
+	duration, err := lb.GetQuarantineTimeDuration()
 	if err != nil || duration == 0 {
 		return defaultLoadBalancerQuarantineTime
 	}
 	return duration
 }
 
-func (cc *ClusterConfiguration) LoadBalancerWithDefaults() *LoadBalancer {
+func (cc *ClusterConfiguration) GetLoadBalancerWithDefaults() *LoadBalancer {
 	loadBalancer := &LoadBalancer{
 		ScheduleInterval: defaultLoadBalancerScheduleString,
 		QuarantineTime:   defaultLoadBalancerQuarantineString,
@@ -231,4 +254,15 @@ func (cc *ClusterConfiguration) LoadBalancerWithDefaults() *LoadBalancer {
 	}
 
 	return loadBalancer
+}
+
+func formatKeySortingType(value KeySortingType) string {
+	switch value {
+	case KeySortingType_NATURAL:
+		return "natural"
+	case KeySortingType_HIERARCHICAL:
+		return "hierarchical"
+	default:
+		return ""
+	}
 }
