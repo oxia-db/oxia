@@ -272,7 +272,7 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 		if err != nil {
 			return err
 		}
-		m.currentClusterConfig = gproto.Clone(newConfig).(*commonproto.ClusterConfiguration)
+		m.currentClusterConfig = gproto.Clone(newConfig).(*commonproto.ClusterConfiguration) //nolint:revive
 		m.rebuildConfigIndexesLocked()
 		watchedConfig, _ := m.clusterConfigWatch.Load()
 		if watchedConfig == nil {
