@@ -22,14 +22,13 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/policy"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 )
 
 func TestSelectNoAntiAffinities(t *testing.T) {
 	saSelector := &serverAntiAffinitiesSelector{}
-	candidatesMetadata := map[string]model.ServerMetadata{
+	candidatesMetadata := map[string]*proto.DataServerMetadata{
 		"server1": {Labels: map[string]string{"region": "us-east"}},
 		"server2": {Labels: map[string]string{"region": "us-west"}},
 		"server3": {Labels: map[string]string{"region": "eu-east"}},
@@ -37,12 +36,12 @@ func TestSelectNoAntiAffinities(t *testing.T) {
 		"server5": {Labels: map[string]string{"region": "ap-east"}},
 		"server6": {Labels: map[string]string{"region": "ap-west"}},
 	}
-	var nsPolicies *policy.Policies
+	var nsPolicies *proto.HierarchyPolicies
 
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New[string]("server1", "server2", "server3", "server4", "server5", "server6"),
-		Policies:           nsPolicies,
+		HierarchyPolicies:  nsPolicies,
 	}
 	context.SetSelected(linkedhashset.New[string]())
 
@@ -52,7 +51,7 @@ func TestSelectNoAntiAffinities(t *testing.T) {
 
 func TestSelectSatisfiedAntiAffinities(t *testing.T) {
 	saSelector := &serverAntiAffinitiesSelector{}
-	candidatesMetadata := map[string]model.ServerMetadata{
+	candidatesMetadata := map[string]*proto.DataServerMetadata{
 		"server1": {Labels: map[string]string{"region": "us-east"}},
 		"server2": {Labels: map[string]string{"region": "us-west"}},
 		"server3": {Labels: map[string]string{"region": "eu-east"}},
@@ -60,11 +59,11 @@ func TestSelectSatisfiedAntiAffinities(t *testing.T) {
 		"server5": {Labels: map[string]string{"region": "ap-east"}},
 		"server6": {Labels: map[string]string{"region": "ap-west"}},
 	}
-	nsPolicies := &policy.Policies{
-		AntiAffinities: []policy.AntiAffinity{
+	nsPolicies := &proto.HierarchyPolicies{
+		AntiAffinities: []*proto.AntiAffinity{
 			{
 				Labels: []string{"region"},
-				Mode:   policy.Strict,
+				Mode:   proto.AntiAffinityModeStrict,
 			},
 		},
 	}
@@ -73,7 +72,7 @@ func TestSelectSatisfiedAntiAffinities(t *testing.T) {
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("server1", "server2", "server3", "server4", "server5", "server6"),
-		Policies:           nsPolicies,
+		HierarchyPolicies:  nsPolicies,
 	}
 	context.SetSelected(selected)
 
@@ -107,7 +106,7 @@ func TestSelectSatisfiedAntiAffinities(t *testing.T) {
 
 func TestSelectUnsatisfiedAntiAffinitiesStrict(t *testing.T) {
 	saSelector := &serverAntiAffinitiesSelector{}
-	candidatesMetadata := map[string]model.ServerMetadata{
+	candidatesMetadata := map[string]*proto.DataServerMetadata{
 		"server1": {Labels: map[string]string{"region": "us-east"}},
 		"server2": {Labels: map[string]string{"region": "us-east"}},
 		"server3": {Labels: map[string]string{"region": "us-east"}},
@@ -115,11 +114,11 @@ func TestSelectUnsatisfiedAntiAffinitiesStrict(t *testing.T) {
 		"server5": {Labels: map[string]string{"region": "us-east"}},
 		"server6": {Labels: map[string]string{"region": "us-east"}},
 	}
-	nsPolicies := &policy.Policies{
-		AntiAffinities: []policy.AntiAffinity{
+	nsPolicies := &proto.HierarchyPolicies{
+		AntiAffinities: []*proto.AntiAffinity{
 			{
 				Labels: []string{"region"},
-				Mode:   policy.Strict,
+				Mode:   proto.AntiAffinityModeStrict,
 			},
 		},
 	}
@@ -127,7 +126,7 @@ func TestSelectUnsatisfiedAntiAffinitiesStrict(t *testing.T) {
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("server1", "server2", "server3", "server4", "server5", "server6"),
-		Policies:           nsPolicies,
+		HierarchyPolicies:  nsPolicies,
 	}
 	result, err := saSelector.Select(context)
 	assert.ErrorIs(t, err, selector.ErrMultipleResult)
@@ -148,7 +147,7 @@ func TestSelectUnsatisfiedAntiAffinitiesStrict(t *testing.T) {
 
 func TestSelectUnsatisfiedAntiAffinitiesRelax(t *testing.T) {
 	saSelector := &serverAntiAffinitiesSelector{}
-	candidatesMetadata := map[string]model.ServerMetadata{
+	candidatesMetadata := map[string]*proto.DataServerMetadata{
 		"server1": {Labels: map[string]string{"region": "us-east"}},
 		"server2": {Labels: map[string]string{"region": "us-east"}},
 		"server3": {Labels: map[string]string{"region": "us-east"}},
@@ -156,11 +155,11 @@ func TestSelectUnsatisfiedAntiAffinitiesRelax(t *testing.T) {
 		"server5": {Labels: map[string]string{"region": "us-east"}},
 		"server6": {Labels: map[string]string{"region": "us-east"}},
 	}
-	nsPolicies := &policy.Policies{
-		AntiAffinities: []policy.AntiAffinity{
+	nsPolicies := &proto.HierarchyPolicies{
+		AntiAffinities: []*proto.AntiAffinity{
 			{
 				Labels: []string{"region"},
-				Mode:   policy.Relaxed,
+				Mode:   proto.AntiAffinityModeRelaxed,
 			},
 		},
 	}
@@ -168,7 +167,7 @@ func TestSelectUnsatisfiedAntiAffinitiesRelax(t *testing.T) {
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("server1", "server2", "server3", "server4", "server5", "server6"),
-		Policies:           nsPolicies,
+		HierarchyPolicies:  nsPolicies,
 	}
 	context.SetSelected(selectedServers)
 	result, err := saSelector.Select(context)
@@ -190,16 +189,16 @@ func TestSelectUnsatisfiedAntiAffinitiesRelax(t *testing.T) {
 
 func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 	saSelector := &serverAntiAffinitiesSelector{}
-	candidatesMetadata := map[string]model.ServerMetadata{
+	candidatesMetadata := map[string]*proto.DataServerMetadata{
 		"s1": {Labels: map[string]string{"region": "us-east", "type": "compute1"}},
 		"s2": {Labels: map[string]string{"region": "us-north", "type": "compute1"}},
 		"s3": {Labels: map[string]string{"region": "us-south", "type": "storage1"}},
 		"s4": {Labels: map[string]string{"region": "us-west", "type": "storage2"}},
 	}
-	nsPolicies := &policy.Policies{
-		AntiAffinities: []policy.AntiAffinity{
-			{Labels: []string{"region"}, Mode: policy.Strict},
-			{Labels: []string{"type"}, Mode: policy.Strict},
+	nsPolicies := &proto.HierarchyPolicies{
+		AntiAffinities: []*proto.AntiAffinity{
+			{Labels: []string{"region"}, Mode: proto.AntiAffinityModeStrict},
+			{Labels: []string{"type"}, Mode: proto.AntiAffinityModeStrict},
 		},
 	}
 
@@ -207,7 +206,7 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("s1", "s2", "s3", "s4"),
-		Policies:           nsPolicies,
+		HierarchyPolicies:  nsPolicies,
 	}
 	context.SetSelected(selectedServers)
 

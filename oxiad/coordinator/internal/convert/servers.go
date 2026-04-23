@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package policy
+package convert
 
-type Policies struct {
-	// AntiAffinities defines a list of anti-affinity rules for placement policy, ensuring resource don't coexist undesirably.
-	AntiAffinities []AntiAffinity `json:"antiAffinities,omitempty" yaml:"antiAffinities,omitempty"`
+import (
+	commonproto "github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+)
+
+func DataServer(server *commonproto.DataServer) model.Server {
+	if server == nil {
+		return model.Server{}
+	}
+	return model.Server{
+		Name:     server.Name,
+		Public:   server.GetPublic(),
+		Internal: server.GetInternal(),
+	}
 }

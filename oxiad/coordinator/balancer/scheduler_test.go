@@ -23,6 +23,7 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
+	"github.com/oxia-db/oxia/common/proto"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -34,10 +35,18 @@ import (
 type mockMetadata struct {
 	status    *model.ClusterStatus
 	nodes     *linkedhashset.Set[string]
-	metadata  map[string]model.ServerMetadata
-	nsConfigs map[string]*model.NamespaceConfig
-	nodeMap   map[string]*model.Server
-	lbConfig  *model.LoadBalancer
+	metadata  map[string]*proto.DataServerMetadata
+	nsConfigs map[string]*proto.Namespace
+	nodeMap   map[string]*proto.DataServer
+	lbConfig  *proto.LoadBalancer
+}
+
+func dataServer(server model.Server) *proto.DataServer {
+	return &proto.DataServer{
+		Name:     server.Name,
+		Public:   server.Public,
+		Internal: server.Internal,
+	}
 }
 
 var _ coordmetadata.Metadata = (*mockMetadata)(nil)
@@ -46,7 +55,7 @@ func (*mockMetadata) Close() error { return nil }
 
 func (m *mockMetadata) LoadStatus() *model.ClusterStatus { return m.status }
 
-func (m *mockMetadata) ApplyStatusChanges(*model.ClusterConfig, coordmetadata.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+func (m *mockMetadata) ApplyStatusChanges(*proto.ClusterConfiguration, coordmetadata.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
 	return m.status, nil, nil
 }
 
@@ -56,54 +65,54 @@ func (*mockMetadata) UpdateShardMetadata(string, int64, model.ShardMetadata) {}
 
 func (*mockMetadata) DeleteShardMetadata(string, int64) {}
 
-func (*mockMetadata) IsReady(*model.ClusterConfig) bool { return true }
+func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
 func (*mockMetadata) StatusChangeNotify() <-chan struct{} { return make(chan struct{}) }
 
-func (*mockMetadata) LoadConfig() *model.ClusterConfig { return nil }
+func (*mockMetadata) LoadConfig() *proto.ClusterConfiguration { return nil }
 
-func (*mockMetadata) ConfigWatch() *commonoption.Watch[*model.ClusterConfig] {
-	return commonoption.NewWatch[*model.ClusterConfig](nil)
+func (*mockMetadata) ConfigWatch() *commonoption.Watch[*proto.ClusterConfiguration] {
+	return commonoption.NewWatch[*proto.ClusterConfiguration](nil)
 }
 
-func (m *mockMetadata) LoadLoadBalancer() *model.LoadBalancer {
+func (m *mockMetadata) LoadLoadBalancer() *proto.LoadBalancer {
 	if m.lbConfig != nil {
 		return m.lbConfig
 	}
-	return &model.LoadBalancer{
-		ScheduleInterval: 30 * time.Second,
-		QuarantineTime:   5 * time.Minute,
+	return &proto.LoadBalancer{
+		ScheduleInterval: "30s",
+		QuarantineTime:   "5m",
 	}
 }
 
 func (m *mockMetadata) Nodes() *linkedhashset.Set[string] { return m.nodes }
 
-func (m *mockMetadata) NodesWithMetadata() (*linkedhashset.Set[string], map[string]model.ServerMetadata) {
+func (m *mockMetadata) NodesWithMetadata() (*linkedhashset.Set[string], map[string]*proto.DataServerMetadata) {
 	return m.nodes, m.metadata
 }
 
-func (m *mockMetadata) NamespaceConfig(namespace string) (*model.NamespaceConfig, bool) {
+func (m *mockMetadata) Namespace(namespace string) (*proto.Namespace, bool) {
 	nc, ok := m.nsConfigs[namespace]
 	return nc, ok
 }
 
-func (m *mockMetadata) Node(id string) (*model.Server, bool) {
+func (m *mockMetadata) Node(id string) (*proto.DataServer, bool) {
 	n, ok := m.nodeMap[id]
 	return n, ok
 }
 
-func (m *mockMetadata) GetDataServerInfo(id string) (*model.DataServerInfo, bool) {
+func (m *mockMetadata) GetDataServerInfo(id string) (*proto.DataServerInfo, bool) {
 	n, ok := m.nodeMap[id]
 	if !ok {
 		return nil, false
 	}
 	metadata, ok := m.metadata[id]
 	if !ok {
-		metadata = model.ServerMetadata{}
+		metadata = &proto.DataServerMetadata{}
 	}
-	return &model.DataServerInfo{
-		Server:   n,
-		Metadata: metadata,
+	return &proto.DataServerInfo{
+		DataServer: n,
+		Metadata:   metadata,
 	}, true
 }
 
@@ -172,13 +181,13 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 	metadata := &mockMetadata{
 		status:   status,
 		nodes:    nodes,
-		metadata: map[string]model.ServerMetadata{},
-		nsConfigs: map[string]*model.NamespaceConfig{
+		metadata: map[string]*proto.DataServerMetadata{},
+		nsConfigs: map[string]*proto.Namespace{
 			"rf1ns": {Name: "rf1ns", ReplicationFactor: 1},
 		},
-		nodeMap: map[string]*model.Server{
-			"sv-1": &sv1,
-			"sv-2": &sv2,
+		nodeMap: map[string]*proto.DataServer{
+			"sv-1": dataServer(sv1),
+			"sv-2": dataServer(sv2),
 		},
 	}
 
@@ -227,14 +236,14 @@ func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
 	metadata := &mockMetadata{
 		status:   status,
 		nodes:    nodes,
-		metadata: map[string]model.ServerMetadata{},
-		nsConfigs: map[string]*model.NamespaceConfig{
+		metadata: map[string]*proto.DataServerMetadata{},
+		nsConfigs: map[string]*proto.Namespace{
 			"ns": {Name: "ns", ReplicationFactor: 3},
 		},
-		nodeMap: map[string]*model.Server{
-			"sv-1": &sv1,
-			"sv-2": &sv2,
-			"sv-3": &sv3,
+		nodeMap: map[string]*proto.DataServer{
+			"sv-1": dataServer(sv1),
+			"sv-2": dataServer(sv2),
+			"sv-3": dataServer(sv3),
 		},
 	}
 

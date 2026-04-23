@@ -34,7 +34,7 @@ func (ensemble *ensemble) Select(context *Context) ([]string, error) {
 		Candidates:         context.Candidates,
 		CandidatesMetadata: context.CandidatesMetadata,
 		Status:             context.Status,
-		Policies:           context.Policies,
+		HierarchyPolicies:  context.HierarchyPolicies,
 		LoadRatioSupplier:  context.LoadRatioSupplier,
 	}
 	selected := linkedhashset.New[string]()

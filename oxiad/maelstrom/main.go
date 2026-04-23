@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -34,7 +35,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
@@ -153,10 +153,10 @@ func main() {
 	replicationGrpcProvider := newMaelstromReplicationRpcProvider()
 	dispatcher := newDispatcher(grpcProvider, replicationGrpcProvider)
 
-	var servers []model.Server
+	var servers []*commonproto.DataServer
 	for _, node := range allNodes {
 		if node != thisNode {
-			servers = append(servers, model.Server{
+			servers = append(servers, &commonproto.DataServer{
 				Public:   node,
 				Internal: node,
 			})
@@ -174,8 +174,8 @@ func main() {
 
 	if thisNode == "n1" {
 		// First node is going to be the "coordinator"
-		clusterConfig := model.ClusterConfig{
-			Namespaces: []model.NamespaceConfig{{
+		clusterConfig := &commonproto.ClusterConfiguration{
+			Namespaces: []*commonproto.Namespace{{
 				Name:              constant.DefaultNamespace,
 				ReplicationFactor: 3,
 				InitialShardCount: 1,
@@ -191,7 +191,7 @@ func main() {
 			)
 			os.Exit(1)
 		}
-		metadata := coordmetadata.New(context.Background(), metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil)
+		metadata := coordmetadata.New(context.Background(), metadataProvider, func() (*commonproto.ClusterConfiguration, error) { return clusterConfig, nil }, nil)
 		_, err := coordinator.NewCoordinator(
 			metadata,
 			func(instanceID string) rpc.Provider {

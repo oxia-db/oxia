@@ -40,18 +40,11 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
@@ -103,18 +96,11 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
@@ -166,18 +152,11 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
@@ -220,18 +199,11 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
@@ -283,18 +255,11 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)
@@ -341,18 +306,11 @@ func TestLeaderHintWithClient(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)

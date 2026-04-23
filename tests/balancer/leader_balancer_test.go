@@ -16,17 +16,29 @@ package balancer
 
 import (
 	"testing"
-	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 
 	"github.com/oxia-db/oxia/tests/mock"
 )
+
+func dataServers(servers ...model.Server) []*proto.DataServer {
+	dataServers := make([]*proto.DataServer, 0, len(servers))
+	for _, server := range servers {
+		dataServers = append(dataServers, &proto.DataServer{
+			Name:     server.Name,
+			Public:   server.Public,
+			Internal: server.Internal,
+		})
+	}
+	return dataServers
+}
 
 func waitForSteadyState(t *testing.T, metadata coordmetadata.Metadata, expectedNamespaces int) {
 	t.Helper()
@@ -74,8 +86,8 @@ func TestLeaderBalanced(t *testing.T) {
 	defer s3.Close()
 	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
 
-	cc := &model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	cc := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:              "ns-1",
 				InitialShardCount: 5,
@@ -92,9 +104,9 @@ func TestLeaderBalanced(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: []model.Server{s1ad, s2ad, s3ad},
-		LoadBalancer: &model.LoadBalancer{
-			QuarantineTime: 1 * time.Millisecond,
+		Servers: dataServers(s1ad, s2ad, s3ad),
+		LoadBalancer: &proto.LoadBalancer{
+			QuarantineTime: "1ms",
 		},
 	}
 
@@ -117,8 +129,8 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	s3, s3ad := mock.NewServer(t, "sv-3")
 	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
 
-	cc := &model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	cc := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:              "ns-1",
 				InitialShardCount: 5,
@@ -135,9 +147,9 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: []model.Server{s1ad, s2ad, s3ad},
-		LoadBalancer: &model.LoadBalancer{
-			QuarantineTime: 1 * time.Millisecond,
+		Servers: dataServers(s1ad, s2ad, s3ad),
+		LoadBalancer: &proto.LoadBalancer{
+			QuarantineTime: "1ms",
 		},
 	}
 
@@ -187,8 +199,8 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 
 	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
 
-	cc := &model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	cc := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:              "ns-1",
 				InitialShardCount: 5,
@@ -205,9 +217,9 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: []model.Server{s1ad, s2ad, s3ad},
-		LoadBalancer: &model.LoadBalancer{
-			QuarantineTime: 1 * time.Millisecond,
+		Servers: dataServers(s1ad, s2ad, s3ad),
+		LoadBalancer: &proto.LoadBalancer{
+			QuarantineTime: "1ms",
 		},
 	}
 
@@ -221,7 +233,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	balancer := coordinator.LoadBalancer()
 	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 
-	cc.Servers = append(cc.Servers, s4ad, s5ad, s6ad)
+	cc.Servers = append(cc.Servers, dataServers(s4ad, s5ad, s6ad)...)
 	ch <- nil
 	candidates = linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier(), s4ad.GetIdentifier(), s5ad.GetIdentifier(), s6ad.GetIdentifier())
 

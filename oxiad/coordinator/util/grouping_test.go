@@ -21,11 +21,11 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func TestGroupingCandidatesNormalCase(t *testing.T) {
-	candidatesMetadata := map[string]model.ServerMetadata{
+	candidatesMetadata := map[string]*proto.DataServerMetadata{
 		"server1": {
 			Labels: map[string]string{
 				"region": "us-east",
@@ -56,14 +56,14 @@ func TestGroupingCandidatesNormalCase(t *testing.T) {
 }
 
 func TestGroupingCandidatesNoCandidates(t *testing.T) {
-	candidatesMetadata := map[string]model.ServerMetadata{}
+	candidatesMetadata := map[string]*proto.DataServerMetadata{}
 
 	result := GroupingCandidatesWithLabelValue(linkedhashset.New[string](), candidatesMetadata)
 	assert.Empty(t, result)
 }
 
 func TestGroupingCandidatesNoMetadata(t *testing.T) {
-	candidatesMetadata := map[string]model.ServerMetadata{}
+	candidatesMetadata := map[string]*proto.DataServerMetadata{}
 
 	result := GroupingCandidatesWithLabelValue(linkedhashset.New("server1", "server2"), candidatesMetadata)
 
@@ -71,7 +71,7 @@ func TestGroupingCandidatesNoMetadata(t *testing.T) {
 }
 
 func TestGroupingCandidatesPartialMetadataMissing(t *testing.T) {
-	candidatesMetadata := map[string]model.ServerMetadata{
+	candidatesMetadata := map[string]*proto.DataServerMetadata{
 		"server1": {Labels: map[string]string{"region": "us-east"}},
 	}
 
@@ -85,7 +85,7 @@ func TestGroupingCandidatesPartialMetadataMissing(t *testing.T) {
 }
 
 func TestGroupingCandidatesAllSameLabelValue(t *testing.T) {
-	candidatesMetadata := map[string]model.ServerMetadata{
+	candidatesMetadata := map[string]*proto.DataServerMetadata{
 		"server1": {Labels: map[string]string{"region": "us-east"}},
 		"server2": {Labels: map[string]string{"region": "us-east"}},
 	}

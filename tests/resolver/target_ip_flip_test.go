@@ -27,6 +27,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
@@ -45,6 +46,14 @@ type testCluster struct {
 
 const integrationRequestTimeout = 30 * time.Second
 const rejectionRequestTimeout = 5 * time.Second
+
+func dataServer(server model.Server) *proto.DataServer {
+	return &proto.DataServer{
+		Name:     server.Name,
+		Public:   server.Public,
+		Internal: server.Internal,
+	}
+}
 
 func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCluster {
 	t.Helper()
@@ -67,14 +76,20 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 	cluster.coordinator = newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) {
-			return model.ClusterConfig{
-				Namespaces: []model.NamespaceConfig{{
+		func() (*proto.ClusterConfiguration, error) {
+			return &proto.ClusterConfiguration{
+				Namespaces: []*proto.Namespace{{
 					Name:              constant.DefaultNamespace,
 					ReplicationFactor: 1,
 					InitialShardCount: 3,
 				}},
-				Servers:               cluster.addresses,
+				Servers: func() []*proto.DataServer {
+					dataServers := make([]*proto.DataServer, 0, len(cluster.addresses))
+					for _, addr := range cluster.addresses {
+						dataServers = append(dataServers, dataServer(addr))
+					}
+					return dataServers
+				}(),
 				AllowExtraAuthorities: []string{cluster.authority},
 			}, nil
 		},

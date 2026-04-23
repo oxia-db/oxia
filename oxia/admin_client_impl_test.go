@@ -157,9 +157,9 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 				listDataServersResponse: &proto.ListDataServersResponse{
 					DataServers: []*proto.DataServer{
 						{
-							Name:            &serverName,
-							PublicAddress:   "public-1",
-							InternalAddress: "internal-1",
+							Name:     &serverName,
+							Public:   "public-1",
+							Internal: "internal-1",
 						},
 					},
 				},
@@ -172,8 +172,8 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 	require.Len(t, dataServers, 1)
 	require.NotNil(t, dataServers[0].Name)
 	assert.Equal(t, serverName, *dataServers[0].Name)
-	assert.Equal(t, "public-1", dataServers[0].PublicAddress)
-	assert.Equal(t, "internal-1", dataServers[0].InternalAddress)
+	assert.Equal(t, "public-1", dataServers[0].GetPublic())
+	assert.Equal(t, "internal-1", dataServers[0].GetInternal())
 }
 
 func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
@@ -185,11 +185,13 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 				getDataServerResponse: &proto.GetDataServerResponse{
 					DataServerInfo: &proto.DataServerInfo{
 						DataServer: &proto.DataServer{
-							Name:            &serverName,
-							PublicAddress:   "public-1",
-							InternalAddress: "internal-1",
+							Name:     &serverName,
+							Public:   "public-1",
+							Internal: "internal-1",
 						},
-						Metadata: map[string]string{"rack": "rack-1"},
+						Metadata: &proto.DataServerMetadata{
+							Labels: map[string]string{"rack": "rack-1"},
+						},
 					},
 				},
 			},
@@ -202,9 +204,9 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	require.NotNil(t, dataServer.DataServer)
 	require.NotNil(t, dataServer.DataServer.Name)
 	assert.Equal(t, serverName, *dataServer.DataServer.Name)
-	assert.Equal(t, "public-1", dataServer.DataServer.PublicAddress)
-	assert.Equal(t, "internal-1", dataServer.DataServer.InternalAddress)
-	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata)
+	assert.Equal(t, "public-1", dataServer.DataServer.GetPublic())
+	assert.Equal(t, "internal-1", dataServer.DataServer.GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

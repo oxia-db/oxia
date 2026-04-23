@@ -24,7 +24,9 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	coordconvert "github.com/oxia-db/oxia/oxiad/coordinator/internal/convert"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
@@ -49,7 +51,7 @@ type nodeBasedBalancer struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	loadBalancerConf    *model.LoadBalancer
+	loadBalancerConf    *commonproto.LoadBalancer
 	metadata            coordmetadata.Metadata
 	nodeAvailableJudger func(nodeID string) bool
 
@@ -131,7 +133,7 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	return false
 }
 
-func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidates *linkedhashset.Set[string], metadata map[string]model.ServerMetadata, currentStatus *model.ClusterStatus, swapGroup *sync.WaitGroup) {
+func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidates *linkedhashset.Set[string], metadata map[string]*commonproto.DataServerMetadata, currentStatus *model.ClusterStatus, swapGroup *sync.WaitGroup) {
 	nodeIter := loadRatios.NodeIterator()
 	if !nodeIter.Last() {
 		return
@@ -182,7 +184,7 @@ func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidat
 
 func (r *nodeBasedBalancer) cleanDeletedNode(loadRatios *model.Ratio,
 	candidates *linkedhashset.Set[string],
-	metadata map[string]model.ServerMetadata,
+	metadata map[string]*commonproto.DataServerMetadata,
 	currentStatus *model.ClusterStatus,
 	swapGroup *sync.WaitGroup) {
 	for nodeIter := loadRatios.NodeIterator(); nodeIter.Next(); {
@@ -216,27 +218,26 @@ func (r *nodeBasedBalancer) swapShard(
 	swapGroup *sync.WaitGroup,
 	loadRatios *model.Ratio,
 	candidates *linkedhashset.Set[string],
-	metadata map[string]model.ServerMetadata,
+	metadata map[string]*commonproto.DataServerMetadata,
 	currentStatus *model.ClusterStatus) (bool, error) {
-	var nsc *model.NamespaceConfig
+	var nsc *commonproto.Namespace
 	var exist bool
 	var err error
 
-	if nsc, exist = r.metadata.NamespaceConfig(candidateShard.Namespace); !exist {
+	if nsc, exist = r.metadata.Namespace(candidateShard.Namespace); !exist {
 		return false, nil
 	}
 
 	// With RF=1, an ensemble swap cannot safely transfer data (there's no
 	// follower to replicate from). Skip rebalancing for such namespaces.
-	if nsc.ReplicationFactor <= 1 {
+	if nsc.GetReplicationFactor() <= 1 {
 		return false, nil
 	}
 
-	policies := nsc.Policies
 	sContext := &single.Context{
 		Candidates:         candidates,
 		CandidatesMetadata: metadata,
-		Policies:           policies,
+		HierarchyPolicies:  nsc.GetPolicy(),
 		Status:             currentStatus,
 		LoadRatioSupplier:  func() *model.Ratio { return loadRatios },
 	}
@@ -260,14 +261,14 @@ func (r *nodeBasedBalancer) swapShard(
 	if targetNodeID == fromNodeID {
 		return false, nil
 	}
-	var targetNode *model.Server
+	var targetNode *commonproto.DataServer
 	if targetNode, exist = r.metadata.Node(targetNodeID); !exist {
 		return false, errors.New("target node does not exist")
 	}
 
 	r.Info("propose to swap the shard", slog.Int64("shard", candidateShard.ShardID), slog.Any("from", fromNode), slog.Any("to", targetNodeID))
 	swapGroup.Add(1)
-	r.actionCh <- action.NewChangeEnsembleActionWithCallback(candidateShard.ShardID, fromNode, *targetNode,
+	r.actionCh <- action.NewChangeEnsembleActionWithCallback(candidateShard.ShardID, fromNode, coordconvert.DataServer(targetNode),
 		concurrent.NewOnce(func(_ any) {
 			swapGroup.Done()
 		}, func(_ error) {
@@ -282,7 +283,7 @@ func (r *nodeBasedBalancer) checkQuarantineNodes() {
 	deletedKeys := make([]string, 0)
 	r.nodeQuarantineNodeMap.Range(func(key, value any) bool {
 		timestamp := value.(time.Time) //nolint: revive
-		if time.Since(timestamp) >= r.loadBalancerConf.QuarantineTime {
+		if time.Since(timestamp) >= r.loadBalancerConf.GetQuarantineTimeDurationOrDefault() {
 			deletedKeys = append(deletedKeys, key.(string))
 		}
 		return true
@@ -296,7 +297,7 @@ func (r *nodeBasedBalancer) checkQuarantineShards() {
 	deletedKeys := make([]int64, 0)
 	r.shardQuarantineShardMap.Range(func(key, value any) bool {
 		timestamp := value.(time.Time) //nolint: revive
-		if time.Since(timestamp) >= r.loadBalancerConf.QuarantineTime {
+		if time.Since(timestamp) >= r.loadBalancerConf.GetQuarantineTimeDurationOrDefault() {
 			deletedKeys = append(deletedKeys, key.(int64))
 		}
 		return true
@@ -338,7 +339,7 @@ func (r *nodeBasedBalancer) startBackgroundScheduler() {
 	go process.DoWithLabels(r.ctx, map[string]string{
 		"component": "load-balancer-scheduler",
 	}, func() {
-		timer := time.NewTicker(r.loadBalancerConf.ScheduleInterval)
+		timer := time.NewTicker(r.loadBalancerConf.GetScheduleIntervalDurationOrDefault())
 		defer timer.Stop()
 		defer r.Done()
 		for {

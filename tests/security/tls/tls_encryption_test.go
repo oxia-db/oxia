@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -119,20 +120,13 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 }
 
@@ -145,20 +139,13 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithRequestTimeout(1*time.Second))
@@ -175,20 +162,13 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -211,20 +191,13 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -248,20 +221,13 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -286,16 +252,9 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// failed without cert

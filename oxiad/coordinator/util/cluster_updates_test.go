@@ -22,8 +22,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
+
+func dataServers(servers []model.Server) []*proto.DataServer {
+	dataServers := make([]*proto.DataServer, 0, len(servers))
+	for _, server := range servers {
+		dataServers = append(dataServers, &proto.DataServer{
+			Name:     server.Name,
+			Public:   server.Public,
+			Internal: server.Internal,
+		})
+	}
+	return dataServers
+}
 
 // loadAwareEnsembleSupplier picks the `nc.ReplicationFactor` servers that
 // currently hold the fewest ensemble slots across all already-placed shards in
@@ -32,8 +45,8 @@ import (
 // per-shard ensemble selections within the same init cycle observe each
 // other's choices. Without that publication every call sees an empty cluster
 // and returns the same servers, producing wildly uneven initial placement.
-func loadAwareEnsembleSupplier(servers []model.Server) func(*model.NamespaceConfig, *model.ClusterStatus) ([]model.Server, error) {
-	return func(nc *model.NamespaceConfig, cs *model.ClusterStatus) ([]model.Server, error) {
+func loadAwareEnsembleSupplier(servers []model.Server) func(*proto.Namespace, *model.ClusterStatus) ([]model.Server, error) {
+	return func(nc *proto.Namespace, cs *model.ClusterStatus) ([]model.Server, error) {
 		load := make(map[string]int, len(servers))
 		for _, s := range servers {
 			load[s.Internal] = 0
@@ -50,7 +63,7 @@ func loadAwareEnsembleSupplier(servers []model.Server) func(*model.NamespaceConf
 		sort.SliceStable(ranked, func(i, j int) bool {
 			return load[ranked[i].Internal] < load[ranked[j].Internal]
 		})
-		return ranked[:nc.ReplicationFactor], nil
+		return ranked[:nc.GetReplicationFactor()], nil
 	}
 }
 
@@ -68,13 +81,13 @@ func TestClientUpdates_InitialPlacementSeesPriorShards(t *testing.T) {
 	const rf = 3
 
 	status := model.NewClusterStatus()
-	_, _ = ApplyClusterChanges(&model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
+	_, _ = ApplyClusterChanges(&proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
 			InitialShardCount: shardCount,
 			ReplicationFactor: rf,
 		}},
-		Servers: servers,
+		Servers: dataServers(servers),
 	}, status, loadAwareEnsembleSupplier(servers))
 
 	slots := map[string]int{}
@@ -108,8 +121,8 @@ var (
 func TestClientUpdates_ClusterInit(t *testing.T) {
 	servers := []model.Server{s1, s2, s3, s4}
 	status := model.NewClusterStatus()
-	shardsAdded, shardsToRemove := ApplyClusterChanges(&model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
+	shardsAdded, shardsToRemove := ApplyClusterChanges(&proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
 			InitialShardCount: 1,
 			ReplicationFactor: 3,
@@ -118,8 +131,8 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 			InitialShardCount: 2,
 			ReplicationFactor: 3,
 		}},
-		Servers: servers,
-	}, status, func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error) {
+		Servers: dataServers(servers),
+	}, status, func(namespaceConfig *proto.Namespace, status *model.ClusterStatus) ([]model.Server, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
@@ -197,8 +210,8 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 		},
 	}, ShardIdGenerator: 1,
 		ServerIdx: 3}
-	shardsAdded, shardsToRemove := ApplyClusterChanges(&model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
+	shardsAdded, shardsToRemove := ApplyClusterChanges(&proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
 			InitialShardCount: 1,
 			ReplicationFactor: 3,
@@ -207,8 +220,8 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 			InitialShardCount: 2,
 			ReplicationFactor: 3,
 		}},
-		Servers: servers,
-	}, status, func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error) {
+		Servers: dataServers(servers),
+	}, status, func(namespaceConfig *proto.Namespace, status *model.ClusterStatus) ([]model.Server, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
@@ -315,14 +328,14 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 		ShardIdGenerator: 3,
 		ServerIdx:        1,
 	}
-	shardsAdded, shardsToRemove := ApplyClusterChanges(&model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
+	shardsAdded, shardsToRemove := ApplyClusterChanges(&proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
 			InitialShardCount: 1,
 			ReplicationFactor: 3,
 		}},
-		Servers: servers,
-	}, status, func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error) {
+		Servers: dataServers(servers),
+	}, status, func(namespaceConfig *proto.Namespace, status *model.ClusterStatus) ([]model.Server, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 

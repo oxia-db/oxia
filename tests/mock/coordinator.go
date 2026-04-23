@@ -19,21 +19,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
-func NewCoordinator(t *testing.T, config *model.ClusterConfig, clusterConfigNotificationCh chan any) coordinator.Coordinator {
+func NewCoordinator(t *testing.T, config *proto.ClusterConfiguration, clusterConfigNotificationCh chan any) coordinator.Coordinator {
 	t.Helper()
 	metadataProvider := memory.NewProvider()
 	metadata := coordmetadata.New(
 		t.Context(),
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return *config, nil },
+		func() (*proto.ClusterConfiguration, error) { return config, nil },
 		clusterConfigNotificationCh,
 	)
 	t.Cleanup(func() {

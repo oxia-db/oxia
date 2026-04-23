@@ -58,8 +58,8 @@ type OxiaCoordinationClient interface {
 	DeleteShard(ctx context.Context, in *DeleteShardRequest, opts ...grpc.CallOption) (*DeleteShardResponse, error)
 	Handshake(ctx context.Context, in *HandshakeRequest, opts ...grpc.CallOption) (*HandshakeResponse, error)
 	// Deprecated: use Handshake for node initialization and feature discovery.
-	// Keep GetInfo only for rolling-upgrade compatibility and remove it in the
-	// next major version.
+	// Keep GetInfo only so new coordinators can fall back to older dataservers
+	// during rolling upgrades, and remove it in the next major version.
 	GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error)
 	// Removes an observer follower from the parent leader without fencing.
 	// Used during split abort to cleanly stop data streaming to children.
@@ -181,8 +181,8 @@ type OxiaCoordinationServer interface {
 	DeleteShard(context.Context, *DeleteShardRequest) (*DeleteShardResponse, error)
 	Handshake(context.Context, *HandshakeRequest) (*HandshakeResponse, error)
 	// Deprecated: use Handshake for node initialization and feature discovery.
-	// Keep GetInfo only for rolling-upgrade compatibility and remove it in the
-	// next major version.
+	// Keep GetInfo only so new coordinators can fall back to older dataservers
+	// during rolling upgrades, and remove it in the next major version.
 	GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error)
 	// Removes an observer follower from the parent leader without fencing.
 	// Used during split abort to cleanly stop data streaming to children.

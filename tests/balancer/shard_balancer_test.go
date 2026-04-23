@@ -23,13 +23,26 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/policy"
 
 	"github.com/oxia-db/oxia/oxia"
 
 	"github.com/oxia-db/oxia/tests/mock"
 )
+
+func shardBalancerDataServers(servers ...model.Server) []*proto.DataServer {
+	dataServers := make([]*proto.DataServer, 0, len(servers))
+	for _, server := range servers {
+		dataServers = append(dataServers, &proto.DataServer{
+			Name:     server.Name,
+			Public:   server.Public,
+			Internal: server.Internal,
+		})
+	}
+	return dataServers
+}
 
 func TestNormalShardBalancer(t *testing.T) {
 	s1, s1ad := mock.NewServer(t, "sv-1")
@@ -43,8 +56,8 @@ func TestNormalShardBalancer(t *testing.T) {
 	s5, s5ad := mock.NewServer(t, "sv-5")
 	defer s5.Close()
 
-	cc := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	cc := proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:              "ns-1",
 				InitialShardCount: 3,
@@ -61,7 +74,7 @@ func TestNormalShardBalancer(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: []model.Server{s1ad, s2ad, s3ad},
+		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
 	ch := make(chan any, 1)
@@ -81,13 +94,21 @@ func TestNormalShardBalancer(t *testing.T) {
 		return true
 	}, 10*time.Second, 50*time.Millisecond)
 
-	cc.Servers = append(cc.Servers, s4ad, s5ad)
+	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
 		_, exist := metadata.Node(s4ad.GetIdentifier())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
+	assert.Eventually(t, func() bool {
+		controllers := coordinator.NodeControllers()
+		s4Controller, s4Ok := controllers[s4ad.GetIdentifier()]
+		s5Controller, s5Ok := controllers[s5ad.GetIdentifier()]
+		return s4Ok && s5Ok &&
+			s4Controller.Status() == controller.Running &&
+			s5Controller.Status() == controller.Running
+	}, 30*time.Second, 50*time.Millisecond)
 
 	balancer := coordinator.LoadBalancer()
 	assert.Eventually(t, func() bool {
@@ -107,7 +128,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	defer s4.Close()
 	s5, s5ad := mock.NewServer(t, "sv-5")
 	defer s5.Close()
-	serverMetadata := map[string]model.ServerMetadata{
+	serverMetadata := map[string]*proto.DataServerMetadata{
 		s1ad.GetIdentifier(): {
 			Labels: map[string]string{"zone": "us-east-1"},
 		},
@@ -125,16 +146,17 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 		},
 	}
 
-	cc := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	cc := proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:              "ns-1",
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
-				Policies: &policy.Policies{
-					AntiAffinities: []policy.AntiAffinity{
+				Policy: &proto.HierarchyPolicies{
+					AntiAffinities: []*proto.AntiAffinity{
 						{
 							Labels: []string{"zone"},
+							Mode:   proto.AntiAffinityModeStrict,
 						},
 					},
 				},
@@ -143,10 +165,11 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 				Name:              "ns-2",
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
-				Policies: &policy.Policies{
-					AntiAffinities: []policy.AntiAffinity{
+				Policy: &proto.HierarchyPolicies{
+					AntiAffinities: []*proto.AntiAffinity{
 						{
 							Labels: []string{"zone"},
+							Mode:   proto.AntiAffinityModeStrict,
 						},
 					},
 				},
@@ -158,7 +181,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 			},
 		},
 		ServerMetadata: serverMetadata,
-		Servers:        []model.Server{s1ad, s2ad, s3ad},
+		Servers:        shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
 	ch := make(chan any, 1)
@@ -178,13 +201,21 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 		return true
 	}, 10*time.Second, 50*time.Millisecond)
 
-	cc.Servers = append(cc.Servers, s4ad, s5ad)
+	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
 		_, exist := metadata.Node(s4ad.GetIdentifier())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
+	assert.Eventually(t, func() bool {
+		controllers := coordinator.NodeControllers()
+		s4Controller, s4Ok := controllers[s4ad.GetIdentifier()]
+		s5Controller, s5Ok := controllers[s5ad.GetIdentifier()]
+		return s4Ok && s5Ok &&
+			s4Controller.Status() == controller.Running &&
+			s5Controller.Status() == controller.Running
+	}, 30*time.Second, 50*time.Millisecond)
 
 	balancer := coordinator.LoadBalancer()
 	assert.Eventually(t, func() bool {
@@ -227,8 +258,8 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	defer s6.Close()
 
 	// config
-	cc := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	cc := proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:              "ns-1",
 				InitialShardCount: 3,
@@ -245,7 +276,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: []model.Server{s1ad, s2ad, s3ad},
+		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 	ch := make(chan any, 1)
 	coordinator := mock.NewCoordinator(t, &cc, ch)
@@ -267,7 +298,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 		}
 	}
 
-	cc.Servers = append(cc.Servers, s4ad, s5ad, s6ad)
+	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad, s6ad)...)
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {

@@ -44,14 +44,14 @@ func Test_cmd_dataServerList(t *testing.T) {
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServer{
 		{
-			Name:            &serverName1,
-			PublicAddress:   "public1",
-			InternalAddress: "internal1",
+			Name:     &serverName1,
+			Public:   "public1",
+			Internal: "internal1",
 		},
 		{
-			Name:            &serverName2,
-			PublicAddress:   "public2",
-			InternalAddress: "internal2",
+			Name:     &serverName2,
+			Public:   "public2",
+			Internal: "internal2",
 		},
 	}, nil)
 
@@ -61,10 +61,10 @@ func Test_cmd_dataServerList(t *testing.T) {
 	var dataServers []proto.DataServer
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServers))
 	assert.Equal(t, 2, len(dataServers))
-	assert.Equal(t, "public1", dataServers[0].PublicAddress)
-	assert.Equal(t, "public2", dataServers[1].PublicAddress)
-	assert.Equal(t, "internal1", dataServers[0].InternalAddress)
-	assert.Equal(t, "internal2", dataServers[1].InternalAddress)
+	assert.Equal(t, "public1", dataServers[0].GetPublic())
+	assert.Equal(t, "public2", dataServers[1].GetPublic())
+	assert.Equal(t, "internal1", dataServers[0].GetInternal())
+	assert.Equal(t, "internal2", dataServers[1].GetInternal())
 	require.NotNil(t, dataServers[0].Name)
 	require.NotNil(t, dataServers[1].Name)
 	assert.Equal(t, "server-1", *dataServers[0].Name)

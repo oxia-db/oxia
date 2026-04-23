@@ -19,17 +19,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
 func newCoordinatorInstance(
 	t *testing.T,
 	metadataProvider provider.Provider,
-	clusterConfigProvider func() (model.ClusterConfig, error),
+	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider coordinatorrpc.ProviderFactory,
 ) coordinator.Coordinator {

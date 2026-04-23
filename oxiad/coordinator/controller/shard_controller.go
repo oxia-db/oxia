@@ -76,7 +76,7 @@ func NoOpSupportedFeaturesSupplier([]model.Server) map[string][]proto.Feature {
 type shardController struct {
 	namespace       string
 	shard           int64
-	namespaceConfig *model.NamespaceConfig
+	namespaceConfig *proto.Namespace
 	rpc             rpc.Provider
 	metadata        Metadata
 
@@ -118,7 +118,7 @@ func (s *shardController) BecameUnavailable(dataServer model.Server) {
 func NewShardController(
 	namespace string,
 	shard int64,
-	nc *model.NamespaceConfig,
+	nc *proto.Namespace,
 	shardMetadata model.ShardMetadata,
 	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
@@ -359,10 +359,10 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		EnableNotifications: true,
 		KeySorting:          proto.KeySortingType_UNKNOWN,
 	}
-	nsConfig, exist := s.metadataStore.NamespaceConfig(s.namespace)
+	nsConfig, exist := s.metadataStore.Namespace(s.namespace)
 	if exist {
-		termOptions.EnableNotifications = nsConfig.NotificationsEnabled.Get()
-		termOptions.KeySorting = nsConfig.KeySorting.ToProto()
+		termOptions.EnableNotifications = nsConfig.NotificationsEnabledOrDefault()
+		termOptions.KeySorting, _ = nsConfig.GetKeySortingType()
 	}
 	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
 		s.metadataStore, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
@@ -475,7 +475,7 @@ func (s *shardController) SyncServerAddress() {
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
 		if newInfo, ok := s.metadataStore.Node(candidate.GetIdentifier()); ok {
-			if newInfo.Public != candidate.Public || newInfo.Internal != candidate.Internal {
+			if newInfo.GetPublic() != candidate.Public || newInfo.GetInternal() != candidate.Internal {
 				needSync = true
 				break
 			}

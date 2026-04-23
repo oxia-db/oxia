@@ -26,7 +26,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/oxia-db/oxia/tests/mock"
@@ -47,18 +46,11 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 		rpc.NewRpcProviderFactory(nil),
 	)

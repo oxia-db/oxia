@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
@@ -34,13 +35,16 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		Internal: "leader-internal:6649",
 	}
 
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
+	clusterConfig := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
 			Name:              "default",
 			InitialShardCount: 1,
 			ReplicationFactor: 1,
 		}},
-		Servers: []model.Server{leader},
+		Servers: []*proto.DataServer{{
+			Public:   leader.Public,
+			Internal: leader.Internal,
+		}},
 		AllowExtraAuthorities: []string{
 			"bootstrap:6648",
 			leader.Public,
@@ -49,7 +53,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	metadata := coordmetadata.New(
 		t.Context(),
 		memory.NewProvider(),
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 	)
 	t.Cleanup(func() {
@@ -100,18 +104,21 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		Internal: "removed-internal:6649",
 	}
 
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
+	clusterConfig := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
 			Name:              "default",
 			InitialShardCount: 1,
 			ReplicationFactor: 1,
 		}},
-		Servers: []model.Server{active},
+		Servers: []*proto.DataServer{{
+			Public:   active.Public,
+			Internal: active.Internal,
+		}},
 	}
 	metadata := coordmetadata.New(
 		t.Context(),
 		memory.NewProvider(),
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
+		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 	)
 	t.Cleanup(func() {

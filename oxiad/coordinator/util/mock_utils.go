@@ -15,12 +15,15 @@
 //revive:disable-next-line:var-naming
 package util
 
-import "github.com/oxia-db/oxia/oxiad/coordinator/model"
+import (
+	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+)
 
-func SimpleEnsembleSupplier(candidates []model.Server, nc *model.NamespaceConfig, cs *model.ClusterStatus) []model.Server {
+func SimpleEnsembleSupplier(candidates []model.Server, nc *proto.Namespace, cs *model.ClusterStatus) []model.Server {
 	n := len(candidates)
-	res := make([]model.Server, nc.ReplicationFactor)
-	for i := uint32(0); i < nc.ReplicationFactor; i++ {
+	res := make([]model.Server, nc.GetReplicationFactor())
+	for i := uint32(0); i < nc.GetReplicationFactor(); i++ {
 		res[i] = candidates[int(cs.ServerIdx+i)%n]
 	}
 	return res

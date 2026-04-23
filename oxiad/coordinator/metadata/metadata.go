@@ -18,7 +18,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"reflect"
 	"sync"
 	"time"
 
@@ -26,41 +25,38 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
 	"github.com/google/uuid"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/process"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
 
-const (
-	defaultLoadBalancerScheduleInterval = 30 * time.Second
-	defaultQuarantineTime               = 5 * time.Minute
-)
-
 type Metadata interface {
 	io.Closer
 
 	LoadStatus() *model.ClusterStatus
-	ApplyStatusChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64)
+	ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64)
 	UpdateStatus(newStatus *model.ClusterStatus)
 	UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata)
 	DeleteShardMetadata(namespace string, shard int64)
-	IsReady(clusterConfig *model.ClusterConfig) bool
+	IsReady(clusterConfig *commonproto.ClusterConfiguration) bool
 	StatusChangeNotify() <-chan struct{}
 
-	LoadConfig() *model.ClusterConfig
-	ConfigWatch() *commonoption.Watch[*model.ClusterConfig]
-	LoadLoadBalancer() *model.LoadBalancer
+	LoadConfig() *commonproto.ClusterConfiguration
+	ConfigWatch() *commonoption.Watch[*commonproto.ClusterConfiguration]
+	LoadLoadBalancer() *commonproto.LoadBalancer
 	Nodes() *linkedhashset.Set[string]
-	NodesWithMetadata() (*linkedhashset.Set[string], map[string]model.ServerMetadata)
-	NamespaceConfig(namespace string) (*model.NamespaceConfig, bool)
-	Node(id string) (*model.Server, bool)
-	GetDataServerInfo(name string) (*model.DataServerInfo, bool)
+	NodesWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata)
+	Namespace(namespace string) (*commonproto.Namespace, bool)
+	Node(id string) (*commonproto.DataServer, bool)
+	GetDataServerInfo(name string) (*commonproto.DataServerInfo, bool)
 }
 
-type EnsembleSupplier func(namespaceConfig *model.NamespaceConfig, status *model.ClusterStatus) ([]model.Server, error)
+type EnsembleSupplier func(namespaceConfig *commonproto.Namespace, status *model.ClusterStatus) ([]model.Server, error)
 
 type coordinatorMetadata struct {
 	*slog.Logger
@@ -76,20 +72,20 @@ type coordinatorMetadata struct {
 	currentVersionID provider.Version
 	changeCh         chan struct{}
 
-	clusterConfigProvider        func() (model.ClusterConfig, error)
+	clusterConfigProvider        func() (*commonproto.ClusterConfiguration, error)
 	clusterConfigNotificationsCh chan any
 
 	clusterConfigLock     sync.RWMutex
-	currentClusterConfig  *model.ClusterConfig
-	clusterConfigWatch    *commonoption.Watch[*model.ClusterConfig]
-	nodesIndex            *redblacktree.Tree[string, *model.Server]
-	namespaceConfigsIndex *redblacktree.Tree[string, *model.NamespaceConfig]
+	currentClusterConfig  *commonproto.ClusterConfiguration
+	clusterConfigWatch    *commonoption.Watch[*commonproto.ClusterConfiguration]
+	nodesIndex            *redblacktree.Tree[string, *commonproto.DataServer]
+	namespaceConfigsIndex *redblacktree.Tree[string, *commonproto.Namespace]
 }
 
 func New(
 	ctx context.Context,
 	metadataProvider provider.Provider,
-	clusterConfigProvider func() (model.ClusterConfig, error),
+	clusterConfigProvider func() (*commonproto.ClusterConfiguration, error),
 	clusterConfigNotificationsCh chan any,
 ) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
@@ -103,7 +99,7 @@ func New(
 		changeCh:                     make(chan struct{}),
 		clusterConfigProvider:        clusterConfigProvider,
 		clusterConfigNotificationsCh: clusterConfigNotificationsCh,
-		clusterConfigWatch:           commonoption.NewWatch[*model.ClusterConfig](nil),
+		clusterConfigWatch:           commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
 	}
 
 	m.doStatusRecovery()
@@ -185,7 +181,7 @@ func (m *coordinatorMetadata) LoadStatus() *model.ClusterStatus {
 	return m.currentStatus
 }
 
-func (m *coordinatorMetadata) ApplyStatusChanges(config *model.ClusterConfig, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+func (m *coordinatorMetadata) ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
@@ -239,7 +235,7 @@ func (m *coordinatorMetadata) DeleteShardMetadata(namespace string, shard int64)
 	m.notifyStatusChange()
 }
 
-func (m *coordinatorMetadata) IsReady(clusterConfig *model.ClusterConfig) bool {
+func (m *coordinatorMetadata) IsReady(clusterConfig *commonproto.ClusterConfiguration) bool {
 	currentStatus := m.LoadStatus()
 	for _, namespace := range clusterConfig.Namespaces {
 		namespaceStatus, ok := currentStatus.Namespaces[namespace.Name]
@@ -276,7 +272,7 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 		if err != nil {
 			return err
 		}
-		m.currentClusterConfig = &newConfig
+		m.currentClusterConfig = gproto.Clone(newConfig).(*commonproto.ClusterConfiguration) //nolint:revive
 		m.rebuildConfigIndexesLocked()
 		watchedConfig, _ := m.clusterConfigWatch.Load()
 		if watchedConfig == nil {
@@ -293,17 +289,15 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 }
 
 func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
-	nodes := redblacktree.New[string, *model.Server]()
-	for idx := range m.currentClusterConfig.Servers {
-		server := &m.currentClusterConfig.Servers[idx]
-		nodes.Put(server.GetIdentifier(), server)
+	nodes := redblacktree.New[string, *commonproto.DataServer]()
+	for _, server := range m.currentClusterConfig.GetServers() {
+		nodes.Put(server.GetNameOrDefault(), server)
 	}
 	m.nodesIndex = nodes
 
-	namespaceConfigs := redblacktree.New[string, *model.NamespaceConfig]()
-	for idx := range m.currentClusterConfig.Namespaces {
-		ns := &m.currentClusterConfig.Namespaces[idx]
-		namespaceConfigs.Put(ns.Name, ns)
+	namespaceConfigs := redblacktree.New[string, *commonproto.Namespace]()
+	for _, ns := range m.currentClusterConfig.GetNamespaces() {
+		namespaceConfigs.Put(ns.GetName(), ns)
 	}
 	m.namespaceConfigsIndex = namespaceConfigs
 }
@@ -330,7 +324,7 @@ func (m *coordinatorMetadata) waitForConfigUpdates() {
 			currentClusterConfig := m.currentClusterConfig
 			m.clusterConfigLock.RUnlock()
 
-			if reflect.DeepEqual(oldClusterConfig, currentClusterConfig) {
+			if gproto.Equal(oldClusterConfig, currentClusterConfig) {
 				m.Info("No cluster config changes detected")
 				continue
 			}
@@ -339,7 +333,7 @@ func (m *coordinatorMetadata) waitForConfigUpdates() {
 	}
 }
 
-func (m *coordinatorMetadata) LoadConfig() *model.ClusterConfig {
+func (m *coordinatorMetadata) LoadConfig() *commonproto.ClusterConfiguration {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -350,27 +344,12 @@ func (m *coordinatorMetadata) LoadConfig() *model.ClusterConfig {
 	return m.currentClusterConfig
 }
 
-func (m *coordinatorMetadata) ConfigWatch() *commonoption.Watch[*model.ClusterConfig] {
+func (m *coordinatorMetadata) ConfigWatch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
 	return m.clusterConfigWatch
 }
 
-func (m *coordinatorMetadata) LoadLoadBalancer() *model.LoadBalancer {
-	config := m.LoadConfig()
-	if config.LoadBalancer == nil {
-		return &model.LoadBalancer{
-			ScheduleInterval: defaultLoadBalancerScheduleInterval,
-			QuarantineTime:   defaultQuarantineTime,
-		}
-	}
-
-	loadBalancer := *config.LoadBalancer
-	if loadBalancer.ScheduleInterval == 0 {
-		loadBalancer.ScheduleInterval = defaultLoadBalancerScheduleInterval
-	}
-	if loadBalancer.QuarantineTime == 0 {
-		loadBalancer.QuarantineTime = defaultQuarantineTime
-	}
-	return &loadBalancer
+func (m *coordinatorMetadata) LoadLoadBalancer() *commonproto.LoadBalancer {
+	return m.LoadConfig().GetLoadBalancerWithDefaults()
 }
 
 func (m *coordinatorMetadata) Nodes() *linkedhashset.Set[string] {
@@ -383,13 +362,13 @@ func (m *coordinatorMetadata) Nodes() *linkedhashset.Set[string] {
 	}
 
 	nodes := linkedhashset.New[string]()
-	for idx := range m.currentClusterConfig.Servers {
-		nodes.Add(m.currentClusterConfig.Servers[idx].GetIdentifier())
+	for _, server := range m.currentClusterConfig.GetServers() {
+		nodes.Add(server.GetNameOrDefault())
 	}
 	return nodes
 }
 
-func (m *coordinatorMetadata) NodesWithMetadata() (*linkedhashset.Set[string], map[string]model.ServerMetadata) {
+func (m *coordinatorMetadata) NodesWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata) {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -399,13 +378,18 @@ func (m *coordinatorMetadata) NodesWithMetadata() (*linkedhashset.Set[string], m
 	}
 
 	nodes := linkedhashset.New[string]()
-	for idx := range m.currentClusterConfig.Servers {
-		nodes.Add(m.currentClusterConfig.Servers[idx].GetIdentifier())
+	for _, server := range m.currentClusterConfig.GetServers() {
+		nodes.Add(server.GetNameOrDefault())
 	}
-	return nodes, m.currentClusterConfig.ServerMetadata
+
+	metadata := make(map[string]*commonproto.DataServerMetadata, len(m.currentClusterConfig.GetServerMetadata()))
+	for id, value := range m.currentClusterConfig.GetServerMetadata() {
+		metadata[id] = value
+	}
+	return nodes, metadata
 }
 
-func (m *coordinatorMetadata) NamespaceConfig(namespace string) (*model.NamespaceConfig, bool) {
+func (m *coordinatorMetadata) Namespace(namespace string) (*commonproto.Namespace, bool) {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -416,7 +400,7 @@ func (m *coordinatorMetadata) NamespaceConfig(namespace string) (*model.Namespac
 	return m.namespaceConfigsIndex.Get(namespace)
 }
 
-func (m *coordinatorMetadata) Node(id string) (*model.Server, bool) {
+func (m *coordinatorMetadata) Node(id string) (*commonproto.DataServer, bool) {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -427,7 +411,7 @@ func (m *coordinatorMetadata) Node(id string) (*model.Server, bool) {
 	return m.nodesIndex.Get(id)
 }
 
-func (m *coordinatorMetadata) GetDataServerInfo(id string) (*model.DataServerInfo, bool) {
+func (m *coordinatorMetadata) GetDataServerInfo(id string) (*commonproto.DataServerInfo, bool) {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -436,19 +420,7 @@ func (m *coordinatorMetadata) GetDataServerInfo(id string) (*model.DataServerInf
 		m.clusterConfigLock.RLock()
 	}
 
-	node, found := m.nodesIndex.Get(id)
-	if !found {
-		return nil, false
-	}
-
-	info := &model.DataServerInfo{
-		Server:   node,
-		Metadata: model.ServerMetadata{},
-	}
-	if metadata, found := m.currentClusterConfig.ServerMetadata[id]; found {
-		info.Metadata = metadata
-	}
-	return info, true
+	return m.currentClusterConfig.GetDataServerInfo(id)
 }
 
 func WaitForCondition(ctx context.Context, metadata Metadata, triggerFn func(), condition func(*model.ClusterStatus) bool) error {

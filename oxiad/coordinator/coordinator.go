@@ -31,6 +31,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
+	coordconvert "github.com/oxia-db/oxia/oxiad/coordinator/internal/convert"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
@@ -116,29 +117,29 @@ func (c *coordinator) NodeControllers() map[string]controller.DataServerControll
 	return res
 }
 
-func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
+func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 	c.Lock()
 	defer c.Unlock()
 
 	c.Info("Detected change in cluster config", slog.Any("newClusterConfig", newConfig))
 
 	// Check for nodes to add
-	for _, sa := range newConfig.Servers {
-		if _, ok := c.nodeControllers[sa.GetIdentifier()]; ok {
+	for _, sa := range newConfig.GetServers() {
+		if _, ok := c.nodeControllers[sa.GetNameOrDefault()]; ok {
 			continue
 		}
 		// The node is present in the config, though we don't know it yet,
 		// therefore it must be a newly added node
 		c.Info("Detected new node", slog.Any("server", sa))
-		if nc, ok := c.drainingNodes[sa.GetIdentifier()]; ok {
+		if nc, ok := c.drainingNodes[sa.GetNameOrDefault()]; ok {
 			// If there were any controller for a draining node, close it
 			// and recreate it as a new node
 			_ = nc.Close()
-			delete(c.drainingNodes, sa.GetIdentifier())
+			delete(c.drainingNodes, sa.GetNameOrDefault())
 		}
-		c.nodeControllers[sa.GetIdentifier()] = controller.NewDataServerController(
+		c.nodeControllers[sa.GetNameOrDefault()] = controller.NewDataServerController(
 			c.ctx,
-			sa,
+			coordconvert.DataServer(sa),
 			c,
 			c,
 			c.rpc,
@@ -164,7 +165,7 @@ func (c *coordinator) ConfigChanged(newConfig *model.ClusterConfig) {
 	clusterStatus, shardsToAdd, shardsToDelete := c.metadata.ApplyStatusChanges(newConfig, c.selectNewEnsemble)
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
-		if namespaceConfig, exist := c.metadata.NamespaceConfig(namespace); exist {
+		if namespaceConfig, exist := c.metadata.Namespace(namespace); exist {
 			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
 				shardMetadata.Clone(), c.metadata, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
@@ -201,14 +202,14 @@ func (c *coordinator) findDataServerFeatures(dataServers []model.Server) map[str
 
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
-func (c *coordinator) selectNewEnsemble(ns *model.NamespaceConfig, editingStatus *model.ClusterStatus) ([]model.Server, error) {
+func (c *coordinator) selectNewEnsemble(ns *proto.Namespace, editingStatus *model.ClusterStatus) ([]model.Server, error) {
 	nodes, nodesMetadata := c.metadata.NodesWithMetadata()
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
 		CandidatesMetadata: nodesMetadata,
-		Policies:           ns.Policies,
+		HierarchyPolicies:  ns.GetPolicy(),
 		Status:             editingStatus,
-		Replicas:           int(ns.ReplicationFactor),
+		Replicas:           int(ns.GetReplicationFactor()),
 		LoadRatioSupplier: func() *model.Ratio {
 			groupedStatus, historyNodes := util.GroupingShardsNodeByStatus(nodes, editingStatus)
 			return c.loadBalancer.LoadRatioAlgorithm()(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
@@ -221,12 +222,12 @@ func (c *coordinator) selectNewEnsemble(ns *model.NamespaceConfig, editingStatus
 	}
 	esm := make([]model.Server, 0)
 	for _, id := range ensembles {
-		var node *model.Server
+		var node *proto.DataServer
 		var exist bool
 		if node, exist = c.metadata.Node(id); !exist {
 			return nil, fmt.Errorf("failed to find node %s", id)
 		}
-		esm = append(esm, *node)
+		esm = append(esm, coordconvert.DataServer(node))
 	}
 	return esm, nil
 }
@@ -372,7 +373,7 @@ func (c *coordinator) computeNewAssignments() {
 	status := c.metadata.LoadStatus()
 	c.assignments = &proto.ShardAssignments{
 		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
-		AllowedAuthorities: mergedAuthorities(status, config.Servers, config.AllowExtraAuthorities),
+		AllowedAuthorities: mergedAuthorities(status, config.GetServers(), config.GetAllowExtraAuthorities()),
 	}
 	// Update the leader for the shards on all the namespaces
 	for name, ns := range status.Namespaces {
@@ -415,22 +416,22 @@ func (c *coordinator) computeNewAssignments() {
 	c.assignmentsChanged.Broadcast()
 }
 
-func mergedAuthorities(status *model.ClusterStatus, servers []model.Server, extraAuthorities []string) []string {
+func mergedAuthorities(status *model.ClusterStatus, servers []*proto.DataServer, extraAuthorities []string) []string {
 	authorities := linkedhashset.New[string]()
-	addServerAuthorities := func(server model.Server) {
-		authorities.Add(server.Public)
-		authorities.Add(server.Internal)
+	addServerAuthorities := func(public string, internal string) {
+		authorities.Add(public)
+		authorities.Add(internal)
 	}
 	for _, server := range servers {
-		addServerAuthorities(server)
+		addServerAuthorities(server.GetPublic(), server.GetInternal())
 	}
 	for _, namespace := range status.Namespaces {
 		for _, shard := range namespace.Shards {
 			for _, server := range shard.Ensemble {
-				addServerAuthorities(server)
+				addServerAuthorities(server.Public, server.Internal)
 			}
 			for _, server := range shard.RemovedNodes {
-				addServerAuthorities(server)
+				addServerAuthorities(server.Public, server.Internal)
 			}
 		}
 	}
@@ -509,7 +510,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 			Max: sp,
 		},
 	}
-	cloned.ServerIdx += nsConfig.ReplicationFactor
+	cloned.ServerIdx += nsConfig.GetReplicationFactor()
 
 	rightEnsemble, err := c.selectNewEnsemble(nsConfig, cloned)
 	if err != nil {
@@ -667,10 +668,10 @@ func (c *coordinator) SplitAborted(parentShard int64, leftChild int64, rightChil
 	c.computeNewAssignments()
 }
 
-func (c *coordinator) namespaceConfigForSplit(namespace string) *model.NamespaceConfig {
-	nsConfig, exist := c.metadata.NamespaceConfig(namespace)
+func (c *coordinator) namespaceConfigForSplit(namespace string) *proto.Namespace {
+	nsConfig, exist := c.metadata.Namespace(namespace)
 	if !exist {
-		nsConfig = &model.NamespaceConfig{}
+		nsConfig = &proto.Namespace{}
 	}
 	return nsConfig
 }
@@ -747,10 +748,10 @@ func newCoordinator(
 	c.rpc = rpcProvider(c.insID)
 
 	// init node controller
-	for _, node := range clusterConfig.Servers {
-		c.nodeControllers[node.GetIdentifier()] = controller.NewDataServerController(
+	for _, node := range clusterConfig.GetServers() {
+		c.nodeControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
 			c.ctx,
-			node,
+			coordconvert.DataServer(node),
 			c,
 			c,
 			c.rpc,
@@ -764,10 +765,10 @@ func newCoordinator(
 	for ns, shards := range clusterStatus.Namespaces {
 		for shard := range shards.Shards {
 			shardMetadata := shards.Shards[shard]
-			var nsConfig *model.NamespaceConfig
+			var nsConfig *proto.Namespace
 			var exist bool
-			if nsConfig, exist = c.metadata.NamespaceConfig(ns); !exist {
-				nsConfig = &model.NamespaceConfig{}
+			if nsConfig, exist = c.metadata.Namespace(ns); !exist {
+				nsConfig = &proto.Namespace{}
 			}
 			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
 				shardMetadata, c.metadata, c.findDataServerFeatures,

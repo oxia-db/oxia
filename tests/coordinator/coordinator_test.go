@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/proto"
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
@@ -35,16 +36,13 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := metadata2.NewProvider()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 1,
-			InitialShardCount: 2,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	clusterConfig := newClusterConfig([]*proto.Namespace{{
+		Name:              "default",
+		ReplicationFactor: 1,
+		InitialShardCount: 2,
+	}}, []model.Server{sa1, sa2, sa3})
 
-	metadata := createCoordinatorMetadata(t, metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil)
+	metadata := createCoordinatorMetadata(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil)
 	defer func() {
 		assert.NoError(t, metadata.Close())
 	}()

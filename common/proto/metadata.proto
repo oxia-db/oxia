@@ -1,0 +1,65 @@
+// Copyright 2023-2025 The Oxia Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package io.oxia.proto.v1;
+
+option go_package = "github.com/oxia-db/oxia/common/proto";
+
+message DataServer {
+  optional string name = 1;
+  string public = 2;
+  string internal = 3;
+}
+
+message DataServerMetadata {
+  map<string, string> labels = 1;
+}
+
+message DataServerInfo {
+  DataServer dataServer = 1;
+  DataServerMetadata metadata = 2;
+}
+
+message AntiAffinity {
+  repeated string labels = 1;
+  string mode = 2;
+}
+
+message HierarchyPolicies {
+  repeated AntiAffinity antiAffinities = 1;
+}
+
+message Namespace {
+  string name = 1;
+  uint32 initialShardCount = 2;
+  uint32 replicationFactor = 3;
+  optional bool notificationsEnabled = 4;
+  string keySorting = 5;
+  HierarchyPolicies policy = 6;
+}
+
+message LoadBalancer {
+  string scheduleInterval = 1;
+  string quarantineTime = 2;
+}
+
+message ClusterConfiguration {
+  repeated Namespace namespaces = 1;
+  repeated DataServer servers = 2;
+  repeated string allowExtraAuthorities = 3;
+  map<string, DataServerMetadata> serverMetadata = 4;
+  LoadBalancer loadBalancer = 5;
+}

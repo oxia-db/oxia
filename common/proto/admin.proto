@@ -22,6 +22,8 @@ package io.oxia.proto.v1;
 option go_package = "github.com/oxia-db/oxia/common/proto";
 option java_multiple_files = true;
 
+import "metadata.proto";
+
 service OxiaAdmin {
 
   rpc ListDataServers(ListDataServersRequest) returns (ListDataServersResponse);
@@ -41,17 +43,6 @@ service OxiaAdmin {
 }
 
 message ListDataServersRequest {
-}
-
-message DataServer {
-  optional string name = 1;
-  string public_address = 2;
-  string internal_address = 3;
-}
-
-message DataServerInfo {
-  DataServer data_server = 1;
-  map<string, string> metadata = 2;
 }
 
 message ListDataServersResponse {
