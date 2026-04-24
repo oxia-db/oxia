@@ -18,20 +18,32 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	cc "github.com/oxia-db/oxia/cmd/client/common"
+	dataserveroutput "github.com/oxia-db/oxia/cmd/admin/dataserver/output"
 	"github.com/oxia-db/oxia/oxia"
 )
 
 var Cmd = &cobra.Command{
-	Use:          "get dataserver",
-	Short:        "Get a data server",
-	Long:         `Get a data server`,
-	Args:         cobra.ExactArgs(1),
+	Use:          "get [dataserver]",
+	Short:        "Get a data server or list data server identities",
+	Long:         `Get a data server or list data server identities`,
+	Args:         cobra.MaximumNArgs(1),
 	RunE:         exec,
 	SilenceUsage: true,
 }
 
+func init() {
+	Cmd.Flags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
+}
+
 func exec(cmd *cobra.Command, args []string) error {
+	outputFormat, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
+	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
+		return err
+	}
+
 	client, err := commons.AdminConfig.NewAdminClient()
 	if err != nil {
 		return err
@@ -40,10 +52,17 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
+	if len(args) == 0 {
+		dataServers, err := client.ListDataServers()
+		if err != nil {
+			return err
+		}
+		return dataserveroutput.WriteDataServers(cmd.OutOrStdout(), outputFormat, dataServers)
+	}
+
 	dataServer, err := client.GetDataServer(args[0])
 	if err != nil {
 		return err
 	}
-	cc.WriteOutput(cmd.OutOrStdout(), dataServer)
-	return nil
+	return dataserveroutput.WriteDataServer(cmd.OutOrStdout(), outputFormat, dataServer)
 }
