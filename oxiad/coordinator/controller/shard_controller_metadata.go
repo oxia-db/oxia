@@ -17,43 +17,43 @@ package controller
 import (
 	"sync"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 type Metadata struct {
 	sync.RWMutex
-	shardMetadata model.ShardMetadata
+	shardMetadata *commonproto.ShardMetadata
 }
 
-func (s *Metadata) Load() model.ShardMetadata {
+func (s *Metadata) Load() *commonproto.ShardMetadata {
 	s.RLock()
 	defer s.RUnlock()
 	return s.shardMetadata.Clone()
 }
 
-func (s *Metadata) Compute(fn func(metadata *model.ShardMetadata)) model.ShardMetadata {
+func (s *Metadata) Compute(fn func(metadata *commonproto.ShardMetadata)) *commonproto.ShardMetadata {
 	s.Lock()
 	defer s.Unlock()
-	fn(&s.shardMetadata)
+	fn(s.shardMetadata)
 	return s.shardMetadata.Clone()
 }
 
-func (s *Metadata) Store(metadata model.ShardMetadata) {
+func (s *Metadata) Store(metadata *commonproto.ShardMetadata) {
 	s.Lock()
 	defer s.Unlock()
-	s.shardMetadata = metadata
+	s.shardMetadata = metadata.Clone()
 }
 
-func (s *Metadata) Status() model.ShardStatus {
+func (s *Metadata) Status() string {
 	s.RLock()
 	defer s.RUnlock()
-	return s.shardMetadata.Status
+	return s.shardMetadata.GetStatusOrDefault()
 }
 
-func (s *Metadata) Leader() *model.Server {
+func (s *Metadata) Leader() *commonproto.DataServer {
 	s.RLock()
 	defer s.RUnlock()
-	return s.shardMetadata.Leader
+	return s.shardMetadata.GetLeader()
 }
 
 func (s *Metadata) Term() int64 {
@@ -62,9 +62,9 @@ func (s *Metadata) Term() int64 {
 	return s.shardMetadata.Term
 }
 
-func NewMetadata(metadata model.ShardMetadata) Metadata {
+func NewMetadata(metadata *commonproto.ShardMetadata) Metadata {
 	return Metadata{
 		RWMutex:       sync.RWMutex{},
-		shardMetadata: metadata,
+		shardMetadata: metadata.Clone(),
 	}
 }

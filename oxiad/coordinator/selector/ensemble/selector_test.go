@@ -22,7 +22,6 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
@@ -43,7 +42,7 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("s1", "s2", "s3", "s4"),
-		Status: &model.ClusterStatus{
+		Status: &proto.ClusterStatus{
 			ServerIdx: 0,
 		},
 		HierarchyPolicies: nsPolicies,

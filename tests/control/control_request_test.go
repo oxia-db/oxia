@@ -40,9 +40,9 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	defer s3.Close()
 
 	serverInstanceIndex := map[string]*dataserver.Server{
-		sa1.GetIdentifier(): s1,
-		sa2.GetIdentifier(): s2,
-		sa3.GetIdentifier(): s3,
+		sa1.GetNameOrDefault(): s1,
+		sa2.GetNameOrDefault(): s2,
+		sa3.GetNameOrDefault(): s3,
 	}
 
 	metadataProvider := memory.NewProvider()
@@ -79,8 +79,8 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 
 	// Verify the checksum feature is enabled on all replicas.
 	for _, dataServer := range shardMetadata.Ensemble {
-		targetId := dataServer.GetIdentifier()
-		if targetId == leader.GetIdentifier() {
+		targetId := dataServer.GetNameOrDefault()
+		if targetId == leader.GetNameOrDefault() {
 			assert.Eventually(t, func() bool {
 				lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
 				return err == nil && lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
@@ -95,7 +95,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 
 	// Capture the leader's checksum before the flush write. At this point
 	// the leader has committed key1-key7 and the checksum reflects that state.
-	lead, err := serverInstanceIndex[leader.GetIdentifier()].GetShardDirector().GetLeader(0)
+	lead, err := serverInstanceIndex[leader.GetNameOrDefault()].GetShardDirector().GetLeader(0)
 	assert.NoError(t, err)
 	leaderChecksum := lead.Checksum().Value()
 
@@ -112,8 +112,8 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	// The check is inside Eventually because the follower needs time to
 	// process key8's replication message and apply key7's commit.
 	for _, dataServer := range shardMetadata.Ensemble {
-		targetId := dataServer.GetIdentifier()
-		if targetId == leader.GetIdentifier() {
+		targetId := dataServer.GetNameOrDefault()
+		if targetId == leader.GetNameOrDefault() {
 			continue
 		}
 		assert.Eventually(t, func() bool {

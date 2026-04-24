@@ -30,7 +30,6 @@ import (
 
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 
@@ -76,13 +75,13 @@ func getClientTLSOption() (*security.TLSOptions, error) {
 	return &clientOption, nil
 }
 
-func newTLSServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
+func newTLSServer(t *testing.T) (s *dataserver.Server, addr *proto.DataServer) {
 	t.Helper()
 	return newTLSServerWithInterceptor(t, func(config *dataserveroption.Options) {
 	})
 }
 
-func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserveroption.Options)) (s *dataserver.Server, addr model.Server) {
+func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserveroption.Options)) (s *dataserver.Server, addr *proto.DataServer) {
 	t.Helper()
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -103,7 +102,7 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 
 	assert.NoError(t, err)
 
-	addr = model.Server{
+	addr = &proto.DataServer{
 		Public:   fmt.Sprintf("localhost:%d", s.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s.InternalPort()),
 	}

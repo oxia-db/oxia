@@ -31,17 +31,16 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
 
 type Metadata interface {
 	io.Closer
 
-	LoadStatus() *model.ClusterStatus
-	ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64)
-	UpdateStatus(newStatus *model.ClusterStatus)
-	UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata)
+	LoadStatus() *commonproto.ClusterStatus
+	ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*commonproto.ClusterStatus, map[int64]string, []int64)
+	UpdateStatus(newStatus *commonproto.ClusterStatus)
+	UpdateShardMetadata(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
 	DeleteShardMetadata(namespace string, shard int64)
 	IsReady(clusterConfig *commonproto.ClusterConfiguration) bool
 	StatusChangeNotify() <-chan struct{}
@@ -56,7 +55,7 @@ type Metadata interface {
 	GetDataServerInfo(name string) (*commonproto.DataServerInfo, bool)
 }
 
-type EnsembleSupplier func(namespaceConfig *commonproto.Namespace, status *model.ClusterStatus) ([]model.Server, error)
+type EnsembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServer, error)
 
 type coordinatorMetadata struct {
 	*slog.Logger
@@ -68,7 +67,7 @@ type coordinatorMetadata struct {
 	metadataProvider provider.Provider
 
 	statusLock       sync.RWMutex
-	currentStatus    *model.ClusterStatus
+	currentStatus    *commonproto.ClusterStatus
 	currentVersionID provider.Version
 	changeCh         chan struct{}
 
@@ -147,7 +146,7 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 	})
 
 	if m.currentStatus == nil {
-		m.currentStatus = model.NewClusterStatus()
+		m.currentStatus = commonproto.NewClusterStatus()
 	}
 	if m.currentStatus.InstanceId == "" {
 		clonedStatus := m.currentStatus.Clone()
@@ -157,7 +156,7 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 	}
 }
 
-func (m *coordinatorMetadata) persistStatusLocked(newStatus *model.ClusterStatus, warnMessage string) {
+func (m *coordinatorMetadata) persistStatusLocked(newStatus *commonproto.ClusterStatus, warnMessage string) {
 	_ = backoff.RetryNotify(func() error {
 		versionID, err := m.metadataProvider.Store(newStatus, m.currentVersionID)
 		if err != nil {
@@ -175,13 +174,13 @@ func (m *coordinatorMetadata) persistStatusLocked(newStatus *model.ClusterStatus
 	})
 }
 
-func (m *coordinatorMetadata) LoadStatus() *model.ClusterStatus {
+func (m *coordinatorMetadata) LoadStatus() *commonproto.ClusterStatus {
 	m.statusLock.RLock()
 	defer m.statusLock.RUnlock()
 	return m.currentStatus
 }
 
-func (m *coordinatorMetadata) ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+func (m *coordinatorMetadata) ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*commonproto.ClusterStatus, map[int64]string, []int64) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
@@ -196,7 +195,7 @@ func (m *coordinatorMetadata) ApplyStatusChanges(config *commonproto.ClusterConf
 	return newStatus, shardsToAdd, shardsToDelete
 }
 
-func (m *coordinatorMetadata) UpdateStatus(newStatus *model.ClusterStatus) {
+func (m *coordinatorMetadata) UpdateStatus(newStatus *commonproto.ClusterStatus) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
@@ -204,7 +203,7 @@ func (m *coordinatorMetadata) UpdateStatus(newStatus *model.ClusterStatus) {
 	m.notifyStatusChange()
 }
 
-func (m *coordinatorMetadata) UpdateShardMetadata(namespace string, shard int64, shardMetadata model.ShardMetadata) {
+func (m *coordinatorMetadata) UpdateShardMetadata(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
@@ -246,7 +245,7 @@ func (m *coordinatorMetadata) IsReady(clusterConfig *commonproto.ClusterConfigur
 			return false
 		}
 		for _, shard := range namespaceStatus.Shards {
-			if shard.Status != model.ShardStatusSteadyState {
+			if shard.GetStatusOrDefault() != commonproto.ShardStatusSteadyState {
 				return false
 			}
 		}
@@ -423,7 +422,7 @@ func (m *coordinatorMetadata) GetDataServerInfo(id string) (*commonproto.DataSer
 	return m.currentClusterConfig.GetDataServerInfo(id)
 }
 
-func WaitForCondition(ctx context.Context, metadata Metadata, triggerFn func(), condition func(*model.ClusterStatus) bool) error {
+func WaitForCondition(ctx context.Context, metadata Metadata, triggerFn func(), condition func(*commonproto.ClusterStatus) bool) error {
 	for {
 		ch := metadata.StatusChangeNotify()
 		if condition(metadata.LoadStatus()) {

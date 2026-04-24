@@ -26,11 +26,10 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/concurrent"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
-	leader := model.Server{
+	leader := &proto.DataServer{
 		Public:   "leader-public:6648",
 		Internal: "leader-internal:6649",
 	}
@@ -59,16 +58,16 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
 	})
-	metadata.UpdateStatus(&model.ClusterStatus{
-		Namespaces: map[string]model.NamespaceStatus{
+	metadata.UpdateStatus(&proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,
-				Shards: map[int64]model.ShardMetadata{
+				Shards: map[int64]*proto.ShardMetadata{
 					0: {
-						Status:   model.ShardStatusUnknown,
-						Leader:   &leader,
-						Ensemble: []model.Server{leader},
-						Int32HashRange: model.Int32HashRange{
+						Status:   proto.ShardStatusUnknown,
+						Leader:   leader,
+						Ensemble: []*proto.DataServer{leader},
+						Int32HashRange: &proto.HashRange{
 							Min: 0,
 							Max: 100,
 						},
@@ -95,11 +94,11 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 }
 
 func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
-	active := model.Server{
+	active := &proto.DataServer{
 		Public:   "active-public:6648",
 		Internal: "active-internal:6649",
 	}
-	removed := model.Server{
+	removed := &proto.DataServer{
 		Public:   "removed-public:6648",
 		Internal: "removed-internal:6649",
 	}
@@ -124,17 +123,17 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
 	})
-	metadata.UpdateStatus(&model.ClusterStatus{
-		Namespaces: map[string]model.NamespaceStatus{
+	metadata.UpdateStatus(&proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,
-				Shards: map[int64]model.ShardMetadata{
+				Shards: map[int64]*proto.ShardMetadata{
 					0: {
-						Status:       model.ShardStatusUnknown,
-						Leader:       &removed,
-						Ensemble:     []model.Server{removed},
-						RemovedNodes: []model.Server{removed},
-						Int32HashRange: model.Int32HashRange{
+						Status:       proto.ShardStatusUnknown,
+						Leader:       removed,
+						Ensemble:     []*proto.DataServer{removed},
+						RemovedNodes: []*proto.DataServer{removed},
+						Int32HashRange: &proto.HashRange{
 							Min: 0,
 							Max: 100,
 						},

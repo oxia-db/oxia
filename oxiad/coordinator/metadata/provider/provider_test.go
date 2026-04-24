@@ -35,7 +35,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 var (
@@ -83,14 +83,14 @@ func TestProvider(t *testing.T) {
 			assert.Nil(t, res)
 
 			assert.PanicsWithError(t, provider.ErrBadVersion.Error(), func() {
-				_, err := m.Store(&model.ClusterStatus{
-					Namespaces: map[string]model.NamespaceStatus{},
+				_, err := m.Store(&proto.ClusterStatus{
+					Namespaces: map[string]*proto.NamespaceStatus{},
 				}, "")
 				assert.NoError(t, err)
 			})
 
-			newVersion, err := m.Store(&model.ClusterStatus{
-				Namespaces: map[string]model.NamespaceStatus{},
+			newVersion, err := m.Store(&proto.ClusterStatus{
+				Namespaces: map[string]*proto.NamespaceStatus{},
 			}, provider.NotExists)
 			assert.NoError(t, err)
 			assert.EqualValues(t, provider.Version("0"), newVersion)
@@ -98,8 +98,8 @@ func TestProvider(t *testing.T) {
 			res, version, err = m.Get()
 			assert.NoError(t, err)
 			assert.EqualValues(t, provider.Version("0"), version)
-			assert.Equal(t, &model.ClusterStatus{
-				Namespaces: map[string]model.NamespaceStatus{},
+			assert.Equal(t, &proto.ClusterStatus{
+				Namespaces: map[string]*proto.NamespaceStatus{},
 			}, res)
 
 			assert.NoError(t, m.Close())

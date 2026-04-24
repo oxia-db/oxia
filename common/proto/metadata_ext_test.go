@@ -196,3 +196,156 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 	require.NoError(t, decoded.Validate())
 	require.True(t, gproto.Equal(config, decoded))
 }
+
+func TestDecodeClusterStatusJSONCompatibility(t *testing.T) {
+	status, err := UnmarshalClusterStatusJSON([]byte(`{
+  "namespaces": {
+    "default": {
+      "replicationFactor": 3,
+      "shards": {
+        "1": {
+          "status": "SteadyState",
+          "term": 12,
+          "leader": {
+            "name": "node-1",
+            "public": "localhost:6648",
+            "internal": "localhost:6649"
+          },
+          "ensemble": [
+            {
+              "name": "node-1",
+              "public": "localhost:6648",
+              "internal": "localhost:6649"
+            },
+            {
+              "public": "localhost:7658",
+              "internal": "localhost:7659"
+            }
+          ],
+          "removedNodes": [],
+          "pendingDeleteShardNodes": [],
+          "int32HashRange": {
+            "min": 0,
+            "max": 4294967295
+          },
+          "split": {
+            "phase": "Bootstrap",
+            "parentShardId": 0,
+            "childShardIds": [2, 3],
+            "splitPoint": 123,
+            "snapshotOffset": 456,
+            "parentTermAtBootstrap": 789,
+            "childLeadersAtBootstrap": {
+              "2": "localhost:6649"
+            }
+          }
+        }
+      }
+    }
+  },
+  "shardIdGenerator": 4,
+  "serverIdx": 2,
+  "instanceId": "instance-1"
+}`))
+	require.NoError(t, err)
+	require.Equal(t, uint32(3), status.GetNamespaces()["default"].GetReplicationFactor())
+	shard := status.GetNamespaces()["default"].GetShards()[1]
+	require.Equal(t, ShardStatusSteadyState, shard.GetStatusOrDefault())
+	require.Equal(t, int64(12), shard.GetTerm())
+	require.Equal(t, "node-1", shard.GetLeader().GetNameOrDefault())
+	require.Equal(t, uint32(0), shard.GetInt32HashRange().GetMin())
+	require.Equal(t, uint32(4294967295), shard.GetInt32HashRange().GetMax())
+	require.NotNil(t, shard.GetSplit())
+	require.Equal(t, SplitPhaseBootstrap, shard.GetSplit().GetPhaseOrDefault())
+	require.Equal(t, []int64{2, 3}, shard.GetSplit().GetChildShardIds())
+	require.Equal(t, "instance-1", status.GetInstanceId())
+}
+
+func TestDecodeClusterStatusYAMLCompatibility(t *testing.T) {
+	status, err := UnmarshalClusterStatusYAML([]byte(`
+namespaces:
+  default:
+    replicationFactor: 1
+    shards:
+      1:
+        status: Election
+        term: 7
+        ensemble:
+          - public: localhost:6648
+            internal: localhost:6649
+        removedNodes:
+          - public: localhost:7658
+            internal: localhost:7659
+        pendingDeleteShardNodes:
+          - public: localhost:8658
+            internal: localhost:8659
+        int32HashRange:
+          min: 1
+          max: 2
+shardIdGenerator: 2
+serverIdx: 1
+instanceId: instance-yaml
+`))
+	require.NoError(t, err)
+	shard := status.GetNamespaces()["default"].GetShards()[1]
+	require.Equal(t, ShardStatusElection, shard.GetStatusOrDefault())
+	require.Len(t, shard.GetEnsemble(), 1)
+	require.Len(t, shard.GetRemovedNodes(), 1)
+	require.Len(t, shard.GetPendingDeleteShardNodes(), 1)
+	require.Equal(t, uint32(1), shard.GetInt32HashRange().GetMin())
+	require.Equal(t, uint32(2), shard.GetInt32HashRange().GetMax())
+	require.Equal(t, "instance-yaml", status.GetInstanceId())
+}
+
+func TestEncodeClusterStatusYAMLRoundTrip(t *testing.T) {
+	name := "node-1"
+	status := &ClusterStatus{
+		Namespaces: map[string]*NamespaceStatus{
+			"default": {
+				ReplicationFactor: 2,
+				Shards: map[int64]*ShardMetadata{
+					1: {
+						Status: ShardStatusSteadyState,
+						Term:   3,
+						Leader: &DataServer{
+							Name:     &name,
+							Public:   "localhost:6648",
+							Internal: "localhost:6649",
+						},
+						Ensemble: []*DataServer{
+							{
+								Name:     &name,
+								Public:   "localhost:6648",
+								Internal: "localhost:6649",
+							},
+							{
+								Public:   "localhost:7658",
+								Internal: "localhost:7659",
+							},
+						},
+						Int32HashRange: &HashRange{
+							Min: 10,
+							Max: 20,
+						},
+						Split: &SplitMetadata{
+							Phase:         SplitPhaseCatchUp,
+							ParentShardId: 0,
+							ChildShardIds: []int64{2, 3},
+							SplitPoint:    15,
+						},
+					},
+				},
+			},
+		},
+		ShardIdGenerator: 4,
+		ServerIdx:        1,
+		InstanceId:       "instance-round-trip",
+	}
+
+	data, err := MarshalClusterStatusYAML(status)
+	require.NoError(t, err)
+
+	decoded, err := UnmarshalClusterStatusYAML(data)
+	require.NoError(t, err)
+	require.True(t, gproto.Equal(status, decoded))
+}

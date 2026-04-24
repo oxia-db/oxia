@@ -20,7 +20,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 var (
@@ -52,9 +52,9 @@ func NextVersion(version Version) Version {
 type Provider interface {
 	io.Closer
 
-	Get() (cs *model.ClusterStatus, version Version, err error)
+	Get() (cs *commonproto.ClusterStatus, version Version, err error)
 
-	Store(cs *model.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
+	Store(cs *commonproto.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
 
 	WaitToBecomeLeader() error
 }

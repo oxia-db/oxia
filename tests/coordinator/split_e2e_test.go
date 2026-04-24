@@ -40,7 +40,6 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
@@ -49,10 +48,10 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 	s1, sa1 := newServer(t)
 	s2, sa2 := newServer(t)
 	s3, sa3 := newServer(t)
-	servers := map[model.Server]*dataserver.Server{
-		sa1: s1,
-		sa2: s2,
-		sa3: s3,
+	servers := map[string]*dataserver.Server{
+		sa1.GetNameOrDefault(): s1,
+		sa2.GetNameOrDefault(): s2,
+		sa3.GetNameOrDefault(): s3,
 	}
 
 	metadataProvider := memory.NewProvider()
@@ -60,7 +59,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
-	}}, []model.Server{sa1, sa2, sa3})
+	}}, []*proto.DataServer{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -76,7 +75,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 	// Wait for initial shard to be in steady state
 	require.Eventually(t, func() bool {
 		shard := metadata.LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0]
-		return shard.Status == model.ShardStatusSteadyState
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
 	}, 30*time.Second, 100*time.Millisecond)
 
 	slog.Info("Initial cluster is ready")
@@ -131,7 +130,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 			t.Logf("Left child shard %d not found", leftChild)
 			return false
 		}
-		if left.Status != model.ShardStatusSteadyState {
+		if left.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 			t.Logf("Left child shard %d status: %v", leftChild, left.Status)
 			return false
 		}
@@ -146,7 +145,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 			t.Logf("Right child shard %d not found", rightChild)
 			return false
 		}
-		if right.Status != model.ShardStatusSteadyState {
+		if right.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 			t.Logf("Right child shard %d status: %v", rightChild, right.Status)
 			return false
 		}
@@ -296,13 +295,14 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 // splitTestCluster holds references to a 3-node test cluster with a
 // coordinator, used by the shard-split integration tests.
 type splitTestCluster struct {
-	servers             map[model.Server]*dataserver.Server
-	sa1                 model.Server
+	servers             map[string]*dataserver.Server
+	addresses           []*proto.DataServer
+	sa1                 *proto.DataServer
 	coordinator         coordinator.Coordinator
 	metadata            coordmetadata.Metadata
 	leftChild           int64
 	rightChild          int64
-	leftMeta, rightMeta model.ShardMetadata
+	leftMeta, rightMeta *proto.ShardMetadata
 }
 
 // setupSplitCluster creates a 3-node cluster, waits for the initial shard to
@@ -313,8 +313,10 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 	s1, sa1 := newServer(t)
 	s2, sa2 := newServer(t)
 	s3, sa3 := newServer(t)
-	servers := map[model.Server]*dataserver.Server{
-		sa1: s1, sa2: s2, sa3: s3,
+	servers := map[string]*dataserver.Server{
+		sa1.GetNameOrDefault(): s1,
+		sa2.GetNameOrDefault(): s2,
+		sa3.GetNameOrDefault(): s3,
 	}
 
 	metadataProvider := memory.NewProvider()
@@ -322,7 +324,7 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
-	}}, []model.Server{sa1, sa2, sa3})
+	}}, []*proto.DataServer{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -335,12 +337,13 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 	metadata := coordinatorInstance.Metadata()
 	require.Eventually(t, func() bool {
 		shard := metadata.LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0]
-		return shard.Status == model.ShardStatusSteadyState
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
 	}, 30*time.Second, 100*time.Millisecond)
 	slog.Info("Initial cluster is ready")
 
 	return &splitTestCluster{
 		servers:     servers,
+		addresses:   []*proto.DataServer{sa1, sa2, sa3},
 		sa1:         sa1,
 		coordinator: coordinatorInstance,
 		metadata:    metadata,
@@ -368,7 +371,7 @@ func (c *splitTestCluster) splitAndWait(t *testing.T) {
 		}
 		for _, child := range []int64{c.leftChild, c.rightChild} {
 			sm, ok := ns.Shards[child]
-			if !ok || sm.Status != model.ShardStatusSteadyState || sm.Leader == nil || sm.Split != nil {
+			if !ok || sm.GetStatusOrDefault() != proto.ShardStatusSteadyState || sm.Leader == nil || sm.Split != nil {
 				return false
 			}
 		}
@@ -418,6 +421,23 @@ func (c *splitTestCluster) close(t *testing.T) {
 	for _, s := range c.servers {
 		assert.NoError(t, s.Close())
 	}
+}
+
+func (c *splitTestCluster) liveAddressExcluding(excludedIDs ...string) *proto.DataServer {
+	excluded := make(map[string]struct{}, len(excludedIDs))
+	for _, id := range excludedIDs {
+		excluded[id] = struct{}{}
+	}
+	for _, addr := range c.addresses {
+		id := addr.GetNameOrDefault()
+		if _, skip := excluded[id]; skip {
+			continue
+		}
+		if _, ok := c.servers[id]; ok {
+			return addr
+		}
+	}
+	return nil
 }
 
 // ---- Notifications test ----
@@ -834,7 +854,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
 			assert.NoError(t, err)
 
-			sa1 := model.Server{
+			sa1 := &proto.DataServer{
 				Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 				Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 			}
@@ -855,7 +875,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				ReplicationFactor: 1,
 				InitialShardCount: 1,
 				KeySorting:        keySortingValue,
-			}}, []model.Server{sa1})
+			}}, []*proto.DataServer{sa1})
 
 			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
@@ -869,7 +889,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 
 			assert.Eventually(t, func() bool {
 				shard := metadata.LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0]
-				return shard.Status == model.ShardStatusSteadyState
+				return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
 			}, 10*time.Second, 10*time.Millisecond)
 
 			client, err := oxia.NewSyncClient(sa1.Public)
@@ -900,7 +920,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 
 // waitForSplitPhase waits until the parent shard's split metadata reaches the
 // given phase, or fails the test if the timeout is exceeded.
-func waitForSplitPhase(t *testing.T, metadata coordmetadata.Metadata, parentShardId int64, phase model.SplitPhase, timeout time.Duration) {
+func waitForSplitPhase(t *testing.T, metadata coordmetadata.Metadata, parentShardId int64, phase string, timeout time.Duration) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		status := metadata.LoadStatus()
@@ -932,7 +952,7 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 
 	// Find the parent leader before initiating the split
 	status := cluster.metadata.LoadStatus()
-	parentLeader := *status.Namespaces[constant.DefaultNamespace].Shards[0].Leader
+	parentLeader := status.Namespaces[constant.DefaultNamespace].Shards[0].Leader
 	slog.Info("Parent leader identified", slog.Any("leader", parentLeader))
 
 	// Initiate split (don't wait for completion)
@@ -944,11 +964,11 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 
 	// Wait briefly for Bootstrap to start, then kill the parent leader.
 	// This simulates a leader crash during the observer snapshot transfer.
-	waitForSplitPhase(t, cluster.metadata, 0, model.SplitPhaseBootstrap, 30*time.Second)
+	waitForSplitPhase(t, cluster.metadata, 0, proto.SplitPhaseBootstrap, 30*time.Second)
 	slog.Info("Kill parent leader during Bootstrap/CatchUp", slog.Any("leader", parentLeader))
 
-	assert.NoError(t, cluster.servers[parentLeader].Close())
-	delete(cluster.servers, parentLeader)
+	assert.NoError(t, cluster.servers[parentLeader.GetNameOrDefault()].Close())
+	delete(cluster.servers, parentLeader.GetNameOrDefault())
 
 	// The split controller should recover: the coordinator will elect a new
 	// parent leader, the split controller detects the term change and falls
@@ -963,7 +983,7 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 		}
 		for _, child := range []int64{leftChild, rightChild} {
 			sm, ok := ns.Shards[child]
-			if !ok || sm.Status != model.ShardStatusSteadyState || sm.Leader == nil || sm.Split != nil {
+			if !ok || sm.GetStatusOrDefault() != proto.ShardStatusSteadyState || sm.Leader == nil || sm.Split != nil {
 				return false
 			}
 		}
@@ -972,11 +992,8 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 	slog.Info("Split completed after parent leader kill")
 
 	// Verify all 50 keys are still accessible
-	var survivingAddr model.Server
-	for addr := range cluster.servers {
-		survivingAddr = addr
-		break
-	}
+	survivingAddr := cluster.liveAddressExcluding(parentLeader.GetNameOrDefault())
+	require.NotNil(t, survivingAddr)
 
 	require.Eventually(t, func() bool {
 		client, err = oxia.NewSyncClient(survivingAddr.Public)
@@ -1018,19 +1035,14 @@ func TestCoordinator_ShardSplit_FollowerKillDuringSplit(t *testing.T) {
 	// Find a follower (non-leader) server
 	status := cluster.metadata.LoadStatus()
 	parentMeta := status.Namespaces[constant.DefaultNamespace].Shards[0]
-	parentLeader := *parentMeta.Leader
-	var follower model.Server
-	for addr := range cluster.servers {
-		if addr != parentLeader {
-			follower = addr
-			break
-		}
-	}
+	parentLeader := parentMeta.Leader
+	follower := cluster.liveAddressExcluding(parentLeader.GetNameOrDefault())
+	require.NotNil(t, follower)
 
 	// Kill a follower before initiating split
 	slog.Info("Killing follower before split", slog.Any("follower", follower))
-	assert.NoError(t, cluster.servers[follower].Close())
-	delete(cluster.servers, follower)
+	assert.NoError(t, cluster.servers[follower.GetNameOrDefault()].Close())
+	delete(cluster.servers, follower.GetNameOrDefault())
 
 	// The split should still complete with 2/3 servers (quorum)
 	slog.Info("Initiating split with one follower down")
@@ -1044,13 +1056,13 @@ func TestCoordinator_ShardSplit_FollowerKillDuringSplit(t *testing.T) {
 		st := cluster.metadata.LoadStatus()
 		ns := st.Namespaces[constant.DefaultNamespace]
 		if parentMeta, parentExists := ns.Shards[0]; parentExists {
-			if parentMeta.Status != model.ShardStatusDeleting {
+			if parentMeta.GetStatusOrDefault() != proto.ShardStatusDeleting {
 				return false
 			}
 		}
 		for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
 			sm, ok := ns.Shards[child]
-			if !ok || sm.Status != model.ShardStatusSteadyState || sm.Leader == nil || sm.Split != nil {
+			if !ok || sm.GetStatusOrDefault() != proto.ShardStatusSteadyState || sm.Leader == nil || sm.Split != nil {
 				return false
 			}
 		}
@@ -1059,11 +1071,8 @@ func TestCoordinator_ShardSplit_FollowerKillDuringSplit(t *testing.T) {
 	slog.Info("Split completed with one follower down")
 
 	// Verify keys accessible through a surviving server
-	var survivingAddr model.Server
-	for addr := range cluster.servers {
-		survivingAddr = addr
-		break
-	}
+	survivingAddr := cluster.liveAddressExcluding()
+	require.NotNil(t, survivingAddr)
 
 	require.Eventually(t, func() bool {
 		client, err = oxia.NewSyncClient(survivingAddr.Public)
@@ -1113,7 +1122,7 @@ func TestCoordinator_ShardSplit_ConcurrentSplitRejected(t *testing.T) {
 		}
 		for _, child := range []int64{leftChild, rightChild} {
 			sm, ok := ns.Shards[child]
-			if !ok || sm.Status != model.ShardStatusSteadyState || sm.Leader == nil || sm.Split != nil {
+			if !ok || sm.GetStatusOrDefault() != proto.ShardStatusSteadyState || sm.Leader == nil || sm.Split != nil {
 				return false
 			}
 		}

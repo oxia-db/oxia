@@ -25,7 +25,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/hash"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -53,11 +52,11 @@ var secondaryIdxRegex = regexp.MustCompile(
 //   - __oxia/session/{id}: keep (session metadata duplicated to both children)
 //   - __oxia/session/{id}/{user-key}: filter by user key hash
 //   - __oxia/idx/{idx}/{sec}\x01{pri}: filter by primary key hash
-func FilterDBForSplit(kv kvstore.KV, hashRange model.Int32HashRange) error {
+func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 	slog.Info(
 		"Filtering database for shard split",
-		slog.Any("hash-range-min", hashRange.Min),
-		slog.Any("hash-range-max", hashRange.Max),
+		slog.Any("hash-range-min", hashRange.GetMin()),
+		slog.Any("hash-range-max", hashRange.GetMax()),
 	)
 
 	batch := kv.NewWriteBatch()
@@ -137,7 +136,7 @@ func classifyInternalKey(
 	key string,
 	it kvstore.KeyValueIterator,
 	batch kvstore.WriteBatch,
-	hashRange model.Int32HashRange,
+	hashRange *proto.HashRange,
 ) (splitAction, error) {
 	switch {
 	case key == commitOffsetKey,
@@ -188,7 +187,7 @@ func filterNotificationKey(
 	key string,
 	it kvstore.KeyValueIterator,
 	batch kvstore.WriteBatch,
-	hashRange model.Int32HashRange,
+	hashRange *proto.HashRange,
 ) (splitAction, error) {
 	value, err := it.Value()
 	if err != nil {
@@ -236,7 +235,7 @@ func filterNotificationKey(
 // classifySessionShadowKey extracts the user key from a shadow key and checks
 // if it belongs to this child's hash range.
 // Shadow key format: __oxia/session/{16hex}/{url_escaped_user_key}.
-func classifySessionShadowKey(key string, hashRange model.Int32HashRange) splitAction {
+func classifySessionShadowKey(key string, hashRange *proto.HashRange) splitAction {
 	// Find the position after "__oxia/session/{16hex}/"
 	prefix := sessionKeyPrefix + "/"
 	rest := key[len(prefix):]
@@ -265,7 +264,7 @@ func classifySessionShadowKey(key string, hashRange model.Int32HashRange) splitA
 // classifySecondaryIndexKey extracts the primary key from a secondary index key
 // and checks if it belongs to this child's hash range.
 // Format: __oxia/idx/{name}/{secondary}\x01{url_escaped_primary}.
-func classifySecondaryIndexKey(key string, hashRange model.Int32HashRange) splitAction {
+func classifySecondaryIndexKey(key string, hashRange *proto.HashRange) splitAction {
 	matches := secondaryIdxRegex.FindStringSubmatch(key)
 	if len(matches) != 3 {
 		// Can't parse: keep to be safe
@@ -286,7 +285,7 @@ func classifySecondaryIndexKey(key string, hashRange model.Int32HashRange) split
 
 // isUserKeyInRange determines if a user data key belongs to the given hash range.
 // If the StorageEntry has a partition_key, that is hashed; otherwise the key itself.
-func isUserKeyInRange(key string, value []byte, hashRange model.Int32HashRange) bool {
+func isUserKeyInRange(key string, value []byte, hashRange *proto.HashRange) bool {
 	se := proto.StorageEntryFromVTPool()
 	defer se.ReturnToVTPool()
 
@@ -306,15 +305,15 @@ func isUserKeyInRange(key string, value []byte, hashRange model.Int32HashRange) 
 	return isHashInRange(h, hashRange)
 }
 
-func isHashInRange(h uint32, hashRange model.Int32HashRange) bool {
-	return h >= hashRange.Min && h <= hashRange.Max
+func isHashInRange(h uint32, hashRange *proto.HashRange) bool {
+	return h >= hashRange.GetMin() && h <= hashRange.GetMax()
 }
 
 // FilterWriteRequestForSplit filters a WriteRequest to only include operations
 // for keys within the given hash range. Returns nil if nothing remains.
 // This is used at the state machine apply level when a child shard processes
 // WAL entries inherited from its parent.
-func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange model.Int32HashRange) *proto.WriteRequest {
+func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange *proto.HashRange) *proto.WriteRequest {
 	if req == nil {
 		return nil
 	}

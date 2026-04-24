@@ -18,7 +18,6 @@ import (
 	"errors"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
@@ -64,7 +63,7 @@ func ApplyLogEntryWithSplitFilter(
 	db database.DB,
 	entry *proto.LogEntry,
 	updateOperationCallback database.UpdateOperationCallback,
-	hashRange model.Int32HashRange,
+	hashRange *proto.HashRange,
 ) (ApplyResponse, error) {
 	logEntryValue := proto.LogEntryValueFromVTPool()
 	defer logEntryValue.ReturnToVTPool()

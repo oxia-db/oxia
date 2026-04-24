@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,11 +33,10 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 var _ provider.Provider = &Provider{}
@@ -91,7 +89,7 @@ func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string) provi
 	return m
 }
 
-func (m *Provider) Get() (status *model.ClusterStatus, version provider.Version, err error) {
+func (m *Provider) Get() (status *commonproto.ClusterStatus, version provider.Version, err error) {
 	timer := m.getLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -100,7 +98,7 @@ func (m *Provider) Get() (status *model.ClusterStatus, version provider.Version,
 	return m.getWithoutLock()
 }
 
-func (m *Provider) getWithoutLock() (*model.ClusterStatus, provider.Version, error) {
+func (m *Provider) getWithoutLock() (*commonproto.ClusterStatus, provider.Version, error) {
 	cm, err := K8SConfigMaps(m.kubernetes).Get(m.namespace, m.name)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -109,9 +107,9 @@ func (m *Provider) getWithoutLock() (*model.ClusterStatus, provider.Version, err
 		return nil, "", err
 	}
 
-	status := &model.ClusterStatus{}
 	data := []byte(cm.Data["status"])
-	if err = yaml.Unmarshal(data, status); err != nil {
+	status, err := commonproto.UnmarshalClusterStatusYAML(data)
+	if err != nil {
 		return nil, "", err
 	}
 
@@ -122,7 +120,7 @@ func (m *Provider) getWithoutLock() (*model.ClusterStatus, provider.Version, err
 	return status, version, nil
 }
 
-func (m *Provider) Store(status *model.ClusterStatus, expectedVersion provider.Version) (provider.Version, error) {
+func (m *Provider) Store(status *commonproto.ClusterStatus, expectedVersion provider.Version) (provider.Version, error) {
 	timer := m.storeLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -231,8 +229,8 @@ func (m *Provider) Close() error {
 	return nil
 }
 
-func configMap(name string, status *model.ClusterStatus, version provider.Version) *corev1.ConfigMap {
-	bytes, err := yaml.Marshal(status)
+func configMap(name string, status *commonproto.ClusterStatus, version provider.Version) *corev1.ConfigMap {
+	bytes, err := commonproto.MarshalClusterStatusYAML(status)
 	if err != nil {
 		slog.Error(
 			"unable to marshal cluster status",

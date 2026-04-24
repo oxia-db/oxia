@@ -25,12 +25,12 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 type container struct {
-	ClusterStatus *model.ClusterStatus `json:"clusterStatus"`
-	Version       provider.Version     `json:"version"`
+	ClusterStatus json.RawMessage  `json:"clusterStatus"`
+	Version       provider.Version `json:"version"`
 }
 
 var _ provider.Provider = &Provider{}
@@ -70,7 +70,7 @@ func (m *Provider) WaitToBecomeLeader() error {
 	return nil
 }
 
-func (m *Provider) Get() (cs *model.ClusterStatus, version provider.Version, err error) {
+func (m *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
 	content, err := os.ReadFile(m.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -88,10 +88,19 @@ func (m *Provider) Get() (cs *model.ClusterStatus, version provider.Version, err
 		return nil, provider.NotExists, err
 	}
 
-	return mc.ClusterStatus, mc.Version, nil
+	if len(mc.ClusterStatus) == 0 {
+		return nil, mc.Version, nil
+	}
+
+	clusterStatus, err := commonproto.UnmarshalClusterStatusJSON(mc.ClusterStatus)
+	if err != nil {
+		return nil, provider.NotExists, err
+	}
+
+	return clusterStatus, mc.Version, nil
 }
 
-func (m *Provider) Store(cs *model.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	if err = m.ensureParentDirectoryExists(); err != nil {
 		return provider.NotExists, err
 	}
@@ -106,8 +115,12 @@ func (m *Provider) Store(cs *model.ClusterStatus, expectedVersion provider.Versi
 	}
 
 	newVersion = provider.NextVersion(existingVersion)
+	statusBytes, err := commonproto.MarshalClusterStatusJSON(cs)
+	if err != nil {
+		return "", err
+	}
 	newContent, err := json.Marshal(container{
-		ClusterStatus: cs,
+		ClusterStatus: statusBytes,
 		Version:       newVersion,
 	})
 	if err != nil {

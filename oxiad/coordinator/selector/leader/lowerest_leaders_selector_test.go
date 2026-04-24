@@ -19,7 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 )
 
@@ -27,8 +27,8 @@ func TestSelect_NoCandidates(t *testing.T) {
 	s := NewSelector()
 
 	_, err := s.Select(&Context{
-		Candidates: []model.Server{},
-		Status:     model.NewClusterStatus(),
+		Candidates: []*proto.DataServer{},
+		Status:     proto.NewClusterStatus(),
 	})
 	assert.ErrorIs(t, err, selector.ErrNoCandidates)
 }
@@ -38,7 +38,7 @@ func TestSelect_NilCandidates(t *testing.T) {
 
 	_, err := s.Select(&Context{
 		Candidates: nil,
-		Status:     model.NewClusterStatus(),
+		Status:     proto.NewClusterStatus(),
 	})
 	assert.ErrorIs(t, err, selector.ErrNoCandidates)
 }
@@ -47,10 +47,10 @@ func TestSelect_SingleCandidate(t *testing.T) {
 	s := NewSelector()
 
 	server, err := s.Select(&Context{
-		Candidates: []model.Server{
+		Candidates: []*proto.DataServer{
 			{Internal: "127.0.0.1:6601", Public: "127.0.0.1:6611"},
 		},
-		Status: model.NewClusterStatus(),
+		Status: proto.NewClusterStatus(),
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, "127.0.0.1:6601", server.Internal)

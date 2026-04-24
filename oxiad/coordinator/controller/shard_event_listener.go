@@ -14,10 +14,10 @@
 
 package controller
 
-import "github.com/oxia-db/oxia/oxiad/coordinator/model"
+import commonproto "github.com/oxia-db/oxia/common/proto"
 
 type ShardEventListener interface {
-	LeaderElected(shard int64, leader model.Server, followers []model.Server)
+	LeaderElected(shard int64, leader *commonproto.DataServer, followers []*commonproto.DataServer)
 
 	ShardDeleted(shard int64)
 }

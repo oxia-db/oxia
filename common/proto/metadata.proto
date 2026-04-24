@@ -63,3 +63,41 @@ message ClusterConfiguration {
   map<string, DataServerMetadata> serverMetadata = 4;
   LoadBalancer loadBalancer = 5;
 }
+
+message HashRange {
+  uint32 min = 1;
+  uint32 max = 2;
+}
+
+message SplitMetadata {
+  string phase = 1;
+  int64 parentShardId = 2;
+  repeated int64 childShardIds = 3;
+  uint32 splitPoint = 4;
+  int64 snapshotOffset = 5;
+  int64 parentTermAtBootstrap = 6;
+  map<int64, string> childLeadersAtBootstrap = 7;
+}
+
+message ShardMetadata {
+  string status = 1;
+  int64 term = 2;
+  DataServer leader = 3;
+  repeated DataServer ensemble = 4;
+  repeated DataServer removedNodes = 5;
+  repeated DataServer pendingDeleteShardNodes = 6;
+  HashRange int32HashRange = 7;
+  SplitMetadata split = 8;
+}
+
+message NamespaceStatus {
+  uint32 replicationFactor = 1;
+  map<int64, ShardMetadata> shards = 2;
+}
+
+message ClusterStatus {
+  map<string, NamespaceStatus> namespaces = 1;
+  int64 shardIdGenerator = 2;
+  uint32 serverIdx = 3;
+  string instanceId = 4;
+}

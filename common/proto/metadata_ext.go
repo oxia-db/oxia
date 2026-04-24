@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	gproto "google.golang.org/protobuf/proto"
+
 	"github.com/oxia-db/oxia/common/validation"
 )
 
@@ -32,6 +34,15 @@ const (
 	AntiAffinityModeUnknown = ""
 	AntiAffinityModeStrict  = "strict"
 	AntiAffinityModeRelaxed = "relaxed"
+
+	ShardStatusUnknown     = "Unknown"
+	ShardStatusSteadyState = "SteadyState"
+	ShardStatusElection    = "Election"
+	ShardStatusDeleting    = "Deleting"
+
+	SplitPhaseBootstrap = "Bootstrap"
+	SplitPhaseCatchUp   = "CatchUp"
+	SplitPhaseCutover   = "Cutover"
 )
 
 func (ds *DataServer) GetNameOrDefault() string {
@@ -42,6 +53,85 @@ func (ds *DataServer) GetNameOrDefault() string {
 		return ds.GetName()
 	}
 	return ds.GetInternal()
+}
+
+func NewClusterStatus() *ClusterStatus {
+	return &ClusterStatus{
+		Namespaces: map[string]*NamespaceStatus{},
+	}
+}
+
+func (cs *ClusterStatus) Clone() *ClusterStatus {
+	if cs == nil {
+		return nil
+	}
+	return gproto.Clone(cs).(*ClusterStatus) //nolint:revive
+}
+
+func (hr *HashRange) Clone() *HashRange {
+	if hr == nil {
+		return nil
+	}
+	return gproto.Clone(hr).(*HashRange) //nolint:revive
+}
+
+func (ns *NamespaceStatus) Clone() *NamespaceStatus {
+	if ns == nil {
+		return nil
+	}
+	return gproto.Clone(ns).(*NamespaceStatus) //nolint:revive
+}
+
+func (sm *ShardMetadata) Clone() *ShardMetadata {
+	if sm == nil {
+		return nil
+	}
+	return gproto.Clone(sm).(*ShardMetadata) //nolint:revive
+}
+
+func (sm *SplitMetadata) Clone() *SplitMetadata {
+	if sm == nil {
+		return nil
+	}
+	return gproto.Clone(sm).(*SplitMetadata) //nolint:revive
+}
+
+func ParseShardStatus(value string) string {
+	switch value {
+	case ShardStatusSteadyState:
+		return ShardStatusSteadyState
+	case ShardStatusElection:
+		return ShardStatusElection
+	case ShardStatusDeleting:
+		return ShardStatusDeleting
+	default:
+		return ShardStatusUnknown
+	}
+}
+
+func (sm *ShardMetadata) GetStatusOrDefault() string {
+	if sm == nil {
+		return ShardStatusUnknown
+	}
+	return ParseShardStatus(sm.GetStatus())
+}
+
+func ParseSplitPhase(value string) string {
+	switch value {
+	case SplitPhaseCatchUp:
+		return SplitPhaseCatchUp
+	case SplitPhaseCutover:
+		return SplitPhaseCutover
+	default:
+		return SplitPhaseBootstrap
+	}
+}
+
+func (sm *SplitMetadata) GetPhaseOrDefault() string {
+	if sm == nil {
+		return SplitPhaseBootstrap
+	}
+	return ParseSplitPhase(sm.GetPhase())
 }
 
 func (ns *Namespace) NotificationsEnabledOrDefault() bool {

@@ -28,7 +28,6 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	grpcstatus "google.golang.org/grpc/status"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/commonio"
@@ -77,7 +76,7 @@ type dataServerController struct {
 
 	ctx        context.Context
 	cancel     context.CancelFunc
-	dataServer model.Server
+	dataServer *proto.DataServer
 	rpc        rpc.Provider
 	insID      string
 	closed     atomic.Bool
@@ -348,7 +347,7 @@ func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.Healt
 	return nil
 }
 
-func NewDataServerController(ctx context.Context, dataServer model.Server,
+func NewDataServerController(ctx context.Context, dataServer *proto.DataServer,
 	shardAssignmentsProvider ShardAssignmentsProvider,
 	dataServerEventListener DataServerEventListener,
 	rpcProvider rpc.Provider,
@@ -356,14 +355,14 @@ func NewDataServerController(ctx context.Context, dataServer model.Server,
 	return newDataServerController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, insID, defaultInitialRetryBackoff)
 }
 
-func newDataServerController(ctx context.Context, dataServer model.Server,
+func newDataServerController(ctx context.Context, dataServer *proto.DataServer,
 	shardAssignmentsProvider ShardAssignmentsProvider,
 	dataServerEventListener DataServerEventListener,
 	rpcProvider rpc.Provider,
 	insID string,
 	initialRetryBackoff time.Duration) DataServerController {
 	dataServerCtx, cancel := context.WithCancel(ctx)
-	dataServerID := dataServer.GetIdentifier()
+	dataServerID := dataServer.GetNameOrDefault()
 	labels := map[string]any{"data-server": dataServerID}
 
 	supportedFeatures := atomic.Value{}

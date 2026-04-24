@@ -61,9 +61,9 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	defer s3.Close()
 
 	serverInstanceIndex := map[string]*dataserver.Server{
-		sa1.GetIdentifier(): s1,
-		sa2.GetIdentifier(): s2,
-		sa3.GetIdentifier(): s3,
+		sa1.GetNameOrDefault(): s1,
+		sa2.GetNameOrDefault(): s2,
+		sa3.GetNameOrDefault(): s3,
 	}
 
 	metadataProvider := memory.NewProvider()
@@ -90,8 +90,8 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	shardMetadata := resource.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
 	for _, dataServer := range shardMetadata.Ensemble {
-		targetId := dataServer.GetIdentifier()
-		if targetId == leader.GetIdentifier() {
+		targetId := dataServer.GetNameOrDefault()
+		if targetId == leader.GetNameOrDefault() {
 			assert.Eventually(t, func() bool {
 				lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
 				return err == nil && lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
@@ -111,7 +111,7 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Trigger checksum recording on the leader
-	lead, err := serverInstanceIndex[leader.GetIdentifier()].GetShardDirector().GetLeader(0)
+	lead, err := serverInstanceIndex[leader.GetNameOrDefault()].GetShardDirector().GetLeader(0)
 	assert.NoError(t, err)
 	lead.ProposeRecordChecksum(context.Background())
 

@@ -30,7 +30,6 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/oxia-db/oxia/tests/mock"
@@ -41,19 +40,11 @@ type testCluster struct {
 	authority   string
 	coordinator coordinator.Coordinator
 	servers     map[string]*dataserver.Server
-	addresses   []model.Server
+	addresses   []*proto.DataServer
 }
 
 const integrationRequestTimeout = 30 * time.Second
 const rejectionRequestTimeout = 5 * time.Second
-
-func dataServer(server model.Server) *proto.DataServer {
-	return &proto.DataServer{
-		Name:     server.Name,
-		Public:   server.Public,
-		Internal: server.Internal,
-	}
-}
 
 func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCluster {
 	t.Helper()
@@ -62,13 +53,13 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		name:      prefix,
 		authority: fmt.Sprintf("%s-bootstrap:6648", prefix),
 		servers:   make(map[string]*dataserver.Server, serverCount),
-		addresses: make([]model.Server, 0, serverCount),
+		addresses: make([]*proto.DataServer, 0, serverCount),
 	}
 
 	for i := 0; i < serverCount; i++ {
 		name := fmt.Sprintf("%s-s%d", prefix, i+1)
 		server, addr := mock.NewServer(t, name)
-		cluster.servers[addr.GetIdentifier()] = server
+		cluster.servers[addr.GetNameOrDefault()] = server
 		cluster.addresses = append(cluster.addresses, addr)
 	}
 
@@ -84,11 +75,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 					InitialShardCount: 3,
 				}},
 				Servers: func() []*proto.DataServer {
-					dataServers := make([]*proto.DataServer, 0, len(cluster.addresses))
-					for _, addr := range cluster.addresses {
-						dataServers = append(dataServers, dataServer(addr))
-					}
-					return dataServers
+					return cluster.addresses
 				}(),
 				AllowExtraAuthorities: []string{cluster.authority},
 			}, nil
@@ -99,7 +86,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 
 	require.Eventually(t, func() bool {
 		shard := cluster.coordinator.Metadata().LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0]
-		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
 	return cluster
@@ -123,13 +110,13 @@ func (c *testCluster) stopAllServers(t *testing.T) {
 	}
 }
 
-func (c *testCluster) leader() model.Server {
-	return *c.coordinator.Metadata().LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0].Leader
+func (c *testCluster) leader() *proto.DataServer {
+	return c.coordinator.Metadata().LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0].Leader
 }
 
-func (c *testCluster) bootstrapTargetExcluding(excluded model.Server) model.Server {
+func (c *testCluster) bootstrapTargetExcluding(excluded *proto.DataServer) *proto.DataServer {
 	for _, addr := range c.addresses {
-		if addr.GetIdentifier() != excluded.GetIdentifier() {
+		if addr.GetNameOrDefault() != excluded.GetNameOrDefault() {
 			return addr
 		}
 	}

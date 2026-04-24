@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 
 	"github.com/oxia-db/oxia/common/concurrent"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 var _ Action = &ChangeEnsembleAction{}
@@ -28,8 +28,8 @@ type ChangeEnsembleAction struct {
 	sync.WaitGroup
 
 	Shard int64
-	From  model.Server
-	To    model.Server
+	From  *commonproto.DataServer
+	To    *commonproto.DataServer
 
 	finished     atomic.Bool
 	executeError error
@@ -66,11 +66,11 @@ func (*ChangeEnsembleAction) Type() Type {
 	return SwapNode
 }
 
-func NewChangeEnsembleAction(shard int64, from model.Server, to model.Server) *ChangeEnsembleAction {
+func NewChangeEnsembleAction(shard int64, from *commonproto.DataServer, to *commonproto.DataServer) *ChangeEnsembleAction {
 	return NewChangeEnsembleActionWithCallback(shard, from, to, nil)
 }
 
-func NewChangeEnsembleActionWithCallback(shard int64, from model.Server, to model.Server, callback concurrent.Callback[any]) *ChangeEnsembleAction {
+func NewChangeEnsembleActionWithCallback(shard int64, from *commonproto.DataServer, to *commonproto.DataServer, callback concurrent.Callback[any]) *ChangeEnsembleAction {
 	action := ChangeEnsembleAction{
 		WaitGroup:    sync.WaitGroup{},
 		Shard:        shard,

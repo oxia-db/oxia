@@ -19,16 +19,16 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
-	"github.com/oxia-db/oxia/common/proto"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
 
 type Context struct {
 	Candidates         *linkedhashset.Set[string]
-	CandidatesMetadata map[string]*proto.DataServerMetadata
-	HierarchyPolicies  *proto.HierarchyPolicies
-	Status             *model.ClusterStatus
+	CandidatesMetadata map[string]*commonproto.DataServerMetadata
+	HierarchyPolicies  *commonproto.HierarchyPolicies
+	Status             *commonproto.ClusterStatus
 
 	LoadRatioSupplier func() *model.Ratio
 

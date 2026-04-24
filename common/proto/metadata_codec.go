@@ -60,6 +60,51 @@ func MarshalClusterConfigurationYAML(config *ClusterConfiguration) ([]byte, erro
 	return yaml.Marshal(generic)
 }
 
+func UnmarshalClusterStatusJSON(data []byte) (*ClusterStatus, error) {
+	status := &ClusterStatus{}
+	if err := (protojson.UnmarshalOptions{
+		DiscardUnknown: false,
+	}).Unmarshal(data, status); err != nil {
+		return nil, err
+	}
+	return status, nil
+}
+
+func MarshalClusterStatusJSON(status *ClusterStatus) ([]byte, error) {
+	return protojson.MarshalOptions{
+		UseProtoNames:   false,
+		EmitUnpopulated: false,
+	}.Marshal(status)
+}
+
+func UnmarshalClusterStatusYAML(data []byte) (*ClusterStatus, error) {
+	var generic any
+	if err := yaml.Unmarshal(data, &generic); err != nil {
+		return nil, err
+	}
+
+	jsonBytes, err := json.Marshal(yamlJSONCompatibleValue(generic))
+	if err != nil {
+		return nil, err
+	}
+
+	return UnmarshalClusterStatusJSON(jsonBytes)
+}
+
+func MarshalClusterStatusYAML(status *ClusterStatus) ([]byte, error) {
+	jsonBytes, err := MarshalClusterStatusJSON(status)
+	if err != nil {
+		return nil, err
+	}
+
+	var generic any
+	if err := json.Unmarshal(jsonBytes, &generic); err != nil {
+		return nil, err
+	}
+
+	return yaml.Marshal(generic)
+}
+
 func yamlJSONCompatibleValue(value any) any {
 	switch v := value.(type) {
 	case map[string]any:

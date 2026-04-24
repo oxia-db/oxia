@@ -23,17 +23,8 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
-
-func dataServer(server model.Server) *proto.DataServer {
-	return &proto.DataServer{
-		Name:     server.Name,
-		Public:   server.Public,
-		Internal: server.Internal,
-	}
-}
 
 func createCoordinatorMetadata(
 	t *testing.T,
@@ -65,13 +56,9 @@ func newCoordinatorInstance(
 	return coordinatorInstance
 }
 
-func newClusterConfig(namespaces []*proto.Namespace, servers []model.Server) *proto.ClusterConfiguration {
-	dataServers := make([]*proto.DataServer, 0, len(servers))
-	for _, server := range servers {
-		dataServers = append(dataServers, dataServer(server))
-	}
+func newClusterConfig(namespaces []*proto.Namespace, servers []*proto.DataServer) *proto.ClusterConfiguration {
 	return &proto.ClusterConfiguration{
 		Namespaces: namespaces,
-		Servers:    dataServers,
+		Servers:    servers,
 	}
 }

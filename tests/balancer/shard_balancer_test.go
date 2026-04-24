@@ -25,23 +25,14 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/oxia"
 
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
-func shardBalancerDataServers(servers ...model.Server) []*proto.DataServer {
-	dataServers := make([]*proto.DataServer, 0, len(servers))
-	for _, server := range servers {
-		dataServers = append(dataServers, &proto.DataServer{
-			Name:     server.Name,
-			Public:   server.Public,
-			Internal: server.Internal,
-		})
-	}
-	return dataServers
+func shardBalancerDataServers(servers ...*proto.DataServer) []*proto.DataServer {
+	return servers
 }
 
 func TestNormalShardBalancer(t *testing.T) {
@@ -86,7 +77,7 @@ func TestNormalShardBalancer(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
-				if shard.Status != model.ShardStatusSteadyState {
+				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
 				}
 			}
@@ -98,13 +89,13 @@ func TestNormalShardBalancer(t *testing.T) {
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.Node(s4ad.GetIdentifier())
+		_, exist := metadata.Node(s4ad.GetNameOrDefault())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 	assert.Eventually(t, func() bool {
 		controllers := coordinator.NodeControllers()
-		s4Controller, s4Ok := controllers[s4ad.GetIdentifier()]
-		s5Controller, s5Ok := controllers[s5ad.GetIdentifier()]
+		s4Controller, s4Ok := controllers[s4ad.GetNameOrDefault()]
+		s5Controller, s5Ok := controllers[s5ad.GetNameOrDefault()]
 		return s4Ok && s5Ok &&
 			s4Controller.Status() == controller.Running &&
 			s5Controller.Status() == controller.Running
@@ -129,19 +120,19 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	s5, s5ad := mock.NewServer(t, "sv-5")
 	defer s5.Close()
 	serverMetadata := map[string]*proto.DataServerMetadata{
-		s1ad.GetIdentifier(): {
+		s1ad.GetNameOrDefault(): {
 			Labels: map[string]string{"zone": "us-east-1"},
 		},
-		s2ad.GetIdentifier(): {
+		s2ad.GetNameOrDefault(): {
 			Labels: map[string]string{"zone": "us-north-1"},
 		},
-		s3ad.GetIdentifier(): {
+		s3ad.GetNameOrDefault(): {
 			Labels: map[string]string{"zone": "us-west-1"},
 		},
-		s4ad.GetIdentifier(): {
+		s4ad.GetNameOrDefault(): {
 			Labels: map[string]string{"zone": "us-west-1"},
 		},
-		s5ad.GetIdentifier(): {
+		s5ad.GetNameOrDefault(): {
 			Labels: map[string]string{"zone": "us-east-1"},
 		},
 	}
@@ -193,7 +184,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		for _, ns := range metadata.LoadStatus().Namespaces {
 			for _, shard := range ns.Shards {
-				if shard.Status != model.ShardStatusSteadyState {
+				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
 				}
 			}
@@ -205,13 +196,13 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.Node(s4ad.GetIdentifier())
+		_, exist := metadata.Node(s4ad.GetNameOrDefault())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 	assert.Eventually(t, func() bool {
 		controllers := coordinator.NodeControllers()
-		s4Controller, s4Ok := controllers[s4ad.GetIdentifier()]
-		s5Controller, s5Ok := controllers[s5ad.GetIdentifier()]
+		s4Controller, s4Ok := controllers[s4ad.GetNameOrDefault()]
+		s5Controller, s5Ok := controllers[s5ad.GetNameOrDefault()]
 		return s4Ok && s5Ok &&
 			s4Controller.Status() == controller.Running &&
 			s5Controller.Status() == controller.Running
@@ -229,7 +220,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 			nodeIDs := linkedhashset.New[string]()
 			nodeZones := linkedhashset.New[string]()
 			for _, server := range shard.Ensemble {
-				id := server.GetIdentifier()
+				id := server.GetNameOrDefault()
 				nodeIDs.Add(id)
 				metadata := serverMetadata[id]
 				nodeZones.Add(metadata.Labels["zone"])
@@ -302,7 +293,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.Node(s4ad.GetIdentifier())
+		_, exist := metadata.Node(s4ad.GetNameOrDefault())
 		return exist
 	}, 60*time.Second, 1*time.Second)
 
