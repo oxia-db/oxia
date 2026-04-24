@@ -261,6 +261,41 @@ func TestDecodeClusterStatusJSONCompatibility(t *testing.T) {
 	require.Equal(t, "instance-1", status.GetInstanceId())
 }
 
+func TestDecodeClusterStatusJSONIgnoresUnknownFields(t *testing.T) {
+	status, err := UnmarshalClusterStatusJSON([]byte(`{
+  "namespaces": {
+    "default": {
+      "replicationFactor": 3,
+      "unknownNamespaceField": "ignored",
+      "shards": {
+        "1": {
+          "status": "SteadyState",
+          "term": 12,
+          "unknownShardField": {
+            "nested": true
+          },
+          "int32HashRange": {
+            "min": 0,
+            "max": 4294967295,
+            "unknownRangeField": 1
+          }
+        }
+      }
+    }
+  },
+  "instanceId": "instance-1",
+  "unknownTopLevelField": 123
+}`))
+	require.NoError(t, err)
+	require.Equal(t, "instance-1", status.GetInstanceId())
+	require.Equal(t, uint32(3), status.GetNamespaces()["default"].GetReplicationFactor())
+	shard := status.GetNamespaces()["default"].GetShards()[1]
+	require.Equal(t, ShardStatusSteadyState, shard.GetStatusOrDefault())
+	require.Equal(t, int64(12), shard.GetTerm())
+	require.Equal(t, uint32(0), shard.GetInt32HashRange().GetMin())
+	require.Equal(t, uint32(4294967295), shard.GetInt32HashRange().GetMax())
+}
+
 func TestDecodeClusterStatusYAMLCompatibility(t *testing.T) {
 	status, err := UnmarshalClusterStatusYAML([]byte(`
 namespaces:

@@ -63,7 +63,7 @@ func MarshalClusterConfigurationYAML(config *ClusterConfiguration) ([]byte, erro
 func UnmarshalClusterStatusJSON(data []byte) (*ClusterStatus, error) {
 	status := &ClusterStatus{}
 	if err := (protojson.UnmarshalOptions{
-		DiscardUnknown: false,
+		DiscardUnknown: true,
 	}).Unmarshal(data, status); err != nil {
 		return nil, err
 	}
