@@ -26,9 +26,9 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/single"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
 )
 
 type mockMetadata struct {

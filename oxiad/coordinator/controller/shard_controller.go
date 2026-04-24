@@ -25,10 +25,10 @@ import (
 	"github.com/cenkalti/backoff/v4"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
+	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/selector/leader"
 
 	"github.com/oxia-db/oxia/common/process"
 	oxiatime "github.com/oxia-db/oxia/common/time"
