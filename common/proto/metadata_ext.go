@@ -175,8 +175,9 @@ func (cc *ClusterConfiguration) GetDataServer(id string) (*DataServer, bool) {
 
 		identity := server
 		if server.GetName() == "" {
+			name := server.GetNameOrDefault()
 			identity = &DataServerIdentity{
-				Name:     new(server.GetNameOrDefault()),
+				Name:     &name,
 				Public:   server.GetPublic(),
 				Internal: server.GetInternal(),
 			}

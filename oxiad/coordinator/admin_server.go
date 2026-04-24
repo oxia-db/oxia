@@ -47,11 +47,23 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
 	for _, server := range cnf.GetServers() {
 		id := server.GetNameOrDefault()
-		dataServer, found := cnf.GetDataServer(id)
-		if !found {
-			continue
+		identity := server
+		if server.GetName() == "" {
+			name := id
+			identity = &proto.DataServerIdentity{
+				Name:     &name,
+				Public:   server.GetPublic(),
+				Internal: server.GetInternal(),
+			}
 		}
-		dataServers = append(dataServers, dataServer)
+		metadata := &proto.DataServerMetadata{}
+		if value, found := cnf.GetServerMetadata()[id]; found {
+			metadata = value
+		}
+		dataServers = append(dataServers, &proto.DataServer{
+			Identity: identity,
+			Metadata: metadata,
+		})
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil

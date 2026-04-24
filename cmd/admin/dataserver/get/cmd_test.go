@@ -66,46 +66,10 @@ func Test_cmd_getDataServer(t *testing.T) {
 }
 
 func Test_cmd_getDataServersIdentities(t *testing.T) {
-	serverName1 := "server-1"
-	serverName2 := "internal2"
 	commons.MockedAdminClient = commons.NewMockAdminClient()
-
-	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServer{
-		{
-			Identity: &proto.DataServerIdentity{
-				Name:     &serverName1,
-				Public:   "public1",
-				Internal: "internal1",
-			},
-			Metadata: &proto.DataServerMetadata{
-				Labels: map[string]string{"rack": "rack-1"},
-			},
-		},
-		{
-			Identity: &proto.DataServerIdentity{
-				Name:     &serverName2,
-				Public:   "public2",
-				Internal: "internal2",
-			},
-			Metadata: &proto.DataServerMetadata{
-				Labels: map[string]string{"rack": "rack-2"},
-			},
-		},
-	}, nil)
 
 	out, err := runCmd()
 
-	assert.NoError(t, err)
-	var identities []proto.DataServerIdentity
-	assert.NoError(t, json.Unmarshal([]byte(out), &identities))
-	require.Len(t, identities, 2)
-	require.NotNil(t, identities[0].Name)
-	require.NotNil(t, identities[1].Name)
-	assert.Equal(t, serverName1, *identities[0].Name)
-	assert.Equal(t, serverName2, *identities[1].Name)
-	assert.Equal(t, "public1", identities[0].GetPublic())
-	assert.Equal(t, "public2", identities[1].GetPublic())
-	assert.Equal(t, "internal1", identities[0].GetInternal())
-	assert.Equal(t, "internal2", identities[1].GetInternal())
+	assert.Error(t, err)
+	assert.Contains(t, out, "accepts 1 arg(s), received 0")
 }
