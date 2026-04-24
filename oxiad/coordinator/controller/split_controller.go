@@ -594,16 +594,16 @@ func (sc *SplitController) runCutover() error {
 		meta.Status = proto.ShardStatusDeleting
 	})
 
-	// Step 5: Notify the coordinator. This triggers the parent shard
-	// controller's DeleteShard (which retries indefinitely with backoff)
-	// and recomputes shard assignments so clients discover the children.
-	sc.eventListener.SplitComplete(sc.parentShardId, sc.leftChildId, sc.rightChildId)
-
 	// Clear split metadata from parent — the split controller's job is done.
 	// The parent shard controller handles the actual deletion.
 	sc.updateParentMeta(func(meta *proto.ShardMetadata) {
 		meta.Split = nil
 	})
+
+	// Step 5: Notify the coordinator. This triggers the parent shard
+	// controller's DeleteShard (which retries indefinitely with backoff)
+	// and recomputes shard assignments so clients discover the children.
+	sc.eventListener.SplitComplete(sc.parentShardId, sc.leftChildId, sc.rightChildId)
 
 	return nil
 }
