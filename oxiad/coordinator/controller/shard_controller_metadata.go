@@ -17,6 +17,8 @@ package controller
 import (
 	"sync"
 
+	gproto "google.golang.org/protobuf/proto"
+
 	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
@@ -28,20 +30,20 @@ type Metadata struct {
 func (s *Metadata) Load() *commonproto.ShardMetadata {
 	s.RLock()
 	defer s.RUnlock()
-	return s.shardMetadata.Clone()
+	return gproto.Clone(s.shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
 }
 
 func (s *Metadata) Compute(fn func(metadata *commonproto.ShardMetadata)) *commonproto.ShardMetadata {
 	s.Lock()
 	defer s.Unlock()
 	fn(s.shardMetadata)
-	return s.shardMetadata.Clone()
+	return gproto.Clone(s.shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
 }
 
 func (s *Metadata) Store(metadata *commonproto.ShardMetadata) {
 	s.Lock()
 	defer s.Unlock()
-	s.shardMetadata = metadata.Clone()
+	s.shardMetadata = gproto.Clone(metadata).(*commonproto.ShardMetadata) //nolint:revive
 }
 
 func (s *Metadata) Status() string {
@@ -65,6 +67,6 @@ func (s *Metadata) Term() int64 {
 func NewMetadata(metadata *commonproto.ShardMetadata) Metadata {
 	return Metadata{
 		RWMutex:       sync.RWMutex{},
-		shardMetadata: metadata.Clone(),
+		shardMetadata: gproto.Clone(metadata).(*commonproto.ShardMetadata),
 	}
 }

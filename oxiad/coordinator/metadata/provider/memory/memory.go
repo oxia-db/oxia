@@ -17,6 +17,8 @@ package memory
 import (
 	"sync"
 
+	gproto "google.golang.org/protobuf/proto"
+
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
@@ -59,7 +61,7 @@ func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider
 		panic(provider.ErrBadVersion)
 	}
 
-	m.cs = cs.Clone()
+	m.cs = gproto.Clone(cs).(*commonproto.ClusterStatus) //nolint:revive
 	m.version = provider.NextVersion(m.version)
 	return m.version, nil
 }

@@ -67,6 +67,9 @@ func UnmarshalClusterStatusJSON(data []byte) (*ClusterStatus, error) {
 	}).Unmarshal(data, status); err != nil {
 		return nil, err
 	}
+	if status.Namespaces == nil {
+		status.Namespaces = map[string]*NamespaceStatus{}
+	}
 	return status, nil
 }
 

@@ -21,6 +21,7 @@ import (
 
 	"github.com/hashicorp/raft"
 	"go.uber.org/multierr"
+	gproto "google.golang.org/protobuf/proto"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
 )
@@ -82,7 +83,7 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 // Snapshot returns a snapshot of the FSM.
 func (sc *stateContainer) Snapshot() (raft.FSMSnapshot, error) {
 	return &stateContainer{
-		State:          sc.State.Clone(),
+		State:          gproto.Clone(sc.State).(*commonproto.ClusterStatus),
 		CurrentVersion: sc.CurrentVersion,
 	}, nil
 }

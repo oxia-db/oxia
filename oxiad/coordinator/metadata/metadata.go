@@ -149,7 +149,7 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 		m.currentStatus = commonproto.NewClusterStatus()
 	}
 	if m.currentStatus.InstanceId == "" {
-		clonedStatus := m.currentStatus.Clone()
+		clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
 		clonedStatus.InstanceId = uuid.NewString()
 		m.persistStatusLocked(clonedStatus, "failed to initialize instance id")
 		m.notifyStatusChange()
@@ -184,7 +184,7 @@ func (m *coordinatorMetadata) ApplyStatusChanges(config *commonproto.ClusterConf
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
-	newStatus := m.currentStatus.Clone()
+	newStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
 	shardsToAdd, shardsToDelete := util.ApplyClusterChanges(config, newStatus, ensembleSupplier)
 	if len(shardsToAdd) == 0 && len(shardsToDelete) == 0 {
 		return newStatus, shardsToAdd, shardsToDelete
@@ -207,12 +207,12 @@ func (m *coordinatorMetadata) UpdateShardMetadata(namespace string, shard int64,
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
-	clonedStatus := m.currentStatus.Clone()
+	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
 	ns, exist := clonedStatus.Namespaces[namespace]
 	if !exist {
 		return
 	}
-	ns.Shards[shard] = shardMetadata.Clone()
+	ns.Shards[shard] = gproto.Clone(shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
 	m.persistStatusLocked(clonedStatus, "failed to update shard metadata")
 	m.notifyStatusChange()
 }
@@ -221,7 +221,7 @@ func (m *coordinatorMetadata) DeleteShardMetadata(namespace string, shard int64)
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
-	clonedStatus := m.currentStatus.Clone()
+	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
 	ns, exist := clonedStatus.Namespaces[namespace]
 	if !exist {
 		return

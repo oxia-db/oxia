@@ -23,6 +23,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
@@ -216,7 +217,7 @@ func (sc *SplitController) currentPhase() string {
 // updatePhase atomically updates the split phase on both parent and children.
 func (sc *SplitController) updatePhase(newPhase string) {
 	status := sc.metadata.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus) //nolint:revive
 
 	ns := cloned.Namespaces[sc.namespace]
 
@@ -677,7 +678,7 @@ func (sc *SplitController) loadShardMeta(shardId int64) *proto.ShardMetadata {
 	if !exists {
 		return nil
 	}
-	return meta.Clone()
+	return gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
 }
 
 func (sc *SplitController) updateParentMeta(fn func(meta *proto.ShardMetadata)) {
@@ -690,7 +691,7 @@ func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *proto.Sh
 
 func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.ShardMetadata)) {
 	status := sc.metadata.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus) //nolint:revive
 	ns := cloned.Namespaces[sc.namespace]
 	if meta, exists := ns.Shards[shardId]; exists {
 		fn(meta)

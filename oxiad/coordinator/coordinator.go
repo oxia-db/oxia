@@ -166,7 +166,7 @@ func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.metadata.Namespace(namespace); exist {
 			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
-				shardMetadata.Clone(), c.metadata, c.findDataServerFeatures,
+				pb.Clone(shardMetadata).(*proto.ShardMetadata), c.metadata, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
@@ -485,7 +485,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Allocate child shard IDs
-	cloned := status.Clone()
+	cloned := pb.Clone(status).(*proto.ClusterStatus) //nolint:revive
 	leftChildId := cloned.ShardIdGenerator
 	rightChildId := cloned.ShardIdGenerator + 1
 	cloned.ShardIdGenerator += 2

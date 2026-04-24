@@ -20,8 +20,6 @@ import (
 	"strings"
 	"time"
 
-	gproto "google.golang.org/protobuf/proto"
-
 	"github.com/oxia-db/oxia/common/validation"
 )
 
@@ -59,41 +57,6 @@ func NewClusterStatus() *ClusterStatus {
 	return &ClusterStatus{
 		Namespaces: map[string]*NamespaceStatus{},
 	}
-}
-
-func (cs *ClusterStatus) Clone() *ClusterStatus {
-	if cs == nil {
-		return nil
-	}
-	return gproto.Clone(cs).(*ClusterStatus) //nolint:revive
-}
-
-func (hr *HashRange) Clone() *HashRange {
-	if hr == nil {
-		return nil
-	}
-	return gproto.Clone(hr).(*HashRange) //nolint:revive
-}
-
-func (ns *NamespaceStatus) Clone() *NamespaceStatus {
-	if ns == nil {
-		return nil
-	}
-	return gproto.Clone(ns).(*NamespaceStatus) //nolint:revive
-}
-
-func (sm *ShardMetadata) Clone() *ShardMetadata {
-	if sm == nil {
-		return nil
-	}
-	return gproto.Clone(sm).(*ShardMetadata) //nolint:revive
-}
-
-func (sm *SplitMetadata) Clone() *SplitMetadata {
-	if sm == nil {
-		return nil
-	}
-	return gproto.Clone(sm).(*SplitMetadata) //nolint:revive
 }
 
 func ParseShardStatus(value string) string {

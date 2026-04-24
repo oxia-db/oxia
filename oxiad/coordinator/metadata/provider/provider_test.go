@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	gproto "google.golang.org/protobuf/proto"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -98,9 +99,9 @@ func TestProvider(t *testing.T) {
 			res, version, err = m.Get()
 			assert.NoError(t, err)
 			assert.EqualValues(t, provider.Version("0"), version)
-			assert.Equal(t, &proto.ClusterStatus{
+			assert.True(t, gproto.Equal(&proto.ClusterStatus{
 				Namespaces: map[string]*proto.NamespaceStatus{},
-			}, res)
+			}, res))
 
 			assert.NoError(t, m.Close())
 		})

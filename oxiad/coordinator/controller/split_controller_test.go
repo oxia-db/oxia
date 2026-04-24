@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -275,7 +276,7 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 	// For CatchUp, we need child leaders to already be set (they were set during bootstrap)
 	// Update child metadata to have leaders
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 	leftMeta := ns.Shards[1]
 	leftMeta.Leader = ls1
@@ -391,7 +392,7 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
@@ -453,7 +454,7 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 
 	// Set child leaders and ParentTermAtBootstrap = 5
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
@@ -661,7 +662,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
@@ -727,7 +728,7 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
@@ -800,7 +801,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	// Set child leaders and ParentTermAtBootstrap as if Bootstrap completed.
 	// Also set ChildLeadersAtBootstrap with the ORIGINAL leaders.
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
