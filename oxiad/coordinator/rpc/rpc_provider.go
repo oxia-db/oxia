@@ -36,18 +36,18 @@ const rpcTimeout = 30 * time.Second
 type Provider interface {
 	io.Closer
 
-	PushShardAssignments(ctx context.Context, node *proto.DataServer) (proto.OxiaCoordination_PushShardAssignmentsClient, error)
-	NewTerm(ctx context.Context, node *proto.DataServer, req *proto.NewTermRequest) (*proto.NewTermResponse, error)
-	BecomeLeader(ctx context.Context, node *proto.DataServer, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error)
-	AddFollower(ctx context.Context, node *proto.DataServer, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error)
-	GetStatus(ctx context.Context, node *proto.DataServer, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
-	DeleteShard(ctx context.Context, node *proto.DataServer, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
-	Handshake(ctx context.Context, node *proto.DataServer, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error)
-	RemoveObserver(ctx context.Context, node *proto.DataServer, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error)
+	PushShardAssignments(ctx context.Context, node *proto.DataServerIdentity) (proto.OxiaCoordination_PushShardAssignmentsClient, error)
+	NewTerm(ctx context.Context, node *proto.DataServerIdentity, req *proto.NewTermRequest) (*proto.NewTermResponse, error)
+	BecomeLeader(ctx context.Context, node *proto.DataServerIdentity, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error)
+	AddFollower(ctx context.Context, node *proto.DataServerIdentity, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error)
+	GetStatus(ctx context.Context, node *proto.DataServerIdentity, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
+	DeleteShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
+	Handshake(ctx context.Context, node *proto.DataServerIdentity, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error)
+	RemoveObserver(ctx context.Context, node *proto.DataServerIdentity, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error)
 
-	GetHealthClient(node *proto.DataServer) (grpc_health_v1.HealthClient, io.Closer, error)
+	GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, io.Closer, error)
 
-	ClearPooledConnections(node *proto.DataServer)
+	ClearPooledConnections(node *proto.DataServerIdentity)
 }
 
 type rpcProvider struct {
@@ -68,7 +68,7 @@ func (r *rpcProvider) Close() error {
 	return r.pool.Close()
 }
 
-func (r *rpcProvider) PushShardAssignments(ctx context.Context, node *proto.DataServer) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
+func (r *rpcProvider) PushShardAssignments(ctx context.Context, node *proto.DataServerIdentity) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func (r *rpcProvider) PushShardAssignments(ctx context.Context, node *proto.Data
 	return client.PushShardAssignments(ctx)
 }
 
-func (r *rpcProvider) NewTerm(ctx context.Context, node *proto.DataServer, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+func (r *rpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
 		return nil, err
@@ -89,7 +89,7 @@ func (r *rpcProvider) NewTerm(ctx context.Context, node *proto.DataServer, req *
 	return client.NewTerm(ctx, req)
 }
 
-func (r *rpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServer, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
+func (r *rpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func (r *rpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServer, 
 	return client.BecomeLeader(ctx, req)
 }
 
-func (r *rpcProvider) AddFollower(ctx context.Context, node *proto.DataServer, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+func (r *rpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func (r *rpcProvider) AddFollower(ctx context.Context, node *proto.DataServer, r
 	return client.AddFollower(ctx, req)
 }
 
-func (r *rpcProvider) GetStatus(ctx context.Context, node *proto.DataServer, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+func (r *rpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
 		return nil, err
@@ -125,7 +125,7 @@ func (r *rpcProvider) GetStatus(ctx context.Context, node *proto.DataServer, req
 	return client.GetStatus(ctx, req)
 }
 
-func (r *rpcProvider) Handshake(ctx context.Context, node *proto.DataServer, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+func (r *rpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdentity, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
 		return nil, err
@@ -154,7 +154,7 @@ func (r *rpcProvider) Handshake(ctx context.Context, node *proto.DataServer, req
 	}, nil
 }
 
-func (r *rpcProvider) DeleteShard(ctx context.Context, node *proto.DataServer, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
+func (r *rpcProvider) DeleteShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
 		return nil, err
@@ -166,7 +166,7 @@ func (r *rpcProvider) DeleteShard(ctx context.Context, node *proto.DataServer, r
 	return client.DeleteShard(ctx, req)
 }
 
-func (r *rpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServer, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
+func (r *rpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServerIdentity, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
 		return nil, err
@@ -178,10 +178,10 @@ func (r *rpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServer
 	return client.RemoveObserver(ctx, req)
 }
 
-func (r *rpcProvider) GetHealthClient(node *proto.DataServer) (grpc_health_v1.HealthClient, io.Closer, error) {
+func (r *rpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, io.Closer, error) {
 	return r.pool.GetHealthRpc(node.Internal)
 }
 
-func (r *rpcProvider) ClearPooledConnections(node *proto.DataServer) {
+func (r *rpcProvider) ClearPooledConnections(node *proto.DataServerIdentity) {
 	r.pool.Clear(node.Internal)
 }

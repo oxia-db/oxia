@@ -28,8 +28,8 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 )
 
-func dataServer(name *string, public, internal string) *proto.DataServer {
-	return &proto.DataServer{
+func dataServer(name *string, public, internal string) *proto.DataServerIdentity {
+	return &proto.DataServerIdentity{
 		Name:     name,
 		Public:   public,
 		Internal: internal,
@@ -59,7 +59,7 @@ func TestAdminServerListDataServers(t *testing.T) {
 
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
-			Servers: []*proto.DataServer{
+			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName1, "public-1", "internal-1"),
 				dataServer(&serverName2, "public-2", "internal-2"),
 				dataServer(nil, "public-3", "internal-3"),
@@ -77,20 +77,26 @@ func TestAdminServerListDataServers(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.DataServers, 3)
 
-	require.NotNil(t, res.DataServers[0].Name)
-	assert.Equal(t, serverName1, *res.DataServers[0].Name)
-	assert.Equal(t, "public-1", res.DataServers[0].GetPublic())
-	assert.Equal(t, "internal-1", res.DataServers[0].GetInternal())
+	require.NotNil(t, res.DataServers[0].Identity)
+	require.NotNil(t, res.DataServers[0].Identity.Name)
+	assert.Equal(t, serverName1, *res.DataServers[0].Identity.Name)
+	assert.Equal(t, "public-1", res.DataServers[0].Identity.GetPublic())
+	assert.Equal(t, "internal-1", res.DataServers[0].Identity.GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, res.DataServers[0].Metadata.GetLabels())
 
-	require.NotNil(t, res.DataServers[1].Name)
-	assert.Equal(t, serverName2, *res.DataServers[1].Name)
-	assert.Equal(t, "public-2", res.DataServers[1].GetPublic())
-	assert.Equal(t, "internal-2", res.DataServers[1].GetInternal())
+	require.NotNil(t, res.DataServers[1].Identity)
+	require.NotNil(t, res.DataServers[1].Identity.Name)
+	assert.Equal(t, serverName2, *res.DataServers[1].Identity.Name)
+	assert.Equal(t, "public-2", res.DataServers[1].Identity.GetPublic())
+	assert.Equal(t, "internal-2", res.DataServers[1].Identity.GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-2"}, res.DataServers[1].Metadata.GetLabels())
 
-	require.NotNil(t, res.DataServers[2].Name)
-	assert.Equal(t, "internal-3", *res.DataServers[2].Name)
-	assert.Equal(t, "public-3", res.DataServers[2].GetPublic())
-	assert.Equal(t, "internal-3", res.DataServers[2].GetInternal())
+	require.NotNil(t, res.DataServers[2].Identity)
+	require.NotNil(t, res.DataServers[2].Identity.Name)
+	assert.Equal(t, "internal-3", *res.DataServers[2].Identity.Name)
+	assert.Equal(t, "public-3", res.DataServers[2].Identity.GetPublic())
+	assert.Equal(t, "internal-3", res.DataServers[2].Identity.GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-3"}, res.DataServers[2].Metadata.GetLabels())
 }
 
 func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
@@ -98,7 +104,7 @@ func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
 
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
-			Servers: []*proto.DataServer{
+			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName1, "public-1", "internal-1"),
 				dataServer(nil, "public-2", "internal-2"),
 			},
@@ -130,7 +136,7 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
-			Servers: []*proto.DataServer{
+			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-2", "internal-2"),
 			},
 			ServerMetadata: map[string]*proto.DataServerMetadata{
@@ -143,13 +149,13 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 	res, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: serverName})
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	require.NotNil(t, res.DataServerInfo)
-	require.NotNil(t, res.DataServerInfo.DataServer)
-	require.NotNil(t, res.DataServerInfo.DataServer.Name)
-	assert.Equal(t, serverName, *res.DataServerInfo.DataServer.Name)
-	assert.Equal(t, "public-2", res.DataServerInfo.DataServer.GetPublic())
-	assert.Equal(t, "internal-2", res.DataServerInfo.DataServer.GetInternal())
-	assert.Equal(t, map[string]string{"zone": "zone-2"}, res.DataServerInfo.Metadata.GetLabels())
+	require.NotNil(t, res.DataServer)
+	require.NotNil(t, res.DataServer.Identity)
+	require.NotNil(t, res.DataServer.Identity.Name)
+	assert.Equal(t, serverName, *res.DataServer.Identity.Name)
+	assert.Equal(t, "public-2", res.DataServer.Identity.GetPublic())
+	assert.Equal(t, "internal-2", res.DataServer.Identity.GetInternal())
+	assert.Equal(t, map[string]string{"zone": "zone-2"}, res.DataServer.Metadata.GetLabels())
 }
 
 func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
@@ -157,7 +163,7 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
-			Servers: []*proto.DataServer{
+			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-2", "internal-2"),
 				dataServer(nil, "public-3", "internal-3"),
 			},
@@ -172,13 +178,13 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 	res, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-3"})
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	require.NotNil(t, res.DataServerInfo)
-	require.NotNil(t, res.DataServerInfo.DataServer)
-	require.NotNil(t, res.DataServerInfo.DataServer.Name)
-	assert.Equal(t, "internal-3", *res.DataServerInfo.DataServer.Name)
-	assert.Equal(t, "public-3", res.DataServerInfo.DataServer.GetPublic())
-	assert.Equal(t, "internal-3", res.DataServerInfo.DataServer.GetInternal())
-	assert.Equal(t, map[string]string{"role": "fallback"}, res.DataServerInfo.Metadata.GetLabels())
+	require.NotNil(t, res.DataServer)
+	require.NotNil(t, res.DataServer.Identity)
+	require.NotNil(t, res.DataServer.Identity.Name)
+	assert.Equal(t, "internal-3", *res.DataServer.Identity.Name)
+	assert.Equal(t, "public-3", res.DataServer.Identity.GetPublic())
+	assert.Equal(t, "internal-3", res.DataServer.Identity.GetInternal())
+	assert.Equal(t, map[string]string{"role": "fallback"}, res.DataServer.Metadata.GetLabels())
 
 	_, err = admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-2"})
 	require.Error(t, err)
@@ -188,7 +194,7 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 func TestAdminServerGetDataServerNotFound(t *testing.T) {
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
-			Servers: []*proto.DataServer{
+			Servers: []*proto.DataServerIdentity{
 				dataServer(nil, "public-1", "internal-1"),
 			},
 		}),

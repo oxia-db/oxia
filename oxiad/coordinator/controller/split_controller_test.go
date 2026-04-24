@@ -58,15 +58,15 @@ func (m *mockSplitEventListener) SplitAborted(parentShard int64, leftChild int64
 }
 
 var (
-	ps1 = &proto.DataServer{Public: "ps1:9091", Internal: "ps1:8191"}
-	ps2 = &proto.DataServer{Public: "ps2:9091", Internal: "ps2:8191"}
-	ps3 = &proto.DataServer{Public: "ps3:9091", Internal: "ps3:8191"}
-	ls1 = &proto.DataServer{Public: "ls1:9091", Internal: "ls1:8191"}
-	ls2 = &proto.DataServer{Public: "ls2:9091", Internal: "ls2:8191"}
-	ls3 = &proto.DataServer{Public: "ls3:9091", Internal: "ls3:8191"}
-	rs1 = &proto.DataServer{Public: "rs1:9091", Internal: "rs1:8191"}
-	rs2 = &proto.DataServer{Public: "rs2:9091", Internal: "rs2:8191"}
-	rs3 = &proto.DataServer{Public: "rs3:9091", Internal: "rs3:8191"}
+	ps1 = &proto.DataServerIdentity{Public: "ps1:9091", Internal: "ps1:8191"}
+	ps2 = &proto.DataServerIdentity{Public: "ps2:9091", Internal: "ps2:8191"}
+	ps3 = &proto.DataServerIdentity{Public: "ps3:9091", Internal: "ps3:8191"}
+	ls1 = &proto.DataServerIdentity{Public: "ls1:9091", Internal: "ls1:8191"}
+	ls2 = &proto.DataServerIdentity{Public: "ls2:9091", Internal: "ls2:8191"}
+	ls3 = &proto.DataServerIdentity{Public: "ls3:9091", Internal: "ls3:8191"}
+	rs1 = &proto.DataServerIdentity{Public: "rs1:9091", Internal: "rs1:8191"}
+	rs2 = &proto.DataServerIdentity{Public: "rs2:9091", Internal: "rs2:8191"}
+	rs3 = &proto.DataServerIdentity{Public: "rs3:9091", Internal: "rs3:8191"}
 )
 
 // setupSplitTest creates a cluster status with a parent shard in SteadyState,
@@ -94,7 +94,7 @@ func setupSplitTest(t *testing.T, phase string) (
 						Status:   proto.ShardStatusSteadyState,
 						Term:     5,
 						Leader:   ps1,
-						Ensemble: []*proto.DataServer{ps1, ps2, ps3},
+						Ensemble: []*proto.DataServerIdentity{ps1, ps2, ps3},
 						Int32HashRange: &proto.HashRange{
 							Min: 0,
 							Max: 1000,
@@ -108,7 +108,7 @@ func setupSplitTest(t *testing.T, phase string) (
 					1: {
 						Status:   proto.ShardStatusSteadyState,
 						Term:     0,
-						Ensemble: []*proto.DataServer{ls1, ls2, ls3},
+						Ensemble: []*proto.DataServerIdentity{ls1, ls2, ls3},
 						Int32HashRange: &proto.HashRange{
 							Min: 0,
 							Max: 500,
@@ -122,7 +122,7 @@ func setupSplitTest(t *testing.T, phase string) (
 					2: {
 						Status:   proto.ShardStatusSteadyState,
 						Term:     0,
-						Ensemble: []*proto.DataServer{rs1, rs2, rs3},
+						Ensemble: []*proto.DataServerIdentity{rs1, rs2, rs3},
 						Int32HashRange: &proto.HashRange{
 							Min: 501,
 							Max: 1000,

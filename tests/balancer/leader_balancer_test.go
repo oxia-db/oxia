@@ -27,7 +27,7 @@ import (
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
-func dataServers(servers ...*proto.DataServer) []*proto.DataServer {
+func dataServers(servers ...*proto.DataServerIdentity) []*proto.DataServerIdentity {
 	return servers
 }
 
@@ -95,7 +95,7 @@ func TestLeaderBalanced(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: []*proto.DataServer{s1ad, s2ad, s3ad},
+		Servers: []*proto.DataServerIdentity{s1ad, s2ad, s3ad},
 		LoadBalancer: &proto.LoadBalancer{
 			QuarantineTime: "1ms",
 		},

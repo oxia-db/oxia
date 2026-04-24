@@ -40,7 +40,7 @@ type testCluster struct {
 	authority   string
 	coordinator coordinator.Coordinator
 	servers     map[string]*dataserver.Server
-	addresses   []*proto.DataServer
+	addresses   []*proto.DataServerIdentity
 }
 
 const integrationRequestTimeout = 30 * time.Second
@@ -53,7 +53,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		name:      prefix,
 		authority: fmt.Sprintf("%s-bootstrap:6648", prefix),
 		servers:   make(map[string]*dataserver.Server, serverCount),
-		addresses: make([]*proto.DataServer, 0, serverCount),
+		addresses: make([]*proto.DataServerIdentity, 0, serverCount),
 	}
 
 	for i := 0; i < serverCount; i++ {
@@ -74,7 +74,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 					ReplicationFactor: 1,
 					InitialShardCount: 3,
 				}},
-				Servers: func() []*proto.DataServer {
+				Servers: func() []*proto.DataServerIdentity {
 					return cluster.addresses
 				}(),
 				AllowExtraAuthorities: []string{cluster.authority},
@@ -110,11 +110,11 @@ func (c *testCluster) stopAllServers(t *testing.T) {
 	}
 }
 
-func (c *testCluster) leader() *proto.DataServer {
+func (c *testCluster) leader() *proto.DataServerIdentity {
 	return c.coordinator.Metadata().LoadStatus().Namespaces[constant.DefaultNamespace].Shards[0].Leader
 }
 
-func (c *testCluster) bootstrapTargetExcluding(excluded *proto.DataServer) *proto.DataServer {
+func (c *testCluster) bootstrapTargetExcluding(excluded *proto.DataServerIdentity) *proto.DataServerIdentity {
 	for _, addr := range c.addresses {
 		if addr.GetNameOrDefault() != excluded.GetNameOrDefault() {
 			return addr

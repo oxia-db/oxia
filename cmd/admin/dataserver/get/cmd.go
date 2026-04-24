@@ -23,7 +23,7 @@ import (
 )
 
 var Cmd = &cobra.Command{
-	Use:          "get [data-server]",
+	Use:          "get dataserver",
 	Short:        "Get a data server",
 	Long:         `Get a data server`,
 	Args:         cobra.ExactArgs(1),

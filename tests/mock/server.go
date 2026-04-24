@@ -29,7 +29,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
-func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(options *option.Options)) (s *dataserver.Server, addr *commonproto.DataServer) {
+func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(options *option.Options)) (s *dataserver.Server, addr *commonproto.DataServerIdentity) {
 	t.Helper()
 	dataServerOption := option.NewDefaultOptions()
 	dataServerOption.Server.Public.BindAddress = "localhost:0"
@@ -44,7 +44,7 @@ func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(option
 	assert.NoError(t, err)
 
 	tmp := &name
-	addr = &commonproto.DataServer{
+	addr = &commonproto.DataServerIdentity{
 		Name:     tmp,
 		Public:   fmt.Sprintf("localhost:%d", s.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s.InternalPort()),
@@ -53,13 +53,13 @@ func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(option
 	return s, addr
 }
 
-func NewServer(t *testing.T, name string) (s *dataserver.Server, addr *commonproto.DataServer) {
+func NewServer(t *testing.T, name string) (s *dataserver.Server, addr *commonproto.DataServerIdentity) {
 	t.Helper()
 	return NewServerWithOptions(t, name, func(_ *option.Options) {
 	})
 }
 
-func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr *commonproto.DataServer) {
+func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr *commonproto.DataServerIdentity) {
 	t.Helper()
 	dataServerOption := option.NewDefaultOptions()
 	dataServerOption.Server.Public.BindAddress = publicAddress
@@ -74,7 +74,7 @@ func NewServerWithAddress(t *testing.T, name string, publicAddress string, inter
 	assert.NoError(t, err)
 
 	tmp := &name
-	addr = &commonproto.DataServer{
+	addr = &commonproto.DataServerIdentity{
 		Name:     tmp,
 		Public:   publicAddress,
 		Internal: internalAddress,

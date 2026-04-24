@@ -28,7 +28,7 @@ import (
 )
 
 func TestDataServerController_HealthCheck(t *testing.T) {
-	addr := &proto.DataServer{
+	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
 	}
@@ -69,7 +69,7 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 }
 
 func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T) {
-	addr := &proto.DataServer{
+	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
 	}
@@ -129,7 +129,7 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 }
 
 func TestDataServerController_ShardsAssignments(t *testing.T) {
-	addr := &proto.DataServer{
+	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
 	}

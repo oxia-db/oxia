@@ -40,7 +40,7 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 )
 
-func newServer(t *testing.T) (s *dataserver.Server, addr *proto.DataServer) {
+func newServer(t *testing.T) (s *dataserver.Server, addr *proto.DataServerIdentity) {
 	t.Helper()
 
 	options := option.NewDefaultOptions()
@@ -55,7 +55,7 @@ func newServer(t *testing.T) (s *dataserver.Server, addr *proto.DataServer) {
 
 	assert.NoError(t, err)
 
-	addr = &proto.DataServer{
+	addr = &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s.InternalPort()),
 	}
@@ -73,7 +73,7 @@ func TestCoordinatorE2E(t *testing.T) {
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
@@ -107,7 +107,7 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 4,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
@@ -155,7 +155,7 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
@@ -174,8 +174,8 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 	nsStatus = metadata.LoadStatus().Namespaces[constant.DefaultNamespace]
 
 	leader := nsStatus.Shards[0].Leader
-	var follower *proto.DataServer
-	for _, addr := range []*proto.DataServer{sa1, sa2, sa3} {
+	var follower *proto.DataServerIdentity
+	for _, addr := range []*proto.DataServerIdentity{sa1, sa2, sa3} {
 		if addr.GetNameOrDefault() != leader.GetNameOrDefault() {
 			follower = addr
 			break
@@ -255,7 +255,7 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 		Name:              "my-ns-2",
 		ReplicationFactor: 2,
 		InitialShardCount: 3,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
@@ -342,7 +342,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 		Name:              "my-ns-1",
 		ReplicationFactor: 1,
 		InitialShardCount: 2,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 
@@ -385,7 +385,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	// Restart the coordinator and remove the namespace
 	assert.NoError(t, coordinatorInstance.Close())
 
-	newClusterConfig := newClusterConfig([]*proto.Namespace{}, []*proto.DataServer{sa1, sa2, sa3})
+	newClusterConfig := newClusterConfig([]*proto.Namespace{}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	slog.Info("Restarting coordinator")
 	newMetadata := createCoordinatorMetadata(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return newClusterConfig, nil }, nil)
@@ -426,7 +426,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		Name:              "my-ns-1",
 		ReplicationFactor: 1,
 		InitialShardCount: 2,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configChangesCh := make(chan any)
 	configProvider := func() (*proto.ClusterConfiguration, error) {
@@ -512,7 +512,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 		Name:              "my-ns-1",
 		ReplicationFactor: 1,
 		InitialShardCount: 2,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := func() (*proto.ClusterConfiguration, error) {
 		return clusterConfig, nil
@@ -525,8 +525,8 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 
 	// Add s4, s5
 	clusterConfig.Servers = append(clusterConfig.Servers,
-		&proto.DataServer{Name: sa4.Name, Public: sa4.Public, Internal: sa4.Internal},
-		&proto.DataServer{Name: sa5.Name, Public: sa5.Public, Internal: sa5.Internal},
+		&proto.DataServerIdentity{Name: sa4.Name, Public: sa4.Public, Internal: sa4.Internal},
+		&proto.DataServerIdentity{Name: sa5.Name, Public: sa5.Public, Internal: sa5.Internal},
 	)
 	// Remove s1
 	clusterConfig.Servers = clusterConfig.Servers[1:]
@@ -571,7 +571,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 		Name:              "my-ns-1",
 		ReplicationFactor: 1,
 		InitialShardCount: 1,
-	}}, []*proto.DataServer{sa1, sa2, sa3, sa4})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3, sa4})
 
 	configProvider := func() (*proto.ClusterConfiguration, error) {
 		return clusterConfig, nil
@@ -598,7 +598,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 
 	// Remove leader dataserver
 	leaderID := metadata.LoadStatus().Namespaces["my-ns-1"].Shards[0].Leader.GetNameOrDefault()
-	d := make([]*proto.DataServer, 0)
+	d := make([]*proto.DataServerIdentity, 0)
 	for _, sv := range clusterConfig.Servers {
 		if sv.GetNameOrDefault() != leaderID {
 			d = append(d, sv)
@@ -645,7 +645,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 		Name:              "my-ns-1",
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 	configChangesCh := make(chan any)
 	c := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) {
 		return clusterConfig, nil
@@ -666,9 +666,9 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// change the localhost to 127.0.0.1
-	clusterServer := make([]*proto.DataServer, 0, len(clusterConfig.Servers))
+	clusterServer := make([]*proto.DataServerIdentity, 0, len(clusterConfig.Servers))
 	for _, sv := range clusterConfig.Servers {
-		clusterServer = append(clusterServer, &proto.DataServer{
+		clusterServer = append(clusterServer, &proto.DataServerIdentity{
 			Name:     sv.Name,
 			Public:   strings.ReplaceAll(sv.GetPublic(), "localhost", "127.0.0.1"),
 			Internal: sv.GetInternal(),

@@ -153,10 +153,10 @@ func main() {
 	replicationGrpcProvider := newMaelstromReplicationRpcProvider()
 	dispatcher := newDispatcher(grpcProvider, replicationGrpcProvider)
 
-	var servers []*commonproto.DataServer
+	var servers []*commonproto.DataServerIdentity
 	for _, node := range allNodes {
 		if node != thisNode {
-			servers = append(servers, &commonproto.DataServer{
+			servers = append(servers, &commonproto.DataServerIdentity{
 				Public:   node,
 				Internal: node,
 			})

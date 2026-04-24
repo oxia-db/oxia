@@ -52,7 +52,7 @@ func (s *Metadata) Status() string {
 	return s.shardMetadata.GetStatusOrDefault()
 }
 
-func (s *Metadata) Leader() *commonproto.DataServer {
+func (s *Metadata) Leader() *commonproto.DataServerIdentity {
 	s.RLock()
 	defer s.RUnlock()
 	return s.shardMetadata.GetLeader()

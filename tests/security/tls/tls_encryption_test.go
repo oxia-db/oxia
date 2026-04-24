@@ -75,13 +75,13 @@ func getClientTLSOption() (*security.TLSOptions, error) {
 	return &clientOption, nil
 }
 
-func newTLSServer(t *testing.T) (s *dataserver.Server, addr *proto.DataServer) {
+func newTLSServer(t *testing.T) (s *dataserver.Server, addr *proto.DataServerIdentity) {
 	t.Helper()
 	return newTLSServerWithInterceptor(t, func(config *dataserveroption.Options) {
 	})
 }
 
-func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserveroption.Options)) (s *dataserver.Server, addr *proto.DataServer) {
+func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserveroption.Options)) (s *dataserver.Server, addr *proto.DataServerIdentity) {
 	t.Helper()
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -102,7 +102,7 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 
 	assert.NoError(t, err)
 
-	addr = &proto.DataServer{
+	addr = &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s.InternalPort()),
 	}

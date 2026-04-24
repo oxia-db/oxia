@@ -29,7 +29,7 @@ import (
 )
 
 func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
-	leader := &proto.DataServer{
+	leader := &proto.DataServerIdentity{
 		Public:   "leader-public:6648",
 		Internal: "leader-internal:6649",
 	}
@@ -40,7 +40,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 			InitialShardCount: 1,
 			ReplicationFactor: 1,
 		}},
-		Servers: []*proto.DataServer{{
+		Servers: []*proto.DataServerIdentity{{
 			Public:   leader.Public,
 			Internal: leader.Internal,
 		}},
@@ -66,7 +66,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 					0: {
 						Status:   proto.ShardStatusUnknown,
 						Leader:   leader,
-						Ensemble: []*proto.DataServer{leader},
+						Ensemble: []*proto.DataServerIdentity{leader},
 						Int32HashRange: &proto.HashRange{
 							Min: 0,
 							Max: 100,
@@ -94,11 +94,11 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 }
 
 func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
-	active := &proto.DataServer{
+	active := &proto.DataServerIdentity{
 		Public:   "active-public:6648",
 		Internal: "active-internal:6649",
 	}
-	removed := &proto.DataServer{
+	removed := &proto.DataServerIdentity{
 		Public:   "removed-public:6648",
 		Internal: "removed-internal:6649",
 	}
@@ -109,7 +109,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 			InitialShardCount: 1,
 			ReplicationFactor: 1,
 		}},
-		Servers: []*proto.DataServer{{
+		Servers: []*proto.DataServerIdentity{{
 			Public:   active.Public,
 			Internal: active.Internal,
 		}},
@@ -131,8 +131,8 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 					0: {
 						Status:       proto.ShardStatusUnknown,
 						Leader:       removed,
-						Ensemble:     []*proto.DataServer{removed},
-						RemovedNodes: []*proto.DataServer{removed},
+						Ensemble:     []*proto.DataServerIdentity{removed},
+						RemovedNodes: []*proto.DataServerIdentity{removed},
 						Int32HashRange: &proto.HashRange{
 							Min: 0,
 							Max: 100,

@@ -41,8 +41,8 @@ func Test_cmd_getDataServer(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServerInfo{
-		DataServer: &proto.DataServer{
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServer{
+		Identity: &proto.DataServerIdentity{
 			Name:     &serverName,
 			Public:   "public1",
 			Internal: "internal1",
@@ -55,12 +55,21 @@ func Test_cmd_getDataServer(t *testing.T) {
 	out, err := runCmd(serverName)
 
 	assert.NoError(t, err)
-	var dataServer proto.DataServerInfo
+	var dataServer proto.DataServer
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServer))
-	require.NotNil(t, dataServer.DataServer)
-	assert.NotNil(t, dataServer.DataServer.Name)
-	assert.Equal(t, serverName, *dataServer.DataServer.Name)
-	assert.Equal(t, "public1", dataServer.DataServer.GetPublic())
-	assert.Equal(t, "internal1", dataServer.DataServer.GetInternal())
+	require.NotNil(t, dataServer.Identity)
+	assert.NotNil(t, dataServer.Identity.Name)
+	assert.Equal(t, serverName, *dataServer.Identity.Name)
+	assert.Equal(t, "public1", dataServer.Identity.GetPublic())
+	assert.Equal(t, "internal1", dataServer.Identity.GetInternal())
 	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
+}
+
+func Test_cmd_getDataServersIdentities(t *testing.T) {
+	commons.MockedAdminClient = commons.NewMockAdminClient()
+
+	out, err := runCmd()
+
+	assert.Error(t, err)
+	assert.Contains(t, out, "accepts 1 arg(s), received 0")
 }

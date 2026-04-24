@@ -17,5 +17,5 @@ package controller
 import commonproto "github.com/oxia-db/oxia/common/proto"
 
 type DataServerEventListener interface {
-	BecameUnavailable(dataServer *commonproto.DataServer)
+	BecameUnavailable(dataServer *commonproto.DataServerIdentity)
 }

@@ -40,7 +40,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		Name:              "default",
 		ReplicationFactor: 1,
 		InitialShardCount: 2,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	metadata := createCoordinatorMetadata(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil)
 	defer func() {
@@ -57,9 +57,9 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		Status:                  proto.ShardStatusSteadyState,
 		Term:                    999,
 		Leader:                  nil,
-		Ensemble:                []*proto.DataServer{},
-		RemovedNodes:            []*proto.DataServer{},
-		PendingDeleteShardNodes: make([]*proto.DataServer, 0),
+		Ensemble:                []*proto.DataServerIdentity{},
+		RemovedNodes:            []*proto.DataServerIdentity{},
+		PendingDeleteShardNodes: make([]*proto.DataServerIdentity, 0),
 		Int32HashRange:          &proto.HashRange{Min: 2000, Max: 100000},
 	}
 	metadataView := coordinatorInstance.Metadata()

@@ -19,9 +19,9 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
-func SimpleEnsembleSupplier(candidates []*commonproto.DataServer, nc *commonproto.Namespace, cs *commonproto.ClusterStatus) []*commonproto.DataServer {
+func SimpleEnsembleSupplier(candidates []*commonproto.DataServerIdentity, nc *commonproto.Namespace, cs *commonproto.ClusterStatus) []*commonproto.DataServerIdentity {
 	n := len(candidates)
-	res := make([]*commonproto.DataServer, nc.GetReplicationFactor())
+	res := make([]*commonproto.DataServerIdentity, nc.GetReplicationFactor())
 	for i := uint32(0); i < nc.GetReplicationFactor(); i++ {
 		res[i] = candidates[int(cs.ServerIdx+i)%n]
 	}

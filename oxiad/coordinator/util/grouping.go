@@ -66,9 +66,9 @@ func NodeShardLeaders(candidates *linkedhashset.Set[string], status *commonproto
 	return totalShards, electedShards, result
 }
 
-func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *commonproto.ClusterStatus) (map[string][]model.ShardInfo, map[string]*commonproto.DataServer) {
+func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *commonproto.ClusterStatus) (map[string][]model.ShardInfo, map[string]*commonproto.DataServerIdentity) {
 	groupingShardByNode := make(map[string][]model.ShardInfo)
-	historyNodes := make(map[string]*commonproto.DataServer)
+	historyNodes := make(map[string]*commonproto.DataServerIdentity)
 	if status != nil {
 		for namespace, namespaceStatus := range status.Namespaces {
 			for shard, shardStatus := range namespaceStatus.Shards {

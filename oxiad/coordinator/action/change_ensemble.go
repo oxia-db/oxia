@@ -28,8 +28,8 @@ type ChangeEnsembleAction struct {
 	sync.WaitGroup
 
 	Shard int64
-	From  *commonproto.DataServer
-	To    *commonproto.DataServer
+	From  *commonproto.DataServerIdentity
+	To    *commonproto.DataServerIdentity
 
 	finished     atomic.Bool
 	executeError error
@@ -66,11 +66,11 @@ func (*ChangeEnsembleAction) Type() Type {
 	return SwapNode
 }
 
-func NewChangeEnsembleAction(shard int64, from *commonproto.DataServer, to *commonproto.DataServer) *ChangeEnsembleAction {
+func NewChangeEnsembleAction(shard int64, from *commonproto.DataServerIdentity, to *commonproto.DataServerIdentity) *ChangeEnsembleAction {
 	return NewChangeEnsembleActionWithCallback(shard, from, to, nil)
 }
 
-func NewChangeEnsembleActionWithCallback(shard int64, from *commonproto.DataServer, to *commonproto.DataServer, callback concurrent.Callback[any]) *ChangeEnsembleAction {
+func NewChangeEnsembleActionWithCallback(shard int64, from *commonproto.DataServerIdentity, to *commonproto.DataServerIdentity, callback concurrent.Callback[any]) *ChangeEnsembleAction {
 	action := ChangeEnsembleAction{
 		WaitGroup:    sync.WaitGroup{},
 		Shard:        shard,

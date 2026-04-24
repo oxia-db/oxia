@@ -17,7 +17,7 @@ package controller
 import commonproto "github.com/oxia-db/oxia/common/proto"
 
 type ShardEventListener interface {
-	LeaderElected(shard int64, leader *commonproto.DataServer, followers []*commonproto.DataServer)
+	LeaderElected(shard int64, leader *commonproto.DataServerIdentity, followers []*commonproto.DataServerIdentity)
 
 	ShardDeleted(shard int64)
 }

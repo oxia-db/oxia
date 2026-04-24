@@ -161,7 +161,7 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 				},
 			},
 		},
-		Servers: []*DataServer{
+		Servers: []*DataServerIdentity{
 			{
 				Name:     &name,
 				Public:   "localhost:6648",
@@ -342,12 +342,12 @@ func TestEncodeClusterStatusYAMLRoundTrip(t *testing.T) {
 					1: {
 						Status: ShardStatusSteadyState,
 						Term:   3,
-						Leader: &DataServer{
+						Leader: &DataServerIdentity{
 							Name:     &name,
 							Public:   "localhost:6648",
 							Internal: "localhost:6649",
 						},
-						Ensemble: []*DataServer{
+						Ensemble: []*DataServerIdentity{
 							{
 								Name:     &name,
 								Public:   "localhost:6648",
