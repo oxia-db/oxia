@@ -21,50 +21,49 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
-func dataServers(servers []model.Server) []*proto.DataServer {
-	dataServers := make([]*proto.DataServer, 0, len(servers))
-	for _, server := range servers {
-		dataServers = append(dataServers, &proto.DataServer{
-			Name:     server.Name,
-			Public:   server.Public,
-			Internal: server.Internal,
-		})
-	}
-	return dataServers
+func hashRange(start, end uint32) *proto.HashRange {
+	return &proto.HashRange{Min: start, Max: end}
 }
 
-// loadAwareEnsembleSupplier picks the `nc.ReplicationFactor` servers that
-// currently hold the fewest ensemble slots across all already-placed shards in
-// `cs`. It is used to verify that ApplyClusterChanges publishes intermediate
-// shard placements into status during the init loop, so that successive
-// per-shard ensemble selections within the same init cycle observe each
-// other's choices. Without that publication every call sees an empty cluster
-// and returns the same servers, producing wildly uneven initial placement.
-func loadAwareEnsembleSupplier(servers []model.Server) func(*proto.Namespace, *model.ClusterStatus) ([]model.Server, error) {
-	return func(nc *proto.Namespace, cs *model.ClusterStatus) ([]model.Server, error) {
+func shardMetadata(status string, ensemble []*proto.DataServer, start, end uint32) *proto.ShardMetadata {
+	return &proto.ShardMetadata{
+		Status:         status,
+		Term:           -1,
+		Ensemble:       ensemble,
+		Int32HashRange: hashRange(start, end),
+	}
+}
+
+func loadAwareEnsembleSupplier(servers []*proto.DataServer) func(*proto.Namespace, *proto.ClusterStatus) ([]*proto.DataServer, error) {
+	return func(nc *proto.Namespace, cs *proto.ClusterStatus) ([]*proto.DataServer, error) {
 		load := make(map[string]int, len(servers))
 		for _, s := range servers {
-			load[s.Internal] = 0
+			load[s.GetInternal()] = 0
 		}
-		for _, ns := range cs.Namespaces {
-			for _, sh := range ns.Shards {
-				for _, m := range sh.Ensemble {
-					load[m.Internal]++
+		for _, ns := range cs.GetNamespaces() {
+			for _, sh := range ns.GetShards() {
+				for _, m := range sh.GetEnsemble() {
+					load[m.GetInternal()]++
 				}
 			}
 		}
-		ranked := make([]model.Server, len(servers))
+		ranked := make([]*proto.DataServer, len(servers))
 		copy(ranked, servers)
 		sort.SliceStable(ranked, func(i, j int) bool {
-			return load[ranked[i].Internal] < load[ranked[j].Internal]
+			return load[ranked[i].GetInternal()] < load[ranked[j].GetInternal()]
 		})
 		return ranked[:nc.GetReplicationFactor()], nil
 	}
+}
+
+func assertStatusEqual(t *testing.T, expected, actual *proto.ClusterStatus) {
+	t.Helper()
+	assert.True(t, gproto.Equal(expected, actual), "expected status %v, got %v", expected, actual)
 }
 
 // TestClientUpdates_InitialPlacementSeesPriorShards verifies that the
@@ -76,51 +75,48 @@ func loadAwareEnsembleSupplier(servers []model.Server) func(*proto.Namespace, *m
 // pseudo-random initial placement that immediately tripped the count-based
 // load-balancer once the cluster came up.
 func TestClientUpdates_InitialPlacementSeesPriorShards(t *testing.T) {
-	servers := []model.Server{s1, s2, s3, s4}
+	servers := []*proto.DataServer{s1, s2, s3, s4}
 	const shardCount = 16
 	const rf = 3
 
-	status := model.NewClusterStatus()
+	status := proto.NewClusterStatus()
 	_, _ = ApplyClusterChanges(&proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
 			InitialShardCount: shardCount,
 			ReplicationFactor: rf,
 		}},
-		Servers: dataServers(servers),
+		Servers: servers,
 	}, status, loadAwareEnsembleSupplier(servers))
 
 	slots := map[string]int{}
 	for _, s := range servers {
-		slots[s.Internal] = 0
+		slots[s.GetInternal()] = 0
 	}
-	for _, sh := range status.Namespaces["ns-1"].Shards {
-		assert.Len(t, sh.Ensemble, rf)
-		for _, m := range sh.Ensemble {
-			slots[m.Internal]++
+	for _, sh := range status.GetNamespaces()["ns-1"].GetShards() {
+		assert.Len(t, sh.GetEnsemble(), rf)
+		for _, m := range sh.GetEnsemble() {
+			slots[m.GetInternal()]++
 		}
 	}
 
-	// shardCount * rf == 48 ensemble slots distributed across 4 servers ⇒
-	// exactly 12 slots per server when each ensembleSupplier call sees prior
-	// placements.
 	expected := shardCount * rf / len(servers)
 	for _, s := range servers {
-		assert.Equal(t, expected, slots[s.Internal],
-			"server %s should hold exactly %d ensemble slots", s.Internal, expected)
+		assert.Equal(t, expected, slots[s.GetInternal()],
+			"server %s should hold exactly %d ensemble slots", s.GetInternal(), expected)
 	}
 }
 
 var (
-	s1 = model.Server{Public: "s1:6648", Internal: "s1:6649"}
-	s2 = model.Server{Public: "s2:6648", Internal: "s2:6649"}
-	s3 = model.Server{Public: "s3:6648", Internal: "s3:6649"}
-	s4 = model.Server{Public: "s4:6648", Internal: "s4:6649"}
+	s1 = &proto.DataServer{Public: "s1:6648", Internal: "s1:6649"}
+	s2 = &proto.DataServer{Public: "s2:6648", Internal: "s2:6649"}
+	s3 = &proto.DataServer{Public: "s3:6648", Internal: "s3:6649"}
+	s4 = &proto.DataServer{Public: "s4:6648", Internal: "s4:6649"}
 )
 
 func TestClientUpdates_ClusterInit(t *testing.T) {
-	servers := []model.Server{s1, s2, s3, s4}
-	status := model.NewClusterStatus()
+	servers := []*proto.DataServer{s1, s2, s3, s4}
+	status := proto.NewClusterStatus()
 	shardsAdded, shardsToRemove := ApplyClusterChanges(&proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
@@ -131,51 +127,24 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 			InitialShardCount: 2,
 			ReplicationFactor: 3,
 		}},
-		Servers: dataServers(servers),
-	}, status, func(namespaceConfig *proto.Namespace, status *model.ClusterStatus) ([]model.Server, error) {
+		Servers: servers,
+	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServer, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
-	assert.Equal(t, &model.ClusterStatus{
-		Namespaces: map[string]model.NamespaceStatus{
+	assertStatusEqual(t, &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
 			"ns-1": {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
-					0: {
-						Status:   model.ShardStatusUnknown,
-						Term:     -1,
-						Leader:   nil,
-						Ensemble: []model.Server{s1, s2, s3},
-						Int32HashRange: model.Int32HashRange{
-							Min: 0,
-							Max: math.MaxUint32,
-						},
-					},
+				Shards: map[int64]*proto.ShardMetadata{
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 			"ns-2": {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
-					1: {
-						Status:   model.ShardStatusUnknown,
-						Term:     -1,
-						Leader:   nil,
-						Ensemble: []model.Server{s4, s1, s2},
-						Int32HashRange: model.Int32HashRange{
-							Min: 0,
-							Max: math.MaxUint32 / 2,
-						},
-					},
-					2: {
-						Status:   model.ShardStatusUnknown,
-						Term:     -1,
-						Leader:   nil,
-						Ensemble: []model.Server{s3, s4, s1},
-						Int32HashRange: model.Int32HashRange{
-							Min: math.MaxUint32/2 + 1,
-							Max: math.MaxUint32,
-						},
-					},
+				Shards: map[int64]*proto.ShardMetadata{
+					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
 				},
 			},
 		},
@@ -187,29 +156,24 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 	assert.Equal(t, map[int64]string{
 		0: "ns-1",
 		1: "ns-2",
-		2: "ns-2"}, shardsAdded)
+		2: "ns-2",
+	}, shardsAdded)
 }
 
 func TestClientUpdates_NamespaceAdded(t *testing.T) {
-	servers := []model.Server{s1, s2, s3, s4}
-	status := &model.ClusterStatus{Namespaces: map[string]model.NamespaceStatus{
-		"ns-1": {
-			ReplicationFactor: 3,
-			Shards: map[int64]model.ShardMetadata{
-				0: {
-					Status:   model.ShardStatusUnknown,
-					Term:     -1,
-					Leader:   nil,
-					Ensemble: []model.Server{s1, s2, s3},
-					Int32HashRange: model.Int32HashRange{
-						Min: 0,
-						Max: math.MaxUint32,
-					},
+	servers := []*proto.DataServer{s1, s2, s3, s4}
+	status := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
+			"ns-1": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 		},
-	}, ShardIdGenerator: 1,
-		ServerIdx: 3}
+		ShardIdGenerator: 1,
+		ServerIdx:        3,
+	}
 	shardsAdded, shardsToRemove := ApplyClusterChanges(&proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
@@ -220,53 +184,24 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 			InitialShardCount: 2,
 			ReplicationFactor: 3,
 		}},
-		Servers: dataServers(servers),
-	}, status, func(namespaceConfig *proto.Namespace, status *model.ClusterStatus) ([]model.Server, error) {
+		Servers: servers,
+	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServer, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
-	assert.Equal(t, &model.ClusterStatus{
-		Namespaces: map[string]model.NamespaceStatus{
+	assertStatusEqual(t, &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
 			"ns-1": {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
-					0: {
-						Status:                  model.ShardStatusUnknown,
-						Term:                    -1,
-						Leader:                  nil,
-						Ensemble:                []model.Server{s1, s2, s3},
-						RemovedNodes:            nil,
-						PendingDeleteShardNodes: nil,
-						Int32HashRange: model.Int32HashRange{
-							Min: 0,
-							Max: math.MaxUint32,
-						},
-					},
+				Shards: map[int64]*proto.ShardMetadata{
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 			"ns-2": {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
-					1: {
-						Status:   model.ShardStatusUnknown,
-						Term:     -1,
-						Leader:   nil,
-						Ensemble: []model.Server{s4, s1, s2},
-						Int32HashRange: model.Int32HashRange{
-							Min: 0,
-							Max: math.MaxUint32 / 2,
-						},
-					},
-					2: {
-						Status:   model.ShardStatusUnknown,
-						Term:     -1,
-						Leader:   nil,
-						Ensemble: []model.Server{s3, s4, s1},
-						Int32HashRange: model.Int32HashRange{
-							Min: math.MaxUint32/2 + 1,
-							Max: math.MaxUint32,
-						},
-					},
+				Shards: map[int64]*proto.ShardMetadata{
+					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
 				},
 			},
 		},
@@ -277,51 +212,25 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 	assert.Equal(t, []int64{}, shardsToRemove)
 	assert.Equal(t, map[int64]string{
 		1: "ns-2",
-		2: "ns-2"}, shardsAdded)
+		2: "ns-2",
+	}, shardsAdded)
 }
 
 func TestClientUpdates_NamespaceRemoved(t *testing.T) {
-	servers := []model.Server{s1, s2, s3, s4}
-	status := &model.ClusterStatus{
-		Namespaces: map[string]model.NamespaceStatus{
+	servers := []*proto.DataServer{s1, s2, s3, s4}
+	status := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
 			"ns-1": {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
-					0: {
-						Status:   model.ShardStatusUnknown,
-						Term:     -1,
-						Leader:   nil,
-						Ensemble: []model.Server{s1, s2, s3},
-						Int32HashRange: model.Int32HashRange{
-							Min: 0,
-							Max: math.MaxUint32,
-						},
-					},
+				Shards: map[int64]*proto.ShardMetadata{
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 			"ns-2": {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
-					1: {
-						Status:   model.ShardStatusUnknown,
-						Term:     -1,
-						Leader:   nil,
-						Ensemble: []model.Server{s4, s1, s2},
-						Int32HashRange: model.Int32HashRange{
-							Min: 0,
-							Max: math.MaxUint32 / 2,
-						},
-					},
-					2: {
-						Status:   model.ShardStatusUnknown,
-						Term:     -1,
-						Leader:   nil,
-						Ensemble: []model.Server{s3, s4, s1},
-						Int32HashRange: model.Int32HashRange{
-							Min: math.MaxUint32/2 + 1,
-							Max: math.MaxUint32,
-						},
-					},
+				Shards: map[int64]*proto.ShardMetadata{
+					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
 				},
 			},
 		},
@@ -334,57 +243,24 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 			InitialShardCount: 1,
 			ReplicationFactor: 3,
 		}},
-		Servers: dataServers(servers),
-	}, status, func(namespaceConfig *proto.Namespace, status *model.ClusterStatus) ([]model.Server, error) {
+		Servers: servers,
+	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServer, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
-	assert.Equal(t, &model.ClusterStatus{
-		Namespaces: map[string]model.NamespaceStatus{
+	assertStatusEqual(t, &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
 			"ns-1": {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
-					0: {
-						Status:                  model.ShardStatusUnknown,
-						Term:                    -1,
-						Leader:                  nil,
-						Ensemble:                []model.Server{s1, s2, s3},
-						RemovedNodes:            nil,
-						PendingDeleteShardNodes: nil,
-						Int32HashRange: model.Int32HashRange{
-							Min: 0,
-							Max: math.MaxUint32,
-						},
-					},
+				Shards: map[int64]*proto.ShardMetadata{
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 			"ns-2": {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
-					1: {
-						Status:                  model.ShardStatusDeleting,
-						Term:                    -1,
-						Leader:                  nil,
-						Ensemble:                []model.Server{s4, s1, s2},
-						RemovedNodes:            nil,
-						PendingDeleteShardNodes: nil,
-						Int32HashRange: model.Int32HashRange{
-							Min: 0,
-							Max: math.MaxUint32 / 2,
-						},
-					},
-					2: {
-						Status:                  model.ShardStatusDeleting,
-						Term:                    -1,
-						Leader:                  nil,
-						Ensemble:                []model.Server{s3, s4, s1},
-						RemovedNodes:            nil,
-						PendingDeleteShardNodes: nil,
-						Int32HashRange: model.Int32HashRange{
-							Min: math.MaxUint32/2 + 1,
-							Max: math.MaxUint32,
-						},
-					},
+				Shards: map[int64]*proto.ShardMetadata{
+					1: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServer{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServer{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
 				},
 			},
 		},

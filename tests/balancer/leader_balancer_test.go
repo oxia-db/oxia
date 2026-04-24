@@ -22,34 +22,25 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
-func dataServers(servers ...model.Server) []*proto.DataServer {
-	dataServers := make([]*proto.DataServer, 0, len(servers))
-	for _, server := range servers {
-		dataServers = append(dataServers, &proto.DataServer{
-			Name:     server.Name,
-			Public:   server.Public,
-			Internal: server.Internal,
-		})
-	}
-	return dataServers
+func dataServers(servers ...*proto.DataServer) []*proto.DataServer {
+	return servers
 }
 
 func waitForSteadyState(t *testing.T, metadata coordmetadata.Metadata, expectedNamespaces int) {
 	t.Helper()
 	ctx := t.Context()
-	err := coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *model.ClusterStatus) bool {
+	err := coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *proto.ClusterStatus) bool {
 		if len(status.Namespaces) != expectedNamespaces {
 			return false
 		}
 		for _, ns := range status.Namespaces {
 			for _, shard := range ns.Shards {
-				if shard.Status != model.ShardStatusSteadyState {
+				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
 				}
 			}
@@ -62,7 +53,7 @@ func waitForSteadyState(t *testing.T, metadata coordmetadata.Metadata, expectedN
 func waitForLeadersBalanced(t *testing.T, metadata coordmetadata.Metadata, balancer interface{ Trigger() }, candidates *linkedhashset.Set[string], expectedPerNode int) {
 	t.Helper()
 	ctx := t.Context()
-	err := coordmetadata.WaitForCondition(ctx, metadata, balancer.Trigger, func(status *model.ClusterStatus) bool {
+	err := coordmetadata.WaitForCondition(ctx, metadata, balancer.Trigger, func(status *proto.ClusterStatus) bool {
 		shardLeaders, electedShards, nodeShards := util.NodeShardLeaders(candidates, status)
 		if shardLeaders != electedShards {
 			return false
@@ -84,7 +75,7 @@ func TestLeaderBalanced(t *testing.T) {
 	defer s2.Close()
 	s3, s3ad := mock.NewServer(t, "sv-3")
 	defer s3.Close()
-	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
+	candidates := linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault())
 
 	cc := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
@@ -104,7 +95,7 @@ func TestLeaderBalanced(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: dataServers(s1ad, s2ad, s3ad),
+		Servers: []*proto.DataServer{s1ad, s2ad, s3ad},
 		LoadBalancer: &proto.LoadBalancer{
 			QuarantineTime: "1ms",
 		},
@@ -127,7 +118,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	s2, s2ad := mock.NewServer(t, "sv-2")
 	defer s2.Close()
 	s3, s3ad := mock.NewServer(t, "sv-3")
-	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
+	candidates := linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault())
 
 	cc := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
@@ -168,9 +159,9 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 
 	// wait for leader moved
 	ctx := t.Context()
-	err := coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *model.ClusterStatus) bool {
+	err := coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *proto.ClusterStatus) bool {
 		_, _, nodeShards := util.NodeShardLeaders(candidates, status)
-		shards := nodeShards[s3ad.GetIdentifier()]
+		shards := nodeShards[s3ad.GetNameOrDefault()]
 		return shards.Size() == 0
 	})
 	require.NoError(t, err, "timed out waiting for leaders to move off crashed node")
@@ -197,7 +188,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	s6, s6ad := mock.NewServer(t, "sv-6")
 	defer s6.Close()
 
-	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
+	candidates := linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault())
 
 	cc := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
@@ -235,7 +226,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 
 	cc.Servers = append(cc.Servers, dataServers(s4ad, s5ad, s6ad)...)
 	ch <- nil
-	candidates = linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier(), s4ad.GetIdentifier(), s5ad.GetIdentifier(), s6ad.GetIdentifier())
+	candidates = linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault(), s4ad.GetNameOrDefault(), s5ad.GetNameOrDefault(), s6ad.GetNameOrDefault())
 
 	// wait for leader balanced
 	waitForLeadersBalanced(t, metadata, balancer, candidates, 2)

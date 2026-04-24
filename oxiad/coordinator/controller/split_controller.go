@@ -23,12 +23,12 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
@@ -61,7 +61,7 @@ type SplitController struct {
 	eventListener SplitEventListener
 
 	// ensembleSelector selects server ensembles for new shards.
-	ensembleSelector func(namespace string) ([]model.Server, error)
+	ensembleSelector func(namespace string) ([]*proto.DataServer, error)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -78,7 +78,7 @@ type SplitControllerConfig struct {
 	Metadata         coordmetadata.Metadata
 	RpcProvider      rpc.Provider
 	EventListener    SplitEventListener
-	EnsembleSelector func(namespace string) ([]model.Server, error)
+	EnsembleSelector func(namespace string) ([]*proto.DataServer, error)
 
 	// SplitTimeout is the maximum duration for the entire split operation.
 	// If the split does not complete within this time, it is aborted.
@@ -123,8 +123,8 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 		return sc
 	}
 
-	sc.leftChildId = parentMeta.Split.ChildShardIDs[0]
-	sc.rightChildId = parentMeta.Split.ChildShardIDs[1]
+	sc.leftChildId = parentMeta.Split.ChildShardIds[0]
+	sc.rightChildId = parentMeta.Split.ChildShardIds[1]
 	sc.splitPoint = parentMeta.Split.SplitPoint
 
 	sc.wg.Go(func() {
@@ -162,7 +162,7 @@ func (sc *SplitController) run() {
 	// abort and clean up.
 	if sc.ctx.Err() != nil {
 		phase := sc.currentPhase()
-		if phase != nil && *phase < model.SplitPhaseCutover {
+		if phase == proto.SplitPhaseBootstrap || phase == proto.SplitPhaseCatchUp {
 			sc.abort()
 		}
 	}
@@ -175,23 +175,23 @@ func (sc *SplitController) driveStateMachine() error {
 		}
 
 		phase := sc.currentPhase()
-		if phase == nil {
+		if phase == "" {
 			// Split is done or metadata was cleaned up
 			return nil
 		}
 
-		sc.log.Info("Running split phase", slog.String("phase", phase.String()))
+		sc.log.Info("Running split phase", slog.String("phase", phase))
 
 		var err error
-		switch *phase {
-		case model.SplitPhaseBootstrap:
+		switch phase {
+		case proto.SplitPhaseBootstrap:
 			err = sc.runBootstrap()
-		case model.SplitPhaseCatchUp:
+		case proto.SplitPhaseCatchUp:
 			err = sc.runCatchUp()
-		case model.SplitPhaseCutover:
+		case proto.SplitPhaseCutover:
 			err = sc.runCutover()
 		default:
-			sc.log.Error("Unknown split phase", slog.Any("phase", *phase))
+			sc.log.Error("Unknown split phase", slog.Any("phase", phase))
 			return nil
 		}
 
@@ -201,37 +201,35 @@ func (sc *SplitController) driveStateMachine() error {
 	}
 }
 
-func (sc *SplitController) currentPhase() *model.SplitPhase {
+func (sc *SplitController) currentPhase() string {
 	status := sc.metadata.LoadStatus()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
-		return nil
+		return ""
 	}
 	parentMeta, exists := ns.Shards[sc.parentShardId]
 	if !exists || parentMeta.Split == nil {
-		return nil
+		return ""
 	}
-	return &parentMeta.Split.Phase
+	return parentMeta.Split.GetPhaseOrDefault()
 }
 
 // updatePhase atomically updates the split phase on both parent and children.
-func (sc *SplitController) updatePhase(newPhase model.SplitPhase) {
+func (sc *SplitController) updatePhase(newPhase string) {
 	status := sc.metadata.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus) //nolint:revive
 
 	ns := cloned.Namespaces[sc.namespace]
 
 	// Update parent
 	if parentMeta, exists := ns.Shards[sc.parentShardId]; exists && parentMeta.Split != nil {
 		parentMeta.Split.Phase = newPhase
-		ns.Shards[sc.parentShardId] = parentMeta
 	}
 
 	// Update children
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
 		if childMeta, exists := ns.Shards[childId]; exists && childMeta.Split != nil {
 			childMeta.Split.Phase = newPhase
-			ns.Shards[childId] = childMeta
 		}
 	}
 
@@ -248,7 +246,7 @@ func (sc *SplitController) runBootstrap() error {
 	if parentMeta == nil || parentMeta.Leader == nil {
 		return errors.New("parent shard has no leader")
 	}
-	if parentMeta.Status != model.ShardStatusSteadyState {
+	if parentMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 		return errors.New("parent shard is not in steady state")
 	}
 
@@ -266,7 +264,7 @@ func (sc *SplitController) runBootstrap() error {
 	if parentMeta == nil || parentMeta.Leader == nil {
 		return errors.New("parent shard has no leader")
 	}
-	parentLeader := *parentMeta.Leader
+	parentLeader := parentMeta.Leader
 	parentTerm := parentMeta.Term
 
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
@@ -282,15 +280,15 @@ func (sc *SplitController) runBootstrap() error {
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
 		childMeta := sc.loadShardMeta(childId)
 		if childMeta != nil && childMeta.Leader != nil {
-			childLeaders[childId] = childMeta.Leader.Internal
+			childLeaders[childId] = childMeta.Leader.GetInternal()
 		}
 	}
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
+	sc.updateParentMeta(func(meta *proto.ShardMetadata) {
 		meta.Split.ParentTermAtBootstrap = parentTerm
 		meta.Split.ChildLeadersAtBootstrap = childLeaders
 	})
 
-	sc.updatePhase(model.SplitPhaseCatchUp)
+	sc.updatePhase(proto.SplitPhaseCatchUp)
 	return nil
 }
 
@@ -305,7 +303,7 @@ func (sc *SplitController) fenceAndElectChild(childId int64) error {
 	if childMeta.Leader != nil {
 		sc.log.Info("Child already has leader, skipping fence/elect",
 			slog.Int64("child-shard", childId),
-			slog.Any("leader", *childMeta.Leader),
+			slog.Any("leader", childMeta.Leader),
 		)
 		return nil
 	}
@@ -318,18 +316,18 @@ func (sc *SplitController) fenceAndElectChild(childId int64) error {
 
 	childLeader := sc.pickLeader(headEntries)
 
-	sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
+	sc.updateChildMeta(childId, func(meta *proto.ShardMetadata) {
 		meta.Term = childTerm
-		meta.Leader = &childLeader
-		meta.Status = model.ShardStatusSteadyState
+		meta.Leader = childLeader
+		meta.Status = proto.ShardStatusSteadyState
 	})
 
 	// Elect the child leader so it replicates to its followers immediately.
 	// Without this, only the single child leader node has the data.
 	followerMap := make(map[string]*proto.EntryId)
 	for server, entry := range headEntries {
-		if server != childLeader {
-			followerMap[server.Internal] = entry
+		if server.GetNameOrDefault() != childLeader.GetNameOrDefault() {
+			followerMap[server.GetInternal()] = entry
 		}
 	}
 
@@ -354,18 +352,18 @@ func (sc *SplitController) fenceAndElectChild(childId int64) error {
 
 // addChildObserver adds a child's leader as an observer follower on the parent
 // leader so the parent streams snapshots and WAL entries to it.
-func (sc *SplitController) addChildObserver(childId int64, parentLeader model.Server, parentTerm int64) error {
+func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.DataServer, parentTerm int64) error {
 	childMeta := sc.loadShardMeta(childId)
 	if childMeta == nil || childMeta.Leader == nil {
 		return errors.Errorf("child shard %d has no leader", childId)
 	}
-	childLeader := *childMeta.Leader
+	childLeader := childMeta.Leader
 
 	_, err := sc.rpcProvider.AddFollower(sc.ctx, parentLeader, &proto.AddFollowerRequest{
 		Namespace:    sc.namespace,
 		Shard:        sc.parentShardId,
 		Term:         parentTerm,
-		FollowerName: childLeader.Internal,
+		FollowerName: childLeader.GetInternal(),
 		FollowerHeadEntryId: &proto.EntryId{
 			Term:   -1,
 			Offset: -1,
@@ -373,8 +371,8 @@ func (sc *SplitController) addChildObserver(childId int64, parentLeader model.Se
 		Observer:    true,
 		TargetShard: &childId,
 		SplitHashRange: &proto.Int32HashRange{
-			MinHashInclusive: childMeta.Int32HashRange.Min,
-			MaxHashInclusive: childMeta.Int32HashRange.Max,
+			MinHashInclusive: childMeta.GetInt32HashRange().GetMin(),
+			MaxHashInclusive: childMeta.GetInt32HashRange().GetMax(),
 		},
 	})
 	if err != nil {
@@ -421,7 +419,7 @@ func (sc *SplitController) runCatchUp() error {
 		}
 		if caughtUp {
 			sc.log.Info("All children caught up")
-			sc.updatePhase(model.SplitPhaseCutover)
+			sc.updatePhase(proto.SplitPhaseCutover)
 			return nil
 		}
 	}
@@ -443,14 +441,14 @@ func (sc *SplitController) checkObserverCursorsStale() (bool, error) {
 			slog.Int64("bootstrap-term", parentMeta.Split.ParentTermAtBootstrap),
 			slog.Int64("current-term", parentMeta.Term),
 		)
-		sc.updatePhase(model.SplitPhaseBootstrap)
+		sc.updatePhase(proto.SplitPhaseBootstrap)
 		return true, nil
 	}
 
 	// Child leader election: the observer cursor targets the old (dead) leader.
 	// Remove the stale cursor and fall back to Bootstrap to re-add.
 	if sc.removeStaleChildObservers(parentMeta) {
-		sc.updatePhase(model.SplitPhaseBootstrap)
+		sc.updatePhase(proto.SplitPhaseBootstrap)
 		return true, nil
 	}
 
@@ -459,7 +457,7 @@ func (sc *SplitController) checkObserverCursorsStale() (bool, error) {
 
 // removeStaleChildObservers checks if any child leader changed since Bootstrap.
 // If so, removes the stale observer cursor from the parent and returns true.
-func (sc *SplitController) removeStaleChildObservers(parentMeta *model.ShardMetadata) bool {
+func (sc *SplitController) removeStaleChildObservers(parentMeta *proto.ShardMetadata) bool {
 	if parentMeta.Split.ChildLeadersAtBootstrap == nil || parentMeta.Leader == nil {
 		return false
 	}
@@ -469,16 +467,16 @@ func (sc *SplitController) removeStaleChildObservers(parentMeta *model.ShardMeta
 			continue
 		}
 		bootstrapLeader, ok := parentMeta.Split.ChildLeadersAtBootstrap[childId]
-		if !ok || childMeta.Leader.Internal == bootstrapLeader {
+		if !ok || childMeta.Leader.GetInternal() == bootstrapLeader {
 			continue
 		}
 
 		sc.log.Warn("Child leader changed since bootstrap, removing stale observer and resetting to Bootstrap",
 			slog.Int64("child-shard", childId),
 			slog.String("old-leader", bootstrapLeader),
-			slog.String("new-leader", childMeta.Leader.Internal),
+			slog.String("new-leader", childMeta.Leader.GetInternal()),
 		)
-		_, _ = sc.rpcProvider.RemoveObserver(sc.ctx, *parentMeta.Leader, &proto.RemoveObserverRequest{
+		_, _ = sc.rpcProvider.RemoveObserver(sc.ctx, parentMeta.Leader, &proto.RemoveObserverRequest{
 			Namespace:    sc.namespace,
 			Shard:        sc.parentShardId,
 			Term:         parentMeta.Term,
@@ -499,7 +497,7 @@ func (sc *SplitController) runCatchUpRound() (bool, error) {
 		return false, errors.New("parent has no leader")
 	}
 
-	parentStatus, err := sc.rpcProvider.GetStatus(sc.ctx, *parentMeta.Leader, &proto.GetStatusRequest{
+	parentStatus, err := sc.rpcProvider.GetStatus(sc.ctx, parentMeta.Leader, &proto.GetStatusRequest{
 		Shard: sc.parentShardId,
 	})
 	if err != nil {
@@ -562,10 +560,10 @@ func (sc *SplitController) runCutover() error {
 	)
 
 	// Update parent term in metadata
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
+	sc.updateParentMeta(func(meta *proto.ShardMetadata) {
 		meta.Term = newParentTerm
 		meta.Leader = nil
-		meta.Status = model.ShardStatusElection
+		meta.Status = proto.ShardStatusElection
 	})
 
 	// Step 2: Wait for children to commit parentFinalOffset.
@@ -587,25 +585,25 @@ func (sc *SplitController) runCutover() error {
 	// Step 4: Clear split metadata from children and mark parent for deletion.
 	// Children are now independent shards.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
+		sc.updateChildMeta(childId, func(meta *proto.ShardMetadata) {
 			meta.Split = nil
 		})
 	}
 
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
-		meta.Status = model.ShardStatusDeleting
+	sc.updateParentMeta(func(meta *proto.ShardMetadata) {
+		meta.Status = proto.ShardStatusDeleting
+	})
+
+	// Clear split metadata from parent — the split controller's job is done.
+	// The parent shard controller handles the actual deletion.
+	sc.updateParentMeta(func(meta *proto.ShardMetadata) {
+		meta.Split = nil
 	})
 
 	// Step 5: Notify the coordinator. This triggers the parent shard
 	// controller's DeleteShard (which retries indefinitely with backoff)
 	// and recomputes shard assignments so clients discover the children.
 	sc.eventListener.SplitComplete(sc.parentShardId, sc.leftChildId, sc.rightChildId)
-
-	// Clear split metadata from parent — the split controller's job is done.
-	// The parent shard controller handles the actual deletion.
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
-		meta.Split = nil
-	})
 
 	return nil
 }
@@ -625,16 +623,16 @@ func (sc *SplitController) abort() {
 	// Remove observer cursors from parent leader (best-effort).
 	// Only needed if we reached Bootstrap (observers were added).
 	if parentMeta != nil && parentMeta.Split != nil && parentMeta.Leader != nil {
-		phase := parentMeta.Split.Phase
-		if phase >= model.SplitPhaseBootstrap {
+		phase := parentMeta.Split.GetPhaseOrDefault()
+		if phase == proto.SplitPhaseBootstrap || phase == proto.SplitPhaseCatchUp || phase == proto.SplitPhaseCutover {
 			for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
 				childMeta := sc.loadShardMeta(childId)
 				if childMeta != nil && childMeta.Leader != nil {
-					_, err := sc.rpcProvider.RemoveObserver(ctx, *parentMeta.Leader, &proto.RemoveObserverRequest{
+					_, err := sc.rpcProvider.RemoveObserver(ctx, parentMeta.Leader, &proto.RemoveObserverRequest{
 						Namespace:    sc.namespace,
 						Shard:        sc.parentShardId,
 						Term:         parentMeta.Term,
-						FollowerName: childMeta.Leader.Internal,
+						FollowerName: childMeta.Leader.GetInternal(),
 						TargetShard:  childId,
 					})
 					if err != nil {
@@ -654,7 +652,7 @@ func (sc *SplitController) abort() {
 	}
 
 	// Clear parent split metadata.
-	sc.updateParentMeta(func(meta *model.ShardMetadata) {
+	sc.updateParentMeta(func(meta *proto.ShardMetadata) {
 		meta.Split = nil
 	})
 
@@ -666,11 +664,11 @@ func (sc *SplitController) abort() {
 
 // --- Helper methods ---
 
-func (sc *SplitController) loadParentMeta() *model.ShardMetadata {
+func (sc *SplitController) loadParentMeta() *proto.ShardMetadata {
 	return sc.loadShardMeta(sc.parentShardId)
 }
 
-func (sc *SplitController) loadShardMeta(shardId int64) *model.ShardMetadata {
+func (sc *SplitController) loadShardMeta(shardId int64) *proto.ShardMetadata {
 	status := sc.metadata.LoadStatus()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
@@ -680,25 +678,23 @@ func (sc *SplitController) loadShardMeta(shardId int64) *model.ShardMetadata {
 	if !exists {
 		return nil
 	}
-	cloned := meta.Clone()
-	return &cloned
+	return gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
 }
 
-func (sc *SplitController) updateParentMeta(fn func(meta *model.ShardMetadata)) {
+func (sc *SplitController) updateParentMeta(fn func(meta *proto.ShardMetadata)) {
 	sc.updateShardMeta(sc.parentShardId, fn)
 }
 
-func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *model.ShardMetadata)) {
+func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *proto.ShardMetadata)) {
 	sc.updateShardMeta(childId, fn)
 }
 
-func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *model.ShardMetadata)) {
+func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.ShardMetadata)) {
 	status := sc.metadata.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus) //nolint:revive
 	ns := cloned.Namespaces[sc.namespace]
 	if meta, exists := ns.Shards[shardId]; exists {
-		fn(&meta)
-		ns.Shards[shardId] = meta
+		fn(meta)
 		sc.metadata.UpdateStatus(cloned)
 	}
 }
@@ -708,10 +704,10 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *model.Sh
 func (sc *SplitController) fenceEnsemble(
 	shardId int64,
 	term int64,
-	ensemble []model.Server,
-) (map[model.Server]*proto.EntryId, error) {
+	ensemble []*proto.DataServer,
+) (map[*proto.DataServer]*proto.EntryId, error) {
 	type fenceResult struct {
-		server model.Server
+		server *proto.DataServer
 		entry  *proto.EntryId
 		err    error
 	}
@@ -740,7 +736,7 @@ func (sc *SplitController) fenceEnsemble(
 		close(ch)
 	}()
 
-	results := make(map[model.Server]*proto.EntryId)
+	results := make(map[*proto.DataServer]*proto.EntryId)
 	var lastErr error
 	for r := range ch {
 		if r.err != nil {
@@ -767,8 +763,8 @@ func (sc *SplitController) fenceEnsemble(
 
 // pickLeader chooses the server with the highest term/offset from the
 // fencing results.
-func (*SplitController) pickLeader(entries map[model.Server]*proto.EntryId) model.Server {
-	var best model.Server
+func (*SplitController) pickLeader(entries map[*proto.DataServer]*proto.EntryId) *proto.DataServer {
+	var best *proto.DataServer
 	var bestEntry *proto.EntryId
 
 	for server, entry := range entries {
@@ -793,7 +789,7 @@ func (sc *SplitController) waitForChildCommitOffset(ctx context.Context, childId
 			return errors.Errorf("child shard %d has no leader", childId)
 		}
 
-		resp, err := sc.rpcProvider.GetStatus(ctx, *childMeta.Leader, &proto.GetStatusRequest{
+		resp, err := sc.rpcProvider.GetStatus(ctx, childMeta.Leader, &proto.GetStatusRequest{
 			Shard: childId,
 		})
 		if err != nil {
@@ -838,13 +834,13 @@ func (sc *SplitController) reelectChild(childId int64) error {
 	}
 
 	// Re-elect the same leader (the node already has the data).
-	newLeader := *childMeta.Leader
+	newLeader := childMeta.Leader
 
 	// Build follower map
 	followerMap := make(map[string]*proto.EntryId)
 	for server, entry := range headEntries {
-		if server != newLeader {
-			followerMap[server.Internal] = entry
+		if server.GetNameOrDefault() != newLeader.GetNameOrDefault() {
+			followerMap[server.GetInternal()] = entry
 		}
 	}
 
@@ -860,10 +856,10 @@ func (sc *SplitController) reelectChild(childId int64) error {
 	}
 
 	// Update child metadata
-	sc.updateChildMeta(childId, func(meta *model.ShardMetadata) {
+	sc.updateChildMeta(childId, func(meta *proto.ShardMetadata) {
 		meta.Term = newTerm
-		meta.Leader = &newLeader
-		meta.Status = model.ShardStatusSteadyState
+		meta.Leader = newLeader
+		meta.Status = proto.ShardStatusSteadyState
 	})
 
 	sc.log.Info("Child re-elected in clean term",

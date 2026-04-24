@@ -21,10 +21,18 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-
 	"github.com/oxia-db/oxia/common/proto"
 )
+
+func testDataServer(id string) *proto.DataServer {
+	return &proto.DataServer{Internal: id, Public: id}
+}
+
+type electionResponse = struct {
+	DataServer *proto.DataServer
+	EntryID    *proto.EntryId
+	Err        error
+}
 
 func TestNegotiate_EmptyInput(t *testing.T) {
 	result := negotiate(nil)
@@ -55,7 +63,6 @@ func TestNegotiate_AllNodesSupport(t *testing.T) {
 }
 
 func TestNegotiate_PartialSupport(t *testing.T) {
-	// Only node1 and node2 support FINGERPRINT, node3 doesn't
 	nodeFeatures := map[string][]proto.Feature{
 		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
 		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
@@ -78,7 +85,6 @@ func TestNegotiate_IgnoresUnknownFeature(t *testing.T) {
 }
 
 func TestNegotiate_HandlesDuplicates(t *testing.T) {
-	// Node1 has FINGERPRINT listed twice
 	nodeFeatures := map[string][]proto.Feature{
 		"node1": {proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_DB_CHECKSUM},
 		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
@@ -89,8 +95,6 @@ func TestNegotiate_HandlesDuplicates(t *testing.T) {
 }
 
 func TestNegotiate_NoCommonFeatures(t *testing.T) {
-	// Simulate a scenario where nodes have no features in common
-	// (using empty lists to represent old nodes)
 	nodeFeatures := map[string][]proto.Feature{
 		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
 		"node2": {},
@@ -102,12 +106,10 @@ func TestNegotiate_NoCommonFeatures(t *testing.T) {
 }
 
 func TestNegotiate_OldNodeWithNoFeatures(t *testing.T) {
-	// Simulates rolling upgrade scenario where some nodes are old
-	// and report no features (or empty features)
 	nodeFeatures := map[string][]proto.Feature{
 		"new-node-1": {proto.Feature_FEATURE_DB_CHECKSUM},
 		"new-node-2": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"old-node":   nil, // Old node doesn't report any features
+		"old-node":   nil,
 	}
 
 	result := negotiate(nodeFeatures)
@@ -121,20 +123,15 @@ func TestNoOpSupportedFeaturesSupplier(t *testing.T) {
 }
 
 func TestNegotiate_MixedVersions_RollingUpgrade(t *testing.T) {
-	// Simulate a rolling upgrade scenario:
-	// - 2 new nodes support FINGERPRINT
-	// - 1 old node supports nothing
-
 	nodeFeatures := map[string][]proto.Feature{
 		"new-node-1": {proto.Feature_FEATURE_DB_CHECKSUM},
 		"new-node-2": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"old-node":   {}, // Old node reports empty features
+		"old-node":   {},
 	}
 
 	result := negotiate(nodeFeatures)
 	assert.Empty(t, result, "features should not be enabled until all nodes are upgraded")
 
-	// After upgrading the old node
 	nodeFeatures["old-node"] = []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
 
 	result = negotiate(nodeFeatures)
@@ -143,28 +140,14 @@ func TestNegotiate_MixedVersions_RollingUpgrade(t *testing.T) {
 
 func TestWaitForMajority_Success(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	server3 := model.Server{Internal: "server3", Public: "server3"}
-	ensemble := []model.Server{server1, server2, server3}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	server3 := testDataServer("server3")
+	ensemble := []*proto.DataServer{server1, server2, server3}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 3)
-
-	// Send 2 successful responses (majority for 3 servers)
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server1, &proto.EntryId{Term: 1, Offset: 100}, nil}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server2, &proto.EntryId{Term: 1, Offset: 95}, nil}
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
+	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
 
 	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble)
 
@@ -177,33 +160,15 @@ func TestWaitForMajority_Success(t *testing.T) {
 
 func TestWaitForMajority_FailureNoQuorum(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	server3 := model.Server{Internal: "server3", Public: "server3"}
-	ensemble := []model.Server{server1, server2, server3}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	server3 := testDataServer("server3")
+	ensemble := []*proto.DataServer{server1, server2, server3}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 3)
-
-	// Send 1 success and 2 errors (no majority)
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server1, &proto.EntryId{Term: 1, Offset: 100}, nil}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server2, nil, errors.New("connection failed")}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server3, nil, errors.New("timeout")}
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
+	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
+	ch <- electionResponse{DataServer: server3, Err: errors.New("timeout")}
 
 	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble)
 
@@ -215,33 +180,15 @@ func TestWaitForMajority_FailureNoQuorum(t *testing.T) {
 
 func TestWaitForMajority_MixedSuccessAndFailure(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	server3 := model.Server{Internal: "server3", Public: "server3"}
-	ensemble := []model.Server{server1, server2, server3}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	server3 := testDataServer("server3")
+	ensemble := []*proto.DataServer{server1, server2, server3}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 3)
-
-	// Send 2 successes and 1 error (reaches majority)
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server1, &proto.EntryId{Term: 1, Offset: 100}, nil}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server2, nil, errors.New("connection failed")}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server3, &proto.EntryId{Term: 1, Offset: 90}, nil}
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
+	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
+	ch <- electionResponse{DataServer: server3, EntryID: &proto.EntryId{Term: 1, Offset: 90}}
 
 	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble)
 
@@ -254,34 +201,16 @@ func TestWaitForMajority_MixedSuccessAndFailure(t *testing.T) {
 
 func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	server3 := model.Server{Internal: "server3", Public: "server3"}
-	removedServer := model.Server{Internal: "removed", Public: "removed"}
-	ensemble := []model.Server{server1, server2, server3}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	server3 := testDataServer("server3")
+	removedServer := testDataServer("removed")
+	ensemble := []*proto.DataServer{server1, server2, server3}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 4)
-
-	// Send 3 responses including one from a removed server
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server1, &proto.EntryId{Term: 1, Offset: 100}, nil}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{removedServer, &proto.EntryId{Term: 1, Offset: 110}, nil}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server2, &proto.EntryId{Term: 1, Offset: 95}, nil}
+	ch := make(chan electionResponse, 4)
+	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
+	ch <- electionResponse{DataServer: removedServer, EntryID: &proto.EntryId{Term: 1, Offset: 110}}
+	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
 
 	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble)
 
@@ -295,28 +224,14 @@ func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
 
 func TestWaitForMajority_EarlyReturn(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	server3 := model.Server{Internal: "server3", Public: "server3"}
-	ensemble := []model.Server{server1, server2, server3}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	server3 := testDataServer("server3")
+	ensemble := []*proto.DataServer{server1, server2, server3}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 3)
-
-	// Send only 2 responses to reach majority
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server1, &proto.EntryId{Term: 1, Offset: 100}, nil}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server2, &proto.EntryId{Term: 1, Offset: 95}, nil}
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
+	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
 
 	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble)
 
@@ -327,32 +242,18 @@ func TestWaitForMajority_EarlyReturn(t *testing.T) {
 
 func TestWaitForGracePeriod_AllResponsesReceived(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	server3 := model.Server{Internal: "server3", Public: "server3"}
-	ensemble := []model.Server{server1, server2, server3}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	server3 := testDataServer("server3")
+	ensemble := []*proto.DataServer{server1, server2, server3}
 
-	candidatesResponse := map[model.Server]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 	}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 3)
-
-	// Send remaining responses
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server2, &proto.EntryId{Term: 1, Offset: 95}, nil}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server3, &proto.EntryId{Term: 1, Offset: 90}, nil}
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
+	ch <- electionResponse{DataServer: server3, EntryID: &proto.EntryId{Term: 1, Offset: 90}}
 
 	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse)
 
@@ -364,19 +265,15 @@ func TestWaitForGracePeriod_AllResponsesReceived(t *testing.T) {
 
 func TestWaitForGracePeriod_Timeout(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	ensemble := []model.Server{server1, server2}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	ensemble := []*proto.DataServer{server1, server2}
 
-	candidatesResponse := map[model.Server]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 	}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 3)
+	ch := make(chan electionResponse, 3)
 
 	start := time.Now()
 	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse)
@@ -389,32 +286,18 @@ func TestWaitForGracePeriod_Timeout(t *testing.T) {
 
 func TestWaitForGracePeriod_IgnoresErrors(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	server3 := model.Server{Internal: "server3", Public: "server3"}
-	ensemble := []model.Server{server1, server2, server3}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	server3 := testDataServer("server3")
+	ensemble := []*proto.DataServer{server1, server2, server3}
 
-	candidatesResponse := map[model.Server]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 	}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 3)
-
-	// Send one error and one success
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server2, nil, errors.New("connection failed")}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server3, &proto.EntryId{Term: 1, Offset: 90}, nil}
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
+	ch <- electionResponse{DataServer: server3, EntryID: &proto.EntryId{Term: 1, Offset: 90}}
 
 	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse)
 
@@ -426,32 +309,18 @@ func TestWaitForGracePeriod_IgnoresErrors(t *testing.T) {
 
 func TestWaitForGracePeriod_ExcludesRemovedServers(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	removedServer := model.Server{Internal: "removed", Public: "removed"}
-	ensemble := []model.Server{server1, server2}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	removedServer := testDataServer("removed")
+	ensemble := []*proto.DataServer{server1, server2}
 
-	candidatesResponse := map[model.Server]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 	}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 3)
-
-	// Send responses including one from removed server
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{removedServer, &proto.EntryId{Term: 1, Offset: 110}, nil}
-	ch <- struct {
-		model.Server
-		*proto.EntryId
-		error
-	}{server2, &proto.EntryId{Term: 1, Offset: 95}, nil}
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: removedServer, EntryID: &proto.EntryId{Term: 1, Offset: 110}}
+	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
 
 	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse)
 
@@ -463,22 +332,17 @@ func TestWaitForGracePeriod_ExcludesRemovedServers(t *testing.T) {
 
 func TestWaitForGracePeriod_AlreadyComplete(t *testing.T) {
 	e := &ShardElection{}
-	server1 := model.Server{Internal: "server1", Public: "server1"}
-	server2 := model.Server{Internal: "server2", Public: "server2"}
-	ensemble := []model.Server{server1, server2}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	ensemble := []*proto.DataServer{server1, server2}
 
-	candidatesResponse := map[model.Server]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 		server2: {Term: 1, Offset: 95},
 	}
 
-	ch := make(chan struct {
-		model.Server
-		*proto.EntryId
-		error
-	}, 2)
+	ch := make(chan electionResponse, 2)
 
-	// Already have all responses, should return immediately
 	start := time.Now()
 	e.waitForGracePeriod(ch, 2, ensemble, 2, candidatesResponse)
 	elapsed := time.Since(start)

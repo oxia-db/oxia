@@ -18,12 +18,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
@@ -40,7 +40,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		Name:              "default",
 		ReplicationFactor: 1,
 		InitialShardCount: 2,
-	}}, []model.Server{sa1, sa2, sa3})
+	}}, []*proto.DataServer{sa1, sa2, sa3})
 
 	metadata := createCoordinatorMetadata(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil)
 	defer func() {
@@ -53,18 +53,18 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	assert.NoError(t, err)
 	defer coordinatorInstance.Close()
 
-	shardMetadata := model.ShardMetadata{
-		Status:                  model.ShardStatusSteadyState,
+	shardMetadata := &proto.ShardMetadata{
+		Status:                  proto.ShardStatusSteadyState,
 		Term:                    999,
 		Leader:                  nil,
-		Ensemble:                []model.Server{},
-		RemovedNodes:            []model.Server{},
-		PendingDeleteShardNodes: make([]model.Server, 0),
-		Int32HashRange:          model.Int32HashRange{Min: 2000, Max: 100000},
+		Ensemble:                []*proto.DataServer{},
+		RemovedNodes:            []*proto.DataServer{},
+		PendingDeleteShardNodes: make([]*proto.DataServer, 0),
+		Int32HashRange:          &proto.HashRange{Min: 2000, Max: 100000},
 	}
 	metadataView := coordinatorInstance.Metadata()
 	metadataView.UpdateShardMetadata("default", 1, shardMetadata)
 
 	status := metadataView.LoadStatus()
-	assert.EqualValues(t, status.Namespaces["default"].Shards[1], shardMetadata)
+	assert.True(t, gproto.Equal(status.Namespaces["default"].Shards[1], shardMetadata))
 }

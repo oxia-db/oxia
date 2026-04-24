@@ -31,8 +31,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 
@@ -84,16 +82,16 @@ func (sap *mockShardAssignmentsProvider) WaitForNextUpdate(ctx context.Context, 
 }
 
 type mockNodeAvailabilityListener struct {
-	events chan model.Server
+	events chan *proto.DataServer
 }
 
 func newMockNodeAvailabilityListener() *mockNodeAvailabilityListener {
 	return &mockNodeAvailabilityListener{
-		events: make(chan model.Server, 100),
+		events: make(chan *proto.DataServer, 100),
 	}
 }
 
-func (nal *mockNodeAvailabilityListener) BecameUnavailable(node model.Server) {
+func (nal *mockNodeAvailabilityListener) BecameUnavailable(node *proto.DataServer) {
 	nal.events <- node
 }
 
@@ -376,7 +374,7 @@ func (r *mockRpcProvider) Close() error {
 	return nil
 }
 
-func (r *mockRpcProvider) ClearPooledConnections(node model.Server) {
+func (r *mockRpcProvider) ClearPooledConnections(node *proto.DataServer) {
 }
 
 func newMockRpcProvider() *mockRpcProvider {
@@ -385,14 +383,14 @@ func newMockRpcProvider() *mockRpcProvider {
 	}
 }
 
-func (r *mockRpcProvider) FailNode(node model.Server, err error) {
+func (r *mockRpcProvider) FailNode(node *proto.DataServer, err error) {
 	r.Lock()
 	defer r.Unlock()
 
 	n := r.getNode(node)
 	n.err = err
 }
-func (r *mockRpcProvider) GetInfo(_ context.Context, node model.Server, _ *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+func (r *mockRpcProvider) GetInfo(_ context.Context, node *proto.DataServer, _ *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -406,7 +404,7 @@ func (r *mockRpcProvider) GetInfo(_ context.Context, node model.Server, _ *proto
 	}, nil
 }
 
-func (r *mockRpcProvider) Handshake(_ context.Context, node model.Server, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+func (r *mockRpcProvider) Handshake(_ context.Context, node *proto.DataServer, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -421,7 +419,7 @@ func (r *mockRpcProvider) Handshake(_ context.Context, node model.Server, _ *pro
 	}, nil
 }
 
-func (r *mockRpcProvider) RecoverNode(node model.Server) {
+func (r *mockRpcProvider) RecoverNode(node *proto.DataServer) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -429,25 +427,25 @@ func (r *mockRpcProvider) RecoverNode(node model.Server) {
 	n.err = nil
 }
 
-func (r *mockRpcProvider) GetNode(node model.Server) *mockPerNodeChannels {
+func (r *mockRpcProvider) GetNode(node *proto.DataServer) *mockPerNodeChannels {
 	r.Lock()
 	defer r.Unlock()
 
 	return r.getNode(node)
 }
 
-func (r *mockRpcProvider) getNode(node model.Server) *mockPerNodeChannels {
-	res, ok := r.channels[node.Internal]
+func (r *mockRpcProvider) getNode(node *proto.DataServer) *mockPerNodeChannels {
+	res, ok := r.channels[node.GetInternal()]
 	if ok {
 		return res
 	}
 
 	res = newMockPerNodeChannels()
-	r.channels[node.Internal] = res
+	r.channels[node.GetInternal()] = res
 	return res
 }
 
-func (r *mockRpcProvider) PushShardAssignments(ctx context.Context, node model.Server) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
+func (r *mockRpcProvider) PushShardAssignments(ctx context.Context, node *proto.DataServer) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -459,7 +457,7 @@ func (r *mockRpcProvider) PushShardAssignments(ctx context.Context, node model.S
 	return n.shardAssignmentsStream, nil
 }
 
-func (r *mockRpcProvider) NewTerm(ctx context.Context, node model.Server, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+func (r *mockRpcProvider) NewTerm(ctx context.Context, node *proto.DataServer, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -482,7 +480,7 @@ func (r *mockRpcProvider) NewTerm(ctx context.Context, node model.Server, req *p
 	}
 }
 
-func (r *mockRpcProvider) BecomeLeader(ctx context.Context, node model.Server, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
+func (r *mockRpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServer, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -505,7 +503,7 @@ func (r *mockRpcProvider) BecomeLeader(ctx context.Context, node model.Server, r
 	}
 }
 
-func (r *mockRpcProvider) GetStatus(ctx context.Context, node model.Server, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+func (r *mockRpcProvider) GetStatus(ctx context.Context, node *proto.DataServer, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -528,7 +526,7 @@ func (r *mockRpcProvider) GetStatus(ctx context.Context, node model.Server, req 
 	}
 }
 
-func (r *mockRpcProvider) DeleteShard(ctx context.Context, node model.Server, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
+func (r *mockRpcProvider) DeleteShard(ctx context.Context, node *proto.DataServer, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -551,7 +549,7 @@ func (r *mockRpcProvider) DeleteShard(ctx context.Context, node model.Server, re
 	}
 }
 
-func (r *mockRpcProvider) AddFollower(ctx context.Context, node model.Server, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+func (r *mockRpcProvider) AddFollower(ctx context.Context, node *proto.DataServer, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -574,7 +572,7 @@ func (r *mockRpcProvider) AddFollower(ctx context.Context, node model.Server, re
 	}
 }
 
-func (r *mockRpcProvider) RemoveObserver(ctx context.Context, node model.Server, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
+func (r *mockRpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServer, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -597,7 +595,7 @@ func (r *mockRpcProvider) RemoveObserver(ctx context.Context, node model.Server,
 	}
 }
 
-func (r *mockRpcProvider) GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, io.Closer, error) {
+func (r *mockRpcProvider) GetHealthClient(node *proto.DataServer) (grpc_health_v1.HealthClient, io.Closer, error) {
 	c := r.GetNode(node).healthClient
 	return c, c, nil
 }

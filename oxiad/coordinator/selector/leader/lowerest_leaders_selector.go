@@ -19,32 +19,32 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
 
-var _ selector.Selector[*Context, model.Server] = &leader{}
+var _ selector.Selector[*Context, *commonproto.DataServer] = &leader{}
 
 type leader struct{}
 
-func (*leader) Select(context *Context) (model.Server, error) {
+func (*leader) Select(context *Context) (*commonproto.DataServer, error) {
 	if len(context.Candidates) == 0 {
-		return model.Server{}, selector.ErrNoCandidates
+		return nil, selector.ErrNoCandidates
 	}
 
 	status := context.Status
 	candidates := linkedhashset.New[string]()
 	for _, candidate := range context.Candidates {
-		candidates.Add(candidate.GetIdentifier())
+		candidates.Add(candidate.GetNameOrDefault())
 	}
 	_, _, leaders := util.NodeShardLeaders(candidates, status)
 
 	minLeaders := -1
-	var minLeadersNode model.Server
+	var minLeadersNode *commonproto.DataServer
 
 	for idx, candidate := range context.Candidates {
-		if shards, exist := leaders[candidate.GetIdentifier()]; exist {
+		if shards, exist := leaders[candidate.GetNameOrDefault()]; exist {
 			leaderNum := shards.Size()
 			if minLeaders == -1 || leaderNum < minLeaders {
 				minLeaders = leaderNum
@@ -58,6 +58,6 @@ func (*leader) Select(context *Context) (model.Server, error) {
 	return minLeadersNode, nil
 }
 
-func NewSelector() selector.Selector[*Context, model.Server] {
+func NewSelector() selector.Selector[*Context, *commonproto.DataServer] {
 	return &leader{}
 }

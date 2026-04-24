@@ -18,12 +18,11 @@ package util
 import (
 	"log/slog"
 
-	"github.com/oxia-db/oxia/common/proto"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
-func findNamespaceConfig(config *proto.ClusterConfiguration, ns string) *proto.Namespace {
+func findNamespaceConfig(config *commonproto.ClusterConfiguration, ns string) *commonproto.Namespace {
 	for _, cns := range config.GetNamespaces() {
 		if cns.GetName() == ns {
 			return cns
@@ -32,12 +31,16 @@ func findNamespaceConfig(config *proto.ClusterConfiguration, ns string) *proto.N
 	return nil
 }
 
-func ApplyClusterChanges(config *proto.ClusterConfiguration, status *model.ClusterStatus, ensembleSupplier func(namespaceConfig *proto.Namespace, status *model.ClusterStatus) ([]model.Server, error)) (
+func ApplyClusterChanges(config *commonproto.ClusterConfiguration, status *commonproto.ClusterStatus, ensembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServer, error)) (
 	shardsToAdd map[int64]string,
 	shardsToDelete []int64) {
 	shardsToAdd = map[int64]string{}
 	shardsToDelete = []int64{}
 	var err error
+
+	if status.Namespaces == nil {
+		status.Namespaces = map[string]*commonproto.NamespaceStatus{}
+	}
 
 	// Check for new namespaces
 	for _, nc := range config.GetNamespaces() {
@@ -47,8 +50,8 @@ func ApplyClusterChanges(config *proto.ClusterConfiguration, status *model.Clust
 		}
 
 		// This is a new namespace
-		nss := model.NamespaceStatus{
-			Shards:            map[int64]model.ShardMetadata{},
+		nss := &commonproto.NamespaceStatus{
+			Shards:            map[int64]*commonproto.ShardMetadata{},
 			ReplicationFactor: nc.GetReplicationFactor(),
 		}
 		// Publish the namespace into status *before* placing shards so that
@@ -57,17 +60,17 @@ func ApplyClusterChanges(config *proto.ClusterConfiguration, status *model.Clust
 		status.Namespaces[nc.GetName()] = nss
 
 		for _, shard := range sharding.GenerateShards(status.ShardIdGenerator, nc.GetInitialShardCount()) {
-			var esm []model.Server
+			var esm []*commonproto.DataServer
 			if esm, err = ensembleSupplier(nc, status); err != nil {
 				slog.Error("failed to select new ensembles.", slog.Any("shard", shard), slog.Any("error", err))
 				continue
 			}
-			shardMetadata := model.ShardMetadata{
-				Status:   model.ShardStatusUnknown,
+			shardMetadata := &commonproto.ShardMetadata{
+				Status:   commonproto.ShardStatusUnknown,
 				Term:     -1,
 				Leader:   nil,
 				Ensemble: esm,
-				Int32HashRange: model.Int32HashRange{
+				Int32HashRange: &commonproto.HashRange{
 					Min: shard.Min,
 					Max: shard.Max,
 				},
@@ -88,7 +91,7 @@ func ApplyClusterChanges(config *proto.ClusterConfiguration, status *model.Clust
 
 		// Keep the shards in the status and mark them as being deleted
 		for shardId, shard := range ns.Shards {
-			shard.Status = model.ShardStatusDeleting
+			shard.Status = commonproto.ShardStatusDeleting
 			ns.Shards[shardId] = shard
 			shardsToDelete = append(shardsToDelete, shardId)
 		}

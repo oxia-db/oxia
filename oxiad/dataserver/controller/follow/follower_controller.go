@@ -33,7 +33,6 @@ import (
 	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
@@ -89,7 +88,7 @@ type FollowerController interface {
 	// SetSplitHashRange marks this follower as a split child. After loading
 	// a snapshot, the database will be filtered to retain only keys within
 	// the given hash range. WAL entries will also be filtered at apply time.
-	SetSplitHashRange(hashRange *model.Int32HashRange)
+	SetSplitHashRange(hashRange *proto.HashRange)
 }
 
 type followerController struct {
@@ -127,7 +126,7 @@ type followerController struct {
 	// splitHashRange, when non-nil, indicates this follower is a child shard
 	// in a split. The snapshot will be filtered after loading, and WAL entries
 	// will be filtered at state machine apply time.
-	splitHashRange *model.Int32HashRange
+	splitHashRange *proto.HashRange
 }
 
 func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTermOptions, storageOptions *option.StorageOptions,
@@ -455,7 +454,7 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 		var resp statemachine.ApplyResponse
 		if fc.splitHashRange != nil {
 			resp, err = statemachine.ApplyLogEntryWithSplitFilter(fc.db, entry,
-				lead.WrapperUpdateOperationCallback, *fc.splitHashRange)
+				lead.WrapperUpdateOperationCallback, fc.splitHashRange)
 		} else {
 			resp, err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
 		}
@@ -506,7 +505,7 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	return fc.processCommittedEntriesLoop(reader, maxInclusive)
 }
 
-func (fc *followerController) SetSplitHashRange(hashRange *model.Int32HashRange) {
+func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange) {
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
 	fc.splitHashRange = hashRange
@@ -606,7 +605,7 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	// If this follower is a split child, filter the snapshot to only retain
 	// keys within the child's hash range.
 	if fc.splitHashRange != nil {
-		if err = database.FilterDBForSplit(db.RawKV(), *fc.splitHashRange); err != nil {
+		if err = database.FilterDBForSplit(db.RawKV(), fc.splitHashRange); err != nil {
 			return errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "failed to filter snapshot for split")
 		}
 		// FilterDBForSplit deletes the checksum key (it's invalid after

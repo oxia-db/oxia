@@ -21,12 +21,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -58,20 +58,20 @@ func (m *mockSplitEventListener) SplitAborted(parentShard int64, leftChild int64
 }
 
 var (
-	ps1 = model.Server{Public: "ps1:9091", Internal: "ps1:8191"}
-	ps2 = model.Server{Public: "ps2:9091", Internal: "ps2:8191"}
-	ps3 = model.Server{Public: "ps3:9091", Internal: "ps3:8191"}
-	ls1 = model.Server{Public: "ls1:9091", Internal: "ls1:8191"}
-	ls2 = model.Server{Public: "ls2:9091", Internal: "ls2:8191"}
-	ls3 = model.Server{Public: "ls3:9091", Internal: "ls3:8191"}
-	rs1 = model.Server{Public: "rs1:9091", Internal: "rs1:8191"}
-	rs2 = model.Server{Public: "rs2:9091", Internal: "rs2:8191"}
-	rs3 = model.Server{Public: "rs3:9091", Internal: "rs3:8191"}
+	ps1 = &proto.DataServer{Public: "ps1:9091", Internal: "ps1:8191"}
+	ps2 = &proto.DataServer{Public: "ps2:9091", Internal: "ps2:8191"}
+	ps3 = &proto.DataServer{Public: "ps3:9091", Internal: "ps3:8191"}
+	ls1 = &proto.DataServer{Public: "ls1:9091", Internal: "ls1:8191"}
+	ls2 = &proto.DataServer{Public: "ls2:9091", Internal: "ls2:8191"}
+	ls3 = &proto.DataServer{Public: "ls3:9091", Internal: "ls3:8191"}
+	rs1 = &proto.DataServer{Public: "rs1:9091", Internal: "rs1:8191"}
+	rs2 = &proto.DataServer{Public: "rs2:9091", Internal: "rs2:8191"}
+	rs3 = &proto.DataServer{Public: "rs3:9091", Internal: "rs3:8191"}
 )
 
 // setupSplitTest creates a cluster status with a parent shard in SteadyState,
 // two child shards ready for split, and returns the test resources.
-func setupSplitTest(t *testing.T, phase model.SplitPhase) (
+func setupSplitTest(t *testing.T, phase string) (
 	*mockRpcProvider,
 	coordmetadata.Metadata,
 	*mockSplitEventListener,
@@ -85,49 +85,49 @@ func setupSplitTest(t *testing.T, phase model.SplitPhase) (
 	}, nil)
 	t.Cleanup(func() { assert.NoError(t, metadata.Close()) })
 
-	clusterStatus := &model.ClusterStatus{
-		Namespaces: map[string]model.NamespaceStatus{
+	clusterStatus := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
 			constant.DefaultNamespace: {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
+				Shards: map[int64]*proto.ShardMetadata{
 					0: {
-						Status:   model.ShardStatusSteadyState,
+						Status:   proto.ShardStatusSteadyState,
 						Term:     5,
-						Leader:   &ps1,
-						Ensemble: []model.Server{ps1, ps2, ps3},
-						Int32HashRange: model.Int32HashRange{
+						Leader:   ps1,
+						Ensemble: []*proto.DataServer{ps1, ps2, ps3},
+						Int32HashRange: &proto.HashRange{
 							Min: 0,
 							Max: 1000,
 						},
-						Split: &model.SplitMetadata{
+						Split: &proto.SplitMetadata{
 							Phase:         phase,
-							ChildShardIDs: []int64{1, 2},
+							ChildShardIds: []int64{1, 2},
 							SplitPoint:    500,
 						},
 					},
 					1: {
-						Status:   model.ShardStatusSteadyState,
+						Status:   proto.ShardStatusSteadyState,
 						Term:     0,
-						Ensemble: []model.Server{ls1, ls2, ls3},
-						Int32HashRange: model.Int32HashRange{
+						Ensemble: []*proto.DataServer{ls1, ls2, ls3},
+						Int32HashRange: &proto.HashRange{
 							Min: 0,
 							Max: 500,
 						},
-						Split: &model.SplitMetadata{
+						Split: &proto.SplitMetadata{
 							Phase:         phase,
 							ParentShardId: 0,
 							SplitPoint:    500,
 						},
 					},
 					2: {
-						Status:   model.ShardStatusSteadyState,
+						Status:   proto.ShardStatusSteadyState,
 						Term:     0,
-						Ensemble: []model.Server{rs1, rs2, rs3},
-						Int32HashRange: model.Int32HashRange{
+						Ensemble: []*proto.DataServer{rs1, rs2, rs3},
+						Int32HashRange: &proto.HashRange{
 							Min: 501,
 							Max: 1000,
 						},
-						Split: &model.SplitMetadata{
+						Split: &proto.SplitMetadata{
 							Phase:         phase,
 							ParentShardId: 0,
 							SplitPoint:    500,
@@ -201,7 +201,7 @@ func queueCutoverResponses(rpcMock *mockRpcProvider) {
 
 // queueCleanupResponses queues all responses needed for the cleanup phase.
 func TestSplitController_FullLifecycle(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
 
 	queueBootstrapResponses(rpcMock)
 	queueCatchUpResponses(rpcMock)
@@ -232,7 +232,7 @@ func TestSplitController_FullLifecycle(t *testing.T) {
 
 	parentMeta, parentExists := ns.Shards[0]
 	require.True(t, parentExists)
-	assert.Equal(t, model.ShardStatusDeleting, parentMeta.Status)
+	assert.Equal(t, proto.ShardStatusDeleting, parentMeta.Status)
 	assert.Nil(t, parentMeta.Split, "parent split metadata should be cleared")
 
 	leftMeta, leftExists := ns.Shards[1]
@@ -245,7 +245,7 @@ func TestSplitController_FullLifecycle(t *testing.T) {
 }
 
 func TestSplitController_ResumeFromBootstrap(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
 
 	queueBootstrapResponses(rpcMock)
 	queueCatchUpResponses(rpcMock)
@@ -271,19 +271,19 @@ func TestSplitController_ResumeFromBootstrap(t *testing.T) {
 }
 
 func TestSplitController_ResumeFromCatchUp(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// For CatchUp, we need child leaders to already be set (they were set during bootstrap)
 	// Update child metadata to have leaders
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 	leftMeta := ns.Shards[1]
-	leftMeta.Leader = &ls1
+	leftMeta.Leader = ls1
 	leftMeta.Term = 1
 	ns.Shards[1] = leftMeta
 	rightMeta := ns.Shards[2]
-	rightMeta.Leader = &rs1
+	rightMeta.Leader = rs1
 	rightMeta.Term = 1
 	ns.Shards[2] = rightMeta
 	statusRes.UpdateStatus(cloned)
@@ -309,7 +309,7 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 }
 
 func TestSplitController_PhaseTransitions(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
 
 	queueBootstrapResponses(rpcMock)
 	queueCatchUpResponses(rpcMock)
@@ -332,15 +332,15 @@ func TestSplitController_PhaseTransitions(t *testing.T) {
 		ns := status.Namespaces[constant.DefaultNamespace]
 
 		parentMeta := ns.Shards[0]
-		assert.Equal(t, model.ShardStatusDeleting, parentMeta.Status)
+		assert.Equal(t, proto.ShardStatusDeleting, parentMeta.Status)
 
 		leftMeta := ns.Shards[1]
 		assert.NotNil(t, leftMeta.Leader)
-		assert.Equal(t, model.ShardStatusSteadyState, leftMeta.Status)
+		assert.Equal(t, proto.ShardStatusSteadyState, leftMeta.Status)
 
 		rightMeta := ns.Shards[2]
 		assert.NotNil(t, rightMeta.Leader)
-		assert.Equal(t, model.ShardStatusSteadyState, rightMeta.Status)
+		assert.Equal(t, proto.ShardStatusSteadyState, rightMeta.Status)
 	case <-time.After(30 * time.Second):
 		t.Fatal("Split did not complete in time")
 	}
@@ -350,7 +350,7 @@ func TestSplitController_PhaseTransitions(t *testing.T) {
 
 func TestSplitController_TimeoutDuringBootstrap(t *testing.T) {
 	// Don't queue any RPC responses -- bootstrap will hang on fenceEnsemble.
-	_, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
+	_, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -388,21 +388,21 @@ func TestSplitController_TimeoutDuringBootstrap(t *testing.T) {
 }
 
 func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
 	leftMeta.Term = 1
-	leftMeta.Leader = &ls1
+	leftMeta.Leader = ls1
 	ns.Shards[1] = leftMeta
 
 	rightMeta := ns.Shards[2]
 	rightMeta.Term = 1
-	rightMeta.Leader = &rs1
+	rightMeta.Leader = rs1
 	ns.Shards[2] = rightMeta
 
 	parentMeta := ns.Shards[0]
@@ -450,27 +450,27 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 // --- Parent Leader Election Tests ---
 
 func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// Set child leaders and ParentTermAtBootstrap = 5
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
 	leftMeta.Term = 1
-	leftMeta.Leader = &ls1
+	leftMeta.Leader = ls1
 	ns.Shards[1] = leftMeta
 
 	rightMeta := ns.Shards[2]
 	rightMeta.Term = 1
-	rightMeta.Leader = &rs1
+	rightMeta.Leader = rs1
 	ns.Shards[2] = rightMeta
 
 	// Simulate parent leader election: term changed from 5 to 6
 	parentMeta := ns.Shards[0]
 	parentMeta.Term = 6 // Changed!
-	parentMeta.Leader = &ps2
+	parentMeta.Leader = ps2
 	parentMeta.Split.ParentTermAtBootstrap = 5 // Was 5 during Bootstrap
 	ns.Shards[0] = parentMeta
 
@@ -524,7 +524,7 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 // --- Child Failure Tests ---
 
 func TestSplitController_ChildFencingPartialSuccess(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
 
 	// Left child: only 2/3 respond (quorum OK)
 	// ls1 has higher offset -> deterministically becomes leader
@@ -567,7 +567,7 @@ func TestSplitController_ChildFencingPartialSuccess(t *testing.T) {
 }
 
 func TestSplitController_ParentFencingPartialFailure(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
 
 	queueBootstrapResponses(rpcMock)
 	queueCatchUpResponses(rpcMock)
@@ -610,7 +610,7 @@ func TestSplitController_ParentFencingPartialFailure(t *testing.T) {
 }
 
 func TestSplitController_ChildQuorumCommitRetry(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
 
 	queueBootstrapResponses(rpcMock)
 	queueCatchUpResponses(rpcMock)
@@ -658,21 +658,21 @@ func TestSplitController_ChildQuorumCommitRetry(t *testing.T) {
 }
 
 func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
 	leftMeta.Term = 1
-	leftMeta.Leader = &ls1
+	leftMeta.Leader = ls1
 	ns.Shards[1] = leftMeta
 
 	rightMeta := ns.Shards[2]
 	rightMeta.Term = 1
-	rightMeta.Leader = &rs1
+	rightMeta.Leader = rs1
 	ns.Shards[2] = rightMeta
 
 	parentMeta := ns.Shards[0]
@@ -724,21 +724,21 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 }
 
 func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
 	leftMeta.Term = 1
-	leftMeta.Leader = &ls1
+	leftMeta.Leader = ls1
 	ns.Shards[1] = leftMeta
 
 	rightMeta := ns.Shards[2]
 	rightMeta.Term = 1
-	rightMeta.Leader = &rs1
+	rightMeta.Leader = rs1
 	ns.Shards[2] = rightMeta
 
 	parentMeta := ns.Shards[0]
@@ -796,22 +796,22 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 }
 
 func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseCatchUp)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// Set child leaders and ParentTermAtBootstrap as if Bootstrap completed.
 	// Also set ChildLeadersAtBootstrap with the ORIGINAL leaders.
 	status := statusRes.LoadStatus()
-	cloned := status.Clone()
+	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
 	leftMeta := ns.Shards[1]
-	leftMeta.Term = 2      // term=2 because the shard controller re-elected
-	leftMeta.Leader = &ls2 // NEW leader (was ls1 at bootstrap)
+	leftMeta.Term = 2     // term=2 because the shard controller re-elected
+	leftMeta.Leader = ls2 // NEW leader (was ls1 at bootstrap)
 	ns.Shards[1] = leftMeta
 
 	rightMeta := ns.Shards[2]
 	rightMeta.Term = 1
-	rightMeta.Leader = &rs1
+	rightMeta.Leader = rs1
 	ns.Shards[2] = rightMeta
 
 	parentMeta := ns.Shards[0]
@@ -881,7 +881,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	finalNs := finalStatus.Namespaces[constant.DefaultNamespace]
 
 	pm := finalNs.Shards[0]
-	assert.Equal(t, model.ShardStatusDeleting, pm.Status)
+	assert.Equal(t, proto.ShardStatusDeleting, pm.Status)
 
 	lm := finalNs.Shards[1]
 	assert.Nil(t, lm.Split)
@@ -893,7 +893,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 }
 
 func TestSplitController_ChildEnsembleMemberDiesDuringBootstrap(t *testing.T) {
-	rpcMock, statusRes, listener := setupSplitTest(t, model.SplitPhaseBootstrap)
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
 
 	// Left child: 2/3 respond, 1 dead — quorum still met.
 	// ls1 has higher offset so pickLeader deterministically chooses it.

@@ -32,6 +32,15 @@ const (
 	AntiAffinityModeUnknown = ""
 	AntiAffinityModeStrict  = "strict"
 	AntiAffinityModeRelaxed = "relaxed"
+
+	ShardStatusUnknown     = "Unknown"
+	ShardStatusSteadyState = "SteadyState"
+	ShardStatusElection    = "Election"
+	ShardStatusDeleting    = "Deleting"
+
+	SplitPhaseBootstrap = "Bootstrap"
+	SplitPhaseCatchUp   = "CatchUp"
+	SplitPhaseCutover   = "Cutover"
 )
 
 func (ds *DataServer) GetNameOrDefault() string {
@@ -42,6 +51,50 @@ func (ds *DataServer) GetNameOrDefault() string {
 		return ds.GetName()
 	}
 	return ds.GetInternal()
+}
+
+func NewClusterStatus() *ClusterStatus {
+	return &ClusterStatus{
+		Namespaces: map[string]*NamespaceStatus{},
+	}
+}
+
+func ParseShardStatus(value string) string {
+	switch value {
+	case ShardStatusSteadyState:
+		return ShardStatusSteadyState
+	case ShardStatusElection:
+		return ShardStatusElection
+	case ShardStatusDeleting:
+		return ShardStatusDeleting
+	default:
+		return ShardStatusUnknown
+	}
+}
+
+func (sm *ShardMetadata) GetStatusOrDefault() string {
+	if sm == nil {
+		return ShardStatusUnknown
+	}
+	return ParseShardStatus(sm.GetStatus())
+}
+
+func ParseSplitPhase(value string) string {
+	switch value {
+	case SplitPhaseCatchUp:
+		return SplitPhaseCatchUp
+	case SplitPhaseCutover:
+		return SplitPhaseCutover
+	default:
+		return SplitPhaseBootstrap
+	}
+}
+
+func (sm *SplitMetadata) GetPhaseOrDefault() string {
+	if sm == nil {
+		return SplitPhaseBootstrap
+	}
+	return ParseSplitPhase(sm.GetPhase())
 }
 
 func (ns *Namespace) NotificationsEnabledOrDefault() bool {

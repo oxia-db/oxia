@@ -24,7 +24,6 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/hash"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -98,10 +97,10 @@ func readNotificationBatch(t *testing.T, kv kvstore.KV, offset int64) *proto.Not
 
 // leftRange covers [0, midpoint]
 // rightRange covers [midpoint+1, max].
-func splitRanges() (left, right model.Int32HashRange) {
+func splitRanges() (left, right *proto.HashRange) {
 	mid := uint32(math.MaxUint32 / 2)
-	return model.Int32HashRange{Min: 0, Max: mid},
-		model.Int32HashRange{Min: mid + 1, Max: math.MaxUint32}
+	return &proto.HashRange{Min: 0, Max: mid},
+		&proto.HashRange{Min: mid + 1, Max: math.MaxUint32}
 }
 
 func TestFilterDBForSplit_UserKeys(t *testing.T) {

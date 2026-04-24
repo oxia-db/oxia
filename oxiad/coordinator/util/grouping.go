@@ -21,7 +21,7 @@ import (
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
-	"github.com/oxia-db/oxia/common/proto"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
@@ -30,7 +30,7 @@ type NamespaceAndShard struct {
 	ShardID   int64
 }
 
-func NodeShardLeaders(candidates *linkedhashset.Set[string], status *model.ClusterStatus) (totalShards int, electedShards int, result map[string]*arraylist.List[NamespaceAndShard]) {
+func NodeShardLeaders(candidates *linkedhashset.Set[string], status *commonproto.ClusterStatus) (totalShards int, electedShards int, result map[string]*arraylist.List[NamespaceAndShard]) {
 	result = make(map[string]*arraylist.List[NamespaceAndShard])
 	totalShards = 0
 	electedShards = 0
@@ -39,7 +39,7 @@ func NodeShardLeaders(candidates *linkedhashset.Set[string], status *model.Clust
 			totalShards++
 			if leader := shardStatus.Leader; leader != nil {
 				electedShards++
-				leaderNodeID := leader.GetIdentifier()
+				leaderNodeID := leader.GetNameOrDefault()
 				var exist bool
 				if _, exist = result[leaderNodeID]; !exist {
 					result[leaderNodeID] = arraylist.New[NamespaceAndShard]()
@@ -66,14 +66,14 @@ func NodeShardLeaders(candidates *linkedhashset.Set[string], status *model.Clust
 	return totalShards, electedShards, result
 }
 
-func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *model.ClusterStatus) (map[string][]model.ShardInfo, map[string]model.Server) {
+func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *commonproto.ClusterStatus) (map[string][]model.ShardInfo, map[string]*commonproto.DataServer) {
 	groupingShardByNode := make(map[string][]model.ShardInfo)
-	historyNodes := make(map[string]model.Server)
+	historyNodes := make(map[string]*commonproto.DataServer)
 	if status != nil {
 		for namespace, namespaceStatus := range status.Namespaces {
 			for shard, shardStatus := range namespaceStatus.Shards {
 				for idx, node := range shardStatus.Ensemble {
-					nodeID := node.GetIdentifier()
+					nodeID := node.GetNameOrDefault()
 					var groupedShard []model.ShardInfo
 					var exist bool
 					if groupedShard, exist = groupingShardByNode[nodeID]; !exist {
@@ -101,7 +101,7 @@ func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *m
 	return groupingShardByNode, historyNodes
 }
 
-func GroupingCandidatesWithLabelValue(candidates *linkedhashset.Set[string], candidatesMetadata map[string]*proto.DataServerMetadata) map[string]map[string]*linkedhashset.Set[string] {
+func GroupingCandidatesWithLabelValue(candidates *linkedhashset.Set[string], candidatesMetadata map[string]*commonproto.DataServerMetadata) map[string]map[string]*linkedhashset.Set[string] {
 	groupedCandidates := make(map[string]map[string]*linkedhashset.Set[string])
 	for iterator := candidates.Iterator(); iterator.Next(); {
 		candidate := iterator.Value()
@@ -128,7 +128,7 @@ func GroupingCandidatesWithLabelValue(candidates *linkedhashset.Set[string], can
 	return groupedCandidates
 }
 
-func GroupingValueWithLabel(candidates *linkedhashset.Set[string], candidatesMetadata map[string]*proto.DataServerMetadata) map[string]*linkedhashset.Set[string] {
+func GroupingValueWithLabel(candidates *linkedhashset.Set[string], candidatesMetadata map[string]*commonproto.DataServerMetadata) map[string]*linkedhashset.Set[string] {
 	selectedLabelValues := make(map[string]*linkedhashset.Set[string])
 	for selectedIter := candidates.Iterator(); selectedIter.Next(); {
 		nodeID := selectedIter.Value()

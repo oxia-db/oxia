@@ -30,7 +30,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	dcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
@@ -42,9 +41,8 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
-
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/rpc"
 )
 
 type internalRpcServer struct {
@@ -564,7 +562,7 @@ func readTerm(md metadata.MD) (v int64, err error) {
 // readSplitHashRange reads optional split hash range from gRPC metadata.
 // Returns the hash range and true if present, nil and false if absent,
 // or an error if the metadata is present but malformed.
-func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool, error) {
+func readSplitHashRange(md metadata.MD) (*proto.HashRange, bool, error) {
 	minArr := md.Get(constant.MetadataSplitHashRangeMin)
 	maxArr := md.Get(constant.MetadataSplitHashRangeMax)
 	if len(minArr) == 0 || len(maxArr) == 0 {
@@ -579,7 +577,7 @@ func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool, error) {
 		return nil, false, fmt.Errorf("invalid split hash range max %q: %w", maxArr[0], err)
 	}
 
-	return &model.Int32HashRange{
+	return &proto.HashRange{
 		Min: minVal,
 		Max: maxVal,
 	}, true, nil

@@ -23,13 +23,13 @@ import (
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/common/constant"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
-func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(options *option.Options)) (s *dataserver.Server, addr model.Server) {
+func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(options *option.Options)) (s *dataserver.Server, addr *commonproto.DataServer) {
 	t.Helper()
 	dataServerOption := option.NewDefaultOptions()
 	dataServerOption.Server.Public.BindAddress = "localhost:0"
@@ -44,7 +44,7 @@ func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(option
 	assert.NoError(t, err)
 
 	tmp := &name
-	addr = model.Server{
+	addr = &commonproto.DataServer{
 		Name:     tmp,
 		Public:   fmt.Sprintf("localhost:%d", s.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s.InternalPort()),
@@ -53,13 +53,13 @@ func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(option
 	return s, addr
 }
 
-func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
+func NewServer(t *testing.T, name string) (s *dataserver.Server, addr *commonproto.DataServer) {
 	t.Helper()
 	return NewServerWithOptions(t, name, func(_ *option.Options) {
 	})
 }
 
-func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr model.Server) {
+func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr *commonproto.DataServer) {
 	t.Helper()
 	dataServerOption := option.NewDefaultOptions()
 	dataServerOption.Server.Public.BindAddress = publicAddress
@@ -74,7 +74,7 @@ func NewServerWithAddress(t *testing.T, name string, publicAddress string, inter
 	assert.NoError(t, err)
 
 	tmp := &name
-	addr = model.Server{
+	addr = &commonproto.DataServer{
 		Name:     tmp,
 		Public:   publicAddress,
 		Internal: internalAddress,

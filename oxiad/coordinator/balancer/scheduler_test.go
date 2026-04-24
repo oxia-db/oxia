@@ -27,13 +27,12 @@ import (
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector/single"
 )
 
 type mockMetadata struct {
-	status    *model.ClusterStatus
+	status    *proto.ClusterStatus
 	nodes     *linkedhashset.Set[string]
 	metadata  map[string]*proto.DataServerMetadata
 	nsConfigs map[string]*proto.Namespace
@@ -41,11 +40,9 @@ type mockMetadata struct {
 	lbConfig  *proto.LoadBalancer
 }
 
-func dataServer(server model.Server) *proto.DataServer {
+func dataServer(id string) *proto.DataServer {
 	return &proto.DataServer{
-		Name:     server.Name,
-		Public:   server.Public,
-		Internal: server.Internal,
+		Internal: id,
 	}
 }
 
@@ -53,15 +50,15 @@ var _ coordmetadata.Metadata = (*mockMetadata)(nil)
 
 func (*mockMetadata) Close() error { return nil }
 
-func (m *mockMetadata) LoadStatus() *model.ClusterStatus { return m.status }
+func (m *mockMetadata) LoadStatus() *proto.ClusterStatus { return m.status }
 
-func (m *mockMetadata) ApplyStatusChanges(*proto.ClusterConfiguration, coordmetadata.EnsembleSupplier) (*model.ClusterStatus, map[int64]string, []int64) {
+func (m *mockMetadata) ApplyStatusChanges(*proto.ClusterConfiguration, coordmetadata.EnsembleSupplier) (*proto.ClusterStatus, map[int64]string, []int64) {
 	return m.status, nil, nil
 }
 
-func (m *mockMetadata) UpdateStatus(newStatus *model.ClusterStatus) { m.status = newStatus }
+func (m *mockMetadata) UpdateStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
 
-func (*mockMetadata) UpdateShardMetadata(string, int64, model.ShardMetadata) {}
+func (*mockMetadata) UpdateShardMetadata(string, int64, *proto.ShardMetadata) {}
 
 func (*mockMetadata) DeleteShardMetadata(string, int64) {}
 
@@ -160,17 +157,17 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 	// Two nodes with an imbalanced distribution: sv-1 owns all 3 shards,
 	// sv-2 owns none. With RF=3 the balancer would try to swap, but with
 	// RF=1 it must skip entirely.
-	sv1 := model.Server{Internal: "sv-1"}
-	sv2 := model.Server{Internal: "sv-2"}
+	sv1 := dataServer("sv-1")
+	sv2 := dataServer("sv-2")
 
-	status := &model.ClusterStatus{
-		Namespaces: map[string]model.NamespaceStatus{
+	status := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
 			"rf1ns": {
 				ReplicationFactor: 1,
-				Shards: map[int64]model.ShardMetadata{
-					0: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv1}},
-					1: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv1}},
-					2: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv1}},
+				Shards: map[int64]*proto.ShardMetadata{
+					0: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1}},
+					1: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1}},
+					2: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1}},
 				},
 			},
 		},
@@ -186,8 +183,8 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 			"rf1ns": {Name: "rf1ns", ReplicationFactor: 1},
 		},
 		nodeMap: map[string]*proto.DataServer{
-			"sv-1": dataServer(sv1),
-			"sv-2": dataServer(sv2),
+			"sv-1": sv1,
+			"sv-2": sv2,
 		},
 	}
 
@@ -211,22 +208,22 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 }
 
 func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
-	sv1 := model.Server{Internal: "sv-1"}
-	sv2 := model.Server{Internal: "sv-2"}
-	sv3 := model.Server{Internal: "sv-3"}
+	sv1 := dataServer("sv-1")
+	sv2 := dataServer("sv-2")
+	sv3 := dataServer("sv-3")
 
-	status := &model.ClusterStatus{
-		Namespaces: map[string]model.NamespaceStatus{
+	status := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
 			"ns": {
 				ReplicationFactor: 3,
-				Shards: map[int64]model.ShardMetadata{
-					0: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv1, sv2, sv3}},
-					1: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv1, sv2, sv3}},
-					2: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv1, sv2, sv3}},
-					3: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv1, sv2, sv3}},
-					4: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv1, sv2, sv3}},
-					5: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv2, sv3}},
-					6: {Status: model.ShardStatusSteadyState, Ensemble: []model.Server{sv3}},
+				Shards: map[int64]*proto.ShardMetadata{
+					0: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
+					1: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
+					2: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
+					3: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
+					4: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
+					5: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv2, sv3}},
+					6: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv3}},
 				},
 			},
 		},
@@ -241,9 +238,9 @@ func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
 			"ns": {Name: "ns", ReplicationFactor: 3},
 		},
 		nodeMap: map[string]*proto.DataServer{
-			"sv-1": dataServer(sv1),
-			"sv-2": dataServer(sv2),
-			"sv-3": dataServer(sv3),
+			"sv-1": sv1,
+			"sv-2": sv2,
+			"sv-3": sv3,
 		},
 	}
 

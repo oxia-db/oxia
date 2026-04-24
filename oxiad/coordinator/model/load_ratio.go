@@ -20,16 +20,18 @@ import (
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
+
+	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 type ShardInfo struct {
 	Namespace string
 	ShardID   int64
-	Ensemble  []Server
+	Ensemble  []*commonproto.DataServer
 }
 
 type RatioParams struct {
-	HistoryNodes    map[string]Server
+	HistoryNodes    map[string]*commonproto.DataServer
 	NodeShardsInfos map[string][]ShardInfo
 	QuarantineNodes *linkedhashset.Set[string]
 }
@@ -120,7 +122,7 @@ func NewRatio(maxNodeLoadRatio float64, minNodeLoadRatio float64, avgShardLoadRa
 
 type NodeLoadRatio struct {
 	NodeID      string
-	Node        Server
+	Node        *commonproto.DataServer
 	Ratio       float64
 	ShardRatios *arraylist.List[*ShardLoadRatio]
 }

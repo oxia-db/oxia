@@ -31,7 +31,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
-	coordconvert "github.com/oxia-db/oxia/oxiad/coordinator/internal/convert"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
@@ -87,7 +86,7 @@ type coordinator struct {
 	rpc rpc.Provider
 }
 
-func (c *coordinator) LeaderElected(int64, model.Server, []model.Server) {
+func (c *coordinator) LeaderElected(int64, *proto.DataServer, []*proto.DataServer) {
 	c.Lock()
 	defer c.Unlock()
 	c.computeNewAssignments()
@@ -139,7 +138,7 @@ func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 		}
 		c.nodeControllers[sa.GetNameOrDefault()] = controller.NewDataServerController(
 			c.ctx,
-			coordconvert.DataServer(sa),
+			sa,
 			c,
 			c,
 			c.rpc,
@@ -167,7 +166,7 @@ func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
 		if namespaceConfig, exist := c.metadata.Namespace(namespace); exist {
 			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
-				shardMetadata.Clone(), c.metadata, c.findDataServerFeatures,
+				pb.Clone(shardMetadata).(*proto.ShardMetadata), c.metadata, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 			slog.Info("Added new shard", slog.Int64("shard", shard),
 				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
@@ -183,10 +182,10 @@ func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 	c.loadBalancer.Trigger()
 }
 
-func (c *coordinator) findDataServerFeatures(dataServers []model.Server) map[string][]proto.Feature {
+func (c *coordinator) findDataServerFeatures(dataServers []*proto.DataServer) map[string][]proto.Feature {
 	features := make(map[string][]proto.Feature)
 	for _, dataServer := range dataServers {
-		dataServerID := dataServer.GetIdentifier()
+		dataServerID := dataServer.GetNameOrDefault()
 		if serverController, exist := c.nodeControllers[dataServerID]; exist {
 			features[dataServerID] = serverController.SupportedFeatures()
 			continue
@@ -202,7 +201,7 @@ func (c *coordinator) findDataServerFeatures(dataServers []model.Server) map[str
 
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
-func (c *coordinator) selectNewEnsemble(ns *proto.Namespace, editingStatus *model.ClusterStatus) ([]model.Server, error) {
+func (c *coordinator) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServer, error) {
 	nodes, nodesMetadata := c.metadata.NodesWithMetadata()
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
@@ -220,14 +219,14 @@ func (c *coordinator) selectNewEnsemble(ns *proto.Namespace, editingStatus *mode
 	if ensembles, err = c.ensembleSelector.Select(ensembleContext); err != nil {
 		return nil, err
 	}
-	esm := make([]model.Server, 0)
+	esm := make([]*proto.DataServer, 0)
 	for _, id := range ensembles {
 		var node *proto.DataServer
 		var exist bool
 		if node, exist = c.metadata.Node(id); !exist {
 			return nil, fmt.Errorf("failed to find node %s", id)
 		}
-		esm = append(esm, coordconvert.DataServer(node))
+		esm = append(esm, node)
 	}
 	return esm, nil
 }
@@ -255,16 +254,16 @@ func (c *coordinator) Close() error {
 	return err
 }
 
-func (c *coordinator) BecameUnavailable(node model.Server) {
+func (c *coordinator) BecameUnavailable(node *proto.DataServer) {
 	c.Lock()
-	if nc, ok := c.drainingNodes[node.GetIdentifier()]; ok {
+	if nc, ok := c.drainingNodes[node.GetNameOrDefault()]; ok {
 		// The draining node became unavailable. Let's remove it
-		delete(c.drainingNodes, node.GetIdentifier())
+		delete(c.drainingNodes, node.GetNameOrDefault())
 		go func() {
 			// the callback will come from the node controller internal health check goroutine,
 			// we should close it in the background goroutines to avoid any unexpected deadlock here
 			if err := nc.Close(); err != nil {
-				c.Error("Failed to close node controller", slog.String("node", node.GetIdentifier()), slog.Any("error", err))
+				c.Error("Failed to close node controller", slog.String("node", node.GetNameOrDefault()), slog.Any("error", err))
 			}
 		}()
 	}
@@ -315,7 +314,10 @@ func (c *coordinator) startBackgroundActionWorker() {
 
 func (c *coordinator) startBackgroundConfigWatcher() {
 	configWatch := c.metadata.ConfigWatch()
-	_, ver := configWatch.Load()
+	currentConfig, ver := configWatch.Load()
+	if currentConfig != nil {
+		c.ConfigChanged(currentConfig)
+	}
 	for {
 		newConfig, nextVer, err := configWatch.Wait(c.ctx, ver)
 		if err != nil {
@@ -385,15 +387,15 @@ func (c *coordinator) computeNewAssignments() {
 		for shard, a := range ns.Shards {
 			var leader string
 			if a.Leader != nil {
-				leader = a.Leader.Public
+				leader = a.Leader.GetPublic()
 			}
 			// Skip shards that are deleting
-			if a.Status == model.ShardStatusDeleting {
+			if a.GetStatusOrDefault() == proto.ShardStatusDeleting {
 				continue
 			}
 			// Skip child shards that are still being split (child shards
-			// have no ChildShardIDs, only a ParentShardId reference)
-			if a.Split != nil && len(a.Split.ChildShardIDs) == 0 {
+			// have no ChildShardIds, only a ParentShardId reference)
+			if a.Split != nil && len(a.Split.ChildShardIds) == 0 {
 				continue
 			}
 			nsAssignments.Assignments = append(nsAssignments.Assignments,
@@ -402,8 +404,8 @@ func (c *coordinator) computeNewAssignments() {
 					Leader: leader,
 					ShardBoundaries: &proto.ShardAssignment_Int32HashRange{
 						Int32HashRange: &proto.Int32HashRange{
-							MinHashInclusive: a.Int32HashRange.Min,
-							MaxHashInclusive: a.Int32HashRange.Max,
+							MinHashInclusive: a.GetInt32HashRange().GetMin(),
+							MaxHashInclusive: a.GetInt32HashRange().GetMax(),
 						},
 					},
 				},
@@ -416,7 +418,7 @@ func (c *coordinator) computeNewAssignments() {
 	c.assignmentsChanged.Broadcast()
 }
 
-func mergedAuthorities(status *model.ClusterStatus, servers []*proto.DataServer, extraAuthorities []string) []string {
+func mergedAuthorities(status *proto.ClusterStatus, servers []*proto.DataServer, extraAuthorities []string) []string {
 	authorities := linkedhashset.New[string]()
 	addServerAuthorities := func(public string, internal string) {
 		authorities.Add(public)
@@ -428,10 +430,10 @@ func mergedAuthorities(status *model.ClusterStatus, servers []*proto.DataServer,
 	for _, namespace := range status.Namespaces {
 		for _, shard := range namespace.Shards {
 			for _, server := range shard.Ensemble {
-				addServerAuthorities(server.Public, server.Internal)
+				addServerAuthorities(server.GetPublic(), server.GetInternal())
 			}
 			for _, server := range shard.RemovedNodes {
-				addServerAuthorities(server.Public, server.Internal)
+				addServerAuthorities(server.GetPublic(), server.GetInternal())
 			}
 		}
 	}
@@ -460,8 +462,8 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	if !exists {
 		return 0, 0, errors.Errorf("shard %d not found in namespace %q", parentShardId, namespace)
 	}
-	if parentMeta.Status != model.ShardStatusSteadyState {
-		return 0, 0, errors.Errorf("shard %d is not in steady state (status=%s)", parentShardId, parentMeta.Status)
+	if parentMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+		return 0, 0, errors.Errorf("shard %d is not in steady state (status=%s)", parentShardId, parentMeta.GetStatus())
 	}
 	if parentMeta.Split != nil {
 		return 0, 0, errors.Errorf("shard %d already has an active split", parentShardId)
@@ -469,7 +471,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	if len(parentMeta.PendingDeleteShardNodes) > 0 {
 		return 0, 0, errors.Errorf("shard %d has pending ensemble changes", parentShardId)
 	}
-	if parentMeta.Int32HashRange.Max-parentMeta.Int32HashRange.Min < 1 {
+	if parentMeta.GetInt32HashRange().GetMax()-parentMeta.GetInt32HashRange().GetMin() < 1 {
 		return 0, 0, errors.Errorf("shard %d hash range is too small to split", parentShardId)
 	}
 
@@ -477,16 +479,16 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	var sp uint32
 	if splitPoint != nil {
 		sp = *splitPoint
-		if sp < parentMeta.Int32HashRange.Min || sp >= parentMeta.Int32HashRange.Max {
+		if sp < parentMeta.GetInt32HashRange().GetMin() || sp >= parentMeta.GetInt32HashRange().GetMax() {
 			return 0, 0, errors.Errorf("split point %d is outside shard's hash range [%d, %d]",
-				sp, parentMeta.Int32HashRange.Min, parentMeta.Int32HashRange.Max)
+				sp, parentMeta.GetInt32HashRange().GetMin(), parentMeta.GetInt32HashRange().GetMax())
 		}
 	} else {
-		sp = parentMeta.Int32HashRange.Min + (parentMeta.Int32HashRange.Max-parentMeta.Int32HashRange.Min)/2
+		sp = parentMeta.GetInt32HashRange().GetMin() + (parentMeta.GetInt32HashRange().GetMax()-parentMeta.GetInt32HashRange().GetMin())/2
 	}
 
 	// Allocate child shard IDs
-	cloned := status.Clone()
+	cloned := pb.Clone(status).(*proto.ClusterStatus) //nolint:revive
 	leftChildId := cloned.ShardIdGenerator
 	rightChildId := cloned.ShardIdGenerator + 1
 	cloned.ShardIdGenerator += 2
@@ -502,11 +504,11 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	}
 
 	// Update cloned status with left child placement before selecting right child
-	cloned.Namespaces[namespace].Shards[leftChildId] = model.ShardMetadata{
-		Status:   model.ShardStatusSteadyState,
+	cloned.Namespaces[namespace].Shards[leftChildId] = &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
 		Ensemble: leftEnsemble,
-		Int32HashRange: model.Int32HashRange{
-			Min: parentMeta.Int32HashRange.Min,
+		Int32HashRange: &proto.HashRange{
+			Min: parentMeta.GetInt32HashRange().GetMin(),
 			Max: sp,
 		},
 	}
@@ -521,40 +523,39 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 
 	// Create split metadata for parent
 	parentMetaCloned := nsCloned.Shards[parentShardId]
-	parentMetaCloned.Split = &model.SplitMetadata{
-		Phase:         model.SplitPhaseBootstrap,
-		ChildShardIDs: []int64{leftChildId, rightChildId},
+	parentMetaCloned.Split = &proto.SplitMetadata{
+		Phase:         proto.SplitPhaseBootstrap,
+		ChildShardIds: []int64{leftChildId, rightChildId},
 		SplitPoint:    sp,
 	}
-	nsCloned.Shards[parentShardId] = parentMetaCloned
 
 	// Create left child shard
-	nsCloned.Shards[leftChildId] = model.ShardMetadata{
-		Status:   model.ShardStatusSteadyState,
+	nsCloned.Shards[leftChildId] = &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
 		Term:     0,
 		Ensemble: leftEnsemble,
-		Int32HashRange: model.Int32HashRange{
-			Min: parentMeta.Int32HashRange.Min,
+		Int32HashRange: &proto.HashRange{
+			Min: parentMeta.GetInt32HashRange().GetMin(),
 			Max: sp,
 		},
-		Split: &model.SplitMetadata{
-			Phase:         model.SplitPhaseBootstrap,
+		Split: &proto.SplitMetadata{
+			Phase:         proto.SplitPhaseBootstrap,
 			ParentShardId: parentShardId,
 			SplitPoint:    sp,
 		},
 	}
 
 	// Create right child shard
-	nsCloned.Shards[rightChildId] = model.ShardMetadata{
-		Status:   model.ShardStatusSteadyState,
+	nsCloned.Shards[rightChildId] = &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
 		Term:     0,
 		Ensemble: rightEnsemble,
-		Int32HashRange: model.Int32HashRange{
+		Int32HashRange: &proto.HashRange{
 			Min: sp + 1,
-			Max: parentMeta.Int32HashRange.Max,
+			Max: parentMeta.GetInt32HashRange().GetMax(),
 		},
-		Split: &model.SplitMetadata{
-			Phase:         model.SplitPhaseBootstrap,
+		Split: &proto.SplitMetadata{
+			Phase:         proto.SplitPhaseBootstrap,
 			ParentShardId: parentShardId,
 			SplitPoint:    sp,
 		},
@@ -585,7 +586,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 		Metadata:      c.metadata,
 		RpcProvider:   c.rpc,
 		EventListener: c,
-		EnsembleSelector: func(ns string) ([]model.Server, error) {
+		EnsembleSelector: func(ns string) ([]*proto.DataServer, error) {
 			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.metadata.LoadStatus())
 		},
 	})
@@ -678,21 +679,21 @@ func (c *coordinator) namespaceConfigForSplit(namespace string) *proto.Namespace
 
 // restartInProgressSplits checks the cluster status for any shards that have
 // active SplitMetadata and creates SplitControllers to resume them.
-func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus) {
+func (c *coordinator) restartInProgressSplits(clusterStatus *proto.ClusterStatus) {
 	for ns, shards := range clusterStatus.Namespaces {
 		for shardId, meta := range shards.Shards {
 			if meta.Split == nil {
 				continue
 			}
-			// Only create split controller from the parent shard (has ChildShardIDs)
-			if len(meta.Split.ChildShardIDs) == 0 {
+			// Only create split controller from the parent shard (has ChildShardIds)
+			if len(meta.Split.ChildShardIds) == 0 {
 				continue
 			}
 
 			c.Info("Resuming in-progress split",
 				slog.String("namespace", ns),
 				slog.Int64("parent-shard", shardId),
-				slog.String("phase", meta.Split.Phase.String()),
+				slog.String("phase", meta.Split.GetPhaseOrDefault()),
 			)
 
 			sc := controller.NewSplitController(controller.SplitControllerConfig{
@@ -701,7 +702,7 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *model.ClusterStatus
 				Metadata:      c.metadata,
 				RpcProvider:   c.rpc,
 				EventListener: c,
-				EnsembleSelector: func(namespace string) ([]model.Server, error) {
+				EnsembleSelector: func(namespace string) ([]*proto.DataServer, error) {
 					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.metadata.LoadStatus())
 				},
 			})
@@ -751,7 +752,7 @@ func newCoordinator(
 	for _, node := range clusterConfig.GetServers() {
 		c.nodeControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
 			c.ctx,
-			coordconvert.DataServer(node),
+			node,
 			c,
 			c,
 			c.rpc,

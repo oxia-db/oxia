@@ -17,8 +17,10 @@ package memory
 import (
 	"sync"
 
+	gproto "google.golang.org/protobuf/proto"
+
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 var _ provider.Provider = &Provider{}
@@ -26,7 +28,7 @@ var _ provider.Provider = &Provider{}
 type Provider struct {
 	sync.Mutex
 
-	cs      *model.ClusterStatus
+	cs      *commonproto.ClusterStatus
 	version provider.Version
 }
 
@@ -45,13 +47,13 @@ func (*Provider) Close() error {
 	return nil
 }
 
-func (m *Provider) Get() (cs *model.ClusterStatus, version provider.Version, err error) {
+func (m *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 	return m.cs, m.version, nil
 }
 
-func (m *Provider) Store(cs *model.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -59,7 +61,7 @@ func (m *Provider) Store(cs *model.ClusterStatus, expectedVersion provider.Versi
 		panic(provider.ErrBadVersion)
 	}
 
-	m.cs = cs.Clone()
+	m.cs = gproto.Clone(cs).(*commonproto.ClusterStatus) //nolint:revive
 	m.version = provider.NextVersion(m.version)
 	return m.version, nil
 }

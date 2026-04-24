@@ -23,15 +23,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-
 	"github.com/oxia-db/oxia/common/constant"
-
 	"github.com/oxia-db/oxia/common/proto"
 )
 
 func TestDataServerController_HealthCheck(t *testing.T) {
-	addr := model.Server{
+	addr := &proto.DataServer{
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
 	}
@@ -72,7 +69,7 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 }
 
 func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T) {
-	addr := model.Server{
+	addr := &proto.DataServer{
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
 	}
@@ -132,7 +129,7 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 }
 
 func TestDataServerController_ShardsAssignments(t *testing.T) {
-	addr := model.Server{
+	addr := &proto.DataServer{
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
 	}

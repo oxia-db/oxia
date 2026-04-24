@@ -26,14 +26,13 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
-func dataServer(server model.Server) *proto.DataServer {
+func dataServer(name *string, public, internal string) *proto.DataServer {
 	return &proto.DataServer{
-		Name:     server.Name,
-		Public:   server.Public,
-		Internal: server.Internal,
+		Name:     name,
+		Public:   public,
+		Internal: internal,
 	}
 }
 
@@ -61,9 +60,9 @@ func TestAdminServerListDataServers(t *testing.T) {
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServer{
-				dataServer(model.Server{Name: &serverName1, Public: "public-1", Internal: "internal-1"}),
-				dataServer(model.Server{Name: &serverName2, Public: "public-2", Internal: "internal-2"}),
-				dataServer(model.Server{Public: "public-3", Internal: "internal-3"}),
+				dataServer(&serverName1, "public-1", "internal-1"),
+				dataServer(&serverName2, "public-2", "internal-2"),
+				dataServer(nil, "public-3", "internal-3"),
 			},
 			ServerMetadata: map[string]*proto.DataServerMetadata{
 				serverName1:  {Labels: map[string]string{"rack": "rack-1"}},
@@ -100,8 +99,8 @@ func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServer{
-				dataServer(model.Server{Name: &serverName1, Public: "public-1", Internal: "internal-1"}),
-				dataServer(model.Server{Public: "public-2", Internal: "internal-2"}),
+				dataServer(&serverName1, "public-1", "internal-1"),
+				dataServer(nil, "public-2", "internal-2"),
 			},
 			ServerMetadata: map[string]*proto.DataServerMetadata{
 				serverName1:  {Labels: map[string]string{"role": "named"}},
@@ -132,7 +131,7 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServer{
-				dataServer(model.Server{Name: &serverName, Public: "public-2", Internal: "internal-2"}),
+				dataServer(&serverName, "public-2", "internal-2"),
 			},
 			ServerMetadata: map[string]*proto.DataServerMetadata{
 				serverName: {Labels: map[string]string{"zone": "zone-2"}},
@@ -159,8 +158,8 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServer{
-				dataServer(model.Server{Name: &serverName, Public: "public-2", Internal: "internal-2"}),
-				dataServer(model.Server{Public: "public-3", Internal: "internal-3"}),
+				dataServer(&serverName, "public-2", "internal-2"),
+				dataServer(nil, "public-3", "internal-3"),
 			},
 			ServerMetadata: map[string]*proto.DataServerMetadata{
 				serverName:   {Labels: map[string]string{"role": "named"}},
@@ -190,7 +189,7 @@ func TestAdminServerGetDataServerNotFound(t *testing.T) {
 	admin := newAdminServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServer{
-				dataServer(model.Server{Public: "public-1", Internal: "internal-1"}),
+				dataServer(nil, "public-1", "internal-1"),
 			},
 		}),
 		nil,

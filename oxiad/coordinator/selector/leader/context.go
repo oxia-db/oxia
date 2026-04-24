@@ -14,11 +14,9 @@
 
 package leader
 
-import (
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-)
+import commonproto "github.com/oxia-db/oxia/common/proto"
 
 type Context struct {
-	Candidates []model.Server
-	Status     *model.ClusterStatus
+	Candidates []*commonproto.DataServer
+	Status     *commonproto.ClusterStatus
 }

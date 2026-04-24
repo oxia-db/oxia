@@ -20,9 +20,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-
 	"github.com/oxia-db/oxia/common/concurrent"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func TestChangeEnsembleAction_WithCallback(t *testing.T) {
@@ -30,7 +29,7 @@ func TestChangeEnsembleAction_WithCallback(t *testing.T) {
 	var finishedErr error
 
 	// success
-	action := NewChangeEnsembleActionWithCallback(0, model.Server{}, model.Server{}, concurrent.NewOnce(func(t any) {
+	action := NewChangeEnsembleActionWithCallback(0, &proto.DataServer{}, &proto.DataServer{}, concurrent.NewOnce(func(t any) {
 		finished = true
 	}, func(err error) {
 		finished = true
@@ -41,7 +40,7 @@ func TestChangeEnsembleAction_WithCallback(t *testing.T) {
 	assert.Nil(t, finishedErr)
 
 	// failure
-	action = NewChangeEnsembleActionWithCallback(0, model.Server{}, model.Server{}, concurrent.NewOnce(func(t any) {
+	action = NewChangeEnsembleActionWithCallback(0, &proto.DataServer{}, &proto.DataServer{}, concurrent.NewOnce(func(t any) {
 		finished = true
 	}, func(err error) {
 		finished = true
@@ -54,7 +53,7 @@ func TestChangeEnsembleAction_WithCallback(t *testing.T) {
 
 func TestChangeEnsembleAction_WithoutCallback(t *testing.T) {
 	// success
-	action := NewChangeEnsembleAction(0, model.Server{}, model.Server{})
+	action := NewChangeEnsembleAction(0, &proto.DataServer{}, &proto.DataServer{})
 	go func() {
 		action.Done(nil)
 	}()
@@ -62,7 +61,7 @@ func TestChangeEnsembleAction_WithoutCallback(t *testing.T) {
 	assert.Nil(t, err)
 
 	// failure
-	action = NewChangeEnsembleAction(0, model.Server{}, model.Server{})
+	action = NewChangeEnsembleAction(0, &proto.DataServer{}, &proto.DataServer{})
 	go func() {
 		action.Error(errors.New("error"))
 	}()

@@ -26,7 +26,6 @@ import (
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	coordconvert "github.com/oxia-db/oxia/oxiad/coordinator/internal/convert"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
@@ -133,7 +132,7 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	return false
 }
 
-func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidates *linkedhashset.Set[string], metadata map[string]*commonproto.DataServerMetadata, currentStatus *model.ClusterStatus, swapGroup *sync.WaitGroup) {
+func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidates *linkedhashset.Set[string], metadata map[string]*commonproto.DataServerMetadata, currentStatus *commonproto.ClusterStatus, swapGroup *sync.WaitGroup) {
 	nodeIter := loadRatios.NodeIterator()
 	if !nodeIter.Last() {
 		return
@@ -185,7 +184,7 @@ func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidat
 func (r *nodeBasedBalancer) cleanDeletedNode(loadRatios *model.Ratio,
 	candidates *linkedhashset.Set[string],
 	metadata map[string]*commonproto.DataServerMetadata,
-	currentStatus *model.ClusterStatus,
+	currentStatus *commonproto.ClusterStatus,
 	swapGroup *sync.WaitGroup) {
 	for nodeIter := loadRatios.NodeIterator(); nodeIter.Next(); {
 		nodeLoadRatio := nodeIter.Value()
@@ -214,12 +213,12 @@ func (r *nodeBasedBalancer) cleanDeletedNode(loadRatios *model.Ratio,
 
 func (r *nodeBasedBalancer) swapShard(
 	candidateShard *model.ShardLoadRatio,
-	fromNode model.Server,
+	fromNode *commonproto.DataServer,
 	swapGroup *sync.WaitGroup,
 	loadRatios *model.Ratio,
 	candidates *linkedhashset.Set[string],
 	metadata map[string]*commonproto.DataServerMetadata,
-	currentStatus *model.ClusterStatus) (bool, error) {
+	currentStatus *commonproto.ClusterStatus) (bool, error) {
 	var nsc *commonproto.Namespace
 	var exist bool
 	var err error
@@ -241,12 +240,12 @@ func (r *nodeBasedBalancer) swapShard(
 		Status:             currentStatus,
 		LoadRatioSupplier:  func() *model.Ratio { return loadRatios },
 	}
-	fromNodeID := fromNode.GetIdentifier()
+	fromNodeID := fromNode.GetNameOrDefault()
 
 	// filter selected
 	selected := linkedhashset.New[string]()
 	for _, candidate := range candidateShard.Ensemble {
-		candidateID := candidate.GetIdentifier()
+		candidateID := candidate.GetNameOrDefault()
 		if candidateID == fromNodeID {
 			continue
 		}
@@ -268,7 +267,7 @@ func (r *nodeBasedBalancer) swapShard(
 
 	r.Info("propose to swap the shard", slog.Int64("shard", candidateShard.ShardID), slog.Any("from", fromNode), slog.Any("to", targetNodeID))
 	swapGroup.Add(1)
-	r.actionCh <- action.NewChangeEnsembleActionWithCallback(candidateShard.ShardID, fromNode, coordconvert.DataServer(targetNode),
+	r.actionCh <- action.NewChangeEnsembleActionWithCallback(candidateShard.ShardID, fromNode, targetNode,
 		concurrent.NewOnce(func(_ any) {
 			swapGroup.Done()
 		}, func(_ error) {
@@ -423,7 +422,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 
 		minCandidateLeaders := -1
 		for _, candidate := range shardStatus.Ensemble {
-			candidateID := candidate.GetIdentifier()
+			candidateID := candidate.GetNameOrDefault()
 			if !r.nodeAvailableJudger(candidateID) {
 				continue
 			}

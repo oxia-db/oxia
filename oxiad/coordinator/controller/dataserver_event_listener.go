@@ -14,8 +14,8 @@
 
 package controller
 
-import "github.com/oxia-db/oxia/oxiad/coordinator/model"
+import commonproto "github.com/oxia-db/oxia/common/proto"
 
 type DataServerEventListener interface {
-	BecameUnavailable(dataServer model.Server)
+	BecameUnavailable(dataServer *commonproto.DataServer)
 }

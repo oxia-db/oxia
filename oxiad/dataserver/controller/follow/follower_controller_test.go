@@ -30,7 +30,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -1210,7 +1209,7 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 
 	// Set the split hash range to the lower half of the hash space.
 	// Keys a, b, c, e are in range; d, f are out of range.
-	fc.SetSplitHashRange(&model.Int32HashRange{
+	fc.SetSplitHashRange(&proto.HashRange{
 		Min: 0,
 		Max: 0x7FFFFFFF, // 2147483647
 	})

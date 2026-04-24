@@ -29,9 +29,8 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 type Provider struct {
@@ -145,7 +144,7 @@ func fromVersion(v provider.Version) int64 {
 	return n
 }
 
-func (mpr *Provider) Get() (cs *model.ClusterStatus, version provider.Version, err error) {
+func (mpr *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
 	mpr.Lock()
 	defer mpr.Unlock()
 
@@ -155,7 +154,7 @@ func (mpr *Provider) Get() (cs *model.ClusterStatus, version provider.Version, e
 	return mpr.sc.State, toVersion(mpr.sc.CurrentVersion), nil
 }
 
-func (mpr *Provider) Store(cs *model.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (mpr *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	mpr.Lock()
 	defer mpr.Unlock()
 
@@ -169,7 +168,7 @@ func (mpr *Provider) Store(cs *model.ClusterStatus, expectedVersion provider.Ver
 		slog.Any("current-version", mpr.sc.CurrentVersion))
 
 	cmd := raftOpCmd{
-		NewState:        cs.Clone(),
+		NewState:        mustMarshalClusterStatus(cs),
 		ExpectedVersion: fromVersion(expectedVersion),
 	}
 

@@ -16,13 +16,12 @@
 package util
 
 import (
-	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
-func SimpleEnsembleSupplier(candidates []model.Server, nc *proto.Namespace, cs *model.ClusterStatus) []model.Server {
+func SimpleEnsembleSupplier(candidates []*commonproto.DataServer, nc *commonproto.Namespace, cs *commonproto.ClusterStatus) []*commonproto.DataServer {
 	n := len(candidates)
-	res := make([]model.Server, nc.GetReplicationFactor())
+	res := make([]*commonproto.DataServer, nc.GetReplicationFactor())
 	for i := uint32(0); i < nc.GetReplicationFactor(); i++ {
 		res[i] = candidates[int(cs.ServerIdx+i)%n]
 	}
