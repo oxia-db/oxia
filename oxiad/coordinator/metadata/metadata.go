@@ -46,6 +46,7 @@ type Metadata interface {
 	StatusChangeNotify() <-chan struct{}
 
 	LoadConfig() *commonproto.ClusterConfiguration
+	UpdateConfig(*commonproto.ClusterConfiguration) bool
 	ConfigWatch() *commonoption.Watch[*commonproto.ClusterConfiguration]
 	LoadLoadBalancer() *commonproto.LoadBalancer
 	Nodes() *linkedhashset.Set[string]
@@ -299,6 +300,20 @@ func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
 		namespaceConfigs.Put(ns.GetName(), ns)
 	}
 	m.namespaceConfigsIndex = namespaceConfigs
+}
+
+func (m *coordinatorMetadata) UpdateConfig(newConfig *commonproto.ClusterConfiguration) bool {
+	m.clusterConfigLock.Lock()
+	defer m.clusterConfigLock.Unlock()
+
+	if gproto.Equal(m.currentClusterConfig, newConfig) {
+		return false
+	}
+
+	m.currentClusterConfig = gproto.Clone(newConfig).(*commonproto.ClusterConfiguration) //nolint:revive
+	m.rebuildConfigIndexesLocked()
+	m.clusterConfigWatch.Notify(m.currentClusterConfig)
+	return true
 }
 
 func (m *coordinatorMetadata) waitForConfigUpdates() {

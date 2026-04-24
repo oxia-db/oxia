@@ -68,6 +68,8 @@ func (*mockMetadata) StatusChangeNotify() <-chan struct{} { return make(chan str
 
 func (*mockMetadata) LoadConfig() *proto.ClusterConfiguration { return nil }
 
+func (*mockMetadata) UpdateConfig(*proto.ClusterConfiguration) bool { return false }
+
 func (*mockMetadata) ConfigWatch() *commonoption.Watch[*proto.ClusterConfiguration] {
 	return commonoption.NewWatch[*proto.ClusterConfiguration](nil)
 }

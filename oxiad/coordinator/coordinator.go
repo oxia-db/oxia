@@ -51,6 +51,8 @@ type Coordinator interface {
 
 	NodeControllers() map[string]controller.DataServerController
 
+	ReconcileClusterConfig(*proto.ClusterConfiguration) error
+
 	LoadBalancer() balancer.LoadBalancer
 
 	Metadata() coordmetadata.Metadata
@@ -114,6 +116,26 @@ func (c *coordinator) NodeControllers() map[string]controller.DataServerControll
 		res[k] = v
 	}
 	return res
+}
+
+func (c *coordinator) ReconcileClusterConfig(newConfig *proto.ClusterConfiguration) error {
+	if !c.metadata.UpdateConfig(newConfig) {
+		c.Info("No cluster config changes detected")
+	}
+	return nil
+}
+
+func (c *coordinator) startBackgroundConfigWatcher() {
+	_, ver := c.metadata.ConfigWatch().Load()
+	for {
+		clusterConfig, currentVer, err := c.metadata.ConfigWatch().Wait(c.ctx, ver)
+		if err != nil {
+			c.Warn("exit background cluster configuration watch goroutine due to an error", slog.Any("error", err))
+			return
+		}
+		ver = currentVer
+		c.ConfigChanged(clusterConfig)
+	}
 }
 
 func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
@@ -309,25 +331,6 @@ func (c *coordinator) startBackgroundActionWorker() {
 		case <-c.ctx.Done():
 			return
 		}
-	}
-}
-
-func (c *coordinator) startBackgroundConfigWatcher() {
-	configWatch := c.metadata.ConfigWatch()
-	currentConfig, ver := configWatch.Load()
-	if currentConfig != nil {
-		c.ConfigChanged(currentConfig)
-	}
-	for {
-		newConfig, nextVer, err := configWatch.Wait(c.ctx, ver)
-		if err != nil {
-			return
-		}
-		ver = nextVer
-		if newConfig == nil {
-			continue
-		}
-		c.ConfigChanged(newConfig)
 	}
 }
 
@@ -790,7 +793,6 @@ func newCoordinator(
 			"component": "coordinator-config-watcher",
 		}, c.startBackgroundConfigWatcher)
 	})
-
 	c.loadBalancer.Start()
 	return c, nil
 }
