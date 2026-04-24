@@ -25,13 +25,13 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	coordconfig "github.com/oxia-db/oxia/oxiad/coordinator/config"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	k8smetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
+	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/process"
@@ -69,7 +69,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	succeeded := false
 	defer cancelContextOnFailure(cancel, &succeeded)
 
-	clusterConfigReconciler, err := coordconfig.NewReconciler(ctx, &options.Cluster)
+	clusterConfigReconciler, err := coordreconciler.NewReconciler(ctx, &options.Cluster)
 	if err != nil {
 		return nil, err
 	}
