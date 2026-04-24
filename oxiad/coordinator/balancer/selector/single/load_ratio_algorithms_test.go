@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
 )
 
 func TestDefaultShardsRank(t *testing.T) {

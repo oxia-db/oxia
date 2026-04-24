@@ -17,7 +17,7 @@ package selector
 import (
 	"github.com/pkg/errors"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
 )
 
 var (

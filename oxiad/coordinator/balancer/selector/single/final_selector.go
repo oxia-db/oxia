@@ -17,7 +17,7 @@ package single
 import (
 	"math/rand/v2"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 var _ selector.Selector[*Context, string] = &finalSelector{}

@@ -18,7 +18,7 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 var _ selector.Selector[*Context, string] = &serverAntiAffinitiesSelector{}

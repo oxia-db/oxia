@@ -31,10 +31,10 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
+	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/selector/leader"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"

@@ -30,11 +30,11 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/ensemble"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector/ensemble"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 
 	"github.com/oxia-db/oxia/common/concurrent"

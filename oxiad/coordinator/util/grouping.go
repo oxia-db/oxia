@@ -22,7 +22,7 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
 )
 
 type NamespaceAndShard struct {

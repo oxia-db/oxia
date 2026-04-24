@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 func TestSelect_NoCandidates(t *testing.T) {

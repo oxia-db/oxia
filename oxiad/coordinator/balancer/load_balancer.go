@@ -19,8 +19,8 @@ import (
 	"io"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/selector"
 )
 
 type Options struct {
