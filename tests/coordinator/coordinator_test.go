@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -65,5 +66,5 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	metadataView.UpdateShardMetadata("default", 1, shardMetadata)
 
 	status := metadataView.LoadStatus()
-	assert.EqualValues(t, status.Namespaces["default"].Shards[1], shardMetadata)
+	assert.True(t, gproto.Equal(status.Namespaces["default"].Shards[1], shardMetadata))
 }
