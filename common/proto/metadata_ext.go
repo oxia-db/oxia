@@ -43,7 +43,7 @@ const (
 	SplitPhaseCutover   = "Cutover"
 )
 
-func (ds *DataServer) GetNameOrDefault() string {
+func (ds *DataServerIdentity) GetNameOrDefault() string {
 	if ds == nil {
 		return ""
 	}
@@ -51,6 +51,13 @@ func (ds *DataServer) GetNameOrDefault() string {
 		return ds.GetName()
 	}
 	return ds.GetInternal()
+}
+
+func (ds *DataServer) GetNameOrDefault() string {
+	if ds == nil {
+		return ""
+	}
+	return ds.GetIdentity().GetNameOrDefault()
 }
 
 func NewClusterStatus() *ClusterStatus {
@@ -156,7 +163,7 @@ func (a *AntiAffinity) SetModeOrDefault(value string) {
 	a.Mode = ParseAntiAffinityMode(value)
 }
 
-func (cc *ClusterConfiguration) GetDataServerInfo(id string) (*DataServerInfo, bool) {
+func (cc *ClusterConfiguration) GetDataServer(id string) (*DataServer, bool) {
 	if cc == nil {
 		return nil, false
 	}
@@ -166,24 +173,23 @@ func (cc *ClusterConfiguration) GetDataServerInfo(id string) (*DataServerInfo, b
 			continue
 		}
 
-		dataServer := server
+		identity := server
 		if server.GetName() == "" {
-			name := server.GetNameOrDefault()
-			dataServer = &DataServer{
-				Name:     &name,
+			identity = &DataServerIdentity{
+				Name:     new(server.GetNameOrDefault()),
 				Public:   server.GetPublic(),
 				Internal: server.GetInternal(),
 			}
 		}
 
-		info := &DataServerInfo{
-			DataServer: dataServer,
-			Metadata:   &DataServerMetadata{},
+		dataServer := &DataServer{
+			Identity: identity,
+			Metadata: &DataServerMetadata{},
 		}
 		if metadata, found := cc.GetServerMetadata()[id]; found {
-			info.Metadata = metadata
+			dataServer.Metadata = metadata
 		}
-		return info, true
+		return dataServer, true
 	}
 
 	return nil, false

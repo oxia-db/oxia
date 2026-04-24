@@ -157,9 +157,11 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 				listDataServersResponse: &proto.ListDataServersResponse{
 					DataServers: []*proto.DataServer{
 						{
-							Name:     &serverName,
-							Public:   "public-1",
-							Internal: "internal-1",
+							Identity: &proto.DataServerIdentity{
+								Name:     &serverName,
+								Public:   "public-1",
+								Internal: "internal-1",
+							},
 						},
 					},
 				},
@@ -170,10 +172,11 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 	dataServers, err := admin.ListDataServers()
 	require.NoError(t, err)
 	require.Len(t, dataServers, 1)
-	require.NotNil(t, dataServers[0].Name)
-	assert.Equal(t, serverName, *dataServers[0].Name)
-	assert.Equal(t, "public-1", dataServers[0].GetPublic())
-	assert.Equal(t, "internal-1", dataServers[0].GetInternal())
+	require.NotNil(t, dataServers[0].Identity)
+	require.NotNil(t, dataServers[0].Identity.Name)
+	assert.Equal(t, serverName, *dataServers[0].Identity.Name)
+	assert.Equal(t, "public-1", dataServers[0].Identity.GetPublic())
+	assert.Equal(t, "internal-1", dataServers[0].Identity.GetInternal())
 }
 
 func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
@@ -183,8 +186,8 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
 				getDataServerResponse: &proto.GetDataServerResponse{
-					DataServerInfo: &proto.DataServerInfo{
-						DataServer: &proto.DataServer{
+					DataServer: &proto.DataServer{
+						Identity: &proto.DataServerIdentity{
 							Name:     &serverName,
 							Public:   "public-1",
 							Internal: "internal-1",
@@ -201,11 +204,11 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	dataServer, err := admin.GetDataServer(serverName)
 	require.NoError(t, err)
 	require.NotNil(t, dataServer)
-	require.NotNil(t, dataServer.DataServer)
-	require.NotNil(t, dataServer.DataServer.Name)
-	assert.Equal(t, serverName, *dataServer.DataServer.Name)
-	assert.Equal(t, "public-1", dataServer.DataServer.GetPublic())
-	assert.Equal(t, "internal-1", dataServer.DataServer.GetInternal())
+	require.NotNil(t, dataServer.Identity)
+	require.NotNil(t, dataServer.Identity.Name)
+	assert.Equal(t, serverName, *dataServer.Identity.Name)
+	assert.Equal(t, "public-1", dataServer.Identity.GetPublic())
+	assert.Equal(t, "internal-1", dataServer.Identity.GetInternal())
 	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
 }
 

@@ -36,12 +36,12 @@ type mockMetadata struct {
 	nodes     *linkedhashset.Set[string]
 	metadata  map[string]*proto.DataServerMetadata
 	nsConfigs map[string]*proto.Namespace
-	nodeMap   map[string]*proto.DataServer
+	nodeMap   map[string]*proto.DataServerIdentity
 	lbConfig  *proto.LoadBalancer
 }
 
-func dataServer(id string) *proto.DataServer {
-	return &proto.DataServer{
+func dataServer(id string) *proto.DataServerIdentity {
+	return &proto.DataServerIdentity{
 		Internal: id,
 	}
 }
@@ -93,12 +93,12 @@ func (m *mockMetadata) Namespace(namespace string) (*proto.Namespace, bool) {
 	return nc, ok
 }
 
-func (m *mockMetadata) Node(id string) (*proto.DataServer, bool) {
+func (m *mockMetadata) Node(id string) (*proto.DataServerIdentity, bool) {
 	n, ok := m.nodeMap[id]
 	return n, ok
 }
 
-func (m *mockMetadata) GetDataServerInfo(id string) (*proto.DataServerInfo, bool) {
+func (m *mockMetadata) GetDataServer(id string) (*proto.DataServer, bool) {
 	n, ok := m.nodeMap[id]
 	if !ok {
 		return nil, false
@@ -107,9 +107,9 @@ func (m *mockMetadata) GetDataServerInfo(id string) (*proto.DataServerInfo, bool
 	if !ok {
 		metadata = &proto.DataServerMetadata{}
 	}
-	return &proto.DataServerInfo{
-		DataServer: n,
-		Metadata:   metadata,
+	return &proto.DataServer{
+		Identity: n,
+		Metadata: metadata,
 	}, true
 }
 
@@ -165,9 +165,9 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 			"rf1ns": {
 				ReplicationFactor: 1,
 				Shards: map[int64]*proto.ShardMetadata{
-					0: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1}},
-					1: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1}},
-					2: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1}},
+					0: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv1}},
+					1: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv1}},
+					2: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv1}},
 				},
 			},
 		},
@@ -182,7 +182,7 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 		nsConfigs: map[string]*proto.Namespace{
 			"rf1ns": {Name: "rf1ns", ReplicationFactor: 1},
 		},
-		nodeMap: map[string]*proto.DataServer{
+		nodeMap: map[string]*proto.DataServerIdentity{
 			"sv-1": sv1,
 			"sv-2": sv2,
 		},
@@ -217,13 +217,13 @@ func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
 			"ns": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					0: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
-					1: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
-					2: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
-					3: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
-					4: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv1, sv2, sv3}},
-					5: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv2, sv3}},
-					6: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServer{sv3}},
+					0: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv1, sv2, sv3}},
+					1: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv1, sv2, sv3}},
+					2: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv1, sv2, sv3}},
+					3: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv1, sv2, sv3}},
+					4: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv1, sv2, sv3}},
+					5: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv2, sv3}},
+					6: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv3}},
 				},
 			},
 		},
@@ -237,7 +237,7 @@ func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
 		nsConfigs: map[string]*proto.Namespace{
 			"ns": {Name: "ns", ReplicationFactor: 3},
 		},
-		nodeMap: map[string]*proto.DataServer{
+		nodeMap: map[string]*proto.DataServerIdentity{
 			"sv-1": sv1,
 			"sv-2": sv2,
 			"sv-3": sv3,

@@ -20,11 +20,11 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-func (m *DataServer) CloneVT() *DataServer {
+func (m *DataServerIdentity) CloneVT() *DataServerIdentity {
 	if m == nil {
-		return (*DataServer)(nil)
+		return (*DataServerIdentity)(nil)
 	}
-	r := new(DataServer)
+	r := new(DataServerIdentity)
 	r.Public = m.Public
 	r.Internal = m.Internal
 	if rhs := m.Name; rhs != nil {
@@ -38,7 +38,7 @@ func (m *DataServer) CloneVT() *DataServer {
 	return r
 }
 
-func (m *DataServer) CloneMessageVT() proto.Message {
+func (m *DataServerIdentity) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
@@ -65,12 +65,12 @@ func (m *DataServerMetadata) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
-func (m *DataServerInfo) CloneVT() *DataServerInfo {
+func (m *DataServer) CloneVT() *DataServer {
 	if m == nil {
-		return (*DataServerInfo)(nil)
+		return (*DataServer)(nil)
 	}
-	r := new(DataServerInfo)
-	r.DataServer = m.DataServer.CloneVT()
+	r := new(DataServer)
+	r.Identity = m.Identity.CloneVT()
 	r.Metadata = m.Metadata.CloneVT()
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -79,7 +79,7 @@ func (m *DataServerInfo) CloneVT() *DataServerInfo {
 	return r
 }
 
-func (m *DataServerInfo) CloneMessageVT() proto.Message {
+func (m *DataServer) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
@@ -185,7 +185,7 @@ func (m *ClusterConfiguration) CloneVT() *ClusterConfiguration {
 		r.Namespaces = tmpContainer
 	}
 	if rhs := m.Servers; rhs != nil {
-		tmpContainer := make([]*DataServer, len(rhs))
+		tmpContainer := make([]*DataServerIdentity, len(rhs))
 		for k, v := range rhs {
 			tmpContainer[k] = v.CloneVT()
 		}
@@ -276,21 +276,21 @@ func (m *ShardMetadata) CloneVT() *ShardMetadata {
 	r.Int32HashRange = m.Int32HashRange.CloneVT()
 	r.Split = m.Split.CloneVT()
 	if rhs := m.Ensemble; rhs != nil {
-		tmpContainer := make([]*DataServer, len(rhs))
+		tmpContainer := make([]*DataServerIdentity, len(rhs))
 		for k, v := range rhs {
 			tmpContainer[k] = v.CloneVT()
 		}
 		r.Ensemble = tmpContainer
 	}
 	if rhs := m.RemovedNodes; rhs != nil {
-		tmpContainer := make([]*DataServer, len(rhs))
+		tmpContainer := make([]*DataServerIdentity, len(rhs))
 		for k, v := range rhs {
 			tmpContainer[k] = v.CloneVT()
 		}
 		r.RemovedNodes = tmpContainer
 	}
 	if rhs := m.PendingDeleteShardNodes; rhs != nil {
-		tmpContainer := make([]*DataServer, len(rhs))
+		tmpContainer := make([]*DataServerIdentity, len(rhs))
 		for k, v := range rhs {
 			tmpContainer[k] = v.CloneVT()
 		}
@@ -357,7 +357,7 @@ func (m *ClusterStatus) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
-func (this *DataServer) EqualVT(that *DataServer) bool {
+func (this *DataServerIdentity) EqualVT(that *DataServerIdentity) bool {
 	if this == that {
 		return true
 	} else if this == nil || that == nil {
@@ -375,8 +375,8 @@ func (this *DataServer) EqualVT(that *DataServer) bool {
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
-func (this *DataServer) EqualMessageVT(thatMsg proto.Message) bool {
-	that, ok := thatMsg.(*DataServer)
+func (this *DataServerIdentity) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*DataServerIdentity)
 	if !ok {
 		return false
 	}
@@ -410,13 +410,13 @@ func (this *DataServerMetadata) EqualMessageVT(thatMsg proto.Message) bool {
 	}
 	return this.EqualVT(that)
 }
-func (this *DataServerInfo) EqualVT(that *DataServerInfo) bool {
+func (this *DataServer) EqualVT(that *DataServer) bool {
 	if this == that {
 		return true
 	} else if this == nil || that == nil {
 		return false
 	}
-	if !this.DataServer.EqualVT(that.DataServer) {
+	if !this.Identity.EqualVT(that.Identity) {
 		return false
 	}
 	if !this.Metadata.EqualVT(that.Metadata) {
@@ -425,8 +425,8 @@ func (this *DataServerInfo) EqualVT(that *DataServerInfo) bool {
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
-func (this *DataServerInfo) EqualMessageVT(thatMsg proto.Message) bool {
-	that, ok := thatMsg.(*DataServerInfo)
+func (this *DataServer) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*DataServer)
 	if !ok {
 		return false
 	}
@@ -579,10 +579,10 @@ func (this *ClusterConfiguration) EqualVT(that *ClusterConfiguration) bool {
 		vy := that.Servers[i]
 		if p, q := vx, vy; p != q {
 			if p == nil {
-				p = &DataServer{}
+				p = &DataServerIdentity{}
 			}
 			if q == nil {
-				q = &DataServer{}
+				q = &DataServerIdentity{}
 			}
 			if !p.EqualVT(q) {
 				return false
@@ -727,10 +727,10 @@ func (this *ShardMetadata) EqualVT(that *ShardMetadata) bool {
 		vy := that.Ensemble[i]
 		if p, q := vx, vy; p != q {
 			if p == nil {
-				p = &DataServer{}
+				p = &DataServerIdentity{}
 			}
 			if q == nil {
-				q = &DataServer{}
+				q = &DataServerIdentity{}
 			}
 			if !p.EqualVT(q) {
 				return false
@@ -744,10 +744,10 @@ func (this *ShardMetadata) EqualVT(that *ShardMetadata) bool {
 		vy := that.RemovedNodes[i]
 		if p, q := vx, vy; p != q {
 			if p == nil {
-				p = &DataServer{}
+				p = &DataServerIdentity{}
 			}
 			if q == nil {
-				q = &DataServer{}
+				q = &DataServerIdentity{}
 			}
 			if !p.EqualVT(q) {
 				return false
@@ -761,10 +761,10 @@ func (this *ShardMetadata) EqualVT(that *ShardMetadata) bool {
 		vy := that.PendingDeleteShardNodes[i]
 		if p, q := vx, vy; p != q {
 			if p == nil {
-				p = &DataServer{}
+				p = &DataServerIdentity{}
 			}
 			if q == nil {
-				q = &DataServer{}
+				q = &DataServerIdentity{}
 			}
 			if !p.EqualVT(q) {
 				return false
@@ -871,7 +871,7 @@ func (this *ClusterStatus) EqualMessageVT(thatMsg proto.Message) bool {
 	}
 	return this.EqualVT(that)
 }
-func (m *DataServer) MarshalVT() (dAtA []byte, err error) {
+func (m *DataServerIdentity) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -884,12 +884,12 @@ func (m *DataServer) MarshalVT() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *DataServer) MarshalToVT(dAtA []byte) (int, error) {
+func (m *DataServerIdentity) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
 }
 
-func (m *DataServer) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+func (m *DataServerIdentity) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m == nil {
 		return 0, nil
 	}
@@ -977,7 +977,7 @@ func (m *DataServerMetadata) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *DataServerInfo) MarshalVT() (dAtA []byte, err error) {
+func (m *DataServer) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -990,12 +990,12 @@ func (m *DataServerInfo) MarshalVT() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *DataServerInfo) MarshalToVT(dAtA []byte) (int, error) {
+func (m *DataServer) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
 }
 
-func (m *DataServerInfo) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+func (m *DataServer) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m == nil {
 		return 0, nil
 	}
@@ -1017,8 +1017,8 @@ func (m *DataServerInfo) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x12
 	}
-	if m.DataServer != nil {
-		size, err := m.DataServer.MarshalToSizedBufferVT(dAtA[:i])
+	if m.Identity != nil {
+		size, err := m.Identity.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -1728,7 +1728,7 @@ func (m *ClusterStatus) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *DataServer) SizeVT() (n int) {
+func (m *DataServerIdentity) SizeVT() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1768,14 +1768,14 @@ func (m *DataServerMetadata) SizeVT() (n int) {
 	return n
 }
 
-func (m *DataServerInfo) SizeVT() (n int) {
+func (m *DataServer) SizeVT() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
-	if m.DataServer != nil {
-		l = m.DataServer.SizeVT()
+	if m.Identity != nil {
+		l = m.Identity.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	if m.Metadata != nil {
@@ -2079,7 +2079,7 @@ func (m *ClusterStatus) SizeVT() (n int) {
 	return n
 }
 
-func (m *DataServer) UnmarshalVT(dAtA []byte) error {
+func (m *DataServerIdentity) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -2102,10 +2102,10 @@ func (m *DataServer) UnmarshalVT(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: DataServer: wiretype end group for non-group")
+			return fmt.Errorf("proto: DataServerIdentity: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: DataServer: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DataServerIdentity: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -2405,7 +2405,7 @@ func (m *DataServerMetadata) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *DataServerInfo) UnmarshalVT(dAtA []byte) error {
+func (m *DataServer) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -2428,15 +2428,15 @@ func (m *DataServerInfo) UnmarshalVT(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: DataServerInfo: wiretype end group for non-group")
+			return fmt.Errorf("proto: DataServer: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: DataServerInfo: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DataServer: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DataServer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Identity", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -2463,10 +2463,10 @@ func (m *DataServerInfo) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.DataServer == nil {
-				m.DataServer = &DataServer{}
+			if m.Identity == nil {
+				m.Identity = &DataServerIdentity{}
 			}
-			if err := m.DataServer.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Identity.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -3145,7 +3145,7 @@ func (m *ClusterConfiguration) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Servers = append(m.Servers, &DataServer{})
+			m.Servers = append(m.Servers, &DataServerIdentity{})
 			if err := m.Servers[len(m.Servers)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -3916,7 +3916,7 @@ func (m *ShardMetadata) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Leader == nil {
-				m.Leader = &DataServer{}
+				m.Leader = &DataServerIdentity{}
 			}
 			if err := m.Leader.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
@@ -3951,7 +3951,7 @@ func (m *ShardMetadata) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Ensemble = append(m.Ensemble, &DataServer{})
+			m.Ensemble = append(m.Ensemble, &DataServerIdentity{})
 			if err := m.Ensemble[len(m.Ensemble)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -3985,7 +3985,7 @@ func (m *ShardMetadata) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RemovedNodes = append(m.RemovedNodes, &DataServer{})
+			m.RemovedNodes = append(m.RemovedNodes, &DataServerIdentity{})
 			if err := m.RemovedNodes[len(m.RemovedNodes)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -4019,7 +4019,7 @@ func (m *ShardMetadata) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PendingDeleteShardNodes = append(m.PendingDeleteShardNodes, &DataServer{})
+			m.PendingDeleteShardNodes = append(m.PendingDeleteShardNodes, &DataServerIdentity{})
 			if err := m.PendingDeleteShardNodes[len(m.PendingDeleteShardNodes)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -4553,7 +4553,7 @@ func (m *ClusterStatus) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *DataServer) UnmarshalVTUnsafe(dAtA []byte) error {
+func (m *DataServerIdentity) UnmarshalVTUnsafe(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -4576,10 +4576,10 @@ func (m *DataServer) UnmarshalVTUnsafe(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: DataServer: wiretype end group for non-group")
+			return fmt.Errorf("proto: DataServerIdentity: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: DataServer: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DataServerIdentity: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -4899,7 +4899,7 @@ func (m *DataServerMetadata) UnmarshalVTUnsafe(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *DataServerInfo) UnmarshalVTUnsafe(dAtA []byte) error {
+func (m *DataServer) UnmarshalVTUnsafe(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -4922,15 +4922,15 @@ func (m *DataServerInfo) UnmarshalVTUnsafe(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: DataServerInfo: wiretype end group for non-group")
+			return fmt.Errorf("proto: DataServer: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: DataServerInfo: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DataServer: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DataServer", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Identity", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -4957,10 +4957,10 @@ func (m *DataServerInfo) UnmarshalVTUnsafe(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.DataServer == nil {
-				m.DataServer = &DataServer{}
+			if m.Identity == nil {
+				m.Identity = &DataServerIdentity{}
 			}
-			if err := m.DataServer.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.Identity.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -5663,7 +5663,7 @@ func (m *ClusterConfiguration) UnmarshalVTUnsafe(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Servers = append(m.Servers, &DataServer{})
+			m.Servers = append(m.Servers, &DataServerIdentity{})
 			if err := m.Servers[len(m.Servers)-1].UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -6454,7 +6454,7 @@ func (m *ShardMetadata) UnmarshalVTUnsafe(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Leader == nil {
-				m.Leader = &DataServer{}
+				m.Leader = &DataServerIdentity{}
 			}
 			if err := m.Leader.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
@@ -6489,7 +6489,7 @@ func (m *ShardMetadata) UnmarshalVTUnsafe(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Ensemble = append(m.Ensemble, &DataServer{})
+			m.Ensemble = append(m.Ensemble, &DataServerIdentity{})
 			if err := m.Ensemble[len(m.Ensemble)-1].UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -6523,7 +6523,7 @@ func (m *ShardMetadata) UnmarshalVTUnsafe(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RemovedNodes = append(m.RemovedNodes, &DataServer{})
+			m.RemovedNodes = append(m.RemovedNodes, &DataServerIdentity{})
 			if err := m.RemovedNodes[len(m.RemovedNodes)-1].UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -6557,7 +6557,7 @@ func (m *ShardMetadata) UnmarshalVTUnsafe(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PendingDeleteShardNodes = append(m.PendingDeleteShardNodes, &DataServer{})
+			m.PendingDeleteShardNodes = append(m.PendingDeleteShardNodes, &DataServerIdentity{})
 			if err := m.PendingDeleteShardNodes[len(m.PendingDeleteShardNodes)-1].UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}

@@ -24,36 +24,36 @@ import (
 )
 
 func TestDefaultShardsRank(t *testing.T) {
-	ds := func(id string) *proto.DataServer {
-		return &proto.DataServer{Internal: id}
+	ds := func(id string) *proto.DataServerIdentity {
+		return &proto.DataServerIdentity{Internal: id}
 	}
 
 	params := &model.RatioParams{
 		NodeShardsInfos: map[string][]model.ShardInfo{
 			"sv-1": {
-				{Namespace: "ns-1", ShardID: 1, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
-				{Namespace: "ns-2", ShardID: 2, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
-				{Namespace: "ns-3", ShardID: 3, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
-				{Namespace: "ns-4", ShardID: 4, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-3"), ds("sv-4")}},
-				{Namespace: "ns-5", ShardID: 5, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-4"), ds("sv-5")}},
+				{Namespace: "ns-1", ShardID: 1, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
+				{Namespace: "ns-2", ShardID: 2, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
+				{Namespace: "ns-3", ShardID: 3, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
+				{Namespace: "ns-4", ShardID: 4, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-3"), ds("sv-4")}},
+				{Namespace: "ns-5", ShardID: 5, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-4"), ds("sv-5")}},
 			},
 			"sv-2": {
-				{Namespace: "ns-1", ShardID: 1, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
-				{Namespace: "ns-2", ShardID: 2, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
-				{Namespace: "ns-3", ShardID: 3, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
+				{Namespace: "ns-1", ShardID: 1, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
+				{Namespace: "ns-2", ShardID: 2, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
+				{Namespace: "ns-3", ShardID: 3, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
 			},
 			"sv-3": {
-				{Namespace: "ns-1", ShardID: 1, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
-				{Namespace: "ns-2", ShardID: 2, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
-				{Namespace: "ns-3", ShardID: 3, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
-				{Namespace: "ns-4", ShardID: 4, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-3"), ds("sv-4")}},
+				{Namespace: "ns-1", ShardID: 1, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
+				{Namespace: "ns-2", ShardID: 2, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
+				{Namespace: "ns-3", ShardID: 3, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-2"), ds("sv-3")}},
+				{Namespace: "ns-4", ShardID: 4, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-3"), ds("sv-4")}},
 			},
 			"sv-4": {
-				{Namespace: "ns-4", ShardID: 4, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-3"), ds("sv-4")}},
-				{Namespace: "ns-5", ShardID: 5, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-4"), ds("sv-5")}},
+				{Namespace: "ns-4", ShardID: 4, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-3"), ds("sv-4")}},
+				{Namespace: "ns-5", ShardID: 5, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-4"), ds("sv-5")}},
 			},
 			"sv-5": {
-				{Namespace: "ns-5", ShardID: 5, Ensemble: []*proto.DataServer{ds("sv-1"), ds("sv-4"), ds("sv-5")}},
+				{Namespace: "ns-5", ShardID: 5, Ensemble: []*proto.DataServerIdentity{ds("sv-1"), ds("sv-4"), ds("sv-5")}},
 			},
 		},
 	}

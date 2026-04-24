@@ -24,7 +24,7 @@ type AdminClient interface {
 	io.Closer
 
 	ListDataServers() ([]*proto.DataServer, error)
-	GetDataServer(dataServer string) (*proto.DataServerInfo, error)
+	GetDataServer(dataServer string) (*proto.DataServer, error)
 
 	ListNamespaces() *ListNamespacesResult
 

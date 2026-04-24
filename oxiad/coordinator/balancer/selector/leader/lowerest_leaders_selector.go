@@ -24,11 +24,11 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
 
-var _ selector.Selector[*Context, *commonproto.DataServer] = &leader{}
+var _ selector.Selector[*Context, *commonproto.DataServerIdentity] = &leader{}
 
 type leader struct{}
 
-func (*leader) Select(context *Context) (*commonproto.DataServer, error) {
+func (*leader) Select(context *Context) (*commonproto.DataServerIdentity, error) {
 	if len(context.Candidates) == 0 {
 		return nil, selector.ErrNoCandidates
 	}
@@ -41,7 +41,7 @@ func (*leader) Select(context *Context) (*commonproto.DataServer, error) {
 	_, _, leaders := util.NodeShardLeaders(candidates, status)
 
 	minLeaders := -1
-	var minLeadersNode *commonproto.DataServer
+	var minLeadersNode *commonproto.DataServerIdentity
 
 	for idx, candidate := range context.Candidates {
 		if shards, exist := leaders[candidate.GetNameOrDefault()]; exist {
@@ -58,6 +58,6 @@ func (*leader) Select(context *Context) (*commonproto.DataServer, error) {
 	return minLeadersNode, nil
 }
 
-func NewSelector() selector.Selector[*Context, *commonproto.DataServer] {
+func NewSelector() selector.Selector[*Context, *commonproto.DataServerIdentity] {
 	return &leader{}
 }

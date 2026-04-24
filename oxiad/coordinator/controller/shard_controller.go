@@ -66,9 +66,9 @@ type ShardController interface {
 	ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction)
 }
 
-type DataServerSupportedFeaturesSupplier = func(dataServers []*proto.DataServer) map[string][]proto.Feature
+type DataServerSupportedFeaturesSupplier = func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature
 
-func NoOpSupportedFeaturesSupplier([]*proto.DataServer) map[string][]proto.Feature {
+func NoOpSupportedFeaturesSupplier([]*proto.DataServerIdentity) map[string][]proto.Feature {
 	return map[string][]proto.Feature{}
 }
 
@@ -79,7 +79,7 @@ type shardController struct {
 	rpc             rpc.Provider
 	metadata        Metadata
 
-	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServer]
+	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 
 	eventListener                       ShardEventListener
 	metadataStore                       coordmetadata.Metadata
@@ -87,7 +87,7 @@ type shardController struct {
 
 	electionOp          chan *action.ElectionAction
 	deleteOp            chan any
-	dataServerFailureOp chan *proto.DataServer
+	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
 
 	ctx                   context.Context
@@ -109,7 +109,7 @@ func (s *shardController) Metadata() *Metadata {
 	return &s.metadata
 }
 
-func (s *shardController) BecameUnavailable(dataServer *proto.DataServer) {
+func (s *shardController) BecameUnavailable(dataServer *proto.DataServerIdentity) {
 	s.dataServerFailureOp <- dataServer
 }
 
@@ -137,7 +137,7 @@ func NewShardController(
 		leaderSelector:                      leaderselector.NewSelector(),
 		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
 		deleteOp:                            make(chan any, chanBufferSize),
-		dataServerFailureOp:                 make(chan *proto.DataServer, chanBufferSize),
+		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
 
 		periodicTasksInterval: periodTasksInterval,
@@ -279,7 +279,7 @@ func (s *shardController) waitForSplitComplete() {
 	}
 }
 
-func (s *shardController) handleDataServerFailure(failedDataServer *proto.DataServer) {
+func (s *shardController) handleDataServerFailure(failedDataServer *proto.DataServerIdentity) {
 	shardMeta := s.metadata.Load()
 	s.log.Debug(
 		"Received notification of failed data server",
@@ -348,7 +348,7 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *proto.ShardMetada
 	return true
 }
 
-func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServer {
+func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServerIdentity {
 	// stop the current term election
 	if s.currentElection != nil {
 		s.currentElection.Stop()
@@ -375,7 +375,7 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 	return leaderDataServer
 }
 
-func (s *shardController) deleteShardRpc(ctx context.Context, dataServer *proto.DataServer) error {
+func (s *shardController) deleteShardRpc(ctx context.Context, dataServer *proto.DataServerIdentity) error {
 	_, err := s.rpc.DeleteShard(ctx, dataServer, &proto.DeleteShardRequest{
 		Namespace: s.namespace,
 		Shard:     s.shard,
@@ -474,7 +474,7 @@ func (s *shardController) SyncServerAddress() {
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
 		if newInfo, ok := s.metadataStore.Node(candidate.GetNameOrDefault()); ok {
-			if newInfo.GetPublic() != candidate.Public || newInfo.GetInternal() != candidate.Internal {
+			if newInfo.GetPublic() != candidate.GetPublic() || newInfo.GetInternal() != candidate.GetInternal() {
 				needSync = true
 				break
 			}

@@ -18,7 +18,7 @@ package io.oxia.proto.v1;
 
 option go_package = "github.com/oxia-db/oxia/common/proto";
 
-message DataServer {
+message DataServerIdentity {
   optional string name = 1;
   string public = 2;
   string internal = 3;
@@ -28,8 +28,8 @@ message DataServerMetadata {
   map<string, string> labels = 1;
 }
 
-message DataServerInfo {
-  DataServer dataServer = 1;
+message DataServer {
+  DataServerIdentity identity = 1;
   DataServerMetadata metadata = 2;
 }
 
@@ -58,7 +58,7 @@ message LoadBalancer {
 
 message ClusterConfiguration {
   repeated Namespace namespaces = 1;
-  repeated DataServer servers = 2;
+  repeated DataServerIdentity servers = 2;
   repeated string allowExtraAuthorities = 3;
   map<string, DataServerMetadata> serverMetadata = 4;
   LoadBalancer loadBalancer = 5;
@@ -82,10 +82,10 @@ message SplitMetadata {
 message ShardMetadata {
   string status = 1;
   int64 term = 2;
-  DataServer leader = 3;
-  repeated DataServer ensemble = 4;
-  repeated DataServer removedNodes = 5;
-  repeated DataServer pendingDeleteShardNodes = 6;
+  DataServerIdentity leader = 3;
+  repeated DataServerIdentity ensemble = 4;
+  repeated DataServerIdentity removedNodes = 5;
+  repeated DataServerIdentity pendingDeleteShardNodes = 6;
   HashRange int32HashRange = 7;
   SplitMetadata split = 8;
 }

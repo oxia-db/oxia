@@ -59,7 +59,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -296,8 +296,8 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 // coordinator, used by the shard-split integration tests.
 type splitTestCluster struct {
 	servers             map[string]*dataserver.Server
-	addresses           []*proto.DataServer
-	sa1                 *proto.DataServer
+	addresses           []*proto.DataServerIdentity
+	sa1                 *proto.DataServerIdentity
 	coordinator         coordinator.Coordinator
 	metadata            coordmetadata.Metadata
 	leftChild           int64
@@ -324,7 +324,7 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
-	}}, []*proto.DataServer{sa1, sa2, sa3})
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -343,7 +343,7 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 
 	return &splitTestCluster{
 		servers:     servers,
-		addresses:   []*proto.DataServer{sa1, sa2, sa3},
+		addresses:   []*proto.DataServerIdentity{sa1, sa2, sa3},
 		sa1:         sa1,
 		coordinator: coordinatorInstance,
 		metadata:    metadata,
@@ -423,7 +423,7 @@ func (c *splitTestCluster) close(t *testing.T) {
 	}
 }
 
-func (c *splitTestCluster) liveAddressExcluding(excludedIDs ...string) *proto.DataServer {
+func (c *splitTestCluster) liveAddressExcluding(excludedIDs ...string) *proto.DataServerIdentity {
 	excluded := make(map[string]struct{}, len(excludedIDs))
 	for _, id := range excludedIDs {
 		excluded[id] = struct{}{}
@@ -854,7 +854,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
 			assert.NoError(t, err)
 
-			sa1 := &proto.DataServer{
+			sa1 := &proto.DataServerIdentity{
 				Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 				Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 			}
@@ -875,7 +875,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				ReplicationFactor: 1,
 				InitialShardCount: 1,
 				KeySorting:        keySortingValue,
-			}}, []*proto.DataServer{sa1})
+			}}, []*proto.DataServerIdentity{sa1})
 
 			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
 

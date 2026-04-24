@@ -86,7 +86,7 @@ type coordinator struct {
 	rpc rpc.Provider
 }
 
-func (c *coordinator) LeaderElected(int64, *proto.DataServer, []*proto.DataServer) {
+func (c *coordinator) LeaderElected(int64, *proto.DataServerIdentity, []*proto.DataServerIdentity) {
 	c.Lock()
 	defer c.Unlock()
 	c.computeNewAssignments()
@@ -182,7 +182,7 @@ func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 	c.loadBalancer.Trigger()
 }
 
-func (c *coordinator) findDataServerFeatures(dataServers []*proto.DataServer) map[string][]proto.Feature {
+func (c *coordinator) findDataServerFeatures(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
 	features := make(map[string][]proto.Feature)
 	for _, dataServer := range dataServers {
 		dataServerID := dataServer.GetNameOrDefault()
@@ -201,7 +201,7 @@ func (c *coordinator) findDataServerFeatures(dataServers []*proto.DataServer) ma
 
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
-func (c *coordinator) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServer, error) {
+func (c *coordinator) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
 	nodes, nodesMetadata := c.metadata.NodesWithMetadata()
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
@@ -219,9 +219,9 @@ func (c *coordinator) selectNewEnsemble(ns *proto.Namespace, editingStatus *prot
 	if ensembles, err = c.ensembleSelector.Select(ensembleContext); err != nil {
 		return nil, err
 	}
-	esm := make([]*proto.DataServer, 0)
+	esm := make([]*proto.DataServerIdentity, 0)
 	for _, id := range ensembles {
-		var node *proto.DataServer
+		var node *proto.DataServerIdentity
 		var exist bool
 		if node, exist = c.metadata.Node(id); !exist {
 			return nil, fmt.Errorf("failed to find node %s", id)
@@ -254,7 +254,7 @@ func (c *coordinator) Close() error {
 	return err
 }
 
-func (c *coordinator) BecameUnavailable(node *proto.DataServer) {
+func (c *coordinator) BecameUnavailable(node *proto.DataServerIdentity) {
 	c.Lock()
 	if nc, ok := c.drainingNodes[node.GetNameOrDefault()]; ok {
 		// The draining node became unavailable. Let's remove it
@@ -418,7 +418,7 @@ func (c *coordinator) computeNewAssignments() {
 	c.assignmentsChanged.Broadcast()
 }
 
-func mergedAuthorities(status *proto.ClusterStatus, servers []*proto.DataServer, extraAuthorities []string) []string {
+func mergedAuthorities(status *proto.ClusterStatus, servers []*proto.DataServerIdentity, extraAuthorities []string) []string {
 	authorities := linkedhashset.New[string]()
 	addServerAuthorities := func(public string, internal string) {
 		authorities.Add(public)
@@ -586,7 +586,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 		Metadata:      c.metadata,
 		RpcProvider:   c.rpc,
 		EventListener: c,
-		EnsembleSelector: func(ns string) ([]*proto.DataServer, error) {
+		EnsembleSelector: func(ns string) ([]*proto.DataServerIdentity, error) {
 			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.metadata.LoadStatus())
 		},
 	})
@@ -702,7 +702,7 @@ func (c *coordinator) restartInProgressSplits(clusterStatus *proto.ClusterStatus
 				Metadata:      c.metadata,
 				RpcProvider:   c.rpc,
 				EventListener: c,
-				EnsembleSelector: func(namespace string) ([]*proto.DataServer, error) {
+				EnsembleSelector: func(namespace string) ([]*proto.DataServerIdentity, error) {
 					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.metadata.LoadStatus())
 				},
 			})

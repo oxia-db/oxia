@@ -213,7 +213,7 @@ func (r *nodeBasedBalancer) cleanDeletedNode(loadRatios *model.Ratio,
 
 func (r *nodeBasedBalancer) swapShard(
 	candidateShard *model.ShardLoadRatio,
-	fromNode *commonproto.DataServer,
+	fromNode *commonproto.DataServerIdentity,
 	swapGroup *sync.WaitGroup,
 	loadRatios *model.Ratio,
 	candidates *linkedhashset.Set[string],
@@ -260,7 +260,7 @@ func (r *nodeBasedBalancer) swapShard(
 	if targetNodeID == fromNodeID {
 		return false, nil
 	}
-	var targetNode *commonproto.DataServer
+	var targetNode *commonproto.DataServerIdentity
 	if targetNode, exist = r.metadata.Node(targetNodeID); !exist {
 		return false, errors.New("target node does not exist")
 	}

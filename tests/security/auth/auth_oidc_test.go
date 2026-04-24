@@ -71,7 +71,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	dataServerOption1.Storage.WAL.Dir = t.TempDir()
 	s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption1))
 	assert.NoError(t, err)
-	s1Addr := &proto.DataServer{
+	s1Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
@@ -85,7 +85,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 
 	s2, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption2))
 	assert.NoError(t, err)
-	s2Addr := &proto.DataServer{
+	s2Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
@@ -99,7 +99,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 
 	s3, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption3))
 	assert.NoError(t, err)
-	s3Addr := &proto.DataServer{
+	s3Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
@@ -255,7 +255,7 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	assert.NoError(t, err)
 	defer s1.Close()
 
-	s1Addr := &proto.DataServer{
+	s1Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
@@ -271,7 +271,7 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	assert.NoError(t, err)
 	defer s2.Close()
 
-	s2Addr := &proto.DataServer{
+	s2Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
@@ -287,7 +287,7 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	assert.NoError(t, err)
 	defer s3.Close()
 
-	s3Addr := &proto.DataServer{
+	s3Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
@@ -405,7 +405,7 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	assert.NoError(t, err)
 	defer s1.Close()
 
-	s1Addr := &proto.DataServer{
+	s1Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
@@ -421,7 +421,7 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	assert.NoError(t, err)
 	defer s2.Close()
 
-	s2Addr := &proto.DataServer{
+	s2Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
@@ -437,7 +437,7 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	assert.NoError(t, err)
 	defer s3.Close()
 
-	s3Addr := &proto.DataServer{
+	s3Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}

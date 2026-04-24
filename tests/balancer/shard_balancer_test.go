@@ -31,7 +31,7 @@ import (
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
-func shardBalancerDataServers(servers ...*proto.DataServer) []*proto.DataServer {
+func shardBalancerDataServers(servers ...*proto.DataServerIdentity) []*proto.DataServerIdentity {
 	return servers
 }
 

@@ -46,7 +46,7 @@ func newCoordinatorInstance(
 	return coordinatorInstance
 }
 
-func newDefaultClusterConfig(servers ...*proto.DataServer) *proto.ClusterConfiguration {
+func newDefaultClusterConfig(servers ...*proto.DataServerIdentity) *proto.ClusterConfiguration {
 	return &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              constant.DefaultNamespace,

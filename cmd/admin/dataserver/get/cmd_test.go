@@ -41,8 +41,8 @@ func Test_cmd_getDataServer(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServerInfo{
-		DataServer: &proto.DataServer{
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServer{
+		Identity: &proto.DataServerIdentity{
 			Name:     &serverName,
 			Public:   "public1",
 			Internal: "internal1",
@@ -55,12 +55,57 @@ func Test_cmd_getDataServer(t *testing.T) {
 	out, err := runCmd(serverName)
 
 	assert.NoError(t, err)
-	var dataServer proto.DataServerInfo
+	var dataServer proto.DataServer
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServer))
-	require.NotNil(t, dataServer.DataServer)
-	assert.NotNil(t, dataServer.DataServer.Name)
-	assert.Equal(t, serverName, *dataServer.DataServer.Name)
-	assert.Equal(t, "public1", dataServer.DataServer.GetPublic())
-	assert.Equal(t, "internal1", dataServer.DataServer.GetInternal())
+	require.NotNil(t, dataServer.Identity)
+	assert.NotNil(t, dataServer.Identity.Name)
+	assert.Equal(t, serverName, *dataServer.Identity.Name)
+	assert.Equal(t, "public1", dataServer.Identity.GetPublic())
+	assert.Equal(t, "internal1", dataServer.Identity.GetInternal())
 	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
+}
+
+func Test_cmd_getDataServersIdentities(t *testing.T) {
+	serverName1 := "server-1"
+	serverName2 := "internal2"
+	commons.MockedAdminClient = commons.NewMockAdminClient()
+
+	commons.MockedAdminClient.On("Close").Return(nil)
+	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServer{
+		{
+			Identity: &proto.DataServerIdentity{
+				Name:     &serverName1,
+				Public:   "public1",
+				Internal: "internal1",
+			},
+			Metadata: &proto.DataServerMetadata{
+				Labels: map[string]string{"rack": "rack-1"},
+			},
+		},
+		{
+			Identity: &proto.DataServerIdentity{
+				Name:     &serverName2,
+				Public:   "public2",
+				Internal: "internal2",
+			},
+			Metadata: &proto.DataServerMetadata{
+				Labels: map[string]string{"rack": "rack-2"},
+			},
+		},
+	}, nil)
+
+	out, err := runCmd()
+
+	assert.NoError(t, err)
+	var identities []proto.DataServerIdentity
+	assert.NoError(t, json.Unmarshal([]byte(out), &identities))
+	require.Len(t, identities, 2)
+	require.NotNil(t, identities[0].Name)
+	require.NotNil(t, identities[1].Name)
+	assert.Equal(t, serverName1, *identities[0].Name)
+	assert.Equal(t, serverName2, *identities[1].Name)
+	assert.Equal(t, "public1", identities[0].GetPublic())
+	assert.Equal(t, "public2", identities[1].GetPublic())
+	assert.Equal(t, "internal1", identities[0].GetInternal())
+	assert.Equal(t, "internal2", identities[1].GetInternal())
 }

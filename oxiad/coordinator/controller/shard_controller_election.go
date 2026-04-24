@@ -61,7 +61,7 @@ type ShardElection struct {
 	// borrowed resource
 	metadataStore                       coordmetadata.Metadata
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
-	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServer]
+	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener                       ShardEventListener
 	provider                            rpc.Provider
 	meta                                *Metadata
@@ -75,8 +75,8 @@ type ShardElection struct {
 	started atomic.Bool
 }
 
-func (e *ShardElection) refreshedEnsemble(ensemble []*proto.DataServer) []*proto.DataServer {
-	refreshedEnsembleDataServerAddress := make([]*proto.DataServer, len(ensemble))
+func (e *ShardElection) refreshedEnsemble(ensemble []*proto.DataServerIdentity) []*proto.DataServerIdentity {
+	refreshedEnsembleDataServerAddress := make([]*proto.DataServerIdentity, len(ensemble))
 	for idx, candidate := range ensemble {
 		if refreshedAddress, exist := e.metadataStore.Node(candidate.GetNameOrDefault()); exist {
 			refreshedEnsembleDataServerAddress[idx] = refreshedAddress
@@ -93,7 +93,7 @@ func (e *ShardElection) refreshedEnsemble(ensemble []*proto.DataServer) []*proto
 	return refreshedEnsembleDataServerAddress
 }
 
-func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer *proto.DataServer) (*proto.EntryId, error) {
+func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer *proto.DataServerIdentity) (*proto.EntryId, error) {
 	res, err := e.provider.NewTerm(ctx, dataServer, &proto.NewTermRequest{
 		Namespace: e.namespace,
 		Shard:     e.shard,
@@ -109,7 +109,7 @@ func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer
 
 // Send NewTerm to all the ensemble members in parallel and wait for
 // a majority of them to reply successfully.
-func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []*proto.DataServer, removedCandidates []*proto.DataServer) (map[*proto.DataServer]*proto.EntryId, error) {
+func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []*proto.DataServerIdentity, removedCandidates []*proto.DataServerIdentity) (map[*proto.DataServerIdentity]*proto.EntryId, error) {
 	fenceQuorumTimer := e.newTermQuorumLatency.Timer()
 
 	fencingDataServers := slices.Concat(ensemble, removedCandidates)
@@ -127,7 +127,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []*proto.DataSer
 
 	// Channel to receive responses or errors from each server
 	ch := make(chan struct {
-		DataServer *proto.DataServer
+		DataServer *proto.DataServerIdentity
 		EntryID    *proto.EntryId
 		Err        error
 	}, fencingQuorumSize)
@@ -150,7 +150,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []*proto.DataSer
 						e.Info("Processed fenceNewTerm response", slog.Any("data-server", pinedServer), slog.Any("entry-id", entryId))
 					}
 					ch <- struct {
-						DataServer *proto.DataServer
+						DataServer *proto.DataServerIdentity
 						EntryID    *proto.EntryId
 						Err        error
 					}{DataServer: pinedServer, EntryID: entryId, Err: err}
@@ -167,10 +167,10 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []*proto.DataSer
 }
 
 func (*ShardElection) waitForGracePeriod(ch chan struct {
-	DataServer *proto.DataServer
+	DataServer *proto.DataServerIdentity
 	EntryID    *proto.EntryId
 	Err        error
-}, fencingQuorumSize int, ensemble []*proto.DataServer, totalResponses int, candidatesResponse map[*proto.DataServer]*proto.EntryId) {
+}, fencingQuorumSize int, ensemble []*proto.DataServerIdentity, totalResponses int, candidatesResponse map[*proto.DataServerIdentity]*proto.EntryId) {
 	// If we have already reached a quorum of successful responses, we can wait a
 	// tiny bit more, to allow time for all the "healthy" data servers to respond.
 	for totalResponses < fencingQuorumSize {
@@ -191,11 +191,11 @@ func (*ShardElection) waitForGracePeriod(ch chan struct {
 }
 
 func (*ShardElection) waitForMajority(ch chan struct {
-	DataServer *proto.DataServer
+	DataServer *proto.DataServerIdentity
 	EntryID    *proto.EntryId
 	Err        error
-}, fencingQuorumSize int, majority int, ensemble []*proto.DataServer) (map[*proto.DataServer]*proto.EntryId, int, error) {
-	res := make(map[*proto.DataServer]*proto.EntryId)
+}, fencingQuorumSize int, majority int, ensemble []*proto.DataServerIdentity) (map[*proto.DataServerIdentity]*proto.EntryId, int, error) {
+	res := make(map[*proto.DataServerIdentity]*proto.EntryId)
 	successResponses := 0
 	totalResponses := 0
 	var err error
@@ -220,8 +220,8 @@ func (*ShardElection) waitForMajority(ch chan struct {
 	return res, totalResponses, nil
 }
 
-func (e *ShardElection) selectNewLeader(candidatesStatus map[*proto.DataServer]*proto.EntryId) (
-	leader *proto.DataServer, followers map[*proto.DataServer]*proto.EntryId, err error) {
+func (e *ShardElection) selectNewLeader(candidatesStatus map[*proto.DataServerIdentity]*proto.EntryId) (
+	leader *proto.DataServerIdentity, followers map[*proto.DataServerIdentity]*proto.EntryId, err error) {
 	candidates := chooseCandidates(candidatesStatus)
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
@@ -231,7 +231,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[*proto.DataServer]*
 		return nil, nil, err
 	}
 	leader = server
-	followers = make(map[*proto.DataServer]*proto.EntryId)
+	followers = make(map[*proto.DataServerIdentity]*proto.EntryId)
 	for a, e := range candidatesStatus {
 		if a.GetNameOrDefault() != leader.GetNameOrDefault() {
 			followers[a] = e
@@ -240,7 +240,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[*proto.DataServer]*
 	return leader, followers, nil
 }
 
-func (e *ShardElection) becomeLeader(term int64, leader *proto.DataServer, followers map[*proto.DataServer]*proto.EntryId,
+func (e *ShardElection) becomeLeader(term int64, leader *proto.DataServerIdentity, followers map[*proto.DataServerIdentity]*proto.EntryId,
 	replicationFactor uint32, negotiateFeatures []proto.Feature) error {
 	becomeLeaderTimer := e.becomeLeaderLatency.Timer()
 
@@ -264,7 +264,7 @@ func (e *ShardElection) becomeLeader(term int64, leader *proto.DataServer, follo
 }
 
 // ensureFollowerCaught Must be called before we change ensemble to avoid any potential data lost.
-func (e *ShardElection) ensureFollowerCaught(ensemble []*proto.DataServer, leader *proto.DataServer, leaderEntry *proto.EntryId) {
+func (e *ShardElection) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity, leaderEntry *proto.EntryId) {
 	waitGroup := sync.WaitGroup{}
 	for _, server := range ensemble {
 		if server.GetNameOrDefault() == leader.GetNameOrDefault() {
@@ -326,7 +326,7 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []*proto.DataServer, leade
 	waitGroup.Wait()
 }
 
-func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int64, leader *proto.DataServer, follower *proto.DataServer) error {
+func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int64, leader *proto.DataServerIdentity, follower *proto.DataServerIdentity) error {
 	fr, err := e.fenceNewTerm(ctx, term, follower)
 	if err != nil {
 		return err
@@ -353,8 +353,8 @@ func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int
 	return nil
 }
 
-func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []*proto.DataServer, leader *proto.DataServer,
-	successfulFollowers map[*proto.DataServer]*proto.EntryId) {
+func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
+	successfulFollowers map[*proto.DataServerIdentity]*proto.EntryId) {
 	if len(successfulFollowers) == len(ensemble)-1 {
 		e.Debug(
 			"All the member of the ensemble were successfully added",
@@ -415,17 +415,17 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []*proto.Dat
 func (e *ShardElection) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	from := e.changeEnsembleAction.From
 	to := e.changeEnsembleAction.To
-	if !slices.ContainsFunc(mutShardMeta.RemovedNodes, func(server *proto.DataServer) bool {
+	if !slices.ContainsFunc(mutShardMeta.RemovedNodes, func(server *proto.DataServerIdentity) bool {
 		return server.GetNameOrDefault() == from.GetNameOrDefault()
 	}) {
 		mutShardMeta.RemovedNodes = append(mutShardMeta.RemovedNodes, from)
 	}
 	// A dataServer might get re-added to the ensemble after it was swapped out and be in
 	// pending delete state. We don't want a background task to attempt deletion anymore
-	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes, func(dataServer *proto.DataServer) bool {
+	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes, func(dataServer *proto.DataServerIdentity) bool {
 		return dataServer.GetNameOrDefault() == to.GetNameOrDefault()
 	})
-	mutShardMeta.Ensemble = append(slices.DeleteFunc(mutShardMeta.Ensemble, func(dataServer *proto.DataServer) bool {
+	mutShardMeta.Ensemble = append(slices.DeleteFunc(mutShardMeta.Ensemble, func(dataServer *proto.DataServerIdentity) bool {
 		return dataServer.GetNameOrDefault() == from.GetNameOrDefault()
 	}), to)
 	e.Info(
@@ -437,7 +437,7 @@ func (e *ShardElection) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadat
 	)
 }
 
-func (e *ShardElection) start() (*proto.DataServer, error) {
+func (e *ShardElection) start() (*proto.DataServerIdentity, error) {
 	e.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
 
@@ -464,13 +464,13 @@ func (e *ShardElection) start() (*proto.DataServer, error) {
 	}
 	if e.Enabled(context.Background(), slog.LevelInfo) {
 		f := make([]struct {
-			ServerAddress *proto.DataServer `json:"server-address"`
-			EntryId       *proto.EntryId    `json:"entry-id"`
+			ServerAddress *proto.DataServerIdentity `json:"server-address"`
+			EntryId       *proto.EntryId            `json:"entry-id"`
 		}, 0)
 		for sa, entryId := range followers {
 			f = append(f, struct {
-				ServerAddress *proto.DataServer `json:"server-address"`
-				EntryId       *proto.EntryId    `json:"entry-id"`
+				ServerAddress *proto.DataServerIdentity `json:"server-address"`
+				EntryId       *proto.EntryId            `json:"entry-id"`
 			}{ServerAddress: sa, EntryId: entryId})
 		}
 		e.Info(
@@ -576,11 +576,11 @@ func (e *ShardElection) IsReadyForChangeEnsemble() bool {
 	return e.followerCaughtUp.Load()
 }
 
-func (e *ShardElection) Start() *proto.DataServer {
+func (e *ShardElection) Start() *proto.DataServerIdentity {
 	if swapped := e.started.CompareAndSwap(false, true); !swapped {
 		panic("bug! the election has been started")
 	}
-	newLeader, _ := backoff.RetryNotifyWithData[*proto.DataServer](func() (*proto.DataServer, error) {
+	newLeader, _ := backoff.RetryNotifyWithData[*proto.DataServerIdentity](func() (*proto.DataServerIdentity, error) {
 		return e.start()
 	}, oxiatime.NewBackOff(e.Context), func(err error, duration time.Duration) {
 		e.leaderElectionsFailed.Inc()
@@ -604,7 +604,7 @@ func (e *ShardElection) Stop() {
 func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener ShardEventListener,
 	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
-	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServer],
+	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
 	provider rpc.Provider, metadata *Metadata, namespace string, shard int64,
 	changeEnsembleAction *action.ChangeEnsembleAction, termOptions *proto.NewTermOptions,
 	leaderElectionLatency metric.LatencyHistogram, newTermQuorumLatency metric.LatencyHistogram,
@@ -632,23 +632,23 @@ func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener Sh
 	}
 }
 
-func chooseCandidates(candidatesStatus map[*proto.DataServer]*proto.EntryId) []*proto.DataServer {
+func chooseCandidates(candidatesStatus map[*proto.DataServerIdentity]*proto.EntryId) []*proto.DataServerIdentity {
 	// Select all the data servers that have the highest term first
 	var currentMaxTerm int64 = -1
 	// Select all the data servers that have the highest entry in the wal
 	var currentMax int64 = -1
-	var candidates []*proto.DataServer
+	var candidates []*proto.DataServerIdentity
 	for addr, headEntryId := range candidatesStatus {
 		if headEntryId.Term > currentMaxTerm {
 			// the new max
 			currentMaxTerm = headEntryId.Term
 			currentMax = headEntryId.Offset
-			candidates = []*proto.DataServer{addr}
+			candidates = []*proto.DataServerIdentity{addr}
 		} else if headEntryId.Term == currentMaxTerm {
 			if headEntryId.Offset > currentMax {
 				// the new max
 				currentMax = headEntryId.Offset
-				candidates = []*proto.DataServer{addr}
+				candidates = []*proto.DataServerIdentity{addr}
 			} else if headEntryId.Offset == currentMax {
 				candidates = append(candidates, addr)
 			}

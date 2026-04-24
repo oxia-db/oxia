@@ -61,7 +61,7 @@ type SplitController struct {
 	eventListener SplitEventListener
 
 	// ensembleSelector selects server ensembles for new shards.
-	ensembleSelector func(namespace string) ([]*proto.DataServer, error)
+	ensembleSelector func(namespace string) ([]*proto.DataServerIdentity, error)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -78,7 +78,7 @@ type SplitControllerConfig struct {
 	Metadata         coordmetadata.Metadata
 	RpcProvider      rpc.Provider
 	EventListener    SplitEventListener
-	EnsembleSelector func(namespace string) ([]*proto.DataServer, error)
+	EnsembleSelector func(namespace string) ([]*proto.DataServerIdentity, error)
 
 	// SplitTimeout is the maximum duration for the entire split operation.
 	// If the split does not complete within this time, it is aborted.
@@ -352,7 +352,7 @@ func (sc *SplitController) fenceAndElectChild(childId int64) error {
 
 // addChildObserver adds a child's leader as an observer follower on the parent
 // leader so the parent streams snapshots and WAL entries to it.
-func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.DataServer, parentTerm int64) error {
+func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.DataServerIdentity, parentTerm int64) error {
 	childMeta := sc.loadShardMeta(childId)
 	if childMeta == nil || childMeta.Leader == nil {
 		return errors.Errorf("child shard %d has no leader", childId)
@@ -704,10 +704,10 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 func (sc *SplitController) fenceEnsemble(
 	shardId int64,
 	term int64,
-	ensemble []*proto.DataServer,
-) (map[*proto.DataServer]*proto.EntryId, error) {
+	ensemble []*proto.DataServerIdentity,
+) (map[*proto.DataServerIdentity]*proto.EntryId, error) {
 	type fenceResult struct {
-		server *proto.DataServer
+		server *proto.DataServerIdentity
 		entry  *proto.EntryId
 		err    error
 	}
@@ -736,7 +736,7 @@ func (sc *SplitController) fenceEnsemble(
 		close(ch)
 	}()
 
-	results := make(map[*proto.DataServer]*proto.EntryId)
+	results := make(map[*proto.DataServerIdentity]*proto.EntryId)
 	var lastErr error
 	for r := range ch {
 		if r.err != nil {
@@ -763,8 +763,8 @@ func (sc *SplitController) fenceEnsemble(
 
 // pickLeader chooses the server with the highest term/offset from the
 // fencing results.
-func (*SplitController) pickLeader(entries map[*proto.DataServer]*proto.EntryId) *proto.DataServer {
-	var best *proto.DataServer
+func (*SplitController) pickLeader(entries map[*proto.DataServerIdentity]*proto.EntryId) *proto.DataServerIdentity {
+	var best *proto.DataServerIdentity
 	var bestEntry *proto.EntryId
 
 	for server, entry := range entries {

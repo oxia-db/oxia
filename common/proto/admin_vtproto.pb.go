@@ -81,7 +81,7 @@ func (m *GetDataServerResponse) CloneVT() *GetDataServerResponse {
 		return (*GetDataServerResponse)(nil)
 	}
 	r := new(GetDataServerResponse)
-	r.DataServerInfo = m.DataServerInfo.CloneVT()
+	r.DataServer = m.DataServer.CloneVT()
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -312,7 +312,7 @@ func (this *GetDataServerResponse) EqualVT(that *GetDataServerResponse) bool {
 	} else if this == nil || that == nil {
 		return false
 	}
-	if !this.DataServerInfo.EqualVT(that.DataServerInfo) {
+	if !this.DataServer.EqualVT(that.DataServer) {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -647,8 +647,8 @@ func (m *GetDataServerResponse) MarshalToSizedBufferVT(dAtA []byte) (int, error)
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if m.DataServerInfo != nil {
-		size, err := m.DataServerInfo.MarshalToSizedBufferVT(dAtA[:i])
+	if m.DataServer != nil {
+		size, err := m.DataServer.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -1025,8 +1025,8 @@ func (m *GetDataServerResponse) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	if m.DataServerInfo != nil {
-		l = m.DataServerInfo.SizeVT()
+	if m.DataServer != nil {
+		l = m.DataServer.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
@@ -1401,7 +1401,7 @@ func (m *GetDataServerResponse) UnmarshalVT(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DataServerInfo", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field DataServer", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -1428,10 +1428,10 @@ func (m *GetDataServerResponse) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.DataServerInfo == nil {
-				m.DataServerInfo = &DataServerInfo{}
+			if m.DataServer == nil {
+				m.DataServer = &DataServer{}
 			}
-			if err := m.DataServerInfo.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.DataServer.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -2467,7 +2467,7 @@ func (m *GetDataServerResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DataServerInfo", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field DataServer", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -2494,10 +2494,10 @@ func (m *GetDataServerResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.DataServerInfo == nil {
-				m.DataServerInfo = &DataServerInfo{}
+			if m.DataServer == nil {
+				m.DataServer = &DataServer{}
 			}
-			if err := m.DataServerInfo.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.DataServer.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

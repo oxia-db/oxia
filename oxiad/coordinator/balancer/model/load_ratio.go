@@ -27,11 +27,11 @@ import (
 type ShardInfo struct {
 	Namespace string
 	ShardID   int64
-	Ensemble  []*commonproto.DataServer
+	Ensemble  []*commonproto.DataServerIdentity
 }
 
 type RatioParams struct {
-	HistoryNodes    map[string]*commonproto.DataServer
+	HistoryNodes    map[string]*commonproto.DataServerIdentity
 	NodeShardsInfos map[string][]ShardInfo
 	QuarantineNodes *linkedhashset.Set[string]
 }
@@ -122,7 +122,7 @@ func NewRatio(maxNodeLoadRatio float64, minNodeLoadRatio float64, avgShardLoadRa
 
 type NodeLoadRatio struct {
 	NodeID      string
-	Node        *commonproto.DataServer
+	Node        *commonproto.DataServerIdentity
 	Ratio       float64
 	ShardRatios *arraylist.List[*ShardLoadRatio]
 }

@@ -51,11 +51,11 @@ type Metadata interface {
 	Nodes() *linkedhashset.Set[string]
 	NodesWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata)
 	Namespace(namespace string) (*commonproto.Namespace, bool)
-	Node(id string) (*commonproto.DataServer, bool)
-	GetDataServerInfo(name string) (*commonproto.DataServerInfo, bool)
+	Node(id string) (*commonproto.DataServerIdentity, bool)
+	GetDataServer(name string) (*commonproto.DataServer, bool)
 }
 
-type EnsembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServer, error)
+type EnsembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServerIdentity, error)
 
 type coordinatorMetadata struct {
 	*slog.Logger
@@ -77,7 +77,7 @@ type coordinatorMetadata struct {
 	clusterConfigLock     sync.RWMutex
 	currentClusterConfig  *commonproto.ClusterConfiguration
 	clusterConfigWatch    *commonoption.Watch[*commonproto.ClusterConfiguration]
-	nodesIndex            *redblacktree.Tree[string, *commonproto.DataServer]
+	nodesIndex            *redblacktree.Tree[string, *commonproto.DataServerIdentity]
 	namespaceConfigsIndex *redblacktree.Tree[string, *commonproto.Namespace]
 }
 
@@ -288,7 +288,7 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 }
 
 func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
-	nodes := redblacktree.New[string, *commonproto.DataServer]()
+	nodes := redblacktree.New[string, *commonproto.DataServerIdentity]()
 	for _, server := range m.currentClusterConfig.GetServers() {
 		nodes.Put(server.GetNameOrDefault(), server)
 	}
@@ -399,7 +399,7 @@ func (m *coordinatorMetadata) Namespace(namespace string) (*commonproto.Namespac
 	return m.namespaceConfigsIndex.Get(namespace)
 }
 
-func (m *coordinatorMetadata) Node(id string) (*commonproto.DataServer, bool) {
+func (m *coordinatorMetadata) Node(id string) (*commonproto.DataServerIdentity, bool) {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -410,7 +410,7 @@ func (m *coordinatorMetadata) Node(id string) (*commonproto.DataServer, bool) {
 	return m.nodesIndex.Get(id)
 }
 
-func (m *coordinatorMetadata) GetDataServerInfo(id string) (*commonproto.DataServerInfo, bool) {
+func (m *coordinatorMetadata) GetDataServer(id string) (*commonproto.DataServer, bool) {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -419,7 +419,7 @@ func (m *coordinatorMetadata) GetDataServerInfo(id string) (*commonproto.DataSer
 		m.clusterConfigLock.RLock()
 	}
 
-	return m.currentClusterConfig.GetDataServerInfo(id)
+	return m.currentClusterConfig.GetDataServer(id)
 }
 
 func WaitForCondition(ctx context.Context, metadata Metadata, triggerFn func(), condition func(*commonproto.ClusterStatus) bool) error {

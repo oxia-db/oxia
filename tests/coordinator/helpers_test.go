@@ -56,7 +56,7 @@ func newCoordinatorInstance(
 	return coordinatorInstance
 }
 
-func newClusterConfig(namespaces []*proto.Namespace, servers []*proto.DataServer) *proto.ClusterConfiguration {
+func newClusterConfig(namespaces []*proto.Namespace, servers []*proto.DataServerIdentity) *proto.ClusterConfiguration {
 	return &proto.ClusterConfiguration{
 		Namespaces: namespaces,
 		Servers:    servers,

@@ -76,7 +76,7 @@ type dataServerController struct {
 
 	ctx        context.Context
 	cancel     context.CancelFunc
-	dataServer *proto.DataServer
+	dataServer *proto.DataServerIdentity
 	rpc        rpc.Provider
 	insID      string
 	closed     atomic.Bool
@@ -347,7 +347,7 @@ func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.Healt
 	return nil
 }
 
-func NewDataServerController(ctx context.Context, dataServer *proto.DataServer,
+func NewDataServerController(ctx context.Context, dataServer *proto.DataServerIdentity,
 	shardAssignmentsProvider ShardAssignmentsProvider,
 	dataServerEventListener DataServerEventListener,
 	rpcProvider rpc.Provider,
@@ -355,7 +355,7 @@ func NewDataServerController(ctx context.Context, dataServer *proto.DataServer,
 	return newDataServerController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, insID, defaultInitialRetryBackoff)
 }
 
-func newDataServerController(ctx context.Context, dataServer *proto.DataServer,
+func newDataServerController(ctx context.Context, dataServer *proto.DataServerIdentity,
 	shardAssignmentsProvider ShardAssignmentsProvider,
 	dataServerEventListener DataServerEventListener,
 	rpcProvider rpc.Provider,

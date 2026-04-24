@@ -31,7 +31,7 @@ func findNamespaceConfig(config *commonproto.ClusterConfiguration, ns string) *c
 	return nil
 }
 
-func ApplyClusterChanges(config *commonproto.ClusterConfiguration, status *commonproto.ClusterStatus, ensembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServer, error)) (
+func ApplyClusterChanges(config *commonproto.ClusterConfiguration, status *commonproto.ClusterStatus, ensembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServerIdentity, error)) (
 	shardsToAdd map[int64]string,
 	shardsToDelete []int64) {
 	shardsToAdd = map[int64]string{}
@@ -60,7 +60,7 @@ func ApplyClusterChanges(config *commonproto.ClusterConfiguration, status *commo
 		status.Namespaces[nc.GetName()] = nss
 
 		for _, shard := range sharding.GenerateShards(status.ShardIdGenerator, nc.GetInitialShardCount()) {
-			var esm []*commonproto.DataServer
+			var esm []*commonproto.DataServerIdentity
 			if esm, err = ensembleSupplier(nc, status); err != nil {
 				slog.Error("failed to select new ensembles.", slog.Any("shard", shard), slog.Any("error", err))
 				continue

@@ -30,7 +30,7 @@ func hashRange(start, end uint32) *proto.HashRange {
 	return &proto.HashRange{Min: start, Max: end}
 }
 
-func shardMetadata(status string, ensemble []*proto.DataServer, start, end uint32) *proto.ShardMetadata {
+func shardMetadata(status string, ensemble []*proto.DataServerIdentity, start, end uint32) *proto.ShardMetadata {
 	return &proto.ShardMetadata{
 		Status:         status,
 		Term:           -1,
@@ -39,8 +39,8 @@ func shardMetadata(status string, ensemble []*proto.DataServer, start, end uint3
 	}
 }
 
-func loadAwareEnsembleSupplier(servers []*proto.DataServer) func(*proto.Namespace, *proto.ClusterStatus) ([]*proto.DataServer, error) {
-	return func(nc *proto.Namespace, cs *proto.ClusterStatus) ([]*proto.DataServer, error) {
+func loadAwareEnsembleSupplier(servers []*proto.DataServerIdentity) func(*proto.Namespace, *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+	return func(nc *proto.Namespace, cs *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
 		load := make(map[string]int, len(servers))
 		for _, s := range servers {
 			load[s.GetInternal()] = 0
@@ -52,7 +52,7 @@ func loadAwareEnsembleSupplier(servers []*proto.DataServer) func(*proto.Namespac
 				}
 			}
 		}
-		ranked := make([]*proto.DataServer, len(servers))
+		ranked := make([]*proto.DataServerIdentity, len(servers))
 		copy(ranked, servers)
 		sort.SliceStable(ranked, func(i, j int) bool {
 			return load[ranked[i].GetInternal()] < load[ranked[j].GetInternal()]
@@ -75,7 +75,7 @@ func assertStatusEqual(t *testing.T, expected, actual *proto.ClusterStatus) {
 // pseudo-random initial placement that immediately tripped the count-based
 // load-balancer once the cluster came up.
 func TestClientUpdates_InitialPlacementSeesPriorShards(t *testing.T) {
-	servers := []*proto.DataServer{s1, s2, s3, s4}
+	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
 	const shardCount = 16
 	const rf = 3
 
@@ -108,14 +108,14 @@ func TestClientUpdates_InitialPlacementSeesPriorShards(t *testing.T) {
 }
 
 var (
-	s1 = &proto.DataServer{Public: "s1:6648", Internal: "s1:6649"}
-	s2 = &proto.DataServer{Public: "s2:6648", Internal: "s2:6649"}
-	s3 = &proto.DataServer{Public: "s3:6648", Internal: "s3:6649"}
-	s4 = &proto.DataServer{Public: "s4:6648", Internal: "s4:6649"}
+	s1 = &proto.DataServerIdentity{Public: "s1:6648", Internal: "s1:6649"}
+	s2 = &proto.DataServerIdentity{Public: "s2:6648", Internal: "s2:6649"}
+	s3 = &proto.DataServerIdentity{Public: "s3:6648", Internal: "s3:6649"}
+	s4 = &proto.DataServerIdentity{Public: "s4:6648", Internal: "s4:6649"}
 )
 
 func TestClientUpdates_ClusterInit(t *testing.T) {
-	servers := []*proto.DataServer{s1, s2, s3, s4}
+	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
 	status := proto.NewClusterStatus()
 	shardsAdded, shardsToRemove := ApplyClusterChanges(&proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
@@ -128,7 +128,7 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 			ReplicationFactor: 3,
 		}},
 		Servers: servers,
-	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServer, error) {
+	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
@@ -137,14 +137,14 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 			"ns-1": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 			"ns-2": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s4, s1, s2}, 0, math.MaxUint32/2),
-					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
+					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
 				},
 			},
 		},
@@ -161,13 +161,13 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 }
 
 func TestClientUpdates_NamespaceAdded(t *testing.T) {
-	servers := []*proto.DataServer{s1, s2, s3, s4}
+	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{
 			"ns-1": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 		},
@@ -185,7 +185,7 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 			ReplicationFactor: 3,
 		}},
 		Servers: servers,
-	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServer, error) {
+	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
@@ -194,14 +194,14 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 			"ns-1": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 			"ns-2": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s4, s1, s2}, 0, math.MaxUint32/2),
-					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
+					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
 				},
 			},
 		},
@@ -217,20 +217,20 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 }
 
 func TestClientUpdates_NamespaceRemoved(t *testing.T) {
-	servers := []*proto.DataServer{s1, s2, s3, s4}
+	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{
 			"ns-1": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 			"ns-2": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s4, s1, s2}, 0, math.MaxUint32/2),
-					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
+					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
 				},
 			},
 		},
@@ -244,7 +244,7 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 			ReplicationFactor: 3,
 		}},
 		Servers: servers,
-	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServer, error) {
+	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
 		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
@@ -253,14 +253,14 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 			"ns-1": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServer{s1, s2, s3}, 0, math.MaxUint32),
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
 			"ns-2": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					1: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServer{s4, s1, s2}, 0, math.MaxUint32/2),
-					2: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServer{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
+					1: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServerIdentity{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServerIdentity{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
 				},
 			},
 		},

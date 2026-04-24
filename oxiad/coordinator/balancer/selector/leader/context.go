@@ -17,6 +17,6 @@ package leader
 import commonproto "github.com/oxia-db/oxia/common/proto"
 
 type Context struct {
-	Candidates []*commonproto.DataServer
+	Candidates []*commonproto.DataServerIdentity
 	Status     *commonproto.ClusterStatus
 }

@@ -24,12 +24,12 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func testDataServer(id string) *proto.DataServer {
-	return &proto.DataServer{Internal: id, Public: id}
+func testDataServer(id string) *proto.DataServerIdentity {
+	return &proto.DataServerIdentity{Internal: id, Public: id}
 }
 
 type electionResponse = struct {
-	DataServer *proto.DataServer
+	DataServer *proto.DataServerIdentity
 	EntryID    *proto.EntryId
 	Err        error
 }
@@ -143,7 +143,7 @@ func TestWaitForMajority_Success(t *testing.T) {
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServer{server1, server2, server3}
+	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 3)
 	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
@@ -163,7 +163,7 @@ func TestWaitForMajority_FailureNoQuorum(t *testing.T) {
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServer{server1, server2, server3}
+	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 3)
 	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
@@ -183,7 +183,7 @@ func TestWaitForMajority_MixedSuccessAndFailure(t *testing.T) {
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServer{server1, server2, server3}
+	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 3)
 	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
@@ -205,7 +205,7 @@ func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
 	removedServer := testDataServer("removed")
-	ensemble := []*proto.DataServer{server1, server2, server3}
+	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 4)
 	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
@@ -227,7 +227,7 @@ func TestWaitForMajority_EarlyReturn(t *testing.T) {
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServer{server1, server2, server3}
+	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 3)
 	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
@@ -245,9 +245,9 @@ func TestWaitForGracePeriod_AllResponsesReceived(t *testing.T) {
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServer{server1, server2, server3}
+	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
-	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 	}
 
@@ -267,9 +267,9 @@ func TestWaitForGracePeriod_Timeout(t *testing.T) {
 	e := &ShardElection{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
-	ensemble := []*proto.DataServer{server1, server2}
+	ensemble := []*proto.DataServerIdentity{server1, server2}
 
-	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 	}
 
@@ -289,9 +289,9 @@ func TestWaitForGracePeriod_IgnoresErrors(t *testing.T) {
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServer{server1, server2, server3}
+	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
-	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 	}
 
@@ -312,9 +312,9 @@ func TestWaitForGracePeriod_ExcludesRemovedServers(t *testing.T) {
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	removedServer := testDataServer("removed")
-	ensemble := []*proto.DataServer{server1, server2}
+	ensemble := []*proto.DataServerIdentity{server1, server2}
 
-	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 	}
 
@@ -334,9 +334,9 @@ func TestWaitForGracePeriod_AlreadyComplete(t *testing.T) {
 	e := &ShardElection{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
-	ensemble := []*proto.DataServer{server1, server2}
+	ensemble := []*proto.DataServerIdentity{server1, server2}
 
-	candidatesResponse := map[*proto.DataServer]*proto.EntryId{
+	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
 		server1: {Term: 1, Offset: 100},
 		server2: {Term: 1, Offset: 95},
 	}

@@ -27,7 +27,7 @@ func TestSelect_NoCandidates(t *testing.T) {
 	s := NewSelector()
 
 	_, err := s.Select(&Context{
-		Candidates: []*proto.DataServer{},
+		Candidates: []*proto.DataServerIdentity{},
 		Status:     proto.NewClusterStatus(),
 	})
 	assert.ErrorIs(t, err, selector.ErrNoCandidates)
@@ -47,7 +47,7 @@ func TestSelect_SingleCandidate(t *testing.T) {
 	s := NewSelector()
 
 	server, err := s.Select(&Context{
-		Candidates: []*proto.DataServer{
+		Candidates: []*proto.DataServerIdentity{
 			{Internal: "127.0.0.1:6601", Public: "127.0.0.1:6611"},
 		},
 		Status: proto.NewClusterStatus(),

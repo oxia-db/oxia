@@ -46,11 +46,12 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 
 	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
 	for _, server := range cnf.GetServers() {
-		dataServers = append(dataServers, &proto.DataServer{
-			Name:     new(server.GetNameOrDefault()),
-			Public:   server.GetPublic(),
-			Internal: server.GetInternal(),
-		})
+		id := server.GetNameOrDefault()
+		dataServer, found := cnf.GetDataServer(id)
+		if !found {
+			continue
+		}
+		dataServers = append(dataServers, dataServer)
 	}
 
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
@@ -61,13 +62,13 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
 
-	dataServerInfo, found := admin.metadata.GetDataServerInfo(req.DataServer)
+	dataServer, found := admin.metadata.GetDataServer(req.DataServer)
 	if !found {
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
 
 	return &proto.GetDataServerResponse{
-		DataServerInfo: dataServerInfo,
+		DataServer: dataServer,
 	}, nil
 }
 
