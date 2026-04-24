@@ -314,7 +314,10 @@ func (c *coordinator) startBackgroundActionWorker() {
 
 func (c *coordinator) startBackgroundConfigWatcher() {
 	configWatch := c.metadata.ConfigWatch()
-	_, ver := configWatch.Load()
+	currentConfig, ver := configWatch.Load()
+	if currentConfig != nil {
+		c.ConfigChanged(currentConfig)
+	}
 	for {
 		newConfig, nextVer, err := configWatch.Wait(c.ctx, ver)
 		if err != nil {
