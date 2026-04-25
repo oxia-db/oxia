@@ -134,12 +134,14 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	v := viper.New()
 
 	clusterConfigChangeNotifications := make(chan any)
+	clusterOptions := options.Cluster
+	clusterOptions.ConfigPath = options.Metadata.ClusterConfigPathOrLegacy(options.Cluster.ConfigPath)
 
 	clusterConfigProvider := func() (*proto.ClusterConfiguration, error) {
-		return loadClusterConfiguration(&options.Cluster, v)
+		return loadClusterConfiguration(&clusterOptions, v)
 	}
 
-	if err := watchClusterConfigurationProvider(&options.Cluster, v, clusterConfigChangeNotifications); err != nil {
+	if err := watchClusterConfigurationProvider(&clusterOptions, v, clusterConfigChangeNotifications); err != nil {
 		return nil, err
 	}
 
@@ -154,11 +156,11 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	case provider.NameMemory:
 		metadataProvider = memory.NewProvider()
 	case provider.NameFile:
-		metadataProvider = file.NewProvider(meta.File.Path)
+		metadataProvider = file.NewProvider(meta.File.StatusPath())
 	case provider.NameConfigMap:
 		k8sConfig := kubernetes.NewK8SClientConfig()
 		metadataProvider = kubernetes.NewConfigMapProvider(kubernetes.NewK8SClientset(k8sConfig),
-			meta.Kubernetes.Namespace, meta.Kubernetes.ConfigMapName)
+			meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault())
 	case provider.NameRaft:
 		var err error
 		metadataProvider, err = raft.NewProvider(
