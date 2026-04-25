@@ -31,7 +31,6 @@ import (
 	k8smetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
-	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/process"
@@ -69,7 +68,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	succeeded := false
 	defer cancelContextOnFailure(cancel, &succeeded)
 
-	clusterConfigReconciler, err := coordreconciler.NewReconciler(ctx, &options.Cluster)
+	clusterConfigStore, err := coordmetadata.NewClusterConfigStore(ctx, &options.Cluster)
 	if err != nil {
 		return nil, err
 	}
@@ -122,14 +121,9 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	}
 	slog.Info("This coordinator is now leader", slog.String("component", "coordinator"))
 
-	metadata := coordmetadata.New(ctx, metadataProvider, clusterConfigReconciler.Load, nil)
+	metadata := coordmetadata.New(ctx, metadataProvider, clusterConfigStore)
 	coordinatorInstance, err := NewCoordinator(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err != nil {
-		_ = metadata.Close()
-		return nil, err
-	}
-	if err := clusterConfigReconciler.Start(ctx, coordinatorInstance); err != nil {
-		_ = coordinatorInstance.Close()
 		_ = metadata.Close()
 		return nil, err
 	}

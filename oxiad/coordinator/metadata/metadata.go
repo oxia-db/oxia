@@ -18,24 +18,38 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
+	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
+	"github.com/spf13/viper"
 	gproto "google.golang.org/protobuf/proto"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
+	k8s "k8s.io/client-go/kubernetes"
 
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	k8smetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
+	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
 
 type Metadata interface {
 	io.Closer
+	ClusterConfigStore
 
 	LoadStatus() *commonproto.ClusterStatus
 	ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*commonproto.ClusterStatus, map[int64]string, []int64)
@@ -58,6 +72,293 @@ type Metadata interface {
 
 type EnsembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServerIdentity, error)
 
+const (
+	configMapClusterConfigPrefix = "configmap:"
+	clusterConfigMapKey          = "config.yaml"
+	k8sRequestTimeout            = 30 * time.Second
+)
+
+var newK8SClient = func() k8s.Interface {
+	k8sConfig := k8smetadata.NewK8SClientConfig()
+	return k8smetadata.NewK8SClientset(k8sConfig)
+}
+
+type ClusterConfigStore interface {
+	Load() (*commonproto.ClusterConfiguration, error)
+	Watch() *commonoption.Watch[*commonproto.ClusterConfiguration]
+}
+
+type providerConfigStore struct {
+	load  func() (*commonproto.ClusterConfiguration, error)
+	watch *commonoption.Watch[*commonproto.ClusterConfiguration]
+}
+
+func NewProviderClusterConfigStore(
+	ctx context.Context,
+	load func() (*commonproto.ClusterConfiguration, error),
+	notificationsCh chan any,
+) ClusterConfigStore {
+	store := &providerConfigStore{
+		load:  load,
+		watch: commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
+	}
+	if notificationsCh != nil {
+		go process.DoWithLabels(ctx, map[string]string{
+			"component": "cluster-config-store",
+		}, func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-notificationsCh:
+					_ = backoff.RetryNotify(func() error {
+						_, err := store.Load()
+						return err
+					}, oxiatime.NewBackOffWithInitialInterval(ctx, time.Second), func(err error, duration time.Duration) {
+						slog.Warn("failed to reload cluster configuration, retrying later",
+							slog.Any("error", err),
+							slog.Duration("retry-after", duration),
+						)
+					})
+				}
+			}
+		})
+	}
+	return store
+}
+
+func (s *providerConfigStore) Load() (*commonproto.ClusterConfiguration, error) {
+	config, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	s.notify(config)
+	return gproto.Clone(config).(*commonproto.ClusterConfiguration), nil //nolint:revive
+}
+
+func (s *providerConfigStore) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
+	return s.watch
+}
+
+func (s *providerConfigStore) notify(config *commonproto.ClusterConfiguration) {
+	current, _ := s.watch.Load()
+	if gproto.Equal(current, config) {
+		return
+	}
+	s.watch.Notify(gproto.Clone(config).(*commonproto.ClusterConfiguration)) //nolint:revive
+}
+
+func NewClusterConfigStore(ctx context.Context, cluster *option.ClusterOptions) (ClusterConfigStore, error) {
+	if strings.HasPrefix(cluster.ConfigPath, configMapClusterConfigPrefix) {
+		return newConfigMapConfigStore(ctx, cluster.ConfigPath)
+	}
+	return newFileConfigStore(cluster.ConfigPath)
+}
+
+type fileConfigStore struct {
+	v     *viper.Viper
+	watch *commonoption.Watch[*commonproto.ClusterConfiguration]
+}
+
+func newFileConfigStore(configPath string) (*fileConfigStore, error) {
+	v := viper.New()
+	v.SetConfigType("yaml")
+	if configPath == "" {
+		v.AddConfigPath("/oxia/conf")
+		v.AddConfigPath(".")
+	} else {
+		v.SetConfigFile(configPath)
+	}
+	store := &fileConfigStore{
+		v:     v,
+		watch: commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
+	}
+	if _, err := store.Load(); err != nil {
+		return nil, err
+	}
+	v.OnConfigChange(func(_ fsnotify.Event) {
+		if _, err := store.Load(); err != nil {
+			slog.Warn("failed to reload file cluster configuration", slog.Any("error", err))
+		}
+	})
+	v.WatchConfig()
+	return store, nil
+}
+
+func (s *fileConfigStore) Load() (*commonproto.ClusterConfiguration, error) {
+	if err := s.v.ReadInConfig(); err != nil {
+		return nil, err
+	}
+
+	configFile := s.v.ConfigFileUsed()
+	if configFile == "" {
+		return nil, errors.New("cluster configuration: no config file was loaded")
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return nil, err
+	}
+	config, err := parseClusterConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	current, _ := s.watch.Load()
+	if !gproto.Equal(current, config) {
+		s.watch.Notify(gproto.Clone(config).(*commonproto.ClusterConfiguration)) //nolint:revive
+	}
+	return config, nil
+}
+
+func (s *fileConfigStore) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
+	return s.watch
+}
+
+type configMapConfigStore struct {
+	client          k8s.Interface
+	namespace, name string
+	watch           *commonoption.Watch[*commonproto.ClusterConfiguration]
+}
+
+func newConfigMapConfigStore(ctx context.Context, configPath string) (*configMapConfigStore, error) {
+	path := strings.TrimPrefix(configPath, configMapClusterConfigPrefix)
+	namespace, name, ok := strings.Cut(path, "/")
+	if !ok || namespace == "" || name == "" {
+		return nil, errors.Errorf("invalid configmap cluster configuration path %q, expected configmap:<namespace>/<name>", configPath)
+	}
+	store := &configMapConfigStore{
+		client:    newK8SClient(),
+		namespace: namespace,
+		name:      name,
+		watch:     commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
+	}
+	if _, err := store.Load(); err != nil {
+		return nil, err
+	}
+	go process.DoWithLabels(ctx, map[string]string{
+		"component": "k8s-configmap-watch",
+	}, func() {
+		bo := oxiatime.NewBackOffWithInitialInterval(ctx, time.Second)
+		_ = backoff.RetryNotify(func() error {
+			err := store.watchOnce(ctx)
+			if err == nil {
+				return errors.New("K8S config map watch closed")
+			}
+			return err
+		}, bo, func(err error, duration time.Duration) {
+			slog.Warn("K8S config map watch failed, reconnecting",
+				slog.String("k8s-namespace", store.namespace),
+				slog.String("k8s-config-map", store.name),
+				slog.Any("error", err),
+				slog.Duration("retry-after", duration),
+			)
+		})
+	})
+	return store, nil
+}
+
+func (s *configMapConfigStore) Load() (*commonproto.ClusterConfiguration, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), k8sRequestTimeout)
+	defer cancel()
+
+	configMap, err := s.client.CoreV1().ConfigMaps(s.namespace).Get(ctx, s.name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	config, err := parseConfigMapData(configMap, s.namespace, s.name)
+	if err != nil {
+		return nil, err
+	}
+	s.notify(config)
+	return config, nil
+}
+
+func (s *configMapConfigStore) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
+	return s.watch
+}
+
+func (s *configMapConfigStore) watchOnce(ctx context.Context) error {
+	w, err := s.client.CoreV1().ConfigMaps(s.namespace).Watch(
+		ctx,
+		metav1.SingleObject(metav1.ObjectMeta{Name: s.name, Namespace: s.namespace}),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to setup watch on config map")
+	}
+	defer w.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case res, ok := <-w.ResultChan():
+			if !ok {
+				return errors.New("K8S config map watch closed")
+			}
+			if res.Type == watch.Error {
+				return errors.Errorf("watch error: %v", res.Object)
+			}
+			configMap, ok := res.Object.(*corev1.ConfigMap)
+			if !ok {
+				slog.Warn("Got wrong type of object notification",
+					slog.String("k8s-namespace", s.namespace),
+					slog.String("k8s-config-map", s.name),
+					slog.Any("object", res),
+				)
+				continue
+			}
+
+			slog.Info("Got watch event from K8S",
+				slog.String("k8s-namespace", s.namespace),
+				slog.String("k8s-config-map", s.name),
+				slog.Any("event-type", res.Type),
+			)
+
+			switch res.Type {
+			case watch.Added, watch.Modified:
+				config, err := parseConfigMapData(configMap, s.namespace, s.name)
+				if err != nil {
+					return err
+				}
+				s.notify(config)
+			default:
+				return errors.Errorf("unexpected event on config map: %v", res.Type)
+			}
+		}
+	}
+}
+
+func (s *configMapConfigStore) notify(config *commonproto.ClusterConfiguration) {
+	current, _ := s.watch.Load()
+	if gproto.Equal(current, config) {
+		return
+	}
+	s.watch.Notify(gproto.Clone(config).(*commonproto.ClusterConfiguration)) //nolint:revive
+}
+
+func parseConfigMapData(configMap *corev1.ConfigMap, namespace, name string) (*commonproto.ClusterConfiguration, error) {
+	data, found := configMap.Data[clusterConfigMapKey]
+	if !found {
+		return nil, errors.Errorf("path %q not found in config map: configmap:%s/%s", clusterConfigMapKey, namespace, name)
+	}
+	return parseClusterConfig([]byte(data))
+}
+
+func parseClusterConfig(data []byte) (*commonproto.ClusterConfiguration, error) {
+	config, err := commonproto.UnmarshalClusterConfigurationYAML(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	for _, authority := range config.GetAllowExtraAuthorities() {
+		if err := rpc2.ValidateAuthorityAddress(authority); err != nil {
+			return nil, errors.Wrapf(err, "cluster configuration: invalid allowExtraAuthorities entry %q", authority)
+		}
+	}
+	return config, nil
+}
+
 type coordinatorMetadata struct {
 	*slog.Logger
 
@@ -72,12 +373,10 @@ type coordinatorMetadata struct {
 	currentVersionID provider.Version
 	changeCh         chan struct{}
 
-	clusterConfigProvider        func() (*commonproto.ClusterConfiguration, error)
-	clusterConfigNotificationsCh chan any
+	clusterConfigStore ClusterConfigStore
 
 	clusterConfigLock     sync.RWMutex
 	currentClusterConfig  *commonproto.ClusterConfiguration
-	clusterConfigWatch    *commonoption.Watch[*commonproto.ClusterConfiguration]
 	nodesIndex            *redblacktree.Tree[string, *commonproto.DataServerIdentity]
 	namespaceConfigsIndex *redblacktree.Tree[string, *commonproto.Namespace]
 }
@@ -85,34 +384,31 @@ type coordinatorMetadata struct {
 func New(
 	ctx context.Context,
 	metadataProvider provider.Provider,
-	clusterConfigProvider func() (*commonproto.ClusterConfiguration, error),
-	clusterConfigNotificationsCh chan any,
+	clusterConfigStore ClusterConfigStore,
 ) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
-		Logger:                       slog.With(slog.String("component", "coordinator-metadata")),
-		ctx:                          metadataCtx,
-		cancel:                       cancel,
-		wg:                           &sync.WaitGroup{},
-		metadataProvider:             metadataProvider,
-		currentVersionID:             provider.NotExists,
-		changeCh:                     make(chan struct{}),
-		clusterConfigProvider:        clusterConfigProvider,
-		clusterConfigNotificationsCh: clusterConfigNotificationsCh,
-		clusterConfigWatch:           commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
+		Logger:             slog.With(slog.String("component", "coordinator-metadata")),
+		ctx:                metadataCtx,
+		cancel:             cancel,
+		wg:                 &sync.WaitGroup{},
+		metadataProvider:   metadataProvider,
+		currentVersionID:   provider.NotExists,
+		changeCh:           make(chan struct{}),
+		clusterConfigStore: clusterConfigStore,
 	}
 
 	m.doStatusRecovery()
 
-	if clusterConfigNotificationsCh != nil {
-		m.wg.Go(func() {
-			process.DoWithLabels(metadataCtx, map[string]string{
-				"component": "coordinator-metadata-config-watcher",
-			}, m.waitForConfigUpdates)
-		})
-	}
-
 	return m
+}
+
+func (m *coordinatorMetadata) Load() (*commonproto.ClusterConfiguration, error) {
+	return m.clusterConfigStore.Load()
+}
+
+func (m *coordinatorMetadata) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
+	return m.clusterConfigStore.Watch()
 }
 
 func (m *coordinatorMetadata) Close() error {
@@ -268,16 +564,12 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 	}
 
 	_ = backoff.RetryNotify(func() error {
-		newConfig, err := m.clusterConfigProvider()
+		newConfig, err := m.clusterConfigStore.Load()
 		if err != nil {
 			return err
 		}
 		m.currentClusterConfig = gproto.Clone(newConfig).(*commonproto.ClusterConfiguration) //nolint:revive
 		m.rebuildConfigIndexesLocked()
-		watchedConfig, _ := m.clusterConfigWatch.Load()
-		if watchedConfig == nil {
-			m.clusterConfigWatch.Notify(m.currentClusterConfig)
-		}
 		return nil
 	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
 		m.Warn(
@@ -312,39 +604,7 @@ func (m *coordinatorMetadata) UpdateConfig(newConfig *commonproto.ClusterConfigu
 
 	m.currentClusterConfig = gproto.Clone(newConfig).(*commonproto.ClusterConfiguration) //nolint:revive
 	m.rebuildConfigIndexesLocked()
-	m.clusterConfigWatch.Notify(m.currentClusterConfig)
 	return true
-}
-
-func (m *coordinatorMetadata) waitForConfigUpdates() {
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-
-		case <-m.clusterConfigNotificationsCh:
-			m.Info("Received cluster config change event")
-
-			m.clusterConfigLock.Lock()
-			oldClusterConfig := m.currentClusterConfig
-			m.currentClusterConfig = nil
-			m.nodesIndex = nil
-			m.namespaceConfigsIndex = nil
-			m.clusterConfigLock.Unlock()
-
-			m.loadClusterConfigWithInitSlow()
-
-			m.clusterConfigLock.RLock()
-			currentClusterConfig := m.currentClusterConfig
-			m.clusterConfigLock.RUnlock()
-
-			if gproto.Equal(oldClusterConfig, currentClusterConfig) {
-				m.Info("No cluster config changes detected")
-				continue
-			}
-			m.clusterConfigWatch.Notify(currentClusterConfig)
-		}
-	}
 }
 
 func (m *coordinatorMetadata) LoadConfig() *commonproto.ClusterConfiguration {
@@ -359,7 +619,7 @@ func (m *coordinatorMetadata) LoadConfig() *commonproto.ClusterConfiguration {
 }
 
 func (m *coordinatorMetadata) ConfigWatch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
-	return m.clusterConfigWatch
+	return m.clusterConfigStore.Watch()
 }
 
 func (m *coordinatorMetadata) LoadLoadBalancer() *commonproto.LoadBalancer {

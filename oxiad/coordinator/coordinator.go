@@ -34,6 +34,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/ensemble"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
+	"github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 
@@ -121,21 +122,10 @@ func (c *coordinator) NodeControllers() map[string]controller.DataServerControll
 func (c *coordinator) ReconcileClusterConfig(newConfig *proto.ClusterConfiguration) error {
 	if !c.metadata.UpdateConfig(newConfig) {
 		c.Info("No cluster config changes detected")
+		return nil
 	}
+	c.ConfigChanged(newConfig)
 	return nil
-}
-
-func (c *coordinator) startBackgroundConfigWatcher() {
-	_, ver := c.metadata.ConfigWatch().Load()
-	for {
-		clusterConfig, currentVer, err := c.metadata.ConfigWatch().Wait(c.ctx, ver)
-		if err != nil {
-			c.Warn("exit background cluster configuration watch goroutine due to an error", slog.Any("error", err))
-			return
-		}
-		ver = currentVer
-		c.ConfigChanged(clusterConfig)
-	}
 }
 
 func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
@@ -788,12 +778,8 @@ func newCoordinator(
 			"component": "coordinator-action-worker",
 		}, c.startBackgroundActionWorker)
 	})
-	c.Go(func() {
-		process.DoWithLabels(c.ctx, map[string]string{
-			"component": "coordinator-config-watcher",
-		}, c.startBackgroundConfigWatcher)
-	})
 	c.loadBalancer.Start()
+	reconciler.New(c.ctx, metadata, c)
 	return c, nil
 }
 

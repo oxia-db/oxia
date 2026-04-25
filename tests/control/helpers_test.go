@@ -36,7 +36,8 @@ func newCoordinatorInstance(
 ) coordinator.Coordinator {
 	t.Helper()
 
-	metadata := coordmetadata.New(t.Context(), metadataProvider, clusterConfigProvider, clusterConfigNotificationsCh)
+	metadata := coordmetadata.New(t.Context(), metadataProvider,
+		coordmetadata.NewProviderClusterConfigStore(t.Context(), clusterConfigProvider, clusterConfigNotificationsCh))
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
 	})
