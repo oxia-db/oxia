@@ -39,10 +39,18 @@ func dataServer(name *string, public, internal string) *proto.DataServerIdentity
 func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
+	if len(config.GetServers()) > 0 && len(config.GetNamespaces()) == 0 {
+		config.Namespaces = []*proto.Namespace{{
+			Name:              "default",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+		}}
+	}
+
 	metadata := coordmetadata.New(
 		t.Context(),
 		memory.NewProvider(),
-		coordmetadata.NewProviderClusterConfigStore(t.Context(), func() (*proto.ClusterConfiguration, error) {
+		coordmetadata.NewClusterConfigProviderFromLoader(t.Context(), func() (*proto.ClusterConfiguration, error) {
 			return config, nil
 		}, nil),
 	)

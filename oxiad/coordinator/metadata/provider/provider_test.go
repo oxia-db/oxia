@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	gproto "google.golang.org/protobuf/proto"
+	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -78,34 +79,65 @@ func TestProvider(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := newProvider(t)
 
-			res, version, err := m.Get()
+			res, version, err := m.Load(provider.DocumentClusterStatus)
 			assert.NoError(t, err)
 			assert.Equal(t, provider.NotExists, version)
 			assert.Nil(t, res)
 
+			status := &proto.ClusterStatus{
+				Namespaces: map[string]*proto.NamespaceStatus{},
+			}
+			data, err := proto.MarshalClusterStatusJSON(status)
+			assert.NoError(t, err)
+
 			assert.PanicsWithError(t, provider.ErrBadVersion.Error(), func() {
-				_, err := m.Store(&proto.ClusterStatus{
-					Namespaces: map[string]*proto.NamespaceStatus{},
-				}, "")
+				_, err := m.Store(provider.DocumentClusterStatus, data, "")
 				assert.NoError(t, err)
 			})
 
-			newVersion, err := m.Store(&proto.ClusterStatus{
-				Namespaces: map[string]*proto.NamespaceStatus{},
-			}, provider.NotExists)
+			newVersion, err := m.Store(provider.DocumentClusterStatus, data, provider.NotExists)
 			assert.NoError(t, err)
 			assert.EqualValues(t, provider.Version("0"), newVersion)
 
-			res, version, err = m.Get()
+			res, version, err = m.Load(provider.DocumentClusterStatus)
 			assert.NoError(t, err)
 			assert.EqualValues(t, provider.Version("0"), version)
-			assert.True(t, gproto.Equal(&proto.ClusterStatus{
-				Namespaces: map[string]*proto.NamespaceStatus{},
-			}, res))
+			decoded, err := proto.UnmarshalClusterStatusYAML(res)
+			assert.NoError(t, err)
+			assert.True(t, gproto.Equal(status, decoded))
 
 			assert.NoError(t, m.Close())
 		})
 	}
+}
+
+func TestConfigMapProviderStoresClusterConfigIntoExistingConfigMap(t *testing.T) {
+	f := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:       "ns",
+			Name:            "n",
+			ResourceVersion: "7",
+		},
+		Data: map[string]string{
+			"status": "{}",
+		},
+	})
+	f.PrependReactor("*", "*", k8sResourceVersionSupport(f.Tracker()))
+	m := kubernetes.NewConfigMapProvider(f, "ns", "n")
+
+	data, version, err := m.Load(provider.DocumentClusterConfiguration)
+	assert.NoError(t, err)
+	assert.Equal(t, provider.Version("7"), version)
+	assert.Nil(t, data)
+
+	newVersion, err := m.Store(provider.DocumentClusterConfiguration, []byte("servers: []"), version)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, newVersion)
+
+	cm, err := f.CoreV1().ConfigMaps("ns").Get(t.Context(), "n", metav1.GetOptions{})
+	assert.NoError(t, err)
+	assert.Equal(t, "{}", cm.Data["status"])
+	assert.Equal(t, "servers: []", cm.Data["config.yaml"])
 }
 
 func freeAddress(t *testing.T) string {

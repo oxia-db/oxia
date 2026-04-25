@@ -46,13 +46,39 @@ var namespaceConfig = &proto.Namespace{
 func newTestMetadata(t *testing.T, metadataProvider provider.Provider, clusterConfig *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
-	metadata := coordmetadata.New(t.Context(), metadataProvider, coordmetadata.NewProviderClusterConfigStore(t.Context(), func() (*proto.ClusterConfiguration, error) {
+	clusterConfig = validTestClusterConfig(clusterConfig)
+	metadata := coordmetadata.New(t.Context(), metadataProvider, coordmetadata.NewClusterConfigProviderFromLoader(t.Context(), func() (*proto.ClusterConfiguration, error) {
 		return clusterConfig, nil
 	}, nil))
 	t.Cleanup(func() {
 		assert.NoError(t, metadata.Close())
 	})
 	return metadata
+}
+
+func validTestClusterConfig(clusterConfig *proto.ClusterConfiguration) *proto.ClusterConfiguration {
+	if clusterConfig == nil {
+		clusterConfig = &proto.ClusterConfiguration{}
+	}
+	if len(clusterConfig.GetServers()) == 0 {
+		clusterConfig.Servers = []*proto.DataServerIdentity{
+			{Public: "s1:9091", Internal: "s1:8191"},
+			{Public: "s2:9091", Internal: "s2:8191"},
+			{Public: "s3:9091", Internal: "s3:8191"},
+		}
+	}
+	if len(clusterConfig.GetNamespaces()) == 0 {
+		replicationFactor := uint32(len(clusterConfig.GetServers()))
+		if replicationFactor > 3 {
+			replicationFactor = 3
+		}
+		clusterConfig.Namespaces = []*proto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			InitialShardCount: 1,
+			ReplicationFactor: replicationFactor,
+		}}
+	}
+	return clusterConfig
 }
 
 func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {

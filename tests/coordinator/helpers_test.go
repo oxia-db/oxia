@@ -35,7 +35,7 @@ func createCoordinatorMetadata(
 	t.Helper()
 
 	return coordmetadata.New(t.Context(), metadataProvider,
-		coordmetadata.NewProviderClusterConfigStore(t.Context(), clusterConfigProvider, clusterConfigNotificationsCh))
+		coordmetadata.NewClusterConfigProviderFromLoader(t.Context(), clusterConfigProvider, clusterConfigNotificationsCh))
 }
 
 func newCoordinatorInstance(

@@ -205,10 +205,6 @@ func (cc *ClusterConfiguration) Validate() error {
 		return errors.New("cluster configuration: at least one server must be configured")
 	}
 
-	if len(cc.GetNamespaces()) == 0 {
-		return errors.New("cluster configuration: at least one namespace must be configured")
-	}
-
 	for _, ns := range cc.GetNamespaces() {
 		if err := validation.ValidateNamespace(ns.GetName()); err != nil {
 			return fmt.Errorf("cluster configuration: %w", err)

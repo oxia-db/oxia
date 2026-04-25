@@ -144,31 +144,58 @@ func fromVersion(v provider.Version) int64 {
 	return n
 }
 
-func (mpr *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
+func (mpr *Provider) Load(document provider.Document) (data []byte, version provider.Version, err error) {
 	mpr.Lock()
 	defer mpr.Unlock()
+
+	if document != provider.DocumentClusterStatus && document != provider.DocumentClusterConfiguration {
+		return nil, provider.NotExists, errors.Errorf("unsupported metadata document %q", document)
+	}
 
 	mpr.log.Debug("Get metadata",
+		slog.String("metadata-document", string(document)),
 		slog.Any("cluster-status", mpr.sc.State),
 		slog.Any("current-version", mpr.sc.CurrentVersion))
-	return mpr.sc.State, toVersion(mpr.sc.CurrentVersion), nil
+
+	if document != provider.DocumentClusterStatus {
+		data, found := mpr.sc.Documents[document]
+		if !found {
+			return nil, toVersion(mpr.sc.CurrentVersion), nil
+		}
+		return append([]byte(nil), data...), toVersion(mpr.sc.CurrentVersion), nil
+	}
+
+	if mpr.sc.State == nil {
+		return nil, toVersion(mpr.sc.CurrentVersion), nil
+	}
+	data, err = commonproto.MarshalClusterStatusJSON(mpr.sc.State)
+	if err != nil {
+		return nil, provider.NotExists, err
+	}
+	return data, toVersion(mpr.sc.CurrentVersion), nil
 }
 
-func (mpr *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (mpr *Provider) Store(document provider.Document, data []byte, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	mpr.Lock()
 	defer mpr.Unlock()
+
+	if document != provider.DocumentClusterStatus && document != provider.DocumentClusterConfiguration {
+		return provider.NotExists, errors.Errorf("unsupported metadata document %q", document)
+	}
 
 	if err = mpr.raft.VerifyLeader().Error(); err != nil {
 		return provider.NotExists, err
 	}
 
 	mpr.log.Debug("Store into raft",
-		slog.Any("cluster-status", cs),
+		slog.String("metadata-document", string(document)),
+		slog.Any("data", data),
 		slog.Any("expected-version", expectedVersion),
 		slog.Any("current-version", mpr.sc.CurrentVersion))
 
 	cmd := raftOpCmd{
-		NewState:        mustMarshalClusterStatus(cs),
+		Document:        document,
+		NewState:        data,
 		ExpectedVersion: fromVersion(expectedVersion),
 	}
 
@@ -192,4 +219,12 @@ func (mpr *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provid
 	}
 
 	return toVersion(applyRes.newVersion), nil
+}
+
+func (*Provider) Watch() <-chan struct{} {
+	return nil
+}
+
+func (*Provider) SupportsWatch() bool {
+	return false
 }

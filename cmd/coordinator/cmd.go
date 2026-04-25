@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
@@ -34,8 +35,9 @@ import (
 )
 
 var (
-	sconfFile          string
-	coordinatorOptions = option.NewDefaultOptions()
+	sconfFile                       string
+	deprecatedFileClusterStatusPath string
+	coordinatorOptions              = option.NewDefaultOptions()
 
 	Cmd = &cobra.Command{
 		Use:   "coordinator",
@@ -58,18 +60,19 @@ func init() {
 	Cmd.Flags().StringVar(&meta.ProviderName, "metadata", "file", "Metadata provider implementation: file, configmap, raft or memory")
 
 	Cmd.Flags().StringVar(&meta.Kubernetes.Namespace, "k8s-namespace", meta.Kubernetes.Namespace, "Kubernetes namespace for oxia config maps")
-	Cmd.Flags().StringVar(&meta.Kubernetes.ConfigMapName, "k8s-configmap-name", meta.Kubernetes.ConfigMapName, "ConfigMap name for cluster status configmap")
+	Cmd.Flags().StringVar(&meta.Kubernetes.StatusName, "k8s-configmap-name", meta.Kubernetes.StatusName, "ConfigMap name for cluster status configmap")
 
-	Cmd.Flags().StringVar(&meta.File.Path, "file-clusters-status-path", "data/cluster-status.json", "The path where the cluster status is stored when using 'file' provider")
+	Cmd.Flags().StringVar(&deprecatedFileClusterStatusPath, "file-clusters-status-path", "data/cluster-status.json", "The path where the cluster status is stored when using 'file' provider")
 
 	Cmd.Flags().StringSliceVar(&meta.Raft.BootstrapNodes, "raft-bootstrap-nodes", meta.Raft.BootstrapNodes, "Raft bootstrap nodes")
 	Cmd.Flags().StringVar(&meta.Raft.Address, "raft-address", "", "Raft address")
 	Cmd.Flags().StringVar(&meta.Raft.DataDir, "raft-data-dir", "data/raft", "Raft address")
 
 	cluster := &coordinatorOptions.Cluster
-	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Cluster config file path")
-	_ = Cmd.Flags().MarkDeprecated("conf", "--conf and its short form -f are deprecated; please use --cconfig instead (no short form)")
-	Cmd.Flags().StringVar(&cluster.ConfigPath, "cconfig", "", "Cluster config file path")
+	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Deprecated cluster config file path")
+	_ = Cmd.Flags().MarkDeprecated("conf", "--conf and its short form -f are deprecated; configure cluster config through metadata.file.configName or metadata.kubernetes.configName")
+	Cmd.Flags().StringVar(&cluster.ConfigPath, "cconfig", "", "Deprecated cluster config file path")
+	_ = Cmd.Flags().MarkDeprecated("cconfig", "--cconfig is deprecated; configure cluster config through metadata.file.configName or metadata.kubernetes.configName")
 
 	internalServer := &coordinatorOptions.Server.Internal
 	Cmd.Flags().StringVar(&internalServer.TLS.CertFile, "tls-cert-file", "", "Tls certificate file")
@@ -116,6 +119,10 @@ func exec(cmd *cobra.Command, _ []string) {
 			})
 			v.WatchConfig()
 		} else {
+			if deprecatedFileClusterStatusPath != "" {
+				coordinatorOptions.Metadata.File.Dir = filepath.Dir(deprecatedFileClusterStatusPath)
+				coordinatorOptions.Metadata.File.StatusName = filepath.Base(deprecatedFileClusterStatusPath)
+			}
 			coordinatorOptions.WithDefault()
 			if err := coordinatorOptions.Validate(); err != nil {
 				return nil, err

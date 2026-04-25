@@ -27,6 +27,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
@@ -45,7 +46,7 @@ loadBalancer:
   quarantineTime: 2m
 `
 
-func TestMetadataClusterConfig_LoadFromConfigMap(t *testing.T) {
+func TestMetadataClusterConfig_LoadFromLegacyConfigMapPath(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "oxia",
@@ -67,26 +68,102 @@ func TestMetadataClusterConfig_LoadFromConfigMap(t *testing.T) {
 		newK8SClient = previousK8SClient
 	})
 
-	store, err := NewClusterConfigStore(t.Context(), &option.ClusterOptions{
-		ConfigPath: "configmap:oxia/oxia-coordinator",
-	})
+	metadataOptions := &option.MetadataOptions{
+		ProviderOptions: option.ProviderOptions{
+			ProviderName: provider.NameConfigMap,
+		},
+	}
+	require.NoError(t, metadataOptions.ApplyLegacyClusterConfigPath("configmap:oxia/oxia-coordinator"))
+	store, err := NewMetadataProvider(metadataOptions)
 	require.NoError(t, err)
 
-	config, err := store.Load()
+	data, _, err := store.Load(provider.DocumentClusterConfiguration)
+	require.NoError(t, err)
+	config, err := provider.ParseClusterConfig(data)
 	require.NoError(t, err)
 	require.Equal(t, []string{"oxia.oxia.svc.cluster.local:6648"}, config.GetAllowExtraAuthorities())
 }
 
-func TestMetadataClusterConfig_LoadFromFile(t *testing.T) {
+func TestMetadataClusterConfig_LoadFromLegacyFilePath(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "cluster.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(clusterConfigWithCamelCaseFields), 0o600))
 
-	store, err := NewClusterConfigStore(t.Context(), &option.ClusterOptions{
-		ConfigPath: configFile,
-	})
+	metadataOptions := &option.MetadataOptions{
+		ProviderOptions: option.ProviderOptions{
+			ProviderName: provider.NameFile,
+		},
+	}
+	require.NoError(t, metadataOptions.ApplyLegacyClusterConfigPath(configFile))
+	store, err := NewMetadataProvider(metadataOptions)
 	require.NoError(t, err)
 
-	config, err := store.Load()
+	data, _, err := store.Load(provider.DocumentClusterConfiguration)
+	require.NoError(t, err)
+	config, err := provider.ParseClusterConfig(data)
+	require.NoError(t, err)
+	require.Equal(t, []string{"oxia.oxia.svc.cluster.local:6648"}, config.GetAllowExtraAuthorities())
+}
+
+func TestMetadataConfigProvider_DerivesK8SConfigMap(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "oxia",
+			Name:      "oxia-config",
+		},
+		Data: map[string]string{
+			"config.yaml": clusterConfigWithCamelCaseFields,
+		},
+	})
+	client.PrependWatchReactor("configmaps", func(action k8stesting.Action) (bool, k8swatch.Interface, error) {
+		return true, k8swatch.NewFake(), nil
+	})
+
+	previousK8SClient := newK8SClient
+	newK8SClient = func() k8s.Interface {
+		return client
+	}
+	t.Cleanup(func() {
+		newK8SClient = previousK8SClient
+	})
+
+	store, err := NewMetadataProvider(
+		&option.MetadataOptions{
+			ProviderOptions: option.ProviderOptions{
+				ProviderName: provider.NameConfigMap,
+				Kubernetes: option.K8sMetadata{
+					Namespace:  "oxia",
+					ConfigName: "oxia-config",
+				},
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	data, _, err := store.Load(provider.DocumentClusterConfiguration)
+	require.NoError(t, err)
+	config, err := provider.ParseClusterConfig(data)
+	require.NoError(t, err)
+	require.Equal(t, []string{"oxia.oxia.svc.cluster.local:6648"}, config.GetAllowExtraAuthorities())
+}
+
+func TestMetadataConfigProvider_LoadsFileConfigName(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "cluster.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(clusterConfigWithCamelCaseFields), 0o600))
+
+	metadataOptions := &option.MetadataOptions{
+		ProviderOptions: option.ProviderOptions{
+			ProviderName: provider.NameFile,
+			File: option.FileMetadata{
+				ConfigName: configFile,
+			},
+		},
+	}
+	store, err := NewMetadataProvider(metadataOptions)
+	require.NoError(t, err)
+
+	data, _, err := store.Load(provider.DocumentClusterConfiguration)
+	require.NoError(t, err)
+	config, err := provider.ParseClusterConfig(data)
 	require.NoError(t, err)
 	require.Equal(t, []string{"oxia.oxia.svc.cluster.local:6648"}, config.GetAllowExtraAuthorities())
 }

@@ -24,7 +24,6 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
 	"github.com/oxia-db/oxia/common/proto"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/single"
@@ -66,13 +65,19 @@ func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
 func (*mockMetadata) StatusChangeNotify() <-chan struct{} { return make(chan struct{}) }
 
+func (*mockMetadata) Load() (*proto.ClusterConfiguration, error) {
+	return &proto.ClusterConfiguration{}, nil
+}
+
+func (*mockMetadata) Store(*proto.ClusterConfiguration) error { return nil }
+
+func (*mockMetadata) DeclarativeConfigEnabled() bool { return false }
+
+func (*mockMetadata) Watch() <-chan struct{} { return nil }
+
 func (*mockMetadata) LoadConfig() *proto.ClusterConfiguration { return nil }
 
 func (*mockMetadata) UpdateConfig(*proto.ClusterConfiguration) bool { return false }
-
-func (*mockMetadata) ConfigWatch() *commonoption.Watch[*proto.ClusterConfiguration] {
-	return commonoption.NewWatch[*proto.ClusterConfiguration](nil)
-}
 
 func (m *mockMetadata) LoadLoadBalancer() *proto.LoadBalancer {
 	if m.lbConfig != nil {

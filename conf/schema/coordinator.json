@@ -28,17 +28,14 @@
       "properties": {
         "configPath": {
           "type": "string",
-          "description": "Path to the cluster configuration file",
+          "description": "Deprecated path to the cluster configuration file",
           "examples": [
             "./configs/cluster.yaml"
           ]
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "configPath"
-      ]
+      "type": "object"
     },
     "ControllerOptions": {
       "properties": {
@@ -52,19 +49,37 @@
     },
     "FileMetadata": {
       "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Directory for file-based metadata storage",
+          "examples": [
+            "./metadata"
+          ]
+        },
+        "statusName": {
+          "type": "string",
+          "description": "File name for cluster status",
+          "examples": [
+            "cluster-status.json"
+          ]
+        },
+        "configName": {
+          "type": "string",
+          "description": "File name for cluster configuration",
+          "examples": [
+            "cluster.yaml"
+          ]
+        },
         "path": {
           "type": "string",
-          "description": "File system path for metadata storage",
+          "description": "Deprecated file system path for cluster status metadata",
           "examples": [
-            "./metadata/cluster.json"
+            "./metadata/cluster-status.json"
           ]
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "path"
-      ]
+      "type": "object"
     },
     "InternalServerOptions": {
       "properties": {
@@ -96,19 +111,32 @@
             "default"
           ]
         },
+        "statusName": {
+          "type": "string",
+          "description": "Name of the ConfigMap for cluster status",
+          "examples": [
+            "oxia-cluster-status"
+          ]
+        },
+        "configName": {
+          "type": "string",
+          "description": "Name of the ConfigMap for cluster configuration",
+          "examples": [
+            "oxia-cluster-config"
+          ]
+        },
         "configMapName": {
           "type": "string",
-          "description": "Name of the ConfigMap for metadata storage",
+          "description": "Deprecated name of the ConfigMap for cluster status",
           "examples": [
-            "oxia-cluster-metadata"
+            "oxia-cluster-status"
           ]
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "namespace",
-        "configMapName"
+        "namespace"
       ]
     },
     "LogOptions": {
@@ -129,7 +157,7 @@
       "properties": {
         "providerName": {
           "type": "string",
-          "description": "Metadata provider type (memory, configmap, file, or raft)",
+          "description": "Metadata provider type. Valid values: memory/configmap/file/raft",
           "examples": [
             "configmap"
           ]
@@ -193,7 +221,7 @@
       "properties": {
         "cluster": {
           "$ref": "#/$defs/ClusterOptions",
-          "description": "Cluster configuration settings"
+          "description": "Deprecated cluster configuration settings"
         },
         "server": {
           "$ref": "#/$defs/ServerOptions",
@@ -215,7 +243,6 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "cluster",
         "server",
         "metadata",
         "observability"

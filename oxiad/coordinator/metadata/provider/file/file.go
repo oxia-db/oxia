@@ -15,21 +15,18 @@
 package file
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/juju/fslock"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
-	gproto "google.golang.org/protobuf/proto"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-
-	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 type container struct {
@@ -40,42 +37,108 @@ type container struct {
 var _ provider.Provider = &Provider{}
 
 type Provider struct {
-	path     string
-	fileLock *fslock.Lock
+	statusPath string
+	configPath string
+	fileLock   *fslock.Lock
+
+	ctx          context.Context
+	cancel       context.CancelFunc
+	configWatch  chan struct{}
+	configWatchM sync.Mutex
 }
 
 func NewProvider(path string) provider.Provider {
-	return &Provider{
-		path:     path,
-		fileLock: fslock.New(path),
+	return NewProviderWithPaths(path, path)
+}
+
+func NewProviderWithPaths(statusPath, configPath string) provider.Provider {
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &Provider{
+		statusPath: statusPath,
+		configPath: configPath,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
+	if statusPath != "" {
+		p.fileLock = fslock.New(statusPath)
+	}
+	return p
 }
 
 func (m *Provider) Close() error {
-	if err := m.fileLock.Unlock(); err != nil {
-		slog.Warn(
-			"Failed to release file lock on metadata",
-			slog.Any("error", err),
-		)
+	m.cancel()
+	if m.fileLock != nil {
+		if err := m.fileLock.Unlock(); err != nil {
+			slog.Warn(
+				"Failed to release file lock on metadata",
+				slog.Any("error", err),
+			)
+		}
 	}
 
 	return nil
 }
 
 func (m *Provider) WaitToBecomeLeader() error {
-	if err := m.ensureParentDirectoryExists(); err != nil {
+	if m.statusPath == "" {
+		return nil
+	}
+	if err := ensureParentDirectoryExists(m.statusPath); err != nil {
 		return err
 	}
 
 	if err := m.fileLock.Lock(); err != nil {
-		return errors.Wrapf(err, "failed to acquire lock on %s", m.path)
+		return errors.Wrapf(err, "failed to acquire lock on %s", m.statusPath)
 	}
 
 	return nil
 }
 
-func (m *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
-	content, err := os.ReadFile(m.path)
+func (m *Provider) path(document provider.Document) (string, error) {
+	switch document {
+	case provider.DocumentClusterStatus:
+		if m.statusPath == "" {
+			return "", errors.New("cluster status file path is not configured")
+		}
+		return m.statusPath, nil
+	case provider.DocumentClusterConfiguration:
+		if m.configPath == "" {
+			return "", errors.New("cluster configuration file path is not configured")
+		}
+		return m.configPath, nil
+	default:
+		return "", errors.Errorf("unsupported metadata document %q", document)
+	}
+}
+
+func (m *Provider) Load(document provider.Document) (data []byte, version provider.Version, err error) {
+	switch document {
+	case provider.DocumentClusterStatus:
+		return m.loadStatus()
+	case provider.DocumentClusterConfiguration:
+		path, err := m.path(document)
+		if err != nil {
+			return nil, provider.NotExists, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, provider.NotExists, nil
+			}
+			return nil, provider.NotExists, err
+		}
+		return data, provider.NotExists, nil
+	default:
+		return nil, provider.NotExists, errors.Errorf("unsupported metadata document %q", document)
+	}
+}
+
+func (m *Provider) loadStatus() (data []byte, version provider.Version, err error) {
+	path, err := m.path(provider.DocumentClusterStatus)
+	if err != nil {
+		return nil, provider.NotExists, err
+	}
+	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, provider.NotExists, nil
@@ -96,20 +159,41 @@ func (m *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Versio
 		return nil, mc.Version, nil
 	}
 
-	clusterStatus, err := commonproto.UnmarshalClusterStatusJSON(mc.ClusterStatus)
-	if err != nil {
-		return nil, provider.NotExists, err
-	}
-
-	return clusterStatus, mc.Version, nil
+	return mc.ClusterStatus, mc.Version, nil
 }
 
-func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
-	if err = m.ensureParentDirectoryExists(); err != nil {
+func (m *Provider) Store(document provider.Document, data []byte, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+	switch document {
+	case provider.DocumentClusterStatus:
+		return m.storeStatus(data, expectedVersion)
+	case provider.DocumentClusterConfiguration:
+		path, err := m.path(document)
+		if err != nil {
+			return provider.NotExists, err
+		}
+		if err = ensureParentDirectoryExists(path); err != nil {
+			return provider.NotExists, err
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			return provider.NotExists, err
+		}
+		m.notifyConfigWatch()
+		return provider.NotExists, nil
+	default:
+		return provider.NotExists, errors.Errorf("unsupported metadata document %q", document)
+	}
+}
+
+func (m *Provider) storeStatus(data []byte, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+	path, err := m.path(provider.DocumentClusterStatus)
+	if err != nil {
+		return provider.NotExists, err
+	}
+	if err = ensureParentDirectoryExists(path); err != nil {
 		return provider.NotExists, err
 	}
 
-	_, existingVersion, err := m.Get()
+	_, existingVersion, err := m.loadStatus()
 	if err != nil {
 		return provider.NotExists, err
 	}
@@ -119,28 +203,94 @@ func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider
 	}
 
 	newVersion = provider.NextVersion(existingVersion)
-	statusBytes, err := commonproto.MarshalClusterStatusJSON(cs)
-	if err != nil {
-		return "", err
-	}
 	newContent, err := json.Marshal(container{
-		ClusterStatus: statusBytes,
+		ClusterStatus: data,
 		Version:       newVersion,
 	})
 	if err != nil {
 		return "", err
 	}
 
-	if err := os.WriteFile(m.path, newContent, 0600); err != nil {
+	if err := os.WriteFile(path, newContent, 0600); err != nil {
 		return provider.NotExists, err
 	}
 
 	return newVersion, nil
 }
 
-func (m *Provider) ensureParentDirectoryExists() error {
-	// Ensure directory exists
-	parentDir := filepath.Dir(m.path)
+func (*Provider) SupportsWatch() bool {
+	return true
+}
+
+func (m *Provider) Watch() <-chan struct{} {
+	m.configWatchM.Lock()
+	defer m.configWatchM.Unlock()
+	if m.configWatch != nil {
+		return m.configWatch
+	}
+
+	m.configWatch = make(chan struct{}, 1)
+	go m.watchConfigFile()
+	return m.configWatch
+}
+
+func (m *Provider) watchConfigFile() {
+	path, err := m.path(provider.DocumentClusterConfiguration)
+	if err != nil {
+		slog.Warn(
+			"failed to watch file metadata",
+			slog.Any("error", err),
+		)
+		return
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		slog.Warn("failed to create file metadata watcher", slog.Any("error", err))
+		return
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(path); err != nil {
+		slog.Warn("failed to watch file metadata", slog.String("path", path), slog.Any("error", err))
+		return
+	}
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			slog.Warn("file metadata watch failed", slog.String("path", path), slog.Any("error", err))
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
+				m.notifyConfigWatch()
+			}
+		}
+	}
+}
+
+func (m *Provider) notifyConfigWatch() {
+	m.configWatchM.Lock()
+	ch := m.configWatch
+	m.configWatchM.Unlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+func ensureParentDirectoryExists(path string) error {
+	parentDir := filepath.Dir(path)
 	if _, err := os.Stat(parentDir); err != nil {
 		if !os.IsNotExist(err) {
 			return err
@@ -152,62 +302,4 @@ func (m *Provider) ensureParentDirectoryExists() error {
 	}
 
 	return nil
-}
-
-type ClusterConfigStore struct {
-	v     *viper.Viper
-	watch *commonoption.Watch[*commonproto.ClusterConfiguration]
-}
-
-func NewClusterConfigStore(configPath string) (*ClusterConfigStore, error) {
-	v := viper.New()
-	v.SetConfigType("yaml")
-	if configPath == "" {
-		v.AddConfigPath("/oxia/conf")
-		v.AddConfigPath(".")
-	} else {
-		v.SetConfigFile(configPath)
-	}
-	store := &ClusterConfigStore{
-		v:     v,
-		watch: commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
-	}
-	if _, err := store.Load(); err != nil {
-		return nil, err
-	}
-	v.OnConfigChange(func(_ fsnotify.Event) {
-		if _, err := store.Load(); err != nil {
-			slog.Warn("failed to reload file cluster configuration", slog.Any("error", err))
-		}
-	})
-	v.WatchConfig()
-	return store, nil
-}
-
-func (s *ClusterConfigStore) Load() (*commonproto.ClusterConfiguration, error) {
-	if err := s.v.ReadInConfig(); err != nil {
-		return nil, err
-	}
-
-	configFile := s.v.ConfigFileUsed()
-	if configFile == "" {
-		return nil, errors.New("cluster configuration: no config file was loaded")
-	}
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		return nil, err
-	}
-	config, err := provider.ParseClusterConfig(data)
-	if err != nil {
-		return nil, err
-	}
-	current, _ := s.watch.Load()
-	if !gproto.Equal(current, config) {
-		s.watch.Notify(gproto.Clone(config).(*commonproto.ClusterConfiguration)) //nolint:revive
-	}
-	return config, nil
-}
-
-func (s *ClusterConfigStore) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
-	return s.watch
 }

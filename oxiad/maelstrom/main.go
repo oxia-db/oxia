@@ -191,7 +191,7 @@ func main() {
 			)
 			os.Exit(1)
 		}
-		metadata := coordmetadata.New(context.Background(), metadataProvider, coordmetadata.NewProviderClusterConfigStore(context.Background(), func() (*commonproto.ClusterConfiguration, error) { return clusterConfig, nil }, nil))
+		metadata := coordmetadata.New(context.Background(), metadataProvider, coordmetadata.NewClusterConfigProviderFromLoader(context.Background(), func() (*commonproto.ClusterConfiguration, error) { return clusterConfig, nil }, nil))
 		_, err := coordinator.NewCoordinator(
 			metadata,
 			func(instanceID string) rpc.Provider {

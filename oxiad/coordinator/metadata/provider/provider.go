@@ -21,13 +21,13 @@ import (
 	"github.com/pkg/errors"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 )
 
 var (
 	ErrNotInitialized = errors.New("metadata not initialized")
 	ErrBadVersion     = errors.New("metadata bad version")
+	ErrUnsupported    = errors.New("metadata operation unsupported")
 )
 
 var (
@@ -40,6 +40,13 @@ var (
 type Version string
 
 const NotExists Version = "-1"
+
+type Document string
+
+const (
+	DocumentClusterStatus        Document = "clusterStatus"
+	DocumentClusterConfiguration Document = "clusterConfiguration"
+)
 
 func NextVersion(version Version) Version {
 	i, err := strconv.ParseInt(string(version), 10, 64)
@@ -54,16 +61,15 @@ func NextVersion(version Version) Version {
 type Provider interface {
 	io.Closer
 
-	Get() (cs *commonproto.ClusterStatus, version Version, err error)
+	Load(document Document) (data []byte, version Version, err error)
 
-	Store(cs *commonproto.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
+	Store(document Document, data []byte, expectedVersion Version) (newVersion Version, err error)
+
+	SupportsWatch() bool
+
+	Watch() <-chan struct{}
 
 	WaitToBecomeLeader() error
-}
-
-type ClusterConfigStore interface {
-	Load() (*commonproto.ClusterConfiguration, error)
-	Watch() *commonoption.Watch[*commonproto.ClusterConfiguration]
 }
 
 func ParseClusterConfig(data []byte) (*commonproto.ClusterConfiguration, error) {

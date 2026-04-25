@@ -17,9 +17,6 @@ package memory
 import (
 	"sync"
 
-	gproto "google.golang.org/protobuf/proto"
-
-	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -28,7 +25,12 @@ var _ provider.Provider = &Provider{}
 type Provider struct {
 	sync.Mutex
 
-	cs      *commonproto.ClusterStatus
+	documents map[provider.Document]*document
+	watch     chan struct{}
+}
+
+type document struct {
+	data    []byte
 	version provider.Version
 }
 
@@ -38,8 +40,7 @@ func (*Provider) WaitToBecomeLeader() error {
 
 func NewProvider() provider.Provider {
 	return &Provider{
-		cs:      nil,
-		version: provider.NotExists,
+		documents: map[provider.Document]*document{},
 	}
 }
 
@@ -47,21 +48,56 @@ func (*Provider) Close() error {
 	return nil
 }
 
-func (m *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
+func (m *Provider) Load(name provider.Document) (data []byte, version provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
-	return m.cs, m.version, nil
+
+	doc, ok := m.documents[name]
+	if !ok {
+		return nil, provider.NotExists, nil
+	}
+
+	return append([]byte(nil), doc.data...), doc.version, nil
 }
 
-func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider) Store(name provider.Document, data []byte, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
-	if expectedVersion != m.version {
+	version := provider.NotExists
+	doc, ok := m.documents[name]
+	if ok {
+		version = doc.version
+	}
+
+	if expectedVersion != version {
 		panic(provider.ErrBadVersion)
 	}
 
-	m.cs = gproto.Clone(cs).(*commonproto.ClusterStatus) //nolint:revive
-	m.version = provider.NextVersion(m.version)
-	return m.version, nil
+	newVersion = provider.NextVersion(version)
+	m.documents[name] = &document{
+		data:    append([]byte(nil), data...),
+		version: newVersion,
+	}
+	if name == provider.DocumentClusterConfiguration && m.watch != nil {
+		select {
+		case m.watch <- struct{}{}:
+		default:
+		}
+	}
+	return newVersion, nil
+}
+
+func (*Provider) SupportsWatch() bool {
+	return true
+}
+
+func (m *Provider) Watch() <-chan struct{} {
+	m.Lock()
+	defer m.Unlock()
+
+	if m.watch == nil {
+		m.watch = make(chan struct{}, 1)
+	}
+	return m.watch
 }

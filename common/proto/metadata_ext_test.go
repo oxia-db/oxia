@@ -140,6 +140,19 @@ servers:
 	require.Equal(t, KeySortingType_UNKNOWN, keySorting)
 }
 
+func TestValidateAllowsEmptyNamespaces(t *testing.T) {
+	config := &ClusterConfiguration{
+		Servers: []*DataServerIdentity{
+			{
+				Public:   "localhost:6648",
+				Internal: "localhost:6649",
+			},
+		},
+	}
+
+	require.NoError(t, config.Validate())
+}
+
 func TestEncodeYAMLRoundTrip(t *testing.T) {
 	name := "node-1"
 	notificationsEnabled := false

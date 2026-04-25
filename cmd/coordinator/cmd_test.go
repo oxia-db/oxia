@@ -88,9 +88,9 @@ observability:
 	assert.Equal(t, "/path/to/controller-key.pem", opts.Controller.TLS.KeyFile)
 
 	assert.Equal(t, "file", opts.Metadata.ProviderName)
-	assert.Equal(t, "/data/cluster-status.json", opts.Metadata.File.Path)
+	assert.Equal(t, "/data/cluster-status.json", opts.Metadata.File.StatusName)
 	assert.Equal(t, "oxia-system", opts.Metadata.Kubernetes.Namespace)
-	assert.Equal(t, "oxia-cluster-status", opts.Metadata.Kubernetes.ConfigMapName)
+	assert.Equal(t, "oxia-cluster-status", opts.Metadata.Kubernetes.StatusName)
 	assert.Equal(t, []string{"node1:6645", "node2:6645"}, opts.Metadata.Raft.BootstrapNodes)
 	assert.Equal(t, "node1:6645", opts.Metadata.Raft.Address)
 	assert.Equal(t, "/data/raft", opts.Metadata.Raft.DataDir)

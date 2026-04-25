@@ -19,18 +19,12 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
-	k8smetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/process"
@@ -68,42 +62,40 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	succeeded := false
 	defer cancelContextOnFailure(cancel, &succeeded)
 
-	clusterConfigStore, err := coordmetadata.NewClusterConfigStore(ctx, &options.Cluster)
-	if err != nil {
-		return nil, err
-	}
-
-	meta := &options.Metadata
-
-	var metadataProvider provider.Provider
-	switch meta.ProviderName {
-	case provider.NameMemory:
-		metadataProvider = memory.NewProvider()
-	case provider.NameFile:
-		metadataProvider = file.NewProvider(meta.File.Path)
-	case provider.NameConfigMap:
-		k8sConfig := k8smetadata.NewK8SClientConfig()
-		metadataProvider = k8smetadata.NewConfigMapProvider(k8smetadata.NewK8SClientset(k8sConfig),
-			meta.Kubernetes.Namespace, meta.Kubernetes.ConfigMapName)
-	case provider.NameRaft:
-		var err error
-		metadataProvider, err = raft.NewProvider(
-			meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create raft metadata provider")
-		}
-	default:
-		return nil, errors.New(`must be one of "memory", "configmap" or "file"`)
-	}
-
 	healthServer := health.NewServer()
+
+	var grpcServer rpc2.GrpcServer
+	var adminGrpcServer rpc2.GrpcServer
+	var metadata coordmetadata.Metadata
+	var coordinatorInstance Coordinator
+	var metricsServer *metric.PrometheusMetrics
+	defer func() {
+		if succeeded {
+			return
+		}
+		if grpcServer != nil {
+			_ = grpcServer.Close()
+		}
+		if adminGrpcServer != nil {
+			_ = adminGrpcServer.Close()
+		}
+		if coordinatorInstance != nil {
+			_ = coordinatorInstance.Close()
+		}
+		if metadata != nil {
+			_ = metadata.Close()
+		}
+		if metricsServer != nil {
+			_ = metricsServer.Close()
+		}
+	}()
 
 	internalServer := options.Server.Internal
 	internalServerTLS, err := internalServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
-	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
+	grpcServer, err = rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, internalServerTLS, &internalServer.Auth, nil)
 	if err != nil {
@@ -116,15 +108,14 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	}
 
 	slog.Info("Waiting to become leader", slog.String("component", "coordinator"))
-	if err := metadataProvider.WaitToBecomeLeader(); err != nil {
-		return nil, errors.Wrap(err, "failed to wait in becoming leader")
+	metadata, err = coordmetadata.NewFromOptions(ctx, &options.Cluster, &options.Metadata)
+	if err != nil {
+		return nil, err
 	}
 	slog.Info("This coordinator is now leader", slog.String("component", "coordinator"))
 
-	metadata := coordmetadata.New(ctx, metadataProvider, clusterConfigStore)
-	coordinatorInstance, err := NewCoordinator(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
+	coordinatorInstance, err = NewCoordinator(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err != nil {
-		_ = metadata.Close()
 		return nil, err
 	}
 
@@ -137,14 +128,14 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		coordinatorInstance.Metadata(),
 		coordinatorInstance,
 	)
-	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
+	adminGrpcServer, err = rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, admin)
 	}, adminSvTLS, &adminSv.Auth, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	metricsServer, err := startMetricsServer(options.Observability.Metric) //nolint:contextcheck
+	metricsServer, err = startMetricsServer(options.Observability.Metric) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}

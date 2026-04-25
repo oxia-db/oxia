@@ -978,8 +978,10 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 	require.Eventually(t, func() bool {
 		st := cluster.metadata.LoadStatus()
 		ns := st.Namespaces[constant.DefaultNamespace]
-		if _, parentExists := ns.Shards[0]; parentExists {
-			return false
+		if parentMeta, parentExists := ns.Shards[0]; parentExists {
+			if parentMeta.GetStatusOrDefault() != proto.ShardStatusDeleting || parentMeta.Split != nil {
+				return false
+			}
 		}
 		for _, child := range []int64{leftChild, rightChild} {
 			sm, ok := ns.Shards[child]

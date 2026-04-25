@@ -25,7 +25,6 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
-	gproto "google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,14 +34,11 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
-	commonproto "github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
 var _ provider.Provider = &Provider{}
@@ -53,10 +49,16 @@ const (
 	retryPeriod   = 2 * time.Second
 )
 
+const (
+	clusterStatusConfigMapKey = "status"
+	clusterConfigMapKey       = "config.yaml"
+)
+
 type Provider struct {
 	sync.Mutex
-	kubernetes      kubernetes.Interface
-	namespace, name string
+	kubernetes             kubernetes.Interface
+	namespace              string
+	statusName, configName string
 
 	metadataSize      atomic.Int64
 	getLatencyHisto   metric.LatencyHistogram
@@ -66,15 +68,21 @@ type Provider struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	closeCh chan any
+	watch   chan struct{}
 
 	log *slog.Logger
 }
 
 func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string) provider.Provider {
+	return NewProvider(kc, namespace, name, name)
+}
+
+func NewProvider(kc kubernetes.Interface, namespace, statusName, configName string) provider.Provider {
 	m := &Provider{
 		kubernetes: kc,
 		namespace:  namespace,
-		name:       name,
+		statusName: statusName,
+		configName: configName,
 		log:        slog.With("component", "metadata-config-map"),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
@@ -95,17 +103,27 @@ func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string) provi
 	return m
 }
 
-func (m *Provider) Get() (status *commonproto.ClusterStatus, version provider.Version, err error) {
+func (m *Provider) Load(document provider.Document) (data []byte, version provider.Version, err error) {
 	timer := m.getLatencyHisto.Timer()
 	defer timer.Done()
 
 	m.Lock()
 	defer m.Unlock()
-	return m.getWithoutLock()
+	return m.loadWithoutLock(document)
 }
 
-func (m *Provider) getWithoutLock() (*commonproto.ClusterStatus, provider.Version, error) {
-	cm, err := K8SConfigMaps(m.kubernetes).Get(m.namespace, m.name)
+func (m *Provider) loadWithoutLock(document provider.Document) ([]byte, provider.Version, error) {
+	key, err := documentKey(document)
+	if err != nil {
+		return nil, provider.NotExists, err
+	}
+
+	name, err := m.configMapName(document)
+	if err != nil {
+		return nil, provider.NotExists, err
+	}
+
+	cm, err := K8SConfigMaps(m.kubernetes).Get(m.namespace, name)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return nil, provider.NotExists, nil
@@ -113,27 +131,35 @@ func (m *Provider) getWithoutLock() (*commonproto.ClusterStatus, provider.Versio
 		return nil, "", err
 	}
 
-	data := []byte(cm.Data["status"])
-	status, err := commonproto.UnmarshalClusterStatusYAML(data)
-	if err != nil {
-		return nil, "", err
+	version := provider.Version(cm.ResourceVersion)
+	data, found := cm.Data[key]
+	if !found {
+		return nil, version, nil
 	}
 
-	version := provider.Version(cm.ResourceVersion)
 	slog.Debug("Get metadata successful",
 		slog.String("version", cm.ResourceVersion))
 	m.metadataSize.Store(int64(len(data)))
-	return status, version, nil
+	return []byte(data), version, nil
 }
 
-func (m *Provider) Store(status *commonproto.ClusterStatus, expectedVersion provider.Version) (provider.Version, error) {
+func (m *Provider) Store(document provider.Document, data []byte, expectedVersion provider.Version) (provider.Version, error) {
 	timer := m.storeLatencyHisto.Timer()
 	defer timer.Done()
 
 	m.Lock()
 	defer m.Unlock()
 
-	_, version, err := m.getWithoutLock()
+	key, err := documentKey(document)
+	if err != nil {
+		return provider.NotExists, err
+	}
+	name, err := m.configMapName(document)
+	if err != nil {
+		return provider.NotExists, err
+	}
+
+	existing, version, err := m.getConfigMapDataWithoutLock(name)
 	if err != nil {
 		return version, err
 	}
@@ -145,8 +171,8 @@ func (m *Provider) Store(status *commonproto.ClusterStatus, expectedVersion prov
 		panic(provider.ErrBadVersion)
 	}
 
-	data := configMap(m.name, status, expectedVersion)
-	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, data)
+	existing[key] = string(data)
+	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, name, configMap(name, existing, expectedVersion))
 	if err != nil {
 		if k8serrors.IsConflict(err) {
 			panic(provider.ErrBadVersion)
@@ -154,8 +180,27 @@ func (m *Provider) Store(status *commonproto.ClusterStatus, expectedVersion prov
 		return version, err
 	}
 	version = provider.Version(cm.ResourceVersion)
-	m.metadataSize.Store(int64(len(data.Data["status"])))
+	m.metadataSize.Store(int64(len(data)))
+	if document == provider.DocumentClusterConfiguration {
+		m.notifyWatchLocked()
+	}
 	return version, nil
+}
+
+func (m *Provider) getConfigMapDataWithoutLock(name string) (map[string]string, provider.Version, error) {
+	cm, err := K8SConfigMaps(m.kubernetes).Get(m.namespace, name)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return map[string]string{}, provider.NotExists, nil
+		}
+		return nil, provider.NotExists, err
+	}
+
+	data := make(map[string]string, len(cm.Data)+1)
+	for k, v := range cm.Data {
+		data[k] = v
+	}
+	return data, provider.Version(cm.ResourceVersion), nil
 }
 
 func (m *Provider) WaitToBecomeLeader() error {
@@ -167,7 +212,7 @@ func (m *Provider) WaitToBecomeLeader() error {
 	// Create a lease lock
 	lock := &resourcelock.LeaseLock{
 		LeaseMeta: metav1.ObjectMeta{
-			Name:      m.name,
+			Name:      m.statusName,
 			Namespace: m.namespace,
 		},
 		Client: m.kubernetes.CoordinationV1(),
@@ -223,6 +268,23 @@ func (m *Provider) WaitToBecomeLeader() error {
 	return wg.Wait(m.ctx)
 }
 
+func (m *Provider) configMapName(document provider.Document) (string, error) {
+	switch document {
+	case provider.DocumentClusterStatus:
+		if m.statusName == "" {
+			return "", errors.New("cluster status config map name is not configured")
+		}
+		return m.statusName, nil
+	case provider.DocumentClusterConfiguration:
+		if m.configName == "" {
+			return "", errors.New("cluster configuration config map name is not configured")
+		}
+		return m.configName, nil
+	default:
+		return "", errors.Errorf("unsupported metadata document %q", document)
+	}
+}
+
 func (m *Provider) Close() error {
 	m.Lock()
 	defer m.Unlock()
@@ -235,25 +297,14 @@ func (m *Provider) Close() error {
 	return nil
 }
 
-func configMap(name string, status *commonproto.ClusterStatus, version provider.Version) *corev1.ConfigMap {
-	bytes, err := commonproto.MarshalClusterStatusYAML(status)
-	if err != nil {
-		slog.Error(
-			"unable to marshal cluster status",
-			slog.Any("error", err),
-		)
-		panic(err)
-	}
-
+func configMap(name string, data map[string]string, version provider.Version) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ConfigMap",
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Data: map[string]string{
-			"status": string(bytes),
-		},
+		Data:       data,
 	}
 
 	if version != provider.NotExists {
@@ -263,72 +314,58 @@ func configMap(name string, status *commonproto.ClusterStatus, version provider.
 	return cm
 }
 
-const clusterConfigMapKey = "config.yaml"
-
-type ClusterConfigStore struct {
-	kubernetes      kubernetes.Interface
-	namespace, name string
-	watch           *commonoption.Watch[*commonproto.ClusterConfiguration]
+func documentKey(document provider.Document) (string, error) {
+	switch document {
+	case provider.DocumentClusterStatus:
+		return clusterStatusConfigMapKey, nil
+	case provider.DocumentClusterConfiguration:
+		return clusterConfigMapKey, nil
+	default:
+		return "", errors.Errorf("unsupported metadata document %q", document)
+	}
 }
 
-func NewClusterConfigStore(
-	ctx context.Context,
-	kc kubernetes.Interface,
-	namespace string,
-	name string,
-) (*ClusterConfigStore, error) {
-	store := &ClusterConfigStore{
-		kubernetes: kc,
-		namespace:  namespace,
-		name:       name,
-		watch:      commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
+func (*Provider) SupportsWatch() bool {
+	return true
+}
+
+func (m *Provider) Watch() <-chan struct{} {
+	m.Lock()
+	defer m.Unlock()
+	if m.watch != nil {
+		return m.watch
 	}
-	if _, err := store.Load(); err != nil {
-		return nil, err
-	}
-	go process.DoWithLabels(ctx, map[string]string{
+	m.watch = make(chan struct{}, 1)
+	m.watchConfigMap()
+	return m.watch
+}
+
+func (m *Provider) watchConfigMap() {
+	go process.DoWithLabels(m.ctx, map[string]string{
 		"component": "k8s-configmap-watch",
 	}, func() {
-		bo := oxiatime.NewBackOffWithInitialInterval(ctx, time.Second)
+		bo := oxiatime.NewBackOffWithInitialInterval(m.ctx, time.Second)
 		_ = backoff.RetryNotify(func() error {
-			err := store.watchOnce(ctx)
+			err := m.watchOnce(m.ctx)
 			if err == nil {
 				return errors.New("K8S config map watch closed")
 			}
 			return err
 		}, bo, func(err error, duration time.Duration) {
 			slog.Warn("K8S config map watch failed, reconnecting",
-				slog.String("k8s-namespace", store.namespace),
-				slog.String("k8s-config-map", store.name),
+				slog.String("k8s-namespace", m.namespace),
+				slog.String("k8s-config-map", m.configName),
 				slog.Any("error", err),
 				slog.Duration("retry-after", duration),
 			)
 		})
 	})
-	return store, nil
 }
 
-func (s *ClusterConfigStore) Load() (*commonproto.ClusterConfiguration, error) {
-	configMap, err := K8SConfigMaps(s.kubernetes).Get(s.namespace, s.name)
-	if err != nil {
-		return nil, err
-	}
-	config, err := s.parseConfigMap(configMap)
-	if err != nil {
-		return nil, err
-	}
-	s.notify(config)
-	return config, nil
-}
-
-func (s *ClusterConfigStore) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
-	return s.watch
-}
-
-func (s *ClusterConfigStore) watchOnce(ctx context.Context) error {
-	w, err := s.kubernetes.CoreV1().ConfigMaps(s.namespace).Watch(
+func (m *Provider) watchOnce(ctx context.Context) error {
+	w, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Watch(
 		ctx,
-		metav1.SingleObject(metav1.ObjectMeta{Name: s.name, Namespace: s.namespace}),
+		metav1.SingleObject(metav1.ObjectMeta{Name: m.configName, Namespace: m.namespace}),
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to setup watch on config map")
@@ -349,26 +386,24 @@ func (s *ClusterConfigStore) watchOnce(ctx context.Context) error {
 			configMap, ok := res.Object.(*corev1.ConfigMap)
 			if !ok {
 				slog.Warn("Got wrong type of object notification",
-					slog.String("k8s-namespace", s.namespace),
-					slog.String("k8s-config-map", s.name),
+					slog.String("k8s-namespace", m.namespace),
+					slog.String("k8s-config-map", m.configName),
 					slog.Any("object", res),
 				)
 				continue
 			}
 
 			slog.Info("Got watch event from K8S",
-				slog.String("k8s-namespace", s.namespace),
-				slog.String("k8s-config-map", s.name),
+				slog.String("k8s-namespace", m.namespace),
+				slog.String("k8s-config-map", m.configName),
 				slog.Any("event-type", res.Type),
 			)
 
 			switch res.Type {
 			case watch.Added, watch.Modified:
-				config, err := s.parseConfigMap(configMap)
-				if err != nil {
-					return err
+				if _, found := configMap.Data[clusterConfigMapKey]; found {
+					m.notifyWatch()
 				}
-				s.notify(config)
 			default:
 				return errors.Errorf("unexpected event on config map: %v", res.Type)
 			}
@@ -376,18 +411,19 @@ func (s *ClusterConfigStore) watchOnce(ctx context.Context) error {
 	}
 }
 
-func (s *ClusterConfigStore) parseConfigMap(configMap *corev1.ConfigMap) (*commonproto.ClusterConfiguration, error) {
-	data, found := configMap.Data[clusterConfigMapKey]
-	if !found {
-		return nil, errors.Errorf("path %q not found in config map: configmap:%s/%s", clusterConfigMapKey, s.namespace, s.name)
-	}
-	return provider.ParseClusterConfig([]byte(data))
+func (m *Provider) notifyWatch() {
+	m.Lock()
+	defer m.Unlock()
+	m.notifyWatchLocked()
 }
 
-func (s *ClusterConfigStore) notify(config *commonproto.ClusterConfiguration) {
-	current, _ := s.watch.Load()
-	if gproto.Equal(current, config) {
+func (m *Provider) notifyWatchLocked() {
+	ch := m.watch
+	if ch == nil {
 		return
 	}
-	s.watch.Notify(gproto.Clone(config).(*commonproto.ClusterConfiguration)) //nolint:revive
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
 }

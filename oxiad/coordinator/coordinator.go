@@ -779,7 +779,11 @@ func newCoordinator(
 		}, c.startBackgroundActionWorker)
 	})
 	c.loadBalancer.Start()
-	reconciler.New(c.ctx, metadata, c)
+	if metadata.DeclarativeConfigEnabled() {
+		reconciler.New(c.ctx, metadata, c)
+	} else {
+		c.Info("Declarative cluster config is disabled; reconciler is disabled")
+	}
 	return c, nil
 }
 

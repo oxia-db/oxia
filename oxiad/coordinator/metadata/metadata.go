@@ -18,7 +18,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -27,24 +26,28 @@ import (
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 	gproto "google.golang.org/protobuf/proto"
 	k8s "k8s.io/client-go/kubernetes"
 
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	oxiatime "github.com/oxia-db/oxia/common/time"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	filemetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	k8smetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
 
 type Metadata interface {
 	io.Closer
-	ClusterConfigStore
 
+	Load() (*commonproto.ClusterConfiguration, error)
+	Store(*commonproto.ClusterConfiguration) error
+	DeclarativeConfigEnabled() bool
+	Watch() <-chan struct{}
 	LoadStatus() *commonproto.ClusterStatus
 	ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*commonproto.ClusterStatus, map[int64]string, []int64)
 	UpdateStatus(newStatus *commonproto.ClusterStatus)
@@ -55,7 +58,6 @@ type Metadata interface {
 
 	LoadConfig() *commonproto.ClusterConfiguration
 	UpdateConfig(*commonproto.ClusterConfiguration) bool
-	ConfigWatch() *commonoption.Watch[*commonproto.ClusterConfiguration]
 	LoadLoadBalancer() *commonproto.LoadBalancer
 	Nodes() *linkedhashset.Set[string]
 	NodesWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata)
@@ -66,87 +68,173 @@ type Metadata interface {
 
 type EnsembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServerIdentity, error)
 
-const (
-	configMapClusterConfigPrefix = "configmap:"
-)
-
 var newK8SClient = func() k8s.Interface {
 	k8sConfig := k8smetadata.NewK8SClientConfig()
 	return k8smetadata.NewK8SClientset(k8sConfig)
 }
 
-type ClusterConfigStore = provider.ClusterConfigStore
-
-type providerConfigStore struct {
-	load  func() (*commonproto.ClusterConfiguration, error)
-	watch *commonoption.Watch[*commonproto.ClusterConfiguration]
+type loaderClusterConfigProvider struct {
+	ctx             context.Context
+	load            func() (*commonproto.ClusterConfiguration, error)
+	notificationsCh chan any
+	watchM          sync.Mutex
+	watch           chan struct{}
 }
 
-func NewProviderClusterConfigStore(
+func NewClusterConfigProviderFromLoader(
 	ctx context.Context,
 	load func() (*commonproto.ClusterConfiguration, error),
 	notificationsCh chan any,
-) ClusterConfigStore {
-	store := &providerConfigStore{
-		load:  load,
-		watch: commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
+) provider.Provider {
+	return &loaderClusterConfigProvider{
+		ctx:             ctx,
+		load:            load,
+		notificationsCh: notificationsCh,
 	}
-	if notificationsCh != nil {
-		go process.DoWithLabels(ctx, map[string]string{
-			"component": "cluster-config-store",
-		}, func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-notificationsCh:
-					_ = backoff.RetryNotify(func() error {
-						_, err := store.Load()
-						return err
-					}, oxiatime.NewBackOffWithInitialInterval(ctx, time.Second), func(err error, duration time.Duration) {
-						slog.Warn("failed to reload cluster configuration, retrying later",
-							slog.Any("error", err),
-							slog.Duration("retry-after", duration),
-						)
-					})
-				}
-			}
-		})
-	}
-	return store
 }
 
-func (s *providerConfigStore) Load() (*commonproto.ClusterConfiguration, error) {
-	config, err := s.load()
+func (p *loaderClusterConfigProvider) Load(document provider.Document) (data []byte, version provider.Version, err error) {
+	if document != provider.DocumentClusterConfiguration {
+		return nil, provider.NotExists, errors.Errorf("unsupported metadata document %q", document)
+	}
+	config, err := p.load()
+	if err != nil {
+		return nil, provider.NotExists, err
+	}
+	data, err = commonproto.MarshalClusterConfigurationYAML(config)
+	return data, provider.NotExists, err
+}
+
+func (*loaderClusterConfigProvider) Store(provider.Document, []byte, provider.Version) (provider.Version, error) {
+	return provider.NotExists, provider.ErrUnsupported
+}
+
+func (p *loaderClusterConfigProvider) SupportsWatch() bool {
+	return p.notificationsCh != nil
+}
+
+func (p *loaderClusterConfigProvider) Watch() <-chan struct{} {
+	if !p.SupportsWatch() {
+		return nil
+	}
+
+	p.watchM.Lock()
+	defer p.watchM.Unlock()
+	if p.watch != nil {
+		return p.watch
+	}
+
+	p.watch = make(chan struct{}, 1)
+	go process.DoWithLabels(p.ctx, map[string]string{
+		"component": "cluster-config-provider",
+	}, p.forwardNotifications)
+	return p.watch
+}
+
+func (p *loaderClusterConfigProvider) forwardNotifications() {
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case _, ok := <-p.notificationsCh:
+			if !ok {
+				return
+			}
+			p.notify()
+		}
+	}
+}
+
+func (p *loaderClusterConfigProvider) notify() {
+	p.watchM.Lock()
+	ch := p.watch
+	p.watchM.Unlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+func (*loaderClusterConfigProvider) WaitToBecomeLeader() error {
+	return nil
+}
+
+func (*loaderClusterConfigProvider) Close() error {
+	return nil
+}
+
+func newProvider(providerOptions option.ProviderOptions) (provider.Provider, error) {
+	switch providerOptions.ProviderName {
+	case provider.NameMemory:
+		return memory.NewProvider(), nil
+	case provider.NameFile:
+		return filemetadata.NewProviderWithPaths(providerOptions.File.StatusPath(), providerOptions.File.ConfigPath()), nil
+	case provider.NameConfigMap:
+		return k8smetadata.NewProvider(
+			newK8SClient(),
+			providerOptions.Kubernetes.Namespace,
+			providerOptions.Kubernetes.StatusNameOrDefault(),
+			providerOptions.Kubernetes.ConfigNameOrDefault(),
+		), nil
+	case provider.NameRaft:
+		metadataProvider, err := raft.NewProvider(
+			providerOptions.Raft.Address, providerOptions.Raft.BootstrapNodes, providerOptions.Raft.DataDir)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create raft metadata provider")
+		}
+		return metadataProvider, nil
+	default:
+		return nil, errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
+	}
+}
+
+func NewMetadataProvider(metadataOptions *option.MetadataOptions) (provider.Provider, error) {
+	return newProvider(metadataOptions.GetStatusProviderOptions())
+}
+
+func NewConfigProvider(metadataProvider provider.Provider) (provider.Provider, bool, error) {
+	return metadataProvider, metadataProvider.SupportsWatch(), nil
+}
+
+func NewFromOptions(
+	ctx context.Context,
+	clusterOptions *option.ClusterOptions,
+	metadataOptions *option.MetadataOptions,
+) (Metadata, error) {
+	if err := metadataOptions.ApplyLegacyClusterConfigPath(clusterOptions.ConfigPath); err != nil {
+		return nil, err
+	}
+
+	metadataProvider, err := NewMetadataProvider(metadataOptions)
 	if err != nil {
 		return nil, err
 	}
-	s.notify(config)
-	return gproto.Clone(config).(*commonproto.ClusterConfiguration), nil //nolint:revive
-}
 
-func (s *providerConfigStore) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
-	return s.watch
-}
-
-func (s *providerConfigStore) notify(config *commonproto.ClusterConfiguration) {
-	current, _ := s.watch.Load()
-	if gproto.Equal(current, config) {
-		return
+	clusterConfigProvider, declarativeConfig, err := NewConfigProvider(metadataProvider)
+	if err != nil {
+		return nil, multierr.Append(err, metadataProvider.Close())
 	}
-	s.watch.Notify(gproto.Clone(config).(*commonproto.ClusterConfiguration)) //nolint:revive
-}
 
-func NewClusterConfigStore(ctx context.Context, cluster *option.ClusterOptions) (ClusterConfigStore, error) {
-	if strings.HasPrefix(cluster.ConfigPath, configMapClusterConfigPrefix) {
-		path := strings.TrimPrefix(cluster.ConfigPath, configMapClusterConfigPrefix)
-		namespace, name, ok := strings.Cut(path, "/")
-		if !ok || namespace == "" || name == "" {
-			return nil, errors.Errorf("invalid configmap cluster configuration path %q, expected configmap:<namespace>/<name>", cluster.ConfigPath)
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			_ = metadataProvider.Close()
+			if clusterConfigProvider != metadataProvider {
+				_ = clusterConfigProvider.Close()
+			}
 		}
-		return k8smetadata.NewClusterConfigStore(ctx, newK8SClient(), namespace, name)
+	}()
+
+	if err := metadataProvider.WaitToBecomeLeader(); err != nil {
+		return nil, errors.Wrap(err, "failed to wait in becoming leader")
 	}
-	return filemetadata.NewClusterConfigStore(cluster.ConfigPath)
+
+	metadata := newMetadata(ctx, metadataProvider, clusterConfigProvider, declarativeConfig)
+	succeeded = true
+	return metadata, nil
 }
 
 type coordinatorMetadata struct {
@@ -156,14 +244,14 @@ type coordinatorMetadata struct {
 	cancel context.CancelFunc
 	wg     *sync.WaitGroup
 
-	metadataProvider provider.Provider
+	metadataProvider      provider.Provider
+	clusterConfigProvider provider.Provider
+	declarativeConfig     bool
 
 	statusLock       sync.RWMutex
 	currentStatus    *commonproto.ClusterStatus
 	currentVersionID provider.Version
 	changeCh         chan struct{}
-
-	clusterConfigStore ClusterConfigStore
 
 	clusterConfigLock     sync.RWMutex
 	currentClusterConfig  *commonproto.ClusterConfiguration
@@ -174,18 +262,28 @@ type coordinatorMetadata struct {
 func New(
 	ctx context.Context,
 	metadataProvider provider.Provider,
-	clusterConfigStore ClusterConfigStore,
+	clusterConfigProvider provider.Provider,
+) Metadata {
+	return newMetadata(ctx, metadataProvider, clusterConfigProvider, clusterConfigProvider.SupportsWatch())
+}
+
+func newMetadata(
+	ctx context.Context,
+	metadataProvider provider.Provider,
+	clusterConfigProvider provider.Provider,
+	declarativeConfig bool,
 ) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
-		Logger:             slog.With(slog.String("component", "coordinator-metadata")),
-		ctx:                metadataCtx,
-		cancel:             cancel,
-		wg:                 &sync.WaitGroup{},
-		metadataProvider:   metadataProvider,
-		currentVersionID:   provider.NotExists,
-		changeCh:           make(chan struct{}),
-		clusterConfigStore: clusterConfigStore,
+		Logger:                slog.With(slog.String("component", "coordinator-metadata")),
+		ctx:                   metadataCtx,
+		cancel:                cancel,
+		wg:                    &sync.WaitGroup{},
+		metadataProvider:      metadataProvider,
+		clusterConfigProvider: clusterConfigProvider,
+		declarativeConfig:     declarativeConfig,
+		currentVersionID:      provider.NotExists,
+		changeCh:              make(chan struct{}),
 	}
 
 	m.doStatusRecovery()
@@ -194,17 +292,38 @@ func New(
 }
 
 func (m *coordinatorMetadata) Load() (*commonproto.ClusterConfiguration, error) {
-	return m.clusterConfigStore.Load()
+	return m.loadClusterConfigDocument()
 }
 
-func (m *coordinatorMetadata) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
-	return m.clusterConfigStore.Watch()
+func (m *coordinatorMetadata) Store(config *commonproto.ClusterConfiguration) error {
+	data, err := commonproto.MarshalClusterConfigurationYAML(config)
+	if err != nil {
+		return err
+	}
+	_, version, err := m.clusterConfigProvider.Load(provider.DocumentClusterConfiguration)
+	if err != nil {
+		return err
+	}
+	_, err = m.clusterConfigProvider.Store(provider.DocumentClusterConfiguration, data, version)
+	return err
+}
+
+func (m *coordinatorMetadata) DeclarativeConfigEnabled() bool {
+	return m.declarativeConfig
+}
+
+func (m *coordinatorMetadata) Watch() <-chan struct{} {
+	return m.clusterConfigProvider.Watch()
 }
 
 func (m *coordinatorMetadata) Close() error {
 	m.cancel()
 	m.wg.Wait()
-	return m.metadataProvider.Close()
+	err := m.metadataProvider.Close()
+	if m.clusterConfigProvider != nil && m.clusterConfigProvider != m.metadataProvider {
+		err = multierr.Append(err, m.clusterConfigProvider.Close())
+	}
+	return err
 }
 
 func (m *coordinatorMetadata) notifyStatusChange() {
@@ -217,9 +336,16 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 	defer m.statusLock.Unlock()
 
 	_ = backoff.RetryNotify(func() error {
-		clusterStatus, version, err := m.metadataProvider.Get()
+		data, version, err := m.metadataProvider.Load(provider.DocumentClusterStatus)
 		if err != nil {
 			return err
+		}
+		var clusterStatus *commonproto.ClusterStatus
+		if len(data) > 0 {
+			clusterStatus, err = commonproto.UnmarshalClusterStatusYAML(data)
+			if err != nil {
+				return err
+			}
 		}
 		m.currentStatus = clusterStatus
 		m.currentVersionID = version
@@ -245,7 +371,11 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 
 func (m *coordinatorMetadata) persistStatusLocked(newStatus *commonproto.ClusterStatus, warnMessage string) {
 	_ = backoff.RetryNotify(func() error {
-		versionID, err := m.metadataProvider.Store(newStatus, m.currentVersionID)
+		data, err := commonproto.MarshalClusterStatusJSON(newStatus)
+		if err != nil {
+			return err
+		}
+		versionID, err := m.metadataProvider.Store(provider.DocumentClusterStatus, data, m.currentVersionID)
 		if err != nil {
 			return err
 		}
@@ -354,7 +484,7 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 	}
 
 	_ = backoff.RetryNotify(func() error {
-		newConfig, err := m.clusterConfigStore.Load()
+		newConfig, err := m.loadClusterConfigDocument()
 		if err != nil {
 			return err
 		}
@@ -368,6 +498,14 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 			slog.Duration("retry-after", duration),
 		)
 	})
+}
+
+func (m *coordinatorMetadata) loadClusterConfigDocument() (*commonproto.ClusterConfiguration, error) {
+	data, _, err := m.clusterConfigProvider.Load(provider.DocumentClusterConfiguration)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ParseClusterConfig(data)
 }
 
 func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
@@ -406,10 +544,6 @@ func (m *coordinatorMetadata) LoadConfig() *commonproto.ClusterConfiguration {
 		m.clusterConfigLock.RLock()
 	}
 	return m.currentClusterConfig
-}
-
-func (m *coordinatorMetadata) ConfigWatch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
-	return m.clusterConfigStore.Watch()
 }
 
 func (m *coordinatorMetadata) LoadLoadBalancer() *commonproto.LoadBalancer {

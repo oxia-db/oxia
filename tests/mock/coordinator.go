@@ -33,7 +33,7 @@ func NewCoordinator(t *testing.T, config *proto.ClusterConfiguration, clusterCon
 	metadata := coordmetadata.New(
 		t.Context(),
 		metadataProvider,
-		coordmetadata.NewProviderClusterConfigStore(
+		coordmetadata.NewClusterConfigProviderFromLoader(
 			t.Context(),
 			func() (*proto.ClusterConfiguration, error) { return config, nil },
 			clusterConfigNotificationCh,
