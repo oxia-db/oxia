@@ -22,21 +22,27 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
+	gproto "google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 )
 
 var _ provider.Provider = &Provider{}
@@ -255,4 +261,133 @@ func configMap(name string, status *commonproto.ClusterStatus, version provider.
 	}
 
 	return cm
+}
+
+const clusterConfigMapKey = "config.yaml"
+
+type ClusterConfigStore struct {
+	kubernetes      kubernetes.Interface
+	namespace, name string
+	watch           *commonoption.Watch[*commonproto.ClusterConfiguration]
+}
+
+func NewClusterConfigStore(
+	ctx context.Context,
+	kc kubernetes.Interface,
+	namespace string,
+	name string,
+) (*ClusterConfigStore, error) {
+	store := &ClusterConfigStore{
+		kubernetes: kc,
+		namespace:  namespace,
+		name:       name,
+		watch:      commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
+	}
+	if _, err := store.Load(); err != nil {
+		return nil, err
+	}
+	go process.DoWithLabels(ctx, map[string]string{
+		"component": "k8s-configmap-watch",
+	}, func() {
+		bo := oxiatime.NewBackOffWithInitialInterval(ctx, time.Second)
+		_ = backoff.RetryNotify(func() error {
+			err := store.watchOnce(ctx)
+			if err == nil {
+				return errors.New("K8S config map watch closed")
+			}
+			return err
+		}, bo, func(err error, duration time.Duration) {
+			slog.Warn("K8S config map watch failed, reconnecting",
+				slog.String("k8s-namespace", store.namespace),
+				slog.String("k8s-config-map", store.name),
+				slog.Any("error", err),
+				slog.Duration("retry-after", duration),
+			)
+		})
+	})
+	return store, nil
+}
+
+func (s *ClusterConfigStore) Load() (*commonproto.ClusterConfiguration, error) {
+	configMap, err := K8SConfigMaps(s.kubernetes).Get(s.namespace, s.name)
+	if err != nil {
+		return nil, err
+	}
+	config, err := s.parseConfigMap(configMap)
+	if err != nil {
+		return nil, err
+	}
+	s.notify(config)
+	return config, nil
+}
+
+func (s *ClusterConfigStore) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
+	return s.watch
+}
+
+func (s *ClusterConfigStore) watchOnce(ctx context.Context) error {
+	w, err := s.kubernetes.CoreV1().ConfigMaps(s.namespace).Watch(
+		ctx,
+		metav1.SingleObject(metav1.ObjectMeta{Name: s.name, Namespace: s.namespace}),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to setup watch on config map")
+	}
+	defer w.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case res, ok := <-w.ResultChan():
+			if !ok {
+				return errors.New("K8S config map watch closed")
+			}
+			if res.Type == watch.Error {
+				return errors.Errorf("watch error: %v", res.Object)
+			}
+			configMap, ok := res.Object.(*corev1.ConfigMap)
+			if !ok {
+				slog.Warn("Got wrong type of object notification",
+					slog.String("k8s-namespace", s.namespace),
+					slog.String("k8s-config-map", s.name),
+					slog.Any("object", res),
+				)
+				continue
+			}
+
+			slog.Info("Got watch event from K8S",
+				slog.String("k8s-namespace", s.namespace),
+				slog.String("k8s-config-map", s.name),
+				slog.Any("event-type", res.Type),
+			)
+
+			switch res.Type {
+			case watch.Added, watch.Modified:
+				config, err := s.parseConfigMap(configMap)
+				if err != nil {
+					return err
+				}
+				s.notify(config)
+			default:
+				return errors.Errorf("unexpected event on config map: %v", res.Type)
+			}
+		}
+	}
+}
+
+func (s *ClusterConfigStore) parseConfigMap(configMap *corev1.ConfigMap) (*commonproto.ClusterConfiguration, error) {
+	data, found := configMap.Data[clusterConfigMapKey]
+	if !found {
+		return nil, errors.Errorf("path %q not found in config map: configmap:%s/%s", clusterConfigMapKey, s.namespace, s.name)
+	}
+	return provider.ParseClusterConfig([]byte(data))
+}
+
+func (s *ClusterConfigStore) notify(config *commonproto.ClusterConfiguration) {
+	current, _ := s.watch.Load()
+	if gproto.Equal(current, config) {
+		return
+	}
+	s.watch.Notify(gproto.Clone(config).(*commonproto.ClusterConfiguration)) //nolint:revive
 }

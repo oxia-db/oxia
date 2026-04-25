@@ -52,7 +52,7 @@ func TestMetadataClusterConfig_LoadFromConfigMap(t *testing.T) {
 			Name:      "oxia-coordinator",
 		},
 		Data: map[string]string{
-			clusterConfigMapKey: clusterConfigWithCamelCaseFields,
+			"config.yaml": clusterConfigWithCamelCaseFields,
 		},
 	})
 	client.PrependWatchReactor("configmaps", func(action k8stesting.Action) (bool, k8swatch.Interface, error) {

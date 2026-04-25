@@ -20,9 +20,13 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/juju/fslock"
 	"github.com/pkg/errors"
+	"github.com/spf13/viper"
+	gproto "google.golang.org/protobuf/proto"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
@@ -148,4 +152,62 @@ func (m *Provider) ensureParentDirectoryExists() error {
 	}
 
 	return nil
+}
+
+type ClusterConfigStore struct {
+	v     *viper.Viper
+	watch *commonoption.Watch[*commonproto.ClusterConfiguration]
+}
+
+func NewClusterConfigStore(configPath string) (*ClusterConfigStore, error) {
+	v := viper.New()
+	v.SetConfigType("yaml")
+	if configPath == "" {
+		v.AddConfigPath("/oxia/conf")
+		v.AddConfigPath(".")
+	} else {
+		v.SetConfigFile(configPath)
+	}
+	store := &ClusterConfigStore{
+		v:     v,
+		watch: commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
+	}
+	if _, err := store.Load(); err != nil {
+		return nil, err
+	}
+	v.OnConfigChange(func(_ fsnotify.Event) {
+		if _, err := store.Load(); err != nil {
+			slog.Warn("failed to reload file cluster configuration", slog.Any("error", err))
+		}
+	})
+	v.WatchConfig()
+	return store, nil
+}
+
+func (s *ClusterConfigStore) Load() (*commonproto.ClusterConfiguration, error) {
+	if err := s.v.ReadInConfig(); err != nil {
+		return nil, err
+	}
+
+	configFile := s.v.ConfigFileUsed()
+	if configFile == "" {
+		return nil, errors.New("cluster configuration: no config file was loaded")
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return nil, err
+	}
+	config, err := provider.ParseClusterConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	current, _ := s.watch.Load()
+	if !gproto.Equal(current, config) {
+		s.watch.Notify(gproto.Clone(config).(*commonproto.ClusterConfiguration)) //nolint:revive
+	}
+	return config, nil
+}
+
+func (s *ClusterConfigStore) Watch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
+	return s.watch
 }

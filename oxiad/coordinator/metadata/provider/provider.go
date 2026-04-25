@@ -21,6 +21,8 @@ import (
 	"github.com/pkg/errors"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
 )
 
 var (
@@ -57,4 +59,25 @@ type Provider interface {
 	Store(cs *commonproto.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
 
 	WaitToBecomeLeader() error
+}
+
+type ClusterConfigStore interface {
+	Load() (*commonproto.ClusterConfiguration, error)
+	Watch() *commonoption.Watch[*commonproto.ClusterConfiguration]
+}
+
+func ParseClusterConfig(data []byte) (*commonproto.ClusterConfiguration, error) {
+	config, err := commonproto.UnmarshalClusterConfigurationYAML(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	for _, authority := range config.GetAllowExtraAuthorities() {
+		if err := rpc2.ValidateAuthorityAddress(authority); err != nil {
+			return nil, errors.Wrapf(err, "cluster configuration: invalid allowExtraAuthorities entry %q", authority)
+		}
+	}
+	return config, nil
 }
