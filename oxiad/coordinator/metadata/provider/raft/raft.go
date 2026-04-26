@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/raft"
+	hashicorpraft "github.com/hashicorp/raft"
 	"github.com/magodo/slog2hclog"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -36,13 +36,13 @@ import (
 
 type Provider struct {
 	resourceType provider.ResourceType
-	backend      *backend
+	raft         *Raft
 }
 
-type backend struct {
+type Raft struct {
 	sync.Mutex
 	sc    *stateContainer
-	raft  *raft.Raft
+	node  *hashicorpraft.Raft
 	store *kvRaftStore
 	log   *slog.Logger
 
@@ -51,8 +51,12 @@ type backend struct {
 }
 
 func (mpr *Provider) WaitToBecomeLeader() error {
-	<-mpr.backend.raft.LeaderCh()
+	<-mpr.raft.node.LeaderCh()
 	return nil
+}
+
+func (r *Raft) NewProvider(resourceType provider.ResourceType) provider.Provider {
+	return &Provider{resourceType: resourceType, raft: r}
 }
 
 func NewProvider(
@@ -60,8 +64,11 @@ func NewProvider(
 	raftBootstrapNodes []string,
 	raftDataDir string,
 ) (provider.Provider, error) {
-	statusProvider, _, err := NewProviders(raftAddress, raftBootstrapNodes, raftDataDir)
-	return statusProvider, err
+	metadataRaft, err := NewRaft(raftAddress, raftBootstrapNodes, raftDataDir)
+	if err != nil {
+		return nil, err
+	}
+	return metadataRaft.NewProvider(provider.ResourceStatus), nil
 }
 
 func NewProviders(
@@ -69,7 +76,21 @@ func NewProviders(
 	raftBootstrapNodes []string,
 	raftDataDir string,
 ) (statusProvider provider.Provider, configProvider provider.Provider, err error) {
-	backend := &backend{
+	metadataRaft, err := NewRaft(raftAddress, raftBootstrapNodes, raftDataDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	return metadataRaft.NewProvider(provider.ResourceStatus),
+		metadataRaft.NewProvider(provider.ResourceConfig),
+		nil
+}
+
+func NewRaft(
+	raftAddress string,
+	raftBootstrapNodes []string,
+	raftDataDir string,
+) (*Raft, error) {
+	metadataRaft := &Raft{
 		sc:  newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
 		log: slog.With(slog.String("component", "metadata-provider-raft")),
 	}
@@ -78,83 +99,81 @@ func NewProviders(
 	nodeId := raftAddress
 	dataDir := filepath.Join(raftDataDir, nodeId)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return nil, nil, errors.Wrap(err, "failed to create data dir")
+		return nil, errors.Wrap(err, "failed to create data dir")
 	}
 
 	// Setup Raft configuration
-	config := raft.DefaultConfig()
+	config := hashicorpraft.DefaultConfig()
 	config.HeartbeatTimeout = 5 * time.Second
 	config.ElectionTimeout = 10 * time.Second
-	config.LocalID = raft.ServerID(nodeId)
+	config.LocalID = hashicorpraft.ServerID(nodeId)
 	config.LogLevel = "INFO"
 	levelVar := &slog.LevelVar{}
 	levelVar.Set(slog.LevelInfo)
-	config.Logger = slog2hclog.New(backend.log, levelVar)
+	config.Logger = slog2hclog.New(metadataRaft.log, levelVar)
 
 	// Create TCP transport for Raft
 	addr, err := net.ResolveTCPAddr("tcp", raftAddress)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to resolve raft address")
+		return nil, errors.Wrap(err, "failed to resolve raft address")
 	}
-	transport, err := raft.NewTCPTransport(raftAddress, addr, 3, 10*time.Second, os.Stderr)
+	transport, err := hashicorpraft.NewTCPTransport(raftAddress, addr, 3, 10*time.Second, os.Stderr)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to create raft transport")
+		return nil, errors.Wrap(err, "failed to create raft transport")
 	}
 
 	// Create stable store and log store
-	backend.store, err = newKVRaftStore(filepath.Join(dataDir, "store"))
+	metadataRaft.store, err = newKVRaftStore(filepath.Join(dataDir, "store"))
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to create data store")
+		return nil, errors.Wrap(err, "failed to create data store")
 	}
 
 	// Create snapshot store
-	snapshotStore, err := raft.NewFileSnapshotStoreWithLogger(dataDir, 2, config.Logger)
+	snapshotStore, err := hashicorpraft.NewFileSnapshotStoreWithLogger(dataDir, 2, config.Logger)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to create snapshot store")
+		return nil, errors.Wrap(err, "failed to create snapshot store")
 	}
 
 	// Create Raft node
-	backend.raft, err = raft.NewRaft(config, backend.sc, backend.store, backend.store, snapshotStore, transport)
+	metadataRaft.node, err = hashicorpraft.NewRaft(config, metadataRaft.sc, metadataRaft.store, metadataRaft.store, snapshotStore, transport)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to create raft node")
+		return nil, errors.Wrap(err, "failed to create raft node")
 	}
 
-	if hasState, err := raft.HasExistingState(backend.store, backend.store, snapshotStore); err != nil {
-		return nil, nil, errors.Wrap(err, "failed to check existing state")
+	if hasState, err := hashicorpraft.HasExistingState(metadataRaft.store, metadataRaft.store, snapshotStore); err != nil {
+		return nil, errors.Wrap(err, "failed to check existing state")
 	} else if !hasState {
-		configuration := raft.Configuration{
+		configuration := hashicorpraft.Configuration{
 			Servers: getRaftServers(raftBootstrapNodes),
 		}
-		future := backend.raft.BootstrapCluster(configuration)
+		future := metadataRaft.node.BootstrapCluster(configuration)
 		if err := future.Error(); err != nil {
-			return nil, nil, errors.Wrap(err, "failed to create raft node")
+			return nil, errors.Wrap(err, "failed to create raft node")
 		}
 	}
 
-	return &Provider{resourceType: provider.ResourceStatus, backend: backend},
-		&Provider{resourceType: provider.ResourceConfig, backend: backend},
-		nil
+	return metadataRaft, nil
 }
 
-func getRaftServers(bootstrapNodes []string) []raft.Server {
-	servers := make([]raft.Server, len(bootstrapNodes))
+func getRaftServers(bootstrapNodes []string) []hashicorpraft.Server {
+	servers := make([]hashicorpraft.Server, len(bootstrapNodes))
 	for i, addr := range bootstrapNodes {
-		servers[i] = raft.Server{
-			ID:      raft.ServerID(addr),
-			Address: raft.ServerAddress(addr),
+		servers[i] = hashicorpraft.Server{
+			ID:      hashicorpraft.ServerID(addr),
+			Address: hashicorpraft.ServerAddress(addr),
 		}
 	}
 	return servers
 }
 
 func (mpr *Provider) Close() error {
-	mpr.backend.closeOnce.Do(func() {
-		mpr.backend.closeErr = multierr.Combine(
-			mpr.backend.raft.Shutdown().Error(),
-			mpr.backend.store.Close(),
+	mpr.raft.closeOnce.Do(func() {
+		mpr.raft.closeErr = multierr.Combine(
+			mpr.raft.node.Shutdown().Error(),
+			mpr.raft.store.Close(),
 		)
 	})
-	return mpr.backend.closeErr
+	return mpr.raft.closeErr
 }
 
 func toVersion(v int64) provider.Version {
@@ -167,12 +186,12 @@ func fromVersion(v provider.Version) int64 {
 }
 
 func (mpr *Provider) Get() (value proto.Message, version provider.Version, err error) {
-	mpr.backend.Lock()
-	defer mpr.backend.Unlock()
+	mpr.raft.Lock()
+	defer mpr.raft.Unlock()
 
-	document := mpr.backend.sc.document(mpr.resourceType)
+	document := mpr.raft.sc.document(mpr.resourceType)
 
-	mpr.backend.log.Debug("Get metadata",
+	mpr.raft.log.Debug("Get metadata",
 		slog.String("resource-type", string(mpr.resourceType)),
 		slog.Any("metadata", document.State),
 		slog.Any("current-version", document.CurrentVersion))
@@ -184,10 +203,10 @@ func (mpr *Provider) Get() (value proto.Message, version provider.Version, err e
 }
 
 func (mpr *Provider) Store(value proto.Message, expectedVersion provider.Version) (newVersion provider.Version, err error) {
-	mpr.backend.Lock()
-	defer mpr.backend.Unlock()
+	mpr.raft.Lock()
+	defer mpr.raft.Unlock()
 
-	if err = mpr.backend.raft.VerifyLeader().Error(); err != nil {
+	if err = mpr.raft.node.VerifyLeader().Error(); err != nil {
 		return provider.NotExists, err
 	}
 
@@ -196,11 +215,11 @@ func (mpr *Provider) Store(value proto.Message, expectedVersion provider.Version
 		return provider.NotExists, err
 	}
 
-	mpr.backend.log.Debug("Store into raft",
+	mpr.raft.log.Debug("Store into raft",
 		slog.String("resource-type", string(mpr.resourceType)),
 		slog.Any("metadata", data),
 		slog.Any("expected-version", expectedVersion),
-		slog.Any("current-version", mpr.backend.sc.document(mpr.resourceType).CurrentVersion))
+		slog.Any("current-version", mpr.raft.sc.document(mpr.resourceType).CurrentVersion))
 
 	cmd := raftOpCmd{
 		ResourceType:    mpr.resourceType,
@@ -213,7 +232,7 @@ func (mpr *Provider) Store(value proto.Message, expectedVersion provider.Version
 		return provider.NotExists, err
 	}
 
-	future := mpr.backend.raft.Apply(serializedCmd, 30*time.Second)
+	future := mpr.raft.node.Apply(serializedCmd, 30*time.Second)
 	if err := future.Error(); err != nil {
 		return provider.NotExists, errors.Wrap(err, "failed to apply new cluster state")
 	}

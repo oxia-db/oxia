@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -75,12 +76,35 @@ func (wm WatchMode) Enabled() bool {
 func (rt ResourceType) Unmarshal(data []byte) (gproto.Message, error) {
 	switch rt {
 	case ResourceStatus:
-		return commonproto.UnmarshalClusterStatusYAML(data)
+		status, err := commonproto.UnmarshalClusterStatusYAML(data)
+		if err == nil {
+			return status, nil
+		}
+		legacyStatus, legacyErr := unmarshalLegacyClusterStatus(data)
+		if legacyErr == nil {
+			return legacyStatus, nil
+		}
+		return nil, err
 	case ResourceConfig:
 		return commonproto.UnmarshalClusterConfigurationYAML(data)
 	default:
 		return nil, fmt.Errorf("unknown metadata resource type %q", rt)
 	}
+}
+
+type legacyClusterStatusContainer struct {
+	ClusterStatus json.RawMessage `json:"clusterStatus,omitempty"`
+}
+
+func unmarshalLegacyClusterStatus(data []byte) (gproto.Message, error) {
+	container := legacyClusterStatusContainer{}
+	if err := json.Unmarshal(data, &container); err != nil {
+		return nil, err
+	}
+	if len(container.ClusterStatus) == 0 {
+		return nil, ErrNotInitialized
+	}
+	return commonproto.UnmarshalClusterStatusYAML(container.ClusterStatus)
 }
 
 func (rt ResourceType) MarshalYAML(value gproto.Message) ([]byte, error) {

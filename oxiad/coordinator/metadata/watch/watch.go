@@ -107,7 +107,7 @@ func (w *Watch) load() (gproto.Message, bool) {
 
 type Receiver struct {
 	watch   *Watch
-	changed <-chan struct{}
+	changed chan struct{}
 }
 
 func (r *Receiver) Changed() <-chan struct{} {
@@ -116,4 +116,20 @@ func (r *Receiver) Changed() <-chan struct{} {
 
 func (r *Receiver) Load() (gproto.Message, bool) {
 	return r.watch.load()
+}
+
+func (r *Receiver) Close() {
+	r.watch.closeReceiver(r)
+}
+
+func (w *Watch) closeReceiver(r *Receiver) {
+	w.Lock()
+	defer w.Unlock()
+
+	ch, ok := w.receivers[r]
+	if !ok {
+		return
+	}
+	delete(w.receivers, r)
+	close(ch)
 }

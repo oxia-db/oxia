@@ -16,12 +16,14 @@ package provider_test
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -54,7 +56,9 @@ var (
 		"file": func(t *testing.T) provider.Provider {
 			t.Helper()
 
-			return file.NewProvider(filepath.Join(t.TempDir(), "metadata"), provider.ResourceStatus, provider.WatchDisabled)
+			p, err := file.NewProvider(filepath.Join(t.TempDir(), "metadata"), provider.ResourceStatus, provider.WatchDisabled)
+			assert.NoError(t, err)
+			return p
 		},
 		"configmap": func(t *testing.T) provider.Provider {
 			t.Helper()
@@ -108,6 +112,18 @@ func TestProvider(t *testing.T) {
 	}
 }
 
+func TestResourceTypeUnmarshalLegacyClusterStatus(t *testing.T) {
+	status := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{},
+	}
+	data, err := proto.MarshalClusterStatusJSON(status)
+	require.NoError(t, err)
+
+	value, err := provider.ResourceStatus.Unmarshal([]byte(fmt.Sprintf(`{"clusterStatus":%s,"version":"2"}`, data)))
+	require.NoError(t, err)
+	assert.True(t, gproto.Equal(status, value))
+}
+
 func TestProviderConfigResource(t *testing.T) {
 	providers := map[string]func(t *testing.T) provider.Provider{
 		"memory": func(t *testing.T) provider.Provider {
@@ -118,7 +134,9 @@ func TestProviderConfigResource(t *testing.T) {
 		"file": func(t *testing.T) provider.Provider {
 			t.Helper()
 
-			return file.NewProvider(filepath.Join(t.TempDir(), "cluster.yaml"), provider.ResourceConfig, provider.WatchDisabled)
+			p, err := file.NewProvider(filepath.Join(t.TempDir(), "cluster.yaml"), provider.ResourceConfig, provider.WatchDisabled)
+			assert.NoError(t, err)
+			return p
 		},
 		"configmap": func(t *testing.T) provider.Provider {
 			t.Helper()

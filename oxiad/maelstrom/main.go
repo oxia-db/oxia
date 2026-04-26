@@ -184,7 +184,14 @@ func main() {
 			Servers: servers,
 		}
 
-		metadataProvider := file.NewProvider(filepath.Join(dataDir, "cluster-status.json"), provider.ResourceStatus, provider.WatchDisabled)
+		metadataProvider, err := file.NewProvider(filepath.Join(dataDir, "cluster-status.json"), provider.ResourceStatus, provider.WatchDisabled)
+		if err != nil {
+			slog.Error(
+				"failed to create coordinator metadata provider",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
 		if err := metadataProvider.WaitToBecomeLeader(); err != nil {
 			slog.Error(
 				"failed to wait for coordinator metadata leadership",
@@ -193,7 +200,7 @@ func main() {
 			os.Exit(1)
 		}
 		metadata := coordmetadata.New(context.Background(), metadataProvider, func() (*commonproto.ClusterConfiguration, error) { return clusterConfig, nil }, nil)
-		_, err := coordinator.NewCoordinator(
+		_, err = coordinator.NewCoordinator(
 			metadata,
 			func(instanceID string) rpc.Provider {
 				return newRpcProvider(dispatcher)

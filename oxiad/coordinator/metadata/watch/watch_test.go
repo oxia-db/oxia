@@ -72,3 +72,15 @@ func TestWatchClose(t *testing.T) {
 	_, ok := <-r.Changed()
 	assert.False(t, ok)
 }
+
+func TestReceiverClose(t *testing.T) {
+	w := New()
+	r, err := w.Subscribe()
+	require.NoError(t, err)
+
+	r.Close()
+	w.Publish(&proto.ClusterConfiguration{})
+
+	_, ok := <-r.Changed()
+	assert.False(t, ok)
+}

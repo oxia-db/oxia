@@ -16,13 +16,13 @@ package file
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/fsnotify/fsnotify"
 	"github.com/juju/fslock"
 	"github.com/pkg/errors"
@@ -33,17 +33,13 @@ import (
 	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-type legacyStatusContainer struct {
-	ClusterStatus json.RawMessage  `json:"clusterStatus,omitempty"`
-	Version       provider.Version `json:"version,omitempty"`
-}
-
 var _ provider.Provider = &Provider{}
 
 type Provider struct {
 	path         string
 	resourceType provider.ResourceType
 	fileLock     *fslock.Lock
+	lockAcquired bool
 	watchEnabled provider.WatchMode
 	version      provider.Version
 
@@ -54,16 +50,17 @@ type Provider struct {
 	watcher *metadatawatch.Watch
 }
 
-func NewProvider(path string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) provider.Provider {
+func NewProvider(path string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) (provider.Provider, error) {
 	p := &Provider{
 		path:         path,
 		resourceType: resourceType,
+		fileLock:     fslock.New(path),
 		watchEnabled: watchEnabled,
 		version:      provider.NotExists,
 	}
 	p.ctx, p.cancel = context.WithCancel(context.Background())
-	if resourceType == provider.ResourceStatus {
-		p.fileLock = fslock.New(path)
+	if err := p.ensureParentDirectoryExists(); err != nil {
+		return nil, err
 	}
 	if watchEnabled.Enabled() {
 		p.watcher = metadatawatch.New()
@@ -74,7 +71,7 @@ func NewProvider(path string, resourceType provider.ResourceType, watchEnabled p
 			}, p.watchLoop)
 		})
 	}
-	return p
+	return p, nil
 }
 
 func (m *Provider) Close() error {
@@ -85,7 +82,7 @@ func (m *Provider) Close() error {
 	if m.watcher != nil {
 		m.watcher.Close()
 	}
-	if m.fileLock == nil {
+	if !m.lockAcquired {
 		return nil
 	}
 	if err := m.fileLock.Unlock(); err != nil {
@@ -99,17 +96,10 @@ func (m *Provider) Close() error {
 }
 
 func (m *Provider) WaitToBecomeLeader() error {
-	if m.fileLock == nil {
-		return nil
-	}
-
-	if err := m.ensureParentDirectoryExists(); err != nil {
-		return err
-	}
-
 	if err := m.fileLock.Lock(); err != nil {
 		return errors.Wrapf(err, "failed to acquire lock on %s", m.path)
 	}
+	m.lockAcquired = true
 
 	return nil
 }
@@ -127,20 +117,10 @@ func (m *Provider) Get() (value proto.Message, version provider.Version, err err
 		return nil, provider.NotExists, nil
 	}
 	value, err = m.resourceType.Unmarshal(content)
-	if err == nil {
-		return value, m.version, nil
-	}
-	if m.resourceType != provider.ResourceStatus {
-		return nil, provider.NotExists, err
-	}
-	return m.getLegacyStatus(content, err)
+	return value, m.version, err
 }
 
 func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) (newVersion provider.Version, err error) {
-	if err = m.ensureParentDirectoryExists(); err != nil {
-		return provider.NotExists, err
-	}
-
 	_, existingVersion, err := m.Get()
 	if err != nil {
 		return provider.NotExists, err
@@ -164,18 +144,6 @@ func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) 
 	return newVersion, nil
 }
 
-func (m *Provider) getLegacyStatus(content []byte, originalErr error) (proto.Message, provider.Version, error) {
-	mc := legacyStatusContainer{}
-	if err := json.Unmarshal(content, &mc); err != nil {
-		return nil, provider.NotExists, originalErr
-	}
-	if len(mc.ClusterStatus) == 0 {
-		return nil, mc.Version, nil
-	}
-	value, err := m.resourceType.Unmarshal(mc.ClusterStatus)
-	return value, mc.Version, err
-}
-
 func (m *Provider) Watch() (*metadatawatch.Receiver, error) {
 	if !m.watchEnabled.Enabled() || m.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
@@ -184,29 +152,24 @@ func (m *Provider) Watch() (*metadatawatch.Receiver, error) {
 }
 
 func (m *Provider) watchLoop() {
-	for {
-		if m.ctx.Err() != nil {
-			return
+	retry := backoff.NewExponentialBackOff()
+	retry.InitialInterval = time.Second
+	_ = backoff.RetryNotify(func() error {
+		value, _, err := m.Get()
+		if err != nil {
+			return err
 		}
-		m.publishCurrentValue()
-		if err := m.watchOnce(); err != nil {
-			slog.Warn("File metadata watch failed, reconnecting",
-				slog.String("path", m.path),
-				slog.Any("error", err))
-		}
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-time.After(time.Second):
-		}
-	}
+		m.watcher.Publish(value)
+		return m.watchOnce()
+	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
+		slog.Warn("File metadata watch failed, reconnecting",
+			slog.String("path", m.path),
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration))
+	})
 }
 
 func (m *Provider) watchOnce() error {
-	if err := m.ensureParentDirectoryExists(); err != nil {
-		return err
-	}
-
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -228,39 +191,23 @@ func (m *Provider) watchOnce() error {
 			return nil
 		case err, ok := <-watcher.Errors:
 			if !ok {
-				return nil
+				return errors.New("file metadata watcher errors channel closed")
 			}
 			return err
 		case event, ok := <-watcher.Events:
 			if !ok {
-				return nil
+				return errors.New("file metadata watcher events channel closed")
 			}
-			if isWatchedFileEvent(event, watchedPath) {
-				m.publishCurrentValue()
+			if filepath.Clean(event.Name) == watchedPath &&
+				event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) != 0 {
+				value, _, err := m.Get()
+				if err != nil {
+					return err
+				}
+				m.watcher.Publish(value)
 			}
 		}
 	}
-}
-
-func (m *Provider) publishCurrentValue() {
-	value, _, err := m.Get()
-	if err != nil {
-		slog.Warn("Failed to load watched file metadata",
-			slog.String("path", m.path),
-			slog.Any("error", err))
-		return
-	}
-	m.watcher.Publish(value)
-}
-
-func isWatchedFileEvent(event fsnotify.Event, watchedPath string) bool {
-	if filepath.Clean(event.Name) != watchedPath {
-		return false
-	}
-	if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) == 0 {
-		return false
-	}
-	return true
 }
 
 func (m *Provider) ensureParentDirectoryExists() error {

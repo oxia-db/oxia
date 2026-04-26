@@ -16,18 +16,21 @@ package kubernetes
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	k8swatch "k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/leaderelection"
@@ -47,6 +50,9 @@ const (
 	leaseDuration = 15 * time.Second
 	renewDeadline = 10 * time.Second
 	retryPeriod   = 2 * time.Second
+
+	fieldManager      = "oxia-coordinator"
+	k8sRequestTimeout = 30 * time.Second
 )
 
 type Provider struct {
@@ -61,10 +67,9 @@ type Provider struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	closeCh chan any
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
 	watcher *metadatawatch.Watch
 
@@ -117,7 +122,10 @@ func (m *Provider) Get() (value gproto.Message, version provider.Version, err er
 }
 
 func (m *Provider) getWithoutLock() (gproto.Message, provider.Version, error) {
-	cm, err := K8SConfigMaps(m.kubernetes).Get(m.namespace, m.name)
+	ctx, cancel := context.WithTimeout(context.Background(), k8sRequestTimeout)
+	defer cancel()
+
+	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Get(ctx, m.name, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return nil, provider.NotExists, nil
@@ -162,7 +170,21 @@ func (m *Provider) Store(value gproto.Message, expectedVersion provider.Version)
 		return provider.NotExists, err
 	}
 	cmData := configMap(m.name, m.dataKey(), data, expectedVersion)
-	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, cmData)
+	desiredBytes, err := json.Marshal(cmData)
+	if err != nil {
+		return provider.NotExists, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), k8sRequestTimeout)
+	defer cancel()
+
+	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Patch(ctx, m.name, types.ApplyPatchType, desiredBytes, metav1.PatchOptions{
+		FieldManager: fieldManager,
+		Force:        gproto.Bool(true),
+	})
+	if k8serrors.IsNotFound(err) {
+		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Create(ctx, cmData, metav1.CreateOptions{})
+	}
 	if err != nil {
 		if k8serrors.IsConflict(err) {
 			panic(provider.ErrBadVersion)
@@ -223,18 +245,12 @@ func (m *Provider) WaitToBecomeLeader() error {
 		panic(err)
 	}
 
-	closeCh := make(chan any)
-	m.Lock()
-	m.closeCh = closeCh
-	m.Unlock()
-
 	m.wg.Go(func() {
 		process.DoWithLabels(m.ctx, map[string]string{
 			"component":     "metadata-provider",
 			"sub-component": "k8s-leader-elector",
 		}, func() {
 			leaderElector.Run(m.ctx)
-			close(closeCh)
 		})
 	})
 
@@ -242,14 +258,7 @@ func (m *Provider) WaitToBecomeLeader() error {
 }
 
 func (m *Provider) Close() error {
-	m.Lock()
 	m.cancel()
-	closeCh := m.closeCh
-	m.Unlock()
-
-	if closeCh != nil {
-		<-closeCh
-	}
 	m.wg.Wait()
 	if m.watcher != nil {
 		m.watcher.Close()
@@ -266,23 +275,22 @@ func (m *Provider) Watch() (*metadatawatch.Receiver, error) {
 }
 
 func (m *Provider) watchLoop() {
-	for {
-		if m.ctx.Err() != nil {
-			return
+	retry := backoff.NewExponentialBackOff()
+	retry.InitialInterval = time.Second
+	_ = backoff.RetryNotify(func() error {
+		value, _, err := m.Get()
+		if err != nil {
+			return err
 		}
-		m.publishCurrentValue()
-		if err := m.watch(); err != nil {
-			m.log.Warn("K8S config map watch failed, reconnecting",
-				slog.String("k8s-namespace", m.namespace),
-				slog.String("k8s-config-map", m.name),
-				slog.Any("error", err))
-		}
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-time.After(time.Second):
-		}
-	}
+		m.watcher.Publish(value)
+		return m.watch()
+	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
+		m.log.Warn("K8S config map watch failed, reconnecting",
+			slog.String("k8s-namespace", m.namespace),
+			slog.String("k8s-config-map", m.name),
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration))
+	})
 }
 
 func (m *Provider) watch() error {
@@ -302,22 +310,17 @@ func (m *Provider) watch() error {
 		if res.Type != k8swatch.Added && res.Type != k8swatch.Modified {
 			continue
 		}
-		m.publishCurrentValue()
+		value, _, err := m.Get()
+		if err != nil {
+			return err
+		}
+		m.watcher.Publish(value)
 	}
 
-	return nil
-}
-
-func (m *Provider) publishCurrentValue() {
-	value, _, err := m.Get()
-	if err != nil {
-		m.log.Warn("Failed to load watched K8S config map metadata",
-			slog.String("k8s-namespace", m.namespace),
-			slog.String("k8s-config-map", m.name),
-			slog.Any("error", err))
-		return
+	if m.ctx.Err() != nil {
+		return nil
 	}
-	m.watcher.Publish(value)
+	return errors.New("K8S config map watch channel closed")
 }
 
 func (m *Provider) dataKey() string {
