@@ -27,6 +27,7 @@ import (
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
@@ -183,7 +184,7 @@ func main() {
 			Servers: servers,
 		}
 
-		metadataProvider := file.NewProvider(filepath.Join(dataDir, "cluster-status.json"))
+		metadataProvider := file.NewProvider(filepath.Join(dataDir, "cluster-status.json"), provider.ResourceStatus, false)
 		if err := metadataProvider.WaitToBecomeLeader(); err != nil {
 			slog.Error(
 				"failed to wait for coordinator metadata leadership",

@@ -24,6 +24,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/juju/fslock"
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
@@ -36,29 +37,35 @@ type container struct {
 var _ provider.Provider = &Provider{}
 
 type Provider struct {
-	path     string
-	fileLock *fslock.Lock
-	wrapped  bool
-	version  provider.Version
+	path         string
+	resourceType provider.ResourceType
+	fileLock     *fslock.Lock
+	wrapped      bool
+	watchEnabled bool
+	version      provider.Version
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
-func NewProvider(path string) provider.Provider {
-	return &Provider{
-		path:     path,
-		fileLock: fslock.New(path),
-		wrapped:  true,
-		version:  provider.NotExists,
+func NewProvider(path string, resourceType provider.ResourceType, watchEnabled bool) provider.Provider {
+	p := &Provider{
+		path:         path,
+		resourceType: resourceType,
+		wrapped:      resourceType == provider.ResourceStatus,
+		watchEnabled: watchEnabled,
+		version:      provider.NotExists,
 	}
-}
-
-func NewRawProvider(path string) provider.Provider {
-	return &Provider{
-		path:    path,
-		version: provider.NotExists,
+	p.ctx, p.cancel = context.WithCancel(context.Background())
+	if resourceType == provider.ResourceStatus {
+		p.fileLock = fslock.New(path)
 	}
+	return p
 }
 
 func (m *Provider) Close() error {
+	if m.cancel != nil {
+		m.cancel()
+	}
 	if m.fileLock == nil {
 		return nil
 	}
@@ -88,7 +95,7 @@ func (m *Provider) WaitToBecomeLeader() error {
 	return nil
 }
 
-func (m *Provider) Load() (data []byte, version provider.Version, err error) {
+func (m *Provider) Get() (value proto.Message, version provider.Version, err error) {
 	content, err := os.ReadFile(m.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -101,7 +108,8 @@ func (m *Provider) Load() (data []byte, version provider.Version, err error) {
 		return nil, provider.NotExists, nil
 	}
 	if !m.wrapped {
-		return content, m.version, nil
+		value, err := m.resourceType.Unmarshal(content)
+		return value, m.version, err
 	}
 
 	mc := container{}
@@ -113,15 +121,16 @@ func (m *Provider) Load() (data []byte, version provider.Version, err error) {
 		return nil, mc.Version, nil
 	}
 
-	return mc.ClusterStatus, mc.Version, nil
+	value, err = m.resourceType.Unmarshal(mc.ClusterStatus)
+	return value, mc.Version, err
 }
 
-func (m *Provider) Store(data []byte, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	if err = m.ensureParentDirectoryExists(); err != nil {
 		return provider.NotExists, err
 	}
 
-	_, existingVersion, err := m.Load()
+	_, existingVersion, err := m.Get()
 	if err != nil {
 		return provider.NotExists, err
 	}
@@ -131,8 +140,15 @@ func (m *Provider) Store(data []byte, expectedVersion provider.Version) (newVers
 	}
 
 	newVersion = provider.NextVersion(existingVersion)
-	newContent := data
+	newContent, err := m.resourceType.MarshalYAML(value)
+	if err != nil {
+		return provider.NotExists, err
+	}
 	if m.wrapped {
+		data, err := m.resourceType.MarshalJSON(value)
+		if err != nil {
+			return provider.NotExists, err
+		}
 		newContent, err = json.Marshal(container{
 			ClusterStatus: data,
 			Version:       newVersion,
@@ -150,7 +166,10 @@ func (m *Provider) Store(data []byte, expectedVersion provider.Version) (newVers
 	return newVersion, nil
 }
 
-func (m *Provider) Watch(ctx context.Context) (<-chan struct{}, error) {
+func (m *Provider) Watch() (<-chan struct{}, error) {
+	if !m.watchEnabled {
+		return nil, provider.ErrWatchUnsupported
+	}
 	if err := m.ensureParentDirectoryExists(); err != nil {
 		return nil, err
 	}
@@ -166,12 +185,12 @@ func (m *Provider) Watch(ctx context.Context) (<-chan struct{}, error) {
 	}
 
 	notifyCh := make(chan struct{}, 1)
-	go m.watch(ctx, watcher, notifyCh)
+	go m.watch(watcher, notifyCh)
 
 	return notifyCh, nil
 }
 
-func (m *Provider) watch(ctx context.Context, watcher *fsnotify.Watcher, notifyCh chan<- struct{}) {
+func (m *Provider) watch(watcher *fsnotify.Watcher, notifyCh chan<- struct{}) {
 	defer close(notifyCh)
 	defer func() {
 		if err := watcher.Close(); err != nil {
@@ -182,7 +201,7 @@ func (m *Provider) watch(ctx context.Context, watcher *fsnotify.Watcher, notifyC
 	watchedPath := filepath.Clean(m.path)
 	for {
 		select {
-		case <-ctx.Done():
+		case <-m.ctx.Done():
 			return
 		case err, ok := <-watcher.Errors:
 			if !ok {

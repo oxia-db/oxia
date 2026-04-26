@@ -40,11 +40,11 @@ import (
 )
 
 var (
-	_fake = func() *fake.Clientset {
+	newFake = func() *fake.Clientset {
 		f := fake.NewSimpleClientset()
 		f.PrependReactor("*", "*", k8sResourceVersionSupport(f.Tracker()))
 		return f
-	}()
+	}
 	providers = map[string]func(t *testing.T) provider.Provider{
 		"memory": func(t *testing.T) provider.Provider {
 			t.Helper()
@@ -54,12 +54,12 @@ var (
 		"file": func(t *testing.T) provider.Provider {
 			t.Helper()
 
-			return file.NewProvider(filepath.Join(t.TempDir(), "metadata"))
+			return file.NewProvider(filepath.Join(t.TempDir(), "metadata"), provider.ResourceStatus, false)
 		},
 		"configmap": func(t *testing.T) provider.Provider {
 			t.Helper()
 
-			return kubernetes.NewConfigMapProvider(_fake, "ns", "n")
+			return kubernetes.NewConfigMapProvider(newFake(), "ns", "n", provider.ResourceStatus, false)
 		},
 		"raft": func(t *testing.T) provider.Provider {
 			t.Helper()
@@ -78,33 +78,87 @@ func TestProvider(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := newProvider(t)
 
-			res, version, err := m.Load()
+			res, version, err := m.Get()
 			assert.NoError(t, err)
 			assert.Equal(t, provider.NotExists, version)
 			assert.Nil(t, res)
 
-			statusBytes, err := proto.MarshalClusterStatusJSON(&proto.ClusterStatus{
+			status := &proto.ClusterStatus{
 				Namespaces: map[string]*proto.NamespaceStatus{},
-			})
-			assert.NoError(t, err)
+			}
 
 			assert.PanicsWithError(t, provider.ErrBadVersion.Error(), func() {
-				_, err := m.Store(statusBytes, "")
+				_, err := m.Store(status, "")
 				assert.NoError(t, err)
 			})
 
-			newVersion, err := m.Store(statusBytes, provider.NotExists)
+			newVersion, err := m.Store(status, provider.NotExists)
 			assert.NoError(t, err)
 			assert.EqualValues(t, provider.Version("0"), newVersion)
 
-			res, version, err = m.Load()
+			res, version, err = m.Get()
 			assert.NoError(t, err)
 			assert.EqualValues(t, provider.Version("0"), version)
-			status, err := proto.UnmarshalClusterStatusYAML(res)
-			assert.NoError(t, err)
 			assert.True(t, gproto.Equal(&proto.ClusterStatus{
 				Namespaces: map[string]*proto.NamespaceStatus{},
-			}, status))
+			}, res))
+
+			assert.NoError(t, m.Close())
+		})
+	}
+}
+
+func TestProviderConfigResource(t *testing.T) {
+	providers := map[string]func(t *testing.T) provider.Provider{
+		"memory": func(t *testing.T) provider.Provider {
+			t.Helper()
+
+			return memory.NewProvider(provider.ResourceConfig)
+		},
+		"file": func(t *testing.T) provider.Provider {
+			t.Helper()
+
+			return file.NewProvider(filepath.Join(t.TempDir(), "cluster.yaml"), provider.ResourceConfig, false)
+		},
+		"configmap": func(t *testing.T) provider.Provider {
+			t.Helper()
+
+			return kubernetes.NewConfigMapProvider(newFake(), "ns", "config", provider.ResourceConfig, false)
+		},
+		"raft": func(t *testing.T) provider.Provider {
+			t.Helper()
+
+			addr := freeAddress(t)
+			statusProvider, configProvider, err := raft.NewProviders(addr, []string{addr}, filepath.Join(t.TempDir(), "raft"))
+			assert.NoError(t, err)
+			assert.NoError(t, statusProvider.WaitToBecomeLeader())
+			return configProvider
+		},
+	}
+
+	for name, newProvider := range providers {
+		t.Run(name, func(t *testing.T) {
+			m := newProvider(t)
+			config := &proto.ClusterConfiguration{
+				Namespaces: []*proto.Namespace{{
+					Name:              "default",
+					ReplicationFactor: 1,
+					InitialShardCount: 1,
+				}},
+				Servers: []*proto.DataServerIdentity{{
+					Public:   "s1:9091",
+					Internal: "s1:8191",
+				}},
+			}
+
+			newVersion, err := m.Store(config, provider.NotExists)
+			assert.NoError(t, err)
+			assert.EqualValues(t, provider.Version("0"), newVersion)
+
+			res, version, err := m.Get()
+			assert.NoError(t, err)
+			assert.EqualValues(t, provider.Version("0"), version)
+			assert.True(t, gproto.Equal(config, res))
 
 			assert.NoError(t, m.Close())
 		})

@@ -95,7 +95,7 @@ func New(
 	clusterConfigProvider func() (*commonproto.ClusterConfiguration, error),
 	clusterConfigNotificationsCh chan any,
 ) Metadata {
-	return newCoordinatorMetadata(ctx, metadataProvider, newCallbackConfigProvider(clusterConfigProvider, clusterConfigNotificationsCh))
+	return newCoordinatorMetadata(ctx, metadataProvider, newCallbackConfigProvider(ctx, clusterConfigProvider, clusterConfigNotificationsCh))
 }
 
 func NewWithProviders(ctx context.Context, statusProvider provider.Provider, configProvider provider.Provider) Metadata {
@@ -122,29 +122,28 @@ func NewFromOptions(ctx context.Context, meta option.MetadataOptions, legacyClus
 	return NewWithProviders(ctx, statusProvider, configProvider), nil
 }
 
-const configMapConfigKey = "config.yaml"
-
 func newProviders(meta option.MetadataOptions) (statusProvider provider.Provider, configProvider provider.Provider, err error) {
 	switch meta.ProviderName {
 	case provider.NameMemory:
-		return memory.NewProvider(), memory.NewProvider(), nil
+		return memory.NewProvider(provider.ResourceStatus), memory.NewProvider(provider.ResourceConfig), nil
 	case provider.NameFile:
-		return file.NewProvider(meta.File.StatusPath()), file.NewRawProvider(meta.File.ConfigPath()), nil
+		return file.NewProvider(meta.File.StatusPath(), provider.ResourceStatus, false),
+			file.NewProvider(meta.File.ConfigPath(), provider.ResourceConfig, true), nil
 	case provider.NameConfigMap:
 		k8sConfig := kubernetes.NewK8SClientConfig()
 		client := kubernetes.NewK8SClientset(k8sConfig)
-		statusProvider := kubernetes.NewConfigMapProvider(client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault())
+		statusProvider := kubernetes.NewConfigMapProvider(client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ResourceStatus, false)
 		if meta.File.Dir != "" || meta.File.ConfigName != "" {
-			return statusProvider, file.NewRawProvider(meta.File.ConfigPath()), nil
+			return statusProvider, file.NewProvider(meta.File.ConfigPath(), provider.ResourceConfig, true), nil
 		}
-		configProvider := kubernetes.NewConfigMapProvider(client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), configMapConfigKey)
+		configProvider := kubernetes.NewConfigMapProvider(client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ResourceConfig, true)
 		return statusProvider, configProvider, nil
 	case provider.NameRaft:
-		statusProvider, err := raft.NewProvider(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
+		statusProvider, configProvider, err := raft.NewProviders(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create raft metadata provider: %w", err)
 		}
-		return statusProvider, file.NewRawProvider(meta.File.ConfigPath()), nil
+		return statusProvider, configProvider, nil
 	default:
 		return nil, nil, errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
 	}
@@ -166,7 +165,7 @@ func newCoordinatorMetadata(ctx context.Context, statusProvider provider.Provide
 
 	m.doStatusRecovery()
 
-	if configWatch, err := configProvider.Watch(metadataCtx); err != nil && !errors.Is(err, provider.ErrWatchUnsupported) {
+	if configWatch, err := configProvider.Watch(); err != nil && !errors.Is(err, provider.ErrWatchUnsupported) {
 		m.Warn("failed to watch cluster config provider", slog.Any("error", err))
 	} else if configWatch != nil {
 		m.wg.Go(func() {
@@ -182,30 +181,29 @@ func newCoordinatorMetadata(ctx context.Context, statusProvider provider.Provide
 }
 
 type callbackConfigProvider struct {
+	ctx           context.Context
+	cancel        context.CancelFunc
 	load          func() (*commonproto.ClusterConfiguration, error)
 	notifications <-chan any
 }
 
 func newCallbackConfigProvider(
+	ctx context.Context,
 	load func() (*commonproto.ClusterConfiguration, error),
 	notifications <-chan any,
 ) provider.Provider {
+	watchCtx, cancel := context.WithCancel(ctx)
 	return &callbackConfigProvider{
+		ctx:           watchCtx,
+		cancel:        cancel,
 		load:          load,
 		notifications: notifications,
 	}
 }
 
-func (p *callbackConfigProvider) Load() ([]byte, provider.Version, error) {
+func (p *callbackConfigProvider) Get() (gproto.Message, provider.Version, error) {
 	config, err := p.LoadConfig()
-	if err != nil {
-		return nil, provider.NotExists, err
-	}
-	data, err := commonproto.MarshalClusterConfigurationYAML(config)
-	if err != nil {
-		return nil, provider.NotExists, err
-	}
-	return data, provider.NotExists, nil
+	return config, provider.NotExists, err
 }
 
 func (p *callbackConfigProvider) LoadConfig() (*commonproto.ClusterConfiguration, error) {
@@ -215,7 +213,7 @@ func (p *callbackConfigProvider) LoadConfig() (*commonproto.ClusterConfiguration
 	return p.load()
 }
 
-func (*callbackConfigProvider) Store([]byte, provider.Version) (provider.Version, error) {
+func (*callbackConfigProvider) Store(gproto.Message, provider.Version) (provider.Version, error) {
 	return provider.NotExists, errors.New("callback config provider is read-only")
 }
 
@@ -223,19 +221,19 @@ func (*callbackConfigProvider) WaitToBecomeLeader() error {
 	return nil
 }
 
-func (p *callbackConfigProvider) Watch(ctx context.Context) (<-chan struct{}, error) {
+func (p *callbackConfigProvider) Watch() (<-chan struct{}, error) {
 	if p.notifications == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
 
 	ch := make(chan struct{}, 1)
-	go process.DoWithLabels(ctx, map[string]string{
+	go process.DoWithLabels(p.ctx, map[string]string{
 		"component": "callback-config-provider-watch",
 	}, func() {
 		defer close(ch)
 		for {
 			select {
-			case <-ctx.Done():
+			case <-p.ctx.Done():
 				return
 			case _, ok := <-p.notifications:
 				if !ok {
@@ -251,7 +249,8 @@ func (p *callbackConfigProvider) Watch(ctx context.Context) (<-chan struct{}, er
 	return ch, nil
 }
 
-func (*callbackConfigProvider) Close() error {
+func (p *callbackConfigProvider) Close() error {
+	p.cancel()
 	return nil
 }
 
@@ -271,18 +270,18 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 	defer m.statusLock.Unlock()
 
 	_ = backoff.RetryNotify(func() error {
-		data, version, err := m.statusProvider.Load()
+		value, version, err := m.statusProvider.Get()
 		if err != nil {
 			return err
 		}
-		if len(data) == 0 {
+		if value == nil {
 			m.currentStatus = nil
 			m.currentVersionID = version
 			return nil
 		}
-		clusterStatus, err := commonproto.UnmarshalClusterStatusYAML(data)
-		if err != nil {
-			return err
+		clusterStatus, ok := value.(*commonproto.ClusterStatus)
+		if !ok {
+			return fmt.Errorf("expected *ClusterStatus from status provider, got %T", value)
 		}
 		m.currentStatus = clusterStatus
 		m.currentVersionID = version
@@ -308,11 +307,7 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 
 func (m *coordinatorMetadata) persistStatusLocked(newStatus *commonproto.ClusterStatus, warnMessage string) {
 	_ = backoff.RetryNotify(func() error {
-		data, err := commonproto.MarshalClusterStatusJSON(newStatus)
-		if err != nil {
-			return err
-		}
-		versionID, err := m.statusProvider.Store(data, m.currentVersionID)
+		versionID, err := m.statusProvider.Store(newStatus, m.currentVersionID)
 		if err != nil {
 			return err
 		}
@@ -448,16 +443,16 @@ func (m *coordinatorMetadata) loadConfigFromProvider() (*commonproto.ClusterConf
 		return loader.LoadConfig()
 	}
 
-	data, _, err := m.configProvider.Load()
+	value, _, err := m.configProvider.Get()
 	if err != nil {
 		return nil, err
 	}
-	if len(data) == 0 {
+	if value == nil {
 		return nil, provider.ErrNotInitialized
 	}
-	config, err := commonproto.UnmarshalClusterConfigurationYAML(data)
-	if err != nil {
-		return nil, err
+	config, ok := value.(*commonproto.ClusterConfiguration)
+	if !ok {
+		return nil, fmt.Errorf("expected *ClusterConfiguration from config provider, got %T", value)
 	}
 	if err := config.Validate(); err != nil {
 		return nil, err

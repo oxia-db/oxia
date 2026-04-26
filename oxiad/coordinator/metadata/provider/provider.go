@@ -15,11 +15,15 @@
 package provider
 
 import (
-	"context"
+	"fmt"
 	"io"
 	"strconv"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/encoding/protojson"
+	gproto "google.golang.org/protobuf/proto"
+
+	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 var (
@@ -49,14 +53,73 @@ func NextVersion(version Version) Version {
 	return Version(strconv.FormatInt(i, 10))
 }
 
+type ResourceType string
+
+const (
+	ResourceStatus ResourceType = "status"
+	ResourceConfig ResourceType = "config"
+)
+
+func (rt ResourceType) Unmarshal(data []byte) (gproto.Message, error) {
+	switch rt {
+	case ResourceStatus:
+		return commonproto.UnmarshalClusterStatusYAML(data)
+	case ResourceConfig:
+		return commonproto.UnmarshalClusterConfigurationYAML(data)
+	default:
+		return nil, fmt.Errorf("unknown metadata resource type %q", rt)
+	}
+}
+
+func (rt ResourceType) MarshalYAML(value gproto.Message) ([]byte, error) {
+	switch rt {
+	case ResourceStatus:
+		status, ok := value.(*commonproto.ClusterStatus)
+		if !ok {
+			return nil, fmt.Errorf("expected *ClusterStatus for metadata resource type %q, got %T", rt, value)
+		}
+		return commonproto.MarshalClusterStatusYAML(status)
+	case ResourceConfig:
+		config, ok := value.(*commonproto.ClusterConfiguration)
+		if !ok {
+			return nil, fmt.Errorf("expected *ClusterConfiguration for metadata resource type %q, got %T", rt, value)
+		}
+		return commonproto.MarshalClusterConfigurationYAML(config)
+	default:
+		return nil, fmt.Errorf("unknown metadata resource type %q", rt)
+	}
+}
+
+func (rt ResourceType) MarshalJSON(value gproto.Message) ([]byte, error) {
+	switch rt {
+	case ResourceStatus:
+		status, ok := value.(*commonproto.ClusterStatus)
+		if !ok {
+			return nil, fmt.Errorf("expected *ClusterStatus for metadata resource type %q, got %T", rt, value)
+		}
+		return commonproto.MarshalClusterStatusJSON(status)
+	case ResourceConfig:
+		config, ok := value.(*commonproto.ClusterConfiguration)
+		if !ok {
+			return nil, fmt.Errorf("expected *ClusterConfiguration for metadata resource type %q, got %T", rt, value)
+		}
+		return protojson.MarshalOptions{
+			UseProtoNames:   false,
+			EmitUnpopulated: false,
+		}.Marshal(config)
+	default:
+		return nil, fmt.Errorf("unknown metadata resource type %q", rt)
+	}
+}
+
 type Provider interface {
 	io.Closer
 
-	Load() (data []byte, version Version, err error)
+	Get() (value gproto.Message, version Version, err error)
 
-	Store(data []byte, expectedVersion Version) (newVersion Version, err error)
+	Store(value gproto.Message, expectedVersion Version) (newVersion Version, err error)
 
 	WaitToBecomeLeader() error
 
-	Watch(ctx context.Context) (<-chan struct{}, error)
+	Watch() (<-chan struct{}, error)
 }
