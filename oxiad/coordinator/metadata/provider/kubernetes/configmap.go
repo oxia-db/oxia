@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
@@ -36,7 +38,6 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
-	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 var _ provider.Provider = &Provider{}
@@ -49,8 +50,8 @@ const (
 
 type Provider struct {
 	sync.Mutex
-	kubernetes      kubernetes.Interface
-	namespace, name string
+	kubernetes               kubernetes.Interface
+	namespace, name, dataKey string
 
 	metadataSize      atomic.Int64
 	getLatencyHisto   metric.LatencyHistogram
@@ -64,11 +65,19 @@ type Provider struct {
 	log *slog.Logger
 }
 
-func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string) provider.Provider {
+const defaultDataKey = "status"
+
+func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string, dataKey ...string) provider.Provider {
+	key := defaultDataKey
+	if len(dataKey) > 0 && dataKey[0] != "" {
+		key = dataKey[0]
+	}
+
 	m := &Provider{
 		kubernetes: kc,
 		namespace:  namespace,
 		name:       name,
+		dataKey:    key,
 		log:        slog.With("component", "metadata-config-map"),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
@@ -89,7 +98,7 @@ func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string) provi
 	return m
 }
 
-func (m *Provider) Get() (status *commonproto.ClusterStatus, version provider.Version, err error) {
+func (m *Provider) Load() (data []byte, version provider.Version, err error) {
 	timer := m.getLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -98,7 +107,7 @@ func (m *Provider) Get() (status *commonproto.ClusterStatus, version provider.Ve
 	return m.getWithoutLock()
 }
 
-func (m *Provider) getWithoutLock() (*commonproto.ClusterStatus, provider.Version, error) {
+func (m *Provider) getWithoutLock() ([]byte, provider.Version, error) {
 	cm, err := K8SConfigMaps(m.kubernetes).Get(m.namespace, m.name)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -107,20 +116,19 @@ func (m *Provider) getWithoutLock() (*commonproto.ClusterStatus, provider.Versio
 		return nil, "", err
 	}
 
-	data := []byte(cm.Data["status"])
-	status, err := commonproto.UnmarshalClusterStatusYAML(data)
-	if err != nil {
-		return nil, "", err
+	data, ok := cm.Data[m.dataKey]
+	if !ok {
+		return nil, provider.NotExists, nil
 	}
 
 	version := provider.Version(cm.ResourceVersion)
 	slog.Debug("Get metadata successful",
 		slog.String("version", cm.ResourceVersion))
 	m.metadataSize.Store(int64(len(data)))
-	return status, version, nil
+	return []byte(data), version, nil
 }
 
-func (m *Provider) Store(status *commonproto.ClusterStatus, expectedVersion provider.Version) (provider.Version, error) {
+func (m *Provider) Store(data []byte, expectedVersion provider.Version) (provider.Version, error) {
 	timer := m.storeLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -139,8 +147,8 @@ func (m *Provider) Store(status *commonproto.ClusterStatus, expectedVersion prov
 		panic(provider.ErrBadVersion)
 	}
 
-	data := configMap(m.name, status, expectedVersion)
-	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, data)
+	cmData := configMap(m.name, m.dataKey, data, expectedVersion)
+	cm, err := K8SConfigMaps(m.kubernetes).Upsert(m.namespace, m.name, cmData)
 	if err != nil {
 		if k8serrors.IsConflict(err) {
 			panic(provider.ErrBadVersion)
@@ -148,7 +156,7 @@ func (m *Provider) Store(status *commonproto.ClusterStatus, expectedVersion prov
 		return version, err
 	}
 	version = provider.Version(cm.ResourceVersion)
-	m.metadataSize.Store(int64(len(data.Data["status"])))
+	m.metadataSize.Store(int64(len(cmData.Data[m.dataKey])))
 	return version, nil
 }
 
@@ -229,16 +237,59 @@ func (m *Provider) Close() error {
 	return nil
 }
 
-func configMap(name string, status *commonproto.ClusterStatus, version provider.Version) *corev1.ConfigMap {
-	bytes, err := commonproto.MarshalClusterStatusYAML(status)
-	if err != nil {
-		slog.Error(
-			"unable to marshal cluster status",
-			slog.Any("error", err),
-		)
-		panic(err)
-	}
+func (m *Provider) Watch(ctx context.Context) (<-chan struct{}, error) {
+	ch := make(chan struct{}, 1)
+	go process.DoWithLabels(ctx, map[string]string{
+		"component":     "metadata-provider",
+		"sub-component": "k8s-configmap-watch",
+	}, func() {
+		defer close(ch)
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := m.watch(ctx, ch); err != nil {
+				m.log.Warn("K8S config map watch failed, reconnecting",
+					slog.String("k8s-namespace", m.namespace),
+					slog.String("k8s-config-map", m.name),
+					slog.Any("error", err))
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	})
+	return ch, nil
+}
 
+func (m *Provider) watch(ctx context.Context, ch chan<- struct{}) error {
+	w, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Watch(
+		ctx,
+		metav1.SingleObject(metav1.ObjectMeta{Name: m.name, Namespace: m.namespace}),
+	)
+	if err != nil {
+		return err
+	}
+	defer w.Stop()
+
+	for res := range w.ResultChan() {
+		if res.Type == watch.Error {
+			return errors.Errorf("watch error: %v", res.Object)
+		}
+		if res.Type != watch.Added && res.Type != watch.Modified {
+			continue
+		}
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+func configMap(name, dataKey string, data []byte, version provider.Version) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ConfigMap",
@@ -246,7 +297,7 @@ func configMap(name string, status *commonproto.ClusterStatus, version provider.
 		},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Data: map[string]string{
-			"status": string(bytes),
+			dataKey: string(data),
 		},
 	}
 

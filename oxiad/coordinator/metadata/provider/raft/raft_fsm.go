@@ -21,9 +21,6 @@ import (
 
 	"github.com/hashicorp/raft"
 	"go.uber.org/multierr"
-	gproto "google.golang.org/protobuf/proto"
-
-	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 type raftOpCmd struct {
@@ -32,8 +29,8 @@ type raftOpCmd struct {
 }
 
 type stateContainer struct {
-	State          *commonproto.ClusterStatus `json:"-"`
-	CurrentVersion int64                      `json:"current_version"`
+	State          []byte `json:"-"`
+	CurrentVersion int64  `json:"current_version"`
 	log            *slog.Logger
 }
 
@@ -65,14 +62,7 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 		return &applyResult{changeApplied: false}
 	}
 
-	newState, err := commonproto.UnmarshalClusterStatusJSON(opCmd.NewState)
-	if err != nil {
-		sc.log.Error("failed to deserialize cluster status",
-			slog.Any("error", err))
-		return &applyResult{changeApplied: false}
-	}
-
-	sc.State = newState
+	sc.State = cloneBytes(opCmd.NewState)
 	sc.CurrentVersion++
 
 	sc.log.Info("Applied raft log entry",
@@ -83,7 +73,7 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 // Snapshot returns a snapshot of the FSM.
 func (sc *stateContainer) Snapshot() (raft.FSMSnapshot, error) {
 	return &stateContainer{
-		State:          gproto.Clone(sc.State).(*commonproto.ClusterStatus),
+		State:          cloneBytes(sc.State),
 		CurrentVersion: sc.CurrentVersion,
 	}, nil
 }
@@ -99,12 +89,7 @@ func (sc *stateContainer) Restore(rc io.ReadCloser) error {
 		return multierr.Combine(err, rc.Close())
 	}
 
-	state, err := commonproto.UnmarshalClusterStatusJSON(persisted.State)
-	if err != nil {
-		return multierr.Combine(err, rc.Close())
-	}
-
-	sc.State = state
+	sc.State = cloneBytes(persisted.State)
 	sc.CurrentVersion = persisted.CurrentVersion
 	return rc.Close()
 }
@@ -132,21 +117,8 @@ type persistedStateContainer struct {
 }
 
 func marshalStateContainer(sc *stateContainer) ([]byte, error) {
-	stateBytes, err := commonproto.MarshalClusterStatusJSON(sc.State)
-	if err != nil {
-		return nil, err
-	}
-
 	return json.Marshal(persistedStateContainer{
-		State:          stateBytes,
+		State:          json.RawMessage(sc.State),
 		CurrentVersion: sc.CurrentVersion,
 	})
-}
-
-func mustMarshalClusterStatus(status *commonproto.ClusterStatus) json.RawMessage {
-	payload, err := commonproto.MarshalClusterStatusJSON(status)
-	if err != nil {
-		panic(err)
-	}
-	return payload
 }

@@ -78,30 +78,33 @@ func TestProvider(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := newProvider(t)
 
-			res, version, err := m.Get()
+			res, version, err := m.Load()
 			assert.NoError(t, err)
 			assert.Equal(t, provider.NotExists, version)
 			assert.Nil(t, res)
 
+			statusBytes, err := proto.MarshalClusterStatusJSON(&proto.ClusterStatus{
+				Namespaces: map[string]*proto.NamespaceStatus{},
+			})
+			assert.NoError(t, err)
+
 			assert.PanicsWithError(t, provider.ErrBadVersion.Error(), func() {
-				_, err := m.Store(&proto.ClusterStatus{
-					Namespaces: map[string]*proto.NamespaceStatus{},
-				}, "")
+				_, err := m.Store(statusBytes, "")
 				assert.NoError(t, err)
 			})
 
-			newVersion, err := m.Store(&proto.ClusterStatus{
-				Namespaces: map[string]*proto.NamespaceStatus{},
-			}, provider.NotExists)
+			newVersion, err := m.Store(statusBytes, provider.NotExists)
 			assert.NoError(t, err)
 			assert.EqualValues(t, provider.Version("0"), newVersion)
 
-			res, version, err = m.Get()
+			res, version, err = m.Load()
 			assert.NoError(t, err)
 			assert.EqualValues(t, provider.Version("0"), version)
+			status, err := proto.UnmarshalClusterStatusYAML(res)
+			assert.NoError(t, err)
 			assert.True(t, gproto.Equal(&proto.ClusterStatus{
 				Namespaces: map[string]*proto.NamespaceStatus{},
-			}, res))
+			}, status))
 
 			assert.NoError(t, m.Close())
 		})

@@ -170,7 +170,7 @@ func (mo *MetadataOptions) ApplyLegacyClusterConfigPath(configPath string) error
 	switch mo.ProviderName {
 	case provider.NameConfigMap:
 		if !strings.HasPrefix(configPath, legacyConfigMapClusterConfigPrefix) {
-			return nil
+			return mo.File.applyLegacyConfigPath(configPath)
 		}
 		path := strings.TrimPrefix(configPath, legacyConfigMapClusterConfigPrefix)
 		namespace, name, ok := strings.Cut(path, "/")
@@ -195,25 +195,12 @@ func (mo *MetadataOptions) ApplyLegacyClusterConfigPath(configPath string) error
 		}
 		return mo.File.applyLegacyConfigPath(configPath)
 	default:
-		return nil
+		if strings.HasPrefix(configPath, legacyConfigMapClusterConfigPrefix) {
+			return nil
+		}
+		return mo.File.applyLegacyConfigPath(configPath)
 	}
 	return nil
-}
-
-func (mo MetadataOptions) ClusterConfigPathOrLegacy(legacyConfigPath string) string {
-	switch mo.ProviderName {
-	case provider.NameConfigMap:
-		if mo.Kubernetes.Namespace != "" && mo.Kubernetes.ConfigName != "" {
-			return legacyConfigMapClusterConfigPrefix + mo.Kubernetes.Namespace + "/" + mo.Kubernetes.ConfigNameOrDefault()
-		}
-	case provider.NameFile:
-		if (mo.File.Dir != "" || mo.File.ConfigName != "") && mo.File.ConfigPath() != "" {
-			path := mo.File.ConfigPath()
-			return path
-		}
-	default:
-	}
-	return legacyConfigPath
 }
 
 func (mpo ProviderOptions) Validate() error {

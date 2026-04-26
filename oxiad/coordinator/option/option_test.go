@@ -31,7 +31,7 @@ metadata:
 
 	require.NoError(t, opts.Validate())
 	require.Equal(t, "metadata/cluster-status.json", opts.Metadata.File.StatusPath())
-	require.Equal(t, "metadata/cluster.yaml", opts.Metadata.ClusterConfigPathOrLegacy(opts.Cluster.ConfigPath))
+	require.Equal(t, "metadata/cluster.yaml", opts.Metadata.File.ConfigPath())
 }
 
 func TestMetadataOptionsFileDefaultsStatusPathWithoutDir(t *testing.T) {
@@ -42,7 +42,7 @@ metadata:
 
 	require.NoError(t, opts.Validate())
 	require.Equal(t, DefaultFileStatusName, opts.Metadata.File.StatusPath())
-	require.Empty(t, opts.Metadata.ClusterConfigPathOrLegacy(opts.Cluster.ConfigPath))
+	require.Equal(t, DefaultFileConfigName, opts.Metadata.File.ConfigPath())
 }
 
 func TestMetadataOptionsLegacyFileFields(t *testing.T) {
@@ -57,7 +57,7 @@ metadata:
 
 	require.NoError(t, opts.Validate())
 	require.Equal(t, "data/cluster-status.json", opts.Metadata.File.StatusPath())
-	require.Equal(t, "configs/cluster.yaml", opts.Metadata.ClusterConfigPathOrLegacy(opts.Cluster.ConfigPath))
+	require.Equal(t, "configs/cluster.yaml", opts.Metadata.File.ConfigPath())
 }
 
 func TestMetadataOptionsLegacyConfigMapFields(t *testing.T) {
@@ -74,7 +74,6 @@ metadata:
 	require.NoError(t, opts.Validate())
 	require.Equal(t, "oxia-status", opts.Metadata.Kubernetes.StatusNameOrDefault())
 	require.Equal(t, "oxia-config", opts.Metadata.Kubernetes.ConfigNameOrDefault())
-	require.Equal(t, "configmap:oxia/oxia-config", opts.Metadata.ClusterConfigPathOrLegacy(opts.Cluster.ConfigPath))
 }
 
 func TestMetadataOptionsConfigMapStatusWithLegacyFileClusterConfig(t *testing.T) {
@@ -91,7 +90,7 @@ metadata:
 	require.NoError(t, opts.Validate())
 	require.Equal(t, "oxia-status", opts.Metadata.Kubernetes.StatusNameOrDefault())
 	require.Empty(t, opts.Metadata.Kubernetes.ConfigName)
-	require.Equal(t, "configs/cluster.yaml", opts.Metadata.ClusterConfigPathOrLegacy(opts.Cluster.ConfigPath))
+	require.Equal(t, "configs/cluster.yaml", opts.Metadata.File.ConfigPath())
 }
 
 func TestMetadataOptionsRejectLegacyClusterConfigConflict(t *testing.T) {

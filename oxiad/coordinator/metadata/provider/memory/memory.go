@@ -15,11 +15,9 @@
 package memory
 
 import (
+	"context"
 	"sync"
 
-	gproto "google.golang.org/protobuf/proto"
-
-	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -28,7 +26,7 @@ var _ provider.Provider = &Provider{}
 type Provider struct {
 	sync.Mutex
 
-	cs      *commonproto.ClusterStatus
+	data    []byte
 	version provider.Version
 }
 
@@ -38,7 +36,7 @@ func (*Provider) WaitToBecomeLeader() error {
 
 func NewProvider() provider.Provider {
 	return &Provider{
-		cs:      nil,
+		data:    nil,
 		version: provider.NotExists,
 	}
 }
@@ -47,13 +45,13 @@ func (*Provider) Close() error {
 	return nil
 }
 
-func (m *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
+func (m *Provider) Load() (data []byte, version provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
-	return m.cs, m.version, nil
+	return cloneBytes(m.data), m.version, nil
 }
 
-func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider) Store(data []byte, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -61,7 +59,20 @@ func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider
 		panic(provider.ErrBadVersion)
 	}
 
-	m.cs = gproto.Clone(cs).(*commonproto.ClusterStatus) //nolint:revive
+	m.data = cloneBytes(data)
 	m.version = provider.NextVersion(m.version)
 	return m.version, nil
+}
+
+func (*Provider) Watch(context.Context) (<-chan struct{}, error) {
+	return nil, provider.ErrWatchUnsupported
+}
+
+func cloneBytes(data []byte) []byte {
+	if data == nil {
+		return nil
+	}
+	cloned := make([]byte, len(data))
+	copy(cloned, data)
+	return cloned
 }

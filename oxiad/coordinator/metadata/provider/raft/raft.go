@@ -15,6 +15,7 @@
 package raft
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -29,7 +30,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -144,17 +144,17 @@ func fromVersion(v provider.Version) int64 {
 	return n
 }
 
-func (mpr *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
+func (mpr *Provider) Load() (data []byte, version provider.Version, err error) {
 	mpr.Lock()
 	defer mpr.Unlock()
 
 	mpr.log.Debug("Get metadata",
-		slog.Any("cluster-status", mpr.sc.State),
+		slog.Any("metadata", mpr.sc.State),
 		slog.Any("current-version", mpr.sc.CurrentVersion))
-	return mpr.sc.State, toVersion(mpr.sc.CurrentVersion), nil
+	return cloneBytes(mpr.sc.State), toVersion(mpr.sc.CurrentVersion), nil
 }
 
-func (mpr *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (mpr *Provider) Store(data []byte, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	mpr.Lock()
 	defer mpr.Unlock()
 
@@ -163,12 +163,12 @@ func (mpr *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provid
 	}
 
 	mpr.log.Debug("Store into raft",
-		slog.Any("cluster-status", cs),
+		slog.Any("metadata", data),
 		slog.Any("expected-version", expectedVersion),
 		slog.Any("current-version", mpr.sc.CurrentVersion))
 
 	cmd := raftOpCmd{
-		NewState:        mustMarshalClusterStatus(cs),
+		NewState:        json.RawMessage(data),
 		ExpectedVersion: fromVersion(expectedVersion),
 	}
 
@@ -192,4 +192,17 @@ func (mpr *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provid
 	}
 
 	return toVersion(applyRes.newVersion), nil
+}
+
+func (*Provider) Watch(context.Context) (<-chan struct{}, error) {
+	return nil, provider.ErrWatchUnsupported
+}
+
+func cloneBytes(data []byte) []byte {
+	if data == nil {
+		return nil
+	}
+	cloned := make([]byte, len(data))
+	copy(cloned, data)
+	return cloned
 }

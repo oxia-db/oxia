@@ -15,17 +15,17 @@
 package provider
 
 import (
+	"context"
 	"io"
 	"strconv"
 
 	"github.com/pkg/errors"
-
-	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
 var (
-	ErrNotInitialized = errors.New("metadata not initialized")
-	ErrBadVersion     = errors.New("metadata bad version")
+	ErrNotInitialized   = errors.New("metadata not initialized")
+	ErrBadVersion       = errors.New("metadata bad version")
+	ErrWatchUnsupported = errors.New("metadata watch unsupported")
 )
 
 var (
@@ -52,9 +52,11 @@ func NextVersion(version Version) Version {
 type Provider interface {
 	io.Closer
 
-	Get() (cs *commonproto.ClusterStatus, version Version, err error)
+	Load() (data []byte, version Version, err error)
 
-	Store(cs *commonproto.ClusterStatus, expectedVersion Version) (newVersion Version, err error)
+	Store(data []byte, expectedVersion Version) (newVersion Version, err error)
 
 	WaitToBecomeLeader() error
+
+	Watch(ctx context.Context) (<-chan struct{}, error)
 }

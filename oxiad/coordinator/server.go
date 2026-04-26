@@ -17,24 +17,15 @@ package coordinator
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"sync"
 
-	"github.com/fsnotify/fsnotify"
-	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
-	"gopkg.in/yaml.v3"
 
+	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/process"
@@ -44,8 +35,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
-
-	"github.com/oxia-db/oxia/common/proto"
 )
 
 type GrpcServer struct {
@@ -64,113 +53,9 @@ type GrpcServer struct {
 	metrics      *metric.PrometheusMetrics
 }
 
-func watchClusterConfigurationProvider(cluster *option.ClusterOptions, v *viper.Viper, clusterConfigChangeNotifications chan any) error {
-	configPath := cluster.ConfigPath
-	v.SetConfigType("yaml")
-	onChange := func() { clusterConfigChangeNotifications <- nil }
-
-	switch {
-	// remote configmap
-	case strings.HasPrefix(configPath, "configmap:"):
-		err := v.AddRemoteProvider("configmap", "endpoint", configPath)
-		if err != nil {
-			slog.Error("Failed to add remote provider", slog.Any("error", err))
-			return err
-		}
-		if watcher, ok := viper.RemoteConfig.(interface{ OnConfigChange(func()) }); ok {
-			watcher.OnConfigChange(onChange)
-		}
-		return v.WatchRemoteConfigOnChannel()
-	// local file
-	case configPath == "":
-		v.AddConfigPath("/oxia/conf")
-		v.AddConfigPath(".")
-	default:
-		v.SetConfigFile(configPath)
-	}
-
-	v.OnConfigChange(func(_ fsnotify.Event) { onChange() })
-	v.WatchConfig()
-	return nil
-}
-
-func loadClusterConfiguration(cluster *option.ClusterOptions, v *viper.Viper) (*proto.ClusterConfiguration, error) {
-	var err error
-
-	if strings.HasPrefix(cluster.ConfigPath, "configmap:") {
-		err = v.ReadRemoteConfig()
-	} else {
-		err = v.ReadInConfig()
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := yaml.Marshal(v.AllSettings())
-	if err != nil {
-		return nil, err
-	}
-
-	config, err := proto.UnmarshalClusterConfigurationYAML(data)
-	if err != nil {
-		return nil, err
-	}
-	if err := config.Validate(); err != nil {
-		return nil, err
-	}
-	for _, authority := range config.GetAllowExtraAuthorities() {
-		if err := rpc2.ValidateAuthorityAddress(authority); err != nil {
-			return nil, errors.Wrapf(err, "cluster configuration: invalid allowExtraAuthorities entry %q", authority)
-		}
-	}
-	return config, nil
-}
-
 func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[*option.Options]) (*GrpcServer, error) {
 	options, _ := watchableOptions.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
-
-	v := viper.New()
-
-	clusterConfigChangeNotifications := make(chan any)
-	clusterOptions := options.Cluster
-	clusterOptions.ConfigPath = options.Metadata.ClusterConfigPathOrLegacy(options.Cluster.ConfigPath)
-
-	clusterConfigProvider := func() (*proto.ClusterConfiguration, error) {
-		return loadClusterConfiguration(&clusterOptions, v)
-	}
-
-	if err := watchClusterConfigurationProvider(&clusterOptions, v, clusterConfigChangeNotifications); err != nil {
-		return nil, err
-	}
-
-	if _, err := clusterConfigProvider(); err != nil {
-		return nil, err
-	}
-
-	meta := &options.Metadata
-
-	var metadataProvider provider.Provider
-	switch meta.ProviderName {
-	case provider.NameMemory:
-		metadataProvider = memory.NewProvider()
-	case provider.NameFile:
-		metadataProvider = file.NewProvider(meta.File.StatusPath())
-	case provider.NameConfigMap:
-		k8sConfig := kubernetes.NewK8SClientConfig()
-		metadataProvider = kubernetes.NewConfigMapProvider(kubernetes.NewK8SClientset(k8sConfig),
-			meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault())
-	case provider.NameRaft:
-		var err error
-		metadataProvider, err = raft.NewProvider(
-			meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create raft metadata provider")
-		}
-	default:
-		return nil, errors.New(`must be one of "memory", "configmap" or "file"`)
-	}
 
 	healthServer := health.NewServer()
 
@@ -191,13 +76,10 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 
-	slog.Info("Waiting to become leader", slog.String("component", "coordinator"))
-	if err := metadataProvider.WaitToBecomeLeader(); err != nil {
-		return nil, errors.Wrap(err, "failed to wait in becoming leader")
+	metadata, err := coordmetadata.NewFromOptions(parent, options.Metadata, options.Cluster.ConfigPath)
+	if err != nil {
+		return nil, err
 	}
-	slog.Info("This coordinator is now leader", slog.String("component", "coordinator"))
-
-	metadata := coordmetadata.New(parent, metadataProvider, clusterConfigProvider, clusterConfigChangeNotifications)
 	coordinatorInstance, err := NewCoordinator(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err != nil {
 		_ = metadata.Close()
