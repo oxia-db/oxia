@@ -30,9 +30,10 @@ import (
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-type container struct {
+type legacyStatusContainer struct {
 	ClusterStatus json.RawMessage  `json:"clusterStatus,omitempty"`
 	Version       provider.Version `json:"version,omitempty"`
 }
@@ -43,20 +44,20 @@ type Provider struct {
 	path         string
 	resourceType provider.ResourceType
 	fileLock     *fslock.Lock
-	wrapped      bool
 	watchEnabled provider.WatchMode
 	version      provider.Version
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	watchers     *provider.WatchRegistry
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	watcher *metadatawatch.Watch
 }
 
 func NewProvider(path string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) provider.Provider {
 	p := &Provider{
 		path:         path,
 		resourceType: resourceType,
-		wrapped:      resourceType == provider.ResourceStatus,
 		watchEnabled: watchEnabled,
 		version:      provider.NotExists,
 	}
@@ -65,7 +66,7 @@ func NewProvider(path string, resourceType provider.ResourceType, watchEnabled p
 		p.fileLock = fslock.New(path)
 	}
 	if watchEnabled.Enabled() {
-		p.watchers = provider.NewWatchRegistry()
+		p.watcher = metadatawatch.New()
 		p.wg.Go(func() {
 			process.DoWithLabels(p.ctx, map[string]string{
 				"component":     "metadata-provider",
@@ -81,8 +82,8 @@ func (m *Provider) Close() error {
 		m.cancel()
 	}
 	m.wg.Wait()
-	if m.watchers != nil {
-		m.watchers.Close()
+	if m.watcher != nil {
+		m.watcher.Close()
 	}
 	if m.fileLock == nil {
 		return nil
@@ -125,22 +126,14 @@ func (m *Provider) Get() (value proto.Message, version provider.Version, err err
 	if len(content) == 0 {
 		return nil, provider.NotExists, nil
 	}
-	if !m.wrapped {
-		value, err := m.resourceType.Unmarshal(content)
-		return value, m.version, err
+	value, err = m.resourceType.Unmarshal(content)
+	if err == nil {
+		return value, m.version, nil
 	}
-
-	mc := container{}
-	if err = json.Unmarshal(content, &mc); err != nil {
+	if m.resourceType != provider.ResourceStatus {
 		return nil, provider.NotExists, err
 	}
-
-	if len(mc.ClusterStatus) == 0 {
-		return nil, mc.Version, nil
-	}
-
-	value, err = m.resourceType.Unmarshal(mc.ClusterStatus)
-	return value, mc.Version, err
+	return m.getLegacyStatus(content, err)
 }
 
 func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) (newVersion provider.Version, err error) {
@@ -162,19 +155,6 @@ func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) 
 	if err != nil {
 		return provider.NotExists, err
 	}
-	if m.wrapped {
-		data, err := m.resourceType.MarshalJSON(value)
-		if err != nil {
-			return provider.NotExists, err
-		}
-		newContent, err = json.Marshal(container{
-			ClusterStatus: data,
-			Version:       newVersion,
-		})
-		if err != nil {
-			return "", err
-		}
-	}
 
 	if err := os.WriteFile(m.path, newContent, 0600); err != nil {
 		return provider.NotExists, err
@@ -184,11 +164,23 @@ func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) 
 	return newVersion, nil
 }
 
-func (m *Provider) Watch() (<-chan struct{}, error) {
-	if !m.watchEnabled.Enabled() || m.watchers == nil {
+func (m *Provider) getLegacyStatus(content []byte, originalErr error) (proto.Message, provider.Version, error) {
+	mc := legacyStatusContainer{}
+	if err := json.Unmarshal(content, &mc); err != nil {
+		return nil, provider.NotExists, originalErr
+	}
+	if len(mc.ClusterStatus) == 0 {
+		return nil, mc.Version, nil
+	}
+	value, err := m.resourceType.Unmarshal(mc.ClusterStatus)
+	return value, mc.Version, err
+}
+
+func (m *Provider) Watch() (*metadatawatch.Receiver, error) {
+	if !m.watchEnabled.Enabled() || m.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
-	return m.watchers.Register()
+	return m.watcher.Subscribe()
 }
 
 func (m *Provider) watchLoop() {
@@ -196,6 +188,7 @@ func (m *Provider) watchLoop() {
 		if m.ctx.Err() != nil {
 			return
 		}
+		m.publishCurrentValue()
 		if err := m.watchOnce(); err != nil {
 			slog.Warn("File metadata watch failed, reconnecting",
 				slog.String("path", m.path),
@@ -243,10 +236,21 @@ func (m *Provider) watchOnce() error {
 				return nil
 			}
 			if isWatchedFileEvent(event, watchedPath) {
-				m.watchers.Notify()
+				m.publishCurrentValue()
 			}
 		}
 	}
+}
+
+func (m *Provider) publishCurrentValue() {
+	value, _, err := m.Get()
+	if err != nil {
+		slog.Warn("Failed to load watched file metadata",
+			slog.String("path", m.path),
+			slog.Any("error", err))
+		return
+	}
+	m.watcher.Publish(value)
 }
 
 func isWatchedFileEvent(event fsnotify.Event, watchedPath string) bool {

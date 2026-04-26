@@ -18,20 +18,19 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"sync"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/encoding/protojson"
 	gproto "google.golang.org/protobuf/proto"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
 var (
 	ErrNotInitialized   = errors.New("metadata not initialized")
 	ErrBadVersion       = errors.New("metadata bad version")
 	ErrWatchUnsupported = errors.New("metadata watch unsupported")
-	ErrProviderClosed   = errors.New("metadata provider closed")
 )
 
 var (
@@ -134,55 +133,5 @@ type Provider interface {
 
 	WaitToBecomeLeader() error
 
-	Watch() (<-chan struct{}, error)
-}
-
-type WatchRegistry struct {
-	sync.Mutex
-
-	listeners []chan struct{}
-	closed    bool
-}
-
-func NewWatchRegistry() *WatchRegistry {
-	return &WatchRegistry{}
-}
-
-func (w *WatchRegistry) Register() (<-chan struct{}, error) {
-	w.Lock()
-	defer w.Unlock()
-
-	if w.closed {
-		return nil, ErrProviderClosed
-	}
-
-	ch := make(chan struct{}, 1)
-	w.listeners = append(w.listeners, ch)
-	return ch, nil
-}
-
-func (w *WatchRegistry) Notify() {
-	w.Lock()
-	defer w.Unlock()
-
-	for _, ch := range w.listeners {
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
-	}
-}
-
-func (w *WatchRegistry) Close() {
-	w.Lock()
-	defer w.Unlock()
-
-	if w.closed {
-		return
-	}
-
-	w.closed = true
-	for _, ch := range w.listeners {
-		close(ch)
-	}
+	Watch() (*metadatawatch.Receiver, error)
 }

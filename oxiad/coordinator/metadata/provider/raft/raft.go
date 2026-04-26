@@ -31,6 +31,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
 type Provider struct {
@@ -229,7 +230,7 @@ func (mpr *Provider) Store(value proto.Message, expectedVersion provider.Version
 	return toVersion(applyRes.newVersion), nil
 }
 
-func (*Provider) Watch() (<-chan struct{}, error) {
+func (*Provider) Watch() (*metadatawatch.Receiver, error) {
 	return nil, provider.ErrWatchUnsupported
 }
 

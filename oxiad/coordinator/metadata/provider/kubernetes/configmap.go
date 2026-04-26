@@ -28,17 +28,17 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/watch"
+	k8swatch "k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
 var _ provider.Provider = &Provider{}
@@ -61,11 +61,12 @@ type Provider struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	closeCh  chan any
-	watchers *provider.WatchRegistry
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	closeCh chan any
+
+	watcher *metadatawatch.Watch
 
 	log *slog.Logger
 }
@@ -87,7 +88,7 @@ func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string, resou
 
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	if watchEnabled.Enabled() {
-		m.watchers = provider.NewWatchRegistry()
+		m.watcher = metadatawatch.New()
 		m.wg.Go(func() {
 			process.DoWithLabels(m.ctx, map[string]string{
 				"component":     "metadata-provider",
@@ -250,18 +251,18 @@ func (m *Provider) Close() error {
 		<-closeCh
 	}
 	m.wg.Wait()
-	if m.watchers != nil {
-		m.watchers.Close()
+	if m.watcher != nil {
+		m.watcher.Close()
 	}
 	m.log.Info("Closed metadata provider")
 	return nil
 }
 
-func (m *Provider) Watch() (<-chan struct{}, error) {
-	if !m.watchEnabled.Enabled() || m.watchers == nil {
+func (m *Provider) Watch() (*metadatawatch.Receiver, error) {
+	if !m.watchEnabled.Enabled() || m.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
-	return m.watchers.Register()
+	return m.watcher.Subscribe()
 }
 
 func (m *Provider) watchLoop() {
@@ -269,6 +270,7 @@ func (m *Provider) watchLoop() {
 		if m.ctx.Err() != nil {
 			return
 		}
+		m.publishCurrentValue()
 		if err := m.watch(); err != nil {
 			m.log.Warn("K8S config map watch failed, reconnecting",
 				slog.String("k8s-namespace", m.namespace),
@@ -294,16 +296,28 @@ func (m *Provider) watch() error {
 	defer w.Stop()
 
 	for res := range w.ResultChan() {
-		if res.Type == watch.Error {
+		if res.Type == k8swatch.Error {
 			return errors.Errorf("watch error: %v", res.Object)
 		}
-		if res.Type != watch.Added && res.Type != watch.Modified {
+		if res.Type != k8swatch.Added && res.Type != k8swatch.Modified {
 			continue
 		}
-		m.watchers.Notify()
+		m.publishCurrentValue()
 	}
 
 	return nil
+}
+
+func (m *Provider) publishCurrentValue() {
+	value, _, err := m.Get()
+	if err != nil {
+		m.log.Warn("Failed to load watched K8S config map metadata",
+			slog.String("k8s-namespace", m.namespace),
+			slog.String("k8s-config-map", m.name),
+			slog.Any("error", err))
+		return
+	}
+	m.watcher.Publish(value)
 }
 
 func (m *Provider) dataKey() string {

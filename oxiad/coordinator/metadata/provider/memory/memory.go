@@ -20,6 +20,7 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
 var _ provider.Provider = &Provider{}
@@ -68,6 +69,6 @@ func (m *Provider) Store(value gproto.Message, expectedVersion provider.Version)
 	return m.version, nil
 }
 
-func (*Provider) Watch() (<-chan struct{}, error) {
+func (*Provider) Watch() (*metadatawatch.Receiver, error) {
 	return nil, provider.ErrWatchUnsupported
 }

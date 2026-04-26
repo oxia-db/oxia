@@ -40,6 +40,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
+	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
@@ -183,8 +184,10 @@ func newCoordinatorMetadata(ctx context.Context, statusProvider provider.Provide
 type callbackConfigProvider struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 	load          func() (*commonproto.ClusterConfiguration, error)
 	notifications <-chan any
+	watcher       *metadatawatch.Watch
 }
 
 func newCallbackConfigProvider(
@@ -193,12 +196,21 @@ func newCallbackConfigProvider(
 	notifications <-chan any,
 ) provider.Provider {
 	watchCtx, cancel := context.WithCancel(ctx)
-	return &callbackConfigProvider{
+	p := &callbackConfigProvider{
 		ctx:           watchCtx,
 		cancel:        cancel,
 		load:          load,
 		notifications: notifications,
 	}
+	if notifications != nil {
+		p.watcher = metadatawatch.New()
+		p.wg.Go(func() {
+			process.DoWithLabels(p.ctx, map[string]string{
+				"component": "callback-config-provider-watch",
+			}, p.watchLoop)
+		})
+	}
+	return p
 }
 
 func (p *callbackConfigProvider) Get() (gproto.Message, provider.Version, error) {
@@ -221,36 +233,44 @@ func (*callbackConfigProvider) WaitToBecomeLeader() error {
 	return nil
 }
 
-func (p *callbackConfigProvider) Watch() (<-chan struct{}, error) {
-	if p.notifications == nil {
+func (p *callbackConfigProvider) Watch() (*metadatawatch.Receiver, error) {
+	if p.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
+	return p.watcher.Subscribe()
+}
 
-	ch := make(chan struct{}, 1)
-	go process.DoWithLabels(p.ctx, map[string]string{
-		"component": "callback-config-provider-watch",
-	}, func() {
-		defer close(ch)
-		for {
-			select {
-			case <-p.ctx.Done():
+func (p *callbackConfigProvider) watchLoop() {
+	defer p.watcher.Close()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case _, ok := <-p.notifications:
+			if !ok {
 				return
-			case _, ok := <-p.notifications:
-				if !ok {
-					return
-				}
-				select {
-				case ch <- struct{}{}:
-				default:
-				}
 			}
+			p.publishCurrentValue()
 		}
-	})
-	return ch, nil
+	}
+}
+
+func (p *callbackConfigProvider) publishCurrentValue() {
+	value, _, err := p.Get()
+	if err != nil {
+		slog.Warn("Failed to load watched callback config provider metadata", slog.Any("error", err))
+		return
+	}
+	p.watcher.Publish(value)
 }
 
 func (p *callbackConfigProvider) Close() error {
 	p.cancel()
+	p.wg.Wait()
+	if p.watcher != nil {
+		p.watcher.Close()
+	}
 	return nil
 }
 
@@ -454,15 +474,25 @@ func (m *coordinatorMetadata) loadConfigFromProvider() (*commonproto.ClusterConf
 	if !ok {
 		return nil, fmt.Errorf("expected *ClusterConfiguration from config provider, got %T", value)
 	}
-	if err := config.Validate(); err != nil {
+	if err := validateClusterConfig(config); err != nil {
 		return nil, err
+	}
+	return config, nil
+}
+
+func validateClusterConfig(config *commonproto.ClusterConfiguration) error {
+	if config == nil {
+		return provider.ErrNotInitialized
+	}
+	if err := config.Validate(); err != nil {
+		return err
 	}
 	for _, authority := range config.GetAllowExtraAuthorities() {
 		if err := rpc.ValidateAuthorityAddress(authority); err != nil {
-			return nil, fmt.Errorf("cluster configuration: invalid allowExtraAuthorities entry %q: %w", authority, err)
+			return fmt.Errorf("cluster configuration: invalid allowExtraAuthorities entry %q: %w", authority, err)
 		}
 	}
-	return config, nil
+	return nil
 }
 
 func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
@@ -479,38 +509,56 @@ func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
 	m.namespaceConfigsIndex = namespaceConfigs
 }
 
-func (m *coordinatorMetadata) waitForConfigUpdates(configNotifications <-chan struct{}) {
+func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *metadatawatch.Receiver) {
+	m.applyConfigWatchValue(configWatch)
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
 
-		case _, ok := <-configNotifications:
+		case _, ok := <-configWatch.Changed():
 			if !ok {
 				return
 			}
 			m.Info("Received cluster config change event")
-
-			m.clusterConfigLock.Lock()
-			oldClusterConfig := m.currentClusterConfig
-			m.currentClusterConfig = nil
-			m.nodesIndex = nil
-			m.namespaceConfigsIndex = nil
-			m.clusterConfigLock.Unlock()
-
-			m.loadClusterConfigWithInitSlow()
-
-			m.clusterConfigLock.RLock()
-			currentClusterConfig := m.currentClusterConfig
-			m.clusterConfigLock.RUnlock()
-
-			if gproto.Equal(oldClusterConfig, currentClusterConfig) {
-				m.Info("No cluster config changes detected")
-				continue
-			}
-			m.clusterConfigWatch.Notify(currentClusterConfig)
+			m.applyConfigWatchValue(configWatch)
 		}
 	}
+}
+
+func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *metadatawatch.Receiver) {
+	value, ok := configWatch.Load()
+	if !ok {
+		return
+	}
+	config, ok := value.(*commonproto.ClusterConfiguration)
+	if !ok {
+		m.Warn("received unexpected cluster config watch value", slog.String("type", fmt.Sprintf("%T", value)))
+		return
+	}
+	if !m.usesCallbackConfigProvider() {
+		if err := validateClusterConfig(config); err != nil {
+			m.Warn("received invalid cluster config watch value", slog.Any("error", err))
+			return
+		}
+	}
+
+	m.clusterConfigLock.Lock()
+	oldClusterConfig := m.currentClusterConfig
+	m.currentClusterConfig = config
+	m.rebuildConfigIndexesLocked()
+	m.clusterConfigLock.Unlock()
+
+	if gproto.Equal(oldClusterConfig, config) {
+		m.Info("No cluster config changes detected")
+		return
+	}
+	m.clusterConfigWatch.Notify(config)
+}
+
+func (m *coordinatorMetadata) usesCallbackConfigProvider() bool {
+	_, ok := m.configProvider.(*callbackConfigProvider)
+	return ok
 }
 
 func (m *coordinatorMetadata) LoadConfig() *commonproto.ClusterConfiguration {
