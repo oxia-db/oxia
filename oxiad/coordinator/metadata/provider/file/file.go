@@ -20,12 +20,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/juju/fslock"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -41,13 +44,15 @@ type Provider struct {
 	resourceType provider.ResourceType
 	fileLock     *fslock.Lock
 	wrapped      bool
-	watchEnabled bool
+	watchEnabled provider.WatchMode
 	version      provider.Version
 	ctx          context.Context
 	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	watchers     *provider.WatchRegistry
 }
 
-func NewProvider(path string, resourceType provider.ResourceType, watchEnabled bool) provider.Provider {
+func NewProvider(path string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) provider.Provider {
 	p := &Provider{
 		path:         path,
 		resourceType: resourceType,
@@ -59,12 +64,25 @@ func NewProvider(path string, resourceType provider.ResourceType, watchEnabled b
 	if resourceType == provider.ResourceStatus {
 		p.fileLock = fslock.New(path)
 	}
+	if watchEnabled.Enabled() {
+		p.watchers = provider.NewWatchRegistry()
+		p.wg.Go(func() {
+			process.DoWithLabels(p.ctx, map[string]string{
+				"component":     "metadata-provider",
+				"sub-component": "file-watch",
+			}, p.watchLoop)
+		})
+	}
 	return p
 }
 
 func (m *Provider) Close() error {
 	if m.cancel != nil {
 		m.cancel()
+	}
+	m.wg.Wait()
+	if m.watchers != nil {
+		m.watchers.Close()
 	}
 	if m.fileLock == nil {
 		return nil
@@ -167,67 +185,78 @@ func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) 
 }
 
 func (m *Provider) Watch() (<-chan struct{}, error) {
-	if !m.watchEnabled {
+	if !m.watchEnabled.Enabled() || m.watchers == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
+	return m.watchers.Register()
+}
+
+func (m *Provider) watchLoop() {
+	for {
+		if m.ctx.Err() != nil {
+			return
+		}
+		if err := m.watchOnce(); err != nil {
+			slog.Warn("File metadata watch failed, reconnecting",
+				slog.String("path", m.path),
+				slog.Any("error", err))
+		}
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (m *Provider) watchOnce() error {
 	if err := m.ensureParentDirectoryExists(); err != nil {
-		return nil, err
+		return err
 	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	if err := watcher.Add(filepath.Dir(m.path)); err != nil {
-		_ = watcher.Close()
-		return nil, err
-	}
-
-	notifyCh := make(chan struct{}, 1)
-	go m.watch(watcher, notifyCh)
-
-	return notifyCh, nil
-}
-
-func (m *Provider) watch(watcher *fsnotify.Watcher, notifyCh chan<- struct{}) {
-	defer close(notifyCh)
 	defer func() {
 		if err := watcher.Close(); err != nil {
 			slog.Warn("Failed to close file metadata watcher", slog.Any("error", err))
 		}
 	}()
 
+	if err := watcher.Add(filepath.Dir(m.path)); err != nil {
+		return err
+	}
+
 	watchedPath := filepath.Clean(m.path)
 	for {
 		select {
 		case <-m.ctx.Done():
-			return
+			return nil
 		case err, ok := <-watcher.Errors:
 			if !ok {
-				return
+				return nil
 			}
-			slog.Warn("File metadata watch failed", slog.String("path", m.path), slog.Any("error", err))
+			return err
 		case event, ok := <-watcher.Events:
 			if !ok {
-				return
+				return nil
 			}
-			notifyEvent(event, watchedPath, notifyCh)
+			if isWatchedFileEvent(event, watchedPath) {
+				m.watchers.Notify()
+			}
 		}
 	}
 }
 
-func notifyEvent(event fsnotify.Event, watchedPath string, notifyCh chan<- struct{}) {
+func isWatchedFileEvent(event fsnotify.Event, watchedPath string) bool {
 	if filepath.Clean(event.Name) != watchedPath {
-		return
+		return false
 	}
 	if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) == 0 {
-		return
+		return false
 	}
-	select {
-	case notifyCh <- struct{}{}:
-	default:
-	}
+	return true
 }
 
 func (m *Provider) ensureParentDirectoryExists() error {

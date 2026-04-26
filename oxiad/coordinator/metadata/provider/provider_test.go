@@ -54,12 +54,12 @@ var (
 		"file": func(t *testing.T) provider.Provider {
 			t.Helper()
 
-			return file.NewProvider(filepath.Join(t.TempDir(), "metadata"), provider.ResourceStatus, false)
+			return file.NewProvider(filepath.Join(t.TempDir(), "metadata"), provider.ResourceStatus, provider.WatchDisabled)
 		},
 		"configmap": func(t *testing.T) provider.Provider {
 			t.Helper()
 
-			return kubernetes.NewConfigMapProvider(newFake(), "ns", "n", provider.ResourceStatus, false)
+			return kubernetes.NewConfigMapProvider(newFake(), "ns", "n", provider.ResourceStatus, provider.WatchDisabled)
 		},
 		"raft": func(t *testing.T) provider.Provider {
 			t.Helper()
@@ -118,12 +118,12 @@ func TestProviderConfigResource(t *testing.T) {
 		"file": func(t *testing.T) provider.Provider {
 			t.Helper()
 
-			return file.NewProvider(filepath.Join(t.TempDir(), "cluster.yaml"), provider.ResourceConfig, false)
+			return file.NewProvider(filepath.Join(t.TempDir(), "cluster.yaml"), provider.ResourceConfig, provider.WatchDisabled)
 		},
 		"configmap": func(t *testing.T) provider.Provider {
 			t.Helper()
 
-			return kubernetes.NewConfigMapProvider(newFake(), "ns", "config", provider.ResourceConfig, false)
+			return kubernetes.NewConfigMapProvider(newFake(), "ns", "config", provider.ResourceConfig, provider.WatchDisabled)
 		},
 		"raft": func(t *testing.T) provider.Provider {
 			t.Helper()

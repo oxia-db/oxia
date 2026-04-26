@@ -54,21 +54,23 @@ type Provider struct {
 	kubernetes      kubernetes.Interface
 	namespace, name string
 	resourceType    provider.ResourceType
-	watchEnabled    bool
+	watchEnabled    provider.WatchMode
 
 	metadataSize      atomic.Int64
 	getLatencyHisto   metric.LatencyHistogram
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	closeCh chan any
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	closeCh  chan any
+	watchers *provider.WatchRegistry
 
 	log *slog.Logger
 }
 
-func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string, resourceType provider.ResourceType, watchEnabled bool) provider.Provider {
+func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) provider.Provider {
 	m := &Provider{
 		kubernetes:   kc,
 		namespace:    namespace,
@@ -84,6 +86,15 @@ func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string, resou
 	}
 
 	m.ctx, m.cancel = context.WithCancel(context.Background())
+	if watchEnabled.Enabled() {
+		m.watchers = provider.NewWatchRegistry()
+		m.wg.Go(func() {
+			process.DoWithLabels(m.ctx, map[string]string{
+				"component":     "metadata-provider",
+				"sub-component": "k8s-configmap-watch",
+			}, m.watchLoop)
+		})
+	}
 
 	m.metadataSizeGauge = metric.NewGauge("oxia_coordinator_metadata_size",
 		"The size of the coordinator metadata", metric.Bytes, nil, func() int64 {
@@ -163,9 +174,6 @@ func (m *Provider) Store(value gproto.Message, expectedVersion provider.Version)
 }
 
 func (m *Provider) WaitToBecomeLeader() error {
-	m.Lock()
-	defer m.Unlock()
-
 	myIdentity, _ := os.Hostname()
 
 	// Create a lease lock
@@ -214,14 +222,19 @@ func (m *Provider) WaitToBecomeLeader() error {
 		panic(err)
 	}
 
-	m.closeCh = make(chan any)
+	closeCh := make(chan any)
+	m.Lock()
+	m.closeCh = closeCh
+	m.Unlock()
 
-	go process.DoWithLabels(m.ctx, map[string]string{
-		"component":     "metadata-provider",
-		"sub-component": "k8s-leader-elector",
-	}, func() {
-		leaderElector.Run(m.ctx)
-		close(m.closeCh)
+	m.wg.Go(func() {
+		process.DoWithLabels(m.ctx, map[string]string{
+			"component":     "metadata-provider",
+			"sub-component": "k8s-leader-elector",
+		}, func() {
+			leaderElector.Run(m.ctx)
+			close(closeCh)
+		})
 	})
 
 	return wg.Wait(m.ctx)
@@ -229,47 +242,48 @@ func (m *Provider) WaitToBecomeLeader() error {
 
 func (m *Provider) Close() error {
 	m.Lock()
-	defer m.Unlock()
-
 	m.cancel()
-	if m.closeCh != nil {
-		<-m.closeCh
+	closeCh := m.closeCh
+	m.Unlock()
+
+	if closeCh != nil {
+		<-closeCh
+	}
+	m.wg.Wait()
+	if m.watchers != nil {
+		m.watchers.Close()
 	}
 	m.log.Info("Closed metadata provider")
 	return nil
 }
 
 func (m *Provider) Watch() (<-chan struct{}, error) {
-	if !m.watchEnabled {
+	if !m.watchEnabled.Enabled() || m.watchers == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
-	ch := make(chan struct{}, 1)
-	go process.DoWithLabels(m.ctx, map[string]string{
-		"component":     "metadata-provider",
-		"sub-component": "k8s-configmap-watch",
-	}, func() {
-		defer close(ch)
-		for {
-			if m.ctx.Err() != nil {
-				return
-			}
-			if err := m.watch(ch); err != nil {
-				m.log.Warn("K8S config map watch failed, reconnecting",
-					slog.String("k8s-namespace", m.namespace),
-					slog.String("k8s-config-map", m.name),
-					slog.Any("error", err))
-			}
-			select {
-			case <-m.ctx.Done():
-				return
-			case <-time.After(time.Second):
-			}
-		}
-	})
-	return ch, nil
+	return m.watchers.Register()
 }
 
-func (m *Provider) watch(ch chan<- struct{}) error {
+func (m *Provider) watchLoop() {
+	for {
+		if m.ctx.Err() != nil {
+			return
+		}
+		if err := m.watch(); err != nil {
+			m.log.Warn("K8S config map watch failed, reconnecting",
+				slog.String("k8s-namespace", m.namespace),
+				slog.String("k8s-config-map", m.name),
+				slog.Any("error", err))
+		}
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (m *Provider) watch() error {
 	w, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Watch(
 		m.ctx,
 		metav1.SingleObject(metav1.ObjectMeta{Name: m.name, Namespace: m.namespace}),
@@ -286,11 +300,9 @@ func (m *Provider) watch(ch chan<- struct{}) error {
 		if res.Type != watch.Added && res.Type != watch.Modified {
 			continue
 		}
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
+		m.watchers.Notify()
 	}
+
 	return nil
 }
 
