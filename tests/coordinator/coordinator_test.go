@@ -21,6 +21,7 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
@@ -35,7 +36,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata2.NewProvider[*proto.ClusterStatus]()
+	metadataProvider := metadata2.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              "default",
 		ReplicationFactor: 1,

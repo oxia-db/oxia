@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -104,7 +105,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
@@ -292,7 +293,7 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
@@ -442,7 +443,7 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,

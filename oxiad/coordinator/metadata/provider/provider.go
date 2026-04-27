@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -74,6 +75,7 @@ func (wm WatchMode) Enabled() bool {
 }
 
 type Codec[T gproto.Message] interface {
+	Clone(value T) T
 	Unmarshal(data []byte) (T, error)
 	MarshalYAML(value T) ([]byte, error)
 	MarshalJSON(value T) ([]byte, error)
@@ -110,6 +112,10 @@ func (statusCodec) Unmarshal(data []byte) (*commonproto.ClusterStatus, error) {
 	return nil, err
 }
 
+func (statusCodec) Clone(value *commonproto.ClusterStatus) *commonproto.ClusterStatus {
+	return cloneMessage(value)
+}
+
 func (statusCodec) MarshalYAML(value *commonproto.ClusterStatus) ([]byte, error) {
 	return commonproto.MarshalClusterStatusYAML(value)
 }
@@ -124,6 +130,10 @@ func (statusCodec) ConfigMapDataKey() string {
 
 func (configCodec) Unmarshal(data []byte) (*commonproto.ClusterConfiguration, error) {
 	return commonproto.UnmarshalClusterConfigurationYAML(data)
+}
+
+func (configCodec) Clone(value *commonproto.ClusterConfiguration) *commonproto.ClusterConfiguration {
+	return cloneMessage(value)
 }
 
 func (configCodec) MarshalYAML(value *commonproto.ClusterConfiguration) ([]byte, error) {
@@ -215,4 +225,24 @@ type Provider[T gproto.Message] interface {
 	WaitToBecomeLeader() error
 
 	Watch() (*metadatawatch.Receiver[T], error)
+}
+
+func cloneMessage[T gproto.Message](value T) T {
+	var zero T
+	v := reflect.ValueOf(value)
+	if !v.IsValid() {
+		return zero
+	}
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if v.IsNil() {
+			return zero
+		}
+	default:
+	}
+	cloned, ok := gproto.Clone(value).(T)
+	if !ok {
+		panic(fmt.Sprintf("failed to clone metadata value of type %T", value))
+	}
+	return cloned
 }

@@ -25,6 +25,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 )
 
@@ -41,7 +42,7 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 
 	metadata := coordmetadata.New(
 		t.Context(),
-		memory.NewProvider[*proto.ClusterStatus](),
+		memory.NewProvider(provider.ClusterStatusCodec),
 		func() (*proto.ClusterConfiguration, error) {
 			return config, nil
 		},

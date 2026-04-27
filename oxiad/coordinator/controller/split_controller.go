@@ -431,7 +431,8 @@ func (sc *SplitController) runCatchUp() error {
 func (sc *SplitController) checkObserverCursorsStale() (bool, error) {
 	parentMeta := sc.loadParentMeta()
 	if parentMeta == nil || parentMeta.Split == nil {
-		return false, errors.New("parent or split metadata missing")
+		sc.log.Info("Parent or split metadata no longer present, exiting split catch-up loop")
+		return true, nil
 	}
 
 	// Parent leader election: observer cursors are closed when the old leader

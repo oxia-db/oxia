@@ -51,7 +51,7 @@ var (
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			return memory.NewProvider[*proto.ClusterStatus]()
+			return memory.NewProvider(provider.ClusterStatusCodec)
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
@@ -129,7 +129,7 @@ func TestProviderConfigResource(t *testing.T) {
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			return memory.NewProvider[*proto.ClusterConfiguration]()
+			return memory.NewProvider(provider.ClusterConfigCodec)
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()

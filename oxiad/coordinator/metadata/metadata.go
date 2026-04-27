@@ -132,7 +132,7 @@ func NewFromOptions(ctx context.Context, options *option.Options) (Metadata, err
 func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration], backendCloser io.Closer, err error) {
 	switch meta.ProviderName {
 	case provider.NameMemory:
-		return memory.NewProvider[*commonproto.ClusterStatus](), memory.NewProvider[*commonproto.ClusterConfiguration](), nil, nil
+		return memory.NewProvider(provider.ClusterStatusCodec), memory.NewProvider(provider.ClusterConfigCodec), nil, nil
 	case provider.NameFile:
 		statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), provider.ClusterStatusCodec, provider.WatchDisabled)
 		if err != nil {

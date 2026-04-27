@@ -15,8 +15,6 @@
 package memory
 
 import (
-	"fmt"
-	"reflect"
 	"sync"
 
 	gproto "google.golang.org/protobuf/proto"
@@ -32,6 +30,7 @@ var _ provider.Provider[*proto.ClusterConfiguration] = (*Provider[*proto.Cluster
 type Provider[T gproto.Message] struct {
 	sync.Mutex
 
+	codec   provider.Codec[T]
 	value   T
 	version provider.Version
 }
@@ -40,8 +39,9 @@ func (*Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func NewProvider[T gproto.Message]() provider.Provider[T] {
+func NewProvider[T gproto.Message](codec provider.Codec[T]) provider.Provider[T] {
 	return &Provider[T]{
+		codec:   codec,
 		version: provider.NotExists,
 	}
 }
@@ -54,7 +54,7 @@ func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
-	return cloneMessage(m.value), m.version, nil
+	return m.codec.Clone(m.value), m.version, nil
 }
 
 func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersion provider.Version, err error) {
@@ -65,30 +65,11 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersi
 		panic(provider.ErrBadVersion)
 	}
 
-	m.value = cloneMessage(value)
+	m.value = m.codec.Clone(value)
 	m.version = provider.NextVersion(m.version)
 	return m.version, nil
 }
 
 func (*Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
 	return nil, provider.ErrWatchUnsupported
-}
-
-func cloneMessage[T gproto.Message](value T) T {
-	var zero T
-	v := reflect.ValueOf(value)
-	if !v.IsValid() {
-		return zero
-	}
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		if v.IsNil() {
-			return zero
-		}
-	}
-	cloned, ok := gproto.Clone(value).(T)
-	if !ok {
-		panic(fmt.Sprintf("failed to clone metadata value of type %T", value))
-	}
-	return cloned
 }
