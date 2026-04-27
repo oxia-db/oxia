@@ -130,7 +130,7 @@ func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
 }
 
 func (m *Provider[T]) getWithoutLock() (value T, version provider.Version, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), k8sRequestTimeout)
+	ctx, cancel := context.WithTimeout(m.ctx, k8sRequestTimeout)
 	defer cancel()
 
 	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Get(ctx, m.name, metav1.GetOptions{})
@@ -183,7 +183,7 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (provider
 		return provider.NotExists, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), k8sRequestTimeout)
+	ctx, cancel := context.WithTimeout(m.ctx, k8sRequestTimeout)
 	defer cancel()
 
 	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Patch(ctx, m.name, types.ApplyPatchType, desiredBytes, metav1.PatchOptions{

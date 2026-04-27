@@ -407,9 +407,7 @@ func (sc *SplitController) runCatchUp() error {
 			return backoff.Permanent(err)
 		}
 
-		if fallback, err := sc.checkObserverCursorsStale(); err != nil {
-			return err
-		} else if fallback {
+		if sc.checkObserverCursorsStale() {
 			return nil
 		}
 
@@ -426,13 +424,13 @@ func (sc *SplitController) runCatchUp() error {
 }
 
 // checkObserverCursorsStale detects if a parent or child leader election has
-// invalidated the observer cursors set up during Bootstrap. Returns
-// (true, nil) if the phase was reset to Bootstrap and the caller should return.
-func (sc *SplitController) checkObserverCursorsStale() (bool, error) {
+// invalidated the observer cursors set up during Bootstrap. Returns true when
+// the caller should leave CatchUp and let the state machine restart.
+func (sc *SplitController) checkObserverCursorsStale() bool {
 	parentMeta := sc.loadParentMeta()
 	if parentMeta == nil || parentMeta.Split == nil {
 		sc.log.Info("Parent or split metadata no longer present, exiting split catch-up loop")
-		return true, nil
+		return true
 	}
 
 	// Parent leader election: observer cursors are closed when the old leader
@@ -443,17 +441,17 @@ func (sc *SplitController) checkObserverCursorsStale() (bool, error) {
 			slog.Int64("current-term", parentMeta.Term),
 		)
 		sc.updatePhase(proto.SplitPhaseBootstrap)
-		return true, nil
+		return true
 	}
 
 	// Child leader election: the observer cursor targets the old (dead) leader.
 	// Remove the stale cursor and fall back to Bootstrap to re-add.
 	if sc.removeStaleChildObservers(parentMeta) {
 		sc.updatePhase(proto.SplitPhaseBootstrap)
-		return true, nil
+		return true
 	}
 
-	return false, nil
+	return false
 }
 
 // removeStaleChildObservers checks if any child leader changed since Bootstrap.

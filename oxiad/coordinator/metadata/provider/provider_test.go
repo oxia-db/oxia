@@ -115,13 +115,17 @@ func TestProvider(t *testing.T) {
 func TestResourceTypeUnmarshalLegacyClusterStatus(t *testing.T) {
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{},
+		InstanceId: "legacy-instance",
 	}
 	data, err := proto.MarshalClusterStatusJSON(status)
 	require.NoError(t, err)
 
 	value, err := provider.ResourceStatus.Unmarshal([]byte(fmt.Sprintf(`{"clusterStatus":%s,"version":"2"}`, data)))
 	require.NoError(t, err)
-	assert.True(t, gproto.Equal(status, value))
+	typedStatus, ok := value.(*proto.ClusterStatus)
+	require.True(t, ok)
+	assert.Equal(t, "legacy-instance", typedStatus.GetInstanceId())
+	assert.True(t, gproto.Equal(status, typedStatus))
 }
 
 func TestProviderConfigResource(t *testing.T) {

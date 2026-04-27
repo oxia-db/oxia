@@ -97,10 +97,6 @@ const (
 )
 
 func (statusCodec) Unmarshal(data []byte) (*commonproto.ClusterStatus, error) {
-	status, err := commonproto.UnmarshalClusterStatusYAML(data)
-	if err == nil {
-		return status, nil
-	}
 	legacyStatus, legacyErr := unmarshalLegacyClusterStatus(data)
 	if legacyErr == nil {
 		typedStatus, ok := legacyStatus.(*commonproto.ClusterStatus)
@@ -109,7 +105,7 @@ func (statusCodec) Unmarshal(data []byte) (*commonproto.ClusterStatus, error) {
 		}
 		return typedStatus, nil
 	}
-	return nil, err
+	return commonproto.UnmarshalClusterStatusYAML(data)
 }
 
 func (statusCodec) Clone(value *commonproto.ClusterStatus) *commonproto.ClusterStatus {
