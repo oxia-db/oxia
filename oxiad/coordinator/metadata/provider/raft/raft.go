@@ -16,6 +16,7 @@ package raft
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -88,6 +89,14 @@ func NewProviders(
 	return newProvider(metadataRaft, provider.ResourceStatus, provider.ClusterStatusCodec),
 		newProvider(metadataRaft, provider.ResourceConfig, provider.ClusterConfigCodec),
 		nil
+}
+
+func (r *Raft) NewStatusProvider() provider.StatusProvider {
+	return newProvider(r, provider.ResourceStatus, provider.ClusterStatusCodec)
+}
+
+func (r *Raft) NewConfigProvider() provider.ConfigProvider {
+	return newProvider(r, provider.ResourceConfig, provider.ClusterConfigCodec)
 }
 
 func NewRaft(
@@ -171,14 +180,18 @@ func getRaftServers(bootstrapNodes []string) []hashicorpraft.Server {
 	return servers
 }
 
-func (mpr *Provider[T]) Close() error {
-	mpr.raft.closeOnce.Do(func() {
-		mpr.raft.closeErr = multierr.Combine(
-			mpr.raft.node.Shutdown().Error(),
-			mpr.raft.store.Close(),
+func (r *Raft) Close() error {
+	r.closeOnce.Do(func() {
+		r.closeErr = multierr.Combine(
+			r.node.Shutdown().Error(),
+			r.store.Close(),
 		)
 	})
-	return mpr.raft.closeErr
+	return r.closeErr
+}
+
+func (*Provider[T]) Close() error {
+	return nil
 }
 
 func toVersion(v int64) provider.Version {
@@ -257,6 +270,8 @@ func (mpr *Provider[T]) Store(value T, expectedVersion provider.Version) (newVer
 func (*Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
 	return nil, provider.ErrWatchUnsupported
 }
+
+var _ io.Closer = (*Raft)(nil)
 
 func cloneBytes(data []byte) []byte {
 	if data == nil {

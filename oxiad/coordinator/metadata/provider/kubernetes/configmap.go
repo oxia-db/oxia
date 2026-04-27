@@ -61,7 +61,6 @@ type Provider[T gproto.Message] struct {
 	sync.Mutex
 	kubernetes      kubernetes.Interface
 	namespace, name string
-	resourceType    provider.ResourceType
 	codec           provider.Codec[T]
 	watchEnabled    provider.WatchMode
 
@@ -83,7 +82,6 @@ func NewConfigMapProvider[T gproto.Message](
 	ctx context.Context,
 	kc kubernetes.Interface,
 	namespace, name string,
-	resourceType provider.ResourceType,
 	codec provider.Codec[T],
 	watchEnabled provider.WatchMode,
 ) provider.Provider[T] {
@@ -91,7 +89,6 @@ func NewConfigMapProvider[T gproto.Message](
 		kubernetes:   kc,
 		namespace:    namespace,
 		name:         name,
-		resourceType: resourceType,
 		codec:        codec,
 		watchEnabled: watchEnabled,
 		log:          slog.With("component", "metadata-config-map"),
@@ -144,7 +141,7 @@ func (m *Provider[T]) getWithoutLock() (value T, version provider.Version, err e
 		return value, "", err
 	}
 
-	data, ok := cm.Data[m.dataKey()]
+	data, ok := cm.Data[m.codec.ConfigMapDataKey()]
 	if !ok {
 		return value, provider.NotExists, nil
 	}
@@ -180,7 +177,7 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (provider
 	if err != nil {
 		return provider.NotExists, err
 	}
-	cmData := configMap(m.name, m.dataKey(), data, expectedVersion)
+	cmData := makeDesiredConfigMap(m.name, m.codec.ConfigMapDataKey(), data, expectedVersion)
 	desiredBytes, err := json.Marshal(cmData)
 	if err != nil {
 		return provider.NotExists, err
@@ -203,7 +200,7 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (provider
 		return version, err
 	}
 	version = provider.Version(cm.ResourceVersion)
-	m.metadataSize.Store(int64(len(cmData.Data[m.dataKey()])))
+	m.metadataSize.Store(int64(len(cmData.Data[m.codec.ConfigMapDataKey()])))
 	return version, nil
 }
 
@@ -334,16 +331,7 @@ func (m *Provider[T]) watch() error {
 	return errors.New("K8S config map watch channel closed")
 }
 
-func (m *Provider[T]) dataKey() string {
-	switch m.resourceType {
-	case provider.ResourceConfig:
-		return "config.yaml"
-	default:
-		return "status"
-	}
-}
-
-func configMap(name, dataKey string, data []byte, version provider.Version) *corev1.ConfigMap {
+func makeDesiredConfigMap(name, dataKey string, data []byte, version provider.Version) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ConfigMap",

@@ -76,7 +76,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		return nil, err
 	}
 
-	metadata, err := coordmetadata.NewFromOptions(parent, options.Metadata, options.Cluster.ConfigPath)
+	metadata, err := coordmetadata.NewFromOptions(parent, options)
 	if err != nil {
 		return nil, err
 	}

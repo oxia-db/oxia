@@ -77,6 +77,7 @@ type coordinatorMetadata struct {
 
 	statusProvider provider.StatusProvider
 	configProvider provider.ConfigProvider
+	backendCloser  io.Closer
 
 	statusLock       sync.RWMutex
 	currentStatus    *commonproto.ClusterStatus
@@ -103,65 +104,74 @@ func NewWithProviders(ctx context.Context, statusProvider provider.StatusProvide
 	return newCoordinatorMetadata(ctx, statusProvider, configProvider)
 }
 
-func NewFromOptions(ctx context.Context, meta option.MetadataOptions, legacyClusterConfigPath string) (Metadata, error) {
-	if err := meta.ApplyLegacyClusterConfigPath(legacyClusterConfigPath); err != nil {
+func NewFromOptions(ctx context.Context, options *option.Options) (Metadata, error) {
+	if options == nil {
+		return nil, errors.New("options must not be nil")
+	}
+
+	meta := options.Metadata
+	if err := meta.ApplyLegacyClusterConfigPath(options.Cluster.ConfigPath); err != nil {
 		return nil, err
 	}
 
-	statusProvider, configProvider, err := newProviders(ctx, meta)
+	statusProvider, configProvider, backendCloser, err := newProviders(ctx, meta)
 	if err != nil {
 		return nil, err
 	}
 
 	slog.Info("Waiting to become leader", slog.String("component", "coordinator"))
 	if err := statusProvider.WaitToBecomeLeader(); err != nil {
-		_ = multierr.Combine(statusProvider.Close(), configProvider.Close())
+		_ = multierr.Combine(statusProvider.Close(), configProvider.Close(), closeIfNotNil(backendCloser))
 		return nil, fmt.Errorf("failed to wait in becoming leader: %w", err)
 	}
 	slog.Info("This coordinator is now leader", slog.String("component", "coordinator"))
 
-	return NewWithProviders(ctx, statusProvider, configProvider), nil
+	return newCoordinatorMetadataWithCloser(ctx, statusProvider, configProvider, backendCloser), nil
 }
 
-func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvider provider.StatusProvider, configProvider provider.ConfigProvider, err error) {
+func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvider provider.StatusProvider, configProvider provider.ConfigProvider, backendCloser io.Closer, err error) {
 	switch meta.ProviderName {
 	case provider.NameMemory:
-		return memory.NewProvider[*commonproto.ClusterStatus](), memory.NewProvider[*commonproto.ClusterConfiguration](), nil
+		return memory.NewProvider[*commonproto.ClusterStatus](), memory.NewProvider[*commonproto.ClusterConfiguration](), nil, nil
 	case provider.NameFile:
 		statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), provider.ClusterStatusCodec, provider.WatchDisabled)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), provider.ClusterConfigCodec, provider.WatchEnabled)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		return statusProvider, configProvider, nil
+		return statusProvider, configProvider, nil, nil
 	case provider.NameConfigMap:
 		k8sConfig := kubernetes.NewK8SClientConfig()
 		client := kubernetes.NewK8SClientset(k8sConfig)
-		statusProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ResourceStatus, provider.ClusterStatusCodec, provider.WatchDisabled)
+		statusProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ClusterStatusCodec, provider.WatchDisabled)
 		if meta.File.Dir != "" || meta.File.ConfigName != "" {
 			configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), provider.ClusterConfigCodec, provider.WatchEnabled)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
-			return statusProvider, configProvider, nil
+			return statusProvider, configProvider, nil, nil
 		}
-		configProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ResourceConfig, provider.ClusterConfigCodec, provider.WatchEnabled)
-		return statusProvider, configProvider, nil
+		configProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ClusterConfigCodec, provider.WatchEnabled)
+		return statusProvider, configProvider, nil, nil
 	case provider.NameRaft:
-		statusProvider, configProvider, err := raft.NewProviders(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
+		metadataRaft, err := raft.NewRaft(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create raft metadata provider: %w", err)
+			return nil, nil, nil, fmt.Errorf("failed to create raft metadata provider: %w", err)
 		}
-		return statusProvider, configProvider, nil
+		return metadataRaft.NewStatusProvider(), metadataRaft.NewConfigProvider(), metadataRaft, nil
 	default:
-		return nil, nil, errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
+		return nil, nil, nil, errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
 	}
 }
 
 func newCoordinatorMetadata(ctx context.Context, statusProvider provider.StatusProvider, configProvider provider.ConfigProvider) Metadata {
+	return newCoordinatorMetadataWithCloser(ctx, statusProvider, configProvider, nil)
+}
+
+func newCoordinatorMetadataWithCloser(ctx context.Context, statusProvider provider.StatusProvider, configProvider provider.ConfigProvider, backendCloser io.Closer) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
 		Logger:             slog.With(slog.String("component", "coordinator-metadata")),
@@ -170,6 +180,7 @@ func newCoordinatorMetadata(ctx context.Context, statusProvider provider.StatusP
 		wg:                 &sync.WaitGroup{},
 		statusProvider:     statusProvider,
 		configProvider:     configProvider,
+		backendCloser:      backendCloser,
 		currentVersionID:   provider.NotExists,
 		changeCh:           make(chan struct{}),
 		clusterConfigWatch: commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
@@ -288,7 +299,14 @@ func (p *callbackConfigProvider) Close() error {
 func (m *coordinatorMetadata) Close() error {
 	m.cancel()
 	m.wg.Wait()
-	return multierr.Combine(m.statusProvider.Close(), m.configProvider.Close())
+	return multierr.Combine(m.statusProvider.Close(), m.configProvider.Close(), closeIfNotNil(m.backendCloser))
+}
+
+func closeIfNotNil(c io.Closer) error {
+	if c == nil {
+		return nil
+	}
+	return c.Close()
 }
 
 func (m *coordinatorMetadata) notifyStatusChange() {

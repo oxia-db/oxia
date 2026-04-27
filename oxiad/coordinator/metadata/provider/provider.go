@@ -77,6 +77,7 @@ type Codec[T gproto.Message] interface {
 	Unmarshal(data []byte) (T, error)
 	MarshalYAML(value T) ([]byte, error)
 	MarshalJSON(value T) ([]byte, error)
+	ConfigMapDataKey() string
 }
 
 type statusCodec struct{}
@@ -86,6 +87,11 @@ type configCodec struct{}
 var (
 	ClusterStatusCodec Codec[*commonproto.ClusterStatus]        = statusCodec{}
 	ClusterConfigCodec Codec[*commonproto.ClusterConfiguration] = configCodec{}
+)
+
+const (
+	ClusterStatusConfigMapDataKey = "status"
+	ClusterConfigConfigMapDataKey = "config.yaml"
 )
 
 func (statusCodec) Unmarshal(data []byte) (*commonproto.ClusterStatus, error) {
@@ -112,6 +118,10 @@ func (statusCodec) MarshalJSON(value *commonproto.ClusterStatus) ([]byte, error)
 	return commonproto.MarshalClusterStatusJSON(value)
 }
 
+func (statusCodec) ConfigMapDataKey() string {
+	return ClusterStatusConfigMapDataKey
+}
+
 func (configCodec) Unmarshal(data []byte) (*commonproto.ClusterConfiguration, error) {
 	return commonproto.UnmarshalClusterConfigurationYAML(data)
 }
@@ -125,6 +135,10 @@ func (configCodec) MarshalJSON(value *commonproto.ClusterConfiguration) ([]byte,
 		UseProtoNames:   false,
 		EmitUnpopulated: false,
 	}.Marshal(value)
+}
+
+func (configCodec) ConfigMapDataKey() string {
+	return ClusterConfigConfigMapDataKey
 }
 
 func (rt ResourceType) Unmarshal(data []byte) (gproto.Message, error) {

@@ -29,14 +29,16 @@ func TestNewFromOptionsLoadsFileClusterConfig(t *testing.T) {
 	dir := t.TempDir()
 	writeClusterConfig(t, filepath.Join(dir, option.DefaultFileConfigName))
 
-	metadata, err := NewFromOptions(t.Context(), option.MetadataOptions{
-		ProviderOptions: option.ProviderOptions{
-			ProviderName: provider.NameFile,
-			File: option.FileMetadata{
-				Dir: dir,
+	metadata, err := NewFromOptions(t.Context(), &option.Options{
+		Metadata: option.MetadataOptions{
+			ProviderOptions: option.ProviderOptions{
+				ProviderName: provider.NameFile,
+				File: option.FileMetadata{
+					Dir: dir,
+				},
 			},
 		},
-	}, "")
+	})
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())
@@ -52,14 +54,19 @@ func TestNewFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 	configPath := filepath.Join(dir, "legacy-cluster.yaml")
 	writeClusterConfig(t, configPath)
 
-	metadata, err := NewFromOptions(t.Context(), option.MetadataOptions{
-		ProviderOptions: option.ProviderOptions{
-			ProviderName: provider.NameFile,
-			File: option.FileMetadata{
-				StatusName: filepath.Join(dir, option.DefaultFileStatusName),
+	metadata, err := NewFromOptions(t.Context(), &option.Options{
+		Cluster: option.ClusterOptions{
+			ConfigPath: configPath,
+		},
+		Metadata: option.MetadataOptions{
+			ProviderOptions: option.ProviderOptions{
+				ProviderName: provider.NameFile,
+				File: option.FileMetadata{
+					StatusName: filepath.Join(dir, option.DefaultFileStatusName),
+				},
 			},
 		},
-	}, configPath)
+	})
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())

@@ -63,7 +63,7 @@ var (
 		"configmap": func(t *testing.T) provider.StatusProvider {
 			t.Helper()
 
-			return kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "n", provider.ResourceStatus, provider.ClusterStatusCodec, provider.WatchDisabled)
+			return kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "n", provider.ClusterStatusCodec, provider.WatchDisabled)
 		},
 		"raft": func(t *testing.T) provider.StatusProvider {
 			t.Helper()
@@ -141,7 +141,7 @@ func TestProviderConfigResource(t *testing.T) {
 		"configmap": func(t *testing.T) provider.ConfigProvider {
 			t.Helper()
 
-			return kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "config", provider.ResourceConfig, provider.ClusterConfigCodec, provider.WatchDisabled)
+			return kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "config", provider.ClusterConfigCodec, provider.WatchDisabled)
 		},
 		"raft": func(t *testing.T) provider.ConfigProvider {
 			t.Helper()

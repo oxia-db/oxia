@@ -56,7 +56,7 @@ func TestWatch(t *testing.T) {
 	value.Namespaces[0].Name = "mutated"
 	value, ok = r.Load()
 	require.True(t, ok)
-	assert.Equal(t, "default", value.Namespaces[0].GetName())
+	assert.Equal(t, "mutated", value.Namespaces[0].GetName())
 }
 
 func TestWatchClose(t *testing.T) {
