@@ -29,7 +29,7 @@ import (
 
 func newCoordinatorInstance(
 	t *testing.T,
-	metadataProvider provider.StatusProvider,
+	metadataProvider provider.Provider[*proto.ClusterStatus],
 	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc.ProviderFactory,

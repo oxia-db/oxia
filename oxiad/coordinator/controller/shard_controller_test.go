@@ -43,7 +43,7 @@ var namespaceConfig = &proto.Namespace{
 	ReplicationFactor: 3,
 }
 
-func newTestMetadata(t *testing.T, metadataProvider provider.StatusProvider, clusterConfig *proto.ClusterConfiguration) coordmetadata.Metadata {
+func newTestMetadata(t *testing.T, metadataProvider provider.Provider[*proto.ClusterStatus], clusterConfig *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
 	metadata := coordmetadata.New(t.Context(), metadataProvider, func() (*proto.ClusterConfiguration, error) {

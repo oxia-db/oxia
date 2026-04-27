@@ -75,8 +75,8 @@ type coordinatorMetadata struct {
 	cancel context.CancelFunc
 	wg     *sync.WaitGroup
 
-	statusProvider provider.StatusProvider
-	configProvider provider.ConfigProvider
+	statusProvider provider.Provider[*commonproto.ClusterStatus]
+	configProvider provider.Provider[*commonproto.ClusterConfiguration]
 	backendCloser  io.Closer
 
 	statusLock       sync.RWMutex
@@ -93,14 +93,14 @@ type coordinatorMetadata struct {
 
 func New(
 	ctx context.Context,
-	metadataProvider provider.StatusProvider,
+	metadataProvider provider.Provider[*commonproto.ClusterStatus],
 	clusterConfigProvider func() (*commonproto.ClusterConfiguration, error),
 	clusterConfigNotificationsCh chan any,
 ) Metadata {
 	return newCoordinatorMetadata(ctx, metadataProvider, newCallbackConfigProvider(ctx, clusterConfigProvider, clusterConfigNotificationsCh))
 }
 
-func NewWithProviders(ctx context.Context, statusProvider provider.StatusProvider, configProvider provider.ConfigProvider) Metadata {
+func NewWithProviders(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration]) Metadata {
 	return newCoordinatorMetadata(ctx, statusProvider, configProvider)
 }
 
@@ -129,7 +129,7 @@ func NewFromOptions(ctx context.Context, options *option.Options) (Metadata, err
 	return newCoordinatorMetadataWithCloser(ctx, statusProvider, configProvider, backendCloser), nil
 }
 
-func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvider provider.StatusProvider, configProvider provider.ConfigProvider, backendCloser io.Closer, err error) {
+func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration], backendCloser io.Closer, err error) {
 	switch meta.ProviderName {
 	case provider.NameMemory:
 		return memory.NewProvider[*commonproto.ClusterStatus](), memory.NewProvider[*commonproto.ClusterConfiguration](), nil, nil
@@ -167,11 +167,11 @@ func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvi
 	}
 }
 
-func newCoordinatorMetadata(ctx context.Context, statusProvider provider.StatusProvider, configProvider provider.ConfigProvider) Metadata {
+func newCoordinatorMetadata(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration]) Metadata {
 	return newCoordinatorMetadataWithCloser(ctx, statusProvider, configProvider, nil)
 }
 
-func newCoordinatorMetadataWithCloser(ctx context.Context, statusProvider provider.StatusProvider, configProvider provider.ConfigProvider, backendCloser io.Closer) Metadata {
+func newCoordinatorMetadataWithCloser(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration], backendCloser io.Closer) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
 		Logger:             slog.With(slog.String("component", "coordinator-metadata")),
@@ -216,7 +216,7 @@ func newCallbackConfigProvider(
 	ctx context.Context,
 	load func() (*commonproto.ClusterConfiguration, error),
 	notifications <-chan any,
-) provider.ConfigProvider {
+) provider.Provider[*commonproto.ClusterConfiguration] {
 	watchCtx, cancel := context.WithCancel(ctx)
 	p := &callbackConfigProvider{
 		ctx:           watchCtx,

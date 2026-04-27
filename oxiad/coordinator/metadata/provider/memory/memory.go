@@ -26,8 +26,8 @@ import (
 	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-var _ provider.StatusProvider = (*Provider[*proto.ClusterStatus])(nil)
-var _ provider.ConfigProvider = (*Provider[*proto.ClusterConfiguration])(nil)
+var _ provider.Provider[*proto.ClusterStatus] = (*Provider[*proto.ClusterStatus])(nil)
+var _ provider.Provider[*proto.ClusterConfiguration] = (*Provider[*proto.ClusterConfiguration])(nil)
 
 type Provider[T gproto.Message] struct {
 	sync.Mutex

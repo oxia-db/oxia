@@ -36,8 +36,8 @@ import (
 	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-var _ provider.StatusProvider = (*Provider[*commonproto.ClusterStatus])(nil)
-var _ provider.ConfigProvider = (*Provider[*commonproto.ClusterConfiguration])(nil)
+var _ provider.Provider[*commonproto.ClusterStatus] = (*Provider[*commonproto.ClusterStatus])(nil)
+var _ provider.Provider[*commonproto.ClusterConfiguration] = (*Provider[*commonproto.ClusterConfiguration])(nil)
 
 type Provider[T gproto.Message] struct {
 	resourceType provider.ResourceType
@@ -69,7 +69,7 @@ func NewProvider(
 	raftAddress string,
 	raftBootstrapNodes []string,
 	raftDataDir string,
-) (provider.StatusProvider, error) {
+) (provider.Provider[*commonproto.ClusterStatus], error) {
 	metadataRaft, err := NewRaft(raftAddress, raftBootstrapNodes, raftDataDir)
 	if err != nil {
 		return nil, err
@@ -81,7 +81,7 @@ func NewProviders(
 	raftAddress string,
 	raftBootstrapNodes []string,
 	raftDataDir string,
-) (statusProvider provider.StatusProvider, configProvider provider.ConfigProvider, err error) {
+) (statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration], err error) {
 	metadataRaft, err := NewRaft(raftAddress, raftBootstrapNodes, raftDataDir)
 	if err != nil {
 		return nil, nil, err
@@ -91,11 +91,11 @@ func NewProviders(
 		nil
 }
 
-func (r *Raft) NewStatusProvider() provider.StatusProvider {
+func (r *Raft) NewStatusProvider() provider.Provider[*commonproto.ClusterStatus] {
 	return newProvider(r, provider.ResourceStatus, provider.ClusterStatusCodec)
 }
 
-func (r *Raft) NewConfigProvider() provider.ConfigProvider {
+func (r *Raft) NewConfigProvider() provider.Provider[*commonproto.ClusterConfiguration] {
 	return newProvider(r, provider.ResourceConfig, provider.ClusterConfigCodec)
 }
 

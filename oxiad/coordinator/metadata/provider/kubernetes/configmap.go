@@ -45,8 +45,8 @@ import (
 	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-var _ provider.StatusProvider = (*Provider[*commonproto.ClusterStatus])(nil)
-var _ provider.ConfigProvider = (*Provider[*commonproto.ClusterConfiguration])(nil)
+var _ provider.Provider[*commonproto.ClusterStatus] = (*Provider[*commonproto.ClusterStatus])(nil)
+var _ provider.Provider[*commonproto.ClusterConfiguration] = (*Provider[*commonproto.ClusterConfiguration])(nil)
 
 const (
 	leaseDuration = 15 * time.Second

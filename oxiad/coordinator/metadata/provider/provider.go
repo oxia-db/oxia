@@ -216,7 +216,3 @@ type Provider[T gproto.Message] interface {
 
 	Watch() (*metadatawatch.Receiver[T], error)
 }
-
-type StatusProvider = Provider[*commonproto.ClusterStatus]
-
-type ConfigProvider = Provider[*commonproto.ClusterConfiguration]
