@@ -314,17 +314,31 @@ func (c *coordinator) startBackgroundActionWorker() {
 
 func (c *coordinator) startBackgroundConfigWatcher() {
 	configWatch := c.metadata.ConfigWatch()
-	currentConfig, ver := configWatch.Load()
-	if currentConfig != nil {
+	receiver, err := configWatch.Subscribe()
+	if err != nil {
+		c.Warn("failed to subscribe to cluster config watch", slog.Any("error", err))
+		return
+	}
+	defer func() {
+		_ = receiver.Close()
+	}()
+
+	currentConfig, ok := configWatch.Load()
+	if ok && currentConfig != nil {
 		c.ConfigChanged(currentConfig)
 	}
 	for {
-		newConfig, nextVer, err := configWatch.Wait(c.ctx, ver)
-		if err != nil {
+		select {
+		case <-c.ctx.Done():
 			return
+		case _, ok := <-receiver.Changed():
+			if !ok {
+				return
+			}
 		}
-		ver = nextVer
-		if newConfig == nil {
+
+		newConfig, ok := receiver.Load()
+		if !ok || newConfig == nil {
 			continue
 		}
 		c.ConfigChanged(newConfig)

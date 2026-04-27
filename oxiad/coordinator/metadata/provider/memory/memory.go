@@ -20,8 +20,8 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
 var _ provider.Provider[*proto.ClusterStatus] = (*Provider[*proto.ClusterStatus])(nil)
@@ -70,6 +70,6 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersi
 	return m.version, nil
 }
 
-func (*Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
+func (*Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
 	return nil, provider.ErrWatchUnsupported
 }

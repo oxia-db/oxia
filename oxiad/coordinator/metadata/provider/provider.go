@@ -26,7 +26,7 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 )
 
 var (
@@ -220,7 +220,7 @@ type Provider[T gproto.Message] interface {
 
 	WaitToBecomeLeader() error
 
-	Watch() (*metadatawatch.Receiver[T], error)
+	Watch() (*commonwatch.Receiver[T], error)
 }
 
 func cloneMessage[T gproto.Message](value T) T {

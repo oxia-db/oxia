@@ -31,6 +31,7 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
@@ -43,7 +44,7 @@ type GrpcServer struct {
 	ctxCancel        context.CancelFunc
 	wg               sync.WaitGroup
 	logger           *slog.Logger
-	watchableOptions *commonoption.Watch[*option.Options]
+	watchableOptions *commonwatch.Watch[*option.Options]
 
 	grpcServer   rpc2.GrpcServer
 	adminServer  rpc2.GrpcServer
@@ -53,7 +54,7 @@ type GrpcServer struct {
 	metrics      *metric.PrometheusMetrics
 }
 
-func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[*option.Options]) (*GrpcServer, error) {
+func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*option.Options]) (*GrpcServer, error) {
 	options, _ := watchableOptions.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
 
@@ -141,13 +142,27 @@ func startMetricsServer(metrics commonoption.MetricOptions) (*metric.PrometheusM
 }
 
 func (s *GrpcServer) backgroundHandleConfChange() {
-	var coordinatorOptions *option.Options
-	var ver uint64
-	var err error
+	receiver, err := s.watchableOptions.Subscribe()
+	if err != nil {
+		s.logger.Warn("exit background configuration watch goroutine due to a subscription error", slog.Any("error", err))
+		return
+	}
+	defer func() {
+		_ = receiver.Close()
+	}()
+
 	for {
-		coordinatorOptions, ver, err = s.watchableOptions.Wait(s.ctx, ver)
-		if err != nil {
-			s.logger.Warn("exit background configuration watch goroutine due to an error", slog.Any("error", err))
+		select {
+		case <-s.ctx.Done():
+			return
+		case _, ok := <-receiver.Changed():
+			if !ok {
+				return
+			}
+		}
+
+		coordinatorOptions, ok := receiver.Load()
+		if !ok || coordinatorOptions == nil {
 			return
 		}
 

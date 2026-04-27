@@ -15,28 +15,26 @@
 package watch
 
 import (
+	"errors"
 	"io"
 	"sync"
-
-	"github.com/pkg/errors"
-	gproto "google.golang.org/protobuf/proto"
 )
 
 var ErrClosed = errors.New("watch closed")
 
-var _ io.Closer = (*Receiver[gproto.Message])(nil)
+var _ io.Closer = (*Receiver[any])(nil)
 
-type Watch[T gproto.Message] struct {
+type Watch[T any] struct {
 	sync.Mutex
 
 	value     T
-	hasValue  bool
 	closed    bool
 	receivers map[*Receiver[T]]chan struct{}
 }
 
-func New[T gproto.Message]() *Watch[T] {
+func New[T any](init T) *Watch[T] {
 	return &Watch[T]{
+		value:     init,
 		receivers: map[*Receiver[T]]chan struct{}{},
 	}
 }
@@ -67,7 +65,6 @@ func (w *Watch[T]) Publish(value T) {
 	}
 
 	w.value = value
-	w.hasValue = true
 
 	for _, ch := range w.receivers {
 		select {
@@ -92,18 +89,14 @@ func (w *Watch[T]) Close() {
 	}
 }
 
-func (w *Watch[T]) load() (T, bool) {
+func (w *Watch[T]) Load() (T, bool) {
 	w.Lock()
 	defer w.Unlock()
 
-	var zero T
-	if !w.hasValue {
-		return zero, false
-	}
 	return w.value, true
 }
 
-type Receiver[T gproto.Message] struct {
+type Receiver[T any] struct {
 	watch   *Watch[T]
 	changed chan struct{}
 }
@@ -113,7 +106,7 @@ func (r *Receiver[T]) Changed() <-chan struct{} {
 }
 
 func (r *Receiver[T]) Load() (T, bool) {
-	return r.watch.load()
+	return r.watch.Load()
 }
 
 func (r *Receiver[T]) Close() error {

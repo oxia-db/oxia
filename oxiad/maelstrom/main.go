@@ -26,12 +26,11 @@ import (
 	"github.com/spf13/cobra"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -228,7 +227,7 @@ func main() {
 		}
 		_, err = dataserver.NewWithGrpcProvider(
 			context.Background(),
-			commonoption.NewWatch(dataServerOption),
+			commonwatch.New(dataServerOption),
 			grpcProvider,
 			replicationGrpcProvider,
 			manifest,

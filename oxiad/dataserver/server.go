@@ -23,7 +23,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -49,7 +49,7 @@ type Server struct {
 	ctxCancel        context.CancelFunc
 	wg               sync.WaitGroup
 	logger           *slog.Logger
-	watchableOptions *commonoption.Watch[*option.Options]
+	watchableOptions *commonwatch.Watch[*option.Options]
 
 	replicationRpcProvider    rpc.ReplicationRpcProvider
 	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
@@ -61,7 +61,7 @@ type Server struct {
 	healthServer rpc2.HealthServer
 }
 
-func New(parent context.Context, watchableOption *commonoption.Watch[*option.Options]) (*Server, error) {
+func New(parent context.Context, watchableOption *commonwatch.Watch[*option.Options]) (*Server, error) {
 	options, _ := watchableOption.Load()
 	manifest, err := manifestpkg.NewManifest(options.Storage.Database.Dir)
 	if err != nil {
@@ -75,7 +75,7 @@ func New(parent context.Context, watchableOption *commonoption.Watch[*option.Opt
 	return grpcProvider, err
 }
 
-func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.Watch[*option.Options], provider rpc2.GrpcProvider,
+func NewWithGrpcProvider(parent context.Context, watchableOption *commonwatch.Watch[*option.Options], provider rpc2.GrpcProvider,
 	replicationRpcProvider rpc.ReplicationRpcProvider, manifest *manifestpkg.Manifest, disableAuthorityValidation bool) (*Server, error) {
 	options, _ := watchableOption.Load()
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
@@ -171,13 +171,27 @@ func (s *Server) InternalPort() int {
 }
 
 func (s *Server) backgroundHandleConfChange() {
-	var dataServerOptions *option.Options
-	var ver uint64
-	var err error
+	receiver, err := s.watchableOptions.Subscribe()
+	if err != nil {
+		s.logger.Warn("exit background configuration watch goroutine due to a subscription error", slog.Any("error", err))
+		return
+	}
+	defer func() {
+		_ = receiver.Close()
+	}()
+
 	for {
-		dataServerOptions, ver, err = s.watchableOptions.Wait(s.ctx, ver)
-		if err != nil {
-			s.logger.Warn("exit background configuration watch goroutine due to an error", slog.Any("error", err))
+		select {
+		case <-s.ctx.Done():
+			return
+		case _, ok := <-receiver.Changed():
+			if !ok {
+				return
+			}
+		}
+
+		dataServerOptions, ok := receiver.Load()
+		if !ok || dataServerOptions == nil {
 			return
 		}
 

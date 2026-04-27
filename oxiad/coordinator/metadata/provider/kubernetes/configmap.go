@@ -41,8 +41,8 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
 var _ provider.Provider[*commonproto.ClusterStatus] = (*Provider[*commonproto.ClusterStatus])(nil)
@@ -73,7 +73,7 @@ type Provider[T gproto.Message] struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	watcher *metadatawatch.Watch[T]
+	watcher *commonwatch.Watch[T]
 
 	log *slog.Logger
 }
@@ -84,7 +84,7 @@ func NewConfigMapProvider[T gproto.Message](
 	namespace, name string,
 	codec provider.Codec[T],
 	watchEnabled provider.WatchMode,
-) provider.Provider[T] {
+) (provider.Provider[T], error) {
 	m := &Provider[T]{
 		kubernetes:   kc,
 		namespace:    namespace,
@@ -101,7 +101,11 @@ func NewConfigMapProvider[T gproto.Message](
 
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	if watchEnabled.Enabled() {
-		m.watcher = metadatawatch.New[T]()
+		initialValue, _, err := m.getWithoutLock() //nolint:contextcheck // Constructor seeds the watch from the provider-owned context.
+		if err != nil {
+			return nil, err
+		}
+		m.watcher = commonwatch.New(initialValue)
 		m.wg.Go(func() {
 			process.DoWithLabels(m.ctx, map[string]string{
 				"component":     "metadata-provider",
@@ -117,7 +121,7 @@ func NewConfigMapProvider[T gproto.Message](
 
 	logger := logr.FromSlogHandler(m.log.With(slog.String("sub-component", "k8s-client")).Handler())
 	klog.SetLogger(logger)
-	return m
+	return m, nil
 }
 
 func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
@@ -275,7 +279,7 @@ func (m *Provider[T]) Close() error {
 	return nil
 }
 
-func (m *Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
+func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
 	if !m.watchEnabled.Enabled() || m.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
