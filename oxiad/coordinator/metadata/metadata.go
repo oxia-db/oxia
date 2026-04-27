@@ -571,18 +571,19 @@ func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Rec
 			return
 		}
 	}
+	clonedConfig := gproto.Clone(config).(*commonproto.ClusterConfiguration) //nolint:revive
 
 	m.clusterConfigLock.Lock()
 	oldClusterConfig := m.currentClusterConfig
-	m.currentClusterConfig = config
+	m.currentClusterConfig = clonedConfig
 	m.rebuildConfigIndexesLocked()
 	m.clusterConfigLock.Unlock()
 
-	if gproto.Equal(oldClusterConfig, config) {
+	if gproto.Equal(oldClusterConfig, clonedConfig) {
 		m.Info("No cluster config changes detected")
 		return
 	}
-	m.clusterConfigWatch.Publish(config)
+	m.clusterConfigWatch.Publish(clonedConfig)
 }
 
 func (m *coordinatorMetadata) usesCallbackConfigProvider() bool {
