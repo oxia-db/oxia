@@ -15,6 +15,7 @@
 package watch
 
 import (
+	"io"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -22,6 +23,8 @@ import (
 )
 
 var ErrClosed = errors.New("watch closed")
+
+var _ io.Closer = &Receiver{}
 
 type Watch struct {
 	sync.Mutex
@@ -118,8 +121,9 @@ func (r *Receiver) Load() (gproto.Message, bool) {
 	return r.watch.load()
 }
 
-func (r *Receiver) Close() {
+func (r *Receiver) Close() error {
 	r.watch.closeReceiver(r)
+	return nil
 }
 
 func (w *Watch) closeReceiver(r *Receiver) {

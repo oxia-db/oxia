@@ -76,7 +76,7 @@ type Provider struct {
 	log *slog.Logger
 }
 
-func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) provider.Provider {
+func NewConfigMapProvider(ctx context.Context, kc kubernetes.Interface, namespace, name string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) provider.Provider {
 	m := &Provider{
 		kubernetes:   kc,
 		namespace:    namespace,
@@ -91,7 +91,7 @@ func NewConfigMapProvider(kc kubernetes.Interface, namespace, name string, resou
 			"Latency for storing coordinator metadata", nil),
 	}
 
-	m.ctx, m.cancel = context.WithCancel(context.Background())
+	m.ctx, m.cancel = context.WithCancel(ctx)
 	if watchEnabled.Enabled() {
 		m.watcher = metadatawatch.New()
 		m.wg.Go(func() {

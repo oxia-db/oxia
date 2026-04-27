@@ -78,7 +78,7 @@ func TestReceiverClose(t *testing.T) {
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
-	r.Close()
+	require.NoError(t, r.Close())
 	w.Publish(&proto.ClusterConfiguration{})
 
 	_, ok := <-r.Changed()

@@ -50,7 +50,7 @@ type Provider struct {
 	watcher *metadatawatch.Watch
 }
 
-func NewProvider(path string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) (provider.Provider, error) {
+func NewProvider(ctx context.Context, path string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) (provider.Provider, error) {
 	p := &Provider{
 		path:         path,
 		resourceType: resourceType,
@@ -58,7 +58,7 @@ func NewProvider(path string, resourceType provider.ResourceType, watchEnabled p
 		watchEnabled: watchEnabled,
 		version:      provider.NotExists,
 	}
-	p.ctx, p.cancel = context.WithCancel(context.Background())
+	p.ctx, p.cancel = context.WithCancel(ctx)
 	if err := p.ensureParentDirectoryExists(); err != nil {
 		return nil, err
 	}
@@ -75,9 +75,7 @@ func NewProvider(path string, resourceType provider.ResourceType, watchEnabled p
 }
 
 func (m *Provider) Close() error {
-	if m.cancel != nil {
-		m.cancel()
-	}
+	m.cancel()
 	m.wg.Wait()
 	if m.watcher != nil {
 		m.watcher.Close()

@@ -108,7 +108,7 @@ func NewFromOptions(ctx context.Context, meta option.MetadataOptions, legacyClus
 		return nil, err
 	}
 
-	statusProvider, configProvider, err := newProviders(meta)
+	statusProvider, configProvider, err := newProviders(ctx, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -123,16 +123,16 @@ func NewFromOptions(ctx context.Context, meta option.MetadataOptions, legacyClus
 	return NewWithProviders(ctx, statusProvider, configProvider), nil
 }
 
-func newProviders(meta option.MetadataOptions) (statusProvider provider.Provider, configProvider provider.Provider, err error) {
+func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvider provider.Provider, configProvider provider.Provider, err error) {
 	switch meta.ProviderName {
 	case provider.NameMemory:
 		return memory.NewProvider(provider.ResourceStatus), memory.NewProvider(provider.ResourceConfig), nil
 	case provider.NameFile:
-		statusProvider, err = file.NewProvider(meta.File.StatusPath(), provider.ResourceStatus, provider.WatchDisabled)
+		statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), provider.ResourceStatus, provider.WatchDisabled)
 		if err != nil {
 			return nil, nil, err
 		}
-		configProvider, err = file.NewProvider(meta.File.ConfigPath(), provider.ResourceConfig, provider.WatchEnabled)
+		configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), provider.ResourceConfig, provider.WatchEnabled)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -140,15 +140,15 @@ func newProviders(meta option.MetadataOptions) (statusProvider provider.Provider
 	case provider.NameConfigMap:
 		k8sConfig := kubernetes.NewK8SClientConfig()
 		client := kubernetes.NewK8SClientset(k8sConfig)
-		statusProvider := kubernetes.NewConfigMapProvider(client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ResourceStatus, provider.WatchDisabled)
+		statusProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ResourceStatus, provider.WatchDisabled)
 		if meta.File.Dir != "" || meta.File.ConfigName != "" {
-			configProvider, err = file.NewProvider(meta.File.ConfigPath(), provider.ResourceConfig, provider.WatchEnabled)
+			configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), provider.ResourceConfig, provider.WatchEnabled)
 			if err != nil {
 				return nil, nil, err
 			}
 			return statusProvider, configProvider, nil
 		}
-		configProvider := kubernetes.NewConfigMapProvider(client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ResourceConfig, provider.WatchEnabled)
+		configProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ResourceConfig, provider.WatchEnabled)
 		return statusProvider, configProvider, nil
 	case provider.NameRaft:
 		statusProvider, configProvider, err := raft.NewProviders(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
@@ -521,7 +521,9 @@ func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
 }
 
 func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *metadatawatch.Receiver) {
-	defer configWatch.Close()
+	defer func() {
+		_ = configWatch.Close()
+	}()
 
 	m.applyConfigWatchValue(configWatch)
 	for {
