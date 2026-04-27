@@ -15,7 +15,9 @@
 package watch
 
 import (
+	"fmt"
 	"io"
+	"reflect"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -24,24 +26,24 @@ import (
 
 var ErrClosed = errors.New("watch closed")
 
-var _ io.Closer = &Receiver{}
+var _ io.Closer = (*Receiver[gproto.Message])(nil)
 
-type Watch struct {
+type Watch[T gproto.Message] struct {
 	sync.Mutex
 
-	value     gproto.Message
+	value     T
 	hasValue  bool
 	closed    bool
-	receivers map[*Receiver]chan struct{}
+	receivers map[*Receiver[T]]chan struct{}
 }
 
-func New() *Watch {
-	return &Watch{
-		receivers: map[*Receiver]chan struct{}{},
+func New[T gproto.Message]() *Watch[T] {
+	return &Watch[T]{
+		receivers: map[*Receiver[T]]chan struct{}{},
 	}
 }
 
-func (w *Watch) Subscribe() (*Receiver, error) {
+func (w *Watch[T]) Subscribe() (*Receiver[T], error) {
 	w.Lock()
 	defer w.Unlock()
 
@@ -50,7 +52,7 @@ func (w *Watch) Subscribe() (*Receiver, error) {
 	}
 
 	ch := make(chan struct{}, 1)
-	r := &Receiver{
+	r := &Receiver[T]{
 		watch:   w,
 		changed: ch,
 	}
@@ -58,7 +60,7 @@ func (w *Watch) Subscribe() (*Receiver, error) {
 	return r, nil
 }
 
-func (w *Watch) Publish(value gproto.Message) {
+func (w *Watch[T]) Publish(value T) {
 	w.Lock()
 	defer w.Unlock()
 
@@ -66,10 +68,7 @@ func (w *Watch) Publish(value gproto.Message) {
 		return
 	}
 
-	if value != nil {
-		value = gproto.Clone(value)
-	}
-	w.value = value
+	w.value = cloneMessage(value)
 	w.hasValue = true
 
 	for _, ch := range w.receivers {
@@ -80,7 +79,7 @@ func (w *Watch) Publish(value gproto.Message) {
 	}
 }
 
-func (w *Watch) Close() {
+func (w *Watch[T]) Close() {
 	w.Lock()
 	defer w.Unlock()
 
@@ -95,38 +94,36 @@ func (w *Watch) Close() {
 	}
 }
 
-func (w *Watch) load() (gproto.Message, bool) {
+func (w *Watch[T]) load() (T, bool) {
 	w.Lock()
 	defer w.Unlock()
 
+	var zero T
 	if !w.hasValue {
-		return nil, false
+		return zero, false
 	}
-	if w.value == nil {
-		return nil, true
-	}
-	return gproto.Clone(w.value), true
+	return cloneMessage(w.value), true
 }
 
-type Receiver struct {
-	watch   *Watch
+type Receiver[T gproto.Message] struct {
+	watch   *Watch[T]
 	changed chan struct{}
 }
 
-func (r *Receiver) Changed() <-chan struct{} {
+func (r *Receiver[T]) Changed() <-chan struct{} {
 	return r.changed
 }
 
-func (r *Receiver) Load() (gproto.Message, bool) {
+func (r *Receiver[T]) Load() (T, bool) {
 	return r.watch.load()
 }
 
-func (r *Receiver) Close() error {
+func (r *Receiver[T]) Close() error {
 	r.watch.closeReceiver(r)
 	return nil
 }
 
-func (w *Watch) closeReceiver(r *Receiver) {
+func (w *Watch[T]) closeReceiver(r *Receiver[T]) {
 	w.Lock()
 	defer w.Unlock()
 
@@ -136,4 +133,23 @@ func (w *Watch) closeReceiver(r *Receiver) {
 	}
 	delete(w.receivers, r)
 	close(ch)
+}
+
+func cloneMessage[T gproto.Message](value T) T {
+	var zero T
+	v := reflect.ValueOf(value)
+	if !v.IsValid() {
+		return zero
+	}
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if v.IsNil() {
+			return zero
+		}
+	}
+	cloned, ok := gproto.Clone(value).(T)
+	if !ok {
+		panic(fmt.Sprintf("failed to clone watch value of type %T", value))
+	}
+	return cloned
 }

@@ -104,7 +104,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
@@ -292,7 +292,7 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
@@ -442,7 +442,7 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,

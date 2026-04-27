@@ -15,48 +15,49 @@
 package memory
 
 import (
+	"fmt"
+	"reflect"
 	"sync"
 
 	gproto "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-var _ provider.Provider = &Provider{}
+var _ provider.StatusProvider = (*Provider[*proto.ClusterStatus])(nil)
+var _ provider.ConfigProvider = (*Provider[*proto.ClusterConfiguration])(nil)
 
-type Provider struct {
+type Provider[T gproto.Message] struct {
 	sync.Mutex
 
-	value   gproto.Message
+	value   T
 	version provider.Version
 }
 
-func (*Provider) WaitToBecomeLeader() error {
+func (*Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func NewProvider(...provider.ResourceType) provider.Provider {
-	return &Provider{
-		value:   nil,
+func NewProvider[T gproto.Message]() provider.Provider[T] {
+	return &Provider[T]{
 		version: provider.NotExists,
 	}
 }
 
-func (*Provider) Close() error {
+func (*Provider[T]) Close() error {
 	return nil
 }
 
-func (m *Provider) Get() (value gproto.Message, version provider.Version, err error) {
+func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
-	if m.value == nil {
-		return nil, m.version, nil
-	}
-	return gproto.Clone(m.value), m.version, nil
+
+	return cloneMessage(m.value), m.version, nil
 }
 
-func (m *Provider) Store(value gproto.Message, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -64,11 +65,30 @@ func (m *Provider) Store(value gproto.Message, expectedVersion provider.Version)
 		panic(provider.ErrBadVersion)
 	}
 
-	m.value = gproto.Clone(value)
+	m.value = cloneMessage(value)
 	m.version = provider.NextVersion(m.version)
 	return m.version, nil
 }
 
-func (*Provider) Watch() (*metadatawatch.Receiver, error) {
+func (*Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
 	return nil, provider.ErrWatchUnsupported
+}
+
+func cloneMessage[T gproto.Message](value T) T {
+	var zero T
+	v := reflect.ValueOf(value)
+	if !v.IsValid() {
+		return zero
+	}
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if v.IsNil() {
+			return zero
+		}
+	}
+	cloned, ok := gproto.Clone(value).(T)
+	if !ok {
+		panic(fmt.Sprintf("failed to clone metadata value of type %T", value))
+	}
+	return cloned
 }

@@ -75,8 +75,8 @@ type coordinatorMetadata struct {
 	cancel context.CancelFunc
 	wg     *sync.WaitGroup
 
-	statusProvider provider.Provider
-	configProvider provider.Provider
+	statusProvider provider.StatusProvider
+	configProvider provider.ConfigProvider
 
 	statusLock       sync.RWMutex
 	currentStatus    *commonproto.ClusterStatus
@@ -92,14 +92,14 @@ type coordinatorMetadata struct {
 
 func New(
 	ctx context.Context,
-	metadataProvider provider.Provider,
+	metadataProvider provider.StatusProvider,
 	clusterConfigProvider func() (*commonproto.ClusterConfiguration, error),
 	clusterConfigNotificationsCh chan any,
 ) Metadata {
 	return newCoordinatorMetadata(ctx, metadataProvider, newCallbackConfigProvider(ctx, clusterConfigProvider, clusterConfigNotificationsCh))
 }
 
-func NewWithProviders(ctx context.Context, statusProvider provider.Provider, configProvider provider.Provider) Metadata {
+func NewWithProviders(ctx context.Context, statusProvider provider.StatusProvider, configProvider provider.ConfigProvider) Metadata {
 	return newCoordinatorMetadata(ctx, statusProvider, configProvider)
 }
 
@@ -123,16 +123,16 @@ func NewFromOptions(ctx context.Context, meta option.MetadataOptions, legacyClus
 	return NewWithProviders(ctx, statusProvider, configProvider), nil
 }
 
-func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvider provider.Provider, configProvider provider.Provider, err error) {
+func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvider provider.StatusProvider, configProvider provider.ConfigProvider, err error) {
 	switch meta.ProviderName {
 	case provider.NameMemory:
-		return memory.NewProvider(provider.ResourceStatus), memory.NewProvider(provider.ResourceConfig), nil
+		return memory.NewProvider[*commonproto.ClusterStatus](), memory.NewProvider[*commonproto.ClusterConfiguration](), nil
 	case provider.NameFile:
-		statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), provider.ResourceStatus, provider.WatchDisabled)
+		statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), provider.ClusterStatusCodec, provider.WatchDisabled)
 		if err != nil {
 			return nil, nil, err
 		}
-		configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), provider.ResourceConfig, provider.WatchEnabled)
+		configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), provider.ClusterConfigCodec, provider.WatchEnabled)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -140,15 +140,15 @@ func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvi
 	case provider.NameConfigMap:
 		k8sConfig := kubernetes.NewK8SClientConfig()
 		client := kubernetes.NewK8SClientset(k8sConfig)
-		statusProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ResourceStatus, provider.WatchDisabled)
+		statusProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ResourceStatus, provider.ClusterStatusCodec, provider.WatchDisabled)
 		if meta.File.Dir != "" || meta.File.ConfigName != "" {
-			configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), provider.ResourceConfig, provider.WatchEnabled)
+			configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), provider.ClusterConfigCodec, provider.WatchEnabled)
 			if err != nil {
 				return nil, nil, err
 			}
 			return statusProvider, configProvider, nil
 		}
-		configProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ResourceConfig, provider.WatchEnabled)
+		configProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ResourceConfig, provider.ClusterConfigCodec, provider.WatchEnabled)
 		return statusProvider, configProvider, nil
 	case provider.NameRaft:
 		statusProvider, configProvider, err := raft.NewProviders(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
@@ -161,7 +161,7 @@ func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvi
 	}
 }
 
-func newCoordinatorMetadata(ctx context.Context, statusProvider provider.Provider, configProvider provider.Provider) Metadata {
+func newCoordinatorMetadata(ctx context.Context, statusProvider provider.StatusProvider, configProvider provider.ConfigProvider) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
 		Logger:             slog.With(slog.String("component", "coordinator-metadata")),
@@ -198,14 +198,14 @@ type callbackConfigProvider struct {
 	wg            sync.WaitGroup
 	load          func() (*commonproto.ClusterConfiguration, error)
 	notifications <-chan any
-	watcher       *metadatawatch.Watch
+	watcher       *metadatawatch.Watch[*commonproto.ClusterConfiguration]
 }
 
 func newCallbackConfigProvider(
 	ctx context.Context,
 	load func() (*commonproto.ClusterConfiguration, error),
 	notifications <-chan any,
-) provider.Provider {
+) provider.ConfigProvider {
 	watchCtx, cancel := context.WithCancel(ctx)
 	p := &callbackConfigProvider{
 		ctx:           watchCtx,
@@ -214,7 +214,7 @@ func newCallbackConfigProvider(
 		notifications: notifications,
 	}
 	if notifications != nil {
-		p.watcher = metadatawatch.New()
+		p.watcher = metadatawatch.New[*commonproto.ClusterConfiguration]()
 		p.wg.Go(func() {
 			process.DoWithLabels(p.ctx, map[string]string{
 				"component": "callback-config-provider-watch",
@@ -224,7 +224,7 @@ func newCallbackConfigProvider(
 	return p
 }
 
-func (p *callbackConfigProvider) Get() (gproto.Message, provider.Version, error) {
+func (p *callbackConfigProvider) Get() (*commonproto.ClusterConfiguration, provider.Version, error) {
 	config, err := p.LoadConfig()
 	return config, provider.NotExists, err
 }
@@ -236,7 +236,7 @@ func (p *callbackConfigProvider) LoadConfig() (*commonproto.ClusterConfiguration
 	return p.load()
 }
 
-func (*callbackConfigProvider) Store(gproto.Message, provider.Version) (provider.Version, error) {
+func (*callbackConfigProvider) Store(*commonproto.ClusterConfiguration, provider.Version) (provider.Version, error) {
 	return provider.NotExists, errors.New("callback config provider is read-only")
 }
 
@@ -244,7 +244,7 @@ func (*callbackConfigProvider) WaitToBecomeLeader() error {
 	return nil
 }
 
-func (p *callbackConfigProvider) Watch() (*metadatawatch.Receiver, error) {
+func (p *callbackConfigProvider) Watch() (*metadatawatch.Receiver[*commonproto.ClusterConfiguration], error) {
 	if p.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
@@ -301,18 +301,14 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 	defer m.statusLock.Unlock()
 
 	_ = backoff.RetryNotify(func() error {
-		value, version, err := m.statusProvider.Get()
+		clusterStatus, version, err := m.statusProvider.Get()
 		if err != nil {
 			return err
 		}
-		if value == nil {
+		if clusterStatus == nil {
 			m.currentStatus = nil
 			m.currentVersionID = version
 			return nil
-		}
-		clusterStatus, ok := value.(*commonproto.ClusterStatus)
-		if !ok {
-			return fmt.Errorf("expected *ClusterStatus from status provider, got %T", value)
 		}
 		m.currentStatus = clusterStatus
 		m.currentVersionID = version
@@ -474,16 +470,12 @@ func (m *coordinatorMetadata) loadConfigFromProvider() (*commonproto.ClusterConf
 		return loader.LoadConfig()
 	}
 
-	value, _, err := m.configProvider.Get()
+	config, _, err := m.configProvider.Get()
 	if err != nil {
 		return nil, err
 	}
-	if value == nil {
+	if config == nil {
 		return nil, provider.ErrNotInitialized
-	}
-	config, ok := value.(*commonproto.ClusterConfiguration)
-	if !ok {
-		return nil, fmt.Errorf("expected *ClusterConfiguration from config provider, got %T", value)
 	}
 	if err := validateClusterConfig(config); err != nil {
 		return nil, err
@@ -520,7 +512,7 @@ func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
 	m.namespaceConfigsIndex = namespaceConfigs
 }
 
-func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *metadatawatch.Receiver) {
+func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *metadatawatch.Receiver[*commonproto.ClusterConfiguration]) {
 	defer func() {
 		_ = configWatch.Close()
 	}()
@@ -541,14 +533,9 @@ func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *metadatawatch.Re
 	}
 }
 
-func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *metadatawatch.Receiver) {
-	value, ok := configWatch.Load()
+func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *metadatawatch.Receiver[*commonproto.ClusterConfiguration]) {
+	config, ok := configWatch.Load()
 	if !ok {
-		return
-	}
-	config, ok := value.(*commonproto.ClusterConfiguration)
-	if !ok {
-		m.Warn("received unexpected cluster config watch value", slog.String("type", fmt.Sprintf("%T", value)))
 		return
 	}
 	if !m.usesCallbackConfigProvider() {

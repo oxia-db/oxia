@@ -35,7 +35,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata2.NewProvider()
+	metadataProvider := metadata2.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              "default",
 		ReplicationFactor: 1,

@@ -184,7 +184,7 @@ func main() {
 			Servers: servers,
 		}
 
-		metadataProvider, err := file.NewProvider(context.Background(), filepath.Join(dataDir, "cluster-status.json"), provider.ResourceStatus, provider.WatchDisabled)
+		metadataProvider, err := file.NewProvider(context.Background(), filepath.Join(dataDir, "cluster-status.json"), provider.ClusterStatusCodec, provider.WatchDisabled)
 		if err != nil {
 			slog.Error(
 				"failed to create coordinator metadata provider",

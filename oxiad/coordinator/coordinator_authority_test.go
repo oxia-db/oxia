@@ -51,7 +51,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	}
 	metadata := coordmetadata.New(
 		t.Context(),
-		memory.NewProvider(),
+		memory.NewProvider[*proto.ClusterStatus](),
 		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 	)
@@ -116,7 +116,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 	}
 	metadata := coordmetadata.New(
 		t.Context(),
-		memory.NewProvider(),
+		memory.NewProvider[*proto.ClusterStatus](),
 		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 	)

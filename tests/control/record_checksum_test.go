@@ -66,7 +66,7 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,

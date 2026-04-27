@@ -63,7 +63,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		cluster.addresses = append(cluster.addresses, addr)
 	}
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	cluster.coordinator = newCoordinatorInstance(
 		t,
 		metadataProvider,

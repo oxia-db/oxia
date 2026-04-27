@@ -26,18 +26,20 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/juju/fslock"
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/proto"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/process"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-var _ provider.Provider = &Provider{}
+var _ provider.StatusProvider = (*Provider[*commonproto.ClusterStatus])(nil)
+var _ provider.ConfigProvider = (*Provider[*commonproto.ClusterConfiguration])(nil)
 
-type Provider struct {
+type Provider[T gproto.Message] struct {
 	path         string
-	resourceType provider.ResourceType
+	codec        provider.Codec[T]
 	fileLock     *fslock.Lock
 	lockAcquired bool
 	watchEnabled provider.WatchMode
@@ -47,13 +49,13 @@ type Provider struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	watcher *metadatawatch.Watch
+	watcher *metadatawatch.Watch[T]
 }
 
-func NewProvider(ctx context.Context, path string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) (provider.Provider, error) {
-	p := &Provider{
+func NewProvider[T gproto.Message](ctx context.Context, path string, codec provider.Codec[T], watchEnabled provider.WatchMode) (provider.Provider[T], error) {
+	p := &Provider[T]{
 		path:         path,
-		resourceType: resourceType,
+		codec:        codec,
 		fileLock:     fslock.New(path),
 		watchEnabled: watchEnabled,
 		version:      provider.NotExists,
@@ -63,7 +65,7 @@ func NewProvider(ctx context.Context, path string, resourceType provider.Resourc
 		return nil, err
 	}
 	if watchEnabled.Enabled() {
-		p.watcher = metadatawatch.New()
+		p.watcher = metadatawatch.New[T]()
 		p.wg.Go(func() {
 			process.DoWithLabels(p.ctx, map[string]string{
 				"component":     "metadata-provider",
@@ -74,7 +76,7 @@ func NewProvider(ctx context.Context, path string, resourceType provider.Resourc
 	return p, nil
 }
 
-func (m *Provider) Close() error {
+func (m *Provider[T]) Close() error {
 	m.cancel()
 	m.wg.Wait()
 	if m.watcher != nil {
@@ -93,7 +95,7 @@ func (m *Provider) Close() error {
 	return nil
 }
 
-func (m *Provider) WaitToBecomeLeader() error {
+func (m *Provider[T]) WaitToBecomeLeader() error {
 	if err := m.fileLock.Lock(); err != nil {
 		return errors.Wrapf(err, "failed to acquire lock on %s", m.path)
 	}
@@ -102,23 +104,23 @@ func (m *Provider) WaitToBecomeLeader() error {
 	return nil
 }
 
-func (m *Provider) Get() (value proto.Message, version provider.Version, err error) {
+func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
 	content, err := os.ReadFile(m.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, provider.NotExists, nil
+			return value, provider.NotExists, nil
 		}
-		return nil, provider.NotExists, err
+		return value, provider.NotExists, err
 	}
 
 	if len(content) == 0 {
-		return nil, provider.NotExists, nil
+		return value, provider.NotExists, nil
 	}
-	value, err = m.resourceType.Unmarshal(content)
+	value, err = m.codec.Unmarshal(content)
 	return value, m.version, err
 }
 
-func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	_, existingVersion, err := m.Get()
 	if err != nil {
 		return provider.NotExists, err
@@ -129,7 +131,7 @@ func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) 
 	}
 
 	newVersion = provider.NextVersion(existingVersion)
-	newContent, err := m.resourceType.MarshalYAML(value)
+	newContent, err := m.codec.MarshalYAML(value)
 	if err != nil {
 		return provider.NotExists, err
 	}
@@ -142,14 +144,14 @@ func (m *Provider) Store(value proto.Message, expectedVersion provider.Version) 
 	return newVersion, nil
 }
 
-func (m *Provider) Watch() (*metadatawatch.Receiver, error) {
+func (m *Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
 	if !m.watchEnabled.Enabled() || m.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
 	return m.watcher.Subscribe()
 }
 
-func (m *Provider) watchLoop() {
+func (m *Provider[T]) watchLoop() {
 	retry := backoff.NewExponentialBackOff()
 	retry.InitialInterval = time.Second
 	_ = backoff.RetryNotify(func() error {
@@ -167,7 +169,7 @@ func (m *Provider) watchLoop() {
 	})
 }
 
-func (m *Provider) watchOnce() error {
+func (m *Provider[T]) watchOnce() error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -208,7 +210,7 @@ func (m *Provider) watchOnce() error {
 	}
 }
 
-func (m *Provider) ensureParentDirectoryExists() error {
+func (m *Provider[T]) ensureParentDirectoryExists() error {
 	// Ensure directory exists
 	parentDir := filepath.Dir(m.path)
 	if _, err := os.Stat(parentDir); err != nil {

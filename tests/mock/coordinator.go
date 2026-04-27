@@ -29,7 +29,7 @@ import (
 
 func NewCoordinator(t *testing.T, config *proto.ClusterConfiguration, clusterConfigNotificationCh chan any) coordinator.Coordinator {
 	t.Helper()
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	metadata := coordmetadata.New(
 		t.Context(),
 		metadataProvider,

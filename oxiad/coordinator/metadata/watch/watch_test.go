@@ -26,7 +26,7 @@ import (
 )
 
 func TestWatch(t *testing.T) {
-	w := New()
+	w := New[*proto.ClusterConfiguration]()
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
@@ -53,14 +53,14 @@ func TestWatch(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, gproto.Equal(config, value))
 
-	value.(*proto.ClusterConfiguration).Namespaces[0].Name = "mutated"
+	value.Namespaces[0].Name = "mutated"
 	value, ok = r.Load()
 	require.True(t, ok)
-	assert.Equal(t, "default", value.(*proto.ClusterConfiguration).Namespaces[0].GetName())
+	assert.Equal(t, "default", value.Namespaces[0].GetName())
 }
 
 func TestWatchClose(t *testing.T) {
-	w := New()
+	w := New[*proto.ClusterConfiguration]()
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
@@ -74,7 +74,7 @@ func TestWatchClose(t *testing.T) {
 }
 
 func TestReceiverClose(t *testing.T) {
-	w := New()
+	w := New[*proto.ClusterConfiguration]()
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 

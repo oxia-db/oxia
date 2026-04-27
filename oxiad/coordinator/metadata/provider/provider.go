@@ -73,20 +73,66 @@ func (wm WatchMode) Enabled() bool {
 	return bool(wm)
 }
 
+type Codec[T gproto.Message] interface {
+	Unmarshal(data []byte) (T, error)
+	MarshalYAML(value T) ([]byte, error)
+	MarshalJSON(value T) ([]byte, error)
+}
+
+type statusCodec struct{}
+
+type configCodec struct{}
+
+var (
+	ClusterStatusCodec Codec[*commonproto.ClusterStatus]        = statusCodec{}
+	ClusterConfigCodec Codec[*commonproto.ClusterConfiguration] = configCodec{}
+)
+
+func (statusCodec) Unmarshal(data []byte) (*commonproto.ClusterStatus, error) {
+	status, err := commonproto.UnmarshalClusterStatusYAML(data)
+	if err == nil {
+		return status, nil
+	}
+	legacyStatus, legacyErr := unmarshalLegacyClusterStatus(data)
+	if legacyErr == nil {
+		typedStatus, ok := legacyStatus.(*commonproto.ClusterStatus)
+		if !ok {
+			return nil, fmt.Errorf("expected *ClusterStatus from legacy cluster status container, got %T", legacyStatus)
+		}
+		return typedStatus, nil
+	}
+	return nil, err
+}
+
+func (statusCodec) MarshalYAML(value *commonproto.ClusterStatus) ([]byte, error) {
+	return commonproto.MarshalClusterStatusYAML(value)
+}
+
+func (statusCodec) MarshalJSON(value *commonproto.ClusterStatus) ([]byte, error) {
+	return commonproto.MarshalClusterStatusJSON(value)
+}
+
+func (configCodec) Unmarshal(data []byte) (*commonproto.ClusterConfiguration, error) {
+	return commonproto.UnmarshalClusterConfigurationYAML(data)
+}
+
+func (configCodec) MarshalYAML(value *commonproto.ClusterConfiguration) ([]byte, error) {
+	return commonproto.MarshalClusterConfigurationYAML(value)
+}
+
+func (configCodec) MarshalJSON(value *commonproto.ClusterConfiguration) ([]byte, error) {
+	return protojson.MarshalOptions{
+		UseProtoNames:   false,
+		EmitUnpopulated: false,
+	}.Marshal(value)
+}
+
 func (rt ResourceType) Unmarshal(data []byte) (gproto.Message, error) {
 	switch rt {
 	case ResourceStatus:
-		status, err := commonproto.UnmarshalClusterStatusYAML(data)
-		if err == nil {
-			return status, nil
-		}
-		legacyStatus, legacyErr := unmarshalLegacyClusterStatus(data)
-		if legacyErr == nil {
-			return legacyStatus, nil
-		}
-		return nil, err
+		return ClusterStatusCodec.Unmarshal(data)
 	case ResourceConfig:
-		return commonproto.UnmarshalClusterConfigurationYAML(data)
+		return ClusterConfigCodec.Unmarshal(data)
 	default:
 		return nil, fmt.Errorf("unknown metadata resource type %q", rt)
 	}
@@ -114,13 +160,13 @@ func (rt ResourceType) MarshalYAML(value gproto.Message) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("expected *ClusterStatus for metadata resource type %q, got %T", rt, value)
 		}
-		return commonproto.MarshalClusterStatusYAML(status)
+		return ClusterStatusCodec.MarshalYAML(status)
 	case ResourceConfig:
 		config, ok := value.(*commonproto.ClusterConfiguration)
 		if !ok {
 			return nil, fmt.Errorf("expected *ClusterConfiguration for metadata resource type %q, got %T", rt, value)
 		}
-		return commonproto.MarshalClusterConfigurationYAML(config)
+		return ClusterConfigCodec.MarshalYAML(config)
 	default:
 		return nil, fmt.Errorf("unknown metadata resource type %q", rt)
 	}
@@ -133,29 +179,30 @@ func (rt ResourceType) MarshalJSON(value gproto.Message) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("expected *ClusterStatus for metadata resource type %q, got %T", rt, value)
 		}
-		return commonproto.MarshalClusterStatusJSON(status)
+		return ClusterStatusCodec.MarshalJSON(status)
 	case ResourceConfig:
 		config, ok := value.(*commonproto.ClusterConfiguration)
 		if !ok {
 			return nil, fmt.Errorf("expected *ClusterConfiguration for metadata resource type %q, got %T", rt, value)
 		}
-		return protojson.MarshalOptions{
-			UseProtoNames:   false,
-			EmitUnpopulated: false,
-		}.Marshal(config)
+		return ClusterConfigCodec.MarshalJSON(config)
 	default:
 		return nil, fmt.Errorf("unknown metadata resource type %q", rt)
 	}
 }
 
-type Provider interface {
+type Provider[T gproto.Message] interface {
 	io.Closer
 
-	Get() (value gproto.Message, version Version, err error)
+	Get() (value T, version Version, err error)
 
-	Store(value gproto.Message, expectedVersion Version) (newVersion Version, err error)
+	Store(value T, expectedVersion Version) (newVersion Version, err error)
 
 	WaitToBecomeLeader() error
 
-	Watch() (*metadatawatch.Receiver, error)
+	Watch() (*metadatawatch.Receiver[T], error)
 }
+
+type StatusProvider = Provider[*commonproto.ClusterStatus]
+
+type ConfigProvider = Provider[*commonproto.ClusterConfiguration]

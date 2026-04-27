@@ -47,25 +47,25 @@ var (
 		f.PrependReactor("*", "*", k8sResourceVersionSupport(f.Tracker()))
 		return f
 	}
-	providers = map[string]func(t *testing.T) provider.Provider{
-		"memory": func(t *testing.T) provider.Provider {
+	providers = map[string]func(t *testing.T) provider.StatusProvider{
+		"memory": func(t *testing.T) provider.StatusProvider {
 			t.Helper()
 
-			return memory.NewProvider()
+			return memory.NewProvider[*proto.ClusterStatus]()
 		},
-		"file": func(t *testing.T) provider.Provider {
+		"file": func(t *testing.T) provider.StatusProvider {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), provider.ResourceStatus, provider.WatchDisabled)
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), provider.ClusterStatusCodec, provider.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
-		"configmap": func(t *testing.T) provider.Provider {
+		"configmap": func(t *testing.T) provider.StatusProvider {
 			t.Helper()
 
-			return kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "n", provider.ResourceStatus, provider.WatchDisabled)
+			return kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "n", provider.ResourceStatus, provider.ClusterStatusCodec, provider.WatchDisabled)
 		},
-		"raft": func(t *testing.T) provider.Provider {
+		"raft": func(t *testing.T) provider.StatusProvider {
 			t.Helper()
 
 			addr := freeAddress(t)
@@ -125,25 +125,25 @@ func TestResourceTypeUnmarshalLegacyClusterStatus(t *testing.T) {
 }
 
 func TestProviderConfigResource(t *testing.T) {
-	providers := map[string]func(t *testing.T) provider.Provider{
-		"memory": func(t *testing.T) provider.Provider {
+	providers := map[string]func(t *testing.T) provider.ConfigProvider{
+		"memory": func(t *testing.T) provider.ConfigProvider {
 			t.Helper()
 
-			return memory.NewProvider(provider.ResourceConfig)
+			return memory.NewProvider[*proto.ClusterConfiguration]()
 		},
-		"file": func(t *testing.T) provider.Provider {
+		"file": func(t *testing.T) provider.ConfigProvider {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), provider.ResourceConfig, provider.WatchDisabled)
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), provider.ClusterConfigCodec, provider.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
-		"configmap": func(t *testing.T) provider.Provider {
+		"configmap": func(t *testing.T) provider.ConfigProvider {
 			t.Helper()
 
-			return kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "config", provider.ResourceConfig, provider.WatchDisabled)
+			return kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "config", provider.ResourceConfig, provider.ClusterConfigCodec, provider.WatchDisabled)
 		},
-		"raft": func(t *testing.T) provider.Provider {
+		"raft": func(t *testing.T) provider.ConfigProvider {
 			t.Helper()
 
 			addr := freeAddress(t)

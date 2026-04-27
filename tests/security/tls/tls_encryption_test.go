@@ -118,7 +118,7 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -137,7 +137,7 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -160,7 +160,7 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -189,7 +189,7 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -219,7 +219,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -250,7 +250,7 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	s3, sa3 := newTLSServerWithInterceptor(t, disableInternalTLS)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider[*proto.ClusterStatus]()
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))

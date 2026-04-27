@@ -40,11 +40,13 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-var _ provider.Provider = &Provider{}
+var _ provider.StatusProvider = (*Provider[*commonproto.ClusterStatus])(nil)
+var _ provider.ConfigProvider = (*Provider[*commonproto.ClusterConfiguration])(nil)
 
 const (
 	leaseDuration = 15 * time.Second
@@ -55,11 +57,12 @@ const (
 	k8sRequestTimeout = 30 * time.Second
 )
 
-type Provider struct {
+type Provider[T gproto.Message] struct {
 	sync.Mutex
 	kubernetes      kubernetes.Interface
 	namespace, name string
 	resourceType    provider.ResourceType
+	codec           provider.Codec[T]
 	watchEnabled    provider.WatchMode
 
 	metadataSize      atomic.Int64
@@ -71,17 +74,25 @@ type Provider struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	watcher *metadatawatch.Watch
+	watcher *metadatawatch.Watch[T]
 
 	log *slog.Logger
 }
 
-func NewConfigMapProvider(ctx context.Context, kc kubernetes.Interface, namespace, name string, resourceType provider.ResourceType, watchEnabled provider.WatchMode) provider.Provider {
-	m := &Provider{
+func NewConfigMapProvider[T gproto.Message](
+	ctx context.Context,
+	kc kubernetes.Interface,
+	namespace, name string,
+	resourceType provider.ResourceType,
+	codec provider.Codec[T],
+	watchEnabled provider.WatchMode,
+) provider.Provider[T] {
+	m := &Provider[T]{
 		kubernetes:   kc,
 		namespace:    namespace,
 		name:         name,
 		resourceType: resourceType,
+		codec:        codec,
 		watchEnabled: watchEnabled,
 		log:          slog.With("component", "metadata-config-map"),
 
@@ -93,7 +104,7 @@ func NewConfigMapProvider(ctx context.Context, kc kubernetes.Interface, namespac
 
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	if watchEnabled.Enabled() {
-		m.watcher = metadatawatch.New()
+		m.watcher = metadatawatch.New[T]()
 		m.wg.Go(func() {
 			process.DoWithLabels(m.ctx, map[string]string{
 				"component":     "metadata-provider",
@@ -112,7 +123,7 @@ func NewConfigMapProvider(ctx context.Context, kc kubernetes.Interface, namespac
 	return m
 }
 
-func (m *Provider) Get() (value gproto.Message, version provider.Version, err error) {
+func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
 	timer := m.getLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -121,32 +132,32 @@ func (m *Provider) Get() (value gproto.Message, version provider.Version, err er
 	return m.getWithoutLock()
 }
 
-func (m *Provider) getWithoutLock() (gproto.Message, provider.Version, error) {
+func (m *Provider[T]) getWithoutLock() (value T, version provider.Version, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), k8sRequestTimeout)
 	defer cancel()
 
 	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Get(ctx, m.name, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			return nil, provider.NotExists, nil
+			return value, provider.NotExists, nil
 		}
-		return nil, "", err
+		return value, "", err
 	}
 
 	data, ok := cm.Data[m.dataKey()]
 	if !ok {
-		return nil, provider.NotExists, nil
+		return value, provider.NotExists, nil
 	}
 
-	version := provider.Version(cm.ResourceVersion)
+	version = provider.Version(cm.ResourceVersion)
 	slog.Debug("Get metadata successful",
 		slog.String("version", cm.ResourceVersion))
 	m.metadataSize.Store(int64(len(data)))
-	value, err := m.resourceType.Unmarshal([]byte(data))
+	value, err = m.codec.Unmarshal([]byte(data))
 	return value, version, err
 }
 
-func (m *Provider) Store(value gproto.Message, expectedVersion provider.Version) (provider.Version, error) {
+func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (provider.Version, error) {
 	timer := m.storeLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -165,7 +176,7 @@ func (m *Provider) Store(value gproto.Message, expectedVersion provider.Version)
 		panic(provider.ErrBadVersion)
 	}
 
-	data, err := m.resourceType.MarshalYAML(value)
+	data, err := m.codec.MarshalYAML(value)
 	if err != nil {
 		return provider.NotExists, err
 	}
@@ -196,7 +207,7 @@ func (m *Provider) Store(value gproto.Message, expectedVersion provider.Version)
 	return version, nil
 }
 
-func (m *Provider) WaitToBecomeLeader() error {
+func (m *Provider[T]) WaitToBecomeLeader() error {
 	myIdentity, _ := os.Hostname()
 
 	// Create a lease lock
@@ -257,7 +268,7 @@ func (m *Provider) WaitToBecomeLeader() error {
 	return wg.Wait(m.ctx)
 }
 
-func (m *Provider) Close() error {
+func (m *Provider[T]) Close() error {
 	m.cancel()
 	m.wg.Wait()
 	if m.watcher != nil {
@@ -267,14 +278,14 @@ func (m *Provider) Close() error {
 	return nil
 }
 
-func (m *Provider) Watch() (*metadatawatch.Receiver, error) {
+func (m *Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
 	if !m.watchEnabled.Enabled() || m.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
 	return m.watcher.Subscribe()
 }
 
-func (m *Provider) watchLoop() {
+func (m *Provider[T]) watchLoop() {
 	retry := backoff.NewExponentialBackOff()
 	retry.InitialInterval = time.Second
 	_ = backoff.RetryNotify(func() error {
@@ -293,7 +304,7 @@ func (m *Provider) watchLoop() {
 	})
 }
 
-func (m *Provider) watch() error {
+func (m *Provider[T]) watch() error {
 	w, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Watch(
 		m.ctx,
 		metav1.SingleObject(metav1.ObjectMeta{Name: m.name, Namespace: m.namespace}),
@@ -323,7 +334,7 @@ func (m *Provider) watch() error {
 	return errors.New("K8S config map watch channel closed")
 }
 
-func (m *Provider) dataKey() string {
+func (m *Provider[T]) dataKey() string {
 	switch m.resourceType {
 	case provider.ResourceConfig:
 		return "config.yaml"

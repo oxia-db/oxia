@@ -41,7 +41,7 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 
 	metadata := coordmetadata.New(
 		t.Context(),
-		memory.NewProvider(),
+		memory.NewProvider[*proto.ClusterStatus](),
 		func() (*proto.ClusterConfiguration, error) {
 			return config, nil
 		},

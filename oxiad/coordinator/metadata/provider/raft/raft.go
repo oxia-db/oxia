@@ -28,14 +28,19 @@ import (
 	"github.com/magodo/slog2hclog"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/protobuf/proto"
+	gproto "google.golang.org/protobuf/proto"
 
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-type Provider struct {
+var _ provider.StatusProvider = (*Provider[*commonproto.ClusterStatus])(nil)
+var _ provider.ConfigProvider = (*Provider[*commonproto.ClusterConfiguration])(nil)
+
+type Provider[T gproto.Message] struct {
 	resourceType provider.ResourceType
+	codec        provider.Codec[T]
 	raft         *Raft
 }
 
@@ -50,38 +55,38 @@ type Raft struct {
 	closeErr  error
 }
 
-func (mpr *Provider) WaitToBecomeLeader() error {
+func (mpr *Provider[T]) WaitToBecomeLeader() error {
 	<-mpr.raft.node.LeaderCh()
 	return nil
 }
 
-func (r *Raft) NewProvider(resourceType provider.ResourceType) provider.Provider {
-	return &Provider{resourceType: resourceType, raft: r}
+func newProvider[T gproto.Message](r *Raft, resourceType provider.ResourceType, codec provider.Codec[T]) provider.Provider[T] {
+	return &Provider[T]{resourceType: resourceType, codec: codec, raft: r}
 }
 
 func NewProvider(
 	raftAddress string,
 	raftBootstrapNodes []string,
 	raftDataDir string,
-) (provider.Provider, error) {
+) (provider.StatusProvider, error) {
 	metadataRaft, err := NewRaft(raftAddress, raftBootstrapNodes, raftDataDir)
 	if err != nil {
 		return nil, err
 	}
-	return metadataRaft.NewProvider(provider.ResourceStatus), nil
+	return newProvider(metadataRaft, provider.ResourceStatus, provider.ClusterStatusCodec), nil
 }
 
 func NewProviders(
 	raftAddress string,
 	raftBootstrapNodes []string,
 	raftDataDir string,
-) (statusProvider provider.Provider, configProvider provider.Provider, err error) {
+) (statusProvider provider.StatusProvider, configProvider provider.ConfigProvider, err error) {
 	metadataRaft, err := NewRaft(raftAddress, raftBootstrapNodes, raftDataDir)
 	if err != nil {
 		return nil, nil, err
 	}
-	return metadataRaft.NewProvider(provider.ResourceStatus),
-		metadataRaft.NewProvider(provider.ResourceConfig),
+	return newProvider(metadataRaft, provider.ResourceStatus, provider.ClusterStatusCodec),
+		newProvider(metadataRaft, provider.ResourceConfig, provider.ClusterConfigCodec),
 		nil
 }
 
@@ -166,7 +171,7 @@ func getRaftServers(bootstrapNodes []string) []hashicorpraft.Server {
 	return servers
 }
 
-func (mpr *Provider) Close() error {
+func (mpr *Provider[T]) Close() error {
 	mpr.raft.closeOnce.Do(func() {
 		mpr.raft.closeErr = multierr.Combine(
 			mpr.raft.node.Shutdown().Error(),
@@ -185,7 +190,7 @@ func fromVersion(v provider.Version) int64 {
 	return n
 }
 
-func (mpr *Provider) Get() (value proto.Message, version provider.Version, err error) {
+func (mpr *Provider[T]) Get() (value T, version provider.Version, err error) {
 	mpr.raft.Lock()
 	defer mpr.raft.Unlock()
 
@@ -196,13 +201,13 @@ func (mpr *Provider) Get() (value proto.Message, version provider.Version, err e
 		slog.Any("metadata", document.State),
 		slog.Any("current-version", document.CurrentVersion))
 	if len(document.State) == 0 {
-		return nil, toVersion(document.CurrentVersion), nil
+		return value, toVersion(document.CurrentVersion), nil
 	}
-	value, err = mpr.resourceType.Unmarshal(document.State)
+	value, err = mpr.codec.Unmarshal(document.State)
 	return value, toVersion(document.CurrentVersion), err
 }
 
-func (mpr *Provider) Store(value proto.Message, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (mpr *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	mpr.raft.Lock()
 	defer mpr.raft.Unlock()
 
@@ -210,7 +215,7 @@ func (mpr *Provider) Store(value proto.Message, expectedVersion provider.Version
 		return provider.NotExists, err
 	}
 
-	data, err := mpr.resourceType.MarshalJSON(value)
+	data, err := mpr.codec.MarshalJSON(value)
 	if err != nil {
 		return provider.NotExists, err
 	}
@@ -249,7 +254,7 @@ func (mpr *Provider) Store(value proto.Message, expectedVersion provider.Version
 	return toVersion(applyRes.newVersion), nil
 }
 
-func (*Provider) Watch() (*metadatawatch.Receiver, error) {
+func (*Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
 	return nil, provider.ErrWatchUnsupported
 }
 
