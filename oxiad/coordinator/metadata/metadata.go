@@ -468,7 +468,7 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 		m.rebuildConfigIndexesLocked()
 		watchedConfig, _ := m.clusterConfigWatch.Load()
 		if watchedConfig == nil {
-			m.clusterConfigWatch.Notify(m.currentClusterConfig)
+			m.clusterConfigWatch.Publish(m.currentClusterConfig)
 		}
 		return nil
 	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
@@ -572,7 +572,7 @@ func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Rec
 		m.Info("No cluster config changes detected")
 		return
 	}
-	m.clusterConfigWatch.Notify(config)
+	m.clusterConfigWatch.Publish(config)
 }
 
 func (m *coordinatorMetadata) usesCallbackConfigProvider() bool {

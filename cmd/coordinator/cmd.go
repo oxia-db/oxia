@@ -114,7 +114,7 @@ func exec(cmd *cobra.Command, _ []string) {
 				slog.Info("configuration file has changed.",
 					slog.Any("previous", previous),
 					slog.Any("current", temporaryOptions))
-				watchableOptions.Notify(temporaryOptions)
+				watchableOptions.Publish(temporaryOptions)
 			})
 			v.WatchConfig()
 		} else {

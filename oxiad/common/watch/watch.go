@@ -83,10 +83,6 @@ func (w *Watch[T]) Publish(value T) {
 	}
 }
 
-func (w *Watch[T]) Notify(value T) {
-	w.Publish(value)
-}
-
 func (w *Watch[T]) Close() {
 	w.Lock()
 	defer w.Unlock()
