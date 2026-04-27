@@ -28,7 +28,6 @@ type Watch[T any] struct {
 	sync.Mutex
 
 	value     T
-	hasValue  bool
 	closed    bool
 	receivers map[*Receiver[T]]chan struct{}
 }
@@ -36,13 +35,6 @@ type Watch[T any] struct {
 func New[T any](init T) *Watch[T] {
 	return &Watch[T]{
 		value:     init,
-		hasValue:  true,
-		receivers: map[*Receiver[T]]chan struct{}{},
-	}
-}
-
-func NewEmpty[T any]() *Watch[T] {
-	return &Watch[T]{
 		receivers: map[*Receiver[T]]chan struct{}{},
 	}
 }
@@ -73,7 +65,6 @@ func (w *Watch[T]) Publish(value T) {
 	}
 
 	w.value = value
-	w.hasValue = true
 
 	for _, ch := range w.receivers {
 		select {
@@ -102,10 +93,6 @@ func (w *Watch[T]) Load() (T, bool) {
 	w.Lock()
 	defer w.Unlock()
 
-	var zero T
-	if !w.hasValue {
-		return zero, false
-	}
 	return w.value, true
 }
 

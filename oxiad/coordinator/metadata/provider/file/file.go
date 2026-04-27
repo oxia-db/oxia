@@ -65,7 +65,11 @@ func NewProvider[T gproto.Message](ctx context.Context, path string, codec provi
 		return nil, err
 	}
 	if watchEnabled.Enabled() {
-		p.watcher = commonwatch.NewEmpty[T]()
+		initialValue, _, err := p.Get()
+		if err != nil {
+			return nil, err
+		}
+		p.watcher = commonwatch.New(initialValue)
 		p.wg.Go(func() {
 			process.DoWithLabels(p.ctx, map[string]string{
 				"component":     "metadata-provider",

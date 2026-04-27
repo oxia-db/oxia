@@ -32,21 +32,13 @@ func TestWatchLoad(t *testing.T) {
 	assert.True(t, ok)
 }
 
-func TestWatchLoadEmpty(t *testing.T) {
-	w := NewEmpty[*proto.ClusterConfiguration]()
-
-	value, ok := w.Load()
-	assert.Nil(t, value)
-	assert.False(t, ok)
-}
-
 func TestSubscribePublish(t *testing.T) {
-	w := NewEmpty[*proto.ClusterConfiguration]()
+	w := New[*proto.ClusterConfiguration](nil)
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
 	value, ok := r.Load()
-	assert.False(t, ok)
+	assert.True(t, ok)
 	assert.Nil(t, value)
 
 	config := &proto.ClusterConfiguration{
@@ -70,7 +62,7 @@ func TestSubscribePublish(t *testing.T) {
 }
 
 func TestWatchClose(t *testing.T) {
-	w := NewEmpty[*proto.ClusterConfiguration]()
+	w := New[*proto.ClusterConfiguration](nil)
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
@@ -84,7 +76,7 @@ func TestWatchClose(t *testing.T) {
 }
 
 func TestReceiverClose(t *testing.T) {
-	w := NewEmpty[*proto.ClusterConfiguration]()
+	w := New[*proto.ClusterConfiguration](nil)
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 

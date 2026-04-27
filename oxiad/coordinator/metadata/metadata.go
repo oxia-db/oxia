@@ -145,7 +145,10 @@ func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvi
 	case provider.NameConfigMap:
 		k8sConfig := kubernetes.NewK8SClientConfig()
 		client := kubernetes.NewK8SClientset(k8sConfig)
-		statusProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ClusterStatusCodec, provider.WatchDisabled)
+		statusProvider, err := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ClusterStatusCodec, provider.WatchDisabled)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 		if meta.File.Dir != "" || meta.File.ConfigName != "" {
 			configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), provider.ClusterConfigCodec, provider.WatchEnabled)
 			if err != nil {
@@ -153,7 +156,10 @@ func newProviders(ctx context.Context, meta option.MetadataOptions) (statusProvi
 			}
 			return statusProvider, configProvider, nil, nil
 		}
-		configProvider := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ClusterConfigCodec, provider.WatchEnabled)
+		configProvider, err := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ClusterConfigCodec, provider.WatchEnabled)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 		return statusProvider, configProvider, nil, nil
 	case provider.NameRaft:
 		metadataRaft, err := raft.NewRaft(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
@@ -224,7 +230,11 @@ func newCallbackConfigProvider(
 		notifications: notifications,
 	}
 	if notifications != nil {
-		p.watcher = commonwatch.NewEmpty[*commonproto.ClusterConfiguration]()
+		initialValue, _, err := p.Get()
+		if err != nil {
+			slog.Warn("Failed to load initial watched callback config provider metadata", slog.Any("error", err))
+		}
+		p.watcher = commonwatch.New(initialValue)
 		p.wg.Go(func() {
 			process.DoWithLabels(p.ctx, map[string]string{
 				"component": "callback-config-provider-watch",
