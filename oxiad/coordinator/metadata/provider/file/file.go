@@ -15,39 +15,76 @@
 package file
 
 import (
-	"encoding/json"
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
+	"github.com/fsnotify/fsnotify"
 	"github.com/juju/fslock"
 	"github.com/pkg/errors"
+	gproto "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-
+	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-type container struct {
-	ClusterStatus json.RawMessage  `json:"clusterStatus"`
-	Version       provider.Version `json:"version"`
+var _ provider.Provider[*commonproto.ClusterStatus] = (*Provider[*commonproto.ClusterStatus])(nil)
+var _ provider.Provider[*commonproto.ClusterConfiguration] = (*Provider[*commonproto.ClusterConfiguration])(nil)
+
+type Provider[T gproto.Message] struct {
+	path         string
+	codec        provider.Codec[T]
+	fileLock     *fslock.Lock
+	lockAcquired bool
+	watchEnabled provider.WatchMode
+	version      provider.Version
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	watcher *metadatawatch.Watch[T]
 }
 
-var _ provider.Provider = &Provider{}
-
-type Provider struct {
-	path     string
-	fileLock *fslock.Lock
-}
-
-func NewProvider(path string) provider.Provider {
-	return &Provider{
-		path:     path,
-		fileLock: fslock.New(path),
+func NewProvider[T gproto.Message](ctx context.Context, path string, codec provider.Codec[T], watchEnabled provider.WatchMode) (provider.Provider[T], error) {
+	p := &Provider[T]{
+		path:         path,
+		codec:        codec,
+		fileLock:     fslock.New(path),
+		watchEnabled: watchEnabled,
+		version:      provider.NotExists,
 	}
+	p.ctx, p.cancel = context.WithCancel(ctx)
+	if err := p.ensureParentDirectoryExists(); err != nil {
+		return nil, err
+	}
+	if watchEnabled.Enabled() {
+		p.watcher = metadatawatch.New[T]()
+		p.wg.Go(func() {
+			process.DoWithLabels(p.ctx, map[string]string{
+				"component":     "metadata-provider",
+				"sub-component": "file-watch",
+			}, p.watchLoop)
+		})
+	}
+	return p, nil
 }
 
-func (m *Provider) Close() error {
+func (m *Provider[T]) Close() error {
+	m.cancel()
+	m.wg.Wait()
+	if m.watcher != nil {
+		m.watcher.Close()
+	}
+	if !m.lockAcquired {
+		return nil
+	}
 	if err := m.fileLock.Unlock(); err != nil {
 		slog.Warn(
 			"Failed to release file lock on metadata",
@@ -58,53 +95,32 @@ func (m *Provider) Close() error {
 	return nil
 }
 
-func (m *Provider) WaitToBecomeLeader() error {
-	if err := m.ensureParentDirectoryExists(); err != nil {
-		return err
-	}
-
+func (m *Provider[T]) WaitToBecomeLeader() error {
 	if err := m.fileLock.Lock(); err != nil {
 		return errors.Wrapf(err, "failed to acquire lock on %s", m.path)
 	}
+	m.lockAcquired = true
 
 	return nil
 }
 
-func (m *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
+func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
 	content, err := os.ReadFile(m.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, provider.NotExists, nil
+			return value, provider.NotExists, nil
 		}
-		return nil, provider.NotExists, err
+		return value, provider.NotExists, err
 	}
 
 	if len(content) == 0 {
-		return nil, provider.NotExists, nil
+		return value, provider.NotExists, nil
 	}
-
-	mc := container{}
-	if err = json.Unmarshal(content, &mc); err != nil {
-		return nil, provider.NotExists, err
-	}
-
-	if len(mc.ClusterStatus) == 0 {
-		return nil, mc.Version, nil
-	}
-
-	clusterStatus, err := commonproto.UnmarshalClusterStatusJSON(mc.ClusterStatus)
-	if err != nil {
-		return nil, provider.NotExists, err
-	}
-
-	return clusterStatus, mc.Version, nil
+	value, err = m.codec.Unmarshal(content)
+	return value, m.version, err
 }
 
-func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
-	if err = m.ensureParentDirectoryExists(); err != nil {
-		return provider.NotExists, err
-	}
-
+func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	_, existingVersion, err := m.Get()
 	if err != nil {
 		return provider.NotExists, err
@@ -115,26 +131,86 @@ func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider
 	}
 
 	newVersion = provider.NextVersion(existingVersion)
-	statusBytes, err := commonproto.MarshalClusterStatusJSON(cs)
+	newContent, err := m.codec.MarshalYAML(value)
 	if err != nil {
-		return "", err
-	}
-	newContent, err := json.Marshal(container{
-		ClusterStatus: statusBytes,
-		Version:       newVersion,
-	})
-	if err != nil {
-		return "", err
+		return provider.NotExists, err
 	}
 
 	if err := os.WriteFile(m.path, newContent, 0600); err != nil {
 		return provider.NotExists, err
 	}
+	m.version = newVersion
 
 	return newVersion, nil
 }
 
-func (m *Provider) ensureParentDirectoryExists() error {
+func (m *Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
+	if !m.watchEnabled.Enabled() || m.watcher == nil {
+		return nil, provider.ErrWatchUnsupported
+	}
+	return m.watcher.Subscribe()
+}
+
+func (m *Provider[T]) watchLoop() {
+	retry := backoff.NewExponentialBackOff()
+	retry.InitialInterval = time.Second
+	_ = backoff.RetryNotify(func() error {
+		value, _, err := m.Get()
+		if err != nil {
+			return err
+		}
+		m.watcher.Publish(value)
+		return m.watchOnce()
+	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
+		slog.Warn("File metadata watch failed, reconnecting",
+			slog.String("path", m.path),
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration))
+	})
+}
+
+func (m *Provider[T]) watchOnce() error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := watcher.Close(); err != nil {
+			slog.Warn("Failed to close file metadata watcher", slog.Any("error", err))
+		}
+	}()
+
+	if err := watcher.Add(filepath.Dir(m.path)); err != nil {
+		return err
+	}
+
+	watchedPath := filepath.Clean(m.path)
+	for {
+		select {
+		case <-m.ctx.Done():
+			return nil
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return errors.New("file metadata watcher errors channel closed")
+			}
+			return err
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return errors.New("file metadata watcher events channel closed")
+			}
+			if filepath.Clean(event.Name) == watchedPath &&
+				event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) != 0 {
+				value, _, err := m.Get()
+				if err != nil {
+					return err
+				}
+				m.watcher.Publish(value)
+			}
+		}
+	}
+}
+
+func (m *Provider[T]) ensureParentDirectoryExists() error {
 	// Ensure directory exists
 	parentDir := filepath.Dir(m.path)
 	if _, err := os.Stat(parentDir); err != nil {

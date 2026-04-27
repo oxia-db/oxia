@@ -23,6 +23,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/concurrent"
@@ -51,7 +52,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	}
 	metadata := coordmetadata.New(
 		t.Context(),
-		memory.NewProvider(),
+		memory.NewProvider(provider.ClusterStatusCodec),
 		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 	)
@@ -116,7 +117,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 	}
 	metadata := coordmetadata.New(
 		t.Context(),
-		memory.NewProvider(),
+		memory.NewProvider(provider.ClusterStatusCodec),
 		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 	)

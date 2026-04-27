@@ -21,27 +21,25 @@ import (
 
 	"github.com/hashicorp/raft"
 	"go.uber.org/multierr"
-	gproto "google.golang.org/protobuf/proto"
 
-	commonproto "github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
 type raftOpCmd struct {
-	NewState        json.RawMessage `json:"new_state"`
-	ExpectedVersion int64           `json:"expected_version"`
+	ResourceType    provider.ResourceType `json:"resource_type"`
+	NewState        json.RawMessage       `json:"new_state"`
+	ExpectedVersion int64                 `json:"expected_version"`
 }
 
 type stateContainer struct {
-	State          *commonproto.ClusterStatus `json:"-"`
-	CurrentVersion int64                      `json:"current_version"`
-	log            *slog.Logger
+	Documents map[provider.ResourceType]*documentContainer `json:"-"`
+	log       *slog.Logger
 }
 
 func newStateContainer(log *slog.Logger) *stateContainer {
 	return &stateContainer{
-		State:          nil,
-		CurrentVersion: -1,
-		log:            log,
+		Documents: map[provider.ResourceType]*documentContainer{},
+		log:       log,
 	}
 }
 
@@ -55,36 +53,34 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 			slog.Any("error", err))
 		return &applyResult{changeApplied: false}
 	}
+	if opCmd.ResourceType == "" {
+		opCmd.ResourceType = provider.ResourceStatus
+	}
 
-	if opCmd.ExpectedVersion != sc.CurrentVersion {
+	document := sc.document(opCmd.ResourceType)
+	if opCmd.ExpectedVersion != document.CurrentVersion {
 		sc.log.Warn("Failed to apply raft state",
+			slog.String("resource-type", string(opCmd.ResourceType)),
 			slog.Int64("expected-version", opCmd.ExpectedVersion),
-			slog.Int64("current-version", sc.CurrentVersion),
+			slog.Int64("current-version", document.CurrentVersion),
 			slog.Any("proposed-state", opCmd.NewState))
 
 		return &applyResult{changeApplied: false}
 	}
 
-	newState, err := commonproto.UnmarshalClusterStatusJSON(opCmd.NewState)
-	if err != nil {
-		sc.log.Error("failed to deserialize cluster status",
-			slog.Any("error", err))
-		return &applyResult{changeApplied: false}
-	}
-
-	sc.State = newState
-	sc.CurrentVersion++
+	document.State = cloneBytes(opCmd.NewState)
+	document.CurrentVersion++
 
 	sc.log.Info("Applied raft log entry",
-		slog.Int64("new-version", sc.CurrentVersion))
-	return &applyResult{changeApplied: true, newVersion: sc.CurrentVersion}
+		slog.String("resource-type", string(opCmd.ResourceType)),
+		slog.Int64("new-version", document.CurrentVersion))
+	return &applyResult{changeApplied: true, newVersion: document.CurrentVersion}
 }
 
 // Snapshot returns a snapshot of the FSM.
 func (sc *stateContainer) Snapshot() (raft.FSMSnapshot, error) {
 	return &stateContainer{
-		State:          gproto.Clone(sc.State).(*commonproto.ClusterStatus),
-		CurrentVersion: sc.CurrentVersion,
+		Documents: cloneDocuments(sc.Documents),
 	}, nil
 }
 
@@ -99,13 +95,17 @@ func (sc *stateContainer) Restore(rc io.ReadCloser) error {
 		return multierr.Combine(err, rc.Close())
 	}
 
-	state, err := commonproto.UnmarshalClusterStatusJSON(persisted.State)
-	if err != nil {
-		return multierr.Combine(err, rc.Close())
+	if len(persisted.Documents) > 0 {
+		sc.Documents = cloneDocuments(persisted.Documents)
+		return rc.Close()
 	}
 
-	sc.State = state
-	sc.CurrentVersion = persisted.CurrentVersion
+	sc.Documents = map[provider.ResourceType]*documentContainer{
+		provider.ResourceStatus: {
+			State:          cloneBytes(persisted.State),
+			CurrentVersion: persisted.CurrentVersion,
+		},
+	}
 	return rc.Close()
 }
 
@@ -127,26 +127,38 @@ type applyResult struct {
 }
 
 type persistedStateContainer struct {
+	Documents      map[provider.ResourceType]*documentContainer `json:"documents,omitempty"`
+	State          json.RawMessage                              `json:"state,omitempty"`
+	CurrentVersion int64                                        `json:"current_version,omitempty"`
+}
+
+type documentContainer struct {
 	State          json.RawMessage `json:"state"`
 	CurrentVersion int64           `json:"current_version"`
 }
 
 func marshalStateContainer(sc *stateContainer) ([]byte, error) {
-	stateBytes, err := commonproto.MarshalClusterStatusJSON(sc.State)
-	if err != nil {
-		return nil, err
-	}
-
 	return json.Marshal(persistedStateContainer{
-		State:          stateBytes,
-		CurrentVersion: sc.CurrentVersion,
+		Documents: cloneDocuments(sc.Documents),
 	})
 }
 
-func mustMarshalClusterStatus(status *commonproto.ClusterStatus) json.RawMessage {
-	payload, err := commonproto.MarshalClusterStatusJSON(status)
-	if err != nil {
-		panic(err)
+func (sc *stateContainer) document(resourceType provider.ResourceType) *documentContainer {
+	document, ok := sc.Documents[resourceType]
+	if !ok {
+		document = &documentContainer{CurrentVersion: -1}
+		sc.Documents[resourceType] = document
 	}
-	return payload
+	return document
+}
+
+func cloneDocuments(documents map[provider.ResourceType]*documentContainer) map[provider.ResourceType]*documentContainer {
+	cloned := make(map[provider.ResourceType]*documentContainer, len(documents))
+	for resourceType, document := range documents {
+		cloned[resourceType] = &documentContainer{
+			State:          cloneBytes(document.State),
+			CurrentVersion: document.CurrentVersion,
+		}
+	}
+	return cloned
 }

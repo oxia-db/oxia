@@ -19,41 +19,45 @@ import (
 
 	gproto "google.golang.org/protobuf/proto"
 
-	commonproto "github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
-var _ provider.Provider = &Provider{}
+var _ provider.Provider[*proto.ClusterStatus] = (*Provider[*proto.ClusterStatus])(nil)
+var _ provider.Provider[*proto.ClusterConfiguration] = (*Provider[*proto.ClusterConfiguration])(nil)
 
-type Provider struct {
+type Provider[T gproto.Message] struct {
 	sync.Mutex
 
-	cs      *commonproto.ClusterStatus
+	codec   provider.Codec[T]
+	value   T
 	version provider.Version
 }
 
-func (*Provider) WaitToBecomeLeader() error {
+func (*Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func NewProvider() provider.Provider {
-	return &Provider{
-		cs:      nil,
+func NewProvider[T gproto.Message](codec provider.Codec[T]) provider.Provider[T] {
+	return &Provider[T]{
+		codec:   codec,
 		version: provider.NotExists,
 	}
 }
 
-func (*Provider) Close() error {
+func (*Provider[T]) Close() error {
 	return nil
 }
 
-func (m *Provider) Get() (cs *commonproto.ClusterStatus, version provider.Version, err error) {
+func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
-	return m.cs, m.version, nil
+
+	return m.codec.Clone(m.value), m.version, nil
 }
 
-func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersion provider.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -61,7 +65,11 @@ func (m *Provider) Store(cs *commonproto.ClusterStatus, expectedVersion provider
 		panic(provider.ErrBadVersion)
 	}
 
-	m.cs = gproto.Clone(cs).(*commonproto.ClusterStatus) //nolint:revive
+	m.value = m.codec.Clone(value)
 	m.version = provider.NextVersion(m.version)
 	return m.version, nil
+}
+
+func (*Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
+	return nil, provider.ErrWatchUnsupported
 }

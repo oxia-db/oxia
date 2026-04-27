@@ -21,6 +21,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator"
@@ -29,7 +30,7 @@ import (
 
 func NewCoordinator(t *testing.T, config *proto.ClusterConfiguration, clusterConfigNotificationCh chan any) coordinator.Coordinator {
 	t.Helper()
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	metadata := coordmetadata.New(
 		t.Context(),
 		metadataProvider,

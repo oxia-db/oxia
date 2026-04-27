@@ -24,6 +24,7 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -79,7 +80,7 @@ func setupSplitTest(t *testing.T, phase string) (
 	t.Helper()
 
 	rpcMock := newMockRpcProvider()
-	metaProvider := memory.NewProvider()
+	metaProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	metadata := coordmetadata.New(t.Context(), metaProvider, func() (*proto.ClusterConfiguration, error) {
 		return &proto.ClusterConfiguration{}, nil
 	}, nil)

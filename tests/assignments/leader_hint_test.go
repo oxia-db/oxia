@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -38,7 +39,7 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -94,7 +95,7 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -150,7 +151,7 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -197,7 +198,7 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -253,7 +254,7 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -304,7 +305,7 @@ func TestLeaderHintWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,

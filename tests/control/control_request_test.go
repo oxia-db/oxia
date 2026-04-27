@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -45,7 +46,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	coordinatorInstance := newCoordinatorInstance(
 		t,

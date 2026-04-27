@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -54,7 +55,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
@@ -319,7 +320,7 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
@@ -859,7 +860,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 			}
 
-			metadataProvider := memory.NewProvider()
+			metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 			var keySorting proto.KeySortingType
 			if test.sorting == "natural" {
 				keySorting = proto.KeySortingType_NATURAL
