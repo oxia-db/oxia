@@ -24,7 +24,7 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
 	"github.com/oxia-db/oxia/common/proto"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/single"
@@ -68,8 +68,8 @@ func (*mockMetadata) StatusChangeNotify() <-chan struct{} { return make(chan str
 
 func (*mockMetadata) LoadConfig() *proto.ClusterConfiguration { return nil }
 
-func (*mockMetadata) ConfigWatch() *commonoption.Watch[*proto.ClusterConfiguration] {
-	return commonoption.NewWatch[*proto.ClusterConfiguration](nil)
+func (*mockMetadata) ConfigWatch() *commonwatch.Watch[*proto.ClusterConfiguration] {
+	return commonwatch.New[*proto.ClusterConfiguration](nil)
 }
 
 func (m *mockMetadata) LoadLoadBalancer() *proto.LoadBalancer {

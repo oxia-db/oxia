@@ -29,6 +29,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -116,7 +117,7 @@ func init() {
 
 func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		watchableOptions := oxiadcommonoption.NewWatch(dataServerOptions)
+		watchableOptions := commonwatch.New(dataServerOptions)
 		switch {
 		case cmd.Flags().Changed("sconfig"):
 			// init options

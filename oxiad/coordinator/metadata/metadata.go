@@ -33,14 +33,13 @@ import (
 
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/common/rpc"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
-	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
@@ -57,7 +56,7 @@ type Metadata interface {
 	StatusChangeNotify() <-chan struct{}
 
 	LoadConfig() *commonproto.ClusterConfiguration
-	ConfigWatch() *commonoption.Watch[*commonproto.ClusterConfiguration]
+	ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration]
 	LoadLoadBalancer() *commonproto.LoadBalancer
 	Nodes() *linkedhashset.Set[string]
 	NodesWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata)
@@ -86,7 +85,7 @@ type coordinatorMetadata struct {
 
 	clusterConfigLock     sync.RWMutex
 	currentClusterConfig  *commonproto.ClusterConfiguration
-	clusterConfigWatch    *commonoption.Watch[*commonproto.ClusterConfiguration]
+	clusterConfigWatch    *commonwatch.Watch[*commonproto.ClusterConfiguration]
 	nodesIndex            *redblacktree.Tree[string, *commonproto.DataServerIdentity]
 	namespaceConfigsIndex *redblacktree.Tree[string, *commonproto.Namespace]
 }
@@ -183,7 +182,7 @@ func newCoordinatorMetadataWithCloser(ctx context.Context, statusProvider provid
 		backendCloser:      backendCloser,
 		currentVersionID:   provider.NotExists,
 		changeCh:           make(chan struct{}),
-		clusterConfigWatch: commonoption.NewWatch[*commonproto.ClusterConfiguration](nil),
+		clusterConfigWatch: commonwatch.New[*commonproto.ClusterConfiguration](nil),
 	}
 
 	m.doStatusRecovery()
@@ -209,7 +208,7 @@ type callbackConfigProvider struct {
 	wg            sync.WaitGroup
 	load          func() (*commonproto.ClusterConfiguration, error)
 	notifications <-chan any
-	watcher       *metadatawatch.Watch[*commonproto.ClusterConfiguration]
+	watcher       *commonwatch.Watch[*commonproto.ClusterConfiguration]
 }
 
 func newCallbackConfigProvider(
@@ -225,7 +224,7 @@ func newCallbackConfigProvider(
 		notifications: notifications,
 	}
 	if notifications != nil {
-		p.watcher = metadatawatch.New[*commonproto.ClusterConfiguration]()
+		p.watcher = commonwatch.NewEmpty[*commonproto.ClusterConfiguration]()
 		p.wg.Go(func() {
 			process.DoWithLabels(p.ctx, map[string]string{
 				"component": "callback-config-provider-watch",
@@ -255,7 +254,7 @@ func (*callbackConfigProvider) WaitToBecomeLeader() error {
 	return nil
 }
 
-func (p *callbackConfigProvider) Watch() (*metadatawatch.Receiver[*commonproto.ClusterConfiguration], error) {
+func (p *callbackConfigProvider) Watch() (*commonwatch.Receiver[*commonproto.ClusterConfiguration], error) {
 	if p.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
@@ -530,7 +529,7 @@ func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
 	m.namespaceConfigsIndex = namespaceConfigs
 }
 
-func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *metadatawatch.Receiver[*commonproto.ClusterConfiguration]) {
+func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *commonwatch.Receiver[*commonproto.ClusterConfiguration]) {
 	defer func() {
 		_ = configWatch.Close()
 	}()
@@ -551,7 +550,7 @@ func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *metadatawatch.Re
 	}
 }
 
-func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *metadatawatch.Receiver[*commonproto.ClusterConfiguration]) {
+func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Receiver[*commonproto.ClusterConfiguration]) {
 	config, ok := configWatch.Load()
 	if !ok {
 		return
@@ -592,7 +591,7 @@ func (m *coordinatorMetadata) LoadConfig() *commonproto.ClusterConfiguration {
 	return m.currentClusterConfig
 }
 
-func (m *coordinatorMetadata) ConfigWatch() *commonoption.Watch[*commonproto.ClusterConfiguration] {
+func (m *coordinatorMetadata) ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration] {
 	return m.clusterConfigWatch
 }
 

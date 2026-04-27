@@ -29,6 +29,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
@@ -93,7 +94,7 @@ func init() {
 
 func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		watchableOptions := oxiadcommonoption.NewWatch(coordinatorOptions)
+		watchableOptions := commonwatch.New(coordinatorOptions)
 		// configure the options
 		if cmd.Flags().Changed("sconfig") {
 			// init options

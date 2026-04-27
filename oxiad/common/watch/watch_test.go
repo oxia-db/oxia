@@ -20,13 +20,28 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func TestWatch(t *testing.T) {
-	w := New[*proto.ClusterConfiguration]()
+func TestWatchLoad(t *testing.T) {
+	w := New("initial")
+
+	value, ok := w.Load()
+	assert.Equal(t, "initial", value)
+	assert.True(t, ok)
+}
+
+func TestWatchLoadEmpty(t *testing.T) {
+	w := NewEmpty[*proto.ClusterConfiguration]()
+
+	value, ok := w.Load()
+	assert.Nil(t, value)
+	assert.False(t, ok)
+}
+
+func TestSubscribePublish(t *testing.T) {
+	w := NewEmpty[*proto.ClusterConfiguration]()
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
@@ -50,17 +65,12 @@ func TestWatch(t *testing.T) {
 	}
 
 	value, ok = r.Load()
-	require.True(t, ok)
-	require.True(t, gproto.Equal(config, value))
-
-	value.Namespaces[0].Name = "mutated"
-	value, ok = r.Load()
-	require.True(t, ok)
-	assert.Equal(t, "mutated", value.Namespaces[0].GetName())
+	assert.True(t, ok)
+	assert.Same(t, config, value)
 }
 
 func TestWatchClose(t *testing.T) {
-	w := New[*proto.ClusterConfiguration]()
+	w := NewEmpty[*proto.ClusterConfiguration]()
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
@@ -74,7 +84,7 @@ func TestWatchClose(t *testing.T) {
 }
 
 func TestReceiverClose(t *testing.T) {
-	w := New[*proto.ClusterConfiguration]()
+	w := NewEmpty[*proto.ClusterConfiguration]()
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 

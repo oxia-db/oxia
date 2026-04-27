@@ -30,8 +30,8 @@ import (
 
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	metadatawatch "github.com/oxia-db/oxia/oxiad/coordinator/metadata/watch"
 )
 
 var _ provider.Provider[*commonproto.ClusterStatus] = (*Provider[*commonproto.ClusterStatus])(nil)
@@ -49,7 +49,7 @@ type Provider[T gproto.Message] struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	watcher *metadatawatch.Watch[T]
+	watcher *commonwatch.Watch[T]
 }
 
 func NewProvider[T gproto.Message](ctx context.Context, path string, codec provider.Codec[T], watchEnabled provider.WatchMode) (provider.Provider[T], error) {
@@ -65,7 +65,7 @@ func NewProvider[T gproto.Message](ctx context.Context, path string, codec provi
 		return nil, err
 	}
 	if watchEnabled.Enabled() {
-		p.watcher = metadatawatch.New[T]()
+		p.watcher = commonwatch.NewEmpty[T]()
 		p.wg.Go(func() {
 			process.DoWithLabels(p.ctx, map[string]string{
 				"component":     "metadata-provider",
@@ -144,7 +144,7 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersi
 	return newVersion, nil
 }
 
-func (m *Provider[T]) Watch() (*metadatawatch.Receiver[T], error) {
+func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
 	if !m.watchEnabled.Enabled() || m.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
