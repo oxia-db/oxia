@@ -34,6 +34,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/ensemble"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
+	"github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 
@@ -309,39 +310,6 @@ func (c *coordinator) startBackgroundActionWorker() {
 		case <-c.ctx.Done():
 			return
 		}
-	}
-}
-
-func (c *coordinator) startBackgroundConfigWatcher() {
-	configWatch := c.metadata.ConfigWatch()
-	receiver, err := configWatch.Subscribe()
-	if err != nil {
-		c.Warn("failed to subscribe to cluster config watch", slog.Any("error", err))
-		return
-	}
-	defer func() {
-		_ = receiver.Close()
-	}()
-
-	currentConfig, ok := configWatch.Load()
-	if ok && currentConfig != nil {
-		c.ConfigChanged(currentConfig)
-	}
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case _, ok := <-receiver.Changed():
-			if !ok {
-				return
-			}
-		}
-
-		newConfig, ok := receiver.Load()
-		if !ok || newConfig == nil {
-			continue
-		}
-		c.ConfigChanged(newConfig)
 	}
 }
 
@@ -801,8 +769,10 @@ func newCoordinator(
 	})
 	c.Go(func() {
 		process.DoWithLabels(c.ctx, map[string]string{
-			"component": "coordinator-config-watcher",
-		}, c.startBackgroundConfigWatcher)
+			"component": "coordinator-config-reconciler",
+		}, func() {
+			reconciler.NewConfigReconciler(c.Logger, c.metadata.ConfigWatch(), c.ConfigChanged).Run(c.ctx)
+		})
 	})
 
 	c.loadBalancer.Start()
