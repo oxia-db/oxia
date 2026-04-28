@@ -310,9 +310,6 @@ func (c *runtime) startBackgroundConfigWatcher() {
 		}
 
 		newConfig := receiver.Load()
-		if newConfig == nil {
-			continue
-		}
 		c.ConfigChanged(newConfig)
 	}
 }
