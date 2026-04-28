@@ -78,7 +78,7 @@ type ShardElection struct {
 func (e *ShardElection) refreshedEnsemble(ensemble []*proto.DataServerIdentity) []*proto.DataServerIdentity {
 	refreshedEnsembleDataServerAddress := make([]*proto.DataServerIdentity, len(ensemble))
 	for idx, candidate := range ensemble {
-		if refreshedAddress, exist := e.metadataStore.Node(candidate.GetNameOrDefault()); exist {
+		if refreshedAddress, exist := e.metadataStore.GetDataServerIdentity(candidate.GetNameOrDefault()); exist {
 			refreshedEnsembleDataServerAddress[idx] = refreshedAddress
 			continue
 		}
@@ -225,7 +225,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[*proto.DataServerId
 	candidates := chooseCandidates(candidatesStatus)
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Status:     e.metadataStore.LoadStatus(),
+		Status:     e.metadataStore.GetStatus(),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -447,7 +447,7 @@ func (e *ShardElection) start() (*proto.DataServerIdentity, error) {
 		metadata.Term++
 		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
-	e.metadataStore.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	e.metadataStore.PutShard(e.namespace, e.shard, mutShardMeta)
 
 	if e.changeEnsembleAction != nil {
 		e.prepareIfChangeEnsemble(mutShardMeta)
@@ -497,7 +497,7 @@ func (e *ShardElection) start() (*proto.DataServerIdentity, error) {
 	leader := mutShardMeta.Leader
 	leaderEntry := candidatesStatus[leader]
 
-	e.metadataStore.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)
+	e.metadataStore.PutShard(e.namespace, e.shard, mutShardMeta)
 	e.meta.Store(mutShardMeta)
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))

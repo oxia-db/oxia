@@ -50,29 +50,27 @@ var _ coordmetadata.Metadata = (*mockMetadata)(nil)
 
 func (*mockMetadata) Close() error { return nil }
 
-func (m *mockMetadata) LoadStatus() *proto.ClusterStatus { return m.status }
+func (m *mockMetadata) GetStatus() *proto.ClusterStatus { return m.status }
 
 func (m *mockMetadata) ApplyStatusChanges(*proto.ClusterConfiguration, coordmetadata.EnsembleSupplier) (*proto.ClusterStatus, map[int64]string, []int64) {
 	return m.status, nil, nil
 }
 
-func (m *mockMetadata) UpdateStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
+func (m *mockMetadata) PutStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
 
-func (*mockMetadata) UpdateShardMetadata(string, int64, *proto.ShardMetadata) {}
+func (*mockMetadata) PutShard(string, int64, *proto.ShardMetadata) {}
 
-func (*mockMetadata) DeleteShardMetadata(string, int64) {}
+func (*mockMetadata) DeleteShard(string, int64) {}
 
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
-func (*mockMetadata) StatusChangeNotify() <-chan struct{} { return make(chan struct{}) }
-
-func (*mockMetadata) LoadConfig() *proto.ClusterConfiguration { return nil }
+func (*mockMetadata) GetConfig() *proto.ClusterConfiguration { return nil }
 
 func (*mockMetadata) ConfigWatch() *commonwatch.Watch[*proto.ClusterConfiguration] {
 	return commonwatch.New(&proto.ClusterConfiguration{})
 }
 
-func (m *mockMetadata) LoadLoadBalancer() *proto.LoadBalancer {
+func (m *mockMetadata) GetLoadBalancer() *proto.LoadBalancer {
 	if m.lbConfig != nil {
 		return m.lbConfig
 	}
@@ -82,18 +80,18 @@ func (m *mockMetadata) LoadLoadBalancer() *proto.LoadBalancer {
 	}
 }
 
-func (m *mockMetadata) Nodes() *linkedhashset.Set[string] { return m.nodes }
+func (m *mockMetadata) ListDataServers() *linkedhashset.Set[string] { return m.nodes }
 
-func (m *mockMetadata) NodesWithMetadata() (*linkedhashset.Set[string], map[string]*proto.DataServerMetadata) {
+func (m *mockMetadata) ListDataServersWithMetadata() (*linkedhashset.Set[string], map[string]*proto.DataServerMetadata) {
 	return m.nodes, m.metadata
 }
 
-func (m *mockMetadata) Namespace(namespace string) (*proto.Namespace, bool) {
+func (m *mockMetadata) GetNamespace(namespace string) (*proto.Namespace, bool) {
 	nc, ok := m.nsConfigs[namespace]
 	return nc, ok
 }
 
-func (m *mockMetadata) Node(id string) (*proto.DataServerIdentity, bool) {
+func (m *mockMetadata) GetDataServerIdentity(id string) (*proto.DataServerIdentity, bool) {
 	n, ok := m.nodeMap[id]
 	return n, ok
 }
@@ -131,7 +129,7 @@ func newTestBalancer(
 		ctx:                     ctx,
 		ctxCancel:               cancel,
 		wg:                      sync.WaitGroup{},
-		loadBalancerConf:        metadata.LoadLoadBalancer(),
+		loadBalancerConf:        metadata.GetLoadBalancer(),
 		metadata:                metadata,
 		selector:                sel,
 		loadRatioAlgorithm:      single.DefaultShardsRank,

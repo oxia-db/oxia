@@ -130,7 +130,7 @@ func (c *runtime) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 
 	// Check for nodes to remove
 	for serverID, nc := range c.nodeControllers {
-		if _, exist := c.metadata.Node(serverID); exist {
+		if _, exist := c.metadata.GetDataServerIdentity(serverID); exist {
 			continue
 		}
 		c.logger.Info("Detected a removed node", slog.Any("server", serverID))
@@ -146,7 +146,7 @@ func (c *runtime) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 	clusterStatus, shardsToAdd, shardsToDelete := c.metadata.ApplyStatusChanges(newConfig, c.selectNewEnsemble)
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
-		if namespaceConfig, exist := c.metadata.Namespace(namespace); exist {
+		if namespaceConfig, exist := c.metadata.GetNamespace(namespace); exist {
 			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
 				pb.Clone(shardMetadata).(*proto.ShardMetadata), c.metadata, c.findDataServerFeatures,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
@@ -184,7 +184,7 @@ func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-	nodes, nodesMetadata := c.metadata.NodesWithMetadata()
+	nodes, nodesMetadata := c.metadata.ListDataServersWithMetadata()
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
 		CandidatesMetadata: nodesMetadata,
@@ -205,7 +205,7 @@ func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.Cl
 	for _, id := range ensembles {
 		var node *proto.DataServerIdentity
 		var exist bool
-		if node, exist = c.metadata.Node(id); !exist {
+		if node, exist = c.metadata.GetDataServerIdentity(id); !exist {
 			return nil, fmt.Errorf("failed to find node %s", id)
 		}
 		esm = append(esm, node)
@@ -305,7 +305,7 @@ func (c *runtime) startBackgroundConfigWatcher() {
 	configWatch := c.metadata.ConfigWatch()
 	receiver := configWatch.Subscribe()
 
-	if currentConfig := c.metadata.LoadConfig(); currentConfig != nil {
+	if currentConfig := c.metadata.GetConfig(); currentConfig != nil {
 		c.ConfigChanged(currentConfig)
 	}
 	for {
@@ -360,8 +360,8 @@ func (c *runtime) handleActionChangeEnsemble(ac action.Action) {
 
 // This is called while already holding the lock on the coordinator.
 func (c *runtime) computeNewAssignments() {
-	config := c.metadata.LoadConfig()
-	status := c.metadata.LoadStatus()
+	config := c.metadata.GetConfig()
+	status := c.metadata.GetStatus()
 	assignments := &proto.ShardAssignments{
 		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
 		AllowedAuthorities: mergedAuthorities(status, config.GetServers(), config.GetAllowExtraAuthorities()),
@@ -438,7 +438,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	c.Lock()
 	defer c.Unlock()
 
-	status := c.metadata.LoadStatus()
+	status := c.metadata.GetStatus()
 
 	// Validate namespace
 	ns, exists := status.Namespaces[namespace]
@@ -551,7 +551,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 
 	// Persist
-	c.metadata.UpdateStatus(cloned)
+	c.metadata.PutStatus(cloned)
 
 	c.logger.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
@@ -576,7 +576,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 		RpcProvider:   c.rpc,
 		EventListener: c,
 		EnsembleSelector: func(ns string) ([]*proto.DataServerIdentity, error) {
-			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.metadata.LoadStatus())
+			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.metadata.GetStatus())
 		},
 	})
 	c.splitControllers[parentShardId] = sc
@@ -617,7 +617,7 @@ func (c *runtime) SplitComplete(parentShard int64, leftChild int64, rightChild i
 	// during Cutover.
 	if sc, exists := c.shardControllers[parentShard]; exists {
 		// Sync shard controller metadata from the status resource.
-		status := c.metadata.LoadStatus()
+		status := c.metadata.GetStatus()
 		for _, ns := range status.Namespaces {
 			if parentMeta, ok := ns.Shards[parentShard]; ok {
 				sc.Metadata().Store(parentMeta)
@@ -659,7 +659,7 @@ func (c *runtime) SplitAborted(parentShard int64, leftChild int64, rightChild in
 }
 
 func (c *runtime) namespaceConfigForSplit(namespace string) *proto.Namespace {
-	nsConfig, exist := c.metadata.Namespace(namespace)
+	nsConfig, exist := c.metadata.GetNamespace(namespace)
 	if !exist {
 		nsConfig = &proto.Namespace{}
 	}
@@ -692,7 +692,7 @@ func (c *runtime) restartInProgressSplits(clusterStatus *proto.ClusterStatus) {
 				RpcProvider:   c.rpc,
 				EventListener: c,
 				EnsembleSelector: func(namespace string) ([]*proto.DataServerIdentity, error) {
-					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.metadata.LoadStatus())
+					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.metadata.GetStatus())
 				},
 			})
 			c.splitControllers[shardId] = sc
@@ -730,8 +730,8 @@ func New(
 		},
 	})
 
-	clusterConfig := c.metadata.LoadConfig()
-	clusterStatus := c.metadata.LoadStatus()
+	clusterConfig := c.metadata.GetConfig()
+	clusterStatus := c.metadata.GetStatus()
 	c.insID = clusterStatus.InstanceId
 
 	c.rpc = rpcProvider(c.insID)
@@ -756,7 +756,7 @@ func New(
 			shardMetadata := shards.Shards[shard]
 			var nsConfig *proto.Namespace
 			var exist bool
-			if nsConfig, exist = c.metadata.Namespace(ns); !exist {
+			if nsConfig, exist = c.metadata.GetNamespace(ns); !exist {
 				nsConfig = &proto.Namespace{}
 			}
 			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,

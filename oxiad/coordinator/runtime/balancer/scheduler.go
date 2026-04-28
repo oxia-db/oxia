@@ -97,8 +97,8 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	r.checkQuarantineNodes()
 
 	swapGroup := &sync.WaitGroup{}
-	currentStatus := r.metadata.LoadStatus()
-	candidates, metadata := r.metadata.NodesWithMetadata()
+	currentStatus := r.metadata.GetStatus()
+	candidates, metadata := r.metadata.ListDataServersWithMetadata()
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
@@ -222,7 +222,7 @@ func (r *nodeBasedBalancer) swapShard(
 	var exist bool
 	var err error
 
-	if nsc, exist = r.metadata.Namespace(candidateShard.Namespace); !exist {
+	if nsc, exist = r.metadata.GetNamespace(candidateShard.Namespace); !exist {
 		return false, nil
 	}
 
@@ -260,7 +260,7 @@ func (r *nodeBasedBalancer) swapShard(
 		return false, nil
 	}
 	var targetNode *commonproto.DataServerIdentity
-	if targetNode, exist = r.metadata.Node(targetNodeID); !exist {
+	if targetNode, exist = r.metadata.GetDataServerIdentity(targetNodeID); !exist {
 		return false, errors.New("target node does not exist")
 	}
 
@@ -311,8 +311,8 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 }
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
-	status := r.metadata.LoadStatus()
-	candidates := r.metadata.Nodes()
+	status := r.metadata.GetStatus()
+	candidates := r.metadata.ListDataServers()
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, status)
 	return r.loadRatioAlgorithm(
 		&model.RatioParams{
@@ -379,8 +379,8 @@ func (r *nodeBasedBalancer) startBackgroundNotifier() {
 func (r *nodeBasedBalancer) rebalanceLeader() {
 	r.checkQuarantineShards()
 
-	status := r.metadata.LoadStatus()
-	candidates := r.metadata.Nodes()
+	status := r.metadata.GetStatus()
+	candidates := r.metadata.ListDataServers()
 	totalShards, electedShards, nodeLeaders := state.NodeShardLeaders(candidates, status)
 
 	electedRate := float64(electedShards) / float64(totalShards)
@@ -503,7 +503,7 @@ func NewLoadBalancer(options Options) LoadBalancer {
 		ctx:                     ctx,
 		ctxCancel:               cancelFunc,
 		wg:                      sync.WaitGroup{},
-		loadBalancerConf:        options.Metadata.LoadLoadBalancer(),
+		loadBalancerConf:        options.Metadata.GetLoadBalancer(),
 		actionCh:                make(chan action.Action, 1000),
 		nodeAvailableJudger:     options.NodeAvailableJudger,
 		metadata:                options.Metadata,

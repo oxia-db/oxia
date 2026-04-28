@@ -258,7 +258,7 @@ func (s *shardController) waitForSplitComplete() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			status := s.metadataStore.LoadStatus()
+			status := s.metadataStore.GetStatus()
 			ns, exists := status.Namespaces[s.namespace]
 			if !exists {
 				continue
@@ -358,7 +358,7 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		EnableNotifications: true,
 		KeySorting:          proto.KeySortingType_UNKNOWN,
 	}
-	nsConfig, exist := s.metadataStore.Namespace(s.namespace)
+	nsConfig, exist := s.metadataStore.GetNamespace(s.namespace)
 	if exist {
 		termOptions.EnableNotifications = nsConfig.NotificationsEnabledOrDefault()
 		termOptions.KeySorting, _ = nsConfig.GetKeySortingType()
@@ -423,7 +423,7 @@ func (s *shardController) deleteShard() error {
 		)
 	}
 
-	s.metadataStore.DeleteShardMetadata(s.namespace, s.shard)
+	s.metadataStore.DeleteShard(s.namespace, s.shard)
 	s.eventListener.ShardDeleted(s.shard)
 	return s.close()
 }
@@ -473,7 +473,7 @@ func (s *shardController) SyncServerAddress() {
 	shardMeta := s.metadata.Load()
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
-		if newInfo, ok := s.metadataStore.Node(candidate.GetNameOrDefault()); ok {
+		if newInfo, ok := s.metadataStore.GetDataServerIdentity(candidate.GetNameOrDefault()); ok {
 			if newInfo.GetPublic() != candidate.GetPublic() || newInfo.GetInternal() != candidate.GetInternal() {
 				needSync = true
 				break
@@ -504,7 +504,7 @@ func (s *shardController) handlePeriodicTasks() {
 	}
 
 	// Update the shard status
-	s.metadataStore.UpdateShardMetadata(s.namespace, s.shard, mutShardMeta)
+	s.metadataStore.PutShard(s.namespace, s.shard, mutShardMeta)
 	s.metadata.Store(mutShardMeta)
 }
 
