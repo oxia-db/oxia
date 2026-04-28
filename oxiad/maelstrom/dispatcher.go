@@ -88,14 +88,12 @@ func (d *dispatcher) onOxiaStreamRequestMessage(msgType MsgType, m any, message 
 	switch msgType {
 	case MsgTypeShardAssignmentsResponse:
 		r := message.(*proto.ShardAssignments)
-		if leader, ok := shardAssignmentsLeader(r); ok {
+		if leader, ok := getDefaultNamespaceLeader(r); ok {
 			d.currentLeader = leader
 			slog.Info(
 				"Received notification of new leader",
 				slog.String("leader", d.currentLeader),
 			)
-		} else {
-			slog.Debug("Received shard assignments without a default-namespace leader")
 		}
 
 	case MsgTypeAppend:

@@ -65,7 +65,7 @@ func TestShardAssignmentsLeader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotLeader, gotOK := shardAssignmentsLeader(tt.assignments)
+			gotLeader, gotOK := getDefaultNamespaceLeader(tt.assignments)
 			require.Equal(t, tt.wantLeader, gotLeader)
 			require.Equal(t, tt.wantOK, gotOK)
 		})

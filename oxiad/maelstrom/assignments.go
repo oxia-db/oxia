@@ -19,7 +19,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func shardAssignmentsLeader(assignments *proto.ShardAssignments) (string, bool) {
+func getDefaultNamespaceLeader(assignments *proto.ShardAssignments) (string, bool) {
 	if assignments == nil {
 		return "", false
 	}
