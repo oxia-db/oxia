@@ -22,11 +22,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
-
-	"github.com/oxia-db/oxia/common/concurrent"
 )
 
 func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
@@ -78,19 +77,20 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		},
 	})
 	c := &runtime{
-		RWMutex:            sync.RWMutex{},
-		metadata:           metadata,
-		assignmentsChanged: concurrent.NewConditionContext(&sync.Mutex{}),
+		RWMutex:          sync.RWMutex{},
+		metadata:         metadata,
+		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 	}
 
 	c.computeNewAssignments()
+	assignments := c.assignmentsWatch.Load()
 
-	nsAssignments, ok := c.assignments.Namespaces["default"]
+	nsAssignments, ok := assignments.Namespaces["default"]
 	require.True(t, ok)
 	require.Len(t, nsAssignments.Assignments, 1)
 	assert.Equal(t,
 		[]string{"leader-public:6648", "leader-internal:6649", "bootstrap:6648"},
-		c.assignments.AllowedAuthorities,
+		assignments.AllowedAuthorities,
 	)
 }
 
@@ -144,12 +144,13 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		},
 	})
 	c := &runtime{
-		RWMutex:            sync.RWMutex{},
-		metadata:           metadata,
-		assignmentsChanged: concurrent.NewConditionContext(&sync.Mutex{}),
+		RWMutex:          sync.RWMutex{},
+		metadata:         metadata,
+		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 	}
 
 	c.computeNewAssignments()
+	assignments := c.assignmentsWatch.Load()
 
 	assert.Equal(t,
 		[]string{
@@ -158,6 +159,6 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 			"removed-public:6648",
 			"removed-internal:6649",
 		},
-		c.assignments.AllowedAuthorities,
+		assignments.AllowedAuthorities,
 	)
 }
