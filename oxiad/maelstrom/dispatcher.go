@@ -28,8 +28,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/common/constant"
-
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -90,11 +88,15 @@ func (d *dispatcher) onOxiaStreamRequestMessage(msgType MsgType, m any, message 
 	switch msgType {
 	case MsgTypeShardAssignmentsResponse:
 		r := message.(*proto.ShardAssignments)
-		d.currentLeader = r.Namespaces[constant.DefaultNamespace].Assignments[0].Leader
-		slog.Info(
-			"Received notification of new leader",
-			slog.String("leader", d.currentLeader),
-		)
+		if leader, ok := shardAssignmentsLeader(r); ok {
+			d.currentLeader = leader
+			slog.Info(
+				"Received notification of new leader",
+				slog.String("leader", d.currentLeader),
+			)
+		} else {
+			slog.Debug("Received shard assignments without a default-namespace leader")
+		}
 
 	case MsgTypeAppend:
 		msg := m.(*Message[OxiaStreamMessage])

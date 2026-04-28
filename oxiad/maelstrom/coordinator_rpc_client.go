@@ -29,8 +29,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
-	"github.com/oxia-db/oxia/common/constant"
-
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -156,7 +154,9 @@ func newShardAssignmentClient(ctx context.Context, provider *maelstromCoordinato
 
 func (m *maelstromShardAssignmentClient) Send(response *proto.ShardAssignments) error {
 	assignments := response
-	m.provider.dispatcher.currentLeader = assignments.Namespaces[constant.DefaultNamespace].Assignments[0].Leader
+	if leader, ok := shardAssignmentsLeader(assignments); ok {
+		m.provider.dispatcher.currentLeader = leader
+	}
 	req := &Message[OxiaStreamMessage]{
 		Src:  thisNode,
 		Dest: m.node,
