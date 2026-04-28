@@ -12,26 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package runtime
+package controller
 
-import (
-	"io"
-
-	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
-)
-
-type Runtime interface {
-	io.Closer
-	controller.ShardSplitter
-	controller.ShardEventListener
-	controller.ShardAssignmentsProvider
-	controller.DataServerEventListener
-
-	NodeControllers() map[string]controller.DataServerController
-
-	LoadBalancer() balancer.LoadBalancer
-
-	Metadata() coordmetadata.Metadata
+type ShardSplitter interface {
+	InitiateSplit(namespace string, parentShardId int64, splitPoint *uint32) (leftChild, rightChild int64, err error)
 }

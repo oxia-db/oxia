@@ -25,12 +25,8 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 )
-
-// ShardSplitter is implemented by the coordinator to initiate shard splits.
-type ShardSplitter interface {
-	InitiateSplit(namespace string, parentShardId int64, splitPoint *uint32) (leftChild, rightChild int64, err error)
-}
 
 var _ proto.OxiaAdminServer = (*managementServer)(nil)
 
@@ -38,7 +34,7 @@ type managementServer struct {
 	proto.UnimplementedOxiaAdminServer
 
 	metadata      coordmetadata.Metadata
-	shardSplitter ShardSplitter
+	shardSplitter controller.ShardSplitter
 }
 
 func (management *managementServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
@@ -141,7 +137,7 @@ func (management *managementServer) SplitShard(_ context.Context, req *proto.Spl
 
 func newManagementServer(
 	metadata coordmetadata.Metadata,
-	shardSplitter ShardSplitter,
+	shardSplitter controller.ShardSplitter,
 ) *managementServer {
 	return &managementServer{
 		metadata:      metadata,
