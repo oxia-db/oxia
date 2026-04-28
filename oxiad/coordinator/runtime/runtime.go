@@ -36,9 +36,9 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/state"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
-	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 )
 
 type runtime struct {
@@ -63,8 +63,7 @@ type runtime struct {
 	loadBalancer     balancer.LoadBalancer
 	ensembleSelector selector.Selector[*ensemble.Context, []string]
 
-	assignmentsChanged concurrent.ConditionContext
-	assignments        *proto.ShardAssignments
+	assignmentsWatch *commonwatch.Watch[*proto.ShardAssignments]
 
 	rpc rpc.Provider
 }
@@ -263,17 +262,24 @@ func (c *runtime) BecameUnavailable(node *proto.DataServerIdentity) {
 }
 
 func (c *runtime) WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error) {
-	c.Lock()
-	defer c.Unlock()
-
-	for pb.Equal(currentValue, c.assignments) {
-		// Wait on the condition until the assignments get changed
-		if err := c.assignmentsChanged.Wait(ctx); err != nil {
-			return nil, err
-		}
+	receiver := c.assignmentsWatch.Subscribe()
+	latest := c.assignmentsWatch.Load()
+	if !pb.Equal(currentValue, latest) {
+		return latest, nil
 	}
 
-	return c.assignments, nil
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-receiver.Changed():
+		}
+
+		latest = receiver.Load()
+		if !pb.Equal(currentValue, latest) {
+			return latest, nil
+		}
+	}
 }
 
 func (c *runtime) startBackgroundActionWorker() {
@@ -356,7 +362,7 @@ func (c *runtime) handleActionChangeEnsemble(ac action.Action) {
 func (c *runtime) computeNewAssignments() {
 	config := c.metadata.LoadConfig()
 	status := c.metadata.LoadStatus()
-	c.assignments = &proto.ShardAssignments{
+	assignments := &proto.ShardAssignments{
 		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
 		AllowedAuthorities: mergedAuthorities(status, config.GetServers(), config.GetAllowExtraAuthorities()),
 	}
@@ -395,10 +401,10 @@ func (c *runtime) computeNewAssignments() {
 			)
 		}
 
-		c.assignments.Namespaces[name] = nsAssignments
+		assignments.Namespaces[name] = nsAssignments
 	}
 
-	c.assignmentsChanged.Broadcast()
+	c.assignmentsWatch.Publish(assignments)
 }
 
 func mergedAuthorities(status *proto.ClusterStatus, servers []*proto.DataServerIdentity, extraAuthorities []string) []string {
@@ -708,10 +714,10 @@ func New(
 		nodeControllers:  make(map[string]controller.DataServerController),
 		drainingNodes:    make(map[string]controller.DataServerController),
 		metadata:         metadata,
+		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 	}
 
 	c.ctx, c.ctxCancel = context.WithCancel(context.Background())
-	c.assignmentsChanged = concurrent.NewConditionContext(c)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:  c.ctx,
