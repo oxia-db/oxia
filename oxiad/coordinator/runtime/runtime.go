@@ -297,11 +297,7 @@ func (c *runtime) startBackgroundActionWorker() {
 
 func (c *runtime) startBackgroundConfigWatcher() {
 	configWatch := c.metadata.ConfigWatch()
-	receiver, err := configWatch.Subscribe()
-	if err != nil {
-		c.logger.Warn("failed to subscribe to cluster config watch", slog.Any("error", err))
-		return
-	}
+	receiver := configWatch.Subscribe()
 
 	if currentConfig := c.metadata.LoadConfig(); currentConfig != nil {
 		c.ConfigChanged(currentConfig)

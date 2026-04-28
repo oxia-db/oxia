@@ -143,11 +143,7 @@ func startMetricsServer(metrics commonoption.MetricOptions) (*metric.PrometheusM
 }
 
 func (s *GrpcServer) backgroundHandleConfChange() {
-	receiver, err := s.optionsWatch.Subscribe()
-	if err != nil {
-		s.logger.Warn("exit background configuration watch goroutine due to a subscription error", slog.Any("error", err))
-		return
-	}
+	receiver := s.optionsWatch.Subscribe()
 
 	for {
 		select {

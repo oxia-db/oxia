@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -33,8 +32,7 @@ func TestWatchLoad(t *testing.T) {
 
 func TestSubscribePublish(t *testing.T) {
 	w := New(&proto.ClusterConfiguration{})
-	r, err := w.Subscribe()
-	require.NoError(t, err)
+	r := w.Subscribe()
 
 	value := r.Load()
 	assert.NotNil(t, value)
@@ -56,18 +54,4 @@ func TestSubscribePublish(t *testing.T) {
 
 	value = r.Load()
 	assert.Same(t, config, value)
-}
-
-func TestWatchClose(t *testing.T) {
-	w := New(&proto.ClusterConfiguration{})
-	r, err := w.Subscribe()
-	require.NoError(t, err)
-
-	w.Close()
-
-	_, err = w.Subscribe()
-	assert.ErrorIs(t, err, ErrClosed)
-
-	_, ok := <-r.Changed()
-	assert.False(t, ok)
 }

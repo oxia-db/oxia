@@ -267,12 +267,10 @@ func (p *callbackConfigProvider) Watch() (*commonwatch.Receiver[*commonproto.Clu
 	if p.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
-	return p.watcher.Subscribe()
+	return p.watcher.Subscribe(), nil
 }
 
 func (p *callbackConfigProvider) watchLoop() {
-	defer p.watcher.Close()
-
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -298,9 +296,6 @@ func (p *callbackConfigProvider) publishCurrentValue() {
 func (p *callbackConfigProvider) Close() error {
 	p.ctxCancel()
 	p.wg.Wait()
-	if p.watcher != nil {
-		p.watcher.Close()
-	}
 	return nil
 }
 

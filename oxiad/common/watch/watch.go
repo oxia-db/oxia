@@ -15,18 +15,14 @@
 package watch
 
 import (
-	"errors"
 	"sync"
 	"sync/atomic"
 )
-
-var ErrClosed = errors.New("watch closed")
 
 type Watch[T any] struct {
 	sync.Mutex
 
 	value   atomic.Value
-	closed  atomic.Bool
 	changed chan struct{}
 }
 
@@ -38,44 +34,24 @@ func New[T any](init T) *Watch[T] {
 	return w
 }
 
-func (w *Watch[T]) Subscribe() (*Receiver[T], error) {
+func (w *Watch[T]) Subscribe() *Receiver[T] {
 	w.Lock()
 	defer w.Unlock()
-
-	if w.closed.Load() {
-		return nil, ErrClosed
-	}
 
 	return &Receiver[T]{
 		watch:   w,
 		changed: w.changed,
-	}, nil
+	}
 }
 
 func (w *Watch[T]) Publish(value T) {
 	w.Lock()
 	defer w.Unlock()
 
-	if w.closed.Load() {
-		return
-	}
-
 	w.value.Store(value)
 	changed := w.changed
 	w.changed = make(chan struct{})
 	close(changed)
-}
-
-func (w *Watch[T]) Close() {
-	w.Lock()
-	defer w.Unlock()
-
-	if w.closed.Load() {
-		return
-	}
-
-	w.closed.Store(true)
-	close(w.changed)
 }
 
 func (w *Watch[T]) Load() T {
