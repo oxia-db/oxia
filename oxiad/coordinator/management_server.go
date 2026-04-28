@@ -32,17 +32,17 @@ type ShardSplitter interface {
 	InitiateSplit(namespace string, parentShardId int64, splitPoint *uint32) (leftChild, rightChild int64, err error)
 }
 
-var _ proto.OxiaAdminServer = (*adminServer)(nil)
+var _ proto.OxiaAdminServer = (*managementServer)(nil)
 
-type adminServer struct {
+type managementServer struct {
 	proto.UnimplementedOxiaAdminServer
 
 	metadata      coordmetadata.Metadata
 	shardSplitter ShardSplitter
 }
 
-func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
-	cnf := admin.metadata.LoadConfig()
+func (management *managementServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
+	cnf := management.metadata.LoadConfig()
 
 	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
 	for _, server := range cnf.GetServers() {
@@ -69,12 +69,12 @@ func (admin *adminServer) ListDataServers(context.Context, *proto.ListDataServer
 	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
 }
 
-func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
+func (management *managementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
 	if req == nil || req.DataServer == "" {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
 
-	dataServer, found := admin.metadata.GetDataServer(req.DataServer)
+	dataServer, found := management.metadata.GetDataServer(req.DataServer)
 	if !found {
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
@@ -84,8 +84,8 @@ func (admin *adminServer) GetDataServer(_ context.Context, req *proto.GetDataSer
 	}, nil
 }
 
-func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
-	cnf := admin.metadata.LoadConfig()
+func (management *managementServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
+	cnf := management.metadata.LoadConfig()
 
 	namespaceNames := hashset.New[string]()
 	for _, nsConfig := range cnf.GetNamespaces() {
@@ -96,8 +96,8 @@ func (admin *adminServer) ListNamespaces(context.Context, *proto.ListNamespacesR
 	}, nil
 }
 
-func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
-	cnf := admin.metadata.LoadConfig()
+func (management *managementServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
+	cnf := management.metadata.LoadConfig()
 
 	cnfNodes := cnf.GetServers()
 	cnfMeta := cnf.GetServerMetadata()
@@ -117,8 +117,8 @@ func (admin *adminServer) ListNodes(context.Context, *proto.ListNodesRequest) (*
 	return &proto.ListNodesResponse{Nodes: nodes}, nil
 }
 
-func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
-	if admin.shardSplitter == nil {
+func (management *managementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
+	if management.shardSplitter == nil {
 		return nil, errors.New("split shard not supported")
 	}
 
@@ -128,7 +128,7 @@ func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardReq
 		slog.Any("split-point", req.SplitPoint),
 	)
 
-	left, right, err := admin.shardSplitter.InitiateSplit(req.Namespace, req.Shard, req.SplitPoint)
+	left, right, err := management.shardSplitter.InitiateSplit(req.Namespace, req.Shard, req.SplitPoint)
 	if err != nil {
 		return nil, err
 	}
@@ -139,11 +139,11 @@ func (admin *adminServer) SplitShard(_ context.Context, req *proto.SplitShardReq
 	}, nil
 }
 
-func newAdminServer(
+func newManagementServer(
 	metadata coordmetadata.Metadata,
 	shardSplitter ShardSplitter,
-) *adminServer {
-	return &adminServer{
+) *managementServer {
+	return &managementServer{
 		metadata:      metadata,
 		shardSplitter: shardSplitter,
 	}

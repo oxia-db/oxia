@@ -47,12 +47,12 @@ type GrpcServer struct {
 	logger           *slog.Logger
 	watchableOptions *commonwatch.Watch[*option.Options]
 
-	grpcServer   rpc2.GrpcServer
-	adminServer  rpc2.GrpcServer
-	healthServer *health.Server
-	runtime      coordruntime.Runtime
-	metadata     coordmetadata.Metadata
-	metrics      *metric.PrometheusMetrics
+	grpcServer       rpc2.GrpcServer
+	managementServer rpc2.GrpcServer
+	healthServer     *health.Server
+	runtime          coordruntime.Runtime
+	metadata         coordmetadata.Metadata
+	metrics          *metric.PrometheusMetrics
 }
 
 func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*option.Options]) (*GrpcServer, error) {
@@ -88,18 +88,18 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*
 		return nil, err
 	}
 
-	adminSv := options.Server.Admin
-	adminSvTLS, err := adminSv.TLS.TryIntoServerTLSConf()
+	managementSv := options.Server.Admin
+	managementSvTLS, err := managementSv.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
-	admin := newAdminServer(
+	management := newManagementServer(
 		runtime.Metadata(),
 		runtime,
 	)
-	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
-		proto.RegisterOxiaAdminServer(registrar, admin)
-	}, adminSvTLS, &adminSv.Auth, nil)
+	managementGrpcServer, err := rpc2.Default.StartGrpcServer("admin", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
+		proto.RegisterOxiaAdminServer(registrar, management)
+	}, managementSvTLS, &managementSv.Auth, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*
 		logger:           slog.With(slog.String("component", "grpc-server")),
 		watchableOptions: watchableOptions,
 		grpcServer:       grpcServer,
-		adminServer:      adminGrpcServer,
+		managementServer: managementGrpcServer,
 		healthServer:     healthServer,
 		runtime:          runtime,
 		metadata:         metadata,
@@ -184,7 +184,7 @@ func (s *GrpcServer) Close() error {
 	s.healthServer.Shutdown()
 	err = multierr.Combine(
 		s.grpcServer.Close(),
-		s.adminServer.Close(),
+		s.managementServer.Close(),
 		s.runtime.Close(),
 		s.metadata.Close(),
 	)
