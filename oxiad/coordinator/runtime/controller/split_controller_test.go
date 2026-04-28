@@ -140,7 +140,7 @@ func setupSplitTest(t *testing.T, phase string) (
 		ShardIdGenerator: 3,
 	}
 
-	metadata.UpdateStatus(clusterStatus)
+	metadata.PutStatus(clusterStatus)
 	listener := newMockSplitEventListener()
 
 	return rpcMock, metadata, listener
@@ -228,7 +228,7 @@ func TestSplitController_FullLifecycle(t *testing.T) {
 	}
 
 	// Verify final state: parent is Deleting, children have no split metadata
-	status := statusRes.LoadStatus()
+	status := statusRes.GetStatus()
 	ns := status.Namespaces[constant.DefaultNamespace]
 
 	parentMeta, parentExists := ns.Shards[0]
@@ -276,7 +276,7 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 
 	// For CatchUp, we need child leaders to already be set (they were set during bootstrap)
 	// Update child metadata to have leaders
-	status := statusRes.LoadStatus()
+	status := statusRes.GetStatus()
 	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 	leftMeta := ns.Shards[1]
@@ -287,7 +287,7 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 	rightMeta.Leader = rs1
 	rightMeta.Term = 1
 	ns.Shards[2] = rightMeta
-	statusRes.UpdateStatus(cloned)
+	statusRes.PutStatus(cloned)
 
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
@@ -329,7 +329,7 @@ func TestSplitController_PhaseTransitions(t *testing.T) {
 	select {
 	case <-listener.completions:
 		// Verify final state: parent marked Deleting, children elected
-		status := statusRes.LoadStatus()
+		status := statusRes.GetStatus()
 		ns := status.Namespaces[constant.DefaultNamespace]
 
 		parentMeta := ns.Shards[0]
@@ -374,7 +374,7 @@ func TestSplitController_TimeoutDuringBootstrap(t *testing.T) {
 	}
 
 	// Verify: parent.Split cleared, children deleted
-	status := statusRes.LoadStatus()
+	status := statusRes.GetStatus()
 	ns := status.Namespaces[constant.DefaultNamespace]
 
 	parentMeta, parentExists := ns.Shards[0]
@@ -392,7 +392,7 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
-	status := statusRes.LoadStatus()
+	status := statusRes.GetStatus()
 	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -410,7 +410,7 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	statusRes.PutStatus(cloned)
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -437,7 +437,7 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	}
 
 	// Verify: parent restored, children deleted
-	finalStatus := statusRes.LoadStatus()
+	finalStatus := statusRes.GetStatus()
 	finalNs := finalStatus.Namespaces[constant.DefaultNamespace]
 
 	pm, exists := finalNs.Shards[0]
@@ -454,7 +454,7 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// Set child leaders and ParentTermAtBootstrap = 5
-	status := statusRes.LoadStatus()
+	status := statusRes.GetStatus()
 	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -475,7 +475,7 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5 // Was 5 during Bootstrap
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	statusRes.PutStatus(cloned)
 
 	// The controller should detect term change and reset to Bootstrap.
 	// Queue Bootstrap responses -- note: parent leader is now ps2 (after election)
@@ -662,7 +662,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
-	status := statusRes.LoadStatus()
+	status := statusRes.GetStatus()
 	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -680,7 +680,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	statusRes.PutStatus(cloned)
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -711,7 +711,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	}
 
 	// Verify: parent restored, children deleted
-	finalStatus := statusRes.LoadStatus()
+	finalStatus := statusRes.GetStatus()
 	finalNs := finalStatus.Namespaces[constant.DefaultNamespace]
 
 	pm, exists := finalNs.Shards[0]
@@ -728,7 +728,7 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
 	// Set child leaders (as if Bootstrap completed) and ParentTermAtBootstrap
-	status := statusRes.LoadStatus()
+	status := statusRes.GetStatus()
 	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -746,7 +746,7 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	statusRes.PutStatus(cloned)
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -783,7 +783,7 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	}
 
 	// Verify: parent restored, children deleted
-	finalStatus := statusRes.LoadStatus()
+	finalStatus := statusRes.GetStatus()
 	finalNs := finalStatus.Namespaces[constant.DefaultNamespace]
 
 	pm, exists := finalNs.Shards[0]
@@ -801,7 +801,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 
 	// Set child leaders and ParentTermAtBootstrap as if Bootstrap completed.
 	// Also set ChildLeadersAtBootstrap with the ORIGINAL leaders.
-	status := statusRes.LoadStatus()
+	status := statusRes.GetStatus()
 	cloned := gproto.Clone(status).(*proto.ClusterStatus)
 	ns := cloned.Namespaces[constant.DefaultNamespace]
 
@@ -823,7 +823,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	}
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	statusRes.PutStatus(cloned)
 
 	// CatchUp detects left child leader changed (ls1 -> ls2).
 	// It RemoveObserver(old leader) on parent, then falls back to Bootstrap.
@@ -878,7 +878,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	}
 
 	// Verify parent is Deleting and children are healthy
-	finalStatus := statusRes.LoadStatus()
+	finalStatus := statusRes.GetStatus()
 	finalNs := finalStatus.Namespaces[constant.DefaultNamespace]
 
 	pm := finalNs.Shards[0]

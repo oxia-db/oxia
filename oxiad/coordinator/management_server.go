@@ -38,7 +38,7 @@ type managementServer struct {
 }
 
 func (management *managementServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
-	cnf := management.metadata.LoadConfig()
+	cnf := management.metadata.GetConfig()
 
 	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
 	for _, server := range cnf.GetServers() {
@@ -81,7 +81,7 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 }
 
 func (management *managementServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
-	cnf := management.metadata.LoadConfig()
+	cnf := management.metadata.GetConfig()
 
 	namespaceNames := hashset.New[string]()
 	for _, nsConfig := range cnf.GetNamespaces() {
@@ -93,7 +93,7 @@ func (management *managementServer) ListNamespaces(context.Context, *proto.ListN
 }
 
 func (management *managementServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
-	cnf := management.metadata.LoadConfig()
+	cnf := management.metadata.GetConfig()
 
 	cnfNodes := cnf.GetServers()
 	cnfMeta := cnf.GetServerMetadata()

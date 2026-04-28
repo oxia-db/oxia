@@ -44,7 +44,7 @@ func TestNewFromOptionsLoadsFileClusterConfig(t *testing.T) {
 		require.NoError(t, metadata.Close())
 	}()
 
-	config := metadata.LoadConfig()
+	config := metadata.GetConfig()
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
 }
@@ -72,7 +72,7 @@ func TestNewFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 		require.NoError(t, metadata.Close())
 	}()
 
-	config := metadata.LoadConfig()
+	config := metadata.GetConfig()
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
 }

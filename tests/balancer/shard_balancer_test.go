@@ -75,7 +75,7 @@ func TestNormalShardBalancer(t *testing.T) {
 	metadata := coordinator.Metadata()
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.LoadStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -89,7 +89,7 @@ func TestNormalShardBalancer(t *testing.T) {
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.Node(s4ad.GetNameOrDefault())
+		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 	assert.Eventually(t, func() bool {
@@ -182,7 +182,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	metadata := coordinator.Metadata()
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.LoadStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -196,7 +196,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.Node(s4ad.GetNameOrDefault())
+		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 	assert.Eventually(t, func() bool {
@@ -215,7 +215,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}, 30*time.Second, 50*time.Millisecond)
 
 	// check if follow the policy
-	for name, ns := range metadata.LoadStatus().Namespaces {
+	for name, ns := range metadata.GetStatus().Namespaces {
 		for _, shard := range ns.Shards {
 			nodeIDs := linkedhashset.New[string]()
 			nodeZones := linkedhashset.New[string]()
@@ -275,7 +275,23 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 
 	metadata := coordinator.Metadata()
 	assert.Eventually(t, func() bool {
-		return metadata.IsReady(metadata.LoadConfig())
+		config := metadata.GetConfig()
+		status := metadata.GetStatus()
+		for _, namespace := range config.Namespaces {
+			namespaceStatus, ok := status.Namespaces[namespace.Name]
+			if !ok {
+				return false
+			}
+			if len(namespaceStatus.Shards) != int(namespace.InitialShardCount) {
+				return false
+			}
+			for _, shard := range namespaceStatus.Shards {
+				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+					return false
+				}
+			}
+		}
+		return true
 	}, 60*time.Second, 1*time.Second)
 
 	namespaces := []string{"ns-1", "ns-2", "ns-3"}
@@ -293,7 +309,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	ch <- struct{}{}
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.Node(s4ad.GetNameOrDefault())
+		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
 		return exist
 	}, 60*time.Second, 1*time.Second)
 

@@ -111,7 +111,7 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 	sc.ctx, sc.ctxCancel = context.WithTimeout(context.Background(), splitTimeout)
 
 	// Load the current split metadata from cluster status
-	status := sc.metadata.LoadStatus()
+	status := sc.metadata.GetStatus()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
 		sc.logger.Error("Namespace not found in cluster status")
@@ -202,7 +202,7 @@ func (sc *SplitController) driveStateMachine() error {
 }
 
 func (sc *SplitController) currentPhase() string {
-	status := sc.metadata.LoadStatus()
+	status := sc.metadata.GetStatus()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
 		return ""
@@ -216,7 +216,7 @@ func (sc *SplitController) currentPhase() string {
 
 // updatePhase atomically updates the split phase on both parent and children.
 func (sc *SplitController) updatePhase(newPhase string) {
-	status := sc.metadata.LoadStatus()
+	status := sc.metadata.GetStatus()
 	cloned := gproto.Clone(status).(*proto.ClusterStatus) //nolint:revive
 
 	ns := cloned.Namespaces[sc.namespace]
@@ -233,7 +233,7 @@ func (sc *SplitController) updatePhase(newPhase string) {
 		}
 	}
 
-	sc.metadata.UpdateStatus(cloned)
+	sc.metadata.PutStatus(cloned)
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects
@@ -648,7 +648,7 @@ func (sc *SplitController) abort() {
 
 	// Delete child shards from status.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		sc.metadata.DeleteShardMetadata(sc.namespace, childId)
+		sc.metadata.DeleteShard(sc.namespace, childId)
 	}
 
 	// Clear parent split metadata.
@@ -669,7 +669,7 @@ func (sc *SplitController) loadParentMeta() *proto.ShardMetadata {
 }
 
 func (sc *SplitController) loadShardMeta(shardId int64) *proto.ShardMetadata {
-	status := sc.metadata.LoadStatus()
+	status := sc.metadata.GetStatus()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
 		return nil
@@ -690,12 +690,12 @@ func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *proto.Sh
 }
 
 func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.ShardMetadata)) {
-	status := sc.metadata.LoadStatus()
+	status := sc.metadata.GetStatus()
 	cloned := gproto.Clone(status).(*proto.ClusterStatus) //nolint:revive
 	ns := cloned.Namespaces[sc.namespace]
 	if meta, exists := ns.Shards[shardId]; exists {
 		fn(meta)
-		sc.metadata.UpdateStatus(cloned)
+		sc.metadata.PutStatus(cloned)
 	}
 }
 

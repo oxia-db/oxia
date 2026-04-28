@@ -47,22 +47,22 @@ import (
 type Metadata interface {
 	io.Closer
 
-	LoadStatus() *commonproto.ClusterStatus
+	GetStatus() *commonproto.ClusterStatus
+	PutStatus(newStatus *commonproto.ClusterStatus)
 	ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*commonproto.ClusterStatus, map[int64]string, []int64)
-	UpdateStatus(newStatus *commonproto.ClusterStatus)
-	UpdateShardMetadata(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
-	DeleteShardMetadata(namespace string, shard int64)
-	IsReady(clusterConfig *commonproto.ClusterConfiguration) bool
-	StatusChangeNotify() <-chan struct{}
 
-	LoadConfig() *commonproto.ClusterConfiguration
+	PutShard(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
+	DeleteShard(namespace string, shard int64)
+
+	GetConfig() *commonproto.ClusterConfiguration
 	ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration]
-	LoadLoadBalancer() *commonproto.LoadBalancer
-	Nodes() *linkedhashset.Set[string]
-	NodesWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata)
-	Namespace(namespace string) (*commonproto.Namespace, bool)
-	Node(id string) (*commonproto.DataServerIdentity, bool)
+	GetLoadBalancer() *commonproto.LoadBalancer
+
+	ListDataServers() *linkedhashset.Set[string]
+	ListDataServersWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata)
+	GetDataServerIdentity(id string) (*commonproto.DataServerIdentity, bool)
 	GetDataServer(name string) (*commonproto.DataServer, bool)
+	GetNamespace(namespace string) (*commonproto.Namespace, bool)
 }
 
 type EnsembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServerIdentity, error)
@@ -371,7 +371,7 @@ func (m *coordinatorMetadata) persistStatusLocked(newStatus *commonproto.Cluster
 	})
 }
 
-func (m *coordinatorMetadata) LoadStatus() *commonproto.ClusterStatus {
+func (m *coordinatorMetadata) GetStatus() *commonproto.ClusterStatus {
 	m.statusLock.RLock()
 	defer m.statusLock.RUnlock()
 	return m.currentStatus
@@ -392,7 +392,7 @@ func (m *coordinatorMetadata) ApplyStatusChanges(config *commonproto.ClusterConf
 	return newStatus, shardsToAdd, shardsToDelete
 }
 
-func (m *coordinatorMetadata) UpdateStatus(newStatus *commonproto.ClusterStatus) {
+func (m *coordinatorMetadata) PutStatus(newStatus *commonproto.ClusterStatus) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
@@ -400,7 +400,7 @@ func (m *coordinatorMetadata) UpdateStatus(newStatus *commonproto.ClusterStatus)
 	m.notifyStatusChange()
 }
 
-func (m *coordinatorMetadata) UpdateShardMetadata(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
+func (m *coordinatorMetadata) PutShard(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
@@ -414,7 +414,7 @@ func (m *coordinatorMetadata) UpdateShardMetadata(namespace string, shard int64,
 	m.notifyStatusChange()
 }
 
-func (m *coordinatorMetadata) DeleteShardMetadata(namespace string, shard int64) {
+func (m *coordinatorMetadata) DeleteShard(namespace string, shard int64) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
@@ -431,26 +431,7 @@ func (m *coordinatorMetadata) DeleteShardMetadata(namespace string, shard int64)
 	m.notifyStatusChange()
 }
 
-func (m *coordinatorMetadata) IsReady(clusterConfig *commonproto.ClusterConfiguration) bool {
-	currentStatus := m.LoadStatus()
-	for _, namespace := range clusterConfig.Namespaces {
-		namespaceStatus, ok := currentStatus.Namespaces[namespace.Name]
-		if !ok {
-			return false
-		}
-		if len(namespaceStatus.Shards) != int(namespace.InitialShardCount) {
-			return false
-		}
-		for _, shard := range namespaceStatus.Shards {
-			if shard.GetStatusOrDefault() != commonproto.ShardStatusSteadyState {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func (m *coordinatorMetadata) StatusChangeNotify() <-chan struct{} {
+func (m *coordinatorMetadata) statusChangeNotify() <-chan struct{} {
 	m.statusLock.RLock()
 	defer m.statusLock.RUnlock()
 	return m.changeCh
@@ -572,7 +553,7 @@ func (m *coordinatorMetadata) usesCallbackConfigProvider() bool {
 	return ok
 }
 
-func (m *coordinatorMetadata) LoadConfig() *commonproto.ClusterConfiguration {
+func (m *coordinatorMetadata) GetConfig() *commonproto.ClusterConfiguration {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -587,11 +568,11 @@ func (m *coordinatorMetadata) ConfigWatch() *commonwatch.Watch[*commonproto.Clus
 	return m.clusterConfigWatch
 }
 
-func (m *coordinatorMetadata) LoadLoadBalancer() *commonproto.LoadBalancer {
-	return m.LoadConfig().GetLoadBalancerWithDefaults()
+func (m *coordinatorMetadata) GetLoadBalancer() *commonproto.LoadBalancer {
+	return m.GetConfig().GetLoadBalancerWithDefaults()
 }
 
-func (m *coordinatorMetadata) Nodes() *linkedhashset.Set[string] {
+func (m *coordinatorMetadata) ListDataServers() *linkedhashset.Set[string] {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -607,7 +588,7 @@ func (m *coordinatorMetadata) Nodes() *linkedhashset.Set[string] {
 	return nodes
 }
 
-func (m *coordinatorMetadata) NodesWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata) {
+func (m *coordinatorMetadata) ListDataServersWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata) {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -628,7 +609,7 @@ func (m *coordinatorMetadata) NodesWithMetadata() (*linkedhashset.Set[string], m
 	return nodes, metadata
 }
 
-func (m *coordinatorMetadata) Namespace(namespace string) (*commonproto.Namespace, bool) {
+func (m *coordinatorMetadata) GetNamespace(namespace string) (*commonproto.Namespace, bool) {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -639,7 +620,7 @@ func (m *coordinatorMetadata) Namespace(namespace string) (*commonproto.Namespac
 	return m.namespaceConfigsIndex.Get(namespace)
 }
 
-func (m *coordinatorMetadata) Node(id string) (*commonproto.DataServerIdentity, bool) {
+func (m *coordinatorMetadata) GetDataServerIdentity(id string) (*commonproto.DataServerIdentity, bool) {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -663,9 +644,13 @@ func (m *coordinatorMetadata) GetDataServer(id string) (*commonproto.DataServer,
 }
 
 func WaitForCondition(ctx context.Context, metadata Metadata, triggerFn func(), condition func(*commonproto.ClusterStatus) bool) error {
+	notifier, ok := metadata.(interface{ statusChangeNotify() <-chan struct{} })
+	if !ok {
+		return errors.New("metadata does not support status change notifications")
+	}
 	for {
-		ch := metadata.StatusChangeNotify()
-		if condition(metadata.LoadStatus()) {
+		ch := notifier.statusChangeNotify()
+		if condition(metadata.GetStatus()) {
 			return nil
 		}
 		if triggerFn != nil {
