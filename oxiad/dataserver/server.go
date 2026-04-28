@@ -62,7 +62,7 @@ type Server struct {
 }
 
 func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*Server, error) {
-	options, _ := optionsWatch.Load()
+	options := optionsWatch.Load()
 	manifest, err := manifestpkg.NewManifest(options.Storage.Database.Dir)
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options
 
 func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options], provider commonrpc.GrpcProvider,
 	replicationRpcProvider rpc.ReplicationRpcProvider, manifest *manifestpkg.Manifest, disableAuthorityValidation bool) (*Server, error) {
-	options, _ := optionsWatch.Load()
+	options := optionsWatch.Load()
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
 	storage := &options.Storage
@@ -184,8 +184,8 @@ func (s *Server) backgroundHandleConfChange() {
 		case <-receiver.Changed():
 		}
 
-		dataServerOptions, ok := receiver.Load()
-		if !ok || dataServerOptions == nil {
+		dataServerOptions := receiver.Load()
+		if dataServerOptions == nil {
 			return
 		}
 

@@ -133,7 +133,7 @@ func exec(cmd *cobra.Command, _ []string) {
 					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
 					return
 				}
-				previous, _ := optionsWatch.Load()
+				previous := optionsWatch.Load()
 				slog.Info("configuration file has changed.",
 					slog.Any("previous", previous),
 					slog.Any("current", temporaryOptions))

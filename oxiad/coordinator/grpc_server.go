@@ -56,7 +56,7 @@ type GrpcServer struct {
 }
 
 func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*GrpcServer, error) {
-	options, _ := optionsWatch.Load()
+	options := optionsWatch.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
 
 	healthServer := health.NewServer()
@@ -156,8 +156,8 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 		case <-receiver.Changed():
 		}
 
-		coordinatorOptions, ok := receiver.Load()
-		if !ok || coordinatorOptions == nil {
+		coordinatorOptions := receiver.Load()
+		if coordinatorOptions == nil {
 			return
 		}
 

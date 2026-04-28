@@ -27,9 +27,8 @@ import (
 func TestWatchLoad(t *testing.T) {
 	w := New("initial")
 
-	value, ok := w.Load()
+	value := w.Load()
 	assert.Equal(t, "initial", value)
-	assert.True(t, ok)
 }
 
 func TestSubscribePublish(t *testing.T) {
@@ -37,8 +36,7 @@ func TestSubscribePublish(t *testing.T) {
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
-	value, ok := r.Load()
-	assert.True(t, ok)
+	value := r.Load()
 	assert.NotNil(t, value)
 
 	config := &proto.ClusterConfiguration{
@@ -56,8 +54,7 @@ func TestSubscribePublish(t *testing.T) {
 		t.Fatal("timed out waiting for watch change")
 	}
 
-	value, ok = r.Load()
-	assert.True(t, ok)
+	value = r.Load()
 	assert.Same(t, config, value)
 }
 

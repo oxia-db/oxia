@@ -78,16 +78,12 @@ func (w *Watch[T]) Close() {
 	close(w.changed)
 }
 
-func (w *Watch[T]) Load() (T, bool) {
-	if w.closed.Load() {
-		var zero T
-		return zero, false
-	}
+func (w *Watch[T]) Load() T {
 	value, ok := w.value.Load().(T)
 	if !ok {
 		panic("watch value type mismatch")
 	}
-	return value, true
+	return value
 }
 
 type Receiver[T any] struct {
@@ -107,7 +103,7 @@ func (r *Receiver[T]) Changed() <-chan struct{} {
 	return r.changed
 }
 
-func (r *Receiver[T]) Load() (T, bool) {
+func (r *Receiver[T]) Load() T {
 	r.watch.Lock()
 	r.changed = r.watch.changed
 	r.watch.Unlock()

@@ -550,10 +550,7 @@ func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *commonwatch.Rece
 }
 
 func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Receiver[*commonproto.ClusterConfiguration]) {
-	config, ok := configWatch.Load()
-	if !ok {
-		return
-	}
+	config := configWatch.Load()
 	if !m.usesCallbackConfigProvider() {
 		if err := validateClusterConfig(config); err != nil {
 			m.logger.Warn("received invalid cluster config watch value", slog.Any("error", err))

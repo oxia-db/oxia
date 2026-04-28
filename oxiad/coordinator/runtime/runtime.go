@@ -313,8 +313,8 @@ func (c *runtime) startBackgroundConfigWatcher() {
 		case <-receiver.Changed():
 		}
 
-		newConfig, ok := receiver.Load()
-		if !ok || newConfig == nil {
+		newConfig := receiver.Load()
+		if newConfig == nil {
 			continue
 		}
 		c.ConfigChanged(newConfig)
