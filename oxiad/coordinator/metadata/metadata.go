@@ -56,7 +56,7 @@ type Metadata interface {
 	StatusChangeNotify() <-chan struct{}
 
 	LoadConfig() *commonproto.ClusterConfiguration
-	ConfigWatch() (*commonwatch.Receiver[*commonproto.ClusterConfiguration], error)
+	ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration]
 	LoadLoadBalancer() *commonproto.LoadBalancer
 	Nodes() *linkedhashset.Set[string]
 	NodesWithMetadata() (*linkedhashset.Set[string], map[string]*commonproto.DataServerMetadata)
@@ -84,6 +84,7 @@ type coordinatorMetadata struct {
 
 	clusterConfigLock     sync.RWMutex
 	currentClusterConfig  *commonproto.ClusterConfiguration
+	clusterConfigWatch    *commonwatch.Watch[*commonproto.ClusterConfiguration]
 	nodesIndex            *redblacktree.Tree[string, *commonproto.DataServerIdentity]
 	namespaceConfigsIndex *redblacktree.Tree[string, *commonproto.Namespace]
 }
@@ -177,15 +178,16 @@ func newCoordinatorMetadata(ctx context.Context, statusProvider provider.Provide
 func newCoordinatorMetadataWithCloser(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration], backendCloser io.Closer) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
-		logger:           slog.With(slog.String("component", "coordinator-metadata")),
-		ctx:              metadataCtx,
-		ctxCancel:        cancel,
-		wg:               sync.WaitGroup{},
-		statusProvider:   statusProvider,
-		configProvider:   configProvider,
-		backendCloser:    backendCloser,
-		currentVersionID: provider.NotExists,
-		changeCh:         make(chan struct{}),
+		logger:             slog.With(slog.String("component", "coordinator-metadata")),
+		ctx:                metadataCtx,
+		ctxCancel:          cancel,
+		wg:                 sync.WaitGroup{},
+		statusProvider:     statusProvider,
+		configProvider:     configProvider,
+		backendCloser:      backendCloser,
+		currentVersionID:   provider.NotExists,
+		changeCh:           make(chan struct{}),
+		clusterConfigWatch: commonwatch.New(&commonproto.ClusterConfiguration{}),
 	}
 
 	m.doStatusRecovery()
@@ -473,6 +475,7 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 		}
 		m.currentClusterConfig = gproto.Clone(newConfig).(*commonproto.ClusterConfiguration) //nolint:revive
 		m.rebuildConfigIndexesLocked()
+		m.clusterConfigWatch.Publish(m.currentClusterConfig)
 		return nil
 	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
 		m.logger.Warn(
@@ -569,6 +572,7 @@ func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Rec
 		m.logger.Info("No cluster config changes detected")
 		return
 	}
+	m.clusterConfigWatch.Publish(clonedConfig)
 }
 
 func (m *coordinatorMetadata) usesCallbackConfigProvider() bool {
@@ -587,8 +591,8 @@ func (m *coordinatorMetadata) LoadConfig() *commonproto.ClusterConfiguration {
 	return m.currentClusterConfig
 }
 
-func (m *coordinatorMetadata) ConfigWatch() (*commonwatch.Receiver[*commonproto.ClusterConfiguration], error) {
-	return m.configProvider.Watch()
+func (m *coordinatorMetadata) ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration] {
+	return m.clusterConfigWatch
 }
 
 func (m *coordinatorMetadata) LoadLoadBalancer() *commonproto.LoadBalancer {
