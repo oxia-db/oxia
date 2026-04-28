@@ -38,9 +38,9 @@ import (
 	"github.com/oxia-db/oxia/common/hash"
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
@@ -298,7 +298,7 @@ type splitTestCluster struct {
 	servers             map[string]*dataserver.Server
 	addresses           []*proto.DataServerIdentity
 	sa1                 *proto.DataServerIdentity
-	coordinator         coordinator.Coordinator
+	coordinator         coordruntime.Runtime
 	metadata            coordmetadata.Metadata
 	leftChild           int64
 	rightChild          int64

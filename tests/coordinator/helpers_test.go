@@ -20,10 +20,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
 func createCoordinatorMetadata(
@@ -43,7 +43,7 @@ func newCoordinatorInstance(
 	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
 	clusterConfigNotificationsCh chan any,
 	rpcProvider rpc2.ProviderFactory,
-) coordinator.Coordinator {
+) coordruntime.Runtime {
 	t.Helper()
 
 	metadata := createCoordinatorMetadata(t, metadataProvider, clusterConfigProvider, clusterConfigNotificationsCh)
@@ -51,7 +51,7 @@ func newCoordinatorInstance(
 		require.NoError(t, metadata.Close())
 	})
 
-	coordinatorInstance, err := coordinator.NewCoordinator(metadata, rpcProvider)
+	coordinatorInstance, err := coordruntime.New(metadata, rpcProvider)
 	require.NoError(t, err)
 	return coordinatorInstance
 }

@@ -34,7 +34,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
@@ -199,7 +199,7 @@ func main() {
 			os.Exit(1)
 		}
 		metadata := coordmetadata.New(context.Background(), metadataProvider, func() (*commonproto.ClusterConfiguration, error) { return clusterConfig, nil }, nil)
-		_, err = coordinator.NewCoordinator(
+		_, err = coordruntime.New(
 			metadata,
 			func(instanceID string) rpc.Provider {
 				return newRpcProvider(dispatcher)

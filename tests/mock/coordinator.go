@@ -24,11 +24,11 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
-func NewCoordinator(t *testing.T, config *proto.ClusterConfiguration, clusterConfigNotificationCh chan any) coordinator.Coordinator {
+func NewCoordinator(t *testing.T, config *proto.ClusterConfiguration, clusterConfigNotificationCh chan any) coordruntime.Runtime {
 	t.Helper()
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	metadata := coordmetadata.New(
@@ -40,7 +40,7 @@ func NewCoordinator(t *testing.T, config *proto.ClusterConfiguration, clusterCon
 	t.Cleanup(func() {
 		assert.NoError(t, metadata.Close())
 	})
-	coordinatorInstance, err := coordinator.NewCoordinator(metadata, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance, err := coordruntime.New(metadata, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
 	return coordinatorInstance
 }
