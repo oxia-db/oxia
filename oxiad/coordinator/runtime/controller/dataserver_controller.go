@@ -69,13 +69,13 @@ type DataServerController interface {
 }
 
 type dataServerController struct {
-	*slog.Logger
-	sync.WaitGroup
+	logger *slog.Logger
+	wg     sync.WaitGroup
 	ShardAssignmentsProvider
 	DataServerEventListener
 
 	ctx        context.Context
-	cancel     context.CancelFunc
+	ctxCancel  context.CancelFunc
 	dataServer *proto.DataServerIdentity
 	rpc        rpc.Provider
 	insID      string
@@ -111,7 +111,7 @@ func (n *dataServerController) SetStatus(status DataServerStatus) {
 	defer n.statusLock.Unlock()
 	previous := n.status
 	n.status = status
-	n.Info("Changed status", slog.Any("from", previous), slog.Any("to", status))
+	n.logger.Info("Changed status", slog.Any("from", previous), slog.Any("to", status))
 }
 
 func (n *dataServerController) maybeInitHealthClient() {
@@ -125,7 +125,7 @@ func (n *dataServerController) maybeInitHealthClient() {
 			n.healthClientCloser = closer
 			return nil
 		}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-			n.Warn(
+			n.logger.Warn(
 				"Failed to create health client to storage data server",
 				slog.Duration("retry-after", duration),
 				slog.Any("error", err),
@@ -139,25 +139,24 @@ func (n *dataServerController) Close() error {
 		return nil
 	}
 	n.dataServerRunningGauge.Unregister()
-	n.cancel()
-	n.Wait()
+	n.ctxCancel()
+	n.wg.Wait()
 
 	var err error
 	if err = n.healthClientCloser.Close(); err != nil {
-		n.Warn("close data server controller health client failed", slog.Any("error", err))
+		n.logger.Warn("close data server controller health client failed", slog.Any("error", err))
 	}
-	n.Info("Closed data server controller")
+	n.logger.Info("Closed data server controller")
 	return err
 }
 
 func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
-	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
-		n.Debug("Ready to send assignments")
+		n.logger.Debug("Ready to send assignments")
 
 		stream, err := n.rpc.PushShardAssignments(n.ctx, n.dataServer)
 		if err != nil {
-			n.Debug("Failed to create shard assignments stream", slog.Any("error", err))
+			n.logger.Debug("Failed to create shard assignments stream", slog.Any("error", err))
 			return err
 		}
 		streamCtx := stream.Context()
@@ -169,30 +168,30 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 			case <-streamCtx.Done():
 				return streamCtx.Err()
 			default:
-				n.Debug(
+				n.logger.Debug(
 					"Waiting for next assignments update",
 					slog.Any("current-assignments", assignments),
 				)
 				if assignments, err = n.WaitForNextUpdate(streamCtx, assignments); err != nil {
-					n.Debug("Failed to send assignments", slog.Any("error", err))
+					n.logger.Debug("Failed to send assignments", slog.Any("error", err))
 					return err
 				}
 				if assignments == nil {
 					continue
 				}
 
-				n.Debug("Sending assignments", slog.Any("assignments", assignments))
+				n.logger.Debug("Sending assignments", slog.Any("assignments", assignments))
 				if err := stream.Send(assignments); err != nil {
-					n.Debug("Failed to send assignments", slog.Any("error", err))
+					n.logger.Debug("Failed to send assignments", slog.Any("error", err))
 					return err
 				}
-				n.Debug("Send assignments completed successfully")
+				n.logger.Debug("Send assignments completed successfully")
 				n.dispatchAssignmentsBackoff.Reset()
 			}
 		}
 	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {
 		if !errors.Is(err, context.Canceled) {
-			n.Warn(
+			n.logger.Warn(
 				"Failed to send assignments updates to storage data server",
 				slog.Duration("retry-after", duration),
 				slog.Any("error", err),
@@ -209,7 +208,6 @@ func (n *dataServerController) doHealthPing() error {
 }
 
 func (n *dataServerController) healthPingWithRetries() {
-	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
 		n.maybeInitHealthClient()
 		// Immediate check on startup instead of waiting for first tick
@@ -224,13 +222,13 @@ func (n *dataServerController) healthPingWithRetries() {
 				return nil
 			case <-ticker.C:
 				if err := n.doHealthPing(); err != nil {
-					n.Warn("Data server stopped responding to ping")
+					n.logger.Warn("Data server stopped responding to ping")
 					return err
 				}
 			}
 		}
 	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
-		n.Warn(
+		n.logger.Warn(
 			"Failed to check storage data server health by ping-pong",
 			slog.Duration("retry-after", duration),
 			slog.Any("error", err),
@@ -240,9 +238,8 @@ func (n *dataServerController) healthPingWithRetries() {
 }
 
 func (n *dataServerController) healthWatchWithRetries() {
-	defer n.Done()
 	_ = backoff.RetryNotify(func() error {
-		n.Debug("Start new health watch cycle")
+		n.logger.Debug("Start new health watch cycle")
 		n.maybeInitHealthClient()
 
 		watchStream, err := n.healthClient.Watch(n.ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
@@ -260,7 +257,7 @@ func (n *dataServerController) healthWatchWithRetries() {
 			}
 		}
 	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
-		n.Warn("Failed to check storage data server health by watch",
+		n.logger.Warn("Failed to check storage data server health by watch",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
@@ -292,7 +289,7 @@ func (n *dataServerController) becomeAvailable() {
 		return
 	}
 
-	n.Info("Storage data server is back online")
+	n.logger.Info("Storage data server is back online")
 
 	// To avoid the send assignments stream to miss the notification about the current
 	// dataServer went down, we interrupt the current stream when the ping on the dataServer fails
@@ -318,7 +315,7 @@ func (n *dataServerController) becomeAvailable() {
 			return errors.Errorf("unexpected handshake status: %s", handshake.Status.String())
 		}
 	}, bo, func(err error, duration time.Duration) {
-		n.Warn("Failed to handshake with data server",
+		n.logger.Warn("Failed to handshake with data server",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
@@ -336,7 +333,7 @@ func (n *dataServerController) becomeAvailable() {
 func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
-			n.Warn("Data server health check failed", slog.Any("error", err))
+			n.logger.Warn("Data server health check failed", slog.Any("error", err))
 		}
 		return err
 	}
@@ -370,7 +367,7 @@ func newDataServerController(ctx context.Context, dataServer *proto.DataServerId
 
 	nc := &dataServerController{
 		ctx:                      dataServerCtx,
-		cancel:                   cancel,
+		ctxCancel:                cancel,
 		dataServer:               dataServer,
 		ShardAssignmentsProvider: shardAssignmentsProvider,
 		DataServerEventListener:  dataServerEventListener,
@@ -379,7 +376,7 @@ func newDataServerController(ctx context.Context, dataServer *proto.DataServerId
 		statusLock:               sync.RWMutex{},
 		status:                   NotRunning,
 		supportedFeatures:        supportedFeatures,
-		Logger: slog.With(
+		logger: slog.With(
 			slog.String("component", "data-server-controller"),
 			slog.Any("data-server", dataServerID),
 		),
@@ -399,36 +396,39 @@ func newDataServerController(ctx context.Context, dataServer *proto.DataServerId
 			return 0
 		})
 
-	nc.Add(1)
-	go process.DoWithLabels(
-		nc.ctx,
-		map[string]string{
-			"component":  "data-server-controller-health-watch",
-			"dataServer": dataServerID,
-		},
-		nc.healthWatchWithRetries,
-	)
+	nc.wg.Go(func() {
+		process.DoWithLabels(
+			nc.ctx,
+			map[string]string{
+				"component":  "data-server-controller-health-watch",
+				"dataServer": dataServerID,
+			},
+			nc.healthWatchWithRetries,
+		)
+	})
 
-	nc.Add(1)
-	go process.DoWithLabels(
-		nc.ctx,
-		map[string]string{
-			"component":  "data-server-controller-health-ping",
-			"dataServer": dataServerID,
-		},
-		nc.healthPingWithRetries,
-	)
+	nc.wg.Go(func() {
+		process.DoWithLabels(
+			nc.ctx,
+			map[string]string{
+				"component":  "data-server-controller-health-ping",
+				"dataServer": dataServerID,
+			},
+			nc.healthPingWithRetries,
+		)
+	})
 
-	nc.Add(1)
-	go process.DoWithLabels(
-		nc.ctx,
-		map[string]string{
-			"component":  "data-server-controller-assignment-dispatcher",
-			"dataServer": dataServerID,
-		},
-		nc.sendAssignmentsDispatchWithRetries,
-	)
+	nc.wg.Go(func() {
+		process.DoWithLabels(
+			nc.ctx,
+			map[string]string{
+				"component":  "data-server-controller-assignment-dispatcher",
+				"dataServer": dataServerID,
+			},
+			nc.sendAssignmentsDispatchWithRetries,
+		)
+	})
 
-	nc.Info("Started data server controller")
+	nc.logger.Info("Started data server controller")
 	return nc
 }

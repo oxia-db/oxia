@@ -45,11 +45,12 @@ type Provider[T gproto.Message] struct {
 	watchEnabled provider.WatchMode
 	version      provider.Version
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	wg        sync.WaitGroup
 
 	watcher *commonwatch.Watch[T]
+	logger  *slog.Logger
 }
 
 func NewProvider[T gproto.Message](ctx context.Context, path string, codec provider.Codec[T], watchEnabled provider.WatchMode) (provider.Provider[T], error) {
@@ -59,8 +60,9 @@ func NewProvider[T gproto.Message](ctx context.Context, path string, codec provi
 		fileLock:     fslock.New(path),
 		watchEnabled: watchEnabled,
 		version:      provider.NotExists,
+		logger:       slog.With(slog.String("component", "metadata-file-provider"), slog.String("path", path)),
 	}
-	p.ctx, p.cancel = context.WithCancel(ctx)
+	p.ctx, p.ctxCancel = context.WithCancel(ctx)
 	if err := p.ensureParentDirectoryExists(); err != nil {
 		return nil, err
 	}
@@ -81,7 +83,7 @@ func NewProvider[T gproto.Message](ctx context.Context, path string, codec provi
 }
 
 func (m *Provider[T]) Close() error {
-	m.cancel()
+	m.ctxCancel()
 	m.wg.Wait()
 	if m.watcher != nil {
 		m.watcher.Close()
@@ -90,7 +92,7 @@ func (m *Provider[T]) Close() error {
 		return nil
 	}
 	if err := m.fileLock.Unlock(); err != nil {
-		slog.Warn(
+		m.logger.Warn(
 			"Failed to release file lock on metadata",
 			slog.Any("error", err),
 		)
@@ -166,7 +168,7 @@ func (m *Provider[T]) watchLoop() {
 		m.watcher.Publish(value)
 		return m.watchOnce()
 	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
-		slog.Warn("File metadata watch failed, reconnecting",
+		m.logger.Warn("File metadata watch failed, reconnecting",
 			slog.String("path", m.path),
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration))
@@ -180,7 +182,7 @@ func (m *Provider[T]) watchOnce() error {
 	}
 	defer func() {
 		if err := watcher.Close(); err != nil {
-			slog.Warn("Failed to close file metadata watcher", slog.Any("error", err))
+			m.logger.Warn("Failed to close file metadata watcher", slog.Any("error", err))
 		}
 	}()
 

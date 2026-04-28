@@ -68,11 +68,10 @@ type Metadata interface {
 type EnsembleSupplier func(namespaceConfig *commonproto.Namespace, status *commonproto.ClusterStatus) ([]*commonproto.DataServerIdentity, error)
 
 type coordinatorMetadata struct {
-	*slog.Logger
-
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     *sync.WaitGroup
+	logger    *slog.Logger
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	wg        sync.WaitGroup
 
 	statusProvider provider.Provider[*commonproto.ClusterStatus]
 	configProvider provider.Provider[*commonproto.ClusterConfiguration]
@@ -179,10 +178,10 @@ func newCoordinatorMetadata(ctx context.Context, statusProvider provider.Provide
 func newCoordinatorMetadataWithCloser(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration], backendCloser io.Closer) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
-		Logger:             slog.With(slog.String("component", "coordinator-metadata")),
+		logger:             slog.With(slog.String("component", "coordinator-metadata")),
 		ctx:                metadataCtx,
-		cancel:             cancel,
-		wg:                 &sync.WaitGroup{},
+		ctxCancel:          cancel,
+		wg:                 sync.WaitGroup{},
 		statusProvider:     statusProvider,
 		configProvider:     configProvider,
 		backendCloser:      backendCloser,
@@ -194,7 +193,7 @@ func newCoordinatorMetadataWithCloser(ctx context.Context, statusProvider provid
 	m.doStatusRecovery()
 
 	if configWatch, err := configProvider.Watch(); err != nil && !errors.Is(err, provider.ErrWatchUnsupported) {
-		m.Warn("failed to watch cluster config provider", slog.Any("error", err))
+		m.logger.Warn("failed to watch cluster config provider", slog.Any("error", err))
 	} else if configWatch != nil {
 		m.wg.Go(func() {
 			process.DoWithLabels(metadataCtx, map[string]string{
@@ -210,7 +209,7 @@ func newCoordinatorMetadataWithCloser(ctx context.Context, statusProvider provid
 
 type callbackConfigProvider struct {
 	ctx           context.Context
-	cancel        context.CancelFunc
+	ctxCancel     context.CancelFunc
 	wg            sync.WaitGroup
 	load          func() (*commonproto.ClusterConfiguration, error)
 	notifications <-chan any
@@ -225,7 +224,7 @@ func newCallbackConfigProvider(
 	watchCtx, cancel := context.WithCancel(ctx)
 	p := &callbackConfigProvider{
 		ctx:           watchCtx,
-		cancel:        cancel,
+		ctxCancel:     cancel,
 		load:          load,
 		notifications: notifications,
 	}
@@ -297,7 +296,7 @@ func (p *callbackConfigProvider) publishCurrentValue() {
 }
 
 func (p *callbackConfigProvider) Close() error {
-	p.cancel()
+	p.ctxCancel()
 	p.wg.Wait()
 	if p.watcher != nil {
 		p.watcher.Close()
@@ -306,7 +305,7 @@ func (p *callbackConfigProvider) Close() error {
 }
 
 func (m *coordinatorMetadata) Close() error {
-	m.cancel()
+	m.ctxCancel()
 	m.wg.Wait()
 	return multierr.Combine(m.statusProvider.Close(), m.configProvider.Close(), closeIfNotNil(m.backendCloser))
 }
@@ -341,7 +340,7 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 		m.currentVersionID = version
 		return nil
 	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-		m.Warn(
+		m.logger.Warn(
 			"failed to load status, retrying later",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
@@ -369,7 +368,7 @@ func (m *coordinatorMetadata) persistStatusLocked(newStatus *commonproto.Cluster
 		m.currentVersionID = versionID
 		return nil
 	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-		m.Warn(
+		m.logger.Warn(
 			warnMessage,
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
@@ -482,7 +481,7 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 		}
 		return nil
 	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-		m.Warn(
+		m.logger.Warn(
 			"failed to load cluster configuration, retrying later",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
@@ -554,7 +553,7 @@ func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *commonwatch.Rece
 			if !ok {
 				return
 			}
-			m.Info("Received cluster config change event")
+			m.logger.Info("Received cluster config change event")
 			m.applyConfigWatchValue(configWatch)
 		}
 	}
@@ -567,7 +566,7 @@ func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Rec
 	}
 	if !m.usesCallbackConfigProvider() {
 		if err := validateClusterConfig(config); err != nil {
-			m.Warn("received invalid cluster config watch value", slog.Any("error", err))
+			m.logger.Warn("received invalid cluster config watch value", slog.Any("error", err))
 			return
 		}
 	}
@@ -580,7 +579,7 @@ func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Rec
 	m.clusterConfigLock.Unlock()
 
 	if gproto.Equal(oldClusterConfig, clonedConfig) {
-		m.Info("No cluster config changes detected")
+		m.logger.Info("No cluster config changes detected")
 		return
 	}
 	m.clusterConfigWatch.Publish(clonedConfig)

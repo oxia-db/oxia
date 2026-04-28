@@ -127,10 +127,10 @@ func newTestBalancer(
 	sel selector.Selector[*single.Context, string],
 ) *nodeBasedBalancer {
 	return &nodeBasedBalancer{
-		Logger:                  slog.Default(),
-		WaitGroup:               &sync.WaitGroup{},
+		logger:                  slog.Default(),
 		ctx:                     ctx,
-		cancel:                  cancel,
+		ctxCancel:               cancel,
+		wg:                      sync.WaitGroup{},
 		loadBalancerConf:        metadata.LoadLoadBalancer(),
 		metadata:                metadata,
 		selector:                sel,

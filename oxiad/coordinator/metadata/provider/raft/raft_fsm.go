@@ -33,13 +33,13 @@ type raftOpCmd struct {
 
 type stateContainer struct {
 	Documents map[provider.ResourceType]*documentContainer `json:"-"`
-	log       *slog.Logger
+	logger    *slog.Logger
 }
 
-func newStateContainer(log *slog.Logger) *stateContainer {
+func newStateContainer(logger *slog.Logger) *stateContainer {
 	return &stateContainer{
 		Documents: map[provider.ResourceType]*documentContainer{},
-		log:       log,
+		logger:    logger,
 	}
 }
 
@@ -49,7 +49,7 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 	opCmd := raftOpCmd{}
 	err := json.Unmarshal(logEntry.Data, &opCmd)
 	if err != nil {
-		sc.log.Error("failed to deserialize state",
+		sc.logger.Error("failed to deserialize state",
 			slog.Any("error", err))
 		return &applyResult{changeApplied: false}
 	}
@@ -59,7 +59,7 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 
 	document := sc.document(opCmd.ResourceType)
 	if opCmd.ExpectedVersion != document.CurrentVersion {
-		sc.log.Warn("Failed to apply raft state",
+		sc.logger.Warn("Failed to apply raft state",
 			slog.String("resource-type", string(opCmd.ResourceType)),
 			slog.Int64("expected-version", opCmd.ExpectedVersion),
 			slog.Int64("current-version", document.CurrentVersion),
@@ -71,7 +71,7 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 	document.State = cloneBytes(opCmd.NewState)
 	document.CurrentVersion++
 
-	sc.log.Info("Applied raft log entry",
+	sc.logger.Info("Applied raft log entry",
 		slog.String("resource-type", string(opCmd.ResourceType)),
 		slog.Int64("new-version", document.CurrentVersion))
 	return &applyResult{changeApplied: true, newVersion: document.CurrentVersion}
@@ -88,7 +88,7 @@ func (sc *stateContainer) Snapshot() (raft.FSMSnapshot, error) {
 func (sc *stateContainer) Restore(rc io.ReadCloser) error {
 	dec := json.NewDecoder(rc)
 	persisted := &persistedStateContainer{}
-	sc.log.Info("Restored metadata state from snapshot",
+	sc.logger.Info("Restored metadata state from snapshot",
 		slog.Any("cluster-status", sc))
 
 	if err := dec.Decode(persisted); err != nil {
