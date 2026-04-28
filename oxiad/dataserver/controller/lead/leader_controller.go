@@ -43,8 +43,9 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/common/rpc"
+	commonrpc "github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
+	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 )
 
 type LeaderController interface {
@@ -116,7 +117,7 @@ type leaderController struct {
 	wal            wal.Wal
 	db             database.DB
 	termOptions    database.TermOptions
-	rpcClient      rpc.ReplicationRpcProvider
+	rpcClient      dataserverrpc.ReplicationRpcProvider
 	sessionManager SessionManager
 	log            *slog.Logger
 
@@ -129,7 +130,7 @@ type leaderController struct {
 }
 
 func NewLeaderController(storageOptions *option.StorageOptions, namespace string, shardId int64,
-	rpcClient rpc.ReplicationRpcProvider,
+	rpcClient dataserverrpc.ReplicationRpcProvider,
 	walFactory wal.Factory, kvFactory kvstore.Factory,
 	newTermOptions *proto.NewTermOptions,
 ) (LeaderController, error) {
@@ -771,7 +772,7 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 		map[string]string{
 			"oxia":  "read",
 			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
+			"peer":  commonrpc.GetPeer(ctx),
 		},
 		func() {
 			lc.log.Debug("Received read request", slog.Int64("term", lc.term.Load()))
@@ -828,7 +829,7 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 		map[string]string{
 			"oxia":  "list",
 			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
+			"peer":  commonrpc.GetPeer(ctx),
 		},
 		func() {
 			lc.log.Debug("Received list request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
@@ -886,7 +887,7 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 		map[string]string{
 			"oxia":  "range-scan",
 			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
+			"peer":  commonrpc.GetPeer(ctx),
 		},
 		func() {
 			lc.log.Debug("Received range-scan request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
@@ -1101,7 +1102,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 		map[string]string{
 			"oxia":  "dispatch-notifications",
 			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
+			"peer":  commonrpc.GetPeer(ctx),
 		},
 		func() {
 			lc.log.Debug("Dispatch notifications", slog.Int64("term", lc.term.Load()), slog.Any("start-offset-include", offsetExclusive))

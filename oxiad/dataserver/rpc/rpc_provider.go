@@ -24,15 +24,13 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	commonrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/common/security"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 )
 
 const rpcTimeout = 30 * time.Second
 
-// ReplicateStreamProvider
-// This is a provider for the ReplicateStream Grpc handler
-// It's used to allow passing in a mocked version of the Grpc service.
 type ReplicateStreamProvider interface {
 	GetReplicateStream(ctx context.Context, follower string, namespace string, shard int64, term int64) (proto.OxiaLogReplication_ReplicateClient, error)
 	SendSnapshot(ctx context.Context, follower string, namespace string, shard int64, term int64) (proto.OxiaLogReplication_SendSnapshotClient, error)
@@ -46,7 +44,7 @@ type ReplicationRpcProvider interface {
 }
 
 type replicationRpcProvider struct {
-	pool ClientPool
+	pool commonrpc.ClientPool
 }
 
 func NewReplicationRpcProvider(tlsOptions *security.TLSOptions, manifest *manifestpkg.Manifest) (ReplicationRpcProvider, error) {
@@ -55,7 +53,7 @@ func NewReplicationRpcProvider(tlsOptions *security.TLSOptions, manifest *manife
 		return nil, err
 	}
 	return &replicationRpcProvider{
-		pool: NewClientPool(tlsConf, nil, MetadataInjectionDialOptions(func() map[string]string {
+		pool: commonrpc.NewClientPool(tlsConf, nil, commonrpc.MetadataInjectionDialOptions(func() map[string]string {
 			return map[string]string{
 				constant.MetadataInstanceId: manifest.GetInstanceID(),
 			}

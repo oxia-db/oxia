@@ -9,7 +9,7 @@ require (
 	github.com/invopop/jsonschema v0.13.0
 	github.com/oxia-db/oxia/common v0.16.1
 	github.com/oxia-db/oxia/oxia v0.0.0
-	github.com/oxia-db/oxia/oxiad v0.0.0-20260311203958-42be7c29268f
+	github.com/oxia-db/oxia/oxiad v0.0.0-20260428162417-110425299484
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.10.1

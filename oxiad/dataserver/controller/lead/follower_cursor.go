@@ -32,8 +32,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
+	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
@@ -65,7 +65,7 @@ type followerCursor struct {
 
 	term                    int64
 	follower                string
-	replicateStreamProvider rpc.ReplicateStreamProvider
+	replicateStreamProvider dataserverrpc.ReplicateStreamProvider
 	stream                  proto.OxiaLogReplication_ReplicateClient
 
 	ackTracker  QuorumAckTracker
@@ -96,7 +96,7 @@ func NewFollowerCursor( //nolint:revive
 	term int64,
 	namespace string,
 	shardId int64,
-	replicateStreamProvider rpc.ReplicateStreamProvider,
+	replicateStreamProvider dataserverrpc.ReplicateStreamProvider,
 	ackTracker QuorumAckTracker,
 	walObject wal.Wal,
 	db database.DB,
@@ -171,7 +171,7 @@ func NewObserverFollowerCursor( //nolint:revive
 	term int64,
 	namespace string,
 	shardId int64,
-	replicateStreamProvider rpc.ReplicateStreamProvider,
+	replicateStreamProvider dataserverrpc.ReplicateStreamProvider,
 	ackTracker QuorumAckTracker,
 	walObject wal.Wal,
 	db database.DB,

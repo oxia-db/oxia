@@ -31,14 +31,13 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
+	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
-
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -210,6 +209,6 @@ func (noOpReplicationRpcProvider) Truncate(string, *proto.TruncateRequest) (*pro
 	panic("not implemented")
 }
 
-func newNoOpReplicationRpcProvider() rpc.ReplicationRpcProvider {
+func newNoOpReplicationRpcProvider() dataserverrpc.ReplicationRpcProvider {
 	return &noOpReplicationRpcProvider{}
 }
