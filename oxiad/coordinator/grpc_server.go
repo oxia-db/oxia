@@ -56,7 +56,7 @@ type GrpcServer struct {
 }
 
 func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*GrpcServer, error) {
-	options, _ := optionsWatch.Load()
+	options := optionsWatch.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
 
 	healthServer := health.NewServer()
@@ -143,29 +143,16 @@ func startMetricsServer(metrics commonoption.MetricOptions) (*metric.PrometheusM
 }
 
 func (s *GrpcServer) backgroundHandleConfChange() {
-	receiver, err := s.optionsWatch.Subscribe()
-	if err != nil {
-		s.logger.Warn("exit background configuration watch goroutine due to a subscription error", slog.Any("error", err))
-		return
-	}
-	defer func() {
-		_ = receiver.Close()
-	}()
+	receiver := s.optionsWatch.Subscribe()
 
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case _, ok := <-receiver.Changed():
-			if !ok {
-				return
-			}
+		case <-receiver.Changed():
 		}
 
-		coordinatorOptions, ok := receiver.Load()
-		if !ok || coordinatorOptions == nil {
-			return
-		}
+		coordinatorOptions := receiver.Load()
 
 		s.logger.Info("configuration options has changed. processing the dynamic updates.")
 		logOptions := &coordinatorOptions.Observability.Log

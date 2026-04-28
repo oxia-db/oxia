@@ -187,7 +187,7 @@ func newCoordinatorMetadataWithCloser(ctx context.Context, statusProvider provid
 		backendCloser:      backendCloser,
 		currentVersionID:   provider.NotExists,
 		changeCh:           make(chan struct{}),
-		clusterConfigWatch: commonwatch.New[*commonproto.ClusterConfiguration](nil),
+		clusterConfigWatch: commonwatch.New(&commonproto.ClusterConfiguration{}),
 	}
 
 	m.doStatusRecovery()
@@ -267,12 +267,10 @@ func (p *callbackConfigProvider) Watch() (*commonwatch.Receiver[*commonproto.Clu
 	if p.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
-	return p.watcher.Subscribe()
+	return p.watcher.Subscribe(), nil
 }
 
 func (p *callbackConfigProvider) watchLoop() {
-	defer p.watcher.Close()
-
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -298,9 +296,6 @@ func (p *callbackConfigProvider) publishCurrentValue() {
 func (p *callbackConfigProvider) Close() error {
 	p.ctxCancel()
 	p.wg.Wait()
-	if p.watcher != nil {
-		p.watcher.Close()
-	}
 	return nil
 }
 
@@ -469,16 +464,13 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 	}
 
 	_ = backoff.RetryNotify(func() error {
-		newConfig, err := m.loadConfigFromProvider()
+		newConfig, err := loadClusterConfigFromProvider(m.configProvider)
 		if err != nil {
 			return err
 		}
 		m.currentClusterConfig = gproto.Clone(newConfig).(*commonproto.ClusterConfiguration) //nolint:revive
 		m.rebuildConfigIndexesLocked()
-		watchedConfig, _ := m.clusterConfigWatch.Load()
-		if watchedConfig == nil {
-			m.clusterConfigWatch.Publish(m.currentClusterConfig)
-		}
+		m.clusterConfigWatch.Publish(m.currentClusterConfig)
 		return nil
 	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
 		m.logger.Warn(
@@ -489,14 +481,14 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 	})
 }
 
-func (m *coordinatorMetadata) loadConfigFromProvider() (*commonproto.ClusterConfiguration, error) {
-	if loader, ok := m.configProvider.(interface {
+func loadClusterConfigFromProvider(configProvider provider.Provider[*commonproto.ClusterConfiguration]) (*commonproto.ClusterConfiguration, error) {
+	if loader, ok := configProvider.(interface {
 		LoadConfig() (*commonproto.ClusterConfiguration, error)
 	}); ok {
 		return loader.LoadConfig()
 	}
 
-	config, _, err := m.configProvider.Get()
+	config, _, err := configProvider.Get()
 	if err != nil {
 		return nil, err
 	}
@@ -539,20 +531,13 @@ func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
 }
 
 func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *commonwatch.Receiver[*commonproto.ClusterConfiguration]) {
-	defer func() {
-		_ = configWatch.Close()
-	}()
-
 	m.applyConfigWatchValue(configWatch)
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
 
-		case _, ok := <-configWatch.Changed():
-			if !ok {
-				return
-			}
+		case <-configWatch.Changed():
 			m.logger.Info("Received cluster config change event")
 			m.applyConfigWatchValue(configWatch)
 		}
@@ -560,10 +545,7 @@ func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *commonwatch.Rece
 }
 
 func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Receiver[*commonproto.ClusterConfiguration]) {
-	config, ok := configWatch.Load()
-	if !ok {
-		return
-	}
+	config := configWatch.Load()
 	if !m.usesCallbackConfigProvider() {
 		if err := validateClusterConfig(config); err != nil {
 			m.logger.Warn("received invalid cluster config watch value", slog.Any("error", err))

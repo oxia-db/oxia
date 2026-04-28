@@ -62,7 +62,7 @@ type Server struct {
 }
 
 func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*Server, error) {
-	options, _ := optionsWatch.Load()
+	options := optionsWatch.Load()
 	manifest, err := manifestpkg.NewManifest(options.Storage.Database.Dir)
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options
 
 func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options], provider commonrpc.GrpcProvider,
 	replicationRpcProvider rpc.ReplicationRpcProvider, manifest *manifestpkg.Manifest, disableAuthorityValidation bool) (*Server, error) {
-	options, _ := optionsWatch.Load()
+	options := optionsWatch.Load()
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
 	storage := &options.Storage
@@ -171,29 +171,16 @@ func (s *Server) InternalPort() int {
 }
 
 func (s *Server) backgroundHandleConfChange() {
-	receiver, err := s.optionsWatch.Subscribe()
-	if err != nil {
-		s.logger.Warn("exit background configuration watch goroutine due to a subscription error", slog.Any("error", err))
-		return
-	}
-	defer func() {
-		_ = receiver.Close()
-	}()
+	receiver := s.optionsWatch.Subscribe()
 
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case _, ok := <-receiver.Changed():
-			if !ok {
-				return
-			}
+		case <-receiver.Changed():
 		}
 
-		dataServerOptions, ok := receiver.Load()
-		if !ok || dataServerOptions == nil {
-			return
-		}
+		dataServerOptions := receiver.Load()
 
 		s.logger.Info("configuration options has changed. processing the dynamic updates.")
 		logOptions := &dataServerOptions.Observability.Log

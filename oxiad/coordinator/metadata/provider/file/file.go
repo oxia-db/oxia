@@ -85,9 +85,6 @@ func NewProvider[T gproto.Message](ctx context.Context, path string, codec provi
 func (m *Provider[T]) Close() error {
 	m.ctxCancel()
 	m.wg.Wait()
-	if m.watcher != nil {
-		m.watcher.Close()
-	}
 	if !m.lockAcquired {
 		return nil
 	}
@@ -154,7 +151,7 @@ func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
 	if !m.watchEnabled.Enabled() || m.watcher == nil {
 		return nil, provider.ErrWatchUnsupported
 	}
-	return m.watcher.Subscribe()
+	return m.watcher.Subscribe(), nil
 }
 
 func (m *Provider[T]) watchLoop() {

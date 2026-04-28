@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -27,19 +26,16 @@ import (
 func TestWatchLoad(t *testing.T) {
 	w := New("initial")
 
-	value, ok := w.Load()
+	value := w.Load()
 	assert.Equal(t, "initial", value)
-	assert.True(t, ok)
 }
 
 func TestSubscribePublish(t *testing.T) {
-	w := New[*proto.ClusterConfiguration](nil)
-	r, err := w.Subscribe()
-	require.NoError(t, err)
+	w := New(&proto.ClusterConfiguration{})
+	r := w.Subscribe()
 
-	value, ok := r.Load()
-	assert.True(t, ok)
-	assert.Nil(t, value)
+	value := r.Load()
+	assert.NotNil(t, value)
 
 	config := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
@@ -56,33 +52,6 @@ func TestSubscribePublish(t *testing.T) {
 		t.Fatal("timed out waiting for watch change")
 	}
 
-	value, ok = r.Load()
-	assert.True(t, ok)
+	value = r.Load()
 	assert.Same(t, config, value)
-}
-
-func TestWatchClose(t *testing.T) {
-	w := New[*proto.ClusterConfiguration](nil)
-	r, err := w.Subscribe()
-	require.NoError(t, err)
-
-	w.Close()
-
-	_, err = w.Subscribe()
-	assert.ErrorIs(t, err, ErrClosed)
-
-	_, ok := <-r.Changed()
-	assert.False(t, ok)
-}
-
-func TestReceiverClose(t *testing.T) {
-	w := New[*proto.ClusterConfiguration](nil)
-	r, err := w.Subscribe()
-	require.NoError(t, err)
-
-	require.NoError(t, r.Close())
-	w.Publish(&proto.ClusterConfiguration{})
-
-	_, ok := <-r.Changed()
-	assert.False(t, ok)
 }
