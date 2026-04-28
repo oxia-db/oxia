@@ -15,6 +15,7 @@
 package coordinator
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -53,6 +54,12 @@ func newCoordinatorInstance(
 
 	coordinatorInstance, err := coordinator.NewCoordinator(metadata, rpcProvider)
 	require.NoError(t, err)
+	configReconciler, err := coordinator.NewConfigReconcilerForCoordinator(
+		slog.With(slog.String("component", "test-config-reconciler")),
+		coordinatorInstance,
+	)
+	require.NoError(t, err)
+	go configReconciler.Run(t.Context())
 	return coordinatorInstance
 }
 

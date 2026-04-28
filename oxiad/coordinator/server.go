@@ -16,6 +16,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -50,6 +51,7 @@ type GrpcServer struct {
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
 	coordinator  Coordinator
+	reconciler   *ConfigReconciler
 	metadata     coordmetadata.Metadata
 	metrics      *metric.PrometheusMetrics
 }
@@ -86,6 +88,11 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*
 		_ = metadata.Close()
 		return nil, err
 	}
+	concreteCoordinator, ok := coordinatorInstance.(*coordinator)
+	if !ok {
+		_ = multierr.Combine(coordinatorInstance.Close(), metadata.Close())
+		return nil, errors.New("unexpected coordinator implementation")
+	}
 
 	adminSv := options.Server.Admin
 	adminSvTLS, err := adminSv.TLS.TryIntoServerTLSConf()
@@ -121,10 +128,21 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*
 		metadata:         metadata,
 		metrics:          metricsServer,
 	}
+	server.reconciler = NewConfigReconciler(
+		slog.With(slog.String("component", "coordinator-config-reconciler")),
+		concreteCoordinator,
+	)
 	server.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
 			"component": "configuration-watcher",
 		}, server.backgroundHandleConfChange)
+	})
+	server.wg.Go(func() {
+		process.DoWithLabels(ctx, map[string]string{
+			"component": "coordinator-config-reconciler",
+		}, func() {
+			server.reconciler.Run(ctx)
+		})
 	})
 
 	return &server, nil
