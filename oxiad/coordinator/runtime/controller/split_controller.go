@@ -63,10 +63,10 @@ type SplitController struct {
 	// ensembleSelector selects server ensembles for new shards.
 	ensembleSelector func(namespace string) ([]*proto.DataServerIdentity, error)
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	log    *slog.Logger
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	wg        sync.WaitGroup
+	logger    *slog.Logger
 }
 
 const DefaultSplitTimeout = 5 * time.Minute
@@ -97,7 +97,7 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 		rpcProvider:      cfg.RpcProvider,
 		eventListener:    cfg.EventListener,
 		ensembleSelector: cfg.EnsembleSelector,
-		log: slog.With(
+		logger: slog.With(
 			slog.String("component", "split-controller"),
 			slog.String("namespace", cfg.Namespace),
 			slog.Int64("parent-shard", cfg.ParentShardId),
@@ -108,18 +108,18 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 	if splitTimeout == 0 {
 		splitTimeout = DefaultSplitTimeout
 	}
-	sc.ctx, sc.cancel = context.WithTimeout(context.Background(), splitTimeout)
+	sc.ctx, sc.ctxCancel = context.WithTimeout(context.Background(), splitTimeout)
 
 	// Load the current split metadata from cluster status
 	status := sc.metadata.LoadStatus()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
-		sc.log.Error("Namespace not found in cluster status")
+		sc.logger.Error("Namespace not found in cluster status")
 		return sc
 	}
 	parentMeta, exists := ns.Shards[sc.parentShardId]
 	if !exists || parentMeta.Split == nil {
-		sc.log.Error("Parent shard or split metadata not found")
+		sc.logger.Error("Parent shard or split metadata not found")
 		return sc
 	}
 
@@ -143,7 +143,7 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 }
 
 func (sc *SplitController) Close() {
-	sc.cancel()
+	sc.ctxCancel()
 	sc.wg.Wait()
 }
 
@@ -151,7 +151,7 @@ func (sc *SplitController) run() {
 	_ = backoff.RetryNotify(func() error {
 		return sc.driveStateMachine()
 	}, oxiatime.NewBackOff(sc.ctx), func(err error, duration time.Duration) {
-		sc.log.Warn(
+		sc.logger.Warn(
 			"Split state machine step failed, retrying",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
@@ -180,7 +180,7 @@ func (sc *SplitController) driveStateMachine() error {
 			return nil
 		}
 
-		sc.log.Info("Running split phase", slog.String("phase", phase))
+		sc.logger.Info("Running split phase", slog.String("phase", phase))
 
 		var err error
 		switch phase {
@@ -191,7 +191,7 @@ func (sc *SplitController) driveStateMachine() error {
 		case proto.SplitPhaseCutover:
 			err = sc.runCutover()
 		default:
-			sc.log.Error("Unknown split phase", slog.Any("phase", phase))
+			sc.logger.Error("Unknown split phase", slog.Any("phase", phase))
 			return nil
 		}
 
@@ -240,7 +240,7 @@ func (sc *SplitController) updatePhase(newPhase string) {
 // child leaders (so they start replicating to their followers immediately),
 // and adds children as observer followers on the parent leader.
 func (sc *SplitController) runBootstrap() error {
-	sc.log.Info("Phase Bootstrap: fencing children and adding as observers")
+	sc.logger.Info("Phase Bootstrap: fencing children and adding as observers")
 
 	parentMeta := sc.loadParentMeta()
 	if parentMeta == nil || parentMeta.Leader == nil {
@@ -301,7 +301,7 @@ func (sc *SplitController) fenceAndElectChild(childId int64) error {
 	}
 
 	if childMeta.Leader != nil {
-		sc.log.Info("Child already has leader, skipping fence/elect",
+		sc.logger.Info("Child already has leader, skipping fence/elect",
 			slog.Int64("child-shard", childId),
 			slog.Any("leader", childMeta.Leader),
 		)
@@ -342,7 +342,7 @@ func (sc *SplitController) fenceAndElectChild(childId int64) error {
 		return errors.Wrapf(err, "BecomeLeader failed for child %d", childId)
 	}
 
-	sc.log.Info("Child leader elected",
+	sc.logger.Info("Child leader elected",
 		slog.Int64("child-shard", childId),
 		slog.Any("child-leader", childLeader),
 		slog.Int64("term", childTerm),
@@ -379,7 +379,7 @@ func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.D
 		return errors.Wrapf(err, "failed to add child %d as observer on parent", childId)
 	}
 
-	sc.log.Info("Added child as observer on parent",
+	sc.logger.Info("Added child as observer on parent",
 		slog.Int64("child-shard", childId),
 		slog.Any("child-leader", childLeader),
 	)
@@ -400,7 +400,7 @@ const CatchUpRoundTimeout = 10 * time.Second
 // leader during Bootstrap and are actively replicating to their followers.
 // commitOffset advancing means a quorum of child followers have the data.
 func (sc *SplitController) runCatchUp() error {
-	sc.log.Info("Phase CatchUp: monitoring observer progress")
+	sc.logger.Info("Phase CatchUp: monitoring observer progress")
 
 	for {
 		if err := sc.ctx.Err(); err != nil {
@@ -418,7 +418,7 @@ func (sc *SplitController) runCatchUp() error {
 			return err
 		}
 		if caughtUp {
-			sc.log.Info("All children caught up")
+			sc.logger.Info("All children caught up")
 			sc.updatePhase(proto.SplitPhaseCutover)
 			return nil
 		}
@@ -437,7 +437,7 @@ func (sc *SplitController) checkObserverCursorsStale() (bool, error) {
 	// Parent leader election: observer cursors are closed when the old leader
 	// is fenced, so they need to be re-added on the new leader.
 	if parentMeta.Split.ParentTermAtBootstrap > 0 && parentMeta.Term != parentMeta.Split.ParentTermAtBootstrap {
-		sc.log.Warn("Parent term changed since bootstrap, resetting to Bootstrap",
+		sc.logger.Warn("Parent term changed since bootstrap, resetting to Bootstrap",
 			slog.Int64("bootstrap-term", parentMeta.Split.ParentTermAtBootstrap),
 			slog.Int64("current-term", parentMeta.Term),
 		)
@@ -471,7 +471,7 @@ func (sc *SplitController) removeStaleChildObservers(parentMeta *proto.ShardMeta
 			continue
 		}
 
-		sc.log.Warn("Child leader changed since bootstrap, removing stale observer and resetting to Bootstrap",
+		sc.logger.Warn("Child leader changed since bootstrap, removing stale observer and resetting to Bootstrap",
 			slog.Int64("child-shard", childId),
 			slog.String("old-leader", bootstrapLeader),
 			slog.String("new-leader", childMeta.Leader.GetInternal()),
@@ -505,7 +505,7 @@ func (sc *SplitController) runCatchUpRound() (bool, error) {
 	}
 	target := parentStatus.CommitOffset
 
-	sc.log.Info("CatchUp round: waiting for children to reach target",
+	sc.logger.Info("CatchUp round: waiting for children to reach target",
 		slog.Int64("target-commit-offset", target),
 	)
 
@@ -515,7 +515,7 @@ func (sc *SplitController) runCatchUpRound() (bool, error) {
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
 		if err := sc.waitForChildCommitOffset(roundCtx, childId, target); err != nil {
 			if roundCtx.Err() != nil {
-				sc.log.Info("CatchUp round timed out, retrying",
+				sc.logger.Info("CatchUp round timed out, retrying",
 					slog.Int64("child-shard", childId),
 					slog.Int64("target", target),
 				)
@@ -531,7 +531,7 @@ func (sc *SplitController) runCatchUpRound() (bool, error) {
 // data, re-elects child leaders in a clean term, updates shard assignments,
 // and marks the parent for deletion.
 func (sc *SplitController) runCutover() error {
-	sc.log.Info("Phase Cutover: fencing parent and completing split")
+	sc.logger.Info("Phase Cutover: fencing parent and completing split")
 
 	parentMeta := sc.loadParentMeta()
 	if parentMeta == nil {
@@ -554,7 +554,7 @@ func (sc *SplitController) runCutover() error {
 		}
 	}
 
-	sc.log.Info("Parent fenced",
+	sc.logger.Info("Parent fenced",
 		slog.Int64("new-term", newParentTerm),
 		slog.Int64("final-offset", parentFinalOffset),
 	)
@@ -612,7 +612,7 @@ func (sc *SplitController) runCutover() error {
 // It removes observer cursors from the parent, deletes child shards from
 // status, clears the parent's split metadata, and notifies the coordinator.
 func (sc *SplitController) abort() {
-	sc.log.Warn("Aborting split due to timeout or cancellation")
+	sc.logger.Warn("Aborting split due to timeout or cancellation")
 
 	// Use a fresh context since the split context is cancelled.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -636,7 +636,7 @@ func (sc *SplitController) abort() {
 						TargetShard:  childId,
 					})
 					if err != nil {
-						sc.log.Warn("Failed to remove observer during abort",
+						sc.logger.Warn("Failed to remove observer during abort",
 							slog.Int64("child-shard", childId),
 							slog.Any("error", err),
 						)
@@ -656,7 +656,7 @@ func (sc *SplitController) abort() {
 		meta.Split = nil
 	})
 
-	sc.log.Info("Split aborted, parent restored")
+	sc.logger.Info("Split aborted, parent restored")
 
 	// Notify coordinator to clean up child controllers and recompute assignments.
 	sc.eventListener.SplitAborted(sc.parentShardId, sc.leftChildId, sc.rightChildId)
@@ -740,7 +740,7 @@ func (sc *SplitController) fenceEnsemble(
 	var lastErr error
 	for r := range ch {
 		if r.err != nil {
-			sc.log.Warn("NewTerm failed for server",
+			sc.logger.Warn("NewTerm failed for server",
 				slog.Int64("shard", shardId),
 				slog.Any("server", r.server),
 				slog.Any("error", r.err),
@@ -797,7 +797,7 @@ func (sc *SplitController) waitForChildCommitOffset(ctx context.Context, childId
 		}
 
 		if resp.CommitOffset >= targetOffset {
-			sc.log.Info("Child reached target commit offset",
+			sc.logger.Info("Child reached target commit offset",
 				slog.Int64("child-shard", childId),
 				slog.Int64("target", targetOffset),
 				slog.Int64("commit-offset", resp.CommitOffset),
@@ -807,7 +807,7 @@ func (sc *SplitController) waitForChildCommitOffset(ctx context.Context, childId
 
 		return errors.Errorf("child %d commit offset %d, target %d", childId, resp.CommitOffset, targetOffset)
 	}, oxiatime.NewBackOff(ctx), func(err error, duration time.Duration) {
-		sc.log.Debug("Waiting for child commit offset",
+		sc.logger.Debug("Waiting for child commit offset",
 			slog.Int64("child-shard", childId),
 			slog.Int64("target-offset", targetOffset),
 			slog.Any("error", err),
@@ -862,7 +862,7 @@ func (sc *SplitController) reelectChild(childId int64) error {
 		meta.Status = proto.ShardStatusSteadyState
 	})
 
-	sc.log.Info("Child re-elected in clean term",
+	sc.logger.Info("Child re-elected in clean term",
 		slog.Int64("child-shard", childId),
 		slog.Any("leader", newLeader),
 		slog.Int64("term", newTerm),

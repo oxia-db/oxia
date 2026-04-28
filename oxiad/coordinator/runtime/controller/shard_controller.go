@@ -91,10 +91,10 @@ type shardController struct {
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
 
 	ctx                   context.Context
-	cancel                context.CancelFunc
-	wg                    *sync.WaitGroup
+	ctxCancel             context.CancelFunc
+	wg                    sync.WaitGroup
 	periodicTasksInterval time.Duration
-	log                   *slog.Logger
+	logger                *slog.Logger
 
 	currentElection *ShardElection
 
@@ -141,12 +141,12 @@ func NewShardController(
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
 
 		periodicTasksInterval: periodTasksInterval,
-		log: slog.With(
+		logger: slog.With(
 			slog.String("component", "shard-controller"),
 			slog.String("namespace", namespace),
 			slog.Int64("shard", shard),
 		),
-		wg: &sync.WaitGroup{},
+		wg: sync.WaitGroup{},
 
 		leaderElectionLatency: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
 			"The time it takes to elect a leader for the shard", labels),
@@ -163,10 +163,10 @@ func NewShardController(
 			return s.metadata.Term()
 		})
 
-	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
 
 	shardMeta := s.metadata.Load()
-	s.log.Info("Started shard controller", slog.Any("shard-metadata", shardMeta))
+	s.logger.Info("Started shard controller", slog.Any("shard-metadata", shardMeta))
 
 	s.wg.Go(func() {
 		process.DoWithLabels(
@@ -202,12 +202,12 @@ func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
 		// Wait until the split is complete (Split metadata cleared) before
 		// entering the normal event loop, to prevent the load balancer from
 		// triggering elections that would interfere with the split controller.
-		s.log.Info("Child shard during split, waiting for split to complete")
+		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
 		s.onElectLeader(nil)
 	default:
-		s.log.Info(
+		s.logger.Info(
 			"There is already a data server marked as leader on the shard, verifying",
 			slog.Any("current-leader", initShardMeta.Leader),
 		)
@@ -219,7 +219,7 @@ func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
 		}
 	}
 
-	s.log.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
+	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
 
 	periodicTasksTimer := time.NewTicker(s.periodicTasksInterval)
 
@@ -268,7 +268,7 @@ func (s *shardController) waitForSplitComplete() {
 				continue
 			}
 			if meta.Split == nil {
-				s.log.Info("Split complete, child shard entering normal operation",
+				s.logger.Info("Split complete, child shard entering normal operation",
 					slog.Any("leader", meta.Leader),
 				)
 				// Update local metadata to match the status resource
@@ -281,7 +281,7 @@ func (s *shardController) waitForSplitComplete() {
 
 func (s *shardController) handleDataServerFailure(failedDataServer *proto.DataServerIdentity) {
 	shardMeta := s.metadata.Load()
-	s.log.Debug(
+	s.logger.Debug(
 		"Received notification of failed data server",
 		slog.Any("failed-data-server", failedDataServer.GetNameOrDefault()),
 		slog.Any("current-leader", shardMeta.Leader),
@@ -289,7 +289,7 @@ func (s *shardController) handleDataServerFailure(failedDataServer *proto.DataSe
 
 	if shardMeta.Leader != nil &&
 		shardMeta.Leader.GetNameOrDefault() == failedDataServer.GetNameOrDefault() {
-		s.log.Info(
+		s.logger.Info(
 			"Detected failure on shard leader",
 			slog.Any("leader", failedDataServer.GetNameOrDefault()),
 		)
@@ -306,7 +306,7 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *proto.ShardMetada
 
 		switch {
 		case err != nil:
-			s.log.Warn(
+			s.logger.Warn(
 				"Failed to verify status for shard. Start a new election",
 				slog.Any("error", err),
 				slog.Any("data-server", dataServer),
@@ -314,7 +314,7 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *proto.ShardMetada
 			return false
 		case dataServer.GetNameOrDefault() == initShardMeta.Leader.GetNameOrDefault() &&
 			dataServerStatus.Status != proto.ServingStatus_LEADER:
-			s.log.Warn(
+			s.logger.Warn(
 				"Expected leader is not in leader status. Start a new election",
 				slog.Any("data-server", dataServer),
 				slog.Any("status", dataServerStatus.Status),
@@ -322,14 +322,14 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *proto.ShardMetada
 			return false
 		case dataServer.GetNameOrDefault() != initShardMeta.Leader.GetNameOrDefault() &&
 			dataServerStatus.Status != proto.ServingStatus_FOLLOWER:
-			s.log.Warn(
+			s.logger.Warn(
 				"Expected follower is not in follower status. Start a new election",
 				slog.Any("data-server", dataServer),
 				slog.Any("status", dataServerStatus.Status),
 			)
 			return false
 		case dataServerStatus.Term != initShardMeta.Term:
-			s.log.Warn(
+			s.logger.Warn(
 				"Node has a wrong term. Start a new election",
 				slog.Any("data-server", dataServer),
 				slog.Any("data-server-term", dataServerStatus.Term),
@@ -337,14 +337,14 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *proto.ShardMetada
 			)
 			return false
 		default:
-			s.log.Info(
+			s.logger.Info(
 				"Data Server looks ok",
 				slog.Any("data-server", dataServer),
 			)
 		}
 	}
 
-	s.log.Info("All data servers look good. No need to trigger new leader election")
+	s.logger.Info("All data servers look good. No need to trigger new leader election")
 	return true
 }
 
@@ -363,7 +363,7 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		termOptions.EnableNotifications = nsConfig.NotificationsEnabledOrDefault()
 		termOptions.KeySorting, _ = nsConfig.GetKeySortingType()
 	}
-	s.currentElection = NewShardElection(s.ctx, s.log, s.eventListener,
+	s.currentElection = NewShardElection(s.ctx, s.logger, s.eventListener,
 		s.metadataStore, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
 		s.rpc, &s.metadata, s.namespace, s.shard, changeEnsembleAction,
 		termOptions,
@@ -390,18 +390,18 @@ func (s *shardController) DeleteShard() {
 }
 
 func (s *shardController) deleteShardWithRetries() {
-	s.log.Info("Deleting shard")
+	s.logger.Info("Deleting shard")
 
 	_ = backoff.RetryNotify(s.deleteShard, oxiatime.NewBackOff(s.ctx),
 		func(err error, duration time.Duration) {
-			s.log.Warn(
+			s.logger.Warn(
 				"Delete shard failed, retrying later",
 				slog.Duration("retry-after", duration),
 				slog.Any("error", err),
 			)
 		})
 
-	s.cancel()
+	s.ctxCancel()
 }
 
 func (s *shardController) deleteShard() error {
@@ -409,7 +409,7 @@ func (s *shardController) deleteShard() error {
 	for _, server := range shardMeta.Ensemble {
 		// We need to save the address because it gets modified in the loop
 		if err := s.deleteShardRpc(s.ctx, server); err != nil {
-			s.log.Warn(
+			s.logger.Warn(
 				"Failed to delete shard",
 				slog.Any("error", err),
 				slog.Any("data-server", server),
@@ -417,7 +417,7 @@ func (s *shardController) deleteShard() error {
 			return err
 		}
 
-		s.log.Info(
+		s.logger.Info(
 			"Successfully deleted shard from data server",
 			slog.Any("server-address", server),
 		)
@@ -441,7 +441,7 @@ func (s *shardController) Close() error {
 }
 
 func (s *shardController) close() error {
-	s.cancel()
+	s.ctxCancel()
 	s.termGauge.Unregister()
 	return nil
 }
@@ -461,7 +461,7 @@ func (s *shardController) onChangeEnsemble(changeEnsembleAction *action.ChangeEn
 	}()
 	if s.currentElection != nil {
 		if ready := s.currentElection.IsReadyForChangeEnsemble(); !ready {
-			s.log.Warn("Change ensemble rejected: shard is not ready (follower catch-up still in progress)")
+			s.logger.Warn("Change ensemble rejected: shard is not ready (follower catch-up still in progress)")
 			err = ErrNotReadyForChangeEnsemble
 			return
 		}
@@ -483,7 +483,7 @@ func (s *shardController) SyncServerAddress() {
 	if !needSync {
 		return
 	}
-	s.log.Info("server address changed, start a new leader election")
+	s.logger.Info("server address changed, start a new leader election")
 	group := &sync.WaitGroup{}
 	group.Add(1)
 	s.electionOp <- &action.ElectionAction{
@@ -498,7 +498,7 @@ func (s *shardController) handlePeriodicTasks() {
 	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
 		var err error
 		if err = s.handlePendingDeleteShard(mutShardMeta); err != nil {
-			s.log.Warn("Failed to handle pending delete shard", "error", err)
+			s.logger.Warn("Failed to handle pending delete shard", "error", err)
 			return
 		}
 	}
@@ -510,18 +510,18 @@ func (s *shardController) handlePeriodicTasks() {
 
 func (s *shardController) handlePendingDeleteShard(mutShardMeta *proto.ShardMetadata) error {
 	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
-		s.log.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
+		s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
 
 		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
 			Term:      mutShardMeta.Term,
 		}); err != nil {
-			s.log.Warn("Failed to delete shard from removed data server", slog.Any("data-server", ds), slog.Any("error", err))
+			s.logger.Warn("Failed to delete shard from removed data server", slog.Any("data-server", ds), slog.Any("error", err))
 			return err
 		}
 
-		s.log.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
+		s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
 	}
 
 	mutShardMeta.PendingDeleteShardNodes = nil

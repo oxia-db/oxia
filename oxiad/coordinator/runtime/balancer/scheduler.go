@@ -44,11 +44,10 @@ const defaultThreshElectedThreshold = 0.75
 var _ LoadBalancer = &nodeBasedBalancer{}
 
 type nodeBasedBalancer struct {
-	*slog.Logger
-	*sync.WaitGroup
-
-	ctx    context.Context
-	cancel context.CancelFunc
+	logger    *slog.Logger
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	wg        sync.WaitGroup
 
 	loadBalancerConf    *commonproto.LoadBalancer
 	metadata            coordmetadata.Metadata
@@ -71,8 +70,8 @@ func (r *nodeBasedBalancer) Action() <-chan action.Action {
 
 func (r *nodeBasedBalancer) Close() error {
 	close(r.triggerCh)
-	r.cancel()
-	r.Wait()
+	r.ctxCancel()
+	r.wg.Wait()
 	return nil
 }
 
@@ -103,8 +102,8 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
-	if r.Enabled(r.ctx, slog.LevelDebug) {
-		r.Debug("start shard rebalance",
+	if r.logger.Enabled(r.ctx, slog.LevelDebug) {
+		r.logger.Debug("start shard rebalance",
 			slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
 			slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
 			slog.Any("quarantine-nodes", r.quarantineNodes()),
@@ -114,8 +113,8 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 
 	defer func() {
 		swapGroup.Wait()
-		if r.Enabled(r.ctx, slog.LevelDebug) {
-			r.Debug("end shard rebalance",
+		if r.logger.Enabled(r.ctx, slog.LevelDebug) {
+			r.logger.Debug("end shard rebalance",
 				slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
 				slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
 				slog.Float64("avg-shard-ratio", loadRatios.AvgShardLoadRatio()),
@@ -162,7 +161,7 @@ func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidat
 		fromNodeID := highestLoadRatioNode.NodeID
 		fromNode := highestLoadRatioNode.Node
 		if _, err := r.swapShard(highestLoadRatioShard, fromNode, swapGroup, loadRatios, candidates, metadata, currentStatus); err != nil {
-			r.Error("failed to select server when swap the node",
+			r.logger.Error("failed to select server when swap the node",
 				slog.String("namespace", highestLoadRatioShard.Namespace),
 				slog.Int64("shard", highestLoadRatioShard.ShardID),
 				slog.String("from-node", fromNodeID),
@@ -175,7 +174,7 @@ func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidat
 	}
 	if highestLoadRatioNode.Ratio-loadRatios.MinNodeLoadRatio() > loadRatios.AvgShardLoadRatio() {
 		r.nodeQuarantineNodeMap.Store(highestLoadRatioNode.NodeID, time.Now())
-		r.Info("can't rebalance the current node, quarantine it.",
+		r.logger.Info("can't rebalance the current node, quarantine it.",
 			slog.Float64("highest-load-node-ratio", highestLoadRatioNode.Ratio),
 			slog.String("highest-load-node", highestLoadRatioNode.NodeID))
 	}
@@ -196,7 +195,7 @@ func (r *nodeBasedBalancer) cleanDeletedNode(loadRatios *model.Ratio,
 		for shardIter := nodeLoadRatio.ShardIterator(); shardIter.Next(); {
 			var shardRatio = shardIter.Value()
 			if swapped, err := r.swapShard(shardRatio, deletedNode, swapGroup, loadRatios, candidates, metadata, currentStatus); err != nil || !swapped {
-				r.Error("failed to select server when move ensemble out of deleted node",
+				r.logger.Error("failed to select server when move ensemble out of deleted node",
 					slog.String("namespace", shardRatio.Namespace),
 					slog.Int64("shard", shardRatio.ShardID),
 					slog.String("from-node", deletedNodeID),
@@ -206,7 +205,7 @@ func (r *nodeBasedBalancer) cleanDeletedNode(loadRatios *model.Ratio,
 			}
 		}
 		if err := loadRatios.RemoveDeletedNode(nodeLoadRatio.NodeID); err != nil {
-			r.Error("failed to remove deleted node from ratio snapshot", slog.Any("error", err))
+			r.logger.Error("failed to remove deleted node from ratio snapshot", slog.Any("error", err))
 		}
 	}
 }
@@ -265,7 +264,7 @@ func (r *nodeBasedBalancer) swapShard(
 		return false, errors.New("target node does not exist")
 	}
 
-	r.Info("propose to swap the shard", slog.Int64("shard", candidateShard.ShardID), slog.Any("from", fromNode), slog.Any("to", targetNodeID))
+	r.logger.Info("propose to swap the shard", slog.Int64("shard", candidateShard.ShardID), slog.Any("from", fromNode), slog.Any("to", targetNodeID))
 	swapGroup.Add(1)
 	r.actionCh <- action.NewChangeEnsembleActionWithCallback(candidateShard.ShardID, fromNode, targetNode,
 		concurrent.NewOnce(func(_ any) {
@@ -325,7 +324,7 @@ func (r *nodeBasedBalancer) IsBalanced() bool {
 }
 
 func (r *nodeBasedBalancer) Trigger() {
-	r.Info("manually trigger balance")
+	r.logger.Info("manually trigger balance")
 	channel.PushNoBlock(r.triggerCh, nil)
 }
 
@@ -334,46 +333,46 @@ func (r *nodeBasedBalancer) LoadRatioAlgorithm() selector.LoadRatioAlgorithm {
 }
 
 func (r *nodeBasedBalancer) startBackgroundScheduler() {
-	r.Add(1)
-	go process.DoWithLabels(r.ctx, map[string]string{
-		"component": "load-balancer-scheduler",
-	}, func() {
-		timer := time.NewTicker(r.loadBalancerConf.GetScheduleIntervalDurationOrDefault())
-		defer timer.Stop()
-		defer r.Done()
-		for {
-			select {
-			case _, more := <-timer.C:
-				if !more {
+	r.wg.Go(func() {
+		process.DoWithLabels(r.ctx, map[string]string{
+			"component": "load-balancer-scheduler",
+		}, func() {
+			timer := time.NewTicker(r.loadBalancerConf.GetScheduleIntervalDurationOrDefault())
+			defer timer.Stop()
+			for {
+				select {
+				case _, more := <-timer.C:
+					if !more {
+						return
+					}
+					channel.PushNoBlock(r.triggerCh, nil)
+				case <-r.ctx.Done():
 					return
 				}
-				channel.PushNoBlock(r.triggerCh, nil)
-			case <-r.ctx.Done():
-				return
 			}
-		}
+		})
 	})
 }
 
 func (r *nodeBasedBalancer) startBackgroundNotifier() {
-	r.Add(1)
-	go process.DoWithLabels(r.ctx, map[string]string{
-		"component": "load-balancer-notifier",
-	}, func() {
-		defer r.Done()
-		for {
-			select {
-			case _, more := <-r.triggerCh:
-				if !more {
+	r.wg.Go(func() {
+		process.DoWithLabels(r.ctx, map[string]string{
+			"component": "load-balancer-notifier",
+		}, func() {
+			for {
+				select {
+				case _, more := <-r.triggerCh:
+					if !more {
+						return
+					}
+					if r.rebalanceEnsemble() { // if shard is balanced
+						r.rebalanceLeader()
+					}
+				case <-r.ctx.Done():
 					return
 				}
-				if r.rebalanceEnsemble() { // if shard is balanced
-					r.rebalanceLeader()
-				}
-			case <-r.ctx.Done():
-				return
 			}
-		}
+		})
 	})
 }
 
@@ -390,13 +389,13 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		return
 	}
 
-	if r.Enabled(r.ctx, slog.LevelDebug) {
-		r.Debug("start leader rebalance",
+	if r.logger.Enabled(r.ctx, slog.LevelDebug) {
+		r.logger.Debug("start leader rebalance",
 			slog.Any("node-leaders", nodeLeaders),
 			slog.Any("quarantine-shards", r.quarantineShards()),
 		)
 		defer func() {
-			r.Debug("end leader rebalance")
+			r.logger.Debug("end leader rebalance")
 		}()
 	}
 
@@ -433,7 +432,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 			}
 		}
 		if minCandidateLeaders == maxLeaders || minCandidateLeaders+1 == maxLeaders {
-			r.Info("quarantine the shard due to no valid candidates", slog.Int64("shard", shard), slog.Any("leader", maxLeadersNodeID))
+			r.logger.Info("quarantine the shard due to no valid candidates", slog.Int64("shard", shard), slog.Any("leader", maxLeadersNodeID))
 			r.shardQuarantineShardMap.Store(shard, time.Now())
 			continue
 		}
@@ -447,9 +446,9 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		r.actionCh <- ac
 		latch.Wait()
 		leader := ac.NewLeader
-		r.Info("triggered new election", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
+		r.logger.Info("triggered new election", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
 		if leader == maxLeadersNodeID { // no changes
-			r.Info("quarantine the shard due to no leader changed", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
+			r.logger.Info("quarantine the shard due to no leader changed", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
 			r.shardQuarantineShardMap.Store(shard, time.Now())
 		}
 		break
@@ -500,10 +499,10 @@ func NewLoadBalancer(options Options) LoadBalancer {
 		slog.String("component", "load-balancer"))
 
 	return &nodeBasedBalancer{
-		WaitGroup:               &sync.WaitGroup{},
-		Logger:                  logger,
+		logger:                  logger,
 		ctx:                     ctx,
-		cancel:                  cancelFunc,
+		ctxCancel:               cancelFunc,
+		wg:                      sync.WaitGroup{},
 		loadBalancerConf:        options.Metadata.LoadLoadBalancer(),
 		actionCh:                make(chan action.Action, 1000),
 		nodeAvailableJudger:     options.NodeAvailableJudger,

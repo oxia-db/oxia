@@ -69,13 +69,13 @@ type Provider[T gproto.Message] struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	wg        sync.WaitGroup
 
 	watcher *commonwatch.Watch[T]
 
-	log *slog.Logger
+	logger *slog.Logger
 }
 
 func NewConfigMapProvider[T gproto.Message](
@@ -91,7 +91,7 @@ func NewConfigMapProvider[T gproto.Message](
 		name:         name,
 		codec:        codec,
 		watchEnabled: watchEnabled,
-		log:          slog.With("component", "metadata-config-map"),
+		logger:       slog.With("component", "metadata-config-map"),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
 			"Latency for reading coordinator metadata", nil),
@@ -99,7 +99,7 @@ func NewConfigMapProvider[T gproto.Message](
 			"Latency for storing coordinator metadata", nil),
 	}
 
-	m.ctx, m.cancel = context.WithCancel(ctx)
+	m.ctx, m.ctxCancel = context.WithCancel(ctx)
 	if watchEnabled.Enabled() {
 		initialValue, _, err := m.getWithoutLock() //nolint:contextcheck // Constructor seeds the watch from the provider-owned context.
 		if err != nil {
@@ -119,8 +119,8 @@ func NewConfigMapProvider[T gproto.Message](
 			return m.metadataSize.Load()
 		})
 
-	logger := logr.FromSlogHandler(m.log.With(slog.String("sub-component", "k8s-client")).Handler())
-	klog.SetLogger(logger)
+	clientLogger := logr.FromSlogHandler(m.logger.With(slog.String("sub-component", "k8s-client")).Handler())
+	klog.SetLogger(clientLogger)
 	return m, nil
 }
 
@@ -223,7 +223,7 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 		},
 	}
 
-	log := m.log.With(slog.String("identity", myIdentity))
+	logger := m.logger.With(slog.String("identity", myIdentity))
 	wg := concurrent.NewWaitGroup(1)
 
 	// Configure leader election
@@ -235,18 +235,18 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 		RetryPeriod:     retryPeriod,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(_ context.Context) {
-				log.Info("Started leading - lease acquired")
+				logger.Info("Started leading - lease acquired")
 				wg.Done()
 			},
 			OnStoppedLeading: func() {
-				log.Warn("Stopped leading - lease lost!")
+				logger.Warn("Stopped leading - lease lost!")
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
 					return
 				}
 
-				log.Info("New leader elected", slog.String("leader", newLeader))
+				logger.Info("New leader elected", slog.String("leader", newLeader))
 			},
 		},
 	}
@@ -270,12 +270,12 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 }
 
 func (m *Provider[T]) Close() error {
-	m.cancel()
+	m.ctxCancel()
 	m.wg.Wait()
 	if m.watcher != nil {
 		m.watcher.Close()
 	}
-	m.log.Info("Closed metadata provider")
+	m.logger.Info("Closed metadata provider")
 	return nil
 }
 
@@ -297,7 +297,7 @@ func (m *Provider[T]) watchLoop() {
 		m.watcher.Publish(value)
 		return m.watch()
 	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
-		m.log.Warn("K8S config map watch failed, reconnecting",
+		m.logger.Warn("K8S config map watch failed, reconnecting",
 			slog.String("k8s-namespace", m.namespace),
 			slog.String("k8s-config-map", m.name),
 			slog.Any("error", err),

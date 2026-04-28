@@ -42,13 +42,13 @@ import (
 )
 
 type runtime struct {
-	*slog.Logger
-	sync.WaitGroup
 	sync.RWMutex
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	insID  string
+	logger    *slog.Logger
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	wg        sync.WaitGroup
+	insID     string
 
 	metadata coordmetadata.Metadata
 
@@ -103,7 +103,7 @@ func (c *runtime) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.Info("Detected change in cluster config", slog.Any("newClusterConfig", newConfig))
+	c.logger.Info("Detected change in cluster config", slog.Any("newClusterConfig", newConfig))
 
 	// Check for nodes to add
 	for _, sa := range newConfig.GetServers() {
@@ -112,7 +112,7 @@ func (c *runtime) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 		}
 		// The node is present in the config, though we don't know it yet,
 		// therefore it must be a newly added node
-		c.Info("Detected new node", slog.Any("server", sa))
+		c.logger.Info("Detected new node", slog.Any("server", sa))
 		if nc, ok := c.drainingNodes[sa.GetNameOrDefault()]; ok {
 			// If there were any controller for a draining node, close it
 			// and recreate it as a new node
@@ -134,7 +134,7 @@ func (c *runtime) ConfigChanged(newConfig *proto.ClusterConfiguration) {
 		if _, exist := c.metadata.Node(serverID); exist {
 			continue
 		}
-		c.Info("Detected a removed node", slog.Any("server", serverID))
+		c.logger.Info("Detected a removed node", slog.Any("server", serverID))
 		// Moved the node
 		delete(c.nodeControllers, serverID)
 		nc.SetStatus(controller.Draining)
@@ -215,8 +215,8 @@ func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.Cl
 }
 
 func (c *runtime) Close() error {
-	c.cancel()
-	c.Wait()
+	c.ctxCancel()
+	c.wg.Wait()
 
 	var err error
 	for _, sc := range c.splitControllers {
@@ -246,7 +246,7 @@ func (c *runtime) BecameUnavailable(node *proto.DataServerIdentity) {
 			// the callback will come from the node controller internal health check goroutine,
 			// we should close it in the background goroutines to avoid any unexpected deadlock here
 			if err := nc.Close(); err != nil {
-				c.Error("Failed to close node controller", slog.String("node", node.GetNameOrDefault()), slog.Any("error", err))
+				c.logger.Error("Failed to close node controller", slog.String("node", node.GetNameOrDefault()), slog.Any("error", err))
 			}
 		}()
 	}
@@ -299,7 +299,7 @@ func (c *runtime) startBackgroundConfigWatcher() {
 	configWatch := c.metadata.ConfigWatch()
 	receiver, err := configWatch.Subscribe()
 	if err != nil {
-		c.Warn("failed to subscribe to cluster config watch", slog.Any("error", err))
+		c.logger.Warn("failed to subscribe to cluster config watch", slog.Any("error", err))
 		return
 	}
 	defer func() {
@@ -334,13 +334,13 @@ func (c *runtime) handleActionElection(ac action.Action) {
 	if electionAc, ok = ac.(*action.ElectionAction); !ok {
 		panic("unexpected action type")
 	}
-	c.Info("Applying swap action", slog.Any("swap-action", ac))
+	c.logger.Info("Applying swap action", slog.Any("swap-action", ac))
 
 	c.RLock()
 	sc, ok := c.shardControllers[electionAc.Shard]
 	c.RUnlock()
 	if !ok {
-		c.Warn("Shard controller not found", slog.Int64("shard", electionAc.Shard))
+		c.logger.Warn("Shard controller not found", slog.Int64("shard", electionAc.Shard))
 		electionAc.Done(nil)
 		return
 	}
@@ -353,13 +353,13 @@ func (c *runtime) handleActionChangeEnsemble(ac action.Action) {
 	if changeEnsembleAction, ok = ac.(*action.ChangeEnsembleAction); !ok {
 		panic("unexpected action type")
 	}
-	c.Info("Applying swap action", slog.Any("swap-action", ac))
+	c.logger.Info("Applying swap action", slog.Any("swap-action", ac))
 
 	c.RLock()
 	sc, ok := c.shardControllers[changeEnsembleAction.Shard]
 	c.RUnlock()
 	if !ok {
-		c.Warn("Shard controller not found", slog.Int64("shard", changeEnsembleAction.Shard))
+		c.logger.Warn("Shard controller not found", slog.Int64("shard", changeEnsembleAction.Shard))
 		return
 	}
 
@@ -561,7 +561,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	// Persist
 	c.metadata.UpdateStatus(cloned)
 
-	c.Info("Split initiated",
+	c.logger.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
 		slog.Int64("left-child", leftChildId),
 		slog.Int64("right-child", rightChildId),
@@ -606,7 +606,7 @@ func (c *runtime) SplitComplete(parentShard int64, leftChild int64, rightChild i
 	c.Lock()
 	defer c.Unlock()
 
-	c.Info("Split complete, triggering parent shard deletion",
+	c.logger.Info("Split complete, triggering parent shard deletion",
 		slog.Int64("parent-shard", parentShard),
 		slog.Int64("left-child", leftChild),
 		slog.Int64("right-child", rightChild),
@@ -646,7 +646,7 @@ func (c *runtime) SplitAborted(parentShard int64, leftChild int64, rightChild in
 	c.Lock()
 	defer c.Unlock()
 
-	c.Warn("Split aborted",
+	c.logger.Warn("Split aborted",
 		slog.Int64("parent-shard", parentShard),
 		slog.Int64("left-child", leftChild),
 		slog.Int64("right-child", rightChild),
@@ -687,7 +687,7 @@ func (c *runtime) restartInProgressSplits(clusterStatus *proto.ClusterStatus) {
 				continue
 			}
 
-			c.Info("Resuming in-progress split",
+			c.logger.Info("Resuming in-progress split",
 				slog.String("namespace", ns),
 				slog.Int64("parent-shard", shardId),
 				slog.String("phase", meta.Split.GetPhaseOrDefault()),
@@ -713,10 +713,9 @@ func New(
 	rpcProvider rpc.ProviderFactory,
 ) (Runtime, error) {
 	c := &runtime{
-		Logger: slog.With(
+		logger: slog.With(
 			slog.String("component", "coordinator"),
 		),
-		WaitGroup:        sync.WaitGroup{},
 		ensembleSelector: ensemble.NewSelector(),
 		shardControllers: make(map[int64]controller.ShardController),
 		splitControllers: make(map[int64]*controller.SplitController),
@@ -725,7 +724,7 @@ func New(
 		metadata:         metadata,
 	}
 
-	c.ctx, c.cancel = context.WithCancel(context.Background())
+	c.ctx, c.ctxCancel = context.WithCancel(context.Background())
 	c.assignmentsChanged = concurrent.NewConditionContext(c)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
@@ -756,7 +755,7 @@ func New(
 			c.insID,
 		)
 	}
-	c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
+	c.logger.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 	clusterStatus, _, _ = c.metadata.ApplyStatusChanges(clusterConfig, c.selectNewEnsemble)
 
 	// init shard controller
@@ -777,12 +776,12 @@ func New(
 	// Restart any in-progress splits from persisted state
 	c.restartInProgressSplits(clusterStatus)
 
-	c.Go(func() {
+	c.wg.Go(func() {
 		process.DoWithLabels(c.ctx, map[string]string{
 			"component": "coordinator-action-worker",
 		}, c.startBackgroundActionWorker)
 	})
-	c.Go(func() {
+	c.wg.Go(func() {
 		process.DoWithLabels(c.ctx, map[string]string{
 			"component": "coordinator-config-watcher",
 		}, c.startBackgroundConfigWatcher)

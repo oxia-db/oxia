@@ -47,10 +47,10 @@ type Provider[T gproto.Message] struct {
 
 type Raft struct {
 	sync.Mutex
-	sc    *stateContainer
-	node  *hashicorpraft.Raft
-	store *kvRaftStore
-	log   *slog.Logger
+	sc     *stateContainer
+	node   *hashicorpraft.Raft
+	store  *kvRaftStore
+	logger *slog.Logger
 
 	closeOnce sync.Once
 	closeErr  error
@@ -105,8 +105,8 @@ func NewRaft(
 	raftDataDir string,
 ) (*Raft, error) {
 	metadataRaft := &Raft{
-		sc:  newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
-		log: slog.With(slog.String("component", "metadata-provider-raft")),
+		sc:     newStateContainer(slog.With(slog.String("component", "metadata-provider-raft-state-container"))),
+		logger: slog.With(slog.String("component", "metadata-provider-raft")),
 	}
 
 	// Ensure data dir per node
@@ -124,7 +124,7 @@ func NewRaft(
 	config.LogLevel = "INFO"
 	levelVar := &slog.LevelVar{}
 	levelVar.Set(slog.LevelInfo)
-	config.Logger = slog2hclog.New(metadataRaft.log, levelVar)
+	config.Logger = slog2hclog.New(metadataRaft.logger, levelVar)
 
 	// Create TCP transport for Raft
 	addr, err := net.ResolveTCPAddr("tcp", raftAddress)
@@ -209,7 +209,7 @@ func (mpr *Provider[T]) Get() (value T, version provider.Version, err error) {
 
 	document := mpr.raft.sc.document(mpr.resourceType)
 
-	mpr.raft.log.Debug("Get metadata",
+	mpr.raft.logger.Debug("Get metadata",
 		slog.String("resource-type", string(mpr.resourceType)),
 		slog.Any("metadata", document.State),
 		slog.Any("current-version", document.CurrentVersion))
@@ -233,7 +233,7 @@ func (mpr *Provider[T]) Store(value T, expectedVersion provider.Version) (newVer
 		return provider.NotExists, err
 	}
 
-	mpr.raft.log.Debug("Store into raft",
+	mpr.raft.logger.Debug("Store into raft",
 		slog.String("resource-type", string(mpr.resourceType)),
 		slog.Any("metadata", data),
 		slog.Any("expected-version", expectedVersion),
