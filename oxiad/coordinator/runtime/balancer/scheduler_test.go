@@ -68,8 +68,8 @@ func (*mockMetadata) StatusChangeNotify() <-chan struct{} { return make(chan str
 
 func (*mockMetadata) LoadConfig() *proto.ClusterConfiguration { return nil }
 
-func (*mockMetadata) ConfigWatch() *commonwatch.Watch[*proto.ClusterConfiguration] {
-	return commonwatch.New[*proto.ClusterConfiguration](nil)
+func (*mockMetadata) ConfigWatch() (*commonwatch.Receiver[*proto.ClusterConfiguration], error) {
+	return commonwatch.New(&proto.ClusterConfiguration{}).Subscribe()
 }
 
 func (m *mockMetadata) LoadLoadBalancer() *proto.LoadBalancer {

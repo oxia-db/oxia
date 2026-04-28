@@ -16,84 +16,78 @@ package watch
 
 import (
 	"errors"
-	"io"
 	"sync"
+	"sync/atomic"
 )
 
 var ErrClosed = errors.New("watch closed")
 
-var _ io.Closer = (*Receiver[any])(nil)
-
 type Watch[T any] struct {
 	sync.Mutex
 
-	value     T
-	closed    bool
-	receivers map[*Receiver[T]]chan struct{}
+	value   atomic.Value
+	closed  atomic.Bool
+	changed chan struct{}
 }
 
 func New[T any](init T) *Watch[T] {
-	return &Watch[T]{
-		value:     init,
-		receivers: map[*Receiver[T]]chan struct{}{},
+	w := &Watch[T]{
+		changed: make(chan struct{}),
 	}
+	w.value.Store(init)
+	return w
 }
 
 func (w *Watch[T]) Subscribe() (*Receiver[T], error) {
 	w.Lock()
 	defer w.Unlock()
 
-	if w.closed {
+	if w.closed.Load() {
 		return nil, ErrClosed
 	}
 
-	ch := make(chan struct{}, 1)
-	r := &Receiver[T]{
+	return &Receiver[T]{
 		watch:   w,
-		changed: ch,
-	}
-	w.receivers[r] = ch
-	return r, nil
+		changed: w.changed,
+	}, nil
 }
 
 func (w *Watch[T]) Publish(value T) {
 	w.Lock()
 	defer w.Unlock()
 
-	if w.closed {
+	if w.closed.Load() {
 		return
 	}
 
-	w.value = value
-
-	for _, ch := range w.receivers {
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
-	}
+	w.value.Store(value)
+	changed := w.changed
+	w.changed = make(chan struct{})
+	close(changed)
 }
 
 func (w *Watch[T]) Close() {
 	w.Lock()
 	defer w.Unlock()
 
-	if w.closed {
+	if w.closed.Load() {
 		return
 	}
 
-	w.closed = true
-	for r, ch := range w.receivers {
-		close(ch)
-		delete(w.receivers, r)
-	}
+	w.closed.Store(true)
+	close(w.changed)
 }
 
 func (w *Watch[T]) Load() (T, bool) {
-	w.Lock()
-	defer w.Unlock()
-
-	return w.value, true
+	if w.closed.Load() {
+		var zero T
+		return zero, false
+	}
+	value, ok := w.value.Load().(T)
+	if !ok {
+		panic("watch value type mismatch")
+	}
+	return value, true
 }
 
 type Receiver[T any] struct {
@@ -101,27 +95,22 @@ type Receiver[T any] struct {
 	changed chan struct{}
 }
 
+// Changed returns the receiver's current notification channel.
+//
+// Callers must pair every wake-up from Changed with a call to Load. Load both
+// returns the latest value and re-arms the receiver onto the latest watch
+// generation for future notifications.
 func (r *Receiver[T]) Changed() <-chan struct{} {
+	r.watch.Lock()
+	defer r.watch.Unlock()
+
 	return r.changed
 }
 
 func (r *Receiver[T]) Load() (T, bool) {
+	r.watch.Lock()
+	r.changed = r.watch.changed
+	r.watch.Unlock()
+
 	return r.watch.Load()
-}
-
-func (r *Receiver[T]) Close() error {
-	r.watch.closeReceiver(r)
-	return nil
-}
-
-func (w *Watch[T]) closeReceiver(r *Receiver[T]) {
-	w.Lock()
-	defer w.Unlock()
-
-	ch, ok := w.receivers[r]
-	if !ok {
-		return
-	}
-	delete(w.receivers, r)
-	close(ch)
 }

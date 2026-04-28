@@ -33,13 +33,13 @@ func TestWatchLoad(t *testing.T) {
 }
 
 func TestSubscribePublish(t *testing.T) {
-	w := New[*proto.ClusterConfiguration](nil)
+	w := New(&proto.ClusterConfiguration{})
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
 	value, ok := r.Load()
 	assert.True(t, ok)
-	assert.Nil(t, value)
+	assert.NotNil(t, value)
 
 	config := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
@@ -62,7 +62,7 @@ func TestSubscribePublish(t *testing.T) {
 }
 
 func TestWatchClose(t *testing.T) {
-	w := New[*proto.ClusterConfiguration](nil)
+	w := New(&proto.ClusterConfiguration{})
 	r, err := w.Subscribe()
 	require.NoError(t, err)
 
@@ -70,18 +70,6 @@ func TestWatchClose(t *testing.T) {
 
 	_, err = w.Subscribe()
 	assert.ErrorIs(t, err, ErrClosed)
-
-	_, ok := <-r.Changed()
-	assert.False(t, ok)
-}
-
-func TestReceiverClose(t *testing.T) {
-	w := New[*proto.ClusterConfiguration](nil)
-	r, err := w.Subscribe()
-	require.NoError(t, err)
-
-	require.NoError(t, r.Close())
-	w.Publish(&proto.ClusterConfiguration{})
 
 	_, ok := <-r.Changed()
 	assert.False(t, ok)

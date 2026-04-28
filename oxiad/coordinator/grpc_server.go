@@ -148,18 +148,12 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 		s.logger.Warn("exit background configuration watch goroutine due to a subscription error", slog.Any("error", err))
 		return
 	}
-	defer func() {
-		_ = receiver.Close()
-	}()
 
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case _, ok := <-receiver.Changed():
-			if !ok {
-				return
-			}
+		case <-receiver.Changed():
 		}
 
 		coordinatorOptions, ok := receiver.Load()

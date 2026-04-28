@@ -296,28 +296,20 @@ func (c *runtime) startBackgroundActionWorker() {
 }
 
 func (c *runtime) startBackgroundConfigWatcher() {
-	configWatch := c.metadata.ConfigWatch()
-	receiver, err := configWatch.Subscribe()
+	receiver, err := c.metadata.ConfigWatch()
 	if err != nil {
 		c.logger.Warn("failed to subscribe to cluster config watch", slog.Any("error", err))
 		return
 	}
-	defer func() {
-		_ = receiver.Close()
-	}()
 
-	currentConfig, ok := configWatch.Load()
-	if ok && currentConfig != nil {
+	if currentConfig := c.metadata.LoadConfig(); currentConfig != nil {
 		c.ConfigChanged(currentConfig)
 	}
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
-		case _, ok := <-receiver.Changed():
-			if !ok {
-				return
-			}
+		case <-receiver.Changed():
 		}
 
 		newConfig, ok := receiver.Load()
