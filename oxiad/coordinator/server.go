@@ -27,6 +27,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
@@ -49,7 +50,7 @@ type GrpcServer struct {
 	grpcServer   rpc2.GrpcServer
 	adminServer  rpc2.GrpcServer
 	healthServer *health.Server
-	coordinator  Coordinator
+	coordinator  coordruntime.Runtime
 	metadata     coordmetadata.Metadata
 	metrics      *metric.PrometheusMetrics
 }
@@ -81,7 +82,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*
 	if err != nil {
 		return nil, err
 	}
-	coordinatorInstance, err := NewCoordinator(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
+	coordinatorInstance, err := coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err != nil {
 		_ = metadata.Close()
 		return nil, err

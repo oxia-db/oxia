@@ -30,8 +30,8 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/oxia-db/oxia/tests/mock"
 )
@@ -39,7 +39,7 @@ import (
 type testCluster struct {
 	name        string
 	authority   string
-	coordinator coordinator.Coordinator
+	coordinator coordruntime.Runtime
 	servers     map[string]*dataserver.Server
 	addresses   []*proto.DataServerIdentity
 }

@@ -35,13 +35,13 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/rpc"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/changes"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
-	"github.com/oxia-db/oxia/oxiad/coordinator/util"
 )
 
 type Metadata interface {
@@ -388,7 +388,7 @@ func (m *coordinatorMetadata) ApplyStatusChanges(config *commonproto.ClusterConf
 	defer m.statusLock.Unlock()
 
 	newStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
-	shardsToAdd, shardsToDelete := util.ApplyClusterChanges(config, newStatus, ensembleSupplier)
+	shardsToAdd, shardsToDelete := changes.ApplyClusterChanges(config, newStatus, ensembleSupplier)
 	if len(shardsToAdd) == 0 && len(shardsToDelete) == 0 {
 		return newStatus, shardsToAdd, shardsToDelete
 	}

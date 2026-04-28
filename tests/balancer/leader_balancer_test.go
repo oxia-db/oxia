@@ -22,7 +22,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/util"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/state"
 
 	"github.com/oxia-db/oxia/tests/mock"
 )
@@ -54,7 +54,7 @@ func waitForLeadersBalanced(t *testing.T, metadata coordmetadata.Metadata, balan
 	t.Helper()
 	ctx := t.Context()
 	err := coordmetadata.WaitForCondition(ctx, metadata, balancer.Trigger, func(status *proto.ClusterStatus) bool {
-		shardLeaders, electedShards, nodeShards := util.NodeShardLeaders(candidates, status)
+		shardLeaders, electedShards, nodeShards := state.NodeShardLeaders(candidates, status)
 		if shardLeaders != electedShards {
 			return false
 		}
@@ -160,7 +160,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	// wait for leader moved
 	ctx := t.Context()
 	err := coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *proto.ClusterStatus) bool {
-		_, _, nodeShards := util.NodeShardLeaders(candidates, status)
+		_, _, nodeShards := state.NodeShardLeaders(candidates, status)
 		shards := nodeShards[s3ad.GetNameOrDefault()]
 		return shards.Size() == 0
 	})

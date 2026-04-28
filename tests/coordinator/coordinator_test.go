@@ -24,8 +24,8 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
 func TestCoordinatorInitiateLeaderElection(t *testing.T) {
@@ -47,7 +47,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer func() {
 		assert.NoError(t, metadata.Close())
 	}()
-	coordinatorInstance, err := coordinator.NewCoordinator(
+	coordinatorInstance, err := coordruntime.New(
 		metadata,
 		rpc2.NewRpcProviderFactory(nil),
 	)
