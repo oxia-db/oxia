@@ -117,72 +117,6 @@ func (c *coordinator) NodeControllers() map[string]controller.DataServerControll
 	return res
 }
 
-func (c *coordinator) ConfigChanged(newConfig *proto.ClusterConfiguration) {
-	c.Lock()
-	defer c.Unlock()
-
-	c.Info("Detected change in cluster config", slog.Any("newClusterConfig", newConfig))
-
-	// Check for nodes to add
-	for _, sa := range newConfig.GetServers() {
-		if _, ok := c.nodeControllers[sa.GetNameOrDefault()]; ok {
-			continue
-		}
-		// The node is present in the config, though we don't know it yet,
-		// therefore it must be a newly added node
-		c.Info("Detected new node", slog.Any("server", sa))
-		if nc, ok := c.drainingNodes[sa.GetNameOrDefault()]; ok {
-			// If there were any controller for a draining node, close it
-			// and recreate it as a new node
-			_ = nc.Close()
-			delete(c.drainingNodes, sa.GetNameOrDefault())
-		}
-		c.nodeControllers[sa.GetNameOrDefault()] = controller.NewDataServerController(
-			c.ctx,
-			sa,
-			c,
-			c,
-			c.rpc,
-			c.insID,
-		)
-	}
-
-	// Check for nodes to remove
-	for serverID, nc := range c.nodeControllers {
-		if _, exist := c.metadata.Node(serverID); exist {
-			continue
-		}
-		c.Info("Detected a removed node", slog.Any("server", serverID))
-		// Moved the node
-		delete(c.nodeControllers, serverID)
-		nc.SetStatus(controller.Draining)
-		c.drainingNodes[serverID] = nc
-	}
-	for _, sc := range c.shardControllers {
-		sc.SyncServerAddress()
-	}
-
-	clusterStatus, shardsToAdd, shardsToDelete := c.metadata.ApplyStatusChanges(newConfig, c.selectNewEnsemble)
-	for shard, namespace := range shardsToAdd {
-		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
-		if namespaceConfig, exist := c.metadata.Namespace(namespace); exist {
-			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
-				pb.Clone(shardMetadata).(*proto.ShardMetadata), c.metadata, c.findDataServerFeatures,
-				c, c.rpc, controller.DefaultPeriodicTasksInterval)
-			slog.Info("Added new shard", slog.Int64("shard", shard),
-				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
-		}
-	}
-	for _, shard := range shardsToDelete {
-		if s, exist := c.shardControllers[shard]; exist {
-			s.DeleteShard()
-		}
-	}
-
-	c.computeNewAssignments()
-	c.loadBalancer.Trigger()
-}
-
 func (c *coordinator) findDataServerFeatures(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
 	features := make(map[string][]proto.Feature)
 	for _, dataServer := range dataServers {
@@ -771,7 +705,7 @@ func newCoordinator(
 		process.DoWithLabels(c.ctx, map[string]string{
 			"component": "coordinator-config-reconciler",
 		}, func() {
-			reconciler.NewConfigReconciler(c.Logger, c.metadata.ConfigWatch(), c.ConfigChanged).Run(c.ctx)
+			reconciler.NewConfigReconciler(c.Logger, c.metadata.ConfigWatch(), &configReconcilerAdapter{coordinator: c}).Run(c.ctx)
 		})
 	})
 
