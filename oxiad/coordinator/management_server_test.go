@@ -54,11 +54,11 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 	return metadata
 }
 
-func TestAdminServerListDataServers(t *testing.T) {
+func TestManagementServerListDataServers(t *testing.T) {
 	serverName1 := "server-1"
 	serverName2 := "server-2"
 
-	admin := newAdminServer(
+	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName1, "public-1", "internal-1"),
@@ -74,7 +74,7 @@ func TestAdminServerListDataServers(t *testing.T) {
 		nil,
 	)
 
-	res, err := admin.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
+	res, err := management.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
 	require.NoError(t, err)
 	require.Len(t, res.DataServers, 3)
 
@@ -100,10 +100,10 @@ func TestAdminServerListDataServers(t *testing.T) {
 	assert.Equal(t, map[string]string{"rack": "rack-3"}, res.DataServers[2].Metadata.GetLabels())
 }
 
-func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
+func TestManagementServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
 	serverName1 := "server-1"
 
-	admin := newAdminServer(
+	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName1, "public-1", "internal-1"),
@@ -117,7 +117,7 @@ func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
 		nil,
 	)
 
-	res, err := admin.ListNodes(context.Background(), &proto.ListNodesRequest{})
+	res, err := management.ListNodes(context.Background(), &proto.ListNodesRequest{})
 	require.NoError(t, err)
 	require.Len(t, res.Nodes, 2)
 
@@ -132,10 +132,10 @@ func TestAdminServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
 	assert.Equal(t, map[string]string{"role": "fallback"}, res.Nodes[1].Metadata)
 }
 
-func TestAdminServerGetDataServerByName(t *testing.T) {
+func TestManagementServerGetDataServerByName(t *testing.T) {
 	serverName := "server-2"
 
-	admin := newAdminServer(
+	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-2", "internal-2"),
@@ -147,7 +147,7 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 		nil,
 	)
 
-	res, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: serverName})
+	res, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: serverName})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.DataServer)
@@ -159,10 +159,10 @@ func TestAdminServerGetDataServerByName(t *testing.T) {
 	assert.Equal(t, map[string]string{"zone": "zone-2"}, res.DataServer.Metadata.GetLabels())
 }
 
-func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
+func TestManagementServerGetDataServerByIdentifierFallback(t *testing.T) {
 	serverName := "server-2"
 
-	admin := newAdminServer(
+	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-2", "internal-2"),
@@ -176,7 +176,7 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 		nil,
 	)
 
-	res, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-3"})
+	res, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-3"})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.DataServer)
@@ -187,13 +187,13 @@ func TestAdminServerGetDataServerByIdentifierFallback(t *testing.T) {
 	assert.Equal(t, "internal-3", res.DataServer.Identity.GetInternal())
 	assert.Equal(t, map[string]string{"role": "fallback"}, res.DataServer.Metadata.GetLabels())
 
-	_, err = admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-2"})
+	_, err = management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-2"})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }
 
-func TestAdminServerGetDataServerNotFound(t *testing.T) {
-	admin := newAdminServer(
+func TestManagementServerGetDataServerNotFound(t *testing.T) {
+	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(nil, "public-1", "internal-1"),
@@ -202,18 +202,18 @@ func TestAdminServerGetDataServerNotFound(t *testing.T) {
 		nil,
 	)
 
-	_, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "missing"})
+	_, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "missing"})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }
 
-func TestAdminServerGetDataServerRejectsEmptyLookup(t *testing.T) {
-	admin := newAdminServer(
+func TestManagementServerGetDataServerRejectsEmptyLookup(t *testing.T) {
+	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
 
-	_, err := admin.GetDataServer(context.Background(), &proto.GetDataServerRequest{})
+	_, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
 }
