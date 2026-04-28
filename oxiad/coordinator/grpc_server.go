@@ -157,9 +157,6 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 		}
 
 		coordinatorOptions := receiver.Load()
-		if coordinatorOptions == nil {
-			return
-		}
 
 		s.logger.Info("configuration options has changed. processing the dynamic updates.")
 		logOptions := &coordinatorOptions.Observability.Log

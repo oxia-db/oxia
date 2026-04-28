@@ -185,9 +185,6 @@ func (s *Server) backgroundHandleConfChange() {
 		}
 
 		dataServerOptions := receiver.Load()
-		if dataServerOptions == nil {
-			return
-		}
 
 		s.logger.Info("configuration options has changed. processing the dynamic updates.")
 		logOptions := &dataServerOptions.Observability.Log
