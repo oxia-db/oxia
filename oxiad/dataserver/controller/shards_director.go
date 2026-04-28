@@ -24,10 +24,10 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
+	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
@@ -55,7 +55,7 @@ type shardsDirector struct {
 	sync.RWMutex
 	kvFactory              kvstore.Factory
 	walFactory             wal.Factory
-	replicationRpcProvider rpc.ReplicationRpcProvider
+	replicationRpcProvider dataserverrpc.ReplicationRpcProvider
 	storageOptions         *option.StorageOptions
 	log                    *slog.Logger
 
@@ -68,7 +68,7 @@ type shardsDirector struct {
 	followersCounter metric.UpDownCounter
 }
 
-func NewShardsDirector(storageOptions *option.StorageOptions, walFactory wal.Factory, kvFactory kvstore.Factory, provider rpc.ReplicationRpcProvider) ShardsDirector {
+func NewShardsDirector(storageOptions *option.StorageOptions, walFactory wal.Factory, kvFactory kvstore.Factory, provider dataserverrpc.ReplicationRpcProvider) ShardsDirector {
 	sd := &shardsDirector{
 		storageOptions:         storageOptions,
 		walFactory:             walFactory,

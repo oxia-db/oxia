@@ -34,10 +34,9 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
+	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
-
-	"github.com/oxia-db/oxia/common/rpc"
 )
 
 type Server struct {
@@ -51,7 +50,7 @@ type Server struct {
 	logger       *slog.Logger
 	optionsWatch *commonwatch.Watch[*option.Options]
 
-	replicationRpcProvider    rpc.ReplicationRpcProvider
+	replicationRpcProvider    dataserverrpc.ReplicationRpcProvider
 	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
 	shardsDirector            controller.ShardsDirector
 	metrics                   *metric.PrometheusMetrics
@@ -67,7 +66,7 @@ func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options
 	if err != nil {
 		return nil, err
 	}
-	provider, err := rpc.NewReplicationRpcProvider(&options.Replication.TLS, manifest)
+	provider, err := dataserverrpc.NewReplicationRpcProvider(&options.Replication.TLS, manifest)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +75,7 @@ func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options
 }
 
 func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options], provider commonrpc.GrpcProvider,
-	replicationRpcProvider rpc.ReplicationRpcProvider, manifest *manifestpkg.Manifest, disableAuthorityValidation bool) (*Server, error) {
+	replicationRpcProvider dataserverrpc.ReplicationRpcProvider, manifest *manifestpkg.Manifest, disableAuthorityValidation bool) (*Server, error) {
 	options := optionsWatch.Load()
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
