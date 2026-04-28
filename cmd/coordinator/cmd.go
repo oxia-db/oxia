@@ -94,7 +94,7 @@ func init() {
 
 func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		watchableOptions := commonwatch.New(coordinatorOptions)
+		optionsWatch := commonwatch.New(coordinatorOptions)
 		// configure the options
 		if cmd.Flags().Changed("sconfig") {
 			// init options
@@ -110,11 +110,11 @@ func exec(cmd *cobra.Command, _ []string) {
 					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
 					return
 				}
-				previous, _ := watchableOptions.Load()
+				previous, _ := optionsWatch.Load()
 				slog.Info("configuration file has changed.",
 					slog.Any("previous", previous),
 					slog.Any("current", temporaryOptions))
-				watchableOptions.Publish(temporaryOptions)
+				optionsWatch.Publish(temporaryOptions)
 			})
 			v.WatchConfig()
 		} else {
@@ -123,6 +123,6 @@ func exec(cmd *cobra.Command, _ []string) {
 				return nil, err
 			}
 		}
-		return coordinator.NewGrpcServer(context.Background(), watchableOptions)
+		return coordinator.NewGrpcServer(context.Background(), optionsWatch)
 	})
 }

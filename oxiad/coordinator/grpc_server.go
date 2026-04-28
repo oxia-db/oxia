@@ -36,27 +36,27 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	commonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 )
 
 type GrpcServer struct {
 	// concurrent control
-	ctx              context.Context
-	ctxCancel        context.CancelFunc
-	wg               sync.WaitGroup
-	logger           *slog.Logger
-	watchableOptions *commonwatch.Watch[*option.Options]
+	ctx          context.Context
+	ctxCancel    context.CancelFunc
+	wg           sync.WaitGroup
+	logger       *slog.Logger
+	optionsWatch *commonwatch.Watch[*option.Options]
 
-	grpcServer       rpc2.GrpcServer
-	managementServer rpc2.GrpcServer
+	grpcServer       commonrpc.GrpcServer
+	managementServer commonrpc.GrpcServer
 	healthServer     *health.Server
 	runtime          coordruntime.Runtime
 	metadata         coordmetadata.Metadata
 	metrics          *metric.PrometheusMetrics
 }
 
-func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*option.Options]) (*GrpcServer, error) {
-	options, _ := watchableOptions.Load()
+func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*GrpcServer, error) {
+	options, _ := optionsWatch.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
 
 	healthServer := health.NewServer()
@@ -66,7 +66,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*
 	if err != nil {
 		return nil, err
 	}
-	grpcServer, err := rpc2.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
+	grpcServer, err := commonrpc.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, internalServerTLS, &internalServer.Auth, nil)
 	if err != nil {
@@ -97,7 +97,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*
 		runtime.Metadata(),
 		runtime,
 	)
-	managementGrpcServer, err := rpc2.Default.StartGrpcServer("admin", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
+	managementGrpcServer, err := commonrpc.Default.StartGrpcServer("admin", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, management)
 	}, managementSvTLS, &managementSv.Auth, nil)
 	if err != nil {
@@ -114,7 +114,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonwatch.Watch[*
 		ctxCancel:        cancel,
 		wg:               sync.WaitGroup{},
 		logger:           slog.With(slog.String("component", "grpc-server")),
-		watchableOptions: watchableOptions,
+		optionsWatch:     optionsWatch,
 		grpcServer:       grpcServer,
 		managementServer: managementGrpcServer,
 		healthServer:     healthServer,
@@ -143,7 +143,7 @@ func startMetricsServer(metrics commonoption.MetricOptions) (*metric.PrometheusM
 }
 
 func (s *GrpcServer) backgroundHandleConfChange() {
-	receiver, err := s.watchableOptions.Subscribe()
+	receiver, err := s.optionsWatch.Subscribe()
 	if err != nil {
 		s.logger.Warn("exit background configuration watch goroutine due to a subscription error", slog.Any("error", err))
 		return

@@ -117,7 +117,7 @@ func init() {
 
 func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		watchableOptions := commonwatch.New(dataServerOptions)
+		optionsWatch := commonwatch.New(dataServerOptions)
 		switch {
 		case cmd.Flags().Changed("sconfig"):
 			// init options
@@ -133,11 +133,11 @@ func exec(cmd *cobra.Command, _ []string) {
 					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
 					return
 				}
-				previous, _ := watchableOptions.Load()
+				previous, _ := optionsWatch.Load()
 				slog.Info("configuration file has changed.",
 					slog.Any("previous", previous),
 					slog.Any("current", temporaryOptions))
-				watchableOptions.Publish(temporaryOptions)
+				optionsWatch.Publish(temporaryOptions)
 			})
 			v.WatchConfig()
 		default:
@@ -147,6 +147,6 @@ func exec(cmd *cobra.Command, _ []string) {
 			}
 		}
 
-		return dataserver.New(context.Background(), watchableOptions)
+		return dataserver.New(context.Background(), optionsWatch)
 	})
 }

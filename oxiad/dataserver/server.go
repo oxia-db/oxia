@@ -28,7 +28,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	commonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
@@ -45,11 +45,11 @@ type Server struct {
 	*publicRpcServer
 
 	// concurrent control
-	ctx              context.Context
-	ctxCancel        context.CancelFunc
-	wg               sync.WaitGroup
-	logger           *slog.Logger
-	watchableOptions *commonwatch.Watch[*option.Options]
+	ctx          context.Context
+	ctxCancel    context.CancelFunc
+	wg           sync.WaitGroup
+	logger       *slog.Logger
+	optionsWatch *commonwatch.Watch[*option.Options]
 
 	replicationRpcProvider    rpc.ReplicationRpcProvider
 	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
@@ -58,11 +58,11 @@ type Server struct {
 	walFactory                wal.Factory
 	kvFactory                 kvstore.Factory
 
-	healthServer rpc2.HealthServer
+	healthServer commonrpc.HealthServer
 }
 
-func New(parent context.Context, watchableOption *commonwatch.Watch[*option.Options]) (*Server, error) {
-	options, _ := watchableOption.Load()
+func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*Server, error) {
+	options, _ := optionsWatch.Load()
 	manifest, err := manifestpkg.NewManifest(options.Storage.Database.Dir)
 	if err != nil {
 		return nil, err
@@ -71,13 +71,13 @@ func New(parent context.Context, watchableOption *commonwatch.Watch[*option.Opti
 	if err != nil {
 		return nil, err
 	}
-	grpcProvider, err := NewWithGrpcProvider(parent, watchableOption, rpc2.Default, provider, manifest, false)
+	grpcProvider, err := NewWithGrpcProvider(parent, optionsWatch, commonrpc.Default, provider, manifest, false)
 	return grpcProvider, err
 }
 
-func NewWithGrpcProvider(parent context.Context, watchableOption *commonwatch.Watch[*option.Options], provider rpc2.GrpcProvider,
+func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options], provider commonrpc.GrpcProvider,
 	replicationRpcProvider rpc.ReplicationRpcProvider, manifest *manifestpkg.Manifest, disableAuthorityValidation bool) (*Server, error) {
-	options, _ := watchableOption.Load()
+	options, _ := optionsWatch.Load()
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
 	storage := &options.Storage
@@ -97,7 +97,7 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonwatch.Wa
 		ctxCancel:              cancel,
 		wg:                     sync.WaitGroup{},
 		logger:                 slog.With(slog.String("component", "grpc-server")),
-		watchableOptions:       watchableOption,
+		optionsWatch:           optionsWatch,
 		replicationRpcProvider: replicationRpcProvider,
 		walFactory: wal.NewWalFactory(&wal.FactoryOptions{
 			BaseWalDir:  storage.WAL.Dir,
@@ -106,7 +106,7 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonwatch.Wa
 			SyncData:    storage.WAL.IsSyncEnabled(),
 		}),
 		kvFactory:    kvFactory,
-		healthServer: rpc2.NewClosableHealthServer(context.Background()),
+		healthServer: commonrpc.NewClosableHealthServer(context.Background()),
 	}
 
 	s.wg.Go(func() {
@@ -171,7 +171,7 @@ func (s *Server) InternalPort() int {
 }
 
 func (s *Server) backgroundHandleConfChange() {
-	receiver, err := s.watchableOptions.Subscribe()
+	receiver, err := s.optionsWatch.Subscribe()
 	if err != nil {
 		s.logger.Warn("exit background configuration watch goroutine due to a subscription error", slog.Any("error", err))
 		return
