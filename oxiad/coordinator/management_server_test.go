@@ -40,6 +40,15 @@ func dataServer(name *string, public, internal string) *proto.DataServerIdentity
 func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
+	if config == nil {
+		config = &proto.ClusterConfiguration{}
+	}
+	if len(config.Servers) == 0 {
+		config.Servers = []*proto.DataServerIdentity{
+			{Public: "seed-public-1:6648", Internal: "seed-internal-1:6649"},
+		}
+	}
+
 	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
 	_, err := configProvider.Store(config, provider.NotExists)
 	require.NoError(t, err)
