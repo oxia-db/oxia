@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
 	"github.com/oxia-db/oxia/oxia"
@@ -68,7 +70,9 @@ func TestNormalShardBalancer(t *testing.T) {
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	configProvider := mock.NewConfigProvider(t, &cc)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(&cc, provider.NotExists)
+	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
@@ -86,7 +90,10 @@ func TestNormalShardBalancer(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
-	mock.PutConfig(t, configProvider, &cc)
+	_, version, err := configProvider.Get()
+	assert.NoError(t, err)
+	_, err = configProvider.Store(&cc, version)
+	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
@@ -175,7 +182,9 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 		Servers:        shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	configProvider := mock.NewConfigProvider(t, &cc)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(&cc, provider.NotExists)
+	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
@@ -193,7 +202,10 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
-	mock.PutConfig(t, configProvider, &cc)
+	_, version, err := configProvider.Get()
+	assert.NoError(t, err)
+	_, err = configProvider.Store(&cc, version)
+	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
@@ -269,7 +281,9 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 		},
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
-	configProvider := mock.NewConfigProvider(t, &cc)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(&cc, provider.NotExists)
+	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
@@ -306,7 +320,10 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	}
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad, s6ad)...)
-	mock.PutConfig(t, configProvider, &cc)
+	_, version, err := configProvider.Get()
+	assert.NoError(t, err)
+	_, err = configProvider.Store(&cc, version)
+	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())

@@ -69,7 +69,9 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,

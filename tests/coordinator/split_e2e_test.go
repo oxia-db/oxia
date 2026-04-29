@@ -42,7 +42,6 @@ import (
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
-	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func TestCoordinator_ShardSplit(t *testing.T) {
@@ -62,7 +61,9 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	require.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	clientPool := rpc.NewClientPool(nil, nil)
 
@@ -321,7 +322,9 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	require.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -873,7 +876,9 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				KeySorting:        keySortingValue,
 			}}, []*proto.DataServerIdentity{sa1})
 
-			configProvider := mock.NewConfigProvider(t, clusterConfig)
+			configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+			_, err = configProvider.Store(clusterConfig, provider.NotExists)
+			require.NoError(t, err)
 			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 			metadata := coordinatorInstance.Metadata()

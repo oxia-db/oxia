@@ -74,7 +74,9 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		Servers:               cluster.addresses,
 		AllowExtraAuthorities: []string{cluster.authority},
 	}
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	require.NoError(t, err)
 	cluster.coordinator = newCoordinatorInstance(t, metadataProvider, configProvider, coordinatorrpc.NewRpcProviderFactory(nil))
 
 	require.Eventually(t, func() bool {

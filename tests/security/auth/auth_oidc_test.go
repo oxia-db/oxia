@@ -48,7 +48,6 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 
 	clientauth "github.com/oxia-db/oxia/common/auth"
-	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (address string, closeFunc func()) {
@@ -108,7 +107,9 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	return s1Addr.Public, func() {
@@ -294,7 +295,9 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
@@ -443,7 +446,9 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()

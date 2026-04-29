@@ -39,7 +39,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func newServer(t *testing.T) (s *dataserver.Server, addr *proto.DataServerIdentity) {
@@ -77,7 +76,9 @@ func TestCoordinatorE2E(t *testing.T) {
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
@@ -112,7 +113,9 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 		InitialShardCount: 4,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
@@ -161,7 +164,9 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
@@ -262,7 +267,9 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 		InitialShardCount: 3,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
@@ -350,7 +357,9 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 		InitialShardCount: 2,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
@@ -395,7 +404,9 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	newClusterConfig := newClusterConfig([]*proto.Namespace{}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	slog.Info("Restarting coordinator")
-	newConfigProvider := mock.NewConfigProvider(t, newClusterConfig)
+	newConfigProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = newConfigProvider.Store(newClusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	newMetadata := createCoordinatorMetadata(t, metadataProvider, newConfigProvider)
 	t.Cleanup(func() {
 		assert.NoError(t, newMetadata.Close())
@@ -436,7 +447,9 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		InitialShardCount: 2,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
@@ -464,7 +477,10 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		InitialShardCount: 2,
 		ReplicationFactor: 1,
 	})
-	mock.PutConfig(t, configProvider, clusterConfig)
+	_, version, err := configProvider.Get()
+	assert.NoError(t, err)
+	_, err = configProvider.Store(clusterConfig, version)
+	assert.NoError(t, err)
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
@@ -518,7 +534,9 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 		InitialShardCount: 2,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	assert.Equal(t, 3, len(c.NodeControllers()))
@@ -531,7 +549,10 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	// Remove s1
 	clusterConfig.Servers = clusterConfig.Servers[1:]
 
-	mock.PutConfig(t, configProvider, clusterConfig)
+	_, version, err := configProvider.Get()
+	assert.NoError(t, err)
+	_, err = configProvider.Store(clusterConfig, version)
+	assert.NoError(t, err)
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
@@ -573,7 +594,9 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3, sa4})
 
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := c.Metadata()
@@ -602,7 +625,10 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	}
 	clusterConfig.Servers = d
 
-	mock.PutConfig(t, configProvider, clusterConfig)
+	_, version, err := configProvider.Get()
+	assert.NoError(t, err)
+	_, err = configProvider.Store(clusterConfig, version)
+	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
 		return len(c.NodeControllers()) == 3
 	}, 10*time.Second, 10*time.Millisecond)
@@ -642,7 +668,9 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
-	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := c.Metadata()
@@ -669,7 +697,10 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	}
 
 	clusterConfig.Servers = clusterServer
-	mock.PutConfig(t, configProvider, clusterConfig)
+	_, version, err := configProvider.Get()
+	assert.NoError(t, err)
+	_, err = configProvider.Store(clusterConfig, version)
+	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		for _, ns := range metadata.GetStatus().Namespaces {

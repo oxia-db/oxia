@@ -22,6 +22,8 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/state"
 
 	"github.com/oxia-db/oxia/tests/mock"
@@ -101,7 +103,9 @@ func TestLeaderBalanced(t *testing.T) {
 		},
 	}
 
-	configProvider := mock.NewConfigProvider(t, cc)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(cc, provider.NotExists)
+	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
@@ -144,7 +148,9 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 		},
 	}
 
-	configProvider := mock.NewConfigProvider(t, cc)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(cc, provider.NotExists)
+	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
@@ -159,7 +165,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 
 	// wait for leader moved
 	ctx := t.Context()
-	err := coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *proto.ClusterStatus) bool {
+	err = coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *proto.ClusterStatus) bool {
 		_, _, nodeShards := state.NodeShardLeaders(candidates, status)
 		shards := nodeShards[s3ad.GetNameOrDefault()]
 		return shards.Size() == 0
@@ -214,7 +220,9 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 		},
 	}
 
-	configProvider := mock.NewConfigProvider(t, cc)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(cc, provider.NotExists)
+	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
@@ -225,7 +233,10 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 
 	cc.Servers = append(cc.Servers, dataServers(s4ad, s5ad, s6ad)...)
-	mock.PutConfig(t, configProvider, cc)
+	_, version, err := configProvider.Get()
+	require.NoError(t, err)
+	_, err = configProvider.Store(cc, version)
+	require.NoError(t, err)
 	candidates = linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault(), s4ad.GetNameOrDefault(), s5ad.GetNameOrDefault(), s6ad.GetNameOrDefault())
 
 	// wait for leader balanced
