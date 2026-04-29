@@ -17,6 +17,7 @@ package runtime
 import (
 	"io"
 
+	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
@@ -28,6 +29,14 @@ type Runtime interface {
 	controller.ShardEventListener
 	controller.ShardAssignmentsProvider
 	controller.DataServerEventListener
+
+	PutDataServerIfAbsent(server *proto.DataServer)
+	DeleteDataServer(id string)
+	SyncShardControllerServerAddresses()
+	PutShard(namespace string, namespaceConfig *proto.Namespace, shard int64, shardMetadata *proto.ShardMetadata)
+	DeleteShard(shard int64)
+	RecomputeAssignments()
+	SelectNewEnsemble(namespaceConfig *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error)
 
 	NodeControllers() map[string]controller.DataServerController
 

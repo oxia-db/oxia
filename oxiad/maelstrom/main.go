@@ -30,6 +30,7 @@ import (
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -193,7 +194,7 @@ func main() {
 			)
 			os.Exit(1)
 		}
-		_, err = coordruntime.New(
+		coordinatorRuntime, err := coordruntime.New(
 			metadata,
 			func(instanceID string) rpc.Provider {
 				return newRpcProvider(dispatcher)
@@ -205,6 +206,7 @@ func main() {
 			)
 			os.Exit(1)
 		}
+		_ = coordreconciler.New(context.Background(), coordinatorRuntime)
 	} else {
 		// Any other node will be a storage node
 		dataDir, err := os.MkdirTemp("", "oxia-maelstrom")

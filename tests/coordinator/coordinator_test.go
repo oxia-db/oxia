@@ -23,9 +23,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
-
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
 func TestCoordinatorInitiateLeaderElection(t *testing.T) {
@@ -46,15 +44,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	configProvider := metadata2.NewProvider(provider.ClusterConfigCodec)
 	_, err := configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
-	metadata := createCoordinatorMetadata(t, metadataProvider, configProvider)
-	defer func() {
-		assert.NoError(t, metadata.Close())
-	}()
-	coordinatorInstance, err := coordruntime.New(
-		metadata,
-		rpc2.NewRpcProviderFactory(nil),
-	)
-	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	shardMetadata := &proto.ShardMetadata{

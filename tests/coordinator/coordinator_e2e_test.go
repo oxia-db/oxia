@@ -34,7 +34,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -407,12 +406,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	newConfigProvider := memory.NewProvider(provider.ClusterConfigCodec)
 	_, err = newConfigProvider.Store(newClusterConfig, provider.NotExists)
 	assert.NoError(t, err)
-	newMetadata := createCoordinatorMetadata(t, metadataProvider, newConfigProvider)
-	t.Cleanup(func() {
-		assert.NoError(t, newMetadata.Close())
-	})
-	restartedCoordinator, err := coordruntime.New(newMetadata, rpc2.NewRpcProviderFactory(nil))
-	assert.NoError(t, err)
+	restartedCoordinator := newCoordinatorInstance(t, metadataProvider, newConfigProvider, rpc2.NewRpcProviderFactory(nil))
 	coordinatorInstance = restartedCoordinator
 
 	metadata = coordinatorInstance.Metadata()
