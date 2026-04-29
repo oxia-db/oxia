@@ -40,12 +40,12 @@ func dataServer(name *string, public, internal string) *proto.DataServerIdentity
 func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
-	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(config, provider.NotExists)
+	require.NoError(t, err)
+	metadataFactory := coordmetadata.NewFactoryWithProviders(
 		memory.NewProvider(provider.ClusterStatusCodec),
-		func() (*proto.ClusterConfiguration, error) {
-			return config, nil
-		},
-		nil,
+		configProvider,
 	)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	require.NoError(t, err)

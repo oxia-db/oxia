@@ -76,6 +76,7 @@ func (wm WatchMode) Enabled() bool {
 
 type Codec[T gproto.Message] interface {
 	Clone(value T) T
+	NewZero() T
 	Unmarshal(data []byte) (T, error)
 	MarshalYAML(value T) ([]byte, error)
 	MarshalJSON(value T) ([]byte, error)
@@ -112,6 +113,10 @@ func (statusCodec) Clone(value *commonproto.ClusterStatus) *commonproto.ClusterS
 	return cloneMessage(value)
 }
 
+func (statusCodec) NewZero() *commonproto.ClusterStatus {
+	return &commonproto.ClusterStatus{}
+}
+
 func (statusCodec) MarshalYAML(value *commonproto.ClusterStatus) ([]byte, error) {
 	return commonproto.MarshalClusterStatusYAML(value)
 }
@@ -126,6 +131,10 @@ func (statusCodec) ConfigMapDataKey() string {
 
 func (configCodec) Unmarshal(data []byte) (*commonproto.ClusterConfiguration, error) {
 	return commonproto.UnmarshalClusterConfigurationYAML(data)
+}
+
+func (configCodec) NewZero() *commonproto.ClusterConfiguration {
+	return &commonproto.ClusterConfiguration{}
 }
 
 func (configCodec) Clone(value *commonproto.ClusterConfiguration) *commonproto.ClusterConfiguration {

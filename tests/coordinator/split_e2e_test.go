@@ -61,13 +61,10 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	coordinatorInstance := newCoordinatorInstance(
-		t,
-		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
-		rpc2.NewRpcProviderFactory(nil),
-	)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	require.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	clientPool := rpc.NewClientPool(nil, nil)
 
 	metadata := coordinatorInstance.Metadata()
@@ -325,12 +322,14 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	require.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 		rpc2.NewRpcProviderFactory(nil),
 	)
 
@@ -877,7 +876,10 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				KeySorting:        keySortingValue,
 			}}, []*proto.DataServerIdentity{sa1})
 
-			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
+			configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+			_, err = configProvider.Store(clusterConfig, provider.NotExists)
+			require.NoError(t, err)
+			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 			metadata := coordinatorInstance.Metadata()
 			status := metadata.GetStatus()

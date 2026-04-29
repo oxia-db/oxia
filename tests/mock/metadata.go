@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resolver
+package mock
 
 import (
 	"testing"
@@ -20,29 +20,27 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
-	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 )
 
-func newCoordinatorInstance(
-	t *testing.T,
-	metadataProvider provider.Provider[*proto.ClusterStatus],
-	configProvider provider.Provider[*proto.ClusterConfiguration],
-	rpcProvider coordinatorrpc.ProviderFactory,
-) coordruntime.Runtime {
+func NewConfigProvider(t *testing.T, clusterConfig *proto.ClusterConfiguration) provider.Provider[*proto.ClusterConfiguration] {
 	t.Helper()
 
-	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
-	metadata, err := metadataFactory.CreateMetadata(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, metadata.Close())
-		require.NoError(t, metadataFactory.Close())
-	})
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	PutConfig(t, configProvider, clusterConfig)
+	return configProvider
+}
 
-	coordinatorInstance, err := coordruntime.New(metadata, rpcProvider)
+func PutConfig(
+	t *testing.T,
+	configProvider provider.Provider[*proto.ClusterConfiguration],
+	clusterConfig *proto.ClusterConfiguration,
+) {
+	t.Helper()
+
+	_, version, err := configProvider.Get()
 	require.NoError(t, err)
-	return coordinatorInstance
+	_, err = configProvider.Store(clusterConfig, version)
+	require.NoError(t, err)
 }

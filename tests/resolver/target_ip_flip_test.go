@@ -65,25 +65,19 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 	}
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
-	cluster.coordinator = newCoordinatorInstance(
-		t,
-		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) {
-			return &proto.ClusterConfiguration{
-				Namespaces: []*proto.Namespace{{
-					Name:              constant.DefaultNamespace,
-					ReplicationFactor: 1,
-					InitialShardCount: 3,
-				}},
-				Servers: func() []*proto.DataServerIdentity {
-					return cluster.addresses
-				}(),
-				AllowExtraAuthorities: []string{cluster.authority},
-			}, nil
-		},
-		nil,
-		coordinatorrpc.NewRpcProviderFactory(nil),
-	)
+	clusterConfig := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 1,
+			InitialShardCount: 3,
+		}},
+		Servers:               cluster.addresses,
+		AllowExtraAuthorities: []string{cluster.authority},
+	}
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	require.NoError(t, err)
+	cluster.coordinator = newCoordinatorInstance(t, metadataProvider, configProvider, coordinatorrpc.NewRpcProviderFactory(nil))
 
 	require.Eventually(t, func() bool {
 		shard := cluster.coordinator.Metadata().GetStatus().Namespaces[constant.DefaultNamespace].Shards[0]

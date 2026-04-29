@@ -49,10 +49,12 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 			leader.Public,
 		},
 	}
-	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	require.NoError(t, err)
+	metadataFactory := coordmetadata.NewFactoryWithProviders(
 		memory.NewProvider(provider.ClusterStatusCodec),
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 	)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	require.NoError(t, err)
@@ -117,10 +119,12 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 			Internal: active.Internal,
 		}},
 	}
-	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	require.NoError(t, err)
+	metadataFactory := coordmetadata.NewFactoryWithProviders(
 		memory.NewProvider(provider.ClusterStatusCodec),
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 	)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	require.NoError(t, err)

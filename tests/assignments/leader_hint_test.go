@@ -41,11 +41,13 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 		rpc.NewRpcProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
@@ -97,11 +99,13 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 		rpc.NewRpcProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
@@ -153,11 +157,13 @@ func TestLeaderHintListWithClient(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 		rpc.NewRpcProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
@@ -200,11 +206,13 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 		rpc.NewRpcProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
@@ -256,11 +264,13 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 		rpc.NewRpcProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
@@ -307,11 +317,13 @@ func TestLeaderHintWithClient(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 		rpc.NewRpcProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()

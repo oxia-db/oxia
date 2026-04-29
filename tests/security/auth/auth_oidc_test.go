@@ -107,9 +107,10 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProviderFactory(nil))
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	return s1Addr.Public, func() {
 		s1.Close()
@@ -294,10 +295,11 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// Test authentication with issuer 1
@@ -444,10 +446,11 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// Create a valid token

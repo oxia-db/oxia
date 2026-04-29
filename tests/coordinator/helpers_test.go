@@ -29,16 +29,15 @@ import (
 func createCoordinatorMetadata(
 	t *testing.T,
 	metadataProvider provider.Provider[*proto.ClusterStatus],
-	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
-	clusterConfigNotificationsCh chan any,
+	configProvider provider.Provider[*proto.ClusterConfiguration],
 ) coordmetadata.Metadata {
 	t.Helper()
 
-	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
-		metadataProvider,
-		clusterConfigProvider,
-		clusterConfigNotificationsCh,
-	)
+	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
+	t.Cleanup(func() {
+		require.NoError(t, metadataFactory.Close())
+	})
+
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	return metadata
@@ -47,13 +46,12 @@ func createCoordinatorMetadata(
 func newCoordinatorInstance(
 	t *testing.T,
 	metadataProvider provider.Provider[*proto.ClusterStatus],
-	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
-	clusterConfigNotificationsCh chan any,
+	configProvider provider.Provider[*proto.ClusterConfiguration],
 	rpcProvider rpc2.ProviderFactory,
 ) coordruntime.Runtime {
 	t.Helper()
 
-	metadata := createCoordinatorMetadata(t, metadataProvider, clusterConfigProvider, clusterConfigNotificationsCh)
+	metadata := createCoordinatorMetadata(t, metadataProvider, configProvider)
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
 	})

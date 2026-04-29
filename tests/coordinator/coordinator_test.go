@@ -43,7 +43,10 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		InitialShardCount: 2,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	metadata := createCoordinatorMetadata(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil)
+	configProvider := metadata2.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
+	metadata := createCoordinatorMetadata(t, metadataProvider, configProvider)
 	defer func() {
 		assert.NoError(t, metadata.Close())
 	}()

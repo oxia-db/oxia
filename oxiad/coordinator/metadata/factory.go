@@ -40,15 +40,13 @@ type Factory struct {
 	metadataRaft   *raft.Raft
 }
 
-func NewFactoryWithCallbackConfig(
-	ctx context.Context,
+func NewFactoryWithProviders(
 	statusProvider provider.Provider[*commonproto.ClusterStatus],
-	clusterConfigProvider func() (*commonproto.ClusterConfiguration, error),
-	clusterConfigNotificationsCh <-chan any,
+	configProvider provider.Provider[*commonproto.ClusterConfiguration],
 ) *Factory {
 	return &Factory{
 		statusProvider: statusProvider,
-		configProvider: newCallbackConfigProvider(ctx, clusterConfigProvider, clusterConfigNotificationsCh),
+		configProvider: configProvider,
 	}
 }
 
