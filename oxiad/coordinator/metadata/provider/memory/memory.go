@@ -75,8 +75,5 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersi
 }
 
 func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
-	m.Lock()
-	defer m.Unlock()
-
 	return m.watch.Subscribe(), nil
 }
