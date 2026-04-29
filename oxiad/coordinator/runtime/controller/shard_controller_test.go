@@ -46,13 +46,24 @@ var namespaceConfig = &proto.Namespace{
 func newTestMetadata(t *testing.T, metadataProvider provider.Provider[*proto.ClusterStatus], clusterConfig *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
-	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
-		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) {
-			return clusterConfig, nil
-		},
-		nil,
-	)
+	if clusterConfig == nil {
+		clusterConfig = &proto.ClusterConfiguration{}
+	}
+	if len(clusterConfig.Namespaces) == 0 {
+		clusterConfig.Namespaces = []*proto.Namespace{namespaceConfig}
+	}
+	if len(clusterConfig.Servers) == 0 {
+		clusterConfig.Servers = []*proto.DataServerIdentity{
+			{Public: "seed-public-1:6648", Internal: "seed-internal-1:6649"},
+			{Public: "seed-public-2:7648", Internal: "seed-internal-2:7649"},
+			{Public: "seed-public-3:8648", Internal: "seed-internal-3:8649"},
+		}
+	}
+
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	assert.NoError(t, err)
+	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	assert.NoError(t, err)
 	t.Cleanup(func() {

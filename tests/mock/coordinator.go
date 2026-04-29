@@ -31,11 +31,32 @@ import (
 func NewCoordinator(t *testing.T, config *proto.ClusterConfiguration, clusterConfigNotificationCh chan any) coordruntime.Runtime {
 	t.Helper()
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
-	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
-		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return config, nil },
-		clusterConfigNotificationCh,
-	)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(config, provider.NotExists)
+	assert.NoError(t, err)
+	if clusterConfigNotificationCh != nil {
+		go func() {
+			for {
+				select {
+				case <-t.Context().Done():
+					return
+				case _, ok := <-clusterConfigNotificationCh:
+					if !ok {
+						return
+					}
+				}
+
+				_, version, err := configProvider.Get()
+				if err != nil {
+					panic(err)
+				}
+				if _, err = configProvider.Store(config, version); err != nil {
+					panic(err)
+				}
+			}
+		}()
+	}
+	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	assert.NoError(t, err)
 	t.Cleanup(func() {

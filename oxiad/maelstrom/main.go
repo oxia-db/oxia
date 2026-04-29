@@ -30,6 +30,7 @@ import (
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -198,11 +199,18 @@ func main() {
 			)
 			os.Exit(1)
 		}
-		metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(
-			context.Background(),
+		configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+		_, err = configProvider.Store(clusterConfig, provider.NotExists)
+		if err != nil {
+			slog.Error(
+				"failed to seed coordinator config provider",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+		metadataFactory := coordmetadata.NewFactoryWithProviders(
 			metadataProvider,
-			func() (*commonproto.ClusterConfiguration, error) { return clusterConfig, nil },
-			nil,
+			configProvider,
 		)
 		metadata, err := metadataFactory.CreateMetadata(context.Background())
 		if err != nil {

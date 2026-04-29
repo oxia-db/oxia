@@ -112,98 +112,6 @@ func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonpr
 	return m
 }
 
-type callbackConfigProvider struct {
-	ctx           context.Context
-	ctxCancel     context.CancelFunc
-	wg            sync.WaitGroup
-	load          func() (*commonproto.ClusterConfiguration, error)
-	notifications <-chan any
-	watcher       *commonwatch.Watch[*commonproto.ClusterConfiguration]
-}
-
-func newCallbackConfigProvider(
-	ctx context.Context,
-	load func() (*commonproto.ClusterConfiguration, error),
-	notifications <-chan any,
-) provider.Provider[*commonproto.ClusterConfiguration] {
-	watchCtx, cancel := context.WithCancel(ctx)
-	p := &callbackConfigProvider{
-		ctx:           watchCtx,
-		ctxCancel:     cancel,
-		load:          load,
-		notifications: notifications,
-	}
-	if notifications != nil {
-		initialValue, _, err := p.Get()
-		if err != nil {
-			slog.Warn("Failed to load initial watched callback config provider metadata", slog.Any("error", err))
-		}
-		p.watcher = commonwatch.New(initialValue)
-		p.wg.Go(func() {
-			process.DoWithLabels(p.ctx, map[string]string{
-				"component": "callback-config-provider-watch",
-			}, p.watchLoop)
-		})
-	}
-	return p
-}
-
-func (p *callbackConfigProvider) Get() (*commonproto.ClusterConfiguration, provider.Version, error) {
-	config, err := p.LoadConfig()
-	return config, provider.NotExists, err
-}
-
-func (p *callbackConfigProvider) LoadConfig() (*commonproto.ClusterConfiguration, error) {
-	if p.load == nil {
-		return nil, provider.ErrNotInitialized
-	}
-	return p.load()
-}
-
-func (*callbackConfigProvider) Store(*commonproto.ClusterConfiguration, provider.Version) (provider.Version, error) {
-	return provider.NotExists, errors.New("callback config provider is read-only")
-}
-
-func (*callbackConfigProvider) WaitToBecomeLeader() error {
-	return nil
-}
-
-func (p *callbackConfigProvider) Watch() (*commonwatch.Receiver[*commonproto.ClusterConfiguration], error) {
-	if p.watcher == nil {
-		return nil, provider.ErrWatchUnsupported
-	}
-	return p.watcher.Subscribe(), nil
-}
-
-func (p *callbackConfigProvider) watchLoop() {
-	for {
-		select {
-		case <-p.ctx.Done():
-			return
-		case _, ok := <-p.notifications:
-			if !ok {
-				return
-			}
-			p.publishCurrentValue()
-		}
-	}
-}
-
-func (p *callbackConfigProvider) publishCurrentValue() {
-	value, _, err := p.Get()
-	if err != nil {
-		slog.Warn("Failed to load watched callback config provider metadata", slog.Any("error", err))
-		return
-	}
-	p.watcher.Publish(value)
-}
-
-func (p *callbackConfigProvider) Close() error {
-	p.ctxCancel()
-	p.wg.Wait()
-	return nil
-}
-
 func (m *coordinatorMetadata) Close() error {
 	m.ctxCancel()
 	m.wg.Wait()
@@ -361,12 +269,6 @@ func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
 }
 
 func loadClusterConfigFromProvider(configProvider provider.Provider[*commonproto.ClusterConfiguration]) (*commonproto.ClusterConfiguration, error) {
-	if loader, ok := configProvider.(interface {
-		LoadConfig() (*commonproto.ClusterConfiguration, error)
-	}); ok {
-		return loader.LoadConfig()
-	}
-
 	config, _, err := configProvider.Get()
 	if err != nil {
 		return nil, err
@@ -425,11 +327,9 @@ func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *commonwatch.Rece
 
 func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Receiver[*commonproto.ClusterConfiguration]) {
 	config := configWatch.Load()
-	if !m.usesCallbackConfigProvider() {
-		if err := validateClusterConfig(config); err != nil {
-			m.logger.Warn("received invalid cluster config watch value", slog.Any("error", err))
-			return
-		}
+	if err := validateClusterConfig(config); err != nil {
+		m.logger.Warn("received invalid cluster config watch value", slog.Any("error", err))
+		return
 	}
 	clonedConfig := gproto.Clone(config).(*commonproto.ClusterConfiguration) //nolint:revive
 
@@ -444,11 +344,6 @@ func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Rec
 		return
 	}
 	m.clusterConfigWatch.Publish(clonedConfig)
-}
-
-func (m *coordinatorMetadata) usesCallbackConfigProvider() bool {
-	_, ok := m.configProvider.(*callbackConfigProvider)
-	return ok
 }
 
 func (m *coordinatorMetadata) GetConfig() *commonproto.ClusterConfiguration {

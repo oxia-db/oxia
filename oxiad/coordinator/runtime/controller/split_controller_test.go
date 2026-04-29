@@ -81,13 +81,17 @@ func setupSplitTest(t *testing.T, phase string) (
 
 	rpcMock := newMockRpcProvider()
 	metaProvider := memory.NewProvider(provider.ClusterStatusCodec)
-	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
-		metaProvider,
-		func() (*proto.ClusterConfiguration, error) {
-			return &proto.ClusterConfiguration{}, nil
-		},
-		nil,
-	)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(&proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			InitialShardCount: 1,
+			ReplicationFactor: 3,
+		}},
+		Servers: []*proto.DataServerIdentity{ps1, ps2, ps3},
+	}, provider.NotExists)
+	require.NoError(t, err)
+	metadataFactory := coordmetadata.NewFactoryWithProviders(metaProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, metadata.Close()) })

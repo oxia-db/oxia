@@ -33,6 +33,7 @@ type Provider[T gproto.Message] struct {
 	codec   provider.Codec[T]
 	value   T
 	version provider.Version
+	watch   *commonwatch.Watch[T]
 }
 
 func (*Provider[T]) WaitToBecomeLeader() error {
@@ -40,9 +41,11 @@ func (*Provider[T]) WaitToBecomeLeader() error {
 }
 
 func NewProvider[T gproto.Message](codec provider.Codec[T]) provider.Provider[T] {
+	var zero T
 	return &Provider[T]{
 		codec:   codec,
 		version: provider.NotExists,
+		watch:   commonwatch.New(zero),
 	}
 }
 
@@ -67,9 +70,13 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersi
 
 	m.value = m.codec.Clone(value)
 	m.version = provider.NextVersion(m.version)
+	m.watch.Publish(m.codec.Clone(m.value))
 	return m.version, nil
 }
 
-func (*Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
-	return nil, provider.ErrWatchUnsupported
+func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
+	m.Lock()
+	defer m.Unlock()
+
+	return m.watch.Subscribe(), nil
 }
