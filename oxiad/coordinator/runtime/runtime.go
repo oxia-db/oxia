@@ -147,12 +147,16 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 	}
 }
 
-func (c *runtime) PutShard(namespace string, namespaceConfig *proto.Namespace, shard int64, shardMetadata *proto.ShardMetadata) {
+func (c *runtime) PutShard(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
 	c.Lock()
 	defer c.Unlock()
 
 	if _, exist := c.shardControllers[shard]; exist {
 		return
+	}
+	namespaceConfig, exist := c.metadata.GetNamespace(namespace)
+	if !exist {
+		namespaceConfig = &proto.Namespace{}
 	}
 	c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
 		pb.Clone(shardMetadata).(*proto.ShardMetadata), c.metadata, c.findDataServerFeatures,

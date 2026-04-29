@@ -39,6 +39,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
+	"github.com/oxia-db/oxia/common/commonio"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 )
@@ -165,48 +166,13 @@ func main() {
 	}
 
 	if thisNode == "n1" {
-		// First node is going to be the "coordinator"
-		clusterConfig := &commonproto.ClusterConfiguration{
-			Namespaces: []*commonproto.Namespace{{
-				Name:              constant.DefaultNamespace,
-				ReplicationFactor: 3,
-				InitialShardCount: 1,
-			}},
-			Servers: servers,
-		}
-
-		statusProvider := memory.NewProvider(provider.ClusterStatusCodec)
-		configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-		_, err := configProvider.Store(clusterConfig, provider.NotExists)
-		if err != nil {
+		if err := runCoordinator(dispatcher, servers); err != nil {
 			slog.Error(
-				"failed to seed coordinator config provider",
+				"failed to start coordinator",
 				slog.Any("error", err),
 			)
 			os.Exit(1)
 		}
-		metadataFactory := coordmetadata.NewFactoryWithProviders(statusProvider, configProvider)
-		metadata, err := metadataFactory.CreateMetadata(context.Background())
-		if err != nil {
-			slog.Error(
-				"failed to create coordinator metadata",
-				slog.Any("error", err),
-			)
-			os.Exit(1)
-		}
-		coordinatorRuntime, err := coordruntime.New(
-			metadata,
-			func(instanceID string) rpc.Provider {
-				return newRpcProvider(dispatcher)
-			})
-		if err != nil {
-			slog.Error(
-				"failed to create coordinator",
-				slog.Any("error", err),
-			)
-			os.Exit(1)
-		}
-		_ = coordreconciler.New(context.Background(), coordinatorRuntime)
 	} else {
 		// Any other node will be a storage node
 		dataDir, err := os.MkdirTemp("", "oxia-maelstrom")
@@ -249,4 +215,57 @@ func main() {
 
 		dispatcher.ReceivedMessage(rt, req, protoMsg)
 	}
+}
+
+func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIdentity) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	clusterConfig := &commonproto.ClusterConfiguration{
+		Namespaces: []*commonproto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 3,
+			InitialShardCount: 1,
+		}},
+		Servers: servers,
+	}
+
+	statusProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	if _, err := configProvider.Store(clusterConfig, provider.NotExists); err != nil {
+		return errors.Wrap(err, "failed to seed coordinator config provider")
+	}
+
+	metadataFactory := coordmetadata.NewFactoryWithProviders(statusProvider, configProvider)
+	defer func() {
+		_ = commonio.CloseIfNotNil(metadataFactory)
+	}()
+
+	metadata, err := metadataFactory.CreateMetadata(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to create coordinator metadata")
+	}
+	defer func() {
+		_ = commonio.CloseIfNotNil(metadata)
+	}()
+
+	coordinatorRuntime, err := coordruntime.New(
+		metadata,
+		func(instanceID string) rpc.Provider {
+			return newRpcProvider(dispatcher)
+		},
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to create coordinator")
+	}
+	defer func() {
+		_ = commonio.CloseIfNotNil(coordinatorRuntime)
+	}()
+
+	reconciler := coordreconciler.New(ctx, coordinatorRuntime)
+	defer func() {
+		_ = commonio.CloseIfNotNil(reconciler)
+	}()
+
+	return nil
 }

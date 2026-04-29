@@ -21,23 +21,21 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
-var _ Reconciler = (*namespaceReconciler)(nil)
+var _ Reconciler = (*shardReconciler)(nil)
 
-type namespaceReconciler struct {
+type shardReconciler struct {
 	runtime runtime.Runtime
 }
 
-func (*namespaceReconciler) Close() error { return nil }
+func (*shardReconciler) Close() error { return nil }
 
-func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterConfiguration) error {
+func (r *shardReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterConfiguration) error {
 	metadata := r.runtime.Metadata()
 	clusterStatus, shardsToAdd, shardsToDelete := metadata.ApplyStatusChanges(snapshot, r.runtime.SelectNewEnsemble)
 
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
-		if namespaceConfig, exist := metadata.GetNamespace(namespace); exist {
-			r.runtime.PutShard(namespace, namespaceConfig, shard, shardMetadata)
-		}
+		r.runtime.PutShard(namespace, shard, shardMetadata)
 	}
 	for _, shard := range shardsToDelete {
 		r.runtime.DeleteShard(shard)

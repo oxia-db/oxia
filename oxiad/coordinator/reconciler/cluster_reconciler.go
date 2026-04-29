@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
@@ -51,13 +52,12 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 		runtime:   coordinatorRuntime,
 		reconcilers: []Reconciler{
 			&dataServerReconciler{runtime: coordinatorRuntime},
-			&namespaceReconciler{runtime: coordinatorRuntime},
+			&shardReconciler{runtime: coordinatorRuntime},
 		},
 	}
 
 	receiver := r.runtime.Metadata().ConfigWatch().Subscribe()
-
-	r.reconcile0(receiver)
+	r.reconcile0(r.runtime.Metadata().GetConfig(), receiver)
 
 	r.wg.Go(func() {
 		process.DoWithLabels(reconcilerCtx, map[string]string{
@@ -71,7 +71,12 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 func (r *clusterReconciler) Close() error {
 	r.ctxCancel()
 	r.wg.Wait()
-	return nil
+
+	var err error
+	for _, reconciler := range r.reconcilers {
+		err = multierr.Append(err, reconciler.Close())
+	}
+	return err
 }
 
 func (r *clusterReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterConfiguration) error {
@@ -90,13 +95,12 @@ func (r *clusterReconciler) bgWatchClusterConfiguration(receiver *commonwatch.Re
 		case <-r.ctx.Done():
 			return
 		case <-receiver.Changed():
-			r.reconcile0(receiver)
+			r.reconcile0(receiver.Load(), receiver)
 		}
 	}
 }
 
-func (r *clusterReconciler) reconcile0(receiver *commonwatch.Receiver[*proto.ClusterConfiguration]) {
-	snapshot := receiver.Load()
+func (r *clusterReconciler) reconcile0(snapshot *proto.ClusterConfiguration, receiver *commonwatch.Receiver[*proto.ClusterConfiguration]) {
 	_ = backoff.RetryNotify(func() error {
 		// update the snapshot when we are retrying
 		select {

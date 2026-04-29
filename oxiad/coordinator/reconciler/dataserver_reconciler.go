@@ -37,16 +37,16 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 	for _, server := range snapshot.GetServers() {
 		serverName := server.GetNameOrDefault()
 		desired.Add(serverName)
-		configuredServer, exist := snapshot.GetDataServer(serverName)
+		dataServer, exist := snapshot.GetDataServer(serverName)
 		if !exist {
 			continue
 		}
-		r.runtime.PutDataServerIfAbsent(configuredServer)
+		r.runtime.PutDataServerIfAbsent(dataServer)
 	}
 
-	for serverID := range r.runtime.NodeControllers() {
-		if !desired.Contains(serverID) {
-			r.runtime.DeleteDataServer(serverID)
+	for dataServerID := range r.runtime.NodeControllers() {
+		if !desired.Contains(dataServerID) {
+			r.runtime.DeleteDataServer(dataServerID)
 		}
 	}
 

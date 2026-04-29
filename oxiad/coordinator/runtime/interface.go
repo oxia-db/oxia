@@ -31,9 +31,9 @@ type Runtime interface {
 	controller.DataServerEventListener
 
 	PutDataServerIfAbsent(server *proto.DataServer)
-	DeleteDataServer(id string)
+	DeleteDataServer(dataServerID string)
 	SyncShardControllerServerAddresses()
-	PutShard(namespace string, namespaceConfig *proto.Namespace, shard int64, shardMetadata *proto.ShardMetadata)
+	PutShard(namespace string, shard int64, shardMetadata *proto.ShardMetadata)
 	DeleteShard(shard int64)
 	RecomputeAssignments()
 	SelectNewEnsemble(namespaceConfig *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error)
