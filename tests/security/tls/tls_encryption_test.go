@@ -37,6 +37,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/security"
 	"github.com/oxia-db/oxia/oxia"
+	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func getPeerTLSOption() (*security.TLSOptions, error) {
@@ -125,7 +126,8 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 }
 
@@ -144,7 +146,8 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithRequestTimeout(1*time.Second))
@@ -167,7 +170,8 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -196,7 +200,8 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -226,7 +231,8 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(tlsConf))
+	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -253,7 +259,8 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProviderFactory(nil))
+	configProvider := mock.NewConfigProvider(t, clusterConfig)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// failed without cert

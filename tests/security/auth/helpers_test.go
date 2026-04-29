@@ -25,19 +25,17 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
-	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func newCoordinatorInstance(
 	t *testing.T,
 	metadataProvider provider.Provider[*proto.ClusterStatus],
-	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
-	clusterConfigNotificationsCh chan any,
+	configProvider provider.Provider[*proto.ClusterConfiguration],
 	rpcProvider rpc2.ProviderFactory,
 ) coordruntime.Runtime {
 	t.Helper()
 
-	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, mock.NewConfigProvider(t, clusterConfigProvider, clusterConfigNotificationsCh))
+	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {

@@ -68,8 +68,8 @@ func TestNormalShardBalancer(t *testing.T) {
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	ch := make(chan any, 1)
-	coordinator := mock.NewCoordinator(t, &cc, ch)
+	configProvider := mock.NewConfigProvider(t, &cc)
+	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
 	metadata := coordinator.Metadata()
@@ -86,7 +86,7 @@ func TestNormalShardBalancer(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
-	ch <- struct{}{}
+	mock.PutConfig(t, configProvider, &cc)
 
 	assert.Eventually(t, func() bool {
 		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
@@ -175,8 +175,8 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 		Servers:        shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	ch := make(chan any, 1)
-	coordinator := mock.NewCoordinator(t, &cc, ch)
+	configProvider := mock.NewConfigProvider(t, &cc)
+	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
 	metadata := coordinator.Metadata()
@@ -193,7 +193,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
-	ch <- struct{}{}
+	mock.PutConfig(t, configProvider, &cc)
 
 	assert.Eventually(t, func() bool {
 		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
@@ -269,8 +269,8 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 		},
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
-	ch := make(chan any, 1)
-	coordinator := mock.NewCoordinator(t, &cc, ch)
+	configProvider := mock.NewConfigProvider(t, &cc)
+	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
 	metadata := coordinator.Metadata()
@@ -306,7 +306,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	}
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad, s6ad)...)
-	ch <- struct{}{}
+	mock.PutConfig(t, configProvider, &cc)
 
 	assert.Eventually(t, func() bool {
 		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())

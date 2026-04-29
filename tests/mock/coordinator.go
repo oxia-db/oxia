@@ -19,7 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/common/proto"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -28,12 +28,9 @@ import (
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
-func NewCoordinator(t *testing.T, config *proto.ClusterConfiguration, clusterConfigNotificationCh chan any) coordruntime.Runtime {
+func NewCoordinator(t *testing.T, configProvider provider.Provider[*commonproto.ClusterConfiguration]) coordruntime.Runtime {
 	t.Helper()
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
-	configProvider := NewConfigProvider(t, func() (*proto.ClusterConfiguration, error) {
-		return config, nil
-	}, clusterConfigNotificationCh)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	assert.NoError(t, err)

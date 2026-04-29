@@ -24,54 +24,23 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 )
 
-func NewConfigProvider(
-	t *testing.T,
-	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
-	clusterConfigNotificationsCh <-chan any,
-) provider.Provider[*proto.ClusterConfiguration] {
+func NewConfigProvider(t *testing.T, clusterConfig *proto.ClusterConfiguration) provider.Provider[*proto.ClusterConfiguration] {
 	t.Helper()
 
 	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	clusterConfig, err := clusterConfigProvider()
-	require.NoError(t, err)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
-	require.NoError(t, err)
-
-	if clusterConfigNotificationsCh != nil {
-		go replayConfigChanges(t, configProvider, clusterConfigProvider, clusterConfigNotificationsCh)
-	}
-
+	PutConfig(t, configProvider, clusterConfig)
 	return configProvider
 }
 
-func replayConfigChanges(
+func PutConfig(
 	t *testing.T,
 	configProvider provider.Provider[*proto.ClusterConfiguration],
-	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
-	clusterConfigNotificationsCh <-chan any,
+	clusterConfig *proto.ClusterConfiguration,
 ) {
 	t.Helper()
 
-	for {
-		select {
-		case <-t.Context().Done():
-			return
-		case _, ok := <-clusterConfigNotificationsCh:
-			if !ok {
-				return
-			}
-		}
-
-		clusterConfig, err := clusterConfigProvider()
-		if err != nil {
-			panic(err)
-		}
-		_, version, err := configProvider.Get()
-		if err != nil {
-			panic(err)
-		}
-		if _, err = configProvider.Store(clusterConfig, version); err != nil {
-			panic(err)
-		}
-	}
+	_, version, err := configProvider.Get()
+	require.NoError(t, err)
+	_, err = configProvider.Store(clusterConfig, version)
+	require.NoError(t, err)
 }

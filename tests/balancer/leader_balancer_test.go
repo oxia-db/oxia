@@ -101,8 +101,8 @@ func TestLeaderBalanced(t *testing.T) {
 		},
 	}
 
-	ch := make(chan any, 1)
-	coordinator := mock.NewCoordinator(t, cc, ch)
+	configProvider := mock.NewConfigProvider(t, cc)
+	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
 	metadata := coordinator.Metadata()
@@ -144,8 +144,8 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 		},
 	}
 
-	ch := make(chan any, 1)
-	coordinator := mock.NewCoordinator(t, cc, ch)
+	configProvider := mock.NewConfigProvider(t, cc)
+	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
 	metadata := coordinator.Metadata()
@@ -214,8 +214,8 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 		},
 	}
 
-	ch := make(chan any, 1)
-	coordinator := mock.NewCoordinator(t, cc, ch)
+	configProvider := mock.NewConfigProvider(t, cc)
+	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
 	metadata := coordinator.Metadata()
@@ -225,7 +225,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 
 	cc.Servers = append(cc.Servers, dataServers(s4ad, s5ad, s6ad)...)
-	ch <- nil
+	mock.PutConfig(t, configProvider, cc)
 	candidates = linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault(), s4ad.GetNameOrDefault(), s5ad.GetNameOrDefault(), s6ad.GetNameOrDefault())
 
 	// wait for leader balanced

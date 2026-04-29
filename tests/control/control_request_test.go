@@ -48,11 +48,11 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 
 	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := mock.NewConfigProvider(t, clusterConfig)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
 		metadataProvider,
-		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
-		nil,
+		configProvider,
 		rpc.NewRpcProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
