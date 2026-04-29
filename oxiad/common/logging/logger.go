@@ -114,8 +114,9 @@ func ConfigureLogger() {
 
 	slogLogger := slog.New(
 		slogzerolog.Option{
-			Level:  &logLevelVar,
-			Logger: &zerologLogger,
+			Level:       &logLevelVar,
+			Logger:      &zerologLogger,
+			NoTimestamp: true,
 		}.NewZerologHandler(),
 	)
 	slog.SetDefault(slogLogger)
