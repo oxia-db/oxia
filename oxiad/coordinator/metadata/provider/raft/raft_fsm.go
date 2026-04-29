@@ -34,12 +34,14 @@ type raftOpCmd struct {
 type stateContainer struct {
 	Documents map[provider.ResourceType]*documentContainer `json:"-"`
 	logger    *slog.Logger
+	onChange  func(provider.ResourceType, int64)
 }
 
-func newStateContainer(logger *slog.Logger) *stateContainer {
+func newStateContainer(logger *slog.Logger, onChange func(provider.ResourceType, int64)) *stateContainer {
 	return &stateContainer{
 		Documents: map[provider.ResourceType]*documentContainer{},
 		logger:    logger,
+		onChange:  onChange,
 	}
 }
 
@@ -70,6 +72,9 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 
 	document.State = cloneBytes(opCmd.NewState)
 	document.CurrentVersion++
+	if sc.onChange != nil {
+		sc.onChange(opCmd.ResourceType, document.CurrentVersion)
+	}
 
 	sc.logger.Info("Applied raft log entry",
 		slog.String("resource-type", string(opCmd.ResourceType)),
@@ -97,6 +102,11 @@ func (sc *stateContainer) Restore(rc io.ReadCloser) error {
 
 	if len(persisted.Documents) > 0 {
 		sc.Documents = cloneDocuments(persisted.Documents)
+		if sc.onChange != nil {
+			for resourceType, document := range sc.Documents {
+				sc.onChange(resourceType, document.CurrentVersion)
+			}
+		}
 		return rc.Close()
 	}
 
@@ -105,6 +115,9 @@ func (sc *stateContainer) Restore(rc io.ReadCloser) error {
 			State:          cloneBytes(persisted.State),
 			CurrentVersion: persisted.CurrentVersion,
 		},
+	}
+	if sc.onChange != nil {
+		sc.onChange(provider.ResourceStatus, persisted.CurrentVersion)
 	}
 	return rc.Close()
 }
@@ -160,5 +173,14 @@ func cloneDocuments(documents map[provider.ResourceType]*documentContainer) map[
 			CurrentVersion: document.CurrentVersion,
 		}
 	}
+	return cloned
+}
+
+func cloneBytes(data []byte) []byte {
+	if data == nil {
+		return nil
+	}
+	cloned := make([]byte, len(data))
+	copy(cloned, data)
 	return cloned
 }
