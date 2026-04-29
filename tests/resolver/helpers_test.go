@@ -22,53 +22,10 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
+	"github.com/oxia-db/oxia/tests/mock"
 )
-
-func newConfigProvider(
-	t *testing.T,
-	clusterConfigProvider func() (*proto.ClusterConfiguration, error),
-	clusterConfigNotificationsCh <-chan any,
-) provider.Provider[*proto.ClusterConfiguration] {
-	t.Helper()
-
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	clusterConfig, err := clusterConfigProvider()
-	require.NoError(t, err)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
-	require.NoError(t, err)
-
-	if clusterConfigNotificationsCh != nil {
-		go func() {
-			for {
-				select {
-				case <-t.Context().Done():
-					return
-				case _, ok := <-clusterConfigNotificationsCh:
-					if !ok {
-						return
-					}
-				}
-
-				clusterConfig, err := clusterConfigProvider()
-				if err != nil {
-					panic(err)
-				}
-				_, version, err := configProvider.Get()
-				if err != nil {
-					panic(err)
-				}
-				if _, err = configProvider.Store(clusterConfig, version); err != nil {
-					panic(err)
-				}
-			}
-		}()
-	}
-
-	return configProvider
-}
 
 func newCoordinatorInstance(
 	t *testing.T,
@@ -79,7 +36,7 @@ func newCoordinatorInstance(
 ) coordruntime.Runtime {
 	t.Helper()
 
-	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, newConfigProvider(t, clusterConfigProvider, clusterConfigNotificationsCh))
+	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, mock.NewConfigProvider(t, clusterConfigProvider, clusterConfigNotificationsCh))
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
