@@ -192,13 +192,6 @@ func main() {
 			)
 			os.Exit(1)
 		}
-		if err := metadataProvider.WaitToBecomeLeader(); err != nil {
-			slog.Error(
-				"failed to wait for coordinator metadata leadership",
-				slog.Any("error", err),
-			)
-			os.Exit(1)
-		}
 		configProvider := memory.NewProvider(provider.ClusterConfigCodec)
 		_, err = configProvider.Store(clusterConfig, provider.NotExists)
 		if err != nil {
