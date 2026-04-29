@@ -251,8 +251,11 @@ func (sc *SplitController) runBootstrap() error {
 	}
 
 	// Step 1: Fence and elect each child leader (if not already done).
+	// Children must bootstrap in the parent's term so the parent observer
+	// cursors can stream snapshots and WAL entries without term mismatch.
+	parentTerm := parentMeta.Term
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		if err := sc.fenceAndElectChild(childId); err != nil {
+		if err := sc.fenceAndElectChild(childId, parentTerm); err != nil {
 			return err
 		}
 	}
@@ -265,7 +268,6 @@ func (sc *SplitController) runBootstrap() error {
 		return errors.New("parent shard has no leader")
 	}
 	parentLeader := parentMeta.Leader
-	parentTerm := parentMeta.Term
 
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
 		if err := sc.addChildObserver(childId, parentLeader, parentTerm); err != nil {
@@ -294,7 +296,7 @@ func (sc *SplitController) runBootstrap() error {
 
 // fenceAndElectChild fences a child shard's ensemble and elects a leader.
 // Skipped if the child already has a leader (from a previous Bootstrap run).
-func (sc *SplitController) fenceAndElectChild(childId int64) error {
+func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) error {
 	childMeta := sc.loadShardMeta(childId)
 	if childMeta == nil {
 		return errors.Errorf("child shard %d not found", childId)
@@ -308,7 +310,7 @@ func (sc *SplitController) fenceAndElectChild(childId int64) error {
 		return nil
 	}
 
-	childTerm := childMeta.Term + 1
+	childTerm := parentTerm
 	headEntries, err := sc.fenceEnsemble(childId, childTerm, childMeta.Ensemble)
 	if err != nil {
 		return errors.Wrapf(err, "failed to fence child shard %d", childId)

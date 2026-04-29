@@ -16,6 +16,7 @@ package controller
 
 import (
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -354,6 +355,49 @@ func TestSplitController_PhaseTransitions(t *testing.T) {
 		assert.Equal(t, proto.ShardStatusSteadyState, rightMeta.Status)
 	case <-time.After(30 * time.Second):
 		t.Fatal("Split did not complete in time")
+	}
+}
+
+func TestSplitController_BootstrapFencesChildrenInParentTerm(t *testing.T) {
+	rpcMock, statusRes, _ := setupSplitTest(t, proto.SplitPhaseBootstrap)
+
+	queueBootstrapResponses(rpcMock)
+
+	sc := &SplitController{
+		namespace:        constant.DefaultNamespace,
+		parentShardId:    0,
+		leftChildId:      1,
+		rightChildId:     2,
+		metadata:         statusRes,
+		rpcProvider:      rpcMock,
+		eventListener:    newMockSplitEventListener(),
+		ctx:              t.Context(),
+		logger:           slog.With(slog.String("component", "split-controller-test")),
+	}
+
+	require.NoError(t, sc.runBootstrap())
+
+	for _, node := range []*proto.DataServerIdentity{ls1, ls2, ls3} {
+		req := receiveNewTermRequest(t, rpcMock.GetNode(node).newTermRequests)
+		assert.Equal(t, int64(1), req.Shard)
+		assert.Equal(t, int64(5), req.Term)
+	}
+	for _, node := range []*proto.DataServerIdentity{rs1, rs2, rs3} {
+		req := receiveNewTermRequest(t, rpcMock.GetNode(node).newTermRequests)
+		assert.Equal(t, int64(2), req.Shard)
+		assert.Equal(t, int64(5), req.Term)
+	}
+}
+
+func receiveNewTermRequest(t *testing.T, requests <-chan *proto.NewTermRequest) *proto.NewTermRequest {
+	t.Helper()
+
+	select {
+	case req := <-requests:
+		return req
+	case <-time.After(defaultTimeout):
+		t.Fatal("did not receive NewTerm request in time")
+		return nil
 	}
 }
 
