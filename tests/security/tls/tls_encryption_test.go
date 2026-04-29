@@ -23,18 +23,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	"github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/common/security"
 	"github.com/oxia-db/oxia/oxia"
@@ -76,13 +75,13 @@ func getClientTLSOption() (*security.TLSOptions, error) {
 	return &clientOption, nil
 }
 
-func newTLSServer(t *testing.T) (s *dataserver.Server, addr model.Server) {
+func newTLSServer(t *testing.T) (s *dataserver.Server, addr *proto.DataServerIdentity) {
 	t.Helper()
 	return newTLSServerWithInterceptor(t, func(config *dataserveroption.Options) {
 	})
 }
 
-func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserveroption.Options)) (s *dataserver.Server, addr model.Server) {
+func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserveroption.Options)) (s *dataserver.Server, addr *proto.DataServerIdentity) {
 	t.Helper()
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
@@ -99,11 +98,11 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 
 	interceptor(dataServerOption)
 
-	s, err = dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
+	s, err = dataserver.New(t.Context(), commonwatch.New(dataServerOption))
 
 	assert.NoError(t, err)
 
-	addr = model.Server{
+	addr = &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s.InternalPort()),
 	}
@@ -119,25 +118,17 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 }
 
@@ -149,25 +140,17 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithRequestTimeout(1*time.Second))
@@ -183,25 +166,17 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -223,25 +198,17 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -264,25 +231,17 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	clientPool := rpc.NewClientPool(tlsConf, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -306,20 +265,13 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	s3, sa3 := newTLSServerWithInterceptor(t, disableInternalTLS)
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	clientPool := rpc.NewClientPool(nil, nil)
-	defer clientPool.Close()
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// failed without cert

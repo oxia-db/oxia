@@ -29,6 +29,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -116,7 +117,7 @@ func init() {
 
 func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		watchableOptions := oxiadcommonoption.NewWatch(dataServerOptions)
+		optionsWatch := commonwatch.New(dataServerOptions)
 		switch {
 		case cmd.Flags().Changed("sconfig"):
 			// init options
@@ -132,11 +133,11 @@ func exec(cmd *cobra.Command, _ []string) {
 					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
 					return
 				}
-				previous, _ := watchableOptions.Load()
+				previous := optionsWatch.Load()
 				slog.Info("configuration file has changed.",
 					slog.Any("previous", previous),
 					slog.Any("current", temporaryOptions))
-				watchableOptions.Notify(temporaryOptions)
+				optionsWatch.Publish(temporaryOptions)
 			})
 			v.WatchConfig()
 		default:
@@ -146,6 +147,6 @@ func exec(cmd *cobra.Command, _ []string) {
 			}
 		}
 
-		return dataserver.New(context.Background(), watchableOptions)
+		return dataserver.New(context.Background(), optionsWatch)
 	})
 }

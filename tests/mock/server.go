@@ -20,16 +20,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
 	"github.com/oxia-db/oxia/common/constant"
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
-func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(options *option.Options)) (s *dataserver.Server, addr model.Server) {
+func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(options *option.Options)) (s *dataserver.Server, addr *commonproto.DataServerIdentity) {
 	t.Helper()
 	dataServerOption := option.NewDefaultOptions()
 	dataServerOption.Server.Public.BindAddress = "localhost:0"
@@ -39,12 +39,12 @@ func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(option
 	dataServerOption.Storage.WAL.Dir = t.TempDir()
 	optionsConsumer(dataServerOption)
 	var err error
-	s, err = dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
+	s, err = dataserver.New(t.Context(), commonwatch.New(dataServerOption))
 
 	assert.NoError(t, err)
 
 	tmp := &name
-	addr = model.Server{
+	addr = &commonproto.DataServerIdentity{
 		Name:     tmp,
 		Public:   fmt.Sprintf("localhost:%d", s.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s.InternalPort()),
@@ -53,13 +53,13 @@ func NewServerWithOptions(t *testing.T, name string, optionsConsumer func(option
 	return s, addr
 }
 
-func NewServer(t *testing.T, name string) (s *dataserver.Server, addr model.Server) {
+func NewServer(t *testing.T, name string) (s *dataserver.Server, addr *commonproto.DataServerIdentity) {
 	t.Helper()
 	return NewServerWithOptions(t, name, func(_ *option.Options) {
 	})
 }
 
-func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr model.Server) {
+func NewServerWithAddress(t *testing.T, name string, publicAddress string, internalAddress string) (s *dataserver.Server, addr *commonproto.DataServerIdentity) {
 	t.Helper()
 	dataServerOption := option.NewDefaultOptions()
 	dataServerOption.Server.Public.BindAddress = publicAddress
@@ -69,12 +69,12 @@ func NewServerWithAddress(t *testing.T, name string, publicAddress string, inter
 	dataServerOption.Storage.WAL.Dir = t.TempDir()
 
 	var err error
-	s, err = dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption))
+	s, err = dataserver.New(t.Context(), commonwatch.New(dataServerOption))
 
 	assert.NoError(t, err)
 
 	tmp := &name
-	addr = model.Server{
+	addr = &commonproto.DataServerIdentity{
 		Name:     tmp,
 		Public:   publicAddress,
 		Internal: internalAddress,

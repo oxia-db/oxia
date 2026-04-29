@@ -32,19 +32,18 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/json"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	"github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/oxia"
 
@@ -70,9 +69,9 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	dataServerOption1.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption1.Storage.Database.Dir = t.TempDir()
 	dataServerOption1.Storage.WAL.Dir = t.TempDir()
-	s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption1))
+	s1, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption1))
 	assert.NoError(t, err)
-	s1Addr := model.Server{
+	s1Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
@@ -84,9 +83,9 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	dataServerOption2.Storage.Database.Dir = t.TempDir()
 	dataServerOption2.Storage.WAL.Dir = t.TempDir()
 
-	s2, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption2))
+	s2, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption2))
 	assert.NoError(t, err)
-	s2Addr := model.Server{
+	s2Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
@@ -98,36 +97,26 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	dataServerOption3.Storage.Database.Dir = t.TempDir()
 	dataServerOption3.Storage.WAL.Dir = t.TempDir()
 
-	s3, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption3))
+	s3, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption3))
 	assert.NoError(t, err)
-	s3Addr := model.Server{
+	s3Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
-	}
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
-	clientPool := rpc.NewClientPool(nil, nil)
-
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProvider(clientPool))
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	return s1Addr.Public, func() {
 		s1.Close()
 		s2.Close()
 		s3.Close()
 
-		clientPool.Close()
 		coordinatorInstance.Close()
 	}
 }
@@ -263,11 +252,11 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	dataServerOption1.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption1.Storage.Database.Dir = t.TempDir()
 	dataServerOption1.Storage.WAL.Dir = t.TempDir()
-	s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption1))
+	s1, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption1))
 	assert.NoError(t, err)
 	defer s1.Close()
 
-	s1Addr := model.Server{
+	s1Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
@@ -279,11 +268,11 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	dataServerOption2.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption2.Storage.Database.Dir = t.TempDir()
 	dataServerOption2.Storage.WAL.Dir = t.TempDir()
-	s2, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption2))
+	s2, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption2))
 	assert.NoError(t, err)
 	defer s2.Close()
 
-	s2Addr := model.Server{
+	s2Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
@@ -295,32 +284,22 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	dataServerOption3.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption3.Storage.Database.Dir = t.TempDir()
 	dataServerOption3.Storage.WAL.Dir = t.TempDir()
-	s3, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption3))
+	s3, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption3))
 	assert.NoError(t, err)
 	defer s3.Close()
 
-	s3Addr := model.Server{
+	s3Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
-	}
-
-	clientPool := rpc.NewClientPool(nil, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProvider(clientPool))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// Test authentication with issuer 1
@@ -424,11 +403,11 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	dataServerOption1.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption1.Storage.Database.Dir = t.TempDir()
 	dataServerOption1.Storage.WAL.Dir = t.TempDir()
-	s1, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption1))
+	s1, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption1))
 	assert.NoError(t, err)
 	defer s1.Close()
 
-	s1Addr := model.Server{
+	s1Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s1.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 	}
@@ -440,11 +419,11 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	dataServerOption2.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption2.Storage.Database.Dir = t.TempDir()
 	dataServerOption2.Storage.WAL.Dir = t.TempDir()
-	s2, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption2))
+	s2, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption2))
 	assert.NoError(t, err)
 	defer s2.Close()
 
-	s2Addr := model.Server{
+	s2Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s2.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s2.InternalPort()),
 	}
@@ -456,32 +435,22 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	dataServerOption3.Observability.Metric.Enabled = &constant.FlagFalse
 	dataServerOption3.Storage.Database.Dir = t.TempDir()
 	dataServerOption3.Storage.WAL.Dir = t.TempDir()
-	s3, err := dataserver.New(t.Context(), commonoption.NewWatch(dataServerOption3))
+	s3, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption3))
 	assert.NoError(t, err)
 	defer s3.Close()
 
-	s3Addr := model.Server{
+	s3Addr := &proto.DataServerIdentity{
 		Public:   fmt.Sprintf("localhost:%d", s3.PublicPort()),
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{s1Addr, s2Addr, s3Addr},
-	}
-
-	clientPool := rpc.NewClientPool(nil, nil)
-	defer clientPool.Close()
-
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider,
-		func() (model.ClusterConfig, error) { return clusterConfig, nil },
-		nil, rpc2.NewRpcProvider(clientPool))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// Create a valid token

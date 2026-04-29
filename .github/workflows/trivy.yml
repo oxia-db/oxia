@@ -24,16 +24,16 @@ jobs:
     runs-on: "ubuntu-22.04"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver-opts: |
             image=moby/buildkit:latest
             network=host
       - name: Build docker
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -41,6 +41,9 @@ jobs:
           tags: oxia:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Always rebuild the runtime stage so `apk upgrade` picks up the
+          # latest Alpine security patches instead of a cached layer.
+          no-cache-filters: runtime
 
 
       - name: Run Trivy vulnerability scanner

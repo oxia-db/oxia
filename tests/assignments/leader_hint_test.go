@@ -20,13 +20,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/tests/mock"
 )
@@ -39,28 +39,28 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(
+		t,
+		metadataProvider,
+		configProvider,
+		rpc.NewRpcProviderFactory(nil),
+	)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
-		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+		shard := coordinatorInstance.Metadata().GetStatus().Namespaces["default"].Shards[0]
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().GetStatus()
 	shard := status.Namespaces["default"].Shards[0]
-	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
+	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
 	}
 	clientPool := clientrpc.NewClientPool(nil, nil)
@@ -97,28 +97,28 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(
+		t,
+		metadataProvider,
+		configProvider,
+		rpc.NewRpcProviderFactory(nil),
+	)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
-		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+		shard := coordinatorInstance.Metadata().GetStatus().Namespaces["default"].Shards[0]
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().GetStatus()
 	shard := status.Namespaces["default"].Shards[0]
-	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
+	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
 	}
 	clientPool := clientrpc.NewClientPool(nil, nil)
@@ -155,28 +155,28 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(
+		t,
+		metadataProvider,
+		configProvider,
+		rpc.NewRpcProviderFactory(nil),
+	)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
-		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+		shard := coordinatorInstance.Metadata().GetStatus().Namespaces["default"].Shards[0]
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().GetStatus()
 	shard := status.Namespaces["default"].Shards[0]
-	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
+	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
 	}
 
@@ -204,28 +204,28 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(
+		t,
+		metadataProvider,
+		configProvider,
+		rpc.NewRpcProviderFactory(nil),
+	)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
-		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+		shard := coordinatorInstance.Metadata().GetStatus().Namespaces["default"].Shards[0]
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().GetStatus()
 	shard := status.Namespaces["default"].Shards[0]
-	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
+	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
 	}
 	clientPool := clientrpc.NewClientPool(nil, nil)
@@ -262,28 +262,28 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(
+		t,
+		metadataProvider,
+		configProvider,
+		rpc.NewRpcProviderFactory(nil),
+	)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
-		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+		shard := coordinatorInstance.Metadata().GetStatus().Namespaces["default"].Shards[0]
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().GetStatus()
 	shard := status.Namespaces["default"].Shards[0]
-	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
+	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
 	}
 
@@ -315,28 +315,28 @@ func TestLeaderHintWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(
+		t,
+		metadataProvider,
+		configProvider,
+		rpc.NewRpcProviderFactory(nil),
+	)
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
-		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+		shard := coordinatorInstance.Metadata().GetStatus().Namespaces["default"].Shards[0]
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.StatusResource().Load()
+	status := coordinatorInstance.Metadata().GetStatus()
 	shard := status.Namespaces["default"].Shards[0]
-	if shard.Leader.GetIdentifier() == sa1.GetIdentifier() {
+	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
 	}
 

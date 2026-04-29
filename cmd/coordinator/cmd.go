@@ -29,6 +29,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	oxiadcommonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
@@ -58,18 +59,19 @@ func init() {
 	Cmd.Flags().StringVar(&meta.ProviderName, "metadata", "file", "Metadata provider implementation: file, configmap, raft or memory")
 
 	Cmd.Flags().StringVar(&meta.Kubernetes.Namespace, "k8s-namespace", meta.Kubernetes.Namespace, "Kubernetes namespace for oxia config maps")
-	Cmd.Flags().StringVar(&meta.Kubernetes.ConfigMapName, "k8s-configmap-name", meta.Kubernetes.ConfigMapName, "ConfigMap name for cluster status configmap")
+	Cmd.Flags().StringVar(&meta.Kubernetes.StatusName, "k8s-configmap-name", meta.Kubernetes.StatusName, "ConfigMap name for cluster status configmap")
 
-	Cmd.Flags().StringVar(&meta.File.Path, "file-clusters-status-path", "data/cluster-status.json", "The path where the cluster status is stored when using 'file' provider")
+	Cmd.Flags().StringVar(&meta.File.StatusName, "file-clusters-status-path", "data/cluster-status.json", "Cluster status file name or full path when using the 'file' provider; a full path is allowed when no metadata file directory is configured")
 
 	Cmd.Flags().StringSliceVar(&meta.Raft.BootstrapNodes, "raft-bootstrap-nodes", meta.Raft.BootstrapNodes, "Raft bootstrap nodes")
 	Cmd.Flags().StringVar(&meta.Raft.Address, "raft-address", "", "Raft address")
 	Cmd.Flags().StringVar(&meta.Raft.DataDir, "raft-data-dir", "data/raft", "Raft address")
 
 	cluster := &coordinatorOptions.Cluster
-	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Cluster config file path")
-	_ = Cmd.Flags().MarkDeprecated("conf", "--conf and its short form -f are deprecated; please use --cconfig instead (no short form)")
-	Cmd.Flags().StringVar(&cluster.ConfigPath, "cconfig", "", "Cluster config file path")
+	Cmd.Flags().StringVarP(&cluster.ConfigPath, "conf", "f", "", "Deprecated cluster config file path")
+	_ = Cmd.Flags().MarkDeprecated("conf", "--conf and its short form -f are deprecated; configure cluster config through metadata.file.configName or metadata.kubernetes.configName")
+	Cmd.Flags().StringVar(&cluster.ConfigPath, "cconfig", "", "Deprecated cluster config file path")
+	_ = Cmd.Flags().MarkDeprecated("cconfig", "--cconfig is deprecated; configure cluster config through metadata.file.configName or metadata.kubernetes.configName")
 
 	internalServer := &coordinatorOptions.Server.Internal
 	Cmd.Flags().StringVar(&internalServer.TLS.CertFile, "tls-cert-file", "", "Tls certificate file")
@@ -92,7 +94,7 @@ func init() {
 
 func exec(cmd *cobra.Command, _ []string) {
 	process.RunProcess(func() (io.Closer, error) {
-		watchableOptions := oxiadcommonoption.NewWatch(coordinatorOptions)
+		optionsWatch := commonwatch.New(coordinatorOptions)
 		// configure the options
 		if cmd.Flags().Changed("sconfig") {
 			// init options
@@ -108,11 +110,11 @@ func exec(cmd *cobra.Command, _ []string) {
 					slog.Warn("parse updated configuration file failed", slog.Any("err", err))
 					return
 				}
-				previous, _ := watchableOptions.Load()
+				previous := optionsWatch.Load()
 				slog.Info("configuration file has changed.",
 					slog.Any("previous", previous),
 					slog.Any("current", temporaryOptions))
-				watchableOptions.Notify(temporaryOptions)
+				optionsWatch.Publish(temporaryOptions)
 			})
 			v.WatchConfig()
 		} else {
@@ -121,6 +123,6 @@ func exec(cmd *cobra.Command, _ []string) {
 				return nil, err
 			}
 		}
-		return coordinator.NewGrpcServer(context.Background(), watchableOptions)
+		return coordinator.NewGrpcServer(context.Background(), optionsWatch)
 	})
 }

@@ -15,74 +15,84 @@
 package metadata
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"k8s.io/client-go/kubernetes/fake"
+	"github.com/stretchr/testify/require"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
-var (
-	_fake = func() *fake.Clientset {
-		f := fake.NewSimpleClientset()
-		f.PrependReactor("*", "*", K8SResourceVersionSupport(f.Tracker()))
-		return f
+func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeClusterConfig(t, filepath.Join(dir, option.DefaultFileConfigName))
+
+	factory, err := New(t.Context(), &option.Options{
+		Metadata: option.MetadataOptions{
+			ProviderOptions: option.ProviderOptions{
+				ProviderName: provider.NameFile,
+				File: option.FileMetadata{
+					Dir: dir,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	metadata, err := factory.CreateMetadata(t.Context())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, metadata.Close())
+		require.NoError(t, factory.Close())
 	}()
-	metadataProviders = map[string]func(t *testing.T) Provider{
-		"memory": func(t *testing.T) Provider {
-			t.Helper()
 
-			return NewMetadataProviderMemory()
+	config := metadata.GetConfig()
+	require.Len(t, config.GetNamespaces(), 1)
+	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
+}
+
+func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "legacy-cluster.yaml")
+	writeClusterConfig(t, configPath)
+
+	factory, err := New(t.Context(), &option.Options{
+		Cluster: option.ClusterOptions{
+			ConfigPath: configPath,
 		},
-		"file": func(t *testing.T) Provider {
-			t.Helper()
-
-			return NewMetadataProviderFile(filepath.Join(t.TempDir(), "metadata"))
+		Metadata: option.MetadataOptions{
+			ProviderOptions: option.ProviderOptions{
+				ProviderName: provider.NameFile,
+				File: option.FileMetadata{
+					StatusName: filepath.Join(dir, option.DefaultFileStatusName),
+				},
+			},
 		},
-		"configmap": func(t *testing.T) Provider {
-			t.Helper()
+	})
+	require.NoError(t, err)
+	metadata, err := factory.CreateMetadata(t.Context())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, metadata.Close())
+		require.NoError(t, factory.Close())
+	}()
 
-			return NewMetadataProviderConfigMap(_fake, "ns", "n")
-		},
-		"raft": func(t *testing.T) Provider {
-			t.Helper()
+	config := metadata.GetConfig()
+	require.Len(t, config.GetNamespaces(), 1)
+	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
+}
 
-			return newTestRaftClusterProvider(t)
-		},
-	}
-)
+func writeClusterConfig(t *testing.T, path string) {
+	t.Helper()
 
-func TestMetadataProvider(t *testing.T) {
-	for name, provider := range metadataProviders {
-		t.Run(name, func(t *testing.T) {
-			m := provider(t)
-
-			res, version, err := m.Get()
-			assert.NoError(t, err)
-			assert.Equal(t, NotExists, version)
-			assert.Nil(t, res)
-
-			_, err = m.Store(&model.ClusterStatus{
-				Namespaces: map[string]model.NamespaceStatus{},
-			}, "")
-			assert.ErrorIs(t, err, ErrMetadataBadVersion)
-
-			newVersion, err := m.Store(&model.ClusterStatus{
-				Namespaces: map[string]model.NamespaceStatus{},
-			}, NotExists)
-			assert.NoError(t, err)
-			assert.EqualValues(t, Version("0"), newVersion)
-
-			res, version, err = m.Get()
-			assert.NoError(t, err)
-			assert.EqualValues(t, Version("0"), version)
-			assert.Equal(t, &model.ClusterStatus{
-				Namespaces: map[string]model.NamespaceStatus{},
-			}, res)
-
-			assert.NoError(t, m.Close())
-		})
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`
+namespaces:
+  - name: default
+    replicationFactor: 1
+    initialShardCount: 1
+servers:
+  - public: s1:9091
+    internal: s1:8191
+`), 0600))
 }

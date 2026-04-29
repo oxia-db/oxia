@@ -26,7 +26,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
 	"github.com/oxia-db/oxia/common/compare"
 )
@@ -189,9 +188,10 @@ func getKeyEncoder(dbPath string, keySorting proto.KeySortingType) (compare.Enco
 
 	keyEncodingMarker = string(markerData)
 
-	if keyEncodingMarker == string(model.KeySortingNatural) {
+	switch keyEncodingMarker {
+	case "natural":
 		return compare.EncoderNatural, nil
-	} else if keyEncodingMarker == string(model.KeySortingHierarchical) {
+	case "hierarchical":
 		return compare.EncoderHierarchical, nil
 	}
 

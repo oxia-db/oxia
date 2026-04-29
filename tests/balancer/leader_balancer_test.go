@@ -16,28 +16,33 @@ package balancer
 
 import (
 	"testing"
-	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/require"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/resource"
-	"github.com/oxia-db/oxia/oxiad/coordinator/util"
+	"github.com/oxia-db/oxia/common/proto"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/state"
 
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
-func waitForSteadyState(t *testing.T, statusResource resource.StatusResource, expectedNamespaces int) {
+func dataServers(servers ...*proto.DataServerIdentity) []*proto.DataServerIdentity {
+	return servers
+}
+
+func waitForSteadyState(t *testing.T, metadata coordmetadata.Metadata, expectedNamespaces int) {
 	t.Helper()
 	ctx := t.Context()
-	err := resource.WaitForCondition(ctx, statusResource, nil, func(status *model.ClusterStatus) bool {
+	err := coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *proto.ClusterStatus) bool {
 		if len(status.Namespaces) != expectedNamespaces {
 			return false
 		}
 		for _, ns := range status.Namespaces {
 			for _, shard := range ns.Shards {
-				if shard.Status != model.ShardStatusSteadyState {
+				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
 				}
 			}
@@ -47,11 +52,11 @@ func waitForSteadyState(t *testing.T, statusResource resource.StatusResource, ex
 	require.NoError(t, err, "timed out waiting for shards to reach steady state")
 }
 
-func waitForLeadersBalanced(t *testing.T, statusResource resource.StatusResource, balancer interface{ Trigger() }, candidates *linkedhashset.Set[string], expectedPerNode int) {
+func waitForLeadersBalanced(t *testing.T, metadata coordmetadata.Metadata, balancer interface{ Trigger() }, candidates *linkedhashset.Set[string], expectedPerNode int) {
 	t.Helper()
 	ctx := t.Context()
-	err := resource.WaitForCondition(ctx, statusResource, balancer.Trigger, func(status *model.ClusterStatus) bool {
-		shardLeaders, electedShards, nodeShards := util.NodeShardLeaders(candidates, status)
+	err := coordmetadata.WaitForCondition(ctx, metadata, balancer.Trigger, func(status *proto.ClusterStatus) bool {
+		shardLeaders, electedShards, nodeShards := state.NodeShardLeaders(candidates, status)
 		if shardLeaders != electedShards {
 			return false
 		}
@@ -72,10 +77,10 @@ func TestLeaderBalanced(t *testing.T) {
 	defer s2.Close()
 	s3, s3ad := mock.NewServer(t, "sv-3")
 	defer s3.Close()
-	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
+	candidates := linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault())
 
-	cc := &model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	cc := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:              "ns-1",
 				InitialShardCount: 5,
@@ -92,21 +97,23 @@ func TestLeaderBalanced(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: []model.Server{s1ad, s2ad, s3ad},
-		LoadBalancer: &model.LoadBalancer{
-			QuarantineTime: 1 * time.Millisecond,
+		Servers: []*proto.DataServerIdentity{s1ad, s2ad, s3ad},
+		LoadBalancer: &proto.LoadBalancer{
+			QuarantineTime: "1ms",
 		},
 	}
 
-	ch := make(chan any, 1)
-	coordinator := mock.NewCoordinator(t, cc, ch)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(cc, provider.NotExists)
+	require.NoError(t, err)
+	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
-	statusResource := coordinator.StatusResource()
-	waitForSteadyState(t, statusResource, 3)
+	metadata := coordinator.Metadata()
+	waitForSteadyState(t, metadata, 3)
 
 	balancer := coordinator.LoadBalancer()
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 4)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 }
 
 func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
@@ -115,10 +122,10 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	s2, s2ad := mock.NewServer(t, "sv-2")
 	defer s2.Close()
 	s3, s3ad := mock.NewServer(t, "sv-3")
-	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
+	candidates := linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault())
 
-	cc := &model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	cc := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:              "ns-1",
 				InitialShardCount: 5,
@@ -135,30 +142,32 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: []model.Server{s1ad, s2ad, s3ad},
-		LoadBalancer: &model.LoadBalancer{
-			QuarantineTime: 1 * time.Millisecond,
+		Servers: dataServers(s1ad, s2ad, s3ad),
+		LoadBalancer: &proto.LoadBalancer{
+			QuarantineTime: "1ms",
 		},
 	}
 
-	ch := make(chan any, 1)
-	coordinator := mock.NewCoordinator(t, cc, ch)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(cc, provider.NotExists)
+	require.NoError(t, err)
+	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
-	statusResource := coordinator.StatusResource()
-	waitForSteadyState(t, statusResource, 3)
+	metadata := coordinator.Metadata()
+	waitForSteadyState(t, metadata, 3)
 
 	balancer := coordinator.LoadBalancer()
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 4)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 
 	// close s3
 	require.NoError(t, s3.Close())
 
 	// wait for leader moved
 	ctx := t.Context()
-	err := resource.WaitForCondition(ctx, statusResource, nil, func(status *model.ClusterStatus) bool {
-		_, _, nodeShards := util.NodeShardLeaders(candidates, status)
-		shards := nodeShards[s3ad.GetIdentifier()]
+	err = coordmetadata.WaitForCondition(ctx, metadata, nil, func(status *proto.ClusterStatus) bool {
+		_, _, nodeShards := state.NodeShardLeaders(candidates, status)
+		shards := nodeShards[s3ad.GetNameOrDefault()]
 		return shards.Size() == 0
 	})
 	require.NoError(t, err, "timed out waiting for leaders to move off crashed node")
@@ -168,7 +177,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	defer s3.Close()
 
 	// wait for leader balanced
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 4)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 }
 
 func TestLeaderBalancedNodeAdded(t *testing.T) {
@@ -185,10 +194,10 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	s6, s6ad := mock.NewServer(t, "sv-6")
 	defer s6.Close()
 
-	candidates := linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier())
+	candidates := linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault())
 
-	cc := &model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{
+	cc := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
 			{
 				Name:              "ns-1",
 				InitialShardCount: 5,
@@ -205,26 +214,31 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 				ReplicationFactor: 3,
 			},
 		},
-		Servers: []model.Server{s1ad, s2ad, s3ad},
-		LoadBalancer: &model.LoadBalancer{
-			QuarantineTime: 1 * time.Millisecond,
+		Servers: dataServers(s1ad, s2ad, s3ad),
+		LoadBalancer: &proto.LoadBalancer{
+			QuarantineTime: "1ms",
 		},
 	}
 
-	ch := make(chan any, 1)
-	coordinator := mock.NewCoordinator(t, cc, ch)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(cc, provider.NotExists)
+	require.NoError(t, err)
+	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
 
-	statusResource := coordinator.StatusResource()
-	waitForSteadyState(t, statusResource, 3)
+	metadata := coordinator.Metadata()
+	waitForSteadyState(t, metadata, 3)
 
 	balancer := coordinator.LoadBalancer()
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 4)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 
-	cc.Servers = append(cc.Servers, s4ad, s5ad, s6ad)
-	ch <- nil
-	candidates = linkedhashset.New(s1ad.GetIdentifier(), s2ad.GetIdentifier(), s3ad.GetIdentifier(), s4ad.GetIdentifier(), s5ad.GetIdentifier(), s6ad.GetIdentifier())
+	cc.Servers = append(cc.Servers, dataServers(s4ad, s5ad, s6ad)...)
+	_, version, err := configProvider.Get()
+	require.NoError(t, err)
+	_, err = configProvider.Store(cc, version)
+	require.NoError(t, err)
+	candidates = linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault(), s4ad.GetNameOrDefault(), s5ad.GetNameOrDefault(), s6ad.GetNameOrDefault())
 
 	// wait for leader balanced
-	waitForLeadersBalanced(t, statusResource, balancer, candidates, 2)
+	waitForLeadersBalanced(t, metadata, balancer, candidates, 2)
 }

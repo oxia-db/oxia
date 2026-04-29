@@ -19,21 +19,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+
 	"github.com/oxia-db/oxia/common/proto"
-	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/common/metric"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -44,7 +42,7 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	// Start a Prometheus metrics endpoint to scrape from.
 	// All dataservers in this process share the global OTel MeterProvider,
 	// so metrics recorded by leader/follower controllers are visible here.
-	metricsServer, err := metric.Start("localhost:0")
+	metricsServer, err := metric.Start("localhost:0", nil)
 	assert.NoError(t, err)
 	defer metricsServer.Close()
 	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", metricsServer.Port())
@@ -64,22 +62,22 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	defer s3.Close()
 
 	serverInstanceIndex := map[string]*dataserver.Server{
-		sa1.GetIdentifier(): s1,
-		sa2.GetIdentifier(): s2,
-		sa3.GetIdentifier(): s3,
+		sa1.GetNameOrDefault(): s1,
+		sa2.GetNameOrDefault(): s2,
+		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(
+		t,
+		metadataProvider,
+		configProvider,
+		rpc.NewRpcProviderFactory(nil),
+	)
 	defer coordinatorInstance.Close()
 
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithNamespace("default"))
@@ -91,12 +89,12 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for the checksum feature to be enabled on all replicas
-	resource := coordinatorInstance.StatusResource().Load()
+	resource := coordinatorInstance.Metadata().GetStatus()
 	shardMetadata := resource.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
 	for _, dataServer := range shardMetadata.Ensemble {
-		targetId := dataServer.GetIdentifier()
-		if targetId == leader.GetIdentifier() {
+		targetId := dataServer.GetNameOrDefault()
+		if targetId == leader.GetNameOrDefault() {
 			assert.Eventually(t, func() bool {
 				lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
 				return err == nil && lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
@@ -116,43 +114,30 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Trigger checksum recording on the leader
-	lead, err := serverInstanceIndex[leader.GetIdentifier()].GetShardDirector().GetLeader(0)
+	lead, err := serverInstanceIndex[leader.GetNameOrDefault()].GetShardDirector().GetLeader(0)
 	assert.NoError(t, err)
 	lead.ProposeRecordChecksum(context.Background())
 
 	// Verify the DB checksum gauge metric appears in the Prometheus endpoint
-	// with the expected labels and a non-zero value
-	var firstDbMetrics map[int64]string
+	// as a shard-scoped series with a non-zero value.
+	var firstDbMetric checksumMetric
 	assert.Eventually(t, func() bool {
-		firstDbMetrics = parseChecksumMetrics(t, metricsURL, "oxia_dataserver_db_checksum")
-		return len(firstDbMetrics) > 0
+		var found bool
+		firstDbMetric, found = parseChecksumMetric(t, metricsURL, "oxia_dataserver_db_checksum")
+		return found
 	}, 30*time.Second, 200*time.Millisecond)
-
-	// Capture the first commit offset and checksum value
-	var firstOffset int64
-	var firstChecksum string
-	for offset, checksum := range firstDbMetrics {
-		firstOffset = offset
-		firstChecksum = checksum
-	}
-	assert.NotZero(t, firstOffset)
-	assert.NotEqual(t, "0", firstChecksum)
+	assert.NotContains(t, firstDbMetric.labels, "commit_offset")
+	assert.NotEqual(t, "0", firstDbMetric.value)
 
 	// Verify the WAL checksum gauge also appears
-	var firstWalMetrics map[int64]string
+	var firstWalMetric checksumMetric
 	assert.Eventually(t, func() bool {
-		firstWalMetrics = parseChecksumMetrics(t, metricsURL, "oxia_dataserver_wal_checksum")
-		return len(firstWalMetrics) > 0
+		var found bool
+		firstWalMetric, found = parseChecksumMetric(t, metricsURL, "oxia_dataserver_wal_checksum")
+		return found
 	}, 30*time.Second, 200*time.Millisecond)
-
-	var firstWalOffset int64
-	var firstWalChecksum string
-	for offset, checksum := range firstWalMetrics {
-		firstWalOffset = offset
-		firstWalChecksum = checksum
-	}
-	assert.NotZero(t, firstWalOffset)
-	assert.NotEqual(t, "0", firstWalChecksum)
+	assert.NotContains(t, firstWalMetric.labels, "commit_offset")
+	assert.NotEqual(t, "0", firstWalMetric.value)
 
 	// Write more data and record the checksum again
 	_, _, err = client.Put(context.Background(), "/key4", []byte("value4"))
@@ -160,45 +145,38 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 
 	lead.ProposeRecordChecksum(context.Background())
 
-	// Verify a new DB metric line appears with a higher commit offset and different checksum
+	// Verify the DB checksum series updates in place with a different value.
 	assert.Eventually(t, func() bool {
-		metrics := parseChecksumMetrics(t, metricsURL, "oxia_dataserver_db_checksum")
-		for offset, checksum := range metrics {
-			if offset > firstOffset && checksum != firstChecksum {
-				return true
-			}
-		}
-		return false
+		metric, found := parseChecksumMetric(t, metricsURL, "oxia_dataserver_db_checksum")
+		return found && metric.labels == firstDbMetric.labels && metric.value != firstDbMetric.value
 	}, 30*time.Second, 200*time.Millisecond)
 
-	// Verify a new WAL metric line appears with a higher commit offset and different checksum
+	// Verify the WAL checksum series also updates in place with a different value.
 	assert.Eventually(t, func() bool {
-		metrics := parseChecksumMetrics(t, metricsURL, "oxia_dataserver_wal_checksum")
-		for offset, checksum := range metrics {
-			if offset > firstWalOffset && checksum != firstWalChecksum {
-				return true
-			}
-		}
-		return false
+		metric, found := parseChecksumMetric(t, metricsURL, "oxia_dataserver_wal_checksum")
+		return found && metric.labels == firstWalMetric.labels && metric.value != firstWalMetric.value
 	}, 30*time.Second, 200*time.Millisecond)
 }
 
-// parseChecksumMetrics scrapes the Prometheus endpoint and returns a map of
-// commit_offset -> checksum_value for all lines matching the given metricName
-// with shard=0 and namespace=default.
-func parseChecksumMetrics(t *testing.T, url string, metricName string) map[int64]string {
+type checksumMetric struct {
+	labels string
+	value  string
+}
+
+// parseChecksumMetric scrapes the Prometheus endpoint and returns the shard-scoped
+// checksum series for the given metricName with shard=0 and namespace=default.
+func parseChecksumMetric(t *testing.T, url string, metricName string) (checksumMetric, bool) {
 	t.Helper()
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil
+		return checksumMetric{}, false
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil
+		return checksumMetric{}, false
 	}
 
-	result := make(map[int64]string)
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.HasPrefix(line, "#") || !strings.Contains(line, metricName) {
 			continue
@@ -206,30 +184,26 @@ func parseChecksumMetrics(t *testing.T, url string, metricName string) map[int64
 		if !strings.Contains(line, `shard="0"`) || !strings.Contains(line, `oxia_namespace="default"`) {
 			continue
 		}
-		// Extract commit_offset from label like commit_offset="42"
-		offsetIdx := strings.Index(line, `commit_offset="`)
-		if offsetIdx < 0 {
-			continue
-		}
-		offsetStart := offsetIdx + len(`commit_offset="`)
-		offsetEnd := strings.Index(line[offsetStart:], `"`)
-		if offsetEnd < 0 {
-			continue
-		}
-		offset, err := strconv.ParseInt(line[offsetStart:offsetStart+offsetEnd], 10, 64)
-		if err != nil {
+		if strings.Contains(line, `commit_offset="`) {
 			continue
 		}
 
-		// The metric value is the last whitespace-separated field
+		labelStart := strings.Index(line, "{")
+		labelEnd := strings.Index(line, "}")
+		if labelStart < 0 || labelEnd < 0 || labelEnd <= labelStart {
+			continue
+		}
+
 		parts := strings.Fields(line)
 		if len(parts) < 2 {
 			continue
 		}
-		value := parts[len(parts)-1]
-		if value != "0" {
-			result[offset] = value
+		if value := parts[len(parts)-1]; value != "0" {
+			return checksumMetric{
+				labels: line[labelStart+1 : labelEnd],
+				value:  value,
+			}, true
 		}
 	}
-	return result
+	return checksumMetric{}, false
 }

@@ -191,8 +191,8 @@ func (cp *clientPool) newConnection(target string) (*grpc.ClientConn, error) {
 
 	options := []grpc.DialOption{
 		grpc.WithTransportCredentials(tcs),
-		grpc.WithStreamInterceptor(grpcprometheus.StreamClientInterceptor),
-		grpc.WithUnaryInterceptor(grpcprometheus.UnaryClientInterceptor),
+		grpc.WithChainStreamInterceptor(grpcprometheus.StreamClientInterceptor),
+		grpc.WithChainUnaryInterceptor(grpcprometheus.UnaryClientInterceptor),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			PermitWithoutStream: defaultGrpcClientPermitWithoutStream,
 			Time:                defaultGrpcClientKeepAliveTime,

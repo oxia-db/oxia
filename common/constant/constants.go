@@ -26,6 +26,7 @@ const (
 	MetadataShardId           = "shard-id"
 	MetadataSplitHashRangeMin = "split-hash-range-min"
 	MetadataSplitHashRangeMax = "split-hash-range-max"
+	MetadataInstanceId        = "instance-id"
 	DefaultNamespace          = "default"
 
 	DefaultPublicPort   = 6648

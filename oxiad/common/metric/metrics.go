@@ -16,6 +16,7 @@ package metric
 
 import (
 	"context"
+	libtls "crypto/tls"
 	"fmt"
 	"io"
 	"log/slog"
@@ -111,7 +112,14 @@ type PrometheusMetrics struct {
 	port   int
 }
 
-func Start(bindAddress string) (*PrometheusMetrics, error) {
+func Start(bindAddress string, tlsConf *libtls.Config) (*PrometheusMetrics, error) {
+	// Validate that the TLS config has certificates configured
+	if tlsConf != nil {
+		if len(tlsConf.Certificates) == 0 && tlsConf.GetCertificate == nil {
+			return nil, errors.New("metrics TLS config has no certificates configured")
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
@@ -125,11 +133,16 @@ func Start(bindAddress string) (*PrometheusMetrics, error) {
 		server: &http.Server{
 			Handler:           mux,
 			ReadHeaderTimeout: time.Second,
+			TLSConfig:         tlsConf,
 		},
 		port: listener.Addr().(*net.TCPAddr).Port,
 	}
 
-	slog.Info(fmt.Sprintf("Serving Prometheus metrics at http://localhost:%d/metrics", p.port))
+	scheme := "http"
+	if tlsConf != nil {
+		scheme = "https"
+	}
+	slog.Info(fmt.Sprintf("Serving Prometheus metrics at %s://localhost:%d/metrics", scheme, p.port))
 
 	go process.DoWithLabels(
 		context.Background(),
@@ -137,7 +150,12 @@ func Start(bindAddress string) (*PrometheusMetrics, error) {
 			"oxia": "metrics",
 		},
 		func() {
-			if err = p.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if tlsConf != nil {
+				err = p.server.ServeTLS(listener, "", "")
+			} else {
+				err = p.server.Serve(listener)
+			}
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error(
 					"Failed to serve metrics",
 					slog.Any("error", err),

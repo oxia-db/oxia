@@ -27,7 +27,7 @@ import (
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
@@ -36,7 +36,7 @@ import (
 )
 
 func TestUninitializedAssignmentDispatcher(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
 	mockClient := rpc.NewMockShardAssignmentClientStream()
 	assert.False(t, dispatcher.Initialized())
 	req := &proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace}
@@ -46,7 +46,7 @@ func TestUninitializedAssignmentDispatcher(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
 	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
 		err := dispatcher.PushShardAssignments(coordinatorStream)
@@ -84,7 +84,7 @@ func TestShardAssignmentDispatcher_Initialized(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
-	healthServer := rpc2.NewClosableHealthServer(t.Context())
+	healthServer := oxiadcommonrpc.NewClosableHealthServer(t.Context())
 	dispatcher := NewShardAssignmentDispatcher(healthServer)
 	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
@@ -96,7 +96,7 @@ func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 
 	// Readiness probe should fail while not initialized
 	resp, err := healthServer.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{
-		Service: rpc2.ReadinessProbeService,
+		Service: oxiadcommonrpc.ReadinessProbeService,
 	})
 
 	assert.Equal(t, codes.NotFound, status.Code(err))
@@ -118,7 +118,7 @@ func TestShardAssignmentDispatcher_ReadinessProbe(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	resp, err = healthServer.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{
-		Service: rpc2.ReadinessProbeService,
+		Service: oxiadcommonrpc.ReadinessProbeService,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.Status)
@@ -131,7 +131,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	shard1InitialAssignment := newShardAssignment(1, "server2", 100, math.MaxUint32)
 	shard1UpdatedAssignment := newShardAssignment(1, "server3", 100, math.MaxUint32)
 
-	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
 
 	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
@@ -211,7 +211,7 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
 
 	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
@@ -317,7 +317,7 @@ func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
 }
 
 func TestShardAssignmentDispatcher_GetLeader(t *testing.T) {
-	dispatcher := NewShardAssignmentDispatcher(rpc2.NewClosableHealthServer(t.Context()))
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
 
 	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
 	go func() {
@@ -364,6 +364,82 @@ func TestShardAssignmentDispatcher_GetLeader(t *testing.T) {
 	assert.Equal(t, "server1:6649", dispatcher.GetLeader(0))
 	assert.Equal(t, "server3:6649", dispatcher.GetLeader(1))
 
+	assert.NoError(t, dispatcher.Close())
+}
+
+func TestShardAssignmentDispatcher_HasAuthority(t *testing.T) {
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
+
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
+	go func() {
+		err := dispatcher.PushShardAssignments(coordinatorStream)
+		assert.NoError(t, err)
+	}()
+
+	coordinatorStream.AddRequest(&proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{
+					newShardAssignment(0, "server1:6648", 0, math.MaxUint32),
+				},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+		AllowedAuthorities: []string{"server1:6648", "server1:6649", "bootstrap:6648"},
+	})
+
+	assert.Eventually(t, func() bool {
+		return dispatcher.Initialized()
+	}, 10*time.Second, 10*time.Millisecond)
+
+	assert.True(t, dispatcher.HasAuthority("server1:6648"))
+	assert.True(t, dispatcher.HasAuthority("server1:6649"))
+	assert.True(t, dispatcher.HasAuthority("bootstrap:6648"))
+	assert.False(t, dispatcher.HasAuthority("other:6648"))
+
+	assert.NoError(t, dispatcher.Close())
+}
+
+func TestShardAssignmentDispatcher_ClientAssignmentsDoNotIncludeAuthorities(t *testing.T) {
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
+
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
+	go func() {
+		err := dispatcher.PushShardAssignments(coordinatorStream)
+		assert.NoError(t, err)
+	}()
+
+	request := &proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{
+					newShardAssignment(0, "server1:6648", 0, math.MaxUint32),
+				},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+		AllowedAuthorities: []string{"server1:6648", "bootstrap:6648"},
+	}
+	coordinatorStream.AddRequest(request)
+
+	assert.Eventually(t, func() bool {
+		return dispatcher.Initialized()
+	}, 10*time.Second, 10*time.Millisecond)
+
+	mockClient := rpc.NewMockShardAssignmentClientStream()
+	done := make(chan error, 1)
+	go func() {
+		done <- dispatcher.RegisterForUpdates(&proto.ShardAssignmentsRequest{
+			Namespace: constant.DefaultNamespace,
+		}, mockClient)
+	}()
+
+	response := mockClient.GetResponse()
+	assert.Nil(t, response.AllowedAuthorities)
+	assert.Equal(t, request.Namespaces, response.Namespaces)
+
+	mockClient.Cancel()
+	assert.NoError(t, <-done)
 	assert.NoError(t, dispatcher.Close())
 }
 

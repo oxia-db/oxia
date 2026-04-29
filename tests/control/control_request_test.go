@@ -22,12 +22,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+
 	"github.com/oxia-db/oxia/common/proto"
-	clientrpc "github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxia"
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/oxia-db/oxia/tests/mock"
@@ -42,29 +41,29 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	defer s3.Close()
 
 	serverInstanceIndex := map[string]*dataserver.Server{
-		sa1.GetIdentifier(): s1,
-		sa2.GetIdentifier(): s2,
-		sa3.GetIdentifier(): s3,
+		sa1.GetNameOrDefault(): s1,
+		sa2.GetNameOrDefault(): s2,
+		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc.NewRpcProvider(clientrpc.NewClientPool(nil, nil)))
+	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, provider.NotExists)
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(
+		t,
+		metadataProvider,
+		configProvider,
+		rpc.NewRpcProviderFactory(nil),
+	)
 	defer coordinatorInstance.Close()
 
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithNamespace("default"))
 	assert.NoError(t, err)
 	defer client.Close()
 
-	resource := coordinatorInstance.StatusResource().Load()
+	resource := coordinatorInstance.Metadata().GetStatus()
 	shardMetadata := resource.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
 
@@ -83,8 +82,8 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 
 	// Verify the checksum feature is enabled on all replicas.
 	for _, dataServer := range shardMetadata.Ensemble {
-		targetId := dataServer.GetIdentifier()
-		if targetId == leader.GetIdentifier() {
+		targetId := dataServer.GetNameOrDefault()
+		if targetId == leader.GetNameOrDefault() {
 			assert.Eventually(t, func() bool {
 				lead, err := serverInstanceIndex[targetId].GetShardDirector().GetLeader(0)
 				return err == nil && lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
@@ -99,7 +98,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 
 	// Capture the leader's checksum before the flush write. At this point
 	// the leader has committed key1-key7 and the checksum reflects that state.
-	lead, err := serverInstanceIndex[leader.GetIdentifier()].GetShardDirector().GetLeader(0)
+	lead, err := serverInstanceIndex[leader.GetNameOrDefault()].GetShardDirector().GetLeader(0)
 	assert.NoError(t, err)
 	leaderChecksum := lead.Checksum().Value()
 
@@ -116,8 +115,8 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	// The check is inside Eventually because the follower needs time to
 	// process key8's replication message and apply key7's commit.
 	for _, dataServer := range shardMetadata.Ensemble {
-		targetId := dataServer.GetIdentifier()
-		if targetId == leader.GetIdentifier() {
+		targetId := dataServer.GetNameOrDefault()
+		if targetId == leader.GetNameOrDefault() {
 			continue
 		}
 		assert.Eventually(t, func() bool {

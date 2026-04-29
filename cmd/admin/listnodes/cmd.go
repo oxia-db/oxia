@@ -28,8 +28,8 @@ func init() {
 
 var Cmd = &cobra.Command{
 	Use:          "list-nodes",
-	Short:        "List nodes",
-	Long:         `List nodes`,
+	Short:        "List nodes (deprecated: use 'dataserver get')",
+	Long:         `List nodes (deprecated: use 'dataserver get')`,
 	Args:         cobra.ExactArgs(0),
 	RunE:         exec,
 	SilenceUsage: true,
@@ -45,7 +45,7 @@ func exec(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	result := client.ListNodes()
+	result := client.ListNodes() //nolint:staticcheck // Deprecated compatibility command.
 	if result.Error != nil {
 		return result.Error
 	}

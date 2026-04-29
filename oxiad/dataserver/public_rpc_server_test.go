@@ -17,23 +17,76 @@ package dataserver
 import (
 	"context"
 	"io"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
+	"google.golang.org/protobuf/protoadapt"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 )
 
 func init() {
 	logging.LogJSON = false
 	logging.ConfigureLogger()
 }
+
+type testAssignmentDispatcher struct {
+	initialized      bool
+	validAuthorities map[string]bool
+}
+
+func (*testAssignmentDispatcher) Close() error { return nil }
+func (t *testAssignmentDispatcher) Initialized() bool {
+	return t.initialized
+}
+func (*testAssignmentDispatcher) PushShardAssignments(proto.OxiaCoordination_PushShardAssignmentsServer) error {
+	panic("unexpected call")
+}
+func (*testAssignmentDispatcher) RegisterForUpdates(*proto.ShardAssignmentsRequest, assignment.Client) error {
+	panic("unexpected call")
+}
+func (*testAssignmentDispatcher) GetLeader(int64) string { return "" }
+func (t *testAssignmentDispatcher) HasAuthority(authority string) bool {
+	return t.validAuthorities[authority]
+}
+
+type testShardsDirector struct {
+	getLeader func(int64) (lead.LeaderController, error)
+}
+
+func (t *testShardsDirector) Close() error { return nil }
+func (t *testShardsDirector) GetLeader(shardId int64) (lead.LeaderController, error) {
+	return t.getLeader(shardId)
+}
+func (*testShardsDirector) GetFollower(int64) (follow.FollowerController, error) {
+	panic("unexpected call")
+}
+func (*testShardsDirector) GetOrCreateLeader(string, int64, *proto.NewTermOptions) (lead.LeaderController, error) {
+	panic("unexpected call")
+}
+func (*testShardsDirector) GetOrCreateFollower(string, int64, int64, *proto.NewTermOptions) (follow.FollowerController, error) {
+	panic("unexpected call")
+}
+func (*testShardsDirector) DeleteShard(*proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
+	panic("unexpected call")
+}
+func (*testShardsDirector) GetAllLeaders() []lead.LeaderController { panic("unexpected call") }
+
+var _ controller.ShardsDirector = (*testShardsDirector)(nil)
 
 func TestWriteClientClose(t *testing.T) {
 	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
@@ -82,4 +135,109 @@ func TestWriteClientClose(t *testing.T) {
 	t.Logf("resp %v err %v", resp, err)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {
+	server := &publicRpcServer{
+		log: slog.Default(),
+		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
+			"expected-host:6648": true,
+		}},
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "wrong-host:6648",
+	}))
+
+	err := server.validateAuthority(ctx)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
+}
+
+func TestValidateAuthorityReturnsNotInitializedBeforeAssignmentsReady(t *testing.T) {
+	server := &publicRpcServer{
+		assignmentDispatcher: &testAssignmentDispatcher{},
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "expected-host:6648",
+	}))
+
+	err := server.validateAuthority(ctx)
+	require.Error(t, err)
+	assert.Equal(t, constant.CodeNotInitialized, grpcstatus.Code(err))
+}
+
+func TestValidateAuthorityCanBeDisabled(t *testing.T) {
+	server := &publicRpcServer{
+		disableAuthorityValidation: true,
+		assignmentDispatcher:       &testAssignmentDispatcher{},
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "wrong-host:6648",
+	}))
+
+	require.NoError(t, server.validateAuthority(ctx))
+}
+
+type testShardAssignmentsServer struct {
+	ctx context.Context
+}
+
+func (t *testShardAssignmentsServer) Send(*proto.ShardAssignments) error { return nil }
+func (t *testShardAssignmentsServer) SetHeader(metadata.MD) error        { return nil }
+func (t *testShardAssignmentsServer) SendHeader(metadata.MD) error       { return nil }
+func (t *testShardAssignmentsServer) SetTrailer(metadata.MD)             {}
+func (t *testShardAssignmentsServer) Context() context.Context           { return t.ctx }
+func (t *testShardAssignmentsServer) SendMsg(any) error                  { return nil }
+func (t *testShardAssignmentsServer) RecvMsg(any) error                  { return nil }
+func (t *testShardAssignmentsServer) SendHeaderV2(protoadapt.MessageV2) error {
+	return nil
+}
+func (t *testShardAssignmentsServer) RecvMsgV2(protoadapt.MessageV2) error {
+	return nil
+}
+func (t *testShardAssignmentsServer) SendMsgV2(protoadapt.MessageV2) error {
+	return nil
+}
+
+func TestGetShardAssignmentsValidatesAuthority(t *testing.T) {
+	server := &publicRpcServer{
+		log: slog.Default(),
+		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
+			"expected-host:6648": true,
+		}},
+	}
+
+	err := server.GetShardAssignments(&proto.ShardAssignmentsRequest{}, &testShardAssignmentsServer{
+		ctx: metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+			":authority": "wrong-host:6648",
+		})),
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
+}
+
+func TestResolveLeaderValidatesAuthorityBeforeLeaderLookup(t *testing.T) {
+	server := &publicRpcServer{
+		log: slog.Default(),
+		shardsDirector: &testShardsDirector{
+			getLeader: func(int64) (lead.LeaderController, error) {
+				return nil, constant.NewNodeIsNotLeaderWithHint(1, "leader:6648")
+			},
+		},
+		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
+			"expected-host:6648": true,
+		}},
+	}
+
+	shardID := int64(1)
+	_, err := server.resolveLeader(metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+		":authority": "wrong-host:6648",
+	})), &shardID)
+
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
 }

@@ -82,6 +82,12 @@ func (tls *TLSOptions) makeCommonConfig() (*libtls.Config, error) {
 	if tls.MinVersion != 0 {
 		minVersion = tls.MinVersion
 	}
+	if minVersion < libtls.VersionTLS12 {
+		return nil, errors.Errorf("minimum TLS version 0x%04x is below TLS 1.2 (0x%04x)", minVersion, libtls.VersionTLS12)
+	}
+	if tls.MaxVersion != 0 && tls.MaxVersion < minVersion {
+		return nil, errors.Errorf("maximum TLS version 0x%04x is below minimum 0x%04x", tls.MaxVersion, minVersion)
+	}
 
 	tlsConf := libtls.Config{
 		MinVersion: minVersion,
@@ -103,14 +109,28 @@ func (tls *TLSOptions) trustedCertPool() (*x509.CertPool, error) {
 	if err != nil {
 		return nil, err
 	}
-	var block *pem.Block
-	block, _ = pem.Decode(bPem)
-	if block != nil {
+
+	rest := bPem
+	certCount := 0
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "failed to parse certificate in %s", tls.TrustedCaFile)
 		}
 		certPool.AddCert(cert)
+		certCount++
+	}
+
+	if certCount == 0 {
+		return nil, errors.Errorf("no valid certificates found in %s", tls.TrustedCaFile)
 	}
 	return certPool, nil
 }

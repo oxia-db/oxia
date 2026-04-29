@@ -24,7 +24,7 @@ import (
 )
 
 func TestPrometheusMetrics(t *testing.T) {
-	metrics, err := Start("localhost:0")
+	metrics, err := Start("localhost:0", nil)
 	assert.NoError(t, err)
 
 	url := fmt.Sprintf("http://localhost:%d/metrics", metrics.Port())

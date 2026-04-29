@@ -30,20 +30,19 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	dcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
+	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
-
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/rpc"
 )
 
 type internalRpcServer struct {
@@ -52,16 +51,23 @@ type internalRpcServer struct {
 
 	shardsDirector       controller.ShardsDirector
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
-	grpcServer           rpc2.GrpcServer
-	healthServer         rpc2.HealthServer
+	manifest             *manifestpkg.Manifest
+	grpcServer           dcommonrpc.GrpcServer
+	healthServer         dcommonrpc.HealthServer
 	log                  *slog.Logger
 }
 
-func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
-	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc2.HealthServer, tlsConf *tls.Config) (*internalRpcServer, error) {
+func newInternalRpcServer(grpcProvider dcommonrpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
+	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer dcommonrpc.HealthServer,
+	tlsConf *tls.Config, authOptions *auth.Options, manifest *manifestpkg.Manifest) (*internalRpcServer, error) {
+	if authOptions == nil {
+		authOptions = &auth.Disabled
+	}
+
 	server := &internalRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,
+		manifest:             manifest,
 		healthServer:         healthServer,
 		log: slog.With(
 			slog.String("component", "internal-rpc-server"),
@@ -73,7 +79,9 @@ func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, sh
 		proto.RegisterOxiaCoordinationServer(registrar, server)
 		proto.RegisterOxiaLogReplicationServer(registrar, server)
 		grpc_health_v1.RegisterHealthServer(registrar, server.healthServer)
-	}, tlsConf, &auth.Disabled)
+	}, tlsConf, authOptions, dcommonrpc.NewGrpcInsIDVerifyInterceptors(
+		server.manifest,
+	))
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +136,48 @@ func (s *internalRpcServer) PushShardAssignments(srv proto.OxiaCoordination_Push
 	}
 
 	return err
+}
+
+func (s *internalRpcServer) Handshake(c context.Context, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+	log := s.log.With(
+		slog.Any("request", req),
+		slog.String("peer", rpc.GetPeer(c)),
+	)
+
+	log.Info("Received Handshake request")
+
+	if req.InstanceId == "" {
+		return nil, status.Error(codes.InvalidArgument, "instance id must not be empty")
+	}
+
+	currentInstanceID := s.manifest.GetInstanceID()
+	switch currentInstanceID {
+	case "":
+		if err := s.manifest.SetInstanceID(req.InstanceId); err != nil {
+			if errors.Is(err, manifestpkg.ErrInstanceIDMismatch) {
+				return &proto.HandshakeResponse{
+					Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH,
+					FeaturesSupported: feature.SupportedFeatures(),
+				}, nil
+			}
+			log.Warn("Failed to bind instance id", slog.Any("error", err))
+			return nil, err
+		}
+		return &proto.HandshakeResponse{
+			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_BOUND,
+			FeaturesSupported: feature.SupportedFeatures(),
+		}, nil
+	case req.InstanceId:
+		return &proto.HandshakeResponse{
+			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
+			FeaturesSupported: feature.SupportedFeatures(),
+		}, nil
+	default:
+		return &proto.HandshakeResponse{
+			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH,
+			FeaturesSupported: feature.SupportedFeatures(),
+		}, nil
+	}
 }
 
 func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
@@ -275,6 +325,10 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 	return res, err
 }
 
+// GetInfo is a deprecated legacy endpoint kept for rolling-upgrade
+// compatibility. New coordinators should use Handshake, and this endpoint
+// still follows the normal instance-id validation flow until removal in the
+// next major version.
 func (s *internalRpcServer) GetInfo(c context.Context, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
 	log := s.log.With(
 		slog.Any("request", req),
@@ -455,6 +509,10 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 	// If we don't have a follower, fallback to checking the leader controller
 	leader, err := s.shardsDirector.GetLeader(req.Shard)
 	if err != nil {
+		if status.Code(err) == constant.CodeNodeIsNotLeader {
+			// Node is neither follower nor leader for this shard
+			return nil, status.Errorf(constant.CodeNodeIsNotMember, "node is not a member for shard %d", req.Shard)
+		}
 		return nil, err
 	}
 
@@ -504,7 +562,7 @@ func readTerm(md metadata.MD) (v int64, err error) {
 // readSplitHashRange reads optional split hash range from gRPC metadata.
 // Returns the hash range and true if present, nil and false if absent,
 // or an error if the metadata is present but malformed.
-func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool, error) {
+func readSplitHashRange(md metadata.MD) (*proto.HashRange, bool, error) {
 	minArr := md.Get(constant.MetadataSplitHashRangeMin)
 	maxArr := md.Get(constant.MetadataSplitHashRangeMax)
 	if len(minArr) == 0 || len(maxArr) == 0 {
@@ -519,7 +577,7 @@ func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool, error) {
 		return nil, false, fmt.Errorf("invalid split hash range max %q: %w", maxArr[0], err)
 	}
 
-	return &model.Int32HashRange{
+	return &proto.HashRange{
 		Min: minVal,
 		Max: maxVal,
 	}, true, nil

@@ -33,6 +33,40 @@ type adminClientImpl struct {
 	clientPool rpc.ClientPool
 }
 
+func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New("unable to connect to admin server"))
+	}
+
+	response, err := client.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServers, nil
+}
+
+func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServer, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New("unable to connect to admin server"))
+	}
+
+	response, err := client.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: dataServer})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServer, nil
+}
+
 func (admin *adminClientImpl) ListNodes() *ListNodesResult {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
@@ -47,7 +81,7 @@ func (admin *adminClientImpl) ListNodes() *ListNodesResult {
 		}
 	}
 
-	response, err := client.ListNodes(context.Background(), &proto.ListNodesRequest{})
+	response, err := client.ListNodes(context.Background(), &proto.ListNodesRequest{}) //nolint:staticcheck // Deprecated compatibility path.
 	if err != nil {
 		return &ListNodesResult{Error: err}
 	}

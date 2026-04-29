@@ -25,14 +25,19 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonproto "github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
+	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
@@ -149,10 +154,10 @@ func main() {
 	replicationGrpcProvider := newMaelstromReplicationRpcProvider()
 	dispatcher := newDispatcher(grpcProvider, replicationGrpcProvider)
 
-	var servers []model.Server
+	var servers []*commonproto.DataServerIdentity
 	for _, node := range allNodes {
 		if node != thisNode {
-			servers = append(servers, model.Server{
+			servers = append(servers, &commonproto.DataServerIdentity{
 				Public:   node,
 				Internal: node,
 			})
@@ -170,8 +175,8 @@ func main() {
 
 	if thisNode == "n1" {
 		// First node is going to be the "coordinator"
-		clusterConfig := model.ClusterConfig{
-			Namespaces: []model.NamespaceConfig{{
+		clusterConfig := &commonproto.ClusterConfiguration{
+			Namespaces: []*commonproto.Namespace{{
 				Name:              constant.DefaultNamespace,
 				ReplicationFactor: 3,
 				InitialShardCount: 1,
@@ -179,10 +184,47 @@ func main() {
 			Servers: servers,
 		}
 
-		_, _, err := coordinator.NewCoordinator(
-			metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json")),
-			func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil,
-			newRpcProvider(dispatcher))
+		metadataProvider, err := file.NewProvider(context.Background(), filepath.Join(dataDir, "cluster-status.json"), provider.ClusterStatusCodec, provider.WatchDisabled)
+		if err != nil {
+			slog.Error(
+				"failed to create coordinator metadata provider",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+		if err := metadataProvider.WaitToBecomeLeader(); err != nil {
+			slog.Error(
+				"failed to wait for coordinator metadata leadership",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+		configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+		_, err = configProvider.Store(clusterConfig, provider.NotExists)
+		if err != nil {
+			slog.Error(
+				"failed to seed coordinator config provider",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+		metadataFactory := coordmetadata.NewFactoryWithProviders(
+			metadataProvider,
+			configProvider,
+		)
+		metadata, err := metadataFactory.CreateMetadata(context.Background())
+		if err != nil {
+			slog.Error(
+				"failed to create coordinator metadata",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+		_, err = coordruntime.New(
+			metadata,
+			func(instanceID string) rpc.Provider {
+				return newRpcProvider(dispatcher)
+			})
 		if err != nil {
 			slog.Error(
 				"failed to create coordinator",
@@ -196,7 +238,22 @@ func main() {
 		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
 		dataServerOption.Storage.WAL.Dir = filepath.Join(dataDir, thisNode, "wal")
-		_, err := dataserver.NewWithGrpcProvider(context.Background(), commonoption.NewWatch(dataServerOption), grpcProvider, replicationGrpcProvider)
+		manifest, err := manifestpkg.NewManifest(dataServerOption.Storage.Database.Dir)
+		if err != nil {
+			slog.Error(
+				"failed to create dataserver manifest",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+		_, err = dataserver.NewWithGrpcProvider(
+			context.Background(),
+			commonwatch.New(dataServerOption),
+			grpcProvider,
+			replicationGrpcProvider,
+			manifest,
+			true,
+		)
 		if err != nil {
 			return
 		}

@@ -35,6 +35,7 @@ import (
 	"github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/process"
 	time2 "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/common/validation"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
@@ -101,6 +102,10 @@ func walPath(logDir string, namespace string, shard int64) string {
 
 func newWal(namespace string, shard int64, options *FactoryOptions, commitOffsetProvider CommitOffsetProvider,
 	clock time2.Clock, trimmerCheckInterval time.Duration) (Wal, error) {
+	if err := validation.ValidateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
 	if options.SegmentSize == 0 {
 		options.SegmentSize = DefaultFactoryOptions.SegmentSize
 	}
