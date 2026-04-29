@@ -176,7 +176,7 @@ func main() {
 
 		statusProvider := memory.NewProvider(provider.ClusterStatusCodec)
 		configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-		_, err = configProvider.Store(clusterConfig, provider.NotExists)
+		_, err := configProvider.Store(clusterConfig, provider.NotExists)
 		if err != nil {
 			slog.Error(
 				"failed to seed coordinator config provider",
