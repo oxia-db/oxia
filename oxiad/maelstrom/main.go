@@ -163,15 +163,6 @@ func main() {
 		}
 	}
 
-	dataDir, err := os.MkdirTemp("", "oxia-maelstrom")
-	if err != nil {
-		slog.Error(
-			"failed to create data dir",
-			slog.Any("error", err),
-		)
-		os.Exit(1)
-	}
-
 	if thisNode == "n1" {
 		// First node is going to be the "coordinator"
 		clusterConfig := &commonproto.ClusterConfiguration{
@@ -216,6 +207,15 @@ func main() {
 		}
 	} else {
 		// Any other node will be a storage node
+		dataDir, err := os.MkdirTemp("", "oxia-maelstrom")
+		if err != nil {
+			slog.Error(
+				"failed to create data dir",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+
 		dataServerOption := option.NewDefaultOptions()
 		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
