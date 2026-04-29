@@ -48,6 +48,7 @@ type Metadata interface {
 	DeleteShard(namespace string, shard int64)
 
 	GetConfig() *commonproto.ClusterConfiguration
+	ComputeConfig(updateFn func(config *commonproto.ClusterConfiguration) error) error
 	ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration]
 	GetLoadBalancer() *commonproto.LoadBalancer
 
@@ -297,6 +298,59 @@ func validateClusterConfig(config *commonproto.ClusterConfiguration) error {
 	return nil
 }
 
+func (m *coordinatorMetadata) ComputeConfig(updateFn func(config *commonproto.ClusterConfiguration) error) error {
+	for {
+		currentConfig, version, err := m.configProvider.Get()
+		if err != nil {
+			return err
+		}
+		if currentConfig == nil {
+			currentConfig = &commonproto.ClusterConfiguration{}
+		}
+
+		nextConfig := gproto.Clone(currentConfig).(*commonproto.ClusterConfiguration) //nolint:revive
+		if err := updateFn(nextConfig); err != nil {
+			return err
+		}
+		if err := validateClusterConfig(nextConfig); err != nil {
+			return err
+		}
+
+		if _, err := m.storeConfig(nextConfig, version); err != nil {
+			if errors.Is(err, provider.ErrBadVersion) {
+				continue
+			}
+			return err
+		}
+
+		m.applyClusterConfig(nextConfig)
+		return nil
+	}
+}
+
+func (m *coordinatorMetadata) storeConfig(
+	config *commonproto.ClusterConfiguration,
+	expectedVersion provider.Version,
+) (newVersion provider.Version, err error) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+
+		recoveredErr, ok := recovered.(error)
+		if ok && errors.Is(recoveredErr, provider.ErrBadVersion) {
+			newVersion = provider.NotExists
+			err = provider.ErrBadVersion
+			return
+		}
+
+		panic(recovered)
+	}()
+
+	return m.configProvider.Store(config, expectedVersion)
+}
+
 func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
 	nodes := redblacktree.New[string, *commonproto.DataServerIdentity]()
 	for _, server := range m.currentClusterConfig.GetServers() {
@@ -309,6 +363,22 @@ func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
 		namespaceConfigs.Put(ns.GetName(), ns)
 	}
 	m.namespaceConfigsIndex = namespaceConfigs
+}
+
+func (m *coordinatorMetadata) applyClusterConfig(config *commonproto.ClusterConfiguration) {
+	clonedConfig := gproto.Clone(config).(*commonproto.ClusterConfiguration) //nolint:revive
+
+	m.clusterConfigLock.Lock()
+	oldClusterConfig := m.currentClusterConfig
+	m.currentClusterConfig = clonedConfig
+	m.rebuildConfigIndexesLocked()
+	m.clusterConfigLock.Unlock()
+
+	if gproto.Equal(oldClusterConfig, clonedConfig) {
+		m.logger.Info("No cluster config changes detected")
+		return
+	}
+	m.clusterConfigWatch.Publish(clonedConfig)
 }
 
 func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *commonwatch.Receiver[*commonproto.ClusterConfiguration]) {
@@ -331,19 +401,7 @@ func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Rec
 		m.logger.Warn("received invalid cluster config watch value", slog.Any("error", err))
 		return
 	}
-	clonedConfig := gproto.Clone(config).(*commonproto.ClusterConfiguration) //nolint:revive
-
-	m.clusterConfigLock.Lock()
-	oldClusterConfig := m.currentClusterConfig
-	m.currentClusterConfig = clonedConfig
-	m.rebuildConfigIndexesLocked()
-	m.clusterConfigLock.Unlock()
-
-	if gproto.Equal(oldClusterConfig, clonedConfig) {
-		m.logger.Info("No cluster config changes detected")
-		return
-	}
-	m.clusterConfigWatch.Publish(clonedConfig)
+	m.applyClusterConfig(config)
 }
 
 func (m *coordinatorMetadata) GetConfig() *commonproto.ClusterConfiguration {

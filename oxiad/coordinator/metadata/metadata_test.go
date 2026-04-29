@@ -20,8 +20,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
+	commonproto "github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
@@ -81,6 +85,118 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 	config := metadata.GetConfig()
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
+}
+
+func TestComputeConfigUpdatesCachedConfig(t *testing.T) {
+	statusProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	_, err := configProvider.Store(&commonproto.ClusterConfiguration{
+		Namespaces: []*commonproto.Namespace{{
+			Name:              "default",
+			ReplicationFactor: 1,
+			InitialShardCount: 1,
+		}},
+		Servers: []*commonproto.DataServerIdentity{{
+			Public:   "s1:9091",
+			Internal: "s1:8191",
+		}},
+	}, provider.NotExists)
+	require.NoError(t, err)
+
+	metadata := newMetadata(t.Context(), statusProvider, configProvider)
+	t.Cleanup(func() {
+		require.NoError(t, metadata.Close())
+	})
+
+	err = metadata.ComputeConfig(func(config *commonproto.ClusterConfiguration) error {
+		config.AllowExtraAuthorities = append(config.AllowExtraAuthorities, "127.0.0.1:6648")
+		return nil
+	})
+	require.NoError(t, err)
+
+	config := metadata.GetConfig()
+	require.Equal(t, []string{"127.0.0.1:6648"}, config.GetAllowExtraAuthorities())
+}
+
+func TestComputeConfigRetriesOnBadVersion(t *testing.T) {
+	statusProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	configProvider := &retryConfigProvider{
+		config: &commonproto.ClusterConfiguration{
+			Namespaces: []*commonproto.Namespace{{
+				Name:              "default",
+				ReplicationFactor: 1,
+				InitialShardCount: 1,
+			}},
+			Servers: []*commonproto.DataServerIdentity{{
+				Public:   "s1:9091",
+				Internal: "s1:8191",
+			}},
+		},
+		version: provider.NotExists,
+	}
+
+	metadata := newMetadata(t.Context(), statusProvider, configProvider)
+	t.Cleanup(func() {
+		require.NoError(t, metadata.Close())
+	})
+
+	callCount := 0
+	err := metadata.ComputeConfig(func(config *commonproto.ClusterConfiguration) error {
+		callCount++
+		config.Namespaces[0].InitialShardCount++
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, callCount)
+	require.EqualValues(t, 6, metadata.GetConfig().GetNamespaces()[0].GetInitialShardCount())
+}
+
+type retryConfigProvider struct {
+	config      *commonproto.ClusterConfiguration
+	version     provider.Version
+	storeCalled bool
+}
+
+func (*retryConfigProvider) Close() error { return nil }
+
+func (*retryConfigProvider) WaitToBecomeLeader() error { return nil }
+
+func (*retryConfigProvider) Watch() (*commonwatch.Receiver[*commonproto.ClusterConfiguration], error) {
+	return nil, provider.ErrWatchUnsupported
+}
+
+func (p *retryConfigProvider) Get() (*commonproto.ClusterConfiguration, provider.Version, error) {
+	return gproto.Clone(p.config).(*commonproto.ClusterConfiguration), p.version, nil
+}
+
+func (p *retryConfigProvider) Store(
+	value *commonproto.ClusterConfiguration,
+	expectedVersion provider.Version,
+) (provider.Version, error) {
+	if expectedVersion != p.version {
+		panic(provider.ErrBadVersion)
+	}
+
+	if !p.storeCalled {
+		p.storeCalled = true
+		p.config = &commonproto.ClusterConfiguration{
+			Namespaces: []*commonproto.Namespace{{
+				Name:              "default",
+				ReplicationFactor: 1,
+				InitialShardCount: 5,
+			}},
+			Servers: []*commonproto.DataServerIdentity{{
+				Public:   "s1:9091",
+				Internal: "s1:8191",
+			}},
+		}
+		p.version = provider.NextVersion(p.version)
+		panic(provider.ErrBadVersion)
+	}
+
+	p.config = gproto.Clone(value).(*commonproto.ClusterConfiguration)
+	p.version = provider.NextVersion(p.version)
+	return p.version, nil
 }
 
 func writeClusterConfig(t *testing.T, path string) {

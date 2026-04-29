@@ -66,6 +66,8 @@ func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
 func (*mockMetadata) GetConfig() *proto.ClusterConfiguration { return nil }
 
+func (*mockMetadata) ComputeConfig(func(*proto.ClusterConfiguration) error) error { return nil }
+
 func (*mockMetadata) ConfigWatch() *commonwatch.Watch[*proto.ClusterConfiguration] {
 	return commonwatch.New(&proto.ClusterConfiguration{})
 }
