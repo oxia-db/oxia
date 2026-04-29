@@ -25,11 +25,11 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
-func TestNewFromOptionsLoadsFileClusterConfig(t *testing.T) {
+func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
 	dir := t.TempDir()
 	writeClusterConfig(t, filepath.Join(dir, option.DefaultFileConfigName))
 
-	metadata, err := NewFromOptions(t.Context(), &option.Options{
+	factory, err := New(t.Context(), &option.Options{
 		Metadata: option.MetadataOptions{
 			ProviderOptions: option.ProviderOptions{
 				ProviderName: provider.NameFile,
@@ -40,8 +40,11 @@ func TestNewFromOptionsLoadsFileClusterConfig(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	metadata, err := factory.CreateMetadata(t.Context())
+	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())
+		require.NoError(t, factory.Close())
 	}()
 
 	config := metadata.GetConfig()
@@ -49,12 +52,12 @@ func TestNewFromOptionsLoadsFileClusterConfig(t *testing.T) {
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
 }
 
-func TestNewFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
+func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "legacy-cluster.yaml")
 	writeClusterConfig(t, configPath)
 
-	metadata, err := NewFromOptions(t.Context(), &option.Options{
+	factory, err := New(t.Context(), &option.Options{
 		Cluster: option.ClusterOptions{
 			ConfigPath: configPath,
 		},
@@ -68,8 +71,11 @@ func TestNewFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	metadata, err := factory.CreateMetadata(t.Context())
+	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())
+		require.NoError(t, factory.Close())
 	}()
 
 	config := metadata.GetConfig()

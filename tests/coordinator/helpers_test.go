@@ -34,7 +34,14 @@ func createCoordinatorMetadata(
 ) coordmetadata.Metadata {
 	t.Helper()
 
-	return coordmetadata.New(t.Context(), metadataProvider, clusterConfigProvider, clusterConfigNotificationsCh)
+	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
+		metadataProvider,
+		clusterConfigProvider,
+		clusterConfigNotificationsCh,
+	)
+	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	require.NoError(t, err)
+	return metadata
 }
 
 func newCoordinatorInstance(

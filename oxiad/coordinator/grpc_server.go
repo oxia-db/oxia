@@ -52,6 +52,7 @@ type GrpcServer struct {
 	healthServer     *health.Server
 	runtime          coordruntime.Runtime
 	metadata         coordmetadata.Metadata
+	metadataFactory  *coordmetadata.Factory
 	metrics          *metric.PrometheusMetrics
 }
 
@@ -78,13 +79,18 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 		return nil, err
 	}
 
-	metadata, err := coordmetadata.NewFromOptions(parent, options)
+	metadataFactory, err := coordmetadata.New(parent, options)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := metadataFactory.CreateMetadata(parent)
 	if err != nil {
 		return nil, err
 	}
 	runtime, err := coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err != nil {
 		_ = metadata.Close()
+		_ = metadataFactory.Close()
 		return nil, err
 	}
 
@@ -120,6 +126,7 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 		healthServer:     healthServer,
 		runtime:          runtime,
 		metadata:         metadata,
+		metadataFactory:  metadataFactory,
 		metrics:          metricsServer,
 	}
 	server.wg.Go(func() {
@@ -174,6 +181,7 @@ func (s *GrpcServer) Close() error {
 		s.managementServer.Close(),
 		s.runtime.Close(),
 		s.metadata.Close(),
+		s.metadataFactory.Close(),
 	)
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())

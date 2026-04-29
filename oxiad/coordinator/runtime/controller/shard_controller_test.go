@@ -46,11 +46,18 @@ var namespaceConfig = &proto.Namespace{
 func newTestMetadata(t *testing.T, metadataProvider provider.Provider[*proto.ClusterStatus], clusterConfig *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
-	metadata := coordmetadata.New(t.Context(), metadataProvider, func() (*proto.ClusterConfiguration, error) {
-		return clusterConfig, nil
-	}, nil)
+	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
+		metadataProvider,
+		func() (*proto.ClusterConfiguration, error) {
+			return clusterConfig, nil
+		},
+		nil,
+	)
+	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	assert.NoError(t, err)
 	t.Cleanup(func() {
 		assert.NoError(t, metadata.Close())
+		assert.NoError(t, metadataFactory.Close())
 	})
 	return metadata
 }
