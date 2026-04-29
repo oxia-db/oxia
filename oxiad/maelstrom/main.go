@@ -29,7 +29,6 @@ import (
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
@@ -164,15 +163,6 @@ func main() {
 		}
 	}
 
-	dataDir, err := os.MkdirTemp("", "oxia-maelstrom")
-	if err != nil {
-		slog.Error(
-			"failed to create data dir",
-			slog.Any("error", err),
-		)
-		os.Exit(1)
-	}
-
 	if thisNode == "n1" {
 		// First node is going to be the "coordinator"
 		clusterConfig := &commonproto.ClusterConfiguration{
@@ -184,16 +174,9 @@ func main() {
 			Servers: servers,
 		}
 
-		metadataProvider, err := file.NewProvider(context.Background(), filepath.Join(dataDir, "cluster-status.json"), provider.ClusterStatusCodec, provider.WatchDisabled)
-		if err != nil {
-			slog.Error(
-				"failed to create coordinator metadata provider",
-				slog.Any("error", err),
-			)
-			os.Exit(1)
-		}
+		statusProvider := memory.NewProvider(provider.ClusterStatusCodec)
 		configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-		_, err = configProvider.Store(clusterConfig, provider.NotExists)
+		_, err := configProvider.Store(clusterConfig, provider.NotExists)
 		if err != nil {
 			slog.Error(
 				"failed to seed coordinator config provider",
@@ -201,10 +184,7 @@ func main() {
 			)
 			os.Exit(1)
 		}
-		metadataFactory := coordmetadata.NewFactoryWithProviders(
-			metadataProvider,
-			configProvider,
-		)
+		metadataFactory := coordmetadata.NewFactoryWithProviders(statusProvider, configProvider)
 		metadata, err := metadataFactory.CreateMetadata(context.Background())
 		if err != nil {
 			slog.Error(
@@ -227,6 +207,15 @@ func main() {
 		}
 	} else {
 		// Any other node will be a storage node
+		dataDir, err := os.MkdirTemp("", "oxia-maelstrom")
+		if err != nil {
+			slog.Error(
+				"failed to create data dir",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+
 		dataServerOption := option.NewDefaultOptions()
 		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
