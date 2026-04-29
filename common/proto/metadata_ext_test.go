@@ -140,6 +140,11 @@ servers:
 	require.Equal(t, KeySortingType_UNKNOWN, keySorting)
 }
 
+func TestValidateAllowsEmptyConfig(t *testing.T) {
+	config := &ClusterConfiguration{}
+	require.NoError(t, config.Validate())
+}
+
 func TestEncodeYAMLRoundTrip(t *testing.T) {
 	name := "node-1"
 	notificationsEnabled := false
