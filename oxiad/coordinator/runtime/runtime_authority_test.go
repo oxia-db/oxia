@@ -49,14 +49,16 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 			leader.Public,
 		},
 	}
-	metadata := coordmetadata.New(
-		t.Context(),
+	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
 		memory.NewProvider(provider.ClusterStatusCodec),
 		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 	)
+	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
+		require.NoError(t, metadataFactory.Close())
 	})
 	metadata.PutStatus(&proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{
@@ -115,14 +117,16 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 			Internal: active.Internal,
 		}},
 	}
-	metadata := coordmetadata.New(
-		t.Context(),
+	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
 		memory.NewProvider(provider.ClusterStatusCodec),
 		func() (*proto.ClusterConfiguration, error) { return clusterConfig, nil },
 		nil,
 	)
+	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
+		require.NoError(t, metadataFactory.Close())
 	})
 	metadata.PutStatus(&proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{

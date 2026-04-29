@@ -198,7 +198,20 @@ func main() {
 			)
 			os.Exit(1)
 		}
-		metadata := coordmetadata.New(context.Background(), metadataProvider, func() (*commonproto.ClusterConfiguration, error) { return clusterConfig, nil }, nil)
+		metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(
+			context.Background(),
+			metadataProvider,
+			func() (*commonproto.ClusterConfiguration, error) { return clusterConfig, nil },
+			nil,
+		)
+		metadata, err := metadataFactory.CreateMetadata(context.Background())
+		if err != nil {
+			slog.Error(
+				"failed to create coordinator metadata",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
 		_, err = coordruntime.New(
 			metadata,
 			func(instanceID string) rpc.Provider {

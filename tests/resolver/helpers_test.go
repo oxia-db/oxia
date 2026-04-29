@@ -35,9 +35,16 @@ func newCoordinatorInstance(
 ) coordruntime.Runtime {
 	t.Helper()
 
-	metadata := coordmetadata.New(t.Context(), metadataProvider, clusterConfigProvider, clusterConfigNotificationsCh)
+	metadataFactory := coordmetadata.NewFactoryWithCallbackConfig(t.Context(),
+		metadataProvider,
+		clusterConfigProvider,
+		clusterConfigNotificationsCh,
+	)
+	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
+		require.NoError(t, metadataFactory.Close())
 	})
 
 	coordinatorInstance, err := coordruntime.New(metadata, rpcProvider)
