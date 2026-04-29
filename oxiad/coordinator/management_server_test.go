@@ -43,11 +43,6 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 	if config == nil {
 		config = &proto.ClusterConfiguration{}
 	}
-	if len(config.Servers) == 0 {
-		config.Servers = []*proto.DataServerIdentity{
-			{Public: "seed-public-1:6648", Internal: "seed-internal-1:6649"},
-		}
-	}
 
 	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
 	_, err := configProvider.Store(config, provider.NotExists)

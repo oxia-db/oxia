@@ -140,16 +140,8 @@ servers:
 	require.Equal(t, KeySortingType_UNKNOWN, keySorting)
 }
 
-func TestValidateAllowsEmptyNamespaces(t *testing.T) {
-	config := &ClusterConfiguration{
-		Servers: []*DataServerIdentity{
-			{
-				Public:   "localhost:6648",
-				Internal: "localhost:6649",
-			},
-		},
-	}
-
+func TestValidateAllowsEmptyConfig(t *testing.T) {
+	config := &ClusterConfiguration{}
 	require.NoError(t, config.Validate())
 }
 
