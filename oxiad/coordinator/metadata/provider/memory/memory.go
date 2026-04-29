@@ -15,6 +15,7 @@
 package memory
 
 import (
+	"reflect"
 	"sync"
 
 	gproto "google.golang.org/protobuf/proto"
@@ -41,11 +42,10 @@ func (*Provider[T]) WaitToBecomeLeader() error {
 }
 
 func NewProvider[T gproto.Message](codec provider.Codec[T]) provider.Provider[T] {
-	var zero T
 	return &Provider[T]{
 		codec:   codec,
 		version: provider.NotExists,
-		watch:   commonwatch.New(zero),
+		watch:   commonwatch.New(newZeroValue[T]()),
 	}
 }
 
@@ -76,4 +76,17 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersi
 
 func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
 	return m.watch.Subscribe(), nil
+}
+
+func newZeroValue[T gproto.Message]() T {
+	var zero T
+	messageType := reflect.TypeFor[T]()
+	if messageType.Kind() == reflect.Pointer {
+		value, ok := reflect.New(messageType.Elem()).Interface().(T)
+		if !ok {
+			panic("failed to allocate metadata memory provider watch seed")
+		}
+		return value
+	}
+	return zero
 }
