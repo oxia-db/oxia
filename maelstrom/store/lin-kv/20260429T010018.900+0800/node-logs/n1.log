@@ -1,0 +1,78 @@
+{"time":"2026-04-29T01:00:20.776125+08:00","level":"INFO","msg":"Starting Oxia in Maelstrom mode","PWD":"/private/var/folders/lk/_y7xvjmd437b7n36wnb44gnm0000gn/T"}
+{"time":"2026-04-29T01:00:20.776279+08:00","level":"INFO","msg":"Got line","line":"eyJpZCI6NCwic3JjIjoiYzQiLCJkZXN0IjoibjEiLCJib2R5Ijp7InR5cGUiOiJpbml0Iiwibm9kZV9pZCI6Im4xIiwibm9kZV9pZHMiOlsibjEiLCJuMiIsIm4zIiwibjQiLCJuNSJdLCJtc2dfaWQiOjF9fQ=="}
+{"time":"2026-04-29T01:00:20.776322+08:00","level":"INFO","msg":"received message","type":"init","proto-msg":null}
+{"time":"2026-04-29T01:00:20.776328+08:00","level":"INFO","msg":"Received init request","this-node":"n1","all-nodes":["n1","n2","n3","n4","n5"]}
+{"time":"2026-04-29T01:00:20.786197+08:00","level":"INFO","msg":"Started data server controller","component":"data-server-controller","data-server":"n2"}
+{"time":"2026-04-29T01:00:20.786228+08:00","level":"INFO","msg":"Started data server controller","component":"data-server-controller","data-server":"n3"}
+{"time":"2026-04-29T01:00:20.786252+08:00","level":"INFO","msg":"Started data server controller","component":"data-server-controller","data-server":"n4"}
+{"time":"2026-04-29T01:00:20.786265+08:00","level":"INFO","msg":"Started data server controller","component":"data-server-controller","data-server":"n5"}
+{"time":"2026-04-29T01:00:20.786268+08:00","level":"INFO","msg":"Checking cluster config","component":"coordinator","clusterConfig":{"namespaces":[{"name":"default","initialShardCount":1,"replicationFactor":3}],"servers":[{"public":"n2","internal":"n2"},{"public":"n3","internal":"n3"},{"public":"n4","internal":"n4"},{"public":"n5","internal":"n5"}]}}
+{"time":"2026-04-29T01:00:20.786859+08:00","level":"INFO","msg":"Sending message","msg":"eyJpZCI6MCwic3JjIjoibjEiLCJkZXN0IjoibjMiLCJib2R5Ijp7InR5cGUiOiJoZWFsdGgiLCJtc2dfaWQiOjksImluX3JlcGx5X3RvIjpudWxsLCJtIjp7InNoYXJkIjoiMCJ9fX0="}
+panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
+[signal SIGSEGV: segmentation violation code=0x2 addr=0x8 pc=0x103d9d4d0]
+
+goroutine 29 [running]:
+sync.(*WaitGroup).Go.func1.1()
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/sync/waitgroup.go:251 +0x48
+panic({0x1054c4080?, 0x1058f03e0?})
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/runtime/panic.go:860 +0x12c
+main.(*maelstromShardAssignmentClient).Send(0x7ebf09449580, 0x7ebf0979e0a0)
+	/Users/mattison/projects/oxia-io/oxia/oxiad/maelstrom/coordinator_rpc_client.go:159 +0x40
+github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller.(*dataServerController).sendAssignmentsDispatchWithRetries.func1()
+	/Users/mattison/projects/oxia-io/oxia/oxiad/coordinator/runtime/controller/dataserver_controller.go:184 +0x2f0
+github.com/cenkalti/backoff/v4.RetryNotifyWithTimer.Operation.withEmptyData.func1()
+	/Users/mattison/go/pkg/mod/github.com/cenkalti/backoff/v4@v4.3.0/retry.go:18 +0x24
+github.com/cenkalti/backoff/v4.doRetryNotify[...](0x7ebf09345ba8?, {0x1057ef2b8, 0x7ebf09427040}, 0x7ebf09345bf8, {0x0, 0x0?})
+	/Users/mattison/go/pkg/mod/github.com/cenkalti/backoff/v4@v4.3.0/retry.go:88 +0xcc
+github.com/cenkalti/backoff/v4.RetryNotifyWithTimer(0x18?, {0x1057ef2b8?, 0x7ebf09427040?}, 0x10595fcc0?, {0x0?, 0x0?})
+	/Users/mattison/go/pkg/mod/github.com/cenkalti/backoff/v4@v4.3.0/retry.go:61 +0x58
+github.com/cenkalti/backoff/v4.RetryNotify(...)
+	/Users/mattison/go/pkg/mod/github.com/cenkalti/backoff/v4@v4.3.0/retry.go:49
+github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller.(*dataServerController).sendAssignmentsDispatchWithRetries(0x7ebf09346000?)
+	/Users/mattison/projects/oxia-io/oxia/oxiad/coordinator/runtime/controller/dataserver_controller.go:154 +0x48
+github.com/oxia-db/oxia/common/process.DoWithLabels.func1({0x1058093f8?, 0x7ebf09346000?})
+	/Users/mattison/projects/oxia-io/oxia/common/process/pprof.go:46 +0x24
+runtime/pprof.Do({0x105809430?, 0x7ebf0979f9a0?}, {{0x7ebf094491c0?, 0x0?, 0x6d?}}, 0x7ebf09345df8)
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/runtime/pprof/runtime.go:57 +0x78
+github.com/oxia-db/oxia/common/process.DoWithLabels({0x105809430, 0x7ebf0979f9a0}, 0x7ebf09345f58?, 0x7ebf09345f88)
+	/Users/mattison/projects/oxia-io/oxia/common/process/pprof.go:42 +0x208
+github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller.newDataServerController.func4()
+	/Users/mattison/projects/oxia-io/oxia/oxiad/coordinator/runtime/controller/dataserver_controller.go:422 +0x134
+sync.(*WaitGroup).Go.func1()
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/sync/waitgroup.go:258 +0x48
+created by sync.(*WaitGroup).Go in goroutine 1
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/sync/waitgroup.go:238 +0x70
+panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
+[signal SIGSEGV: segmentation violation code=0x2 addr=0x8 pc=0x103d9d4d0]
+
+goroutine 83 [running]:
+sync.(*WaitGroup).Go.func1.1()
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/sync/waitgroup.go:251 +0x48
+panic({0x1054c4080?, 0x1058f03e0?})
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/runtime/panic.go:860 +0x12c
+main.(*maelstromShardAssignmentClient).Send(0x7ebf09510080, 0x7ebf0979e0a0)
+	/Users/mattison/projects/oxia-io/oxia/oxiad/maelstrom/coordinator_rpc_client.go:159 +0x40
+github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller.(*dataServerController).sendAssignmentsDispatchWithRetries.func1()
+	/Users/mattison/projects/oxia-io/oxia/oxiad/coordinator/runtime/controller/dataserver_controller.go:184 +0x2f0
+github.com/cenkalti/backoff/v4.RetryNotifyWithTimer.Operation.withEmptyData.func1()
+	/Users/mattison/go/pkg/mod/github.com/cenkalti/backoff/v4@v4.3.0/retry.go:18 +0x24
+github.com/cenkalti/backoff/v4.doRetryNotify[...](0x7ebf096cfba8?, {0x1057ef2b8, 0x7ebf09427320}, 0x7ebf096cfbf8, {0x0, 0x0?})
+	/Users/mattison/go/pkg/mod/github.com/cenkalti/backoff/v4@v4.3.0/retry.go:88 +0xcc
+github.com/cenkalti/backoff/v4.RetryNotifyWithTimer(0x18?, {0x1057ef2b8?, 0x7ebf09427320?}, 0x10595fcc0?, {0x0?, 0x0?})
+	/Users/mattison/go/pkg/mod/github.com/cenkalti/backoff/v4@v4.3.0/retry.go:61 +0x58
+github.com/cenkalti/backoff/v4.RetryNotify(...)
+	/Users/mattison/go/pkg/mod/github.com/cenkalti/backoff/v4@v4.3.0/retry.go:49
+github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller.(*dataServerController).sendAssignmentsDispatchWithRetries(0x7ebf0957e000?)
+	/Users/mattison/projects/oxia-io/oxia/oxiad/coordinator/runtime/controller/dataserver_controller.go:154 +0x48
+github.com/oxia-db/oxia/common/process.DoWithLabels.func1({0x1058093f8?, 0x7ebf0957e000?})
+	/Users/mattison/projects/oxia-io/oxia/common/process/pprof.go:46 +0x24
+runtime/pprof.Do({0x105809430?, 0x7ebf0979fb80?}, {{0x7ebf09510040?, 0x0?, 0x3d?}}, 0x7ebf096c9df8)
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/runtime/pprof/runtime.go:57 +0x78
+github.com/oxia-db/oxia/common/process.DoWithLabels({0x105809430, 0x7ebf0979fb80}, 0x7ebf096c9f58?, 0x7ebf096c9f88)
+	/Users/mattison/projects/oxia-io/oxia/common/process/pprof.go:42 +0x208
+github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller.newDataServerController.func4()
+	/Users/mattison/projects/oxia-io/oxia/oxiad/coordinator/runtime/controller/dataserver_controller.go:422 +0x134
+sync.(*WaitGroup).Go.func1()
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/sync/waitgroup.go:258 +0x48
+created by sync.(*WaitGroup).Go in goroutine 1
+	/Users/mattison/.local/share/mise/installs/go/1.26.0/src/sync/waitgroup.go:238 +0x70

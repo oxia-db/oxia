@@ -1,0 +1,616 @@
+{:index 0, :time 10086584, :type :invoke, :process 5, :f :write, :value [0 3]}
+{:index 1, :time 252144750, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 2, :time 262027959, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 3, :time 317833875, :type :invoke, :process 2, :f :read, :value [0 nil]}
+{:index 4, :time 320395625, :type :fail, :process 2, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 5, :time 657554667, :type :invoke, :process 3, :f :read, :value [0 nil]}
+{:index 6, :time 660452042, :type :fail, :process 3, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 7, :time 834662625, :type :invoke, :process 4, :f :read, :value [0 nil]}
+{:index 8, :time 838346042, :type :fail, :process 4, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 9, :time 854083834, :type :invoke, :process 6, :f :write, :value [0 1]}
+{:index 10, :time 855997709, :type :fail, :process 6, :f :write, :value [0 1], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 11, :time 871672459, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 12, :time 1020164209, :type :info, :process 5, :f :write, :value [0 3], :error :net-timeout}
+{:index 13, :time 1085853125, :type :invoke, :process 7, :f :cas, :value [0 [1 0]]}
+{:index 14, :time 1089343000, :type :fail, :process 7, :f :cas, :value [0 [1 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 15, :time 1335544584, :type :invoke, :process 8, :f :cas, :value [0 [1 1]]}
+{:index 16, :time 1337409334, :type :fail, :process 8, :f :cas, :value [0 [1 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 17, :time 1558521750, :type :invoke, :process 9, :f :cas, :value [0 [2 1]]}
+{:index 18, :time 1564518875, :type :fail, :process 9, :f :cas, :value [0 [2 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 19, :time 1794744667, :type :invoke, :process 15, :f :write, :value [0 1]}
+{:index 20, :time 1876265000, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 21, :time 1946212375, :type :invoke, :process 6, :f :cas, :value [0 [1 1]]}
+{:index 22, :time 1949263084, :type :fail, :process 6, :f :cas, :value [0 [1 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 23, :time 2207975500, :type :invoke, :process 6, :f :cas, :value [0 [1 0]]}
+{:index 24, :time 2214109709, :type :fail, :process 6, :f :cas, :value [0 [1 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 25, :time 2304389834, :type :invoke, :process 2, :f :read, :value [0 nil]}
+{:index 26, :time 2306207125, :type :fail, :process 2, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 27, :time 2521378334, :type :invoke, :process 6, :f :cas, :value [0 [3 0]]}
+{:index 28, :time 2523864084, :type :fail, :process 6, :f :cas, :value [0 [3 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 29, :time 2703040000, :type :invoke, :process 4, :f :read, :value [0 nil]}
+{:index 30, :time 2705362167, :type :fail, :process 4, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 31, :time 2795864959, :type :info, :process 15, :f :write, :value [0 1], :error :net-timeout}
+{:index 32, :time 3038466667, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 33, :time 3180884834, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 34, :time 3184523917, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 35, :time 3219482959, :type :invoke, :process 7, :f :write, :value [0 4]}
+{:index 36, :time 3221394875, :type :fail, :process 7, :f :write, :value [0 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 37, :time 3586861584, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 38, :time 3589725875, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 39, :time 3614588542, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 40, :time 3616917500, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 41, :time 3779652875, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 42, :time 3782150667, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 43, :time 3883721625, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 44, :time 3885820750, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 45, :time 4040928459, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 46, :time 4079635417, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 47, :time 4081468000, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 48, :time 4343929417, :type :invoke, :process 2, :f :read, :value [0 nil]}
+{:index 49, :time 4346280042, :type :fail, :process 2, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 50, :time 4385407834, :type :invoke, :process 25, :f :write, :value [0 1]}
+{:index 51, :time 4391761667, :type :invoke, :process 6, :f :cas, :value [0 [3 0]]}
+{:index 52, :time 4394619000, :type :fail, :process 6, :f :cas, :value [0 [3 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 53, :time 4449140959, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 54, :time 4482612334, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 55, :time 4483980459, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 56, :time 4815378875, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 57, :time 4817234167, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 58, :time 5030375667, :type :invoke, :process 8, :f :cas, :value [0 [4 1]]}
+{:index 59, :time 5032360500, :type :fail, :process 8, :f :cas, :value [0 [4 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 60, :time 5136834750, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 61, :time 5147786584, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 62, :time 5179622250, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 63, :time 5181046625, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 64, :time 5248684792, :type :invoke, :process 6, :f :write, :value [0 4]}
+{:index 65, :time 5250150292, :type :fail, :process 6, :f :write, :value [0 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 66, :time 5391023417, :type :info, :process 25, :f :write, :value [0 1], :error :net-timeout}
+{:index 67, :time 5435644709, :type :invoke, :process 35, :f :write, :value [0 2]}
+{:index 68, :time 5453859792, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 69, :time 5787973500, :type :invoke, :process 2, :f :read, :value [0 nil]}
+{:index 70, :time 5794967750, :type :fail, :process 2, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 71, :time 5847042417, :type :invoke, :process 6, :f :cas, :value [0 [0 0]]}
+{:index 72, :time 5848918375, :type :fail, :process 6, :f :cas, :value [0 [0 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 73, :time 5905452167, :type :invoke, :process 4, :f :read, :value [0 nil]}
+{:index 74, :time 5907004334, :type :fail, :process 4, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 75, :time 5923854375, :type :invoke, :process 6, :f :write, :value [0 2]}
+{:index 76, :time 5925243042, :type :fail, :process 6, :f :write, :value [0 2], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 77, :time 6326319250, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 78, :time 6333283959, :type :invoke, :process 7, :f :cas, :value [0 [3 2]]}
+{:index 79, :time 6336916042, :type :fail, :process 7, :f :cas, :value [0 [3 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 80, :time 6440474875, :type :info, :process 35, :f :write, :value [0 2], :error :net-timeout}
+{:index 81, :time 6729486709, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 82, :time 6731157875, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 83, :time 7098171459, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 84, :time 7100292834, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 85, :time 7331379709, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 86, :time 7355879667, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 87, :time 7623680625, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 88, :time 7625719084, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 89, :time 7971178250, :type :invoke, :process 45, :f :cas, :value [0 [4 4]]}
+{:index 90, :time 8033665042, :type :invoke, :process 2, :f :read, :value [0 nil]}
+{:index 91, :time 8035301750, :type :fail, :process 2, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 92, :time 8156026709, :type :invoke, :process 6, :f :cas, :value [0 [4 1]]}
+{:index 93, :time 8158230500, :type :fail, :process 6, :f :cas, :value [0 [4 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 94, :time 8280099792, :type :invoke, :process 6, :f :cas, :value [0 [4 1]]}
+{:index 95, :time 8282409209, :type :fail, :process 6, :f :cas, :value [0 [4 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 96, :time 8297154209, :type :invoke, :process 6, :f :cas, :value [0 [0 4]]}
+{:index 97, :time 8298929584, :type :fail, :process 6, :f :cas, :value [0 [0 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 98, :time 8350588667, :type :invoke, :process 6, :f :write, :value [0 0]}
+{:index 99, :time 8352574625, :type :fail, :process 6, :f :write, :value [0 0], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 100, :time 8361111625, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 101, :time 8425773500, :type :invoke, :process 7, :f :write, :value [0 1]}
+{:index 102, :time 8427282875, :type :fail, :process 7, :f :write, :value [0 1], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 103, :time 8824392542, :type :invoke, :process 8, :f :cas, :value [0 [0 3]]}
+{:index 104, :time 8825897750, :type :fail, :process 8, :f :cas, :value [0 [0 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 105, :time 8978838917, :type :info, :process 45, :f :cas, :value [0 [4 4]], :error :net-timeout}
+{:index 106, :time 9057637709, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 107, :time 9093442209, :type :invoke, :process 55, :f :cas, :value [0 [1 1]]}
+{:index 108, :time 9377349334, :type :invoke, :process 6, :f :cas, :value [0 [2 2]]}
+{:index 109, :time 9379460542, :type :fail, :process 6, :f :cas, :value [0 [2 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 110, :time 9705166042, :type :invoke, :process 6, :f :cas, :value [0 [0 3]]}
+{:index 111, :time 9706755417, :type :fail, :process 6, :f :cas, :value [0 [0 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 112, :time 9739552125, :type :invoke, :process 6, :f :cas, :value [0 [2 4]]}
+{:index 113, :time 9741300292, :type :fail, :process 6, :f :cas, :value [0 [2 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 114, :time 10061953209, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 115, :time 10095814084, :type :info, :process 55, :f :cas, :value [0 [1 1]], :error :net-timeout}
+{:index 116, :time 10117772000, :type :invoke, :process 65, :f :cas, :value [0 [4 1]]}
+{:index 117, :time 10355131542, :type :invoke, :process 4, :f :read, :value [0 nil]}
+{:index 118, :time 10357695625, :type :fail, :process 4, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 119, :time 10614176250, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 120, :time 10904967542, :type :invoke, :process 6, :f :write, :value [0 3]}
+{:index 121, :time 10906767084, :type :fail, :process 6, :f :write, :value [0 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 122, :time 11143012625, :type :info, :process 65, :f :cas, :value [0 [4 1]], :error :net-timeout}
+{:index 123, :time 11304000750, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 124, :time 11318983500, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 125, :time 11345105417, :type :invoke, :process 8, :f :write, :value [0 0]}
+{:index 126, :time 11356743917, :type :fail, :process 8, :f :write, :value [0 0], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 127, :time 11505218292, :type :invoke, :process 9, :f :write, :value [0 4]}
+{:index 128, :time 11531861709, :type :fail, :process 9, :f :write, :value [0 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 129, :time 11576145500, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 130, :time 11589235917, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 131, :time 11589676000, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 132, :time 11623368334, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 133, :time 11626976459, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 134, :time 11729548750, :type :invoke, :process 75, :f :cas, :value [0 [2 2]]}
+{:index 135, :time 12020790292, :type :invoke, :process 6, :f :write, :value [0 4]}
+{:index 136, :time 12024176417, :type :fail, :process 6, :f :write, :value [0 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 137, :time 12331243959, :type :invoke, :process 3, :f :read, :value [0 nil]}
+{:index 138, :time 12335887459, :type :fail, :process 3, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 139, :time 12627996584, :type :invoke, :process 6, :f :cas, :value [0 [2 1]]}
+{:index 140, :time 12629725167, :type :fail, :process 6, :f :cas, :value [0 [2 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 141, :time 12736399292, :type :info, :process 75, :f :cas, :value [0 [2 2]], :error :net-timeout}
+{:index 142, :time 12845529875, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 143, :time 13089637750, :type :invoke, :process 6, :f :cas, :value [0 [0 2]]}
+{:index 144, :time 13091291000, :type :fail, :process 6, :f :cas, :value [0 [0 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 145, :time 13134476084, :type :invoke, :process 7, :f :cas, :value [0 [4 3]]}
+{:index 146, :time 13137046750, :type :fail, :process 7, :f :cas, :value [0 [4 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 147, :time 13510142667, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 148, :time 13511737209, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 149, :time 13520074667, :type :invoke, :process 9, :f :cas, :value [0 [3 3]]}
+{:index 150, :time 13521198625, :type :fail, :process 9, :f :cas, :value [0 [3 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 151, :time 13779871959, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 152, :time 13781409750, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 153, :time 13848934709, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 154, :time 14107656292, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 155, :time 14314458375, :type :invoke, :process 85, :f :cas, :value [0 [2 0]]}
+{:index 156, :time 14457834500, :type :invoke, :process 6, :f :write, :value [0 3]}
+{:index 157, :time 14463918167, :type :fail, :process 6, :f :write, :value [0 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 158, :time 14715190125, :type :invoke, :process 3, :f :read, :value [0 nil]}
+{:index 159, :time 14716471084, :type :fail, :process 3, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 160, :time 14724526084, :type :invoke, :process 6, :f :cas, :value [0 [4 3]]}
+{:index 161, :time 14725974834, :type :fail, :process 6, :f :cas, :value [0 [4 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 162, :time 15020617292, :type :invoke, :process 6, :f :write, :value [0 0]}
+{:index 163, :time 15022900917, :type :fail, :process 6, :f :write, :value [0 0], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 164, :time 15111733375, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 165, :time 15199753709, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 166, :time 15319693625, :type :info, :process 85, :f :cas, :value [0 [2 0]], :error :net-timeout}
+{:index 167, :time 15528935250, :type :invoke, :process 7, :f :write, :value [0 1]}
+{:index 168, :time 15530942959, :type :fail, :process 7, :f :write, :value [0 1], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 169, :time 15823122584, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 170, :time 15824813709, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 171, :time 15852014625, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 172, :time 15853670875, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 173, :time 16013269792, :type :invoke, :process 95, :f :write, :value [0 3]}
+{:index 174, :time 16202844167, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 175, :time 16323601917, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 176, :time 16609375375, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 177, :time 16611010584, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 178, :time 16621801709, :type :invoke, :process 6, :f :write, :value [0 1]}
+{:index 179, :time 16623539500, :type :fail, :process 6, :f :write, :value [0 1], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 180, :time 16691096792, :type :invoke, :process 6, :f :write, :value [0 0]}
+{:index 181, :time 16692375417, :type :fail, :process 6, :f :write, :value [0 0], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 182, :time 16801023667, :type :invoke, :process 4, :f :read, :value [0 nil]}
+{:index 183, :time 16802717125, :type :fail, :process 4, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 184, :time 16906848209, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 185, :time 16908845125, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 186, :time 17017004500, :type :info, :process 95, :f :write, :value [0 3], :error :net-timeout}
+{:index 187, :time 17175982709, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 188, :time 17178367084, :type :invoke, :process 7, :f :cas, :value [0 [0 0]]}
+{:index 189, :time 17189008209, :type :fail, :process 7, :f :cas, :value [0 [0 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 190, :time 17190107209, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 191, :time 17221042792, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 192, :time 17222517875, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 193, :time 17329066834, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 194, :time 17333592667, :type :invoke, :process 9, :f :cas, :value [0 [2 0]]}
+{:index 195, :time 17334677584, :type :fail, :process 9, :f :cas, :value [0 [2 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 196, :time 17574289500, :type :invoke, :process 0, :f :read, :value [0 nil]}
+{:index 197, :time 17882076875, :type :invoke, :process 1, :f :read, :value [0 nil]}
+{:index 198, :time 17883633250, :type :fail, :process 1, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 199, :time 17955378084, :type :invoke, :process 105, :f :cas, :value [0 [2 4]]}
+{:index 200, :time 18169628875, :type :invoke, :process 2, :f :read, :value [0 nil]}
+{:index 201, :time 18170997667, :type :fail, :process 2, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 202, :time 18550571792, :type :invoke, :process 3, :f :read, :value [0 nil]}
+{:index 203, :time 18551934542, :type :fail, :process 3, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 204, :time 18579107625, :type :fail, :process 0, :f :read, :value [0 nil], :error :net-timeout}
+{:index 205, :time 18954126667, :type :invoke, :process 4, :f :read, :value [0 nil]}
+{:index 206, :time 18958163209, :type :info, :process 105, :f :cas, :value [0 [2 4]], :error :net-timeout}
+{:index 207, :time 18959074750, :type :fail, :process 4, :f :read, :value [0 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 208, :time 19221451000, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 209, :time 19564234834, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 210, :time 19565916709, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 211, :time 19926370042, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 212, :time 19927641209, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 213, :time 20179495250, :type :invoke, :process 8, :f :cas, :value [1 [3 2]]}
+{:index 214, :time 20185684792, :type :fail, :process 8, :f :cas, :value [1 [3 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 215, :time 20223569250, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 216, :time 20395570875, :type :invoke, :process 9, :f :cas, :value [1 [0 3]]}
+{:index 217, :time 20396911459, :type :fail, :process 9, :f :cas, :value [1 [0 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 218, :time 20615635625, :type :invoke, :process 115, :f :write, :value [1 4]}
+{:index 219, :time 20903940875, :type :invoke, :process 6, :f :cas, :value [1 [0 3]]}
+{:index 220, :time 20907762709, :type :fail, :process 6, :f :cas, :value [1 [0 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 221, :time 20936784250, :type :invoke, :process 6, :f :cas, :value [1 [3 4]]}
+{:index 222, :time 20938008625, :type :fail, :process 6, :f :cas, :value [1 [3 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 223, :time 21271492875, :type :invoke, :process 2, :f :read, :value [1 nil]}
+{:index 224, :time 21273734084, :type :fail, :process 2, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 225, :time 21303950500, :type :invoke, :process 3, :f :read, :value [1 nil]}
+{:index 226, :time 21305270875, :type :fail, :process 3, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 227, :time 21400581375, :type :invoke, :process 4, :f :read, :value [1 nil]}
+{:index 228, :time 21401774000, :type :fail, :process 4, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 229, :time 21485540792, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 230, :time 21553733834, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 231, :time 21555046667, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 232, :time 21618382750, :type :info, :process 115, :f :write, :value [1 4], :error :net-timeout}
+{:index 233, :time 21775613167, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 234, :time 21776947500, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 235, :time 22002639042, :type :invoke, :process 8, :f :cas, :value [1 [1 2]]}
+{:index 236, :time 22004052625, :type :fail, :process 8, :f :cas, :value [1 [1 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 237, :time 22081669625, :type :invoke, :process 9, :f :write, :value [1 4]}
+{:index 238, :time 22083096459, :type :fail, :process 9, :f :write, :value [1 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 239, :time 22220617417, :type :invoke, :process 125, :f :cas, :value [1 [0 2]]}
+{:index 240, :time 22487961334, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 241, :time 22559531959, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 242, :time 22901315459, :type :invoke, :process 6, :f :write, :value [1 3]}
+{:index 243, :time 22902630334, :type :fail, :process 6, :f :write, :value [1 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 244, :time 23193941417, :type :invoke, :process 6, :f :cas, :value [1 [3 0]]}
+{:index 245, :time 23195237625, :type :fail, :process 6, :f :cas, :value [1 [3 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 246, :time 23220842709, :type :info, :process 125, :f :cas, :value [1 [0 2]], :error :net-timeout}
+{:index 247, :time 23237448042, :type :invoke, :process 135, :f :cas, :value [1 [3 4]]}
+{:index 248, :time 23260191417, :type :invoke, :process 6, :f :cas, :value [1 [1 0]]}
+{:index 249, :time 23261344084, :type :fail, :process 6, :f :cas, :value [1 [1 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 250, :time 23327420209, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 251, :time 23328580959, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 252, :time 23475111834, :type :invoke, :process 6, :f :cas, :value [1 [2 3]]}
+{:index 253, :time 23477099417, :type :fail, :process 6, :f :cas, :value [1 [2 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 254, :time 23564526750, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 255, :time 23742493834, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 256, :time 23871652917, :type :invoke, :process 8, :f :cas, :value [1 [0 4]]}
+{:index 257, :time 23873230042, :type :fail, :process 8, :f :cas, :value [1 [0 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 258, :time 24109601875, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 259, :time 24111700917, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 260, :time 24241655792, :type :info, :process 135, :f :cas, :value [1 [3 4]], :error :net-timeout}
+{:index 261, :time 24406651417, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 262, :time 24407954584, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 263, :time 24688132250, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 264, :time 24689415167, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 265, :time 24747331167, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 266, :time 24911845750, :type :invoke, :process 145, :f :cas, :value [1 [0 4]]}
+{:index 267, :time 25055892375, :type :invoke, :process 2, :f :read, :value [1 nil]}
+{:index 268, :time 25057099917, :type :fail, :process 2, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 269, :time 25092675084, :type :invoke, :process 3, :f :read, :value [1 nil]}
+{:index 270, :time 25093697834, :type :fail, :process 3, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 271, :time 25127121334, :type :invoke, :process 6, :f :cas, :value [1 [3 3]]}
+{:index 272, :time 25128076375, :type :fail, :process 6, :f :cas, :value [1 [3 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 273, :time 25267464750, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 274, :time 25509469875, :type :invoke, :process 6, :f :write, :value [1 1]}
+{:index 275, :time 25510817167, :type :fail, :process 6, :f :write, :value [1 1], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 276, :time 25636438459, :type :invoke, :process 7, :f :write, :value [1 4]}
+{:index 277, :time 25638127792, :type :fail, :process 7, :f :write, :value [1 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 278, :time 25863622834, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 279, :time 25865119667, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 280, :time 25914342875, :type :info, :process 145, :f :cas, :value [1 [0 4]], :error :net-timeout}
+{:index 281, :time 26107882667, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 282, :time 26109180750, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 283, :time 26269267750, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 284, :time 26338804750, :type :invoke, :process 155, :f :cas, :value [1 [2 4]]}
+{:index 285, :time 26519659292, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 286, :time 26883309417, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 287, :time 26885367834, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 288, :time 27103597584, :type :invoke, :process 6, :f :cas, :value [1 [3 3]]}
+{:index 289, :time 27104835209, :type :fail, :process 6, :f :cas, :value [1 [3 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 290, :time 27340153209, :type :info, :process 155, :f :cas, :value [1 [2 4]], :error :net-timeout}
+{:index 291, :time 27446721084, :type :invoke, :process 3, :f :read, :value [1 nil]}
+{:index 292, :time 27448617959, :type :fail, :process 3, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 293, :time 27521829167, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 294, :time 27728215834, :type :invoke, :process 4, :f :read, :value [1 nil]}
+{:index 295, :time 27729639750, :type :fail, :process 4, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 296, :time 27796205334, :type :invoke, :process 165, :f :write, :value [1 0]}
+{:index 297, :time 27947623250, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 298, :time 28085531292, :type :invoke, :process 7, :f :cas, :value [1 [2 4]]}
+{:index 299, :time 28087090125, :type :fail, :process 7, :f :cas, :value [1 [2 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 300, :time 28105706167, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 301, :time 28107063750, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 302, :time 28267552917, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 303, :time 28268997292, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 304, :time 28462377084, :type :invoke, :process 6, :f :cas, :value [1 [3 1]]}
+{:index 305, :time 28463814000, :type :fail, :process 6, :f :cas, :value [1 [3 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 306, :time 28609399625, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 307, :time 28610652709, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 308, :time 28798720875, :type :info, :process 165, :f :write, :value [1 0], :error :net-timeout}
+{:index 309, :time 28823505250, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 310, :time 28824777167, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 311, :time 28947740042, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 312, :time 29082126709, :type :invoke, :process 2, :f :read, :value [1 nil]}
+{:index 313, :time 29083222667, :type :fail, :process 2, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 314, :time 29203309625, :type :invoke, :process 3, :f :read, :value [1 nil]}
+{:index 315, :time 29204713625, :type :fail, :process 3, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 316, :time 29595112875, :type :invoke, :process 4, :f :read, :value [1 nil]}
+{:index 317, :time 29596594125, :type :fail, :process 4, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 318, :time 29613013084, :type :invoke, :process 175, :f :cas, :value [1 [1 4]]}
+{:index 319, :time 29641482000, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 320, :time 29846440000, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 321, :time 29847773875, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 322, :time 30238166042, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 323, :time 30239687209, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 324, :time 30618061042, :type :info, :process 175, :f :cas, :value [1 [1 4]], :error :net-timeout}
+{:index 325, :time 30625902834, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 326, :time 30626925584, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 327, :time 30646393792, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 328, :time 31011089625, :type :invoke, :process 185, :f :cas, :value [1 [3 3]]}
+{:index 329, :time 31384561917, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 330, :time 31588428959, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 331, :time 31589809792, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 332, :time 31852919250, :type :invoke, :process 2, :f :read, :value [1 nil]}
+{:index 333, :time 31875771875, :type :fail, :process 2, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 334, :time 32014930042, :type :info, :process 185, :f :cas, :value [1 [3 3]], :error :net-timeout}
+{:index 335, :time 32072088709, :type :invoke, :process 3, :f :read, :value [1 nil]}
+{:index 336, :time 32073612125, :type :fail, :process 3, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 337, :time 32339540917, :type :invoke, :process 4, :f :read, :value [1 nil]}
+{:index 338, :time 32340670167, :type :fail, :process 4, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 339, :time 32387102375, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 340, :time 32489899917, :type :invoke, :process 195, :f :cas, :value [1 [3 1]]}
+{:index 341, :time 32758942667, :type :invoke, :process 6, :f :write, :value [1 1]}
+{:index 342, :time 32760196667, :type :fail, :process 6, :f :write, :value [1 1], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 343, :time 32986496667, :type :invoke, :process 7, :f :cas, :value [1 [4 2]]}
+{:index 344, :time 32989344834, :type :fail, :process 7, :f :cas, :value [1 [4 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 345, :time 33168704417, :type :invoke, :process 8, :f :write, :value [1 3]}
+{:index 346, :time 33169849500, :type :fail, :process 8, :f :write, :value [1 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 347, :time 33321862125, :type :invoke, :process 9, :f :cas, :value [1 [0 4]]}
+{:index 348, :time 33323494334, :type :fail, :process 9, :f :cas, :value [1 [0 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 349, :time 33494914584, :type :info, :process 195, :f :cas, :value [1 [3 1]], :error :net-timeout}
+{:index 350, :time 33579619750, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 351, :time 33753608334, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 352, :time 33755070917, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 353, :time 33864949250, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 354, :time 33866418667, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 355, :time 34148656584, :type :invoke, :process 2, :f :read, :value [1 nil]}
+{:index 356, :time 34149904584, :type :fail, :process 2, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 357, :time 34208573209, :type :invoke, :process 205, :f :write, :value [1 1]}
+{:index 358, :time 34558806500, :type :invoke, :process 6, :f :cas, :value [1 [0 4]]}
+{:index 359, :time 34560794084, :type :fail, :process 6, :f :cas, :value [1 [0 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 360, :time 34579849709, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 361, :time 34805655959, :type :invoke, :process 6, :f :write, :value [1 4]}
+{:index 362, :time 34807372625, :type :fail, :process 6, :f :write, :value [1 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 363, :time 34949596417, :type :invoke, :process 6, :f :cas, :value [1 [2 1]]}
+{:index 364, :time 34950981500, :type :fail, :process 6, :f :cas, :value [1 [2 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 365, :time 35055189209, :type :invoke, :process 7, :f :write, :value [1 4]}
+{:index 366, :time 35057263709, :type :fail, :process 7, :f :write, :value [1 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 367, :time 35211678500, :type :info, :process 205, :f :write, :value [1 1], :error :net-timeout}
+{:index 368, :time 35250284417, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 369, :time 35296819209, :type :invoke, :process 9, :f :write, :value [1 4]}
+{:index 370, :time 35298006459, :type :fail, :process 9, :f :write, :value [1 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 371, :time 35591493084, :type :invoke, :process 1, :f :read, :value [1 nil]}
+{:index 372, :time 35593357125, :type :fail, :process 1, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 373, :time 35955348042, :type :invoke, :process 215, :f :write, :value [1 4]}
+{:index 374, :time 36006377959, :type :invoke, :process 6, :f :cas, :value [1 [4 3]]}
+{:index 375, :time 36007799625, :type :fail, :process 6, :f :cas, :value [1 [4 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 376, :time 36201642875, :type :invoke, :process 6, :f :write, :value [1 3]}
+{:index 377, :time 36203223625, :type :fail, :process 6, :f :write, :value [1 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 378, :time 36251611375, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 379, :time 36265637625, :type :invoke, :process 3, :f :read, :value [1 nil]}
+{:index 380, :time 36266677542, :type :fail, :process 3, :f :read, :value [1 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 381, :time 36327909417, :type :invoke, :process 6, :f :cas, :value [1 [0 3]]}
+{:index 382, :time 36329024875, :type :fail, :process 6, :f :cas, :value [1 [0 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 383, :time 36551874209, :type :invoke, :process 6, :f :cas, :value [1 [4 3]]}
+{:index 384, :time 36553371875, :type :fail, :process 6, :f :cas, :value [1 [4 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 385, :time 36946097750, :type :invoke, :process 0, :f :read, :value [1 nil]}
+{:index 386, :time 36960513292, :type :info, :process 215, :f :write, :value [1 4], :error :net-timeout}
+{:index 387, :time 37138629542, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 388, :time 37140128334, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 389, :time 37519211750, :type :invoke, :process 8, :f :cas, :value [2 [4 4]]}
+{:index 390, :time 37520522042, :type :fail, :process 8, :f :cas, :value [2 [4 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 391, :time 37550602750, :type :invoke, :process 9, :f :write, :value [2 3]}
+{:index 392, :time 37552216750, :type :fail, :process 9, :f :write, :value [2 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 393, :time 37792880000, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 394, :time 37793848125, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 395, :time 37946768167, :type :fail, :process 0, :f :read, :value [1 nil], :error :net-timeout}
+{:index 396, :time 38041248500, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 397, :time 38224310667, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 398, :time 38225562917, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 399, :time 38485799584, :type :invoke, :process 2, :f :read, :value [2 nil]}
+{:index 400, :time 38486837542, :type :fail, :process 2, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 401, :time 38531240209, :type :invoke, :process 3, :f :read, :value [2 nil]}
+{:index 402, :time 38532418792, :type :fail, :process 3, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 403, :time 38664491209, :type :invoke, :process 225, :f :cas, :value [2 [4 4]]}
+{:index 404, :time 39036405459, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 405, :time 39037601417, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 406, :time 39045444042, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 407, :time 39412601709, :type :invoke, :process 6, :f :write, :value [2 4]}
+{:index 408, :time 39413657500, :type :fail, :process 6, :f :write, :value [2 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 409, :time 39669393459, :type :info, :process 225, :f :cas, :value [2 [4 4]], :error :net-timeout}
+{:index 410, :time 39779923542, :type :invoke, :process 7, :f :cas, :value [2 [3 1]]}
+{:index 411, :time 39781237792, :type :fail, :process 7, :f :cas, :value [2 [3 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 412, :time 40138543834, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 413, :time 40513602375, :type :invoke, :process 9, :f :cas, :value [2 [1 1]]}
+{:index 414, :time 40514860250, :type :fail, :process 9, :f :cas, :value [2 [1 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 415, :time 40592508084, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 416, :time 40593642417, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 417, :time 40664336209, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 418, :time 40665491084, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 419, :time 40772298375, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 420, :time 40773599750, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 421, :time 40891691875, :type :invoke, :process 235, :f :write, :value [2 1]}
+{:index 422, :time 40970075042, :type :invoke, :process 3, :f :read, :value [2 nil]}
+{:index 423, :time 40971477709, :type :fail, :process 3, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 424, :time 41143359292, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 425, :time 41223627292, :type :invoke, :process 6, :f :cas, :value [2 [4 3]]}
+{:index 426, :time 41224698209, :type :fail, :process 6, :f :cas, :value [2 [4 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 427, :time 41512662000, :type :invoke, :process 6, :f :cas, :value [2 [0 0]]}
+{:index 428, :time 41514122584, :type :fail, :process 6, :f :cas, :value [2 [0 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 429, :time 41892904709, :type :info, :process 235, :f :write, :value [2 1], :error :net-timeout}
+{:index 430, :time 41908432584, :type :invoke, :process 6, :f :write, :value [2 3]}
+{:index 431, :time 41909568417, :type :fail, :process 6, :f :write, :value [2 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 432, :time 41939610667, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 433, :time 42188867667, :type :invoke, :process 8, :f :cas, :value [2 [4 4]]}
+{:index 434, :time 42190145125, :type :fail, :process 8, :f :cas, :value [2 [4 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 435, :time 42425716917, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 436, :time 42427182167, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 437, :time 42477620417, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 438, :time 42478965209, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 439, :time 42503644542, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 440, :time 42504875917, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 441, :time 42881568709, :type :invoke, :process 245, :f :cas, :value [2 [0 1]]}
+{:index 442, :time 42917104834, :type :invoke, :process 2, :f :read, :value [2 nil]}
+{:index 443, :time 42918368000, :type :fail, :process 2, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 444, :time 42939781167, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 445, :time 43316808584, :type :invoke, :process 3, :f :read, :value [2 nil]}
+{:index 446, :time 43317898709, :type :fail, :process 3, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 447, :time 43603823709, :type :invoke, :process 4, :f :read, :value [2 nil]}
+{:index 448, :time 43604943542, :type :fail, :process 4, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 449, :time 43694781084, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 450, :time 43881895792, :type :info, :process 245, :f :cas, :value [2 [0 1]], :error :net-timeout}
+{:index 451, :time 44038470917, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 452, :time 44039870542, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 453, :time 44197626250, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 454, :time 44198757334, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 455, :time 44242594084, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 456, :time 44243565625, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 457, :time 44463208917, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 458, :time 44464618125, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 459, :time 44698523375, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 460, :time 44731138875, :type :invoke, :process 255, :f :cas, :value [2 [1 4]]}
+{:index 461, :time 44864018875, :type :invoke, :process 6, :f :cas, :value [2 [0 0]]}
+{:index 462, :time 44865133000, :type :fail, :process 6, :f :cas, :value [2 [0 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 463, :time 45044354917, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 464, :time 45045367750, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 465, :time 45250293917, :type :invoke, :process 6, :f :write, :value [2 4]}
+{:index 466, :time 45251390500, :type :fail, :process 6, :f :write, :value [2 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 467, :time 45400359334, :type :invoke, :process 3, :f :read, :value [2 nil]}
+{:index 468, :time 45402067667, :type :fail, :process 3, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 469, :time 45490968667, :type :invoke, :process 6, :f :cas, :value [2 [2 3]]}
+{:index 470, :time 45491988875, :type :fail, :process 6, :f :cas, :value [2 [2 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 471, :time 45733962792, :type :info, :process 255, :f :cas, :value [2 [1 4]], :error :net-timeout}
+{:index 472, :time 45791742584, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 473, :time 45851516167, :type :invoke, :process 6, :f :cas, :value [2 [4 3]]}
+{:index 474, :time 45852885417, :type :fail, :process 6, :f :cas, :value [2 [4 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 475, :time 46125885042, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 476, :time 46127303042, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 477, :time 46334403042, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 478, :time 46335550375, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 479, :time 46660715042, :type :invoke, :process 9, :f :cas, :value [2 [4 3]]}
+{:index 480, :time 46661781084, :type :fail, :process 9, :f :cas, :value [2 [4 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 481, :time 46794674084, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 482, :time 46904948584, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 483, :time 47190414209, :type :invoke, :process 265, :f :write, :value [2 3]}
+{:index 484, :time 47227440500, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 485, :time 47228546000, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 486, :time 47300138167, :type :invoke, :process 2, :f :read, :value [2 nil]}
+{:index 487, :time 47301391084, :type :fail, :process 2, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 488, :time 47302569334, :type :invoke, :process 6, :f :cas, :value [2 [1 0]]}
+{:index 489, :time 47303357042, :type :fail, :process 6, :f :cas, :value [2 [1 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 490, :time 47465819875, :type :invoke, :process 6, :f :write, :value [2 0]}
+{:index 491, :time 47466961542, :type :fail, :process 6, :f :write, :value [2 0], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 492, :time 47856019959, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 493, :time 47857432625, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 494, :time 47906363375, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 495, :time 47979950667, :type :invoke, :process 6, :f :cas, :value [2 [2 2]]}
+{:index 496, :time 47981186625, :type :fail, :process 6, :f :cas, :value [2 [2 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 497, :time 48072571709, :type :invoke, :process 7, :f :write, :value [2 4]}
+{:index 498, :time 48073976250, :type :fail, :process 7, :f :write, :value [2 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 499, :time 48195347875, :type :info, :process 265, :f :write, :value [2 3], :error :net-timeout}
+{:index 500, :time 48463780875, :type :invoke, :process 8, :f :cas, :value [2 [4 1]]}
+{:index 501, :time 48465500292, :type :fail, :process 8, :f :cas, :value [2 [4 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 502, :time 48626108834, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 503, :time 48978100750, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 504, :time 48979222084, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 505, :time 49131614750, :type :invoke, :process 275, :f :write, :value [2 1]}
+{:index 506, :time 49231763875, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 507, :time 49236208000, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 508, :time 49250719667, :type :invoke, :process 2, :f :read, :value [2 nil]}
+{:index 509, :time 49254786584, :type :fail, :process 2, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 510, :time 49265835459, :type :invoke, :process 3, :f :read, :value [2 nil]}
+{:index 511, :time 49266693875, :type :invoke, :process 6, :f :cas, :value [2 [2 2]]}
+{:index 512, :time 49267237500, :type :fail, :process 3, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 513, :time 49267613500, :type :fail, :process 6, :f :cas, :value [2 [2 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 514, :time 49268693000, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 515, :time 49269340292, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 516, :time 49356169917, :type :invoke, :process 6, :f :cas, :value [2 [2 0]]}
+{:index 517, :time 49357406500, :type :fail, :process 6, :f :cas, :value [2 [2 0]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 518, :time 49626820500, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 519, :time 49677286292, :type :invoke, :process 7, :f :cas, :value [2 [1 1]]}
+{:index 520, :time 49680815125, :type :fail, :process 7, :f :cas, :value [2 [1 1]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 521, :time 50057633709, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 522, :time 50133920792, :type :info, :process 275, :f :write, :value [2 1], :error :net-timeout}
+{:index 523, :time 50395902000, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 524, :time 50397237084, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 525, :time 50480621917, :type :invoke, :process 285, :f :cas, :value [2 [2 1]]}
+{:index 526, :time 50752703542, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 527, :time 50755144959, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 528, :time 50893711292, :type :invoke, :process 6, :f :cas, :value [2 [4 2]]}
+{:index 529, :time 50895290959, :type :fail, :process 6, :f :cas, :value [2 [4 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 530, :time 51060980250, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 531, :time 51129042750, :type :invoke, :process 2, :f :read, :value [2 nil]}
+{:index 532, :time 51130153167, :type :fail, :process 2, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 533, :time 51195366167, :type :invoke, :process 3, :f :read, :value [2 nil]}
+{:index 534, :time 51196729000, :type :fail, :process 3, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 535, :time 51484399625, :type :info, :process 285, :f :cas, :value [2 [2 1]], :error :net-timeout}
+{:index 536, :time 51486475584, :type :invoke, :process 4, :f :read, :value [2 nil]}
+{:index 537, :time 51487457625, :type :fail, :process 4, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 538, :time 51787570667, :type :invoke, :process 295, :f :cas, :value [2 [2 3]]}
+{:index 539, :time 52063497000, :type :invoke, :process 6, :f :cas, :value [2 [1 4]]}
+{:index 540, :time 52064779834, :type :fail, :process 6, :f :cas, :value [2 [1 4]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 541, :time 52376450250, :type :invoke, :process 7, :f :write, :value [2 3]}
+{:index 542, :time 52377695709, :type :fail, :process 7, :f :write, :value [2 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 543, :time 52772636084, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 544, :time 52789846917, :type :info, :process 295, :f :cas, :value [2 [2 3]], :error :net-timeout}
+{:index 545, :time 53084731459, :type :invoke, :process 9, :f :cas, :value [2 [1 3]]}
+{:index 546, :time 53088398542, :type :fail, :process 9, :f :cas, :value [2 [1 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 547, :time 53399824709, :type :invoke, :process 305, :f :write, :value [2 0]}
+{:index 548, :time 53552249000, :type :invoke, :process 6, :f :write, :value [2 3]}
+{:index 549, :time 53553643667, :type :fail, :process 6, :f :write, :value [2 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 550, :time 53748155375, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 551, :time 53749705125, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 552, :time 53774100292, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 553, :time 53936882542, :type :invoke, :process 6, :f :write, :value [2 2]}
+{:index 554, :time 53939104709, :type :fail, :process 6, :f :write, :value [2 2], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 555, :time 54284923459, :type :invoke, :process 3, :f :read, :value [2 nil]}
+{:index 556, :time 54286035875, :type :fail, :process 3, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 557, :time 54401342959, :type :info, :process 305, :f :write, :value [2 0], :error :net-timeout}
+{:index 558, :time 54454574250, :type :invoke, :process 4, :f :read, :value [2 nil]}
+{:index 559, :time 54455496084, :type :fail, :process 4, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 560, :time 54605500125, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 561, :time 54858334000, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 562, :time 54859795875, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 563, :time 55139576000, :type :invoke, :process 7, :f :write, :value [2 0]}
+{:index 564, :time 55143759917, :type :fail, :process 7, :f :write, :value [2 0], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 565, :time 55271004750, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 566, :time 55274901375, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 567, :time 55605696834, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 568, :time 55653452417, :type :invoke, :process 9, :f :cas, :value [2 [4 3]]}
+{:index 569, :time 55654755959, :type :fail, :process 9, :f :cas, :value [2 [4 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 570, :time 55909577125, :type :invoke, :process 315, :f :write, :value [2 3]}
+{:index 571, :time 56158734334, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 572, :time 56433561959, :type :invoke, :process 6, :f :write, :value [2 3]}
+{:index 573, :time 56434945750, :type :fail, :process 6, :f :write, :value [2 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 574, :time 56457669084, :type :invoke, :process 2, :f :read, :value [2 nil]}
+{:index 575, :time 56458780542, :type :fail, :process 2, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 576, :time 56760899167, :type :invoke, :process 3, :f :read, :value [2 nil]}
+{:index 577, :time 56761936542, :type :fail, :process 3, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 578, :time 56881247125, :type :invoke, :process 4, :f :read, :value [2 nil]}
+{:index 579, :time 56882476917, :type :fail, :process 4, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 580, :time 56912101417, :type :info, :process 315, :f :write, :value [2 3], :error :net-timeout}
+{:index 581, :time 57116504792, :type :invoke, :process 325, :f :cas, :value [2 [1 4]]}
+{:index 582, :time 57163725750, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 583, :time 57374779792, :type :invoke, :process 6, :f :cas, :value [2 [0 2]]}
+{:index 584, :time 57376358417, :type :fail, :process 6, :f :cas, :value [2 [0 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 585, :time 57564803334, :type :invoke, :process 0, :f :read, :value [2 nil]}
+{:index 586, :time 57597234167, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 587, :time 57598313667, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 588, :time 57878611625, :type :invoke, :process 1, :f :read, :value [2 nil]}
+{:index 589, :time 57879810334, :type :fail, :process 1, :f :read, :value [2 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 590, :time 58118237959, :type :info, :process 325, :f :cas, :value [2 [1 4]], :error :net-timeout}
+{:index 591, :time 58261484500, :type :invoke, :process 335, :f :write, :value [3 2]}
+{:index 592, :time 58301095459, :type :invoke, :process 1, :f :read, :value [3 nil]}
+{:index 593, :time 58302369459, :type :fail, :process 1, :f :read, :value [3 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 594, :time 58568056459, :type :fail, :process 0, :f :read, :value [2 nil], :error :net-timeout}
+{:index 595, :time 58589146209, :type :invoke, :process 6, :f :cas, :value [3 [4 2]]}
+{:index 596, :time 58590937917, :type :fail, :process 6, :f :cas, :value [3 [4 2]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 597, :time 58743113334, :type :invoke, :process 2, :f :read, :value [3 nil]}
+{:index 598, :time 58744389584, :type :fail, :process 2, :f :read, :value [3 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 599, :time 59071551792, :type :invoke, :process 6, :f :write, :value [3 3]}
+{:index 600, :time 59075408042, :type :fail, :process 6, :f :write, :value [3 3], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 601, :time 59100311250, :type :invoke, :process 6, :f :write, :value [3 4]}
+{:index 602, :time 59103503375, :type :fail, :process 6, :f :write, :value [3 4], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 603, :time 59163295042, :type :invoke, :process 6, :f :cas, :value [3 [1 3]]}
+{:index 604, :time 59164551334, :type :fail, :process 6, :f :cas, :value [3 [1 3]], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 605, :time 59168883250, :type :invoke, :process 0, :f :read, :value [3 nil]}
+{:index 606, :time 59262036375, :type :info, :process 335, :f :write, :value [3 2], :error :net-timeout}
+{:index 607, :time 59567815834, :type :invoke, :process 7, :f :write, :value [3 1]}
+{:index 608, :time 59568936459, :type :fail, :process 7, :f :write, :value [3 1], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 609, :time 59661852292, :type :invoke, :process 1, :f :read, :value [3 nil]}
+{:index 610, :time 59662927417, :type :fail, :process 1, :f :read, :value [3 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 611, :time 59801173334, :type :invoke, :process 1, :f :read, :value [3 nil]}
+{:index 612, :time 59802425792, :type :fail, :process 1, :f :read, :value [3 nil], :error [:temporarily-unavailable "temporarily-unavailable"]}
+{:index 613, :time 59996118334, :type :invoke, :process 345, :f :cas, :value [3 [1 3]]}
+{:index 614, :time 60168876917, :type :fail, :process 0, :f :read, :value [3 nil], :error :net-timeout}
+{:index 615, :time 60998970667, :type :info, :process 345, :f :cas, :value [3 [1 3]], :error :net-timeout}
