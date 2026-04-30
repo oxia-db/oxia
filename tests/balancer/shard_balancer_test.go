@@ -70,7 +70,7 @@ func TestNormalShardBalancer(t *testing.T) {
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(&cc, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
@@ -182,7 +182,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 		Servers:        shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(&cc, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
@@ -281,7 +281,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 		},
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(&cc, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)

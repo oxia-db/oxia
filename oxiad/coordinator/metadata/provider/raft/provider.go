@@ -33,6 +33,7 @@ import (
 type Provider[T gproto.Message] struct {
 	codec     metadatacommon.Codec[T]
 	raft      *Raft
+	watchMode metadatacommon.WatchMode
 	ctx       context.Context
 	ctxCancel context.CancelFunc
 	wg        sync.WaitGroup
@@ -45,6 +46,7 @@ func NewProvider[T gproto.Message](ctx context.Context, r *Raft, codec metadatac
 	p := &Provider[T]{
 		codec:     codec,
 		raft:      r,
+		watchMode: watchEnabled,
 		ctx:       ctx,
 		ctxCancel: cancel,
 		logger: slog.With(
@@ -160,5 +162,8 @@ func (mpr *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (
 }
 
 func (mpr *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
+	if !mpr.watchMode.Enabled() || mpr.watch == nil {
+		return nil, metadatacommon.ErrWatchUnsupported
+	}
 	return mpr.watch.Subscribe(), nil
 }

@@ -104,10 +104,10 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
@@ -293,9 +293,9 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 
@@ -444,9 +444,9 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 

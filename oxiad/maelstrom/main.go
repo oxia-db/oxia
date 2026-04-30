@@ -230,8 +230,8 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 		Servers: servers,
 	}
 
-	statusProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	statusProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	if _, err := configProvider.Store(clusterConfig, metadatacommon.NotExists); err != nil {
 		return errors.Wrap(err, "failed to seed coordinator config provider")
 	}

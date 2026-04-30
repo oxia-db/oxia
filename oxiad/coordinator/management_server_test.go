@@ -44,11 +44,11 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 		config = &proto.ClusterConfiguration{}
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(config, metadatacommon.NotExists)
 	require.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(
-		memory.NewProvider(metadatacommon.ClusterStatusCodec),
+		memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled),
 		configProvider,
 	)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())

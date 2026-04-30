@@ -31,22 +31,32 @@ var _ provider.Provider[*proto.ClusterConfiguration] = (*Provider[*proto.Cluster
 type Provider[T gproto.Message] struct {
 	sync.Mutex
 
-	codec   metadatacommon.Codec[T]
-	value   T
-	version metadatacommon.Version
-	watch   *commonwatch.Watch[T]
+	codec        metadatacommon.Codec[T]
+	value        T
+	version      metadatacommon.Version
+	watchEnabled metadatacommon.WatchMode
+	watch        *commonwatch.Watch[T]
 }
 
 func (*Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func NewProvider[T gproto.Message](codec metadatacommon.Codec[T]) provider.Provider[T] {
-	return &Provider[T]{
-		codec:   codec,
-		version: metadatacommon.NotExists,
-		watch:   commonwatch.New(codec.NewZero()),
+func NewProvider[T gproto.Message](codec metadatacommon.Codec[T], watchEnabled ...metadatacommon.WatchMode) provider.Provider[T] {
+	mode := metadatacommon.WatchEnabled
+	if len(watchEnabled) > 0 {
+		mode = watchEnabled[0]
 	}
+
+	p := &Provider[T]{
+		codec:        codec,
+		version:      metadatacommon.NotExists,
+		watchEnabled: mode,
+	}
+	if mode.Enabled() {
+		p.watch = commonwatch.New(codec.NewZero())
+	}
+	return p
 }
 
 func (*Provider[T]) Close() error {
@@ -70,10 +80,15 @@ func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (ne
 
 	m.value = m.codec.Clone(value)
 	m.version = metadatacommon.NextVersion(m.version)
-	m.watch.Publish(m.codec.Clone(m.value))
+	if m.watch != nil {
+		m.watch.Publish(m.codec.Clone(m.value))
+	}
 	return m.version, nil
 }
 
 func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
+	if !m.watchEnabled.Enabled() || m.watch == nil {
+		return nil, metadatacommon.ErrWatchUnsupported
+	}
 	return m.watch.Subscribe(), nil
 }

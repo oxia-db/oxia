@@ -73,8 +73,8 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	factory := &Factory{}
 	switch meta.ProviderName {
 	case metadataconstant.NameMemory:
-		factory.statusProvider = memory.NewProvider(metadatacommon.ClusterStatusCodec)
-		factory.configProvider = memory.NewProvider(metadatacommon.ClusterConfigCodec)
+		factory.statusProvider = memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+		factory.configProvider = memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	case metadataconstant.NameFile:
 		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
 			return nil, err

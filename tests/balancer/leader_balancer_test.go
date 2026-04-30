@@ -103,7 +103,7 @@ func TestLeaderBalanced(t *testing.T) {
 		},
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(cc, metadatacommon.NotExists)
 	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
@@ -148,7 +148,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 		},
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(cc, metadatacommon.NotExists)
 	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
@@ -220,7 +220,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 		},
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(cc, metadatacommon.NotExists)
 	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)

@@ -54,14 +54,14 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	require.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
@@ -316,13 +316,13 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	require.NoError(t, err)
 
@@ -858,7 +858,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 			}
 
-			metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+			metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			var keySorting proto.KeySortingType
 			if test.sorting == "natural" {
 				keySorting = proto.KeySortingType_NATURAL
@@ -876,7 +876,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				KeySorting:        keySortingValue,
 			}}, []*proto.DataServerIdentity{sa1})
 
-			configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+			configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 			_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 			require.NoError(t, err)
 			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))

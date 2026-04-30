@@ -1,5 +1,0 @@
-{"time":"2026-04-29T09:49:28.039575+08:00","level":"INFO","msg":"Starting Oxia in Maelstrom mode","PWD":"/private/var/folders/lk/_y7xvjmd437b7n36wnb44gnm0000gn/T"}
-{"time":"2026-04-29T09:49:28.039746+08:00","level":"INFO","msg":"Got line","line":"eyJpZCI6NCwic3JjIjoiYzQiLCJkZXN0IjoibjEiLCJib2R5Ijp7InR5cGUiOiJpbml0Iiwibm9kZV9pZCI6Im4xIiwibm9kZV9pZHMiOlsibjEiLCJuMiIsIm4zIiwibjQiLCJuNSJdLCJtc2dfaWQiOjF9fQ=="}
-{"time":"2026-04-29T09:49:28.039852+08:00","level":"INFO","msg":"received message","type":"init","proto-msg":null}
-{"time":"2026-04-29T09:49:28.03986+08:00","level":"INFO","msg":"Received init request","this-node":"n1","all-nodes":["n1","n2","n3","n4","n5"]}
-{"time":"2026-04-29T09:49:28.041191+08:00","level":"INFO","msg":"Waiting to become leader","component":"coordinator"}

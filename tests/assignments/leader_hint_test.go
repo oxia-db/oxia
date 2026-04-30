@@ -39,9 +39,9 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
@@ -97,9 +97,9 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
@@ -155,9 +155,9 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
@@ -204,9 +204,9 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
@@ -262,9 +262,9 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
@@ -315,9 +315,9 @@ func TestLeaderHintWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(

@@ -64,7 +64,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		cluster.addresses = append(cluster.addresses, addr)
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              constant.DefaultNamespace,
@@ -74,7 +74,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		Servers:               cluster.addresses,
 		AllowExtraAuthorities: []string{cluster.authority},
 	}
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	require.NoError(t, err)
 	cluster.coordinator = newCoordinatorInstance(t, metadataProvider, configProvider, coordinatorrpc.NewRpcProviderFactory(nil))
