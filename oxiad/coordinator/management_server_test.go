@@ -16,6 +16,7 @@ package coordinator
 
 import (
 	"context"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +26,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 )
 
@@ -44,11 +44,11 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 		config = &proto.ClusterConfiguration{}
 	}
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(config, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(config, metadatacommon.NotExists)
 	require.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(
-		memory.NewProvider(provider.ClusterStatusCodec),
+		memory.NewProvider(metadatacommon.ClusterStatusCodec),
 		configProvider,
 	)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())

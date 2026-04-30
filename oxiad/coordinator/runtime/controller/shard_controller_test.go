@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"math/rand"
 	"sync"
 	"testing"
@@ -60,8 +61,8 @@ func newTestMetadata(t *testing.T, metadataProvider provider.Provider[*proto.Clu
 		}
 	}
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
@@ -136,7 +137,7 @@ func TestShardController(t *testing.T) {
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
@@ -214,7 +215,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	n2 := rpc.GetNode(s2)
 	n3 := rpc.GetNode(s3)
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusSteadyState,
@@ -245,7 +246,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
@@ -292,7 +293,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
@@ -347,7 +348,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 	n2 := rpc.GetNode(s2)
 	n3 := rpc.GetNode(s3)
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusSteadyState,
@@ -384,7 +385,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
 
 	notificationsEnabled := false
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
 			{
 				Name:                 "default",
@@ -426,7 +427,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
 	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
@@ -524,7 +525,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
 	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 
 	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
@@ -644,7 +645,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	s5 := &proto.DataServerIdentity{Public: "s5:9091", Internal: "s5:8191"}
 	s6 := &proto.DataServerIdentity{Public: "s6:9091", Internal: "s6:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 	sc := NewShardController(constant.DefaultNamespace, shardId, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
@@ -742,7 +743,7 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	rpc.GetNode(s2).SetNodeFeatures(feature.SupportedFeatures())
 	rpc.GetNode(s3).SetNodeFeatures(feature.SupportedFeatures())
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 
 	// Create a feature supplier that queries the mock RPC
 	featureSupplier := func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
@@ -798,7 +799,7 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	// s3 is an old node without feature support
 	rpc.GetNode(s3).SetNodeFeatures([]proto.Feature{})
 
-	metadata := newTestMetadata(t, memory.NewProvider(provider.ClusterStatusCodec), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec), &proto.ClusterConfiguration{})
 
 	featureSupplier := func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
 		result := make(map[string][]proto.Feature)

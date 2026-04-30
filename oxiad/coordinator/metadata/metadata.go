@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+
 	"github.com/cenkalti/backoff/v4"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
@@ -71,7 +73,7 @@ type coordinatorMetadata struct {
 
 	statusLock       sync.RWMutex
 	currentStatus    *commonproto.ClusterStatus
-	currentVersionID provider.Version
+	currentVersionID metadatacommon.Version
 	changeCh         chan struct{}
 
 	clusterConfigLock     sync.RWMutex
@@ -90,14 +92,14 @@ func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonpr
 		wg:                 sync.WaitGroup{},
 		statusProvider:     statusProvider,
 		configProvider:     configProvider,
-		currentVersionID:   provider.NotExists,
+		currentVersionID:   metadatacommon.NotExists,
 		changeCh:           make(chan struct{}),
 		clusterConfigWatch: commonwatch.New(&commonproto.ClusterConfiguration{}),
 	}
 
 	m.doStatusRecovery()
 
-	if configWatch, err := configProvider.Watch(); err != nil && !errors.Is(err, provider.ErrWatchUnsupported) {
+	if configWatch, err := configProvider.Watch(); err != nil && !errors.Is(err, metadatacommon.ErrWatchUnsupported) {
 		m.logger.Warn("failed to watch cluster config provider", slog.Any("error", err))
 	} else if configWatch != nil {
 		m.wg.Go(func() {
@@ -274,7 +276,7 @@ func loadClusterConfigFromProvider(configProvider provider.Provider[*commonproto
 		return nil, err
 	}
 	if config == nil {
-		return nil, provider.ErrNotInitialized
+		return nil, metadatacommon.ErrNotInitialized
 	}
 	if err := validateClusterConfig(config); err != nil {
 		return nil, err
@@ -284,7 +286,7 @@ func loadClusterConfigFromProvider(configProvider provider.Provider[*commonproto
 
 func validateClusterConfig(config *commonproto.ClusterConfiguration) error {
 	if config == nil {
-		return provider.ErrNotInitialized
+		return metadatacommon.ErrNotInitialized
 	}
 	if err := config.Validate(); err != nil {
 		return err

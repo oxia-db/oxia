@@ -16,6 +16,7 @@ package controller
 
 import (
 	"errors"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"testing"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -80,8 +80,8 @@ func setupSplitTest(t *testing.T, phase string) (
 	t.Helper()
 
 	rpcMock := newMockRpcProvider()
-	metaProvider := memory.NewProvider(provider.ClusterStatusCodec)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	metaProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
 	_, err := configProvider.Store(&proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              constant.DefaultNamespace,
@@ -89,7 +89,7 @@ func setupSplitTest(t *testing.T, phase string) (
 			ReplicationFactor: 3,
 		}},
 		Servers: []*proto.DataServerIdentity{ps1, ps2, ps3},
-	}, provider.NotExists)
+	}, metadatacommon.NotExists)
 	require.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(metaProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())

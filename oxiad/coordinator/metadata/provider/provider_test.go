@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
@@ -51,19 +52,19 @@ var (
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			return memory.NewProvider(provider.ClusterStatusCodec)
+			return memory.NewProvider(metadatacommon.ClusterStatusCodec)
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), provider.ClusterStatusCodec, provider.WatchDisabled)
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
 		"configmap": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			p, err := kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "n", provider.ClusterStatusCodec, provider.WatchDisabled)
+			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "n", metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
@@ -71,8 +72,9 @@ var (
 			t.Helper()
 
 			addr := freeAddress(t)
-			p, err := raft.NewProvider(addr, []string{addr}, filepath.Join(t.TempDir(), "raft"))
+			r, err := raft.New(addr, []string{addr}, filepath.Join(t.TempDir(), "raft"), nil)
 			assert.NoError(t, err)
+			p := raft.NewProvider(t.Context(), r, metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, p.WaitToBecomeLeader())
 			return p
 		},
@@ -86,25 +88,25 @@ func TestProvider(t *testing.T) {
 
 			res, version, err := m.Get()
 			assert.NoError(t, err)
-			assert.Equal(t, provider.NotExists, version)
+			assert.Equal(t, metadatacommon.NotExists, version)
 			assert.Nil(t, res)
 
 			status := &proto.ClusterStatus{
 				Namespaces: map[string]*proto.NamespaceStatus{},
 			}
 
-			assert.PanicsWithError(t, provider.ErrBadVersion.Error(), func() {
+			assert.PanicsWithError(t, metadatacommon.ErrBadVersion.Error(), func() {
 				_, err := m.Store(status, "")
 				assert.NoError(t, err)
 			})
 
-			newVersion, err := m.Store(status, provider.NotExists)
+			newVersion, err := m.Store(status, metadatacommon.NotExists)
 			assert.NoError(t, err)
-			assert.EqualValues(t, provider.Version("0"), newVersion)
+			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 
 			res, version, err = m.Get()
 			assert.NoError(t, err)
-			assert.EqualValues(t, provider.Version("0"), version)
+			assert.EqualValues(t, metadatacommon.Version("0"), version)
 			assert.True(t, gproto.Equal(&proto.ClusterStatus{
 				Namespaces: map[string]*proto.NamespaceStatus{},
 			}, res))
@@ -114,7 +116,7 @@ func TestProvider(t *testing.T) {
 	}
 }
 
-func TestResourceTypeUnmarshalLegacyClusterStatus(t *testing.T) {
+func TestClusterStatusCodecUnmarshalYAMLLegacyClusterStatus(t *testing.T) {
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{},
 		InstanceId: "legacy-instance",
@@ -122,12 +124,10 @@ func TestResourceTypeUnmarshalLegacyClusterStatus(t *testing.T) {
 	data, err := proto.MarshalClusterStatusJSON(status)
 	require.NoError(t, err)
 
-	value, err := provider.ResourceStatus.Unmarshal([]byte(fmt.Sprintf(`{"clusterStatus":%s,"version":"2"}`, data)))
+	value, err := metadatacommon.ClusterStatusCodec.UnmarshalYAML([]byte(fmt.Sprintf(`{"clusterStatus":%s,"version":"2"}`, data)))
 	require.NoError(t, err)
-	typedStatus, ok := value.(*proto.ClusterStatus)
-	require.True(t, ok)
-	assert.Equal(t, "legacy-instance", typedStatus.GetInstanceId())
-	assert.True(t, gproto.Equal(status, typedStatus))
+	assert.Equal(t, "legacy-instance", value.GetInstanceId())
+	assert.True(t, gproto.Equal(status, value))
 }
 
 func TestProviderConfigResource(t *testing.T) {
@@ -135,19 +135,19 @@ func TestProviderConfigResource(t *testing.T) {
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			return memory.NewProvider(provider.ClusterConfigCodec)
+			return memory.NewProvider(metadatacommon.ClusterConfigCodec)
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), provider.ClusterConfigCodec, provider.WatchDisabled)
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), metadatacommon.ClusterConfigCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
 		"configmap": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			p, err := kubernetes.NewConfigMapProvider(t.Context(), newFake(), "ns", "config", provider.ClusterConfigCodec, provider.WatchDisabled)
+			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "config", metadatacommon.ClusterConfigCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
@@ -155,8 +155,10 @@ func TestProviderConfigResource(t *testing.T) {
 			t.Helper()
 
 			addr := freeAddress(t)
-			statusProvider, configProvider, err := raft.NewProviders(addr, []string{addr}, filepath.Join(t.TempDir(), "raft"))
+			r, err := raft.New(addr, []string{addr}, filepath.Join(t.TempDir(), "raft"), nil)
 			assert.NoError(t, err)
+			statusProvider := raft.NewProvider(t.Context(), r, metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			configProvider := raft.NewProvider(t.Context(), r, metadatacommon.ClusterConfigCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, statusProvider.WaitToBecomeLeader())
 			return configProvider
 		},
@@ -177,13 +179,13 @@ func TestProviderConfigResource(t *testing.T) {
 				}},
 			}
 
-			newVersion, err := m.Store(config, provider.NotExists)
+			newVersion, err := m.Store(config, metadatacommon.NotExists)
 			assert.NoError(t, err)
-			assert.EqualValues(t, provider.Version("0"), newVersion)
+			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 
 			res, version, err := m.Get()
 			assert.NoError(t, err)
-			assert.EqualValues(t, provider.Version("0"), version)
+			assert.EqualValues(t, metadatacommon.Version("0"), version)
 			assert.True(t, gproto.Equal(config, res))
 
 			assert.NoError(t, m.Close())

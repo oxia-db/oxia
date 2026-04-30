@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"os"
 	"testing"
 	"time"
@@ -34,7 +35,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -104,11 +104,11 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -293,10 +293,10 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
@@ -444,10 +444,10 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))

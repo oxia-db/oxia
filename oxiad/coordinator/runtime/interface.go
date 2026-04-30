@@ -33,7 +33,7 @@ type Runtime interface {
 	PutDataServerIfAbsent(server *proto.DataServer)
 	DeleteDataServer(dataServerID string)
 	SyncShardControllerServerAddresses()
-	PutShard(namespace string, shard int64, shardMetadata *proto.ShardMetadata)
+	PutShardIfAbsent(namespace string, shard int64, shardMetadata *proto.ShardMetadata)
 	DeleteShard(shard int64)
 	RecomputeAssignments()
 	SelectNewEnsemble(namespaceConfig *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error)

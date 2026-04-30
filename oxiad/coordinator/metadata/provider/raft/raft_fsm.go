@@ -22,26 +22,26 @@ import (
 	"github.com/hashicorp/raft"
 	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 )
 
 type raftOpCmd struct {
-	ResourceType    provider.ResourceType `json:"resource_type"`
-	NewState        json.RawMessage       `json:"new_state"`
-	ExpectedVersion int64                 `json:"expected_version"`
+	Key             string          `json:"key"`
+	NewState        json.RawMessage `json:"new_state"`
+	ExpectedVersion int64           `json:"expected_version"`
 }
 
 type stateContainer struct {
-	Documents map[provider.ResourceType]*documentContainer `json:"-"`
-	logger    *slog.Logger
-	onChange  func(provider.ResourceType, int64)
+	Documents   map[string]*documentContainer `json:"-"`
+	logger      *slog.Logger
+	interceptor Interceptor
 }
 
-func newStateContainer(logger *slog.Logger, onChange func(provider.ResourceType, int64)) *stateContainer {
+func newStateContainer(logger *slog.Logger, interceptor Interceptor) *stateContainer {
 	return &stateContainer{
-		Documents: map[provider.ResourceType]*documentContainer{},
-		logger:    logger,
-		onChange:  onChange,
+		Documents:   map[string]*documentContainer{},
+		logger:      logger,
+		interceptor: interceptor,
 	}
 }
 
@@ -55,14 +55,14 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 			slog.Any("error", err))
 		return &applyResult{changeApplied: false}
 	}
-	if opCmd.ResourceType == "" {
-		opCmd.ResourceType = provider.ResourceStatus
+	if opCmd.Key == "" {
+		opCmd.Key = metadatacommon.ClusterStatusCodec.GetKey()
 	}
 
-	document := sc.document(opCmd.ResourceType)
+	document := sc.document(opCmd.Key)
 	if opCmd.ExpectedVersion != document.CurrentVersion {
 		sc.logger.Warn("Failed to apply raft state",
-			slog.String("resource-type", string(opCmd.ResourceType)),
+			slog.String("key", opCmd.Key),
 			slog.Int64("expected-version", opCmd.ExpectedVersion),
 			slog.Int64("current-version", document.CurrentVersion),
 			slog.Any("proposed-state", opCmd.NewState))
@@ -72,12 +72,12 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 
 	document.State = cloneBytes(opCmd.NewState)
 	document.CurrentVersion++
-	if sc.onChange != nil {
-		sc.onChange(opCmd.ResourceType, document.CurrentVersion)
+	if sc.interceptor != nil {
+		sc.interceptor.OnApplied(opCmd.Key, document.State)
 	}
 
 	sc.logger.Info("Applied raft log entry",
-		slog.String("resource-type", string(opCmd.ResourceType)),
+		slog.String("key", opCmd.Key),
 		slog.Int64("new-version", document.CurrentVersion))
 	return &applyResult{changeApplied: true, newVersion: document.CurrentVersion}
 }
@@ -102,22 +102,14 @@ func (sc *stateContainer) Restore(rc io.ReadCloser) error {
 
 	if len(persisted.Documents) > 0 {
 		sc.Documents = cloneDocuments(persisted.Documents)
-		if sc.onChange != nil {
-			for resourceType, document := range sc.Documents {
-				sc.onChange(resourceType, document.CurrentVersion)
-			}
-		}
 		return rc.Close()
 	}
 
-	sc.Documents = map[provider.ResourceType]*documentContainer{
-		provider.ResourceStatus: {
+	sc.Documents = map[string]*documentContainer{
+		metadatacommon.ClusterStatusCodec.GetKey(): {
 			State:          cloneBytes(persisted.State),
 			CurrentVersion: persisted.CurrentVersion,
 		},
-	}
-	if sc.onChange != nil {
-		sc.onChange(provider.ResourceStatus, persisted.CurrentVersion)
 	}
 	return rc.Close()
 }
@@ -140,9 +132,9 @@ type applyResult struct {
 }
 
 type persistedStateContainer struct {
-	Documents      map[provider.ResourceType]*documentContainer `json:"documents,omitempty"`
-	State          json.RawMessage                              `json:"state,omitempty"`
-	CurrentVersion int64                                        `json:"current_version,omitempty"`
+	Documents      map[string]*documentContainer `json:"documents,omitempty"`
+	State          json.RawMessage               `json:"state,omitempty"`
+	CurrentVersion int64                         `json:"current_version,omitempty"`
 }
 
 type documentContainer struct {
@@ -156,19 +148,19 @@ func marshalStateContainer(sc *stateContainer) ([]byte, error) {
 	})
 }
 
-func (sc *stateContainer) document(resourceType provider.ResourceType) *documentContainer {
-	document, ok := sc.Documents[resourceType]
+func (sc *stateContainer) document(key string) *documentContainer {
+	document, ok := sc.Documents[key]
 	if !ok {
 		document = &documentContainer{CurrentVersion: -1}
-		sc.Documents[resourceType] = document
+		sc.Documents[key] = document
 	}
 	return document
 }
 
-func cloneDocuments(documents map[provider.ResourceType]*documentContainer) map[provider.ResourceType]*documentContainer {
-	cloned := make(map[provider.ResourceType]*documentContainer, len(documents))
-	for resourceType, document := range documents {
-		cloned[resourceType] = &documentContainer{
+func cloneDocuments(documents map[string]*documentContainer) map[string]*documentContainer {
+	cloned := make(map[string]*documentContainer, len(documents))
+	for key, document := range documents {
+		cloned[key] = &documentContainer{
 			State:          cloneBytes(document.State),
 			CurrentVersion: document.CurrentVersion,
 		}

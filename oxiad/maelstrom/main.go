@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -28,7 +29,6 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -230,9 +230,9 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 		Servers: servers,
 	}
 
-	statusProvider := memory.NewProvider(provider.ClusterStatusCodec)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	if _, err := configProvider.Store(clusterConfig, provider.NotExists); err != nil {
+	statusProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	if _, err := configProvider.Store(clusterConfig, metadatacommon.NotExists); err != nil {
 		return errors.Wrap(err, "failed to seed coordinator config provider")
 	}
 

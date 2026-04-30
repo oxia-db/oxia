@@ -1,0 +1,84 @@
+{"time":"2026-04-29T01:00:20.776075+08:00","level":"INFO","msg":"Starting Oxia in Maelstrom mode","PWD":"/private/var/folders/lk/_y7xvjmd437b7n36wnb44gnm0000gn/T"}
+{"time":"2026-04-29T01:00:20.776245+08:00","level":"INFO","msg":"Got line","line":"eyJpZCI6Mywic3JjIjoiYzMiLCJkZXN0IjoibjUiLCJib2R5Ijp7InR5cGUiOiJpbml0Iiwibm9kZV9pZCI6Im41Iiwibm9kZV9pZHMiOlsibjEiLCJuMiIsIm4zIiwibjQiLCJuNSJdLCJtc2dfaWQiOjF9fQ=="}
+{"time":"2026-04-29T01:00:20.776287+08:00","level":"INFO","msg":"received message","type":"init","proto-msg":null}
+{"time":"2026-04-29T01:00:20.776292+08:00","level":"INFO","msg":"Received init request","this-node":"n5","all-nodes":["n1","n2","n3","n4","n5"]}
+{"time":"2026-04-29T01:00:20.80436+08:00","level":"INFO","msg":"Starting Oxia dataServer","options":{"server":{"public":{"bindAddress":"0.0.0.0:6648","auth":{},"tls":{"enabled":null}},"internal":{"bindAddress":"0.0.0.0:6649","auth":{},"tls":{"enabled":null}}},"replication":{"tls":{"enabled":null}},"storage":{"wal":{"dir":"/var/folders/lk/_y7xvjmd437b7n36wnb44gnm0000gn/T/oxia-maelstrom1314525798/n5/wal","sync":true,"retention":3600000000000},"database":{"dir":"/var/folders/lk/_y7xvjmd437b7n36wnb44gnm0000gn/T/oxia-maelstrom1314525798/n5/db","readCacheSizeMB":100},"notification":{"retention":3600000000000}},"scheduler":{"checksum":{"interval":300000000000}},"observability":{"metric":{"enabled":false,"bindAddress":"0.0.0.0:8080","tls":{"enabled":null}},"log":{"level":"info"}}}}
+{"time":"2026-04-29T01:00:20.80468+08:00","level":"INFO","msg":"Start Grpc server","name":"internal"}
+{"time":"2026-04-29T01:00:20.804695+08:00","level":"INFO","msg":"RegisterService","service-name":"replication.OxiaCoordination"}
+{"time":"2026-04-29T01:00:20.8047+08:00","level":"INFO","msg":"RegisterService","service-name":"replication.OxiaLogReplication"}
+{"time":"2026-04-29T01:00:20.804705+08:00","level":"INFO","msg":"RegisterService","service-name":"grpc.health.v1.Health"}
+{"time":"2026-04-29T01:00:20.80471+08:00","level":"INFO","msg":"Start Grpc server","name":"public"}
+{"time":"2026-04-29T01:00:20.804714+08:00","level":"INFO","msg":"RegisterService","service-name":"io.oxia.proto.v1.OxiaClient"}
+{"time":"2026-04-29T01:00:20.804718+08:00","level":"INFO","msg":"RegisterService","service-name":"io.streamnative.oxia.proto.OxiaClient"}
+{"time":"2026-04-29T01:00:22.868633+08:00","level":"INFO","msg":"received message","type":"cas","proto-msg":null}
+{"time":"2026-04-29T01:00:22.868656+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":25,"src":"c17","dest":"n5","body":{"type":"cas","msg_id":1,"in_reply_to":null,"key":0,"from":3,"to":4}},"msg-type":"cas"}
+{"time":"2026-04-29T01:00:22.868663+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":1,"in-reply-to":0}
+{"time":"2026-04-29T01:00:27.557304+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:27.557319+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":53,"src":"c19","dest":"n5","body":{"type":"read","msg_id":1,"in_reply_to":null,"key":0}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:27.557326+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":1,"in-reply-to":0}
+{"time":"2026-04-29T01:00:30.464971+08:00","level":"INFO","msg":"received message","type":"cas","proto-msg":null}
+{"time":"2026-04-29T01:00:30.464989+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":82,"src":"c17","dest":"n5","body":{"type":"cas","msg_id":2,"in_reply_to":null,"key":0,"from":3,"to":3}},"msg-type":"cas"}
+{"time":"2026-04-29T01:00:30.464995+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":2,"in-reply-to":0}
+{"time":"2026-04-29T01:00:32.007296+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:32.007312+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":93,"src":"c19","dest":"n5","body":{"type":"read","msg_id":2,"in_reply_to":null,"key":0}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:32.007316+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":2,"in-reply-to":0}
+{"time":"2026-04-29T01:00:32.981763+08:00","level":"INFO","msg":"received message","type":"cas","proto-msg":null}
+{"time":"2026-04-29T01:00:32.981801+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":102,"src":"c17","dest":"n5","body":{"type":"cas","msg_id":3,"in_reply_to":null,"key":0,"from":4,"to":3}},"msg-type":"cas"}
+{"time":"2026-04-29T01:00:32.981808+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":3,"in-reply-to":0}
+{"time":"2026-04-29T01:00:36.338648+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:36.338674+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":131,"src":"c19","dest":"n5","body":{"type":"read","msg_id":3,"in_reply_to":null,"key":0}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:36.338683+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":3,"in-reply-to":0}
+{"time":"2026-04-29T01:00:37.376269+08:00","level":"INFO","msg":"received message","type":"cas","proto-msg":null}
+{"time":"2026-04-29T01:00:37.376288+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":140,"src":"c17","dest":"n5","body":{"type":"cas","msg_id":4,"in_reply_to":null,"key":0,"from":0,"to":1}},"msg-type":"cas"}
+{"time":"2026-04-29T01:00:37.376304+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":4,"in-reply-to":0}
+{"time":"2026-04-29T01:00:38.184548+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:38.184577+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":151,"src":"c19","dest":"n5","body":{"type":"read","msg_id":4,"in_reply_to":null,"key":0}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:38.184585+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":4,"in-reply-to":0}
+{"time":"2026-04-29T01:00:38.864451+08:00","level":"INFO","msg":"received message","type":"cas","proto-msg":null}
+{"time":"2026-04-29T01:00:38.864472+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":160,"src":"c17","dest":"n5","body":{"type":"cas","msg_id":5,"in_reply_to":null,"key":0,"from":3,"to":2}},"msg-type":"cas"}
+{"time":"2026-04-29T01:00:38.86448+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":5,"in-reply-to":0}
+{"time":"2026-04-29T01:00:39.91179+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:39.911805+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":170,"src":"c19","dest":"n5","body":{"type":"read","msg_id":5,"in_reply_to":null,"key":0}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:39.91181+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":5,"in-reply-to":0}
+{"time":"2026-04-29T01:00:41.000062+08:00","level":"INFO","msg":"received message","type":"write","proto-msg":null}
+{"time":"2026-04-29T01:00:41.000083+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":180,"src":"c17","dest":"n5","body":{"type":"write","msg_id":6,"in_reply_to":null,"key":1,"value":3}},"msg-type":"write"}
+{"time":"2026-04-29T01:00:41.00009+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":6,"in-reply-to":0}
+{"time":"2026-04-29T01:00:42.370388+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:42.370413+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":190,"src":"c19","dest":"n5","body":{"type":"read","msg_id":6,"in_reply_to":null,"key":1}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:42.370419+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":6,"in-reply-to":0}
+{"time":"2026-04-29T01:00:43.2102+08:00","level":"INFO","msg":"received message","type":"cas","proto-msg":null}
+{"time":"2026-04-29T01:00:43.210238+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":199,"src":"c17","dest":"n5","body":{"type":"cas","msg_id":7,"in_reply_to":null,"key":1,"from":0,"to":2}},"msg-type":"cas"}
+{"time":"2026-04-29T01:00:43.210244+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":7,"in-reply-to":0}
+{"time":"2026-04-29T01:00:45.403444+08:00","level":"INFO","msg":"received message","type":"write","proto-msg":null}
+{"time":"2026-04-29T01:00:45.403473+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":218,"src":"c17","dest":"n5","body":{"type":"write","msg_id":8,"in_reply_to":null,"key":1,"value":1}},"msg-type":"write"}
+{"time":"2026-04-29T01:00:45.40348+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":8,"in-reply-to":0}
+{"time":"2026-04-29T01:00:46.843068+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:46.84312+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":229,"src":"c19","dest":"n5","body":{"type":"read","msg_id":7,"in_reply_to":null,"key":1}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:46.843179+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":7,"in-reply-to":0}
+{"time":"2026-04-29T01:00:51.868596+08:00","level":"INFO","msg":"received message","type":"cas","proto-msg":null}
+{"time":"2026-04-29T01:00:51.868646+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":276,"src":"c17","dest":"n5","body":{"type":"cas","msg_id":9,"in_reply_to":null,"key":1,"from":0,"to":1}},"msg-type":"cas"}
+{"time":"2026-04-29T01:00:51.868653+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":9,"in-reply-to":0}
+{"time":"2026-04-29T01:00:52.650487+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:52.65051+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":287,"src":"c19","dest":"n5","body":{"type":"read","msg_id":8,"in_reply_to":null,"key":1}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:52.650516+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":8,"in-reply-to":0}
+{"time":"2026-04-29T01:00:53.983304+08:00","level":"INFO","msg":"received message","type":"cas","proto-msg":null}
+{"time":"2026-04-29T01:00:53.98335+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":296,"src":"c17","dest":"n5","body":{"type":"cas","msg_id":10,"in_reply_to":null,"key":1,"from":0,"to":0}},"msg-type":"cas"}
+{"time":"2026-04-29T01:00:53.983355+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":10,"in-reply-to":0}
+{"time":"2026-04-29T01:00:57.376051+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:57.376068+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":326,"src":"c19","dest":"n5","body":{"type":"read","msg_id":9,"in_reply_to":null,"key":1}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:57.376074+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":9,"in-reply-to":0}
+{"time":"2026-04-29T01:00:58.817745+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:00:58.817765+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":346,"src":"c19","dest":"n5","body":{"type":"read","msg_id":10,"in_reply_to":null,"key":2}},"msg-type":"read"}
+{"time":"2026-04-29T01:00:58.817771+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":10,"in-reply-to":0}
+{"time":"2026-04-29T01:01:06.007093+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:01:06.007149+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":404,"src":"c19","dest":"n5","body":{"type":"read","msg_id":11,"in_reply_to":null,"key":2}},"msg-type":"read"}
+{"time":"2026-04-29T01:01:06.007209+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":11,"in-reply-to":0}
+{"time":"2026-04-29T01:01:07.275292+08:00","level":"INFO","msg":"received message","type":"cas","proto-msg":null}
+{"time":"2026-04-29T01:01:07.275328+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":412,"src":"c17","dest":"n5","body":{"type":"cas","msg_id":11,"in_reply_to":null,"key":2,"from":2,"to":3}},"msg-type":"cas"}
+{"time":"2026-04-29T01:01:07.275341+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":11,"in-reply-to":0}
+{"time":"2026-04-29T01:01:13.48188+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:01:13.481902+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":460,"src":"c19","dest":"n5","body":{"type":"read","msg_id":12,"in_reply_to":null,"key":2}},"msg-type":"read"}
+{"time":"2026-04-29T01:01:13.481908+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":12,"in-reply-to":0}
+{"time":"2026-04-29T01:01:16.578063+08:00","level":"INFO","msg":"received message","type":"read","proto-msg":null}
+{"time":"2026-04-29T01:01:16.578079+08:00","level":"INFO","msg":"RECEIVED MESSAGE","msg":{"id":479,"src":"c19","dest":"n5","body":{"type":"read","msg_id":13,"in_reply_to":null,"key":2}},"msg-type":"read"}
+{"time":"2026-04-29T01:01:16.578084+08:00","level":"INFO","msg":"Received response for proxied message","proxied-msg-id":13,"in-reply-to":0}

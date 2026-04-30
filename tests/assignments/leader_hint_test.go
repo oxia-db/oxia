@@ -15,12 +15,12 @@
 package assignments
 
 import (
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -39,10 +39,10 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -97,10 +97,10 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -155,10 +155,10 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -204,10 +204,10 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -262,10 +262,10 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,
@@ -315,10 +315,10 @@ func TestLeaderHintWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,

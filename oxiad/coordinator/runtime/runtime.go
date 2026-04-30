@@ -147,7 +147,7 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 	}
 }
 
-func (c *runtime) PutShard(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
+func (c *runtime) PutShardIfAbsent(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
 	c.Lock()
 	defer c.Unlock()
 

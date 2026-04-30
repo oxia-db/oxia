@@ -15,6 +15,7 @@
 package runtime
 
 import (
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"sync"
 	"testing"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 )
 
@@ -49,11 +49,11 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 			leader.Public,
 		},
 	}
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	require.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(
-		memory.NewProvider(provider.ClusterStatusCodec),
+		memory.NewProvider(metadatacommon.ClusterStatusCodec),
 		configProvider,
 	)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
@@ -119,11 +119,11 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 			Internal: active.Internal,
 		}},
 	}
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	require.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(
-		memory.NewProvider(provider.ClusterStatusCodec),
+		memory.NewProvider(metadatacommon.ClusterStatusCodec),
 		configProvider,
 	)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())

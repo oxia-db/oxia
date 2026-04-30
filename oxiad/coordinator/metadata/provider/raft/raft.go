@@ -27,48 +27,35 @@ import (
 	"github.com/magodo/slog2hclog"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
 type Raft struct {
 	sync.Mutex
-	sc     *stateContainer
-	node   *hashicorpraft.Raft
-	store  *kvRaftStore
-	logger *slog.Logger
-
-	changes *commonwatch.Watch[raftStateChange]
+	sc          *stateContainer
+	node        *hashicorpraft.Raft
+	store       *raftStorage
+	logger      *slog.Logger
+	interceptor Interceptor
 
 	closeOnce sync.Once
 	closeErr  error
 }
 
-type raftStateChange struct {
-	ResourceType provider.ResourceType
-	Version      int64
-}
-
 const raftDataDirMode = 0o755
 
-func NewRaft(
+func New(
 	raftAddress string,
 	raftBootstrapNodes []string,
 	raftDataDir string,
+	interceptor Interceptor,
 ) (*Raft, error) {
 	metadataRaft := &Raft{
-		logger:  slog.With(slog.String("component", "metadata-provider-raft")),
-		changes: commonwatch.New(raftStateChange{}),
+		logger:      slog.With(slog.String("component", "metadata-provider-raft")),
+		interceptor: interceptor,
 	}
 	metadataRaft.sc = newStateContainer(
 		slog.With(slog.String("component", "metadata-provider-raft-state-container")),
-		func(resourceType provider.ResourceType, version int64) {
-			metadataRaft.changes.Publish(raftStateChange{
-				ResourceType: resourceType,
-				Version:      version,
-			})
-		},
+		metadataRaft.interceptor,
 	)
 
 	nodeID := raftAddress

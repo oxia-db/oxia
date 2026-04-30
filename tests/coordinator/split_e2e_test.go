@@ -17,6 +17,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"log/slog"
 	"math"
 	"strings"
@@ -27,7 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -54,15 +54,15 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	require.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	clientPool := rpc.NewClientPool(nil, nil)
@@ -316,14 +316,14 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	require.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(
@@ -858,7 +858,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 			}
 
-			metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+			metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 			var keySorting proto.KeySortingType
 			if test.sorting == "natural" {
 				keySorting = proto.KeySortingType_NATURAL
@@ -876,8 +876,8 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				KeySorting:        keySortingValue,
 			}}, []*proto.DataServerIdentity{sa1})
 
-			configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-			_, err = configProvider.Store(clusterConfig, provider.NotExists)
+			configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+			_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 			require.NoError(t, err)
 			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 

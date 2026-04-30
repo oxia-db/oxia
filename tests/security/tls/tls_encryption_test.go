@@ -16,6 +16,7 @@ package tls
 
 import (
 	"fmt"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,7 +26,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -118,15 +118,15 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -140,15 +140,15 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -166,15 +166,15 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -198,15 +198,15 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -231,15 +231,15 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err = configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -265,11 +265,11 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	s3, sa3 := newTLSServerWithInterceptor(t, disableInternalTLS)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()

@@ -15,13 +15,13 @@
 package coordinator
 
 import (
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
@@ -34,15 +34,15 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata2.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := metadata2.NewProvider(metadatacommon.ClusterStatusCodec)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              "default",
 		ReplicationFactor: 1,
 		InitialShardCount: 2,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := metadata2.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := metadata2.NewProvider(metadatacommon.ClusterConfigCodec)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()

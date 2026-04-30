@@ -35,7 +35,7 @@ func (r *shardReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterCo
 
 	for shard, namespace := range shardsToAdd {
 		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
-		r.runtime.PutShard(namespace, shard, shardMetadata)
+		r.runtime.PutShardIfAbsent(namespace, shard, shardMetadata)
 	}
 	for _, shard := range shardsToDelete {
 		r.runtime.DeleteShard(shard)

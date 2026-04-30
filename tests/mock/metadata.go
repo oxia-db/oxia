@@ -15,6 +15,7 @@
 package mock
 
 import (
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ import (
 func NewConfigProvider(t *testing.T, clusterConfig *proto.ClusterConfiguration) provider.Provider[*proto.ClusterConfiguration] {
 	t.Helper()
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec)
 	PutConfig(t, configProvider, clusterConfig)
 	return configProvider
 }

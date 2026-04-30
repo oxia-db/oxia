@@ -15,6 +15,7 @@
 package mock
 
 import (
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +32,7 @@ import (
 
 func NewCoordinator(t *testing.T, configProvider provider.Provider[*commonproto.ClusterConfiguration]) coordruntime.Runtime {
 	t.Helper()
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	assert.NoError(t, err)
