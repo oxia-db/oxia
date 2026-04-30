@@ -52,11 +52,19 @@ func (*mockMetadata) Close() error { return nil }
 
 func (m *mockMetadata) GetStatus() *proto.ClusterStatus { return m.status }
 
-func (m *mockMetadata) ApplyStatusChanges(*proto.ClusterConfiguration, coordmetadata.EnsembleSupplier) (*proto.ClusterStatus, map[int64]string, []int64) {
-	return m.status, nil, nil
+func (m *mockMetadata) PutStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
+
+func (*mockMetadata) CreateNamespaceStatus(*proto.Namespace, coordmetadata.EnsembleSupplier) map[int64]*proto.ShardMetadata {
+	return nil
 }
 
-func (m *mockMetadata) PutStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
+func (*mockMetadata) GetNamespaceStatus(string) (*proto.NamespaceStatus, bool) { return nil, false }
+
+func (*mockMetadata) ListNamespaces() *linkedhashset.Set[string] {
+	return linkedhashset.New[string]()
+}
+
+func (*mockMetadata) DeleteNamespace(string) []int64 { return nil }
 
 func (*mockMetadata) PutShard(string, int64, *proto.ShardMetadata) {}
 

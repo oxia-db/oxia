@@ -34,8 +34,8 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/rpc"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/changes"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -44,8 +44,11 @@ type Metadata interface {
 
 	GetStatus() *commonproto.ClusterStatus
 	PutStatus(newStatus *commonproto.ClusterStatus)
-	ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*commonproto.ClusterStatus, map[int64]string, []int64)
 
+	CreateNamespaceStatus(namespaceConfig *commonproto.Namespace, ensembleSupplier EnsembleSupplier) map[int64]*commonproto.ShardMetadata
+	GetNamespaceStatus(namespace string) (*commonproto.NamespaceStatus, bool)
+	ListNamespaces() *linkedhashset.Set[string]
+	DeleteNamespace(namespace string) []int64
 	PutShard(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
 	DeleteShard(namespace string, shard int64)
 
@@ -185,27 +188,113 @@ func (m *coordinatorMetadata) GetStatus() *commonproto.ClusterStatus {
 	return m.currentStatus
 }
 
-func (m *coordinatorMetadata) ApplyStatusChanges(config *commonproto.ClusterConfiguration, ensembleSupplier EnsembleSupplier) (*commonproto.ClusterStatus, map[int64]string, []int64) {
-	m.statusLock.Lock()
-	defer m.statusLock.Unlock()
-
-	newStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
-	shardsToAdd, shardsToDelete := changes.ApplyClusterChanges(config, newStatus, ensembleSupplier)
-	if len(shardsToAdd) == 0 && len(shardsToDelete) == 0 {
-		return newStatus, shardsToAdd, shardsToDelete
-	}
-
-	m.persistStatusLocked(newStatus, "failed to apply cluster changes")
-	m.notifyStatusChange()
-	return newStatus, shardsToAdd, shardsToDelete
-}
-
 func (m *coordinatorMetadata) PutStatus(newStatus *commonproto.ClusterStatus) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
 	m.persistStatusLocked(newStatus, "failed to update status")
 	m.notifyStatusChange()
+}
+
+func (m *coordinatorMetadata) CreateNamespaceStatus(namespaceConfig *commonproto.Namespace, ensembleSupplier EnsembleSupplier) map[int64]*commonproto.ShardMetadata {
+	m.loadClusterConfigWithInitSlow()
+	serverCount := len(m.GetConfig().GetServers())
+
+	m.statusLock.Lock()
+	defer m.statusLock.Unlock()
+
+	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
+	if clonedStatus.Namespaces == nil {
+		clonedStatus.Namespaces = map[string]*commonproto.NamespaceStatus{}
+	}
+
+	namespace := namespaceConfig.GetName()
+	if _, exists := clonedStatus.Namespaces[namespace]; exists {
+		return nil
+	}
+
+	namespaceStatus := &commonproto.NamespaceStatus{
+		Shards:            map[int64]*commonproto.ShardMetadata{},
+		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
+	}
+	clonedStatus.Namespaces[namespace] = namespaceStatus
+
+	shardsToAdd := make(map[int64]*commonproto.ShardMetadata, namespaceConfig.GetInitialShardCount())
+	for _, shard := range sharding.GenerateShards(clonedStatus.ShardIdGenerator, namespaceConfig.GetInitialShardCount()) {
+		ensemble, err := ensembleSupplier(namespaceConfig, clonedStatus)
+		if err != nil {
+			m.logger.Error("failed to select new ensembles", slog.Any("shard", shard), slog.Any("error", err))
+			continue
+		}
+
+		shardMetadata := &commonproto.ShardMetadata{
+			Status:   commonproto.ShardStatusUnknown,
+			Term:     -1,
+			Leader:   nil,
+			Ensemble: ensemble,
+			Int32HashRange: &commonproto.HashRange{
+				Min: shard.Min,
+				Max: shard.Max,
+			},
+		}
+		namespaceStatus.Shards[shard.Id] = shardMetadata
+		clonedStatus.ServerIdx = (clonedStatus.ServerIdx + namespaceConfig.GetReplicationFactor()) % uint32(serverCount)
+		shardsToAdd[shard.Id] = gproto.Clone(shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
+	}
+	clonedStatus.ShardIdGenerator += int64(namespaceConfig.GetInitialShardCount())
+
+	m.persistStatusLocked(clonedStatus, "failed to create namespace status")
+	m.notifyStatusChange()
+	return shardsToAdd
+}
+
+func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (*commonproto.NamespaceStatus, bool) {
+	m.statusLock.RLock()
+	defer m.statusLock.RUnlock()
+
+	namespaceStatus, exists := m.currentStatus.Namespaces[namespace]
+	if !exists {
+		return nil, false
+	}
+	return gproto.Clone(namespaceStatus).(*commonproto.NamespaceStatus), true //nolint:revive
+}
+
+func (m *coordinatorMetadata) ListNamespaces() *linkedhashset.Set[string] {
+	m.statusLock.RLock()
+	defer m.statusLock.RUnlock()
+
+	namespaceNames := linkedhashset.New[string]()
+	for namespace := range m.currentStatus.Namespaces {
+		namespaceNames.Add(namespace)
+	}
+	return namespaceNames
+}
+
+func (m *coordinatorMetadata) DeleteNamespace(namespace string) []int64 {
+	m.statusLock.Lock()
+	defer m.statusLock.Unlock()
+
+	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
+	namespaceStatus, exists := clonedStatus.Namespaces[namespace]
+	if !exists {
+		return nil
+	}
+
+	shardsToDelete := make([]int64, 0, len(namespaceStatus.Shards))
+	changed := false
+	for shardID, shardMetadata := range namespaceStatus.Shards {
+		if shardMetadata.Status != commonproto.ShardStatusDeleting {
+			shardMetadata.Status = commonproto.ShardStatusDeleting
+			namespaceStatus.Shards[shardID] = shardMetadata
+			changed = true
+		}
+		shardsToDelete = append(shardsToDelete, shardID)
+	}
+	if changed {
+		m.persistStatusLocked(clonedStatus, "failed to mark namespace deleting")
+		m.notifyStatusChange()
+	}
+	return shardsToDelete
 }
 
 func (m *coordinatorMetadata) PutShard(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {

@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//revive:disable-next-line:var-naming
-package changes
+package reconciler
 
 import (
 	"math"
@@ -24,6 +23,7 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 )
 
 func hashRange(start, end uint32) *proto.HashRange {
@@ -61,50 +61,82 @@ func loadAwareEnsembleSupplier(servers []*proto.DataServerIdentity) func(*proto.
 	}
 }
 
-func assertStatusEqual(t *testing.T, expected, actual *proto.ClusterStatus) {
-	t.Helper()
-	assert.True(t, gproto.Equal(expected, actual), "expected status %v, got %v", expected, actual)
+func simpleEnsembleSupplier(candidates []*proto.DataServerIdentity, nc *proto.Namespace, cs *proto.ClusterStatus) []*proto.DataServerIdentity {
+	n := len(candidates)
+	res := make([]*proto.DataServerIdentity, nc.GetReplicationFactor())
+	for i := uint32(0); i < nc.GetReplicationFactor(); i++ {
+		res[i] = candidates[int(cs.ServerIdx+i)%n]
+	}
+	return res
 }
 
-// TestClientUpdates_InitialPlacementSeesPriorShards verifies that the
-// per-shard ensembleSupplier called by ApplyClusterChanges during a new
-// namespace's bootstrap can observe shards that were placed earlier in the
-// same call. Regression for an upstream bug where the new NamespaceStatus was
-// only assigned into status.Namespaces *after* the GenerateShards loop, so
-// every shard was selected against an empty cluster snapshot, leading to
-// pseudo-random initial placement that immediately tripped the count-based
-// load-balancer once the cluster came up.
-func TestClientUpdates_InitialPlacementSeesPriorShards(t *testing.T) {
-	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
-	const shardCount = 16
-	const rf = 3
+func applyClusterChangesForTest(
+	config *proto.ClusterConfiguration,
+	status *proto.ClusterStatus,
+	ensembleSupplier func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServerIdentity, error),
+) (map[int64]string, []int64) {
+	shardsToAdd := map[int64]string{}
+	shardsToDelete := []int64{}
 
-	status := proto.NewClusterStatus()
-	_, _ = ApplyClusterChanges(&proto.ClusterConfiguration{
-		Namespaces: []*proto.Namespace{{
-			Name:              "ns-1",
-			InitialShardCount: shardCount,
-			ReplicationFactor: rf,
-		}},
-		Servers: servers,
-	}, status, loadAwareEnsembleSupplier(servers))
-
-	slots := map[string]int{}
-	for _, s := range servers {
-		slots[s.GetInternal()] = 0
+	namespaceConfigs := make(map[string]*proto.Namespace, len(config.GetNamespaces()))
+	for _, namespaceConfig := range config.GetNamespaces() {
+		namespaceConfigs[namespaceConfig.GetName()] = namespaceConfig
 	}
-	for _, sh := range status.GetNamespaces()["ns-1"].GetShards() {
-		assert.Len(t, sh.GetEnsemble(), rf)
-		for _, m := range sh.GetEnsemble() {
-			slots[m.GetInternal()]++
+
+	if status.Namespaces == nil {
+		status.Namespaces = map[string]*proto.NamespaceStatus{}
+	}
+
+	for _, namespaceConfig := range config.GetNamespaces() {
+		if _, exists := status.Namespaces[namespaceConfig.GetName()]; exists {
+			continue
+		}
+
+		namespaceStatus := &proto.NamespaceStatus{
+			Shards:            map[int64]*proto.ShardMetadata{},
+			ReplicationFactor: namespaceConfig.GetReplicationFactor(),
+		}
+		status.Namespaces[namespaceConfig.GetName()] = namespaceStatus
+
+		for _, shard := range sharding.GenerateShards(status.ShardIdGenerator, namespaceConfig.GetInitialShardCount()) {
+			ensemble, err := ensembleSupplier(namespaceConfig, status)
+			if err != nil {
+				continue
+			}
+
+			namespaceStatus.Shards[shard.Id] = &proto.ShardMetadata{
+				Status:   proto.ShardStatusUnknown,
+				Term:     -1,
+				Leader:   nil,
+				Ensemble: ensemble,
+				Int32HashRange: &proto.HashRange{
+					Min: shard.Min,
+					Max: shard.Max,
+				},
+			}
+			status.ServerIdx = (status.ServerIdx + namespaceConfig.GetReplicationFactor()) % uint32(len(config.GetServers()))
+			shardsToAdd[shard.Id] = namespaceConfig.GetName()
+		}
+		status.ShardIdGenerator += int64(namespaceConfig.GetInitialShardCount())
+	}
+
+	for namespace, namespaceStatus := range status.Namespaces {
+		if _, exists := namespaceConfigs[namespace]; exists {
+			continue
+		}
+		for shardID, shardMetadata := range namespaceStatus.Shards {
+			shardMetadata.Status = proto.ShardStatusDeleting
+			namespaceStatus.Shards[shardID] = shardMetadata
+			shardsToDelete = append(shardsToDelete, shardID)
 		}
 	}
 
-	expected := shardCount * rf / len(servers)
-	for _, s := range servers {
-		assert.Equal(t, expected, slots[s.GetInternal()],
-			"server %s should hold exactly %d ensemble slots", s.GetInternal(), expected)
-	}
+	return shardsToAdd, shardsToDelete
+}
+
+func assertStatusEqual(t *testing.T, expected, actual *proto.ClusterStatus) {
+	t.Helper()
+	assert.True(t, gproto.Equal(expected, actual), "expected status %v, got %v", expected, actual)
 }
 
 var (
@@ -114,10 +146,43 @@ var (
 	s4 = &proto.DataServerIdentity{Public: "s4:6648", Internal: "s4:6649"}
 )
 
-func TestClientUpdates_ClusterInit(t *testing.T) {
+func TestApplyClusterChangesInitialPlacementSeesPriorShards(t *testing.T) {
+	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
+	const shardCount = 16
+	const replicationFactor = 3
+
+	status := proto.NewClusterStatus()
+	_, _ = applyClusterChangesForTest(&proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
+			Name:              "ns-1",
+			InitialShardCount: shardCount,
+			ReplicationFactor: replicationFactor,
+		}},
+		Servers: servers,
+	}, status, loadAwareEnsembleSupplier(servers))
+
+	slots := map[string]int{}
+	for _, s := range servers {
+		slots[s.GetInternal()] = 0
+	}
+	for _, shard := range status.GetNamespaces()["ns-1"].GetShards() {
+		assert.Len(t, shard.GetEnsemble(), replicationFactor)
+		for _, member := range shard.GetEnsemble() {
+			slots[member.GetInternal()]++
+		}
+	}
+
+	expected := shardCount * replicationFactor / len(servers)
+	for _, s := range servers {
+		assert.Equal(t, expected, slots[s.GetInternal()],
+			"server %s should hold exactly %d ensemble slots", s.GetInternal(), expected)
+	}
+}
+
+func TestApplyClusterChangesClusterInit(t *testing.T) {
 	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
 	status := proto.NewClusterStatus()
-	shardsAdded, shardsToRemove := ApplyClusterChanges(&proto.ClusterConfiguration{
+	shardsAdded, shardsToRemove := applyClusterChangesForTest(&proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
 			InitialShardCount: 1,
@@ -129,7 +194,7 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 		}},
 		Servers: servers,
 	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
+		return simpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
 	assertStatusEqual(t, &proto.ClusterStatus{
@@ -160,7 +225,7 @@ func TestClientUpdates_ClusterInit(t *testing.T) {
 	}, shardsAdded)
 }
 
-func TestClientUpdates_NamespaceAdded(t *testing.T) {
+func TestApplyClusterChangesNamespaceAdded(t *testing.T) {
 	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{
@@ -174,7 +239,7 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 		ShardIdGenerator: 1,
 		ServerIdx:        3,
 	}
-	shardsAdded, shardsToRemove := ApplyClusterChanges(&proto.ClusterConfiguration{
+	shardsAdded, shardsToRemove := applyClusterChangesForTest(&proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
 			InitialShardCount: 1,
@@ -186,7 +251,7 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 		}},
 		Servers: servers,
 	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
+		return simpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
 	assertStatusEqual(t, &proto.ClusterStatus{
@@ -216,7 +281,7 @@ func TestClientUpdates_NamespaceAdded(t *testing.T) {
 	}, shardsAdded)
 }
 
-func TestClientUpdates_NamespaceRemoved(t *testing.T) {
+func TestApplyClusterChangesNamespaceRemoved(t *testing.T) {
 	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{
@@ -237,7 +302,7 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 		ShardIdGenerator: 3,
 		ServerIdx:        1,
 	}
-	shardsAdded, shardsToRemove := ApplyClusterChanges(&proto.ClusterConfiguration{
+	shardsAdded, shardsToRemove := applyClusterChangesForTest(&proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              "ns-1",
 			InitialShardCount: 1,
@@ -245,7 +310,7 @@ func TestClientUpdates_NamespaceRemoved(t *testing.T) {
 		}},
 		Servers: servers,
 	}, status, func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-		return SimpleEnsembleSupplier(servers, namespaceConfig, status), nil
+		return simpleEnsembleSupplier(servers, namespaceConfig, status), nil
 	})
 
 	assertStatusEqual(t, &proto.ClusterStatus{

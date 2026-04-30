@@ -31,14 +31,30 @@ func (*shardReconciler) Close() error { return nil }
 
 func (r *shardReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterConfiguration) error {
 	metadata := r.runtime.Metadata()
-	clusterStatus, shardsToAdd, shardsToDelete := metadata.ApplyStatusChanges(snapshot, r.runtime.SelectNewEnsemble)
 
-	for shard, namespace := range shardsToAdd {
-		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
-		r.runtime.PutShardIfAbsent(namespace, shard, shardMetadata)
+	namespaceConfigs := make(map[string]*proto.Namespace, len(snapshot.GetNamespaces()))
+	for _, namespaceConfig := range snapshot.GetNamespaces() {
+		namespaceConfigs[namespaceConfig.GetName()] = namespaceConfig
 	}
-	for _, shard := range shardsToDelete {
-		r.runtime.DeleteShard(shard)
+
+	for _, namespaceConfig := range snapshot.GetNamespaces() {
+		namespace := namespaceConfig.GetName()
+		if _, exists := metadata.GetNamespaceStatus(namespace); exists {
+			continue
+		}
+
+		for shard, shardMetadata := range metadata.CreateNamespaceStatus(namespaceConfig, r.runtime.SelectNewEnsemble) {
+			r.runtime.PutShardIfAbsent(namespace, shard, shardMetadata)
+		}
+	}
+
+	for _, namespace := range metadata.ListNamespaces().Values() {
+		if _, exists := namespaceConfigs[namespace]; exists {
+			continue
+		}
+		for _, shard := range metadata.DeleteNamespace(namespace) {
+			r.runtime.DeleteShard(shard)
+		}
 	}
 
 	return nil
