@@ -19,10 +19,11 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"os"
 	"testing"
 	"time"
+
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"

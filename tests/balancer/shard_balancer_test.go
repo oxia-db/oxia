@@ -17,9 +17,10 @@ package balancer
 import (
 	"context"
 	"fmt"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"testing"
 	"time"
+
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"

@@ -17,9 +17,10 @@ package provider
 import (
 	"io"
 
+	gproto "google.golang.org/protobuf/proto"
+
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	gproto "google.golang.org/protobuf/proto"
 )
 
 type Provider[T gproto.Message] interface {

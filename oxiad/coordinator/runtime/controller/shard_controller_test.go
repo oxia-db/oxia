@@ -16,11 +16,12 @@ package controller
 
 import (
 	"context"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"math/rand"
 	"sync"
 	"testing"
 	"time"
+
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"

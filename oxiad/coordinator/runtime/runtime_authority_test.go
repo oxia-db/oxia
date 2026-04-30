@@ -15,9 +15,10 @@
 package runtime
 
 import (
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"sync"
 	"testing"
+
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

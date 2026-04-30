@@ -15,8 +15,9 @@
 package coordinator
 
 import (
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"testing"
+
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/stretchr/testify/assert"
 	gproto "google.golang.org/protobuf/proto"

@@ -16,11 +16,12 @@ package tls
 
 import (
 	"fmt"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/stretchr/testify/assert"
 

@@ -16,9 +16,10 @@ package controller
 
 import (
 	"errors"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"testing"
 	"time"
+
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

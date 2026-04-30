@@ -18,10 +18,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"

@@ -17,12 +17,13 @@ package coordinator
 import (
 	"context"
 	"fmt"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"log/slog"
 	"math"
 	"strings"
 	"testing"
 	"time"
+
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/stretchr/testify/assert"
 
