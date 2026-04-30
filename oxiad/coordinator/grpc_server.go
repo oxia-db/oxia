@@ -24,8 +24,10 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/oxia-db/oxia/common/commonio"
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 
@@ -50,24 +52,47 @@ type GrpcServer struct {
 	grpcServer       commonrpc.GrpcServer
 	managementServer commonrpc.GrpcServer
 	healthServer     *health.Server
+	reconciler       coordreconciler.Reconciler
 	runtime          coordruntime.Runtime
 	metadata         coordmetadata.Metadata
 	metadataFactory  *coordmetadata.Factory
 	metrics          *metric.PrometheusMetrics
 }
 
-func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*GrpcServer, error) {
+func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (_ *GrpcServer, err error) {
 	options := optionsWatch.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
 
 	healthServer := health.NewServer()
+	var (
+		grpcServer           commonrpc.GrpcServer
+		managementGrpcServer commonrpc.GrpcServer
+		reconciler           coordreconciler.Reconciler
+		runtime              coordruntime.Runtime
+		metadata             coordmetadata.Metadata
+		metadataFactory      *coordmetadata.Factory
+		metricsServer        *metric.PrometheusMetrics
+	)
+	defer func() {
+		if err == nil {
+			return
+		}
+
+		err = multierr.Append(err, commonio.CloseIfNotNil(metricsServer))
+		err = multierr.Append(err, commonio.CloseIfNotNil(managementGrpcServer))
+		err = multierr.Append(err, commonio.CloseIfNotNil(reconciler))
+		err = multierr.Append(err, commonio.CloseIfNotNil(runtime))
+		err = multierr.Append(err, commonio.CloseIfNotNil(metadata))
+		err = multierr.Append(err, commonio.CloseIfNotNil(metadataFactory))
+		err = multierr.Append(err, commonio.CloseIfNotNil(grpcServer))
+	}()
 
 	internalServer := options.Server.Internal
 	internalServerTLS, err := internalServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
-	grpcServer, err := commonrpc.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
+	grpcServer, err = commonrpc.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, internalServerTLS, &internalServer.Auth, nil)
 	if err != nil {
@@ -79,20 +104,19 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 		return nil, err
 	}
 
-	metadataFactory, err := coordmetadata.New(parent, options)
+	metadataFactory, err = coordmetadata.New(parent, options)
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := metadataFactory.CreateMetadata(parent)
+	metadata, err = metadataFactory.CreateMetadata(parent)
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
+	runtime, err = coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err != nil {
-		_ = metadata.Close()
-		_ = metadataFactory.Close()
 		return nil, err
 	}
+	reconciler = coordreconciler.New(parent, runtime)
 
 	managementSv := options.Server.Admin
 	managementSvTLS, err := managementSv.TLS.TryIntoServerTLSConf()
@@ -103,14 +127,14 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 		runtime.Metadata(),
 		runtime,
 	)
-	managementGrpcServer, err := commonrpc.Default.StartGrpcServer("admin", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
+	managementGrpcServer, err = commonrpc.Default.StartGrpcServer("admin", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, management)
 	}, managementSvTLS, &managementSv.Auth, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	metricsServer, err := startMetricsServer(options.Observability.Metric) //nolint:contextcheck
+	metricsServer, err = startMetricsServer(options.Observability.Metric) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +148,7 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 		grpcServer:       grpcServer,
 		managementServer: managementGrpcServer,
 		healthServer:     healthServer,
+		reconciler:       reconciler,
 		runtime:          runtime,
 		metadata:         metadata,
 		metadataFactory:  metadataFactory,
@@ -179,6 +204,7 @@ func (s *GrpcServer) Close() error {
 	err = multierr.Combine(
 		s.grpcServer.Close(),
 		s.managementServer.Close(),
+		s.reconciler.Close(),
 		s.runtime.Close(),
 		s.metadata.Close(),
 		s.metadataFactory.Close(),

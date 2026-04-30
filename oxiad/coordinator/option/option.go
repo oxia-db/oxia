@@ -24,7 +24,7 @@ import (
 	"go.uber.org/multierr"
 	"gopkg.in/yaml.v3"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/security"
@@ -168,7 +168,7 @@ func (mo *MetadataOptions) ApplyLegacyClusterConfigPath(configPath string) error
 	}
 
 	switch mo.ProviderName {
-	case provider.NameConfigMap:
+	case metadataconstant.NameConfigMap:
 		if !strings.HasPrefix(configPath, legacyConfigMapClusterConfigPrefix) {
 			return mo.File.applyLegacyConfigPath(configPath)
 		}
@@ -189,7 +189,7 @@ func (mo *MetadataOptions) ApplyLegacyClusterConfigPath(configPath string) error
 		if mo.Kubernetes.ConfigName == "" {
 			mo.Kubernetes.ConfigName = name
 		}
-	case provider.NameFile:
+	case metadataconstant.NameFile:
 		if strings.HasPrefix(configPath, legacyConfigMapClusterConfigPrefix) {
 			return errors.New("deprecated cluster.configPath must be a file path when metadata provider is file")
 		}
@@ -205,19 +205,19 @@ func (mo *MetadataOptions) ApplyLegacyClusterConfigPath(configPath string) error
 
 func (mpo ProviderOptions) Validate() error {
 	switch mpo.ProviderName {
-	case provider.NameConfigMap:
+	case metadataconstant.NameConfigMap:
 		if mpo.Kubernetes.Namespace == "" {
 			return errors.New("k8s-namespace must be set with metadata=configmap")
 		}
-	case provider.NameRaft:
+	case metadataconstant.NameRaft:
 		if mpo.Raft.Address == "" {
 			return errors.New("raft-address must be set with metadata=raft")
 		}
-	case provider.NameFile:
+	case metadataconstant.NameFile:
 		if mpo.File.StatusPath() == "" {
 			return errors.New("metadata.file status path must be set with metadata=file")
 		}
-	case provider.NameMemory:
+	case metadataconstant.NameMemory:
 	default:
 		return errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
 	}

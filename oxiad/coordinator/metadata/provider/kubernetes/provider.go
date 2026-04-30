@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	k8swatch "k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/klog/v2"
@@ -42,6 +43,7 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -61,8 +63,8 @@ type Provider[T gproto.Message] struct {
 	sync.Mutex
 	kubernetes      kubernetes.Interface
 	namespace, name string
-	codec           provider.Codec[T]
-	watchEnabled    provider.WatchMode
+	codec           metadatacommon.Codec[T]
+	watchEnabled    metadatacommon.WatchMode
 
 	metadataSize      atomic.Int64
 	getLatencyHisto   metric.LatencyHistogram
@@ -78,12 +80,12 @@ type Provider[T gproto.Message] struct {
 	logger *slog.Logger
 }
 
-func NewConfigMapProvider[T gproto.Message](
+func NewProvider[T gproto.Message](
 	ctx context.Context,
 	kc kubernetes.Interface,
 	namespace, name string,
-	codec provider.Codec[T],
-	watchEnabled provider.WatchMode,
+	codec metadatacommon.Codec[T],
+	watchEnabled metadatacommon.WatchMode,
 ) (provider.Provider[T], error) {
 	m := &Provider[T]{
 		kubernetes:   kc,
@@ -124,7 +126,17 @@ func NewConfigMapProvider[T gproto.Message](
 	return m, nil
 }
 
-func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
+func NewDefaultClientset() (kubernetes.Interface, error) {
+	kubeconfigGetter := clientcmd.NewDefaultClientConfigLoadingRules().Load
+	config, err := clientcmd.BuildConfigFromKubeconfigGetter("", kubeconfigGetter)
+	if err != nil {
+		return nil, err
+	}
+	config.QPS = -1
+	return kubernetes.NewForConfig(config)
+}
+
+func (m *Provider[T]) Get() (value T, version metadatacommon.Version, err error) {
 	timer := m.getLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -133,32 +145,32 @@ func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
 	return m.getWithoutLock()
 }
 
-func (m *Provider[T]) getWithoutLock() (value T, version provider.Version, err error) {
+func (m *Provider[T]) getWithoutLock() (value T, version metadatacommon.Version, err error) {
 	ctx, cancel := context.WithTimeout(m.ctx, k8sRequestTimeout)
 	defer cancel()
 
 	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Get(ctx, m.name, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			return value, provider.NotExists, nil
+			return value, metadatacommon.NotExists, nil
 		}
 		return value, "", err
 	}
 
-	data, ok := cm.Data[m.codec.ConfigMapDataKey()]
+	data, ok := cm.Data[m.codec.GetKey()]
 	if !ok {
-		return value, provider.NotExists, nil
+		return value, metadatacommon.NotExists, nil
 	}
 
-	version = provider.Version(cm.ResourceVersion)
+	version = metadatacommon.Version(cm.ResourceVersion)
 	slog.Debug("Get metadata successful",
 		slog.String("version", cm.ResourceVersion))
 	m.metadataSize.Store(int64(len(data)))
-	value, err = m.codec.Unmarshal([]byte(data))
+	value, err = m.codec.UnmarshalYAML([]byte(data))
 	return value, version, err
 }
 
-func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (provider.Version, error) {
+func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (metadatacommon.Version, error) {
 	timer := m.storeLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -174,17 +186,17 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (provider
 		slog.Error("Store metadata failed for version mismatch",
 			slog.Any("local-version", version),
 			slog.Any("expected-version", expectedVersion))
-		panic(provider.ErrBadVersion)
+		panic(metadatacommon.ErrBadVersion)
 	}
 
 	data, err := m.codec.MarshalYAML(value)
 	if err != nil {
-		return provider.NotExists, err
+		return metadatacommon.NotExists, err
 	}
-	cmData := makeDesiredConfigMap(m.name, m.codec.ConfigMapDataKey(), data, expectedVersion)
+	cmData := makeDesiredConfigMap(m.name, m.codec.GetKey(), data, expectedVersion)
 	desiredBytes, err := json.Marshal(cmData)
 	if err != nil {
-		return provider.NotExists, err
+		return metadatacommon.NotExists, err
 	}
 
 	ctx, cancel := context.WithTimeout(m.ctx, k8sRequestTimeout)
@@ -199,12 +211,12 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (provider
 	}
 	if err != nil {
 		if k8serrors.IsConflict(err) {
-			panic(provider.ErrBadVersion)
+			panic(metadatacommon.ErrBadVersion)
 		}
 		return version, err
 	}
-	version = provider.Version(cm.ResourceVersion)
-	m.metadataSize.Store(int64(len(cmData.Data[m.codec.ConfigMapDataKey()])))
+	version = metadatacommon.Version(cm.ResourceVersion)
+	m.metadataSize.Store(int64(len(cmData.Data[m.codec.GetKey()])))
 	return version, nil
 }
 
@@ -278,7 +290,7 @@ func (m *Provider[T]) Close() error {
 
 func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
 	if !m.watchEnabled.Enabled() || m.watcher == nil {
-		return nil, provider.ErrWatchUnsupported
+		return nil, metadatacommon.ErrWatchUnsupported
 	}
 	return m.watcher.Subscribe(), nil
 }
@@ -332,7 +344,7 @@ func (m *Provider[T]) watch() error {
 	return errors.New("K8S config map watch channel closed")
 }
 
-func makeDesiredConfigMap(name, dataKey string, data []byte, version provider.Version) *corev1.ConfigMap {
+func makeDesiredConfigMap(name, dataKey string, data []byte, version metadatacommon.Version) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ConfigMap",
@@ -344,7 +356,7 @@ func makeDesiredConfigMap(name, dataKey string, data []byte, version provider.Ve
 		},
 	}
 
-	if version != provider.NotExists {
+	if version != metadatacommon.NotExists {
 		cm.ResourceVersion = string(version)
 	}
 

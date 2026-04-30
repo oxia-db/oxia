@@ -20,11 +20,12 @@ import (
 	"testing"
 	"time"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
@@ -70,8 +71,8 @@ func TestNormalShardBalancer(t *testing.T) {
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(&cc, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	_, err := configProvider.Store(&cc, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -182,8 +183,8 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 		Servers:        shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(&cc, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	_, err := configProvider.Store(&cc, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -281,8 +282,8 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 		},
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(&cc, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	_, err := configProvider.Store(&cc, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()

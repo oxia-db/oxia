@@ -17,6 +17,8 @@ package mock
 import (
 	"testing"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+
 	"github.com/stretchr/testify/assert"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
@@ -24,13 +26,14 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
+	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
 func NewCoordinator(t *testing.T, configProvider provider.Provider[*commonproto.ClusterConfiguration]) coordruntime.Runtime {
 	t.Helper()
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	assert.NoError(t, err)
@@ -40,5 +43,9 @@ func NewCoordinator(t *testing.T, configProvider provider.Provider[*commonproto.
 	})
 	coordinatorInstance, err := coordruntime.New(metadata, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
+	reconciler := coordreconciler.New(t.Context(), coordinatorInstance)
+	t.Cleanup(func() {
+		assert.NoError(t, reconciler.Close())
+	})
 	return coordinatorInstance
 }

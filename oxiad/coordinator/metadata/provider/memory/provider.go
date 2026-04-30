@@ -21,6 +21,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -30,49 +31,59 @@ var _ provider.Provider[*proto.ClusterConfiguration] = (*Provider[*proto.Cluster
 type Provider[T gproto.Message] struct {
 	sync.Mutex
 
-	codec   provider.Codec[T]
-	value   T
-	version provider.Version
-	watch   *commonwatch.Watch[T]
+	codec        metadatacommon.Codec[T]
+	value        T
+	version      metadatacommon.Version
+	watchEnabled metadatacommon.WatchMode
+	watch        *commonwatch.Watch[T]
 }
 
 func (*Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func NewProvider[T gproto.Message](codec provider.Codec[T]) provider.Provider[T] {
-	return &Provider[T]{
-		codec:   codec,
-		version: provider.NotExists,
-		watch:   commonwatch.New(codec.NewZero()),
+func NewProvider[T gproto.Message](codec metadatacommon.Codec[T], watchEnabled metadatacommon.WatchMode) provider.Provider[T] {
+	p := &Provider[T]{
+		codec:        codec,
+		version:      metadatacommon.NotExists,
+		watchEnabled: watchEnabled,
 	}
+	if watchEnabled.Enabled() {
+		p.watch = commonwatch.New(codec.NewZero())
+	}
+	return p
 }
 
 func (*Provider[T]) Close() error {
 	return nil
 }
 
-func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
+func (m *Provider[T]) Get() (value T, version metadatacommon.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
 	return m.codec.Clone(m.value), m.version, nil
 }
 
-func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (newVersion metadatacommon.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
 	if expectedVersion != m.version {
-		panic(provider.ErrBadVersion)
+		panic(metadatacommon.ErrBadVersion)
 	}
 
 	m.value = m.codec.Clone(value)
-	m.version = provider.NextVersion(m.version)
-	m.watch.Publish(m.codec.Clone(m.value))
+	m.version = metadatacommon.NextVersion(m.version)
+	if m.watch != nil {
+		m.watch.Publish(m.codec.Clone(m.value))
+	}
 	return m.version, nil
 }
 
 func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
+	if !m.watchEnabled.Enabled() || m.watch == nil {
+		return nil, metadatacommon.ErrWatchUnsupported
+	}
 	return m.watch.Subscribe(), nil
 }

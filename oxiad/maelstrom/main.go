@@ -22,14 +22,16 @@ import (
 	"os"
 	"path/filepath"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -38,6 +40,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
+	"github.com/oxia-db/oxia/common/commonio"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 )
@@ -164,43 +167,9 @@ func main() {
 	}
 
 	if thisNode == "n1" {
-		// First node is going to be the "coordinator"
-		clusterConfig := &commonproto.ClusterConfiguration{
-			Namespaces: []*commonproto.Namespace{{
-				Name:              constant.DefaultNamespace,
-				ReplicationFactor: 3,
-				InitialShardCount: 1,
-			}},
-			Servers: servers,
-		}
-
-		statusProvider := memory.NewProvider(provider.ClusterStatusCodec)
-		configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-		_, err := configProvider.Store(clusterConfig, provider.NotExists)
-		if err != nil {
+		if err := runCoordinator(dispatcher, servers); err != nil {
 			slog.Error(
-				"failed to seed coordinator config provider",
-				slog.Any("error", err),
-			)
-			os.Exit(1)
-		}
-		metadataFactory := coordmetadata.NewFactoryWithProviders(statusProvider, configProvider)
-		metadata, err := metadataFactory.CreateMetadata(context.Background())
-		if err != nil {
-			slog.Error(
-				"failed to create coordinator metadata",
-				slog.Any("error", err),
-			)
-			os.Exit(1)
-		}
-		_, err = coordruntime.New(
-			metadata,
-			func(instanceID string) rpc.Provider {
-				return newRpcProvider(dispatcher)
-			})
-		if err != nil {
-			slog.Error(
-				"failed to create coordinator",
+				"failed to start coordinator",
 				slog.Any("error", err),
 			)
 			os.Exit(1)
@@ -247,4 +216,49 @@ func main() {
 
 		dispatcher.ReceivedMessage(rt, req, protoMsg)
 	}
+}
+
+func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIdentity) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	clusterConfig := &commonproto.ClusterConfiguration{
+		Namespaces: []*commonproto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 3,
+			InitialShardCount: 1,
+		}},
+		Servers: servers,
+	}
+
+	statusProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	if _, err := configProvider.Store(clusterConfig, metadatacommon.NotExists); err != nil {
+		return errors.Wrap(err, "failed to seed coordinator config provider")
+	}
+
+	metadataFactory := coordmetadata.NewFactoryWithProviders(statusProvider, configProvider)
+
+	metadata, err := metadataFactory.CreateMetadata(ctx)
+	if err != nil {
+		_ = commonio.CloseIfNotNil(metadataFactory)
+		return errors.Wrap(err, "failed to create coordinator metadata")
+	}
+
+	coordinatorRuntime, err := coordruntime.New(
+		metadata,
+		func(instanceID string) rpc.Provider {
+			return newRpcProvider(dispatcher)
+		},
+	)
+	if err != nil {
+		_ = commonio.CloseIfNotNil(metadata)
+		_ = commonio.CloseIfNotNil(metadataFactory)
+		return errors.Wrap(err, "failed to create coordinator")
+	}
+
+	reconciler := coordreconciler.New(ctx, coordinatorRuntime)
+	_ = reconciler
+
+	return nil
 }

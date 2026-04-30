@@ -98,68 +98,85 @@ func (c *runtime) NodeControllers() map[string]controller.DataServerController {
 	return res
 }
 
-func (c *runtime) ConfigChanged(newConfig *proto.ClusterConfiguration) {
+func (c *runtime) PutDataServerIfAbsent(server *proto.DataServer) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.logger.Info("Detected change in cluster config", slog.Any("newClusterConfig", newConfig))
-
-	// Check for nodes to add
-	for _, sa := range newConfig.GetServers() {
-		if _, ok := c.nodeControllers[sa.GetNameOrDefault()]; ok {
-			continue
-		}
-		// The node is present in the config, though we don't know it yet,
-		// therefore it must be a newly added node
-		c.logger.Info("Detected new node", slog.Any("server", sa))
-		if nc, ok := c.drainingNodes[sa.GetNameOrDefault()]; ok {
-			// If there were any controller for a draining node, close it
-			// and recreate it as a new node
-			_ = nc.Close()
-			delete(c.drainingNodes, sa.GetNameOrDefault())
-		}
-		c.nodeControllers[sa.GetNameOrDefault()] = controller.NewDataServerController(
-			c.ctx,
-			sa,
-			c,
-			c,
-			c.rpc,
-			c.insID,
-		)
+	identity := server.GetIdentity()
+	if identity == nil {
+		return
 	}
-
-	// Check for nodes to remove
-	for serverID, nc := range c.nodeControllers {
-		if _, exist := c.metadata.GetDataServerIdentity(serverID); exist {
-			continue
-		}
-		c.logger.Info("Detected a removed node", slog.Any("server", serverID))
-		// Moved the node
-		delete(c.nodeControllers, serverID)
-		nc.SetStatus(controller.Draining)
-		c.drainingNodes[serverID] = nc
+	if _, ok := c.nodeControllers[identity.GetNameOrDefault()]; ok {
+		return
 	}
+	c.logger.Info("Detected new node", slog.Any("server", identity))
+	if nc, ok := c.drainingNodes[identity.GetNameOrDefault()]; ok {
+		_ = nc.Close()
+		delete(c.drainingNodes, identity.GetNameOrDefault())
+	}
+	c.nodeControllers[identity.GetNameOrDefault()] = controller.NewDataServerController(
+		c.ctx,
+		identity,
+		c,
+		c,
+		c.rpc,
+		c.insID,
+	)
+}
+
+func (c *runtime) DeleteDataServer(id string) {
+	c.Lock()
+	defer c.Unlock()
+
+	nc, exist := c.nodeControllers[id]
+	if !exist {
+		return
+	}
+	c.logger.Info("Detected a removed node", slog.Any("server", id))
+	delete(c.nodeControllers, id)
+	nc.SetStatus(controller.Draining)
+	c.drainingNodes[id] = nc
+}
+
+func (c *runtime) SyncShardControllerServerAddresses() {
+	c.Lock()
+	defer c.Unlock()
+
 	for _, sc := range c.shardControllers {
 		sc.SyncServerAddress()
 	}
+}
 
-	clusterStatus, shardsToAdd, shardsToDelete := c.metadata.ApplyStatusChanges(newConfig, c.selectNewEnsemble)
-	for shard, namespace := range shardsToAdd {
-		shardMetadata := clusterStatus.Namespaces[namespace].Shards[shard]
-		if namespaceConfig, exist := c.metadata.GetNamespace(namespace); exist {
-			c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
-				pb.Clone(shardMetadata).(*proto.ShardMetadata), c.metadata, c.findDataServerFeatures,
-				c, c.rpc, controller.DefaultPeriodicTasksInterval)
-			slog.Info("Added new shard", slog.Int64("shard", shard),
-				slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
-		}
-	}
-	for _, shard := range shardsToDelete {
-		if s, exist := c.shardControllers[shard]; exist {
-			s.DeleteShard()
-		}
-	}
+func (c *runtime) PutShardIfAbsent(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
+	c.Lock()
+	defer c.Unlock()
 
+	if _, exist := c.shardControllers[shard]; exist {
+		return
+	}
+	namespaceConfig, exist := c.metadata.GetNamespace(namespace)
+	if !exist {
+		namespaceConfig = &proto.Namespace{}
+	}
+	c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
+		pb.Clone(shardMetadata).(*proto.ShardMetadata), c.metadata, c.findDataServerFeatures,
+		c, c.rpc, controller.DefaultPeriodicTasksInterval)
+	slog.Info("Added new shard", slog.Int64("shard", shard),
+		slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
+}
+
+func (c *runtime) DeleteShard(shard int64) {
+	c.Lock()
+	defer c.Unlock()
+
+	if s, exist := c.shardControllers[shard]; exist {
+		s.DeleteShard()
+	}
+}
+
+func (c *runtime) RecomputeAssignments() {
+	c.Lock()
+	defer c.Unlock()
 	c.computeNewAssignments()
 	c.loadBalancer.Trigger()
 }
@@ -211,6 +228,10 @@ func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.Cl
 		esm = append(esm, node)
 	}
 	return esm, nil
+}
+
+func (c *runtime) SelectNewEnsemble(namespaceConfig *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+	return c.selectNewEnsemble(namespaceConfig, editingStatus)
 }
 
 func (c *runtime) Close() error {
@@ -298,25 +319,6 @@ func (c *runtime) startBackgroundActionWorker() {
 		case <-c.ctx.Done():
 			return
 		}
-	}
-}
-
-func (c *runtime) startBackgroundConfigWatcher() {
-	configWatch := c.metadata.ConfigWatch()
-	receiver := configWatch.Subscribe()
-
-	if currentConfig := c.metadata.GetConfig(); currentConfig != nil {
-		c.ConfigChanged(currentConfig)
-	}
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case <-receiver.Changed():
-		}
-
-		newConfig := receiver.Load()
-		c.ConfigChanged(newConfig)
 	}
 }
 
@@ -430,6 +432,37 @@ func mergedAuthorities(status *proto.ClusterStatus, servers []*proto.DataServerI
 		authorities.Add(authority)
 	}
 	return authorities.Values()
+}
+
+func dataServersFromStatus(status *proto.ClusterStatus) []*proto.DataServerIdentity {
+	servers := make(map[string]*proto.DataServerIdentity)
+	addServer := func(server *proto.DataServerIdentity) {
+		if server == nil {
+			return
+		}
+		servers[server.GetNameOrDefault()] = server
+	}
+
+	for _, namespace := range status.Namespaces {
+		for _, shard := range namespace.Shards {
+			addServer(shard.Leader)
+			for _, server := range shard.Ensemble {
+				addServer(server)
+			}
+			for _, server := range shard.RemovedNodes {
+				addServer(server)
+			}
+			for _, server := range shard.PendingDeleteShardNodes {
+				addServer(server)
+			}
+		}
+	}
+
+	result := make([]*proto.DataServerIdentity, 0, len(servers))
+	for _, server := range servers {
+		result = append(result, server)
+	}
+	return result
 }
 
 // InitiateSplit validates and initiates a shard split. It creates child shards
@@ -730,14 +763,13 @@ func New(
 		},
 	})
 
-	clusterConfig := c.metadata.GetConfig()
 	clusterStatus := c.metadata.GetStatus()
 	c.insID = clusterStatus.InstanceId
 
 	c.rpc = rpcProvider(c.insID)
 
 	// init node controller
-	for _, node := range clusterConfig.GetServers() {
+	for _, node := range dataServersFromStatus(clusterStatus) {
 		c.nodeControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
 			c.ctx,
 			node,
@@ -747,8 +779,6 @@ func New(
 			c.insID,
 		)
 	}
-	c.logger.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
-	clusterStatus, _, _ = c.metadata.ApplyStatusChanges(clusterConfig, c.selectNewEnsemble)
 
 	// init shard controller
 	for ns, shards := range clusterStatus.Namespaces {
@@ -773,12 +803,6 @@ func New(
 			"component": "coordinator-action-worker",
 		}, c.startBackgroundActionWorker)
 	})
-	c.wg.Go(func() {
-		process.DoWithLabels(c.ctx, map[string]string{
-			"component": "coordinator-config-watcher",
-		}, c.startBackgroundConfigWatcher)
-	})
-
 	c.loadBalancer.Start()
 	return c, nil
 }

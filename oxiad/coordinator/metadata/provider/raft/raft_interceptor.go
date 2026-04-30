@@ -12,25 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package provider
+package raft
 
-import (
-	"io"
-
-	gproto "google.golang.org/protobuf/proto"
-
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-)
-
-type Provider[T gproto.Message] interface {
-	io.Closer
-
-	Get() (value T, version metadataconstant.Version, err error)
-
-	Store(value T, expectedVersion metadataconstant.Version) (newVersion metadataconstant.Version, err error)
-
-	WaitToBecomeLeader() error
-
-	Watch() (*commonwatch.Receiver[T], error)
+type Interceptor interface {
+	OnApplied(key string, data []byte)
 }

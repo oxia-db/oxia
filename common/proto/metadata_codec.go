@@ -22,6 +22,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func UnmarshalClusterConfigurationJSON(data []byte) (*ClusterConfiguration, error) {
+	config := &ClusterConfiguration{}
+	if err := (protojson.UnmarshalOptions{
+		DiscardUnknown: false,
+	}).Unmarshal(data, config); err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
 func UnmarshalClusterConfigurationYAML(data []byte) (*ClusterConfiguration, error) {
 	var generic any
 	if err := yaml.Unmarshal(data, &generic); err != nil {
@@ -43,11 +53,15 @@ func UnmarshalClusterConfigurationYAML(data []byte) (*ClusterConfiguration, erro
 	return config, nil
 }
 
-func MarshalClusterConfigurationYAML(config *ClusterConfiguration) ([]byte, error) {
-	jsonBytes, err := protojson.MarshalOptions{
+func MarshalClusterConfigurationJSON(config *ClusterConfiguration) ([]byte, error) {
+	return protojson.MarshalOptions{
 		UseProtoNames:   false,
 		EmitUnpopulated: false,
 	}.Marshal(config)
+}
+
+func MarshalClusterConfigurationYAML(config *ClusterConfiguration) ([]byte, error) {
+	jsonBytes, err := MarshalClusterConfigurationJSON(config)
 	if err != nil {
 		return nil, err
 	}

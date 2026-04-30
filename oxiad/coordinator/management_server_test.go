@@ -18,6 +18,8 @@ import (
 	"context"
 	"testing"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -25,7 +27,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 )
 
@@ -44,11 +45,11 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 		config = &proto.ClusterConfiguration{}
 	}
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(config, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	_, err := configProvider.Store(config, metadatacommon.NotExists)
 	require.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(
-		memory.NewProvider(provider.ClusterStatusCodec),
+		memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled),
 		configProvider,
 	)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())

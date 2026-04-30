@@ -24,6 +24,7 @@ import (
 	"go.uber.org/multierr"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
@@ -32,12 +33,22 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
+var _ raft.Interceptor = &Factory{}
+
 type Factory struct {
 	mu sync.Mutex
 
-	statusProvider provider.Provider[*commonproto.ClusterStatus]
-	configProvider provider.Provider[*commonproto.ClusterConfiguration]
-	metadataRaft   *raft.Raft
+	statusProvider  provider.Provider[*commonproto.ClusterStatus]
+	configProvider  provider.Provider[*commonproto.ClusterConfiguration]
+	raft            *raft.Raft
+	raftInterceptor raft.Interceptor
+}
+
+func (f *Factory) OnApplied(key string, data []byte) {
+	if f.raftInterceptor == nil {
+		return
+	}
+	f.raftInterceptor.OnApplied(key, data)
 }
 
 func NewFactoryWithProviders(
@@ -54,62 +65,51 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	if options == nil {
 		return nil, errors.New("options must not be nil")
 	}
-
+	var err error
 	meta := options.Metadata
 	if err := meta.ApplyLegacyClusterConfigPath(options.Cluster.ConfigPath); err != nil {
 		return nil, err
 	}
-
 	factory := &Factory{}
-
 	switch meta.ProviderName {
-	case provider.NameMemory:
-		factory.statusProvider = memory.NewProvider(provider.ClusterStatusCodec)
-		factory.configProvider = memory.NewProvider(provider.ClusterConfigCodec)
-	case provider.NameFile:
-		statusProvider, err := file.NewProvider(ctx, meta.File.StatusPath(), provider.ClusterStatusCodec, provider.WatchDisabled)
+	case metadatacommon.NameMemory:
+		factory.statusProvider = memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+		factory.configProvider = memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	case metadatacommon.NameFile:
+		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
+			return nil, err
+		}
+		if factory.configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
+			return nil, err
+		}
+	case metadatacommon.NameConfigMap:
+		client, err := kubernetes.NewDefaultClientset()
 		if err != nil {
 			return nil, err
 		}
-		configProvider, err := file.NewProvider(ctx, meta.File.ConfigPath(), provider.ClusterConfigCodec, provider.WatchEnabled)
-		if err != nil {
+		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
 			return nil, err
 		}
-		factory.statusProvider = statusProvider
-		factory.configProvider = configProvider
-	case provider.NameConfigMap:
-		k8sConfig := kubernetes.NewK8SClientConfig()
-		client := kubernetes.NewK8SClientset(k8sConfig)
-		statusProvider, err := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), provider.ClusterStatusCodec, provider.WatchDisabled)
-		if err != nil {
+		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
 			return nil, err
 		}
-		factory.statusProvider = statusProvider
-		if meta.File.Dir != "" || meta.File.ConfigName != "" {
-			configProvider, err := file.NewProvider(ctx, meta.File.ConfigPath(), provider.ClusterConfigCodec, provider.WatchEnabled)
-			if err != nil {
-				return nil, err
-			}
-			factory.configProvider = configProvider
-		} else {
-			configProvider, err := kubernetes.NewConfigMapProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), provider.ClusterConfigCodec, provider.WatchEnabled)
-			if err != nil {
-				return nil, err
-			}
-			factory.configProvider = configProvider
-		}
-	case provider.NameRaft:
-		metadataRaft, err := raft.NewRaft(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir)
-		if err != nil {
+	case metadatacommon.NameRaft:
+		if factory.raft, err = raft.New(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir, factory); err != nil {
 			return nil, fmt.Errorf("failed to create raft metadata provider: %w", err)
 		}
-		factory.metadataRaft = metadataRaft
-		factory.statusProvider = metadataRaft.NewStatusProvider()
-		factory.configProvider = metadataRaft.NewConfigProvider()
+		factory.configProvider = raft.NewProvider(ctx, factory.raft, metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+		// Raft apply callbacks only drive the config watch today.
+		// Status watch is intentionally unsupported; if we add it later,
+		// this needs to fan out to the status provider too.
+		configProvider, ok := factory.configProvider.(*raft.Provider[*commonproto.ClusterConfiguration])
+		if !ok {
+			return nil, errors.New("failed to create raft config provider")
+		}
+		factory.raftInterceptor = configProvider
+		factory.statusProvider = raft.NewProvider(ctx, factory.raft, metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	default:
 		return nil, errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
 	}
-
 	return factory, nil
 }
 
@@ -133,7 +133,7 @@ func (f *Factory) Close() error {
 	f.mu.Lock()
 	statusProvider := f.statusProvider
 	configProvider := f.configProvider
-	metadataRaft := f.metadataRaft
+	metadataRaft := f.raft
 	f.mu.Unlock()
 
 	var statusErr error
@@ -150,6 +150,5 @@ func (f *Factory) Close() error {
 	if metadataRaft != nil {
 		raftErr = metadataRaft.Close()
 	}
-
 	return multierr.Combine(statusErr, configErr, raftErr)
 }

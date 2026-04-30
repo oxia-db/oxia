@@ -31,19 +31,22 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
 var _ provider.Provider[*commonproto.ClusterStatus] = (*Provider[*commonproto.ClusterStatus])(nil)
 var _ provider.Provider[*commonproto.ClusterConfiguration] = (*Provider[*commonproto.ClusterConfiguration])(nil)
 
+const parentDirectoryMode = 0o755
+
 type Provider[T gproto.Message] struct {
 	path         string
-	codec        provider.Codec[T]
+	codec        metadatacommon.Codec[T]
 	fileLock     *fslock.Lock
 	lockAcquired bool
-	watchEnabled provider.WatchMode
-	version      provider.Version
+	watchEnabled metadatacommon.WatchMode
+	version      metadatacommon.Version
 
 	ctx       context.Context
 	ctxCancel context.CancelFunc
@@ -53,18 +56,24 @@ type Provider[T gproto.Message] struct {
 	logger  *slog.Logger
 }
 
-func NewProvider[T gproto.Message](ctx context.Context, path string, codec provider.Codec[T], watchEnabled provider.WatchMode) (provider.Provider[T], error) {
+func NewProvider[T gproto.Message](ctx context.Context, path string, codec metadatacommon.Codec[T], watchEnabled metadatacommon.WatchMode) (provider.Provider[T], error) {
 	p := &Provider[T]{
 		path:         path,
 		codec:        codec,
 		fileLock:     fslock.New(path),
 		watchEnabled: watchEnabled,
-		version:      provider.NotExists,
+		version:      metadatacommon.NotExists,
 		logger:       slog.With(slog.String("component", "metadata-file-provider"), slog.String("path", path)),
 	}
 	p.ctx, p.ctxCancel = context.WithCancel(ctx)
-	if err := p.ensureParentDirectoryExists(); err != nil {
-		return nil, err
+	parentDir := filepath.Dir(path)
+	if _, err := os.Stat(parentDir); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if err := os.MkdirAll(parentDir, parentDirectoryMode); err != nil {
+			return nil, err
+		}
 	}
 	if watchEnabled.Enabled() {
 		initialValue, _, err := p.Get()
@@ -107,40 +116,40 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func (m *Provider[T]) Get() (value T, version provider.Version, err error) {
+func (m *Provider[T]) Get() (value T, version metadatacommon.Version, err error) {
 	content, err := os.ReadFile(m.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return value, provider.NotExists, nil
+			return value, metadatacommon.NotExists, nil
 		}
-		return value, provider.NotExists, err
+		return value, metadatacommon.NotExists, err
 	}
 
 	if len(content) == 0 {
-		return value, provider.NotExists, nil
+		return value, metadatacommon.NotExists, nil
 	}
-	value, err = m.codec.Unmarshal(content)
+	value, err = m.codec.UnmarshalYAML(content)
 	return value, m.version, err
 }
 
-func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersion provider.Version, err error) {
+func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (newVersion metadatacommon.Version, err error) {
 	_, existingVersion, err := m.Get()
 	if err != nil {
-		return provider.NotExists, err
+		return metadatacommon.NotExists, err
 	}
 
 	if expectedVersion != existingVersion {
-		panic(provider.ErrBadVersion)
+		panic(metadatacommon.ErrBadVersion)
 	}
 
-	newVersion = provider.NextVersion(existingVersion)
+	newVersion = metadatacommon.NextVersion(existingVersion)
 	newContent, err := m.codec.MarshalYAML(value)
 	if err != nil {
-		return provider.NotExists, err
+		return metadatacommon.NotExists, err
 	}
 
 	if err := os.WriteFile(m.path, newContent, 0600); err != nil {
-		return provider.NotExists, err
+		return metadatacommon.NotExists, err
 	}
 	m.version = newVersion
 
@@ -149,7 +158,7 @@ func (m *Provider[T]) Store(value T, expectedVersion provider.Version) (newVersi
 
 func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
 	if !m.watchEnabled.Enabled() || m.watcher == nil {
-		return nil, provider.ErrWatchUnsupported
+		return nil, metadatacommon.ErrWatchUnsupported
 	}
 	return m.watcher.Subscribe(), nil
 }
@@ -211,20 +220,4 @@ func (m *Provider[T]) watchOnce() error {
 			}
 		}
 	}
-}
-
-func (m *Provider[T]) ensureParentDirectoryExists() error {
-	// Ensure directory exists
-	parentDir := filepath.Dir(m.path)
-	if _, err := os.Stat(parentDir); err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-
-		if err := os.MkdirAll(parentDir, 0755); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }

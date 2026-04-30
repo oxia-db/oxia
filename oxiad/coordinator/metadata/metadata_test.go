@@ -21,7 +21,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
@@ -32,7 +32,7 @@ func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
 	factory, err := New(t.Context(), &option.Options{
 		Metadata: option.MetadataOptions{
 			ProviderOptions: option.ProviderOptions{
-				ProviderName: provider.NameFile,
+				ProviderName: metadataconstant.NameFile,
 				File: option.FileMetadata{
 					Dir: dir,
 				},
@@ -63,7 +63,7 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 		},
 		Metadata: option.MetadataOptions{
 			ProviderOptions: option.ProviderOptions{
-				ProviderName: provider.NameFile,
+				ProviderName: metadataconstant.NameFile,
 				File: option.FileMetadata{
 					StatusName: filepath.Join(dir, option.DefaultFileStatusName),
 				},

@@ -21,10 +21,11 @@ import (
 	"testing"
 	"time"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -64,7 +65,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		cluster.addresses = append(cluster.addresses, addr)
 	}
 
-	metadataProvider := memory.NewProvider(provider.ClusterStatusCodec)
+	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              constant.DefaultNamespace,
@@ -74,8 +75,8 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		Servers:               cluster.addresses,
 		AllowExtraAuthorities: []string{cluster.authority},
 	}
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(clusterConfig, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	require.NoError(t, err)
 	cluster.coordinator = newCoordinatorInstance(t, metadataProvider, configProvider, coordinatorrpc.NewRpcProviderFactory(nil))
 

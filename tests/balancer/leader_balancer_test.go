@@ -17,12 +17,13 @@ package balancer
 import (
 	"testing"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/state"
 
@@ -103,8 +104,8 @@ func TestLeaderBalanced(t *testing.T) {
 		},
 	}
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(cc, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	_, err := configProvider.Store(cc, metadatacommon.NotExists)
 	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -148,8 +149,8 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 		},
 	}
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(cc, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	_, err := configProvider.Store(cc, metadatacommon.NotExists)
 	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -220,8 +221,8 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 		},
 	}
 
-	configProvider := memory.NewProvider(provider.ClusterConfigCodec)
-	_, err := configProvider.Store(cc, provider.NotExists)
+	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	_, err := configProvider.Store(cc, metadatacommon.NotExists)
 	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()

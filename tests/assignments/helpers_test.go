@@ -23,6 +23,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
@@ -45,6 +46,10 @@ func newCoordinatorInstance(
 
 	coordinatorInstance, err := coordruntime.New(metadata, rpcProvider)
 	require.NoError(t, err)
+	reconciler := coordreconciler.New(t.Context(), coordinatorInstance)
+	t.Cleanup(func() {
+		require.NoError(t, reconciler.Close())
+	})
 	return coordinatorInstance
 }
 
