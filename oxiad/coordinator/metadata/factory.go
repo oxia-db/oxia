@@ -21,8 +21,6 @@ import (
 	"log/slog"
 	"sync"
 
-	"go.uber.org/multierr"
-
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
@@ -32,6 +30,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/raft"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
+	"go.uber.org/multierr"
 )
 
 var _ raft.Interceptor = &Factory{}
@@ -46,6 +45,9 @@ type Factory struct {
 }
 
 func (f *Factory) OnApplied(key string, data []byte) {
+	if f.raftInterceptor == nil {
+		return
+	}
 	f.raftInterceptor.OnApplied(key, data)
 }
 
@@ -96,6 +98,10 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 			return nil, fmt.Errorf("failed to create raft metadata provider: %w", err)
 		}
 		factory.configProvider = raft.NewProvider(ctx, factory.raft, metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+		// Raft apply callbacks only drive the config watch today.
+		// Status watch is intentionally unsupported; if we add it later,
+		// this needs to fan out to the status provider too.
+		factory.raftInterceptor = factory.configProvider.(*raft.Provider[*commonproto.ClusterConfiguration])
 		factory.statusProvider = raft.NewProvider(ctx, factory.raft, metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	default:
 		return nil, errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
