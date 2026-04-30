@@ -16,7 +16,6 @@ package common
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 
@@ -118,7 +117,7 @@ func unmarshalLegacyClusterStatus(data []byte) (gproto.Message, error) {
 		return nil, err
 	}
 	if len(container.ClusterStatus) == 0 {
-		return nil, errors.New("metadata not initialized")
+		return nil, ErrNotInitialized
 	}
 	return commonproto.UnmarshalClusterStatusYAML(container.ClusterStatus)
 }

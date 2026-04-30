@@ -35,14 +35,14 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata2.NewProvider(metadatacommon.ClusterStatusCodec)
+	metadataProvider := metadata2.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              "default",
 		ReplicationFactor: 1,
 		InitialShardCount: 2,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := metadata2.NewProvider(metadatacommon.ClusterConfigCodec)
+	configProvider := metadata2.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))

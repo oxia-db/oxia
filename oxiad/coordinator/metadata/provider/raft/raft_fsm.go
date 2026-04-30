@@ -27,6 +27,7 @@ import (
 
 type raftOpCmd struct {
 	Key             string          `json:"key"`
+	LegacyKey       string          `json:"resource_type,omitempty"`
 	NewState        json.RawMessage `json:"new_state"`
 	ExpectedVersion int64           `json:"expected_version"`
 }
@@ -56,7 +57,14 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 		return &applyResult{changeApplied: false}
 	}
 	if opCmd.Key == "" {
-		opCmd.Key = metadatacommon.ClusterStatusCodec.GetKey()
+		switch opCmd.LegacyKey {
+		case "", metadatacommon.ClusterStatusCodec.GetKey():
+			opCmd.Key = metadatacommon.ClusterStatusCodec.GetKey()
+		case "config":
+			opCmd.Key = metadatacommon.ClusterConfigCodec.GetKey()
+		default:
+			opCmd.Key = opCmd.LegacyKey
+		}
 	}
 
 	document := sc.document(opCmd.Key)
