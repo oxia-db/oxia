@@ -29,13 +29,13 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-type raftStorage struct {
+type kvRaftStore struct {
 	factory kvstore.Factory
 	kv      kvstore.KV
 }
 
-func newKVRaftStore(path string) (store *raftStorage, err error) {
-	store = &raftStorage{}
+func newKVRaftStore(path string) (store *kvRaftStore, err error) {
+	store = &kvRaftStore{}
 	if store.factory, err = kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
 		DataDir:     path,
 		CacheSizeMB: 1,
@@ -52,7 +52,7 @@ func newKVRaftStore(path string) (store *raftStorage, err error) {
 	return store, nil
 }
 
-func (s *raftStorage) Close() error {
+func (s *kvRaftStore) Close() error {
 	return multierr.Combine(
 		s.kv.Close(),
 		s.factory.Close(),
@@ -70,7 +70,7 @@ var (
 	logKeyMax = fmt.Sprintf(logKeyFormat, uint64(math.MaxUint64))
 )
 
-func (s *raftStorage) FirstIndex() (uint64, error) {
+func (s *kvRaftStore) FirstIndex() (uint64, error) {
 	storedKey, _, closer, err := s.kv.Get(logKeyMin, kvstore.ComparisonCeiling, kvstore.NoInternalKeys)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
@@ -88,7 +88,7 @@ func (s *raftStorage) FirstIndex() (uint64, error) {
 	return idx, err
 }
 
-func (s *raftStorage) LastIndex() (idx uint64, err error) {
+func (s *kvRaftStore) LastIndex() (idx uint64, err error) {
 	storedKey, _, closer, err := s.kv.Get(logKeyMax, kvstore.ComparisonFloor, kvstore.NoInternalKeys)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
@@ -101,7 +101,7 @@ func (s *raftStorage) LastIndex() (idx uint64, err error) {
 	return idx, closer.Close()
 }
 
-func (s *raftStorage) GetLog(index uint64, log *raft.Log) error {
+func (s *kvRaftStore) GetLog(index uint64, log *raft.Log) error {
 	key := fmt.Sprintf(logKeyFormat, index)
 	_, value, closer, err := s.kv.Get(key, kvstore.ComparisonEqual, kvstore.NoInternalKeys)
 	if err != nil {
@@ -114,11 +114,11 @@ func (s *raftStorage) GetLog(index uint64, log *raft.Log) error {
 	)
 }
 
-func (s *raftStorage) StoreLog(log *raft.Log) error {
+func (s *kvRaftStore) StoreLog(log *raft.Log) error {
 	return s.StoreLogs([]*raft.Log{log})
 }
 
-func (s *raftStorage) StoreLogs(logs []*raft.Log) error {
+func (s *kvRaftStore) StoreLogs(logs []*raft.Log) error {
 	wb := s.kv.NewWriteBatch()
 	for _, log := range logs {
 		key := fmt.Sprintf(logKeyFormat, log.Index)
@@ -139,7 +139,7 @@ func (s *raftStorage) StoreLogs(logs []*raft.Log) error {
 	)
 }
 
-func (s *raftStorage) DeleteRange(minInclusive, maxInclusive uint64) error {
+func (s *kvRaftStore) DeleteRange(minInclusive, maxInclusive uint64) error {
 	minKeyInclusive := fmt.Sprintf(logKeyFormat, minInclusive)
 	maxKeyExclusive := fmt.Sprintf(logKeyFormat, maxInclusive+1)
 	wb := s.kv.NewWriteBatch()
@@ -155,7 +155,7 @@ func (s *raftStorage) DeleteRange(minInclusive, maxInclusive uint64) error {
 
 // StableStore methods
 
-func (s *raftStorage) Set(key []byte, value []byte) error {
+func (s *kvRaftStore) Set(key []byte, value []byte) error {
 	wb := s.kv.NewWriteBatch()
 
 	return multierr.Combine(
@@ -165,7 +165,7 @@ func (s *raftStorage) Set(key []byte, value []byte) error {
 	)
 }
 
-func (s *raftStorage) Get(key []byte) ([]byte, error) {
+func (s *kvRaftStore) Get(key []byte) ([]byte, error) {
 	_, value, closer, err := s.kv.Get(string(key), kvstore.ComparisonEqual, kvstore.NoInternalKeys)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
@@ -179,13 +179,13 @@ func (s *raftStorage) Get(key []byte) ([]byte, error) {
 	return copiedValue, closer.Close()
 }
 
-func (s *raftStorage) SetUint64(key []byte, n uint64) error {
+func (s *kvRaftStore) SetUint64(key []byte, n uint64) error {
 	value := make([]byte, 8)
 	binary.BigEndian.PutUint64(value, n)
 	return s.Set(key, value)
 }
 
-func (s *raftStorage) GetUint64(key []byte) (uint64, error) {
+func (s *kvRaftStore) GetUint64(key []byte) (uint64, error) {
 	value, err := s.Get(key)
 	if err != nil || len(value) == 0 {
 		return 0, err

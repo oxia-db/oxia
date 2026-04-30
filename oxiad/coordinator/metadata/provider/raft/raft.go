@@ -33,7 +33,7 @@ type Raft struct {
 	sync.Mutex
 	sc          *stateContainer
 	node        *hashicorpraft.Raft
-	store       *raftStorage
+	store       *kvRaftStore
 	logger      *slog.Logger
 	interceptor Interceptor
 
