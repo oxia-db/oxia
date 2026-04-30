@@ -42,18 +42,13 @@ func (*Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func NewProvider[T gproto.Message](codec metadatacommon.Codec[T], watchEnabled ...metadatacommon.WatchMode) provider.Provider[T] {
-	mode := metadatacommon.WatchEnabled
-	if len(watchEnabled) > 0 {
-		mode = watchEnabled[0]
-	}
-
+func NewProvider[T gproto.Message](codec metadatacommon.Codec[T], watchEnabled metadatacommon.WatchMode) provider.Provider[T] {
 	p := &Provider[T]{
 		codec:        codec,
 		version:      metadatacommon.NotExists,
-		watchEnabled: mode,
+		watchEnabled: watchEnabled,
 	}
-	if mode.Enabled() {
+	if watchEnabled.Enabled() {
 		p.watch = commonwatch.New(codec.NewZero())
 	}
 	return p
