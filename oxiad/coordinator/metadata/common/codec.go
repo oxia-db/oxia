@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//revive:disable:var-naming
 package common
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -117,7 +119,7 @@ func unmarshalLegacyClusterStatus(data []byte) (gproto.Message, error) {
 		return nil, err
 	}
 	if len(container.ClusterStatus) == 0 {
-		return nil, fmt.Errorf("metadata not initialized")
+		return nil, errors.New("metadata not initialized")
 	}
 	return commonproto.UnmarshalClusterStatusYAML(container.ClusterStatus)
 }

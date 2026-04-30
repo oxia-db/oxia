@@ -38,6 +38,8 @@ import (
 var _ provider.Provider[*commonproto.ClusterStatus] = (*Provider[*commonproto.ClusterStatus])(nil)
 var _ provider.Provider[*commonproto.ClusterConfiguration] = (*Provider[*commonproto.ClusterConfiguration])(nil)
 
+const parentDirectoryMode = 0o755
+
 type Provider[T gproto.Message] struct {
 	path         string
 	codec        metadatacommon.Codec[T]
@@ -69,7 +71,7 @@ func NewProvider[T gproto.Message](ctx context.Context, path string, codec metad
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
-		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		if err := os.MkdirAll(parentDir, parentDirectoryMode); err != nil {
 			return nil, err
 		}
 	}
