@@ -238,17 +238,12 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 	}
 
 	metadataFactory := coordmetadata.NewFactoryWithProviders(statusProvider, configProvider)
-	defer func() {
-		_ = commonio.CloseIfNotNil(metadataFactory)
-	}()
 
 	metadata, err := metadataFactory.CreateMetadata(ctx)
 	if err != nil {
+		_ = commonio.CloseIfNotNil(metadataFactory)
 		return errors.Wrap(err, "failed to create coordinator metadata")
 	}
-	defer func() {
-		_ = commonio.CloseIfNotNil(metadata)
-	}()
 
 	coordinatorRuntime, err := coordruntime.New(
 		metadata,
@@ -257,16 +252,13 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 		},
 	)
 	if err != nil {
+		_ = commonio.CloseIfNotNil(metadata)
+		_ = commonio.CloseIfNotNil(metadataFactory)
 		return errors.Wrap(err, "failed to create coordinator")
 	}
-	defer func() {
-		_ = commonio.CloseIfNotNil(coordinatorRuntime)
-	}()
 
 	reconciler := coordreconciler.New(ctx, coordinatorRuntime)
-	defer func() {
-		_ = commonio.CloseIfNotNil(reconciler)
-	}()
+	_ = reconciler
 
 	return nil
 }
