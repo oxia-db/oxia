@@ -17,6 +17,7 @@ package runtime
 import (
 	"io"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
@@ -30,16 +31,17 @@ type Runtime interface {
 	controller.ShardAssignmentsProvider
 	controller.DataServerEventListener
 
-	PutDataServerIfAbsent(server *proto.DataServer)
-	DeleteDataServer(dataServerID string)
-	SyncShardControllerServerAddresses()
+	CreateDataServer(name string, dataServer *proto.DataServer) bool
+	DeleteDataServer(name string)
+
+	ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer]
+
 	CreateNamespace(name string, namespaceConfig *proto.Namespace) bool
 	DeleteNamespace(namespace string)
-	RecomputeAssignments()
-
-	NodeControllers() map[string]controller.DataServerController
 
 	LoadBalancer() balancer.LoadBalancer
-
 	Metadata() coordmetadata.Metadata
+
+	RecomputeAssignments()
+	SyncShardControllerServerAddresses()
 }

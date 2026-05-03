@@ -474,9 +474,10 @@ func (s *shardController) SyncServerAddress() {
 	shardMeta := s.metadata.Load()
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
-		if borrowedNewInfo, ok := s.metadataStore.GetDataServerIdentity(candidate.GetNameOrDefault()); ok {
-			newInfo := borrowedNewInfo.UnsafeBorrow()
-			if newInfo.GetPublic() != candidate.GetPublic() || newInfo.GetInternal() != candidate.GetInternal() {
+		if borrowedDataServer, ok := s.metadataStore.GetDataServer(candidate.GetNameOrDefault()); ok {
+			newInfo := borrowedDataServer.UnsafeBorrow().GetIdentity()
+			if newInfo != nil &&
+				(newInfo.GetPublic() != candidate.GetPublic() || newInfo.GetInternal() != candidate.GetInternal()) {
 				needSync = true
 				break
 			}

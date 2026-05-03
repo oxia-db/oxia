@@ -63,8 +63,8 @@ func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool 
 	return false
 }
 
-func (*mockMetadata) ListNamespaceStatus() commonobject.Borrowed[map[string]*proto.NamespaceStatus] {
-	return commonobject.Borrowed[map[string]*proto.NamespaceStatus]{}
+func (*mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
+	return map[string]commonobject.Borrowed[*proto.NamespaceStatus]{}
 }
 
 func (*mockMetadata) GetNamespaceStatus(string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
@@ -99,15 +99,27 @@ func (m *mockMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalanc
 	})
 }
 
-func (m *mockMetadata) ListDataServers() commonobject.Borrowed[*linkedhashset.Set[string]] {
-	return commonobject.Borrow(m.nodes)
-}
-
-func (m *mockMetadata) ListDataServersWithMetadata() (
-	commonobject.Borrowed[*linkedhashset.Set[string]],
-	commonobject.Borrowed[map[string]*proto.DataServerMetadata],
-) {
-	return commonobject.Borrow(m.nodes), commonobject.Borrow(m.metadata)
+func (m *mockMetadata) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
+	dataServers := make(map[string]commonobject.Borrowed[*proto.DataServer], m.nodes.Size())
+	for _, id := range m.nodes.Values() {
+		name := id
+		identity, ok := m.nodeMap[id]
+		if !ok {
+			identity = &proto.DataServerIdentity{
+				Name:     &name,
+				Internal: id,
+			}
+		}
+		metadata, ok := m.metadata[id]
+		if !ok {
+			metadata = &proto.DataServerMetadata{}
+		}
+		dataServers[id] = commonobject.Borrow(&proto.DataServer{
+			Identity: identity,
+			Metadata: metadata,
+		})
+	}
+	return dataServers
 }
 
 func (m *mockMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*proto.Namespace], bool) {
@@ -118,20 +130,12 @@ func (m *mockMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*pr
 	return commonobject.Borrow(nc), true
 }
 
-func (m *mockMetadata) GetDataServerIdentity(id string) (commonobject.Borrowed[*proto.DataServerIdentity], bool) {
-	n, ok := m.nodeMap[id]
-	if !ok {
-		return commonobject.Borrowed[*proto.DataServerIdentity]{}, false
-	}
-	return commonobject.Borrow(n), true
-}
-
-func (m *mockMetadata) GetDataServer(id string) (commonobject.Borrowed[*proto.DataServer], bool) {
-	n, ok := m.nodeMap[id]
+func (m *mockMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.DataServer], bool) {
+	n, ok := m.nodeMap[name]
 	if !ok {
 		return commonobject.Borrowed[*proto.DataServer]{}, false
 	}
-	metadata, ok := m.metadata[id]
+	metadata, ok := m.metadata[name]
 	if !ok {
 		metadata = &proto.DataServerMetadata{}
 	}

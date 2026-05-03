@@ -20,7 +20,6 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
 	gproto "google.golang.org/protobuf/proto"
 
@@ -30,7 +29,6 @@ import (
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 )
 
 func hashRange(start, end uint32) *proto.HashRange {
@@ -125,12 +123,12 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	return true
 }
 
-func (m *mockNamespaceMetadata) ListNamespaceStatus() commonobject.Borrowed[map[string]*proto.NamespaceStatus] {
-	namespaces := make(map[string]*proto.NamespaceStatus, len(m.status.GetNamespaces()))
+func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
+	namespaces := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
-		namespaces[name] = status
+		namespaces[name] = commonobject.Borrow(status)
 	}
-	return commonobject.Borrow(namespaces)
+	return namespaces
 }
 
 func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
@@ -172,19 +170,8 @@ func (*mockNamespaceMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.Loa
 	return commonobject.Borrowed[*proto.LoadBalancer]{}
 }
 
-func (*mockNamespaceMetadata) ListDataServers() commonobject.Borrowed[*linkedhashset.Set[string]] {
-	return commonobject.Borrow(linkedhashset.New[string]())
-}
-
-func (*mockNamespaceMetadata) ListDataServersWithMetadata() (
-	commonobject.Borrowed[*linkedhashset.Set[string]],
-	commonobject.Borrowed[map[string]*proto.DataServerMetadata],
-) {
-	return commonobject.Borrow(linkedhashset.New[string]()), commonobject.Borrow(map[string]*proto.DataServerMetadata{})
-}
-
-func (*mockNamespaceMetadata) GetDataServerIdentity(string) (commonobject.Borrowed[*proto.DataServerIdentity], bool) {
-	return commonobject.Borrowed[*proto.DataServerIdentity]{}, false
+func (*mockNamespaceMetadata) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
+	return map[string]commonobject.Borrowed[*proto.DataServer]{}
 }
 
 func (*mockNamespaceMetadata) GetDataServer(string) (commonobject.Borrowed[*proto.DataServer], bool) {
@@ -225,7 +212,7 @@ func (*mockNamespaceRuntime) WaitForNextUpdate(context.Context, *proto.ShardAssi
 
 func (*mockNamespaceRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
-func (*mockNamespaceRuntime) PutDataServerIfAbsent(*proto.DataServer) {}
+func (*mockNamespaceRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 
 func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 
@@ -293,7 +280,9 @@ func (m *mockNamespaceRuntime) DeleteShard(shard int64) {
 
 func (*mockNamespaceRuntime) RecomputeAssignments() {}
 
-func (*mockNamespaceRuntime) NodeControllers() map[string]controller.DataServerController { return nil }
+func (*mockNamespaceRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
+	return nil
+}
 
 func (*mockNamespaceRuntime) LoadBalancer() balancer.LoadBalancer { return nil }
 

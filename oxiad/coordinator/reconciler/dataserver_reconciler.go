@@ -41,12 +41,12 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 		if !exist {
 			continue
 		}
-		r.runtime.PutDataServerIfAbsent(dataServer)
+		r.runtime.CreateDataServer(serverName, dataServer)
 	}
 
-	for dataServerID := range r.runtime.NodeControllers() {
-		if !desired.Contains(dataServerID) {
-			r.runtime.DeleteDataServer(dataServerID)
+	for name := range r.runtime.ListDataServer() {
+		if !desired.Contains(name) {
+			r.runtime.DeleteDataServer(name)
 		}
 	}
 

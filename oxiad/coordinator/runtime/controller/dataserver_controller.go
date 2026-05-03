@@ -31,6 +31,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/commonio"
+	commonobject "github.com/oxia-db/oxia/common/object"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
@@ -61,6 +62,8 @@ type ShardAssignmentsProvider interface {
 type DataServerController interface {
 	io.Closer
 
+	GetDataServer() commonobject.Borrowed[*proto.DataServer]
+
 	Status() DataServerStatus
 
 	SupportedFeatures() []proto.Feature
@@ -76,7 +79,7 @@ type dataServerController struct {
 
 	ctx        context.Context
 	ctxCancel  context.CancelFunc
-	dataServer *proto.DataServerIdentity
+	dataServer *proto.DataServer
 	rpc        rpc.Provider
 	insID      string
 	closed     atomic.Bool
@@ -94,6 +97,10 @@ type dataServerController struct {
 
 	dataServerRunningGauge metric.Gauge
 	failedHealthChecks     metric.Counter
+}
+
+func (n *dataServerController) GetDataServer() commonobject.Borrowed[*proto.DataServer] {
+	return commonobject.Borrow(n.dataServer)
 }
 
 func (n *dataServerController) Status() DataServerStatus {
@@ -117,7 +124,7 @@ func (n *dataServerController) SetStatus(status DataServerStatus) {
 func (n *dataServerController) maybeInitHealthClient() {
 	n.healthClientOnce.Do(func() {
 		_ = backoff.RetryNotify(func() error {
-			health, closer, err := n.rpc.GetHealthClient(n.dataServer)
+			health, closer, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
 			if err != nil {
 				return err
 			}
@@ -154,7 +161,7 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 	_ = backoff.RetryNotify(func() error {
 		n.logger.Debug("Ready to send assignments")
 
-		stream, err := n.rpc.PushShardAssignments(n.ctx, n.dataServer)
+		stream, err := n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
 		if err != nil {
 			n.logger.Debug("Failed to create shard assignments stream", slog.Any("error", err))
 			return err
@@ -281,7 +288,7 @@ func (n *dataServerController) becomeUnavailable() {
 	n.statusLock.Unlock()
 
 	n.failedHealthChecks.Inc()
-	n.BecameUnavailable(n.dataServer)
+	n.BecameUnavailable(n.dataServer.GetIdentity())
 }
 
 func (n *dataServerController) becomeAvailable() {
@@ -293,13 +300,13 @@ func (n *dataServerController) becomeAvailable() {
 
 	// To avoid the send assignments stream to miss the notification about the current
 	// dataServer went down, we interrupt the current stream when the ping on the dataServer fails
-	n.rpc.ClearPooledConnections(n.dataServer)
+	n.rpc.ClearPooledConnections(n.dataServer.GetIdentity())
 	n.healthCheckBackoff.Reset()
 
 	// Bind the node before it can receive other internal traffic.
 	bo := commontime.NewBackOffWithInitialInterval(n.ctx, defaultInitialRetryBackoff)
 	if err := backoff.RetryNotify(func() error {
-		handshake, err := n.rpc.Handshake(n.ctx, n.dataServer, &proto.HandshakeRequest{
+		handshake, err := n.rpc.Handshake(n.ctx, n.dataServer.GetIdentity(), &proto.HandshakeRequest{
 			InstanceId: n.insID,
 		})
 		if err != nil {
@@ -344,7 +351,7 @@ func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.Healt
 	return nil
 }
 
-func NewDataServerController(ctx context.Context, dataServer *proto.DataServerIdentity,
+func NewDataServerController(ctx context.Context, dataServer *proto.DataServer,
 	shardAssignmentsProvider ShardAssignmentsProvider,
 	dataServerEventListener DataServerEventListener,
 	rpcProvider rpc.Provider,
@@ -352,14 +359,14 @@ func NewDataServerController(ctx context.Context, dataServer *proto.DataServerId
 	return newDataServerController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, insID, defaultInitialRetryBackoff)
 }
 
-func newDataServerController(ctx context.Context, dataServer *proto.DataServerIdentity,
+func newDataServerController(ctx context.Context, dataServer *proto.DataServer,
 	shardAssignmentsProvider ShardAssignmentsProvider,
 	dataServerEventListener DataServerEventListener,
 	rpcProvider rpc.Provider,
 	insID string,
 	initialRetryBackoff time.Duration) DataServerController {
 	dataServerCtx, cancel := context.WithCancel(ctx)
-	dataServerID := dataServer.GetNameOrDefault()
+	dataServerID := dataServer.GetIdentity().GetNameOrDefault()
 	labels := map[string]any{"data-server": dataServerID}
 
 	supportedFeatures := atomic.Value{}

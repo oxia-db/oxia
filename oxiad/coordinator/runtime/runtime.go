@@ -54,9 +54,9 @@ type runtime struct {
 
 	metadata coordmetadata.Metadata
 
-	shardControllers map[int64]controller.ShardController
-	splitControllers map[int64]*controller.SplitController // keyed by parent shard ID
-	nodeControllers  map[string]controller.DataServerController
+	shardControllers      map[int64]controller.ShardController
+	splitControllers      map[int64]*controller.SplitController // keyed by parent shard ID
+	dataServerControllers map[string]controller.DataServerController
 	// Draining nodes are nodes that were removed from the
 	// nodes list. We keep sending them assignments updates
 	// because they might be still reachable to clients.
@@ -90,54 +90,55 @@ func (c *runtime) Metadata() coordmetadata.Metadata {
 	return c.metadata
 }
 
-func (c *runtime) NodeControllers() map[string]controller.DataServerController {
+func (c *runtime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
 	c.RLock()
 	defer c.RUnlock()
-	res := make(map[string]controller.DataServerController, len(c.nodeControllers))
-	for k, v := range c.nodeControllers {
-		res[k] = v
+	dataServers := make(map[string]commonobject.Borrowed[*proto.DataServer], len(c.dataServerControllers))
+	for name, dataServerController := range c.dataServerControllers {
+		dataServers[name] = dataServerController.GetDataServer()
 	}
-	return res
+	return dataServers
 }
 
-func (c *runtime) PutDataServerIfAbsent(server *proto.DataServer) {
+func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bool {
 	c.Lock()
 	defer c.Unlock()
 
-	identity := server.GetIdentity()
+	identity := dataServer.GetIdentity()
 	if identity == nil {
-		return
+		return false
 	}
-	if _, ok := c.nodeControllers[identity.GetNameOrDefault()]; ok {
-		return
+	if _, ok := c.dataServerControllers[name]; ok {
+		return false
 	}
 	c.logger.Info("Detected new node", slog.Any("server", identity))
-	if nc, ok := c.drainingNodes[identity.GetNameOrDefault()]; ok {
+	if nc, ok := c.drainingNodes[name]; ok {
 		_ = nc.Close()
-		delete(c.drainingNodes, identity.GetNameOrDefault())
+		delete(c.drainingNodes, name)
 	}
-	c.nodeControllers[identity.GetNameOrDefault()] = controller.NewDataServerController(
+	c.dataServerControllers[name] = controller.NewDataServerController(
 		c.ctx,
-		identity,
+		dataServer,
 		c,
 		c,
 		c.rpc,
 		c.insID,
 	)
+	return true
 }
 
-func (c *runtime) DeleteDataServer(id string) {
+func (c *runtime) DeleteDataServer(name string) {
 	c.Lock()
 	defer c.Unlock()
 
-	nc, exist := c.nodeControllers[id]
+	nc, exist := c.dataServerControllers[name]
 	if !exist {
 		return
 	}
-	c.logger.Info("Detected a removed node", slog.Any("server", id))
-	delete(c.nodeControllers, id)
+	c.logger.Info("Detected a removed node", slog.Any("server", name))
+	delete(c.dataServerControllers, name)
 	nc.SetStatus(controller.Draining)
-	c.drainingNodes[id] = nc
+	c.drainingNodes[name] = nc
 }
 
 func (c *runtime) SyncShardControllerServerAddresses() {
@@ -228,7 +229,7 @@ func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity
 	features := make(map[string][]proto.Feature)
 	for _, dataServer := range dataServers {
 		dataServerID := dataServer.GetNameOrDefault()
-		if serverController, exist := c.nodeControllers[dataServerID]; exist {
+		if serverController, exist := c.dataServerControllers[dataServerID]; exist {
 			features[dataServerID] = serverController.SupportedFeatures()
 			continue
 		}
@@ -241,14 +242,32 @@ func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity
 	return features
 }
 
+func dataServersToCandidatesAndMetadata(dataServers map[string]commonobject.Borrowed[*proto.DataServer]) (
+	*linkedhashset.Set[string],
+	map[string]*proto.DataServerMetadata,
+) {
+	candidates := linkedhashset.New[string]()
+	metadata := make(map[string]*proto.DataServerMetadata, len(dataServers))
+	for name, borrowedDataServer := range dataServers {
+		dataServer := borrowedDataServer.UnsafeBorrow()
+		candidates.Add(name)
+		if dataServer.GetMetadata() != nil {
+			metadata[name] = dataServer.GetMetadata()
+			continue
+		}
+		metadata[name] = &proto.DataServerMetadata{}
+	}
+	return candidates, metadata
+}
+
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-	nodesBorrowed, nodesMetadataBorrowed := c.metadata.ListDataServersWithMetadata()
-	nodes := nodesBorrowed.UnsafeBorrow()
+	dataServers := c.metadata.ListDataServer()
+	nodes, metadata := dataServersToCandidatesAndMetadata(dataServers)
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
-		CandidatesMetadata: nodesMetadataBorrowed.UnsafeBorrow(),
+		CandidatesMetadata: metadata,
 		HierarchyPolicies:  ns.GetPolicy(),
 		Status:             editingStatus,
 		Replicas:           int(ns.GetReplicationFactor()),
@@ -264,12 +283,15 @@ func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.Cl
 	}
 	esm := make([]*proto.DataServerIdentity, 0)
 	for _, id := range ensembles {
-		var exist bool
-		var borrowed commonobject.Borrowed[*proto.DataServerIdentity]
-		if borrowed, exist = c.metadata.GetDataServerIdentity(id); !exist {
+		borrowedDataServer, exist := dataServers[id]
+		if !exist {
 			return nil, fmt.Errorf("failed to find node %s", id)
 		}
-		esm = append(esm, borrowed.UnsafeBorrow())
+		dataServer := borrowedDataServer.UnsafeBorrow()
+		if !exist || dataServer.GetIdentity() == nil {
+			return nil, fmt.Errorf("failed to find node %s", id)
+		}
+		esm = append(esm, dataServer.GetIdentity())
 	}
 	return esm, nil
 }
@@ -286,7 +308,7 @@ func (c *runtime) Close() error {
 		err = multierr.Append(err, sc.Close())
 	}
 
-	for _, nc := range c.nodeControllers {
+	for _, nc := range c.dataServerControllers {
 		err = multierr.Append(err, nc.Close())
 	}
 
@@ -781,13 +803,13 @@ func New(
 		logger: slog.With(
 			slog.String("component", "coordinator"),
 		),
-		ensembleSelector: ensemble.NewSelector(),
-		shardControllers: make(map[int64]controller.ShardController),
-		splitControllers: make(map[int64]*controller.SplitController),
-		nodeControllers:  make(map[string]controller.DataServerController),
-		drainingNodes:    make(map[string]controller.DataServerController),
-		metadata:         metadata,
-		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
+		ensembleSelector:      ensemble.NewSelector(),
+		shardControllers:      make(map[int64]controller.ShardController),
+		splitControllers:      make(map[int64]*controller.SplitController),
+		dataServerControllers: make(map[string]controller.DataServerController),
+		drainingNodes:         make(map[string]controller.DataServerController),
+		metadata:              metadata,
+		assignmentsWatch:      commonwatch.New(&proto.ShardAssignments{}),
 	}
 
 	c.ctx, c.ctxCancel = context.WithCancel(context.Background())
@@ -798,7 +820,7 @@ func New(
 		NodeAvailableJudger: func(nodeID string) bool {
 			c.RLock()
 			defer c.RUnlock()
-			nc := c.nodeControllers[nodeID]
+			nc := c.dataServerControllers[nodeID]
 			return nc.Status() == controller.Running
 		},
 	})
@@ -810,9 +832,10 @@ func New(
 
 	// init node controller
 	for _, node := range dataServersFromStatus(clusterStatus) {
-		c.nodeControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
+		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
+		c.dataServerControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
 			c.ctx,
-			node,
+			dataServer,
 			c,
 			c,
 			c.rpc,
@@ -825,9 +848,8 @@ func New(
 		for shard := range shards.Shards {
 			shardMetadata := shards.Shards[shard]
 			var nsConfig *proto.Namespace
-			var exist bool
-			var borrowedNsConfig commonobject.Borrowed[*proto.Namespace]
-			if borrowedNsConfig, exist = c.metadata.GetNamespace(ns); !exist {
+			borrowedNsConfig, exist := c.metadata.GetNamespace(ns)
+			if !exist {
 				nsConfig = &proto.Namespace{}
 			} else {
 				nsConfig = borrowedNsConfig.UnsafeBorrow()

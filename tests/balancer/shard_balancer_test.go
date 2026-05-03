@@ -27,7 +27,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
 	"github.com/oxia-db/oxia/oxia"
 
@@ -97,16 +96,14 @@ func TestNormalShardBalancer(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
+		_, exist := metadata.GetDataServer(s4ad.GetNameOrDefault())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 	assert.Eventually(t, func() bool {
-		controllers := coordinator.NodeControllers()
-		s4Controller, s4Ok := controllers[s4ad.GetNameOrDefault()]
-		s5Controller, s5Ok := controllers[s5ad.GetNameOrDefault()]
-		return s4Ok && s5Ok &&
-			s4Controller.Status() == controller.Running &&
-			s5Controller.Status() == controller.Running
+		dataServers := coordinator.ListDataServer()
+		_, s4Ok := dataServers[s4ad.GetNameOrDefault()]
+		_, s5Ok := dataServers[s5ad.GetNameOrDefault()]
+		return s4Ok && s5Ok
 	}, 30*time.Second, 50*time.Millisecond)
 
 	balancer := coordinator.LoadBalancer()
@@ -209,16 +206,14 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
+		_, exist := metadata.GetDataServer(s4ad.GetNameOrDefault())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 	assert.Eventually(t, func() bool {
-		controllers := coordinator.NodeControllers()
-		s4Controller, s4Ok := controllers[s4ad.GetNameOrDefault()]
-		s5Controller, s5Ok := controllers[s5ad.GetNameOrDefault()]
-		return s4Ok && s5Ok &&
-			s4Controller.Status() == controller.Running &&
-			s5Controller.Status() == controller.Running
+		dataServers := coordinator.ListDataServer()
+		_, s4Ok := dataServers[s4ad.GetNameOrDefault()]
+		_, s5Ok := dataServers[s5ad.GetNameOrDefault()]
+		return s4Ok && s5Ok
 	}, 30*time.Second, 50*time.Millisecond)
 
 	balancer := coordinator.LoadBalancer()
@@ -327,7 +322,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
+		_, exist := metadata.GetDataServer(s4ad.GetNameOrDefault())
 		return exist
 	}, 60*time.Second, 1*time.Second)
 
