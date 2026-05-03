@@ -190,7 +190,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 
 	for shard, shardMetadata := range shardsToAdd {
 		c.shardControllers[shard] = controller.NewShardController(name, shard, namespaceConfig,
-			pb.Clone(shardMetadata).(*proto.ShardMetadata), c.metadata, c.findDataServerFeatures,
+			shardMetadata, c.metadata, c.findDataServerFeatures,
 			c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		slog.Info("Added new shard", slog.Int64("shard", shard),
 			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
