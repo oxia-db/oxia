@@ -44,9 +44,9 @@ type Metadata interface {
 	GetStatus() *commonproto.ClusterStatus
 	PutStatus(newStatus *commonproto.ClusterStatus)
 	ReserveShardIDs(count uint32) int64
-	CreateNamespaceStatusIfAbsent(name string, status *commonproto.NamespaceStatus) map[int64]*commonproto.ShardMetadata
+	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
 
-	ListNamespaceStatus() []string
+	ListNamespaceStatus() map[string]*commonproto.NamespaceStatus
 	GetNamespaceStatus(namespace string) (*commonproto.NamespaceStatus, bool)
 	DeleteNamespaceStatus(name string) *commonproto.NamespaceStatus
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
@@ -211,7 +211,7 @@ func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
 	return base
 }
 
-func (m *coordinatorMetadata) CreateNamespaceStatusIfAbsent(name string, status *commonproto.NamespaceStatus) map[int64]*commonproto.ShardMetadata {
+func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool {
 	m.loadClusterConfigWithInitSlow()
 	serverCount := len(m.GetConfig().GetServers())
 
@@ -224,7 +224,7 @@ func (m *coordinatorMetadata) CreateNamespaceStatusIfAbsent(name string, status 
 	}
 
 	if _, exists := clonedStatus.Namespaces[name]; exists {
-		return nil
+		return false
 	}
 
 	namespaceStatus := gproto.Clone(status).(*commonproto.NamespaceStatus) //nolint:revive
@@ -233,21 +233,16 @@ func (m *coordinatorMetadata) CreateNamespaceStatusIfAbsent(name string, status 
 
 	m.persistStatusLocked(clonedStatus, "failed to create namespace status")
 	m.notifyStatusChange()
-
-	shardsToAdd := make(map[int64]*commonproto.ShardMetadata, len(namespaceStatus.Shards))
-	for shardID, shardMetadata := range namespaceStatus.Shards {
-		shardsToAdd[shardID] = gproto.Clone(shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
-	}
-	return shardsToAdd
+	return true
 }
 
-func (m *coordinatorMetadata) ListNamespaceStatus() []string {
+func (m *coordinatorMetadata) ListNamespaceStatus() map[string]*commonproto.NamespaceStatus {
 	m.statusLock.RLock()
 	defer m.statusLock.RUnlock()
 
-	namespaces := make([]string, 0, len(m.currentStatus.Namespaces))
-	for name := range m.currentStatus.Namespaces {
-		namespaces = append(namespaces, name)
+	namespaces := make(map[string]*commonproto.NamespaceStatus, len(m.currentStatus.Namespaces))
+	for name, status := range m.currentStatus.Namespaces {
+		namespaces[name] = gproto.Clone(status).(*commonproto.NamespaceStatus) //nolint:revive
 	}
 	return namespaces
 }

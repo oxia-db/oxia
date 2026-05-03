@@ -33,7 +33,7 @@ type Runtime interface {
 	PutDataServerIfAbsent(server *proto.DataServer)
 	DeleteDataServer(dataServerID string)
 	SyncShardControllerServerAddresses()
-	CreateNamespace(name string, namespaceConfig *proto.Namespace)
+	CreateNamespace(name string, namespaceConfig *proto.Namespace) bool
 	DeleteNamespace(namespace string)
 	RecomputeAssignments()
 

@@ -101,17 +101,17 @@ func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) int64 {
 	return base
 }
 
-func (m *mockNamespaceMetadata) CreateNamespaceStatusIfAbsent(
+func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	name string,
 	status *proto.NamespaceStatus,
-) map[int64]*proto.ShardMetadata {
+) bool {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus) //nolint:revive
 	if cloned.Namespaces == nil {
 		cloned.Namespaces = map[string]*proto.NamespaceStatus{}
 	}
 
 	if _, exists := cloned.Namespaces[name]; exists {
-		return nil
+		return false
 	}
 
 	namespaceStatus := gproto.Clone(status).(*proto.NamespaceStatus) //nolint:revive
@@ -119,17 +119,13 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatusIfAbsent(
 	cloned.ServerIdx = (cloned.ServerIdx + uint32(len(namespaceStatus.Shards))*namespaceStatus.GetReplicationFactor()) % uint32(len(m.configServers))
 
 	m.status = cloned
-	shardsToAdd := make(map[int64]*proto.ShardMetadata, len(namespaceStatus.Shards))
-	for shardID, shardMetadata := range namespaceStatus.Shards {
-		shardsToAdd[shardID] = gproto.Clone(shardMetadata).(*proto.ShardMetadata) //nolint:revive
-	}
-	return shardsToAdd
+	return true
 }
 
-func (m *mockNamespaceMetadata) ListNamespaceStatus() []string {
-	namespaces := make([]string, 0, len(m.status.GetNamespaces()))
-	for name := range m.status.GetNamespaces() {
-		namespaces = append(namespaces, name)
+func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]*proto.NamespaceStatus {
+	namespaces := make(map[string]*proto.NamespaceStatus, len(m.status.GetNamespaces()))
+	for name, status := range m.status.GetNamespaces() {
+		namespaces[name] = gproto.Clone(status).(*proto.NamespaceStatus) //nolint:revive
 	}
 	return namespaces
 }
@@ -222,7 +218,7 @@ func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 
 func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
-func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) {
+func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
 	baseShardID := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
 	currentStatus := m.metadata.GetStatus()
 	namespaceStatus := &proto.NamespaceStatus{
@@ -256,12 +252,16 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 		}
 	}
 
-	for shard := range m.metadata.CreateNamespaceStatusIfAbsent(name, namespaceStatus) {
+	if !m.metadata.CreateNamespaceStatus(name, namespaceStatus) {
+		return false
+	}
+	for shard := range namespaceStatus.GetShards() {
 		if m.added == nil {
 			m.added = map[int64]string{}
 		}
 		m.added[shard] = name
 	}
+	return true
 }
 
 func (m *mockNamespaceRuntime) DeleteNamespace(namespace string) {

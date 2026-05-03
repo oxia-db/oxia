@@ -148,7 +148,7 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 	}
 }
 
-func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) {
+func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
 	baseShardID := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
 	currentStatus := c.metadata.GetStatus()
 	namespaceStatus := &proto.NamespaceStatus{
@@ -183,18 +183,22 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 		}
 	}
 
-	shardsToAdd := c.metadata.CreateNamespaceStatusIfAbsent(name, namespaceStatus)
+	created := c.metadata.CreateNamespaceStatus(name, namespaceStatus)
+	if !created {
+		return false
+	}
 
 	c.Lock()
 	defer c.Unlock()
 
-	for shard, shardMetadata := range shardsToAdd {
+	for shard, shardMetadata := range namespaceStatus.GetShards() {
 		c.shardControllers[shard] = controller.NewShardController(name, shard, namespaceConfig,
 			shardMetadata, c.metadata, c.findDataServerFeatures,
 			c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		slog.Info("Added new shard", slog.Int64("shard", shard),
 			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
 	}
+	return true
 }
 
 func (c *runtime) DeleteNamespace(namespace string) {
