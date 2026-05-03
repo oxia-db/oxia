@@ -88,6 +88,7 @@ func newNotifications(ctx context.Context, options clientOptions, clientPool rpc
 	defer cancel()
 
 	if err := nm.initWaitGroup.Wait(timeoutCtx); err != nil {
+		_ = nm.Close()
 		return nil, err
 	}
 
@@ -161,11 +162,8 @@ func (snm *shardNotificationsManager) getNotificationsWithRetries() { //nolint:r
 				)
 			}
 
-			if !snm.initialized {
-				snm.initialized = true
-				snm.nm.initWaitGroup.Fail(err)
-				snm.nm.cancel()
-			}
+			// Initial notification stream setup is allowed to retry until the
+			// caller-provided request timeout expires in newNotifications.
 		})
 
 	// Signal that this shard notification manager is now closed
