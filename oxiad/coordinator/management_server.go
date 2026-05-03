@@ -92,27 +92,6 @@ func (management *managementServer) ListNamespaces(context.Context, *proto.ListN
 	}, nil
 }
 
-func (management *managementServer) ListNodes(context.Context, *proto.ListNodesRequest) (*proto.ListNodesResponse, error) {
-	cnf := management.metadata.GetConfig().UnsafeBorrow()
-
-	cnfNodes := cnf.GetServers()
-	cnfMeta := cnf.GetServerMetadata()
-	nodes := make([]*proto.Node, len(cnfNodes))
-	for i, node := range cnfNodes {
-		name := node.GetNameOrDefault()
-		nodes[i] = &proto.Node{
-			Name:            &name,
-			PublicAddress:   node.GetPublic(),
-			InternalAddress: node.GetInternal(),
-			Metadata:        map[string]string{},
-		}
-		if nodeMeta, found := cnfMeta[node.GetNameOrDefault()]; found {
-			nodes[i].Metadata = nodeMeta.GetLabels()
-		}
-	}
-	return &proto.ListNodesResponse{Nodes: nodes}, nil
-}
-
 func (management *managementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
 	if management.shardSplitter == nil {
 		return nil, errors.New("split shard not supported")

@@ -107,38 +107,6 @@ func TestManagementServerListDataServers(t *testing.T) {
 	assert.Equal(t, map[string]string{"rack": "rack-3"}, res.DataServers[2].Metadata.GetLabels())
 }
 
-func TestManagementServerListNodesUsesInternalAddressWhenNameIsUnset(t *testing.T) {
-	serverName1 := "server-1"
-
-	management := newManagementServer(
-		newTestMetadata(t, &proto.ClusterConfiguration{
-			Servers: []*proto.DataServerIdentity{
-				dataServer(&serverName1, "public-1", "internal-1"),
-				dataServer(nil, "public-2", "internal-2"),
-			},
-			ServerMetadata: map[string]*proto.DataServerMetadata{
-				serverName1:  {Labels: map[string]string{"role": "named"}},
-				"internal-2": {Labels: map[string]string{"role": "fallback"}},
-			},
-		}),
-		nil,
-	)
-
-	res, err := management.ListNodes(context.Background(), &proto.ListNodesRequest{})
-	require.NoError(t, err)
-	require.Len(t, res.Nodes, 2)
-
-	require.NotNil(t, res.Nodes[0].Name)
-	assert.Equal(t, serverName1, *res.Nodes[0].Name)
-	assert.Equal(t, map[string]string{"role": "named"}, res.Nodes[0].Metadata)
-
-	require.NotNil(t, res.Nodes[1].Name)
-	assert.Equal(t, "internal-2", *res.Nodes[1].Name)
-	assert.Equal(t, "public-2", res.Nodes[1].PublicAddress)
-	assert.Equal(t, "internal-2", res.Nodes[1].InternalAddress)
-	assert.Equal(t, map[string]string{"role": "fallback"}, res.Nodes[1].Metadata)
-}
-
 func TestManagementServerGetDataServerByName(t *testing.T) {
 	serverName := "server-2"
 
