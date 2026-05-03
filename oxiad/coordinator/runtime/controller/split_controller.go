@@ -233,7 +233,7 @@ func (sc *SplitController) updatePhase(newPhase string) {
 		}
 	}
 
-	sc.metadata.PutStatus(cloned)
+	sc.metadata.UpdateStatus(cloned)
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects
@@ -648,7 +648,7 @@ func (sc *SplitController) abort() {
 
 	// Delete child shards from status.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		sc.metadata.DeleteShard(sc.namespace, childId)
+		sc.metadata.DeleteShardStatus(sc.namespace, childId)
 	}
 
 	// Clear parent split metadata.
@@ -695,7 +695,7 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 	ns := cloned.Namespaces[sc.namespace]
 	if meta, exists := ns.Shards[shardId]; exists {
 		fn(meta)
-		sc.metadata.PutStatus(cloned)
+		sc.metadata.UpdateStatus(cloned)
 	}
 }
 

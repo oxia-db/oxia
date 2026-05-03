@@ -447,7 +447,7 @@ func (e *ShardElection) start() (*proto.DataServerIdentity, error) {
 		metadata.Term++
 		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
-	e.metadataStore.PutShard(e.namespace, e.shard, mutShardMeta)
+	e.metadataStore.UpdateShardStatus(e.namespace, e.shard, mutShardMeta)
 
 	if e.changeEnsembleAction != nil {
 		e.prepareIfChangeEnsemble(mutShardMeta)
@@ -497,7 +497,7 @@ func (e *ShardElection) start() (*proto.DataServerIdentity, error) {
 	leader := mutShardMeta.Leader
 	leaderEntry := candidatesStatus[leader]
 
-	e.metadataStore.PutShard(e.namespace, e.shard, mutShardMeta)
+	e.metadataStore.UpdateShardStatus(e.namespace, e.shard, mutShardMeta)
 	e.meta.Store(mutShardMeta)
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))

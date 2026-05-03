@@ -423,7 +423,7 @@ func (s *shardController) deleteShard() error {
 		)
 	}
 
-	s.metadataStore.DeleteShard(s.namespace, s.shard)
+	s.metadataStore.DeleteShardStatus(s.namespace, s.shard)
 	s.eventListener.ShardDeleted(s.shard)
 	return s.close()
 }
@@ -504,7 +504,7 @@ func (s *shardController) handlePeriodicTasks() {
 	}
 
 	// Update the shard status
-	s.metadataStore.PutShard(s.namespace, s.shard, mutShardMeta)
+	s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
 	s.metadata.Store(mutShardMeta)
 }
 

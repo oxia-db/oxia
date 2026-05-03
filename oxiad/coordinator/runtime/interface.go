@@ -33,10 +33,9 @@ type Runtime interface {
 	PutDataServerIfAbsent(server *proto.DataServer)
 	DeleteDataServer(dataServerID string)
 	SyncShardControllerServerAddresses()
-	PutShardIfAbsent(namespace string, shard int64, shardMetadata *proto.ShardMetadata)
-	DeleteShard(shard int64)
+	CreateNamespace(name string, namespaceConfig *proto.Namespace) bool
+	DeleteNamespace(namespace string)
 	RecomputeAssignments()
-	SelectNewEnsemble(namespaceConfig *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error)
 
 	NodeControllers() map[string]controller.DataServerController
 

@@ -63,7 +63,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		require.NoError(t, metadata.Close())
 		require.NoError(t, metadataFactory.Close())
 	})
-	metadata.PutStatus(&proto.ClusterStatus{
+	metadata.UpdateStatus(&proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,
@@ -133,7 +133,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		require.NoError(t, metadata.Close())
 		require.NoError(t, metadataFactory.Close())
 	})
-	metadata.PutStatus(&proto.ClusterStatus{
+	metadata.UpdateStatus(&proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{
 			"default": {
 				ReplicationFactor: 1,

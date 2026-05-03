@@ -52,7 +52,7 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 		runtime:   coordinatorRuntime,
 		reconcilers: []Reconciler{
 			&dataServerReconciler{runtime: coordinatorRuntime},
-			&shardReconciler{runtime: coordinatorRuntime},
+			&namespaceReconciler{runtime: coordinatorRuntime},
 		},
 	}
 

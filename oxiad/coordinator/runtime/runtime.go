@@ -27,6 +27,7 @@ import (
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
@@ -147,30 +148,71 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 	}
 }
 
-func (c *runtime) PutShardIfAbsent(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
+func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
+	baseShardID := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	currentStatus := c.metadata.GetStatus()
+	namespaceStatus := &proto.NamespaceStatus{
+		Shards:            map[int64]*proto.ShardMetadata{},
+		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
+	}
+	status := &proto.ClusterStatus{
+		Namespaces: make(map[string]*proto.NamespaceStatus, len(currentStatus.GetNamespaces())+1),
+		ServerIdx:  currentStatus.GetServerIdx(),
+	}
+	for name, existingNamespaceStatus := range currentStatus.GetNamespaces() {
+		status.Namespaces[name] = existingNamespaceStatus
+	}
+	status.Namespaces[name] = namespaceStatus
+
+	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
+		esm, err := c.selectNewEnsemble(namespaceConfig, status)
+		if err != nil {
+			c.logger.Error("failed to select new ensembles", slog.Any("shard", shard), slog.Any("error", err))
+			continue
+		}
+
+		namespaceStatus.Shards[shard.Id] = &proto.ShardMetadata{
+			Status:   proto.ShardStatusUnknown,
+			Term:     -1,
+			Leader:   nil,
+			Ensemble: esm,
+			Int32HashRange: &proto.HashRange{
+				Min: shard.Min,
+				Max: shard.Max,
+			},
+		}
+	}
+
+	created := c.metadata.CreateNamespaceStatus(name, namespaceStatus)
+	if !created {
+		return false
+	}
+
 	c.Lock()
 	defer c.Unlock()
 
-	if _, exist := c.shardControllers[shard]; exist {
-		return
+	for shard, shardMetadata := range namespaceStatus.GetShards() {
+		c.shardControllers[shard] = controller.NewShardController(name, shard, namespaceConfig,
+			shardMetadata, c.metadata, c.findDataServerFeatures,
+			c, c.rpc, controller.DefaultPeriodicTasksInterval)
+		slog.Info("Added new shard", slog.Int64("shard", shard),
+			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
 	}
-	namespaceConfig, exist := c.metadata.GetNamespace(namespace)
-	if !exist {
-		namespaceConfig = &proto.Namespace{}
-	}
-	c.shardControllers[shard] = controller.NewShardController(namespace, shard, namespaceConfig,
-		pb.Clone(shardMetadata).(*proto.ShardMetadata), c.metadata, c.findDataServerFeatures,
-		c, c.rpc, controller.DefaultPeriodicTasksInterval)
-	slog.Info("Added new shard", slog.Int64("shard", shard),
-		slog.String("namespace", namespace), slog.Any("shard-metadata", shardMetadata))
+	return true
 }
 
-func (c *runtime) DeleteShard(shard int64) {
+func (c *runtime) DeleteNamespace(namespace string) {
+	namespaceStatus := c.metadata.DeleteNamespaceStatus(namespace)
+	if namespaceStatus == nil {
+		return
+	}
+	c.logger.Info("Deleting namespace", slog.String("namespace", namespace), slog.Int("shards", len(namespaceStatus.GetShards())))
 	c.Lock()
 	defer c.Unlock()
-
-	if s, exist := c.shardControllers[shard]; exist {
-		s.DeleteShard()
+	for shard := range namespaceStatus.GetShards() {
+		if s, exist := c.shardControllers[shard]; exist {
+			s.DeleteShard()
+		}
 	}
 }
 
@@ -228,10 +270,6 @@ func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.Cl
 		esm = append(esm, node)
 	}
 	return esm, nil
-}
-
-func (c *runtime) SelectNewEnsemble(namespaceConfig *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-	return c.selectNewEnsemble(namespaceConfig, editingStatus)
 }
 
 func (c *runtime) Close() error {
@@ -584,7 +622,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 
 	// Persist
-	c.metadata.PutStatus(cloned)
+	c.metadata.UpdateStatus(cloned)
 
 	c.logger.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),

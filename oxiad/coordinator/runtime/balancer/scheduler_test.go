@@ -52,15 +52,25 @@ func (*mockMetadata) Close() error { return nil }
 
 func (m *mockMetadata) GetStatus() *proto.ClusterStatus { return m.status }
 
-func (m *mockMetadata) ApplyStatusChanges(*proto.ClusterConfiguration, coordmetadata.EnsembleSupplier) (*proto.ClusterStatus, map[int64]string, []int64) {
-	return m.status, nil, nil
+func (m *mockMetadata) UpdateStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
+
+func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }
+
+func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool {
+	return false
 }
 
-func (m *mockMetadata) PutStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
+func (*mockMetadata) ListNamespaceStatus() map[string]*proto.NamespaceStatus {
+	return nil
+}
 
-func (*mockMetadata) PutShard(string, int64, *proto.ShardMetadata) {}
+func (*mockMetadata) GetNamespaceStatus(string) (*proto.NamespaceStatus, bool) { return nil, false }
 
-func (*mockMetadata) DeleteShard(string, int64) {}
+func (*mockMetadata) DeleteNamespaceStatus(string) *proto.NamespaceStatus { return nil }
+
+func (*mockMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) {}
+
+func (*mockMetadata) DeleteShardStatus(string, int64) {}
 
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
