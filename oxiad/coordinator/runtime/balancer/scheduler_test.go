@@ -22,12 +22,14 @@ import (
 	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+	"github.com/stretchr/testify/assert"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/single"
 )
@@ -185,6 +187,17 @@ func (s *selectRecordingSelector) Select(_ *single.Context) (string, error) {
 	return "", selector.ErrUnsatisfiedAntiAffinity
 }
 
+type contextRecordingSelector struct {
+	namespace string
+	shard     int64
+}
+
+func (s *contextRecordingSelector) Select(ctx *single.Context) (string, error) {
+	s.namespace = ctx.Namespace
+	s.shard = ctx.Shard
+	return "", selector.ErrUnsatisfiedAntiAffinity
+}
+
 func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 	// Two nodes with an imbalanced distribution: sv-1 owns all 3 shards,
 	// sv-2 owns none. With RF=3 the balancer would try to swap, but with
@@ -237,6 +250,81 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 	if len(b.actionCh) != 0 {
 		t.Fatalf("expected 0 actions, got %d", len(b.actionCh))
 	}
+}
+
+func TestSwapShardPassesNamespaceAndShardToSelector(t *testing.T) {
+	sv1 := dataServer("sv-1")
+	sv2 := dataServer("sv-2")
+	sv3 := dataServer("sv-3")
+
+	status := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
+			"ns-1": {
+				ReplicationFactor: 2,
+				Shards: map[int64]*proto.ShardMetadata{
+					42: {Status: proto.ShardStatusSteadyState, Ensemble: []*proto.DataServerIdentity{sv1, sv2}},
+				},
+			},
+		},
+	}
+
+	nodes := linkedhashset.New("sv-1", "sv-2", "sv-3")
+	sel := &contextRecordingSelector{}
+	metadata := &mockMetadata{
+		status:   status,
+		nodes:    nodes,
+		metadata: map[string]*proto.DataServerMetadata{},
+		nsConfigs: map[string]*proto.Namespace{
+			"ns-1": {Name: "ns-1", ReplicationFactor: 2},
+		},
+		nodeMap: map[string]*proto.DataServerIdentity{
+			"sv-1": sv1,
+			"sv-2": sv2,
+			"sv-3": sv3,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	b := newTestBalancer(ctx, cancel, metadata, sel)
+	candidates, candidatesMetadata := dataServersToCandidatesAndMetadata(metadata.ListDataServer())
+	loadRatios := single.DefaultShardsRank(&model.RatioParams{
+		NodeShardsInfos: map[string][]model.ShardInfo{
+			"sv-1": {{
+				Namespace: "ns-1",
+				ShardID:   42,
+				Ensemble:  []*proto.DataServerIdentity{sv1, sv2},
+			}},
+			"sv-2": {{
+				Namespace: "ns-1",
+				ShardID:   42,
+				Ensemble:  []*proto.DataServerIdentity{sv1, sv2},
+			}},
+			"sv-3": {},
+		},
+	})
+
+	_, err := b.swapShard(
+		&model.ShardLoadRatio{
+			ShardInfo: &model.ShardInfo{
+				Namespace: "ns-1",
+				ShardID:   42,
+				Ensemble:  []*proto.DataServerIdentity{sv1, sv2},
+			},
+			Ratio: 1,
+		},
+		sv1,
+		&sync.WaitGroup{},
+		loadRatios,
+		candidates,
+		candidatesMetadata,
+		status,
+	)
+	assert.ErrorIs(t, err, selector.ErrUnsatisfiedAntiAffinity)
+
+	assert.Equal(t, "ns-1", sel.namespace)
+	assert.EqualValues(t, 42, sel.shard)
 }
 
 func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
