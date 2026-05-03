@@ -80,7 +80,7 @@ func TestNormalShardBalancer(t *testing.T) {
 	metadata := coordinator.Metadata()
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -192,7 +192,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	metadata := coordinator.Metadata()
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -228,7 +228,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}, 30*time.Second, 50*time.Millisecond)
 
 	// check if follow the policy
-	for name, ns := range metadata.GetStatus().Namespaces {
+	for name, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 		for _, shard := range ns.Shards {
 			nodeIDs := linkedhashset.New[string]()
 			nodeZones := linkedhashset.New[string]()
@@ -290,8 +290,8 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 
 	metadata := coordinator.Metadata()
 	assert.Eventually(t, func() bool {
-		config := metadata.GetConfig()
-		status := metadata.GetStatus()
+		config := metadata.GetConfig().UnsafeBorrow()
+		status := metadata.GetStatus().UnsafeBorrow()
 		for _, namespace := range config.Namespaces {
 			namespaceStatus, ok := status.Namespaces[namespace.Name]
 			if !ok {

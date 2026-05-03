@@ -82,7 +82,7 @@ func TestCoordinatorE2E(t *testing.T) {
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
-	status := metadata.GetStatus()
+	status := metadata.GetStatus().UnsafeBorrow()
 
 	assert.EqualValues(t, 1, len(status.Namespaces))
 	nsStatus := status.Namespaces[constant.DefaultNamespace]
@@ -90,7 +90,7 @@ func TestCoordinatorE2E(t *testing.T) {
 	assert.EqualValues(t, 3, nsStatus.ReplicationFactor)
 
 	assert.Eventually(t, func() bool {
-		shard := metadata.GetStatus().Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := metadata.GetStatus().UnsafeBorrow().Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
 	}, 10*time.Second, 10*time.Millisecond)
 
@@ -119,7 +119,7 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
-	status := metadata.GetStatus()
+	status := metadata.GetStatus().UnsafeBorrow()
 	nsStatus := status.Namespaces[constant.DefaultNamespace]
 	assert.EqualValues(t, 4, len(nsStatus.Shards))
 	assert.EqualValues(t, 3, nsStatus.ReplicationFactor)
@@ -170,18 +170,18 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
-	status := metadata.GetStatus()
+	status := metadata.GetStatus().UnsafeBorrow()
 
 	nsStatus := status.Namespaces[constant.DefaultNamespace]
 	assert.EqualValues(t, 1, len(nsStatus.Shards))
 	assert.EqualValues(t, 3, nsStatus.ReplicationFactor)
 
 	assert.Eventually(t, func() bool {
-		shard := metadata.GetStatus().Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := metadata.GetStatus().UnsafeBorrow().Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
 	}, 10*time.Second, 10*time.Millisecond)
 
-	nsStatus = metadata.GetStatus().Namespaces[constant.DefaultNamespace]
+	nsStatus = metadata.GetStatus().UnsafeBorrow().Namespaces[constant.DefaultNamespace]
 
 	leader := nsStatus.Shards[0].Leader
 	var follower *proto.DataServerIdentity
@@ -218,7 +218,7 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 	delete(servers, leader.GetNameOrDefault())
 
 	assert.Eventually(t, func() bool {
-		shard := metadata.GetStatus().Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := metadata.GetStatus().UnsafeBorrow().Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
 	}, 10*time.Second, 10*time.Millisecond)
 
@@ -273,7 +273,7 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
-	status := metadata.GetStatus()
+	status := metadata.GetStatus().UnsafeBorrow()
 	nsDefaultStatus := status.Namespaces[constant.DefaultNamespace]
 	assert.EqualValues(t, 1, len(nsDefaultStatus.Shards))
 	assert.EqualValues(t, 3, nsDefaultStatus.ReplicationFactor)
@@ -288,7 +288,7 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -363,14 +363,14 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
-	status := metadata.GetStatus()
+	status := metadata.GetStatus().UnsafeBorrow()
 	ns1Status := status.Namespaces["my-ns-1"]
 	assert.EqualValues(t, 2, len(ns1Status.Shards))
 	assert.EqualValues(t, 1, ns1Status.ReplicationFactor)
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -381,12 +381,12 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// Trigger new leader election in order to have a new term
-	ns1Status = metadata.GetStatus().Namespaces["my-ns-1"]
+	ns1Status = metadata.GetStatus().UnsafeBorrow().Namespaces["my-ns-1"]
 	coordinatorInstance.BecameUnavailable(ns1Status.Shards[0].Leader)
 
 	// Wait (again) for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -413,7 +413,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	metadata = coordinatorInstance.Metadata()
 	// Wait for all shards to be deleted
 	assert.Eventually(t, func() bool {
-		load := metadata.GetStatus()
+		load := metadata.GetStatus().UnsafeBorrow()
 		slog.Info("load", slog.Any("load", load))
 		return len(load.Namespaces) == 0
 	}, 10*time.Second, 10*time.Millisecond)
@@ -448,14 +448,14 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
-	status := metadata.GetStatus()
+	status := metadata.GetStatus().UnsafeBorrow()
 	ns1Status := status.Namespaces["my-ns-1"]
 	assert.EqualValues(t, 2, len(ns1Status.Shards))
 	assert.EqualValues(t, 1, ns1Status.ReplicationFactor)
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -480,7 +480,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
 		foundNS2 := false
-		for name, ns := range metadata.GetStatus().Namespaces {
+		for name, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			if name == "my-ns-2" {
 				foundNS2 = true
 			}
@@ -493,11 +493,11 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		return foundNS2
 	}, 10*time.Second, 10*time.Millisecond)
 
-	ns1Status = metadata.GetStatus().Namespaces["my-ns-1"]
+	ns1Status = metadata.GetStatus().UnsafeBorrow().Namespaces["my-ns-1"]
 	assert.EqualValues(t, 2, len(ns1Status.Shards))
 	assert.EqualValues(t, 1, ns1Status.ReplicationFactor)
 
-	ns2Status := metadata.GetStatus().Namespaces["my-ns-2"]
+	ns2Status := metadata.GetStatus().UnsafeBorrow().Namespaces["my-ns-2"]
 	assert.EqualValues(t, 2, len(ns2Status.Shards))
 	assert.EqualValues(t, 1, ns1Status.ReplicationFactor)
 
@@ -598,7 +598,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -611,7 +611,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	assert.Equal(t, 4, len(c.NodeControllers()))
 
 	// Remove leader dataserver
-	leaderID := metadata.GetStatus().Namespaces["my-ns-1"].Shards[0].Leader.GetNameOrDefault()
+	leaderID := metadata.GetStatus().UnsafeBorrow().Namespaces["my-ns-1"].Shards[0].Leader.GetNameOrDefault()
 	d := make([]*proto.DataServerIdentity, 0)
 	for _, sv := range clusterConfig.Servers {
 		if sv.GetNameOrDefault() != leaderID {
@@ -630,7 +630,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				return shard.Term > 0 && shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
 			}
@@ -671,7 +671,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	metadata := c.Metadata()
 	// wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false
@@ -698,7 +698,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		for _, ns := range metadata.GetStatus().Namespaces {
+		for _, ns := range metadata.GetStatus().UnsafeBorrow().Namespaces {
 			for _, shard := range ns.Shards {
 				if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 					return false

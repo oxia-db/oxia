@@ -60,6 +60,6 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	metadataView := coordinatorInstance.Metadata()
 	metadataView.UpdateShardStatus("default", 1, shardMetadata)
 
-	status := metadataView.GetStatus()
+	status := metadataView.GetStatus().UnsafeBorrow()
 	assert.True(t, gproto.Equal(status.Namespaces["default"].Shards[1], shardMetadata))
 }

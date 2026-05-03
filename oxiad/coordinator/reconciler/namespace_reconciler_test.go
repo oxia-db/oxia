@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	gproto "google.golang.org/protobuf/proto"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
@@ -89,7 +90,9 @@ type mockNamespaceMetadata struct {
 
 func (*mockNamespaceMetadata) Close() error { return nil }
 
-func (m *mockNamespaceMetadata) GetStatus() *proto.ClusterStatus { return m.status }
+func (m *mockNamespaceMetadata) GetStatus() commonobject.Borrowed[*proto.ClusterStatus] {
+	return commonobject.Borrow(m.status)
+}
 
 func (m *mockNamespaceMetadata) UpdateStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
 
@@ -122,27 +125,27 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	return true
 }
 
-func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]*proto.NamespaceStatus {
+func (m *mockNamespaceMetadata) ListNamespaceStatus() commonobject.Borrowed[map[string]*proto.NamespaceStatus] {
 	namespaces := make(map[string]*proto.NamespaceStatus, len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
-		namespaces[name] = gproto.Clone(status).(*proto.NamespaceStatus)
+		namespaces[name] = status
 	}
-	return namespaces
+	return commonobject.Borrow(namespaces)
 }
 
-func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (*proto.NamespaceStatus, bool) {
+func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
 	status, exists := m.status.GetNamespaces()[namespace]
 	if !exists {
-		return nil, false
+		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
 	}
-	return gproto.Clone(status).(*proto.NamespaceStatus), true
+	return commonobject.Borrow(status), true
 }
 
-func (m *mockNamespaceMetadata) DeleteNamespaceStatus(name string) *proto.NamespaceStatus {
+func (m *mockNamespaceMetadata) DeleteNamespaceStatus(name string) commonobject.Borrowed[*proto.NamespaceStatus] {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	namespaceStatus, exists := cloned.Namespaces[name]
 	if !exists {
-		return nil
+		return commonobject.Borrowed[*proto.NamespaceStatus]{}
 	}
 
 	for shardID, shardMetadata := range namespaceStatus.Shards {
@@ -150,40 +153,50 @@ func (m *mockNamespaceMetadata) DeleteNamespaceStatus(name string) *proto.Namesp
 		namespaceStatus.Shards[shardID] = shardMetadata
 	}
 	m.status = cloned
-	return gproto.Clone(namespaceStatus).(*proto.NamespaceStatus)
+	return commonobject.Borrow(namespaceStatus)
 }
 
 func (*mockNamespaceMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) {}
 
 func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) {}
 
-func (*mockNamespaceMetadata) GetConfig() *proto.ClusterConfiguration { return nil }
+func (*mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
+	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
+}
 
 func (*mockNamespaceMetadata) ConfigWatch() *commonwatch.Watch[*proto.ClusterConfiguration] {
 	return commonwatch.New(&proto.ClusterConfiguration{})
 }
 
-func (*mockNamespaceMetadata) GetLoadBalancer() *proto.LoadBalancer { return nil }
-
-func (*mockNamespaceMetadata) ListDataServers() *linkedhashset.Set[string] {
-	return linkedhashset.New[string]()
+func (*mockNamespaceMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalancer] {
+	return commonobject.Borrowed[*proto.LoadBalancer]{}
 }
 
-func (*mockNamespaceMetadata) ListDataServersWithMetadata() (*linkedhashset.Set[string], map[string]*proto.DataServerMetadata) {
-	return linkedhashset.New[string](), map[string]*proto.DataServerMetadata{}
+func (*mockNamespaceMetadata) ListDataServers() commonobject.Borrowed[*linkedhashset.Set[string]] {
+	return commonobject.Borrow(linkedhashset.New[string]())
 }
 
-func (*mockNamespaceMetadata) GetDataServerIdentity(string) (*proto.DataServerIdentity, bool) {
-	return nil, false
+func (*mockNamespaceMetadata) ListDataServersWithMetadata() (
+	commonobject.Borrowed[*linkedhashset.Set[string]],
+	commonobject.Borrowed[map[string]*proto.DataServerMetadata],
+) {
+	return commonobject.Borrow(linkedhashset.New[string]()), commonobject.Borrow(map[string]*proto.DataServerMetadata{})
 }
 
-func (*mockNamespaceMetadata) GetDataServer(string) (*proto.DataServer, bool) {
-	return nil, false
+func (*mockNamespaceMetadata) GetDataServerIdentity(string) (commonobject.Borrowed[*proto.DataServerIdentity], bool) {
+	return commonobject.Borrowed[*proto.DataServerIdentity]{}, false
 }
 
-func (m *mockNamespaceMetadata) GetNamespace(namespace string) (*proto.Namespace, bool) {
+func (*mockNamespaceMetadata) GetDataServer(string) (commonobject.Borrowed[*proto.DataServer], bool) {
+	return commonobject.Borrowed[*proto.DataServer]{}, false
+}
+
+func (m *mockNamespaceMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*proto.Namespace], bool) {
 	ns, exists := m.configNS[namespace]
-	return ns, exists
+	if !exists {
+		return commonobject.Borrowed[*proto.Namespace]{}, false
+	}
+	return commonobject.Borrow(ns), true
 }
 
 var _ coordmetadata.Metadata = (*mockNamespaceMetadata)(nil)
@@ -220,7 +233,7 @@ func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
 func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
 	baseShardID := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
-	currentStatus := m.metadata.GetStatus()
+	currentStatus := m.metadata.GetStatus().UnsafeBorrow()
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
 		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
@@ -265,7 +278,7 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 }
 
 func (m *mockNamespaceRuntime) DeleteNamespace(namespace string) {
-	namespaceStatus := m.metadata.DeleteNamespaceStatus(namespace)
+	namespaceStatus := m.metadata.DeleteNamespaceStatus(namespace).UnsafeBorrow()
 	if namespaceStatus == nil {
 		return
 	}

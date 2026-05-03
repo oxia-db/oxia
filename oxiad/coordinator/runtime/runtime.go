@@ -25,6 +25,7 @@ import (
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
@@ -150,7 +151,7 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
 	baseShardID := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
-	currentStatus := c.metadata.GetStatus()
+	currentStatus := c.metadata.GetStatus().UnsafeBorrow()
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
 		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
@@ -202,7 +203,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 }
 
 func (c *runtime) DeleteNamespace(namespace string) {
-	namespaceStatus := c.metadata.DeleteNamespaceStatus(namespace)
+	namespaceStatus := c.metadata.DeleteNamespaceStatus(namespace).UnsafeBorrow()
 	if namespaceStatus == nil {
 		return
 	}
@@ -243,10 +244,11 @@ func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-	nodes, nodesMetadata := c.metadata.ListDataServersWithMetadata()
+	nodesBorrowed, nodesMetadataBorrowed := c.metadata.ListDataServersWithMetadata()
+	nodes := nodesBorrowed.UnsafeBorrow()
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
-		CandidatesMetadata: nodesMetadata,
+		CandidatesMetadata: nodesMetadataBorrowed.UnsafeBorrow(),
 		HierarchyPolicies:  ns.GetPolicy(),
 		Status:             editingStatus,
 		Replicas:           int(ns.GetReplicationFactor()),
@@ -262,12 +264,12 @@ func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.Cl
 	}
 	esm := make([]*proto.DataServerIdentity, 0)
 	for _, id := range ensembles {
-		var node *proto.DataServerIdentity
 		var exist bool
-		if node, exist = c.metadata.GetDataServerIdentity(id); !exist {
+		var borrowed commonobject.Borrowed[*proto.DataServerIdentity]
+		if borrowed, exist = c.metadata.GetDataServerIdentity(id); !exist {
 			return nil, fmt.Errorf("failed to find node %s", id)
 		}
-		esm = append(esm, node)
+		esm = append(esm, borrowed.UnsafeBorrow())
 	}
 	return esm, nil
 }
@@ -400,8 +402,8 @@ func (c *runtime) handleActionChangeEnsemble(ac action.Action) {
 
 // This is called while already holding the lock on the coordinator.
 func (c *runtime) computeNewAssignments() {
-	config := c.metadata.GetConfig()
-	status := c.metadata.GetStatus()
+	config := c.metadata.GetConfig().UnsafeBorrow()
+	status := c.metadata.GetStatus().UnsafeBorrow()
 	assignments := &proto.ShardAssignments{
 		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
 		AllowedAuthorities: mergedAuthorities(status, config.GetServers(), config.GetAllowExtraAuthorities()),
@@ -509,7 +511,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	c.Lock()
 	defer c.Unlock()
 
-	status := c.metadata.GetStatus()
+	status := c.metadata.GetStatus().UnsafeBorrow()
 
 	// Validate namespace
 	ns, exists := status.Namespaces[namespace]
@@ -647,7 +649,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 		RpcProvider:   c.rpc,
 		EventListener: c,
 		EnsembleSelector: func(ns string) ([]*proto.DataServerIdentity, error) {
-			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.metadata.GetStatus())
+			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.metadata.GetStatus().UnsafeBorrow())
 		},
 	})
 	c.splitControllers[parentShardId] = sc
@@ -688,7 +690,7 @@ func (c *runtime) SplitComplete(parentShard int64, leftChild int64, rightChild i
 	// during Cutover.
 	if sc, exists := c.shardControllers[parentShard]; exists {
 		// Sync shard controller metadata from the status resource.
-		status := c.metadata.GetStatus()
+		status := c.metadata.GetStatus().UnsafeBorrow()
 		for _, ns := range status.Namespaces {
 			if parentMeta, ok := ns.Shards[parentShard]; ok {
 				sc.Metadata().Store(parentMeta)
@@ -730,11 +732,11 @@ func (c *runtime) SplitAborted(parentShard int64, leftChild int64, rightChild in
 }
 
 func (c *runtime) namespaceConfigForSplit(namespace string) *proto.Namespace {
-	nsConfig, exist := c.metadata.GetNamespace(namespace)
+	borrowedNsConfig, exist := c.metadata.GetNamespace(namespace)
 	if !exist {
-		nsConfig = &proto.Namespace{}
+		return &proto.Namespace{}
 	}
-	return nsConfig
+	return borrowedNsConfig.UnsafeBorrow()
 }
 
 // restartInProgressSplits checks the cluster status for any shards that have
@@ -763,7 +765,7 @@ func (c *runtime) restartInProgressSplits(clusterStatus *proto.ClusterStatus) {
 				RpcProvider:   c.rpc,
 				EventListener: c,
 				EnsembleSelector: func(namespace string) ([]*proto.DataServerIdentity, error) {
-					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.metadata.GetStatus())
+					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.metadata.GetStatus().UnsafeBorrow())
 				},
 			})
 			c.splitControllers[shardId] = sc
@@ -801,7 +803,7 @@ func New(
 		},
 	})
 
-	clusterStatus := c.metadata.GetStatus()
+	clusterStatus := c.metadata.GetStatus().UnsafeBorrow()
 	c.insID = clusterStatus.InstanceId
 
 	c.rpc = rpcProvider(c.insID)
@@ -824,8 +826,11 @@ func New(
 			shardMetadata := shards.Shards[shard]
 			var nsConfig *proto.Namespace
 			var exist bool
-			if nsConfig, exist = c.metadata.GetNamespace(ns); !exist {
+			var borrowedNsConfig commonobject.Borrowed[*proto.Namespace]
+			if borrowedNsConfig, exist = c.metadata.GetNamespace(ns); !exist {
 				nsConfig = &proto.Namespace{}
+			} else {
+				nsConfig = borrowedNsConfig.UnsafeBorrow()
 			}
 			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
 				shardMetadata, c.metadata, c.findDataServerFeatures,

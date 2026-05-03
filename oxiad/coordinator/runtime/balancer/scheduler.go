@@ -24,6 +24,7 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
@@ -97,8 +98,10 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	r.checkQuarantineNodes()
 
 	swapGroup := &sync.WaitGroup{}
-	currentStatus := r.metadata.GetStatus()
-	candidates, metadata := r.metadata.ListDataServersWithMetadata()
+	currentStatus := r.metadata.GetStatus().UnsafeBorrow()
+	candidatesBorrowed, metadataBorrowed := r.metadata.ListDataServersWithMetadata()
+	candidates := candidatesBorrowed.UnsafeBorrow()
+	metadata := metadataBorrowed.UnsafeBorrow()
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
@@ -222,9 +225,11 @@ func (r *nodeBasedBalancer) swapShard(
 	var exist bool
 	var err error
 
-	if nsc, exist = r.metadata.GetNamespace(candidateShard.Namespace); !exist {
+	var borrowedNamespace commonobject.Borrowed[*commonproto.Namespace]
+	if borrowedNamespace, exist = r.metadata.GetNamespace(candidateShard.Namespace); !exist {
 		return false, nil
 	}
+	nsc = borrowedNamespace.UnsafeBorrow()
 
 	// With RF=1, an ensemble swap cannot safely transfer data (there's no
 	// follower to replicate from). Skip rebalancing for such namespaces.
@@ -260,9 +265,11 @@ func (r *nodeBasedBalancer) swapShard(
 		return false, nil
 	}
 	var targetNode *commonproto.DataServerIdentity
-	if targetNode, exist = r.metadata.GetDataServerIdentity(targetNodeID); !exist {
+	var borrowedTargetNode commonobject.Borrowed[*commonproto.DataServerIdentity]
+	if borrowedTargetNode, exist = r.metadata.GetDataServerIdentity(targetNodeID); !exist {
 		return false, errors.New("target node does not exist")
 	}
+	targetNode = borrowedTargetNode.UnsafeBorrow()
 
 	r.logger.Info("propose to swap the shard", slog.Int64("shard", candidateShard.ShardID), slog.Any("from", fromNode), slog.Any("to", targetNodeID))
 	swapGroup.Add(1)
@@ -311,8 +318,8 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 }
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
-	status := r.metadata.GetStatus()
-	candidates := r.metadata.ListDataServers()
+	status := r.metadata.GetStatus().UnsafeBorrow()
+	candidates := r.metadata.ListDataServers().UnsafeBorrow()
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, status)
 	return r.loadRatioAlgorithm(
 		&model.RatioParams{
@@ -379,8 +386,8 @@ func (r *nodeBasedBalancer) startBackgroundNotifier() {
 func (r *nodeBasedBalancer) rebalanceLeader() {
 	r.checkQuarantineShards()
 
-	status := r.metadata.GetStatus()
-	candidates := r.metadata.ListDataServers()
+	status := r.metadata.GetStatus().UnsafeBorrow()
+	candidates := r.metadata.ListDataServers().UnsafeBorrow()
 	totalShards, electedShards, nodeLeaders := state.NodeShardLeaders(candidates, status)
 
 	electedRate := float64(electedShards) / float64(totalShards)
@@ -503,7 +510,7 @@ func NewLoadBalancer(options Options) LoadBalancer {
 		ctx:                     ctx,
 		ctxCancel:               cancelFunc,
 		wg:                      sync.WaitGroup{},
-		loadBalancerConf:        options.Metadata.GetLoadBalancer(),
+		loadBalancerConf:        options.Metadata.GetLoadBalancer().UnsafeBorrow(),
 		actionCh:                make(chan action.Action, 1000),
 		nodeAvailableJudger:     options.NodeAvailableJudger,
 		metadata:                options.Metadata,

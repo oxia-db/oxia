@@ -258,7 +258,7 @@ func (s *shardController) waitForSplitComplete() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			status := s.metadataStore.GetStatus()
+			status := s.metadataStore.GetStatus().UnsafeBorrow()
 			ns, exists := status.Namespaces[s.namespace]
 			if !exists {
 				continue
@@ -358,8 +358,9 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		EnableNotifications: true,
 		KeySorting:          proto.KeySortingType_UNKNOWN,
 	}
-	nsConfig, exist := s.metadataStore.GetNamespace(s.namespace)
+	borrowedNamespaceConfig, exist := s.metadataStore.GetNamespace(s.namespace)
 	if exist {
+		nsConfig := borrowedNamespaceConfig.UnsafeBorrow()
 		termOptions.EnableNotifications = nsConfig.NotificationsEnabledOrDefault()
 		termOptions.KeySorting, _ = nsConfig.GetKeySortingType()
 	}
@@ -473,7 +474,8 @@ func (s *shardController) SyncServerAddress() {
 	shardMeta := s.metadata.Load()
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
-		if newInfo, ok := s.metadataStore.GetDataServerIdentity(candidate.GetNameOrDefault()); ok {
+		if borrowedNewInfo, ok := s.metadataStore.GetDataServerIdentity(candidate.GetNameOrDefault()); ok {
+			newInfo := borrowedNewInfo.UnsafeBorrow()
 			if newInfo.GetPublic() != candidate.GetPublic() || newInfo.GetInternal() != candidate.GetInternal() {
 				needSync = true
 				break
