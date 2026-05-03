@@ -60,15 +60,15 @@ func (*Provider[T]) Close() error {
 	return nil
 }
 
-func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (newVersion metadatacommon.Version, err error) {
+func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadatacommon.Version, err error) {
 	m.Lock()
 	defer m.Unlock()
 
-	if expectedVersion != m.version {
+	if snapshot.Version != m.version {
 		panic(metadatacommon.ErrBadVersion)
 	}
 
-	m.value = m.codec.Clone(value)
+	m.value = m.codec.Clone(snapshot.Value)
 	m.version = metadatacommon.NextVersion(m.version)
 	m.watch.Publish(provider.Versioned[T]{
 		Value:   m.codec.Clone(m.value),

@@ -30,6 +30,7 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -233,7 +234,10 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 
 	statusProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	if _, err := configProvider.Store(clusterConfig, metadatacommon.NotExists); err != nil {
+	if _, err := configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	}); err != nil {
 		return errors.Wrap(err, "failed to seed coordinator config provider")
 	}
 

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 	gproto "google.golang.org/protobuf/proto"
@@ -43,7 +44,10 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := metadata2.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()

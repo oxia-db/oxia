@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/require"
@@ -105,7 +106,10 @@ func TestLeaderBalanced(t *testing.T) {
 	}
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(cc, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   cc,
+		Version: metadatacommon.NotExists,
+	})
 	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -150,7 +154,10 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 	}
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(cc, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   cc,
+		Version: metadatacommon.NotExists,
+	})
 	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -222,7 +229,10 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	}
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(cc, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   cc,
+		Version: metadatacommon.NotExists,
+	})
 	require.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -235,7 +245,10 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 
 	cc.Servers = append(cc.Servers, dataServers(s4ad, s5ad, s6ad)...)
 	version := configProvider.Watch().Load().Version
-	_, err = configProvider.Store(cc, version)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   cc,
+		Version: version,
+	})
 	require.NoError(t, err)
 	candidates = linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault(), s4ad.GetNameOrDefault(), s5ad.GetNameOrDefault(), s6ad.GetNameOrDefault())
 

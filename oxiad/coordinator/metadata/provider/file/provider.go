@@ -30,6 +30,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -117,12 +118,11 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 }
 
 func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
-	retry := backoff.NewExponentialBackOff()
 	err = backoff.RetryNotify(func() error {
 		var readErr error
 		snapshot, readErr = m.loadLatestOnce()
 		return readErr
-	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn("Failed to read file metadata, retrying",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration))
@@ -158,19 +158,19 @@ func (m *Provider[T]) loadLatestOnce() (snapshot provider.Versioned[T], err erro
 	}, nil
 }
 
-func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (newVersion metadatacommon.Version, err error) {
+func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadatacommon.Version, err error) {
 	existingSnapshot, err := m.loadLatest()
 	if err != nil {
 		return metadatacommon.NotExists, err
 	}
 	existingVersion := existingSnapshot.Version
 
-	if expectedVersion != existingVersion {
+	if snapshot.Version != existingVersion {
 		panic(metadatacommon.ErrBadVersion)
 	}
 
 	newVersion = metadatacommon.NextVersion(existingVersion)
-	newContent, err := m.codec.MarshalYAML(value)
+	newContent, err := m.codec.MarshalYAML(snapshot.Value)
 	if err != nil {
 		return metadatacommon.NotExists, err
 	}
@@ -180,7 +180,7 @@ func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (ne
 	}
 	m.version = newVersion
 	m.watcher.Publish(provider.Versioned[T]{
-		Value:   m.codec.Clone(value),
+		Value:   m.codec.Clone(snapshot.Value),
 		Version: newVersion,
 	})
 
@@ -192,8 +192,6 @@ func (m *Provider[T]) Watch() *commonwatch.Watch[provider.Versioned[T]] {
 }
 
 func (m *Provider[T]) watchLoop() {
-	retry := backoff.NewExponentialBackOff()
-	retry.InitialInterval = time.Second
 	_ = backoff.RetryNotify(func() error {
 		snapshot, err := m.loadLatest()
 		if err != nil {
@@ -201,7 +199,7 @@ func (m *Provider[T]) watchLoop() {
 		}
 		m.watcher.Publish(snapshot)
 		return m.watchOnce()
-	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOffWithInitialInterval(m.ctx, time.Second), func(err error, duration time.Duration) {
 		m.logger.Warn("File metadata watch failed, reconnecting",
 			slog.String("path", m.path),
 			slog.Any("error", err),

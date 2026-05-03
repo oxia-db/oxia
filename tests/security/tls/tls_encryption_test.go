@@ -22,6 +22,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 
@@ -127,7 +128,10 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	assert.NoError(t, err)
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -149,7 +153,10 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	assert.NoError(t, err)
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -175,7 +182,10 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	assert.NoError(t, err)
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -207,7 +217,10 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	assert.NoError(t, err)
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -240,7 +253,10 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	assert.NoError(t, err)
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
@@ -270,7 +286,10 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()

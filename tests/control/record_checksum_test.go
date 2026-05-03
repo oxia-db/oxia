@@ -24,6 +24,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 
@@ -71,7 +72,10 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(
 		t,

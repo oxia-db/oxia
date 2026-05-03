@@ -96,11 +96,17 @@ func TestProvider(t *testing.T) {
 			}
 
 			assert.PanicsWithError(t, metadatacommon.ErrBadVersion.Error(), func() {
-				_, err := m.Store(status, "")
+				_, err := m.Store(provider.Versioned[*proto.ClusterStatus]{
+					Value:   status,
+					Version: "",
+				})
 				assert.NoError(t, err)
 			})
 
-			newVersion, err := m.Store(status, metadatacommon.NotExists)
+			newVersion, err := m.Store(provider.Versioned[*proto.ClusterStatus]{
+				Value:   status,
+				Version: metadatacommon.NotExists,
+			})
 			assert.NoError(t, err)
 			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 
@@ -179,7 +185,10 @@ func TestProviderConfigResource(t *testing.T) {
 				}},
 			}
 
-			newVersion, err := m.Store(config, metadatacommon.NotExists)
+			newVersion, err := m.Store(provider.Versioned[*proto.ClusterConfiguration]{
+				Value:   config,
+				Version: metadatacommon.NotExists,
+			})
 			assert.NoError(t, err)
 			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 

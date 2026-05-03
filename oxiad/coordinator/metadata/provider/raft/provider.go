@@ -120,7 +120,7 @@ func (mpr *Provider[T]) loadLatest() provider.Versioned[T] {
 	}
 }
 
-func (mpr *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (newVersion metadatacommon.Version, err error) {
+func (mpr *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadatacommon.Version, err error) {
 	mpr.raft.Lock()
 	defer mpr.raft.Unlock()
 
@@ -128,7 +128,7 @@ func (mpr *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (
 		return metadatacommon.NotExists, err
 	}
 
-	data, err := mpr.codec.MarshalJSON(value)
+	data, err := mpr.codec.MarshalJSON(snapshot.Value)
 	if err != nil {
 		return metadatacommon.NotExists, err
 	}
@@ -136,13 +136,13 @@ func (mpr *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (
 	mpr.raft.logger.Debug("Store into raft",
 		slog.String("key", mpr.codec.GetKey()),
 		slog.Any("metadata", data),
-		slog.Any("expected-version", expectedVersion),
+		slog.Any("expected-version", snapshot.Version),
 		slog.Any("current-version", mpr.raft.sc.document(mpr.codec.GetKey()).CurrentVersion))
 
 	cmd := raftOpCmd{
 		Key:             mpr.codec.GetKey(),
 		NewState:        json.RawMessage(data),
-		ExpectedVersion: fromVersion(expectedVersion),
+		ExpectedVersion: fromVersion(snapshot.Version),
 	}
 
 	serializedCmd, err := json.Marshal(cmd)
@@ -165,7 +165,7 @@ func (mpr *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (
 
 	newVersion = toVersion(applyRes.newVersion)
 	mpr.watch.Publish(provider.Versioned[T]{
-		Value:   mpr.codec.Clone(value),
+		Value:   mpr.codec.Clone(snapshot.Value),
 		Version: newVersion,
 	})
 	return newVersion, nil

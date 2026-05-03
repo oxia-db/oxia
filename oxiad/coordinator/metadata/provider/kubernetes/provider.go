@@ -42,6 +42,7 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -142,12 +143,11 @@ func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
 
 	m.Lock()
 	defer m.Unlock()
-	retry := backoff.NewExponentialBackOff()
 	err = backoff.RetryNotify(func() error {
 		var getErr error
 		snapshot, getErr = m.loadLatestWithoutLock()
 		return getErr
-	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn("Failed to read config map metadata, retrying",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration))
@@ -192,31 +192,30 @@ func (m *Provider[T]) loadLatestWithoutLock() (snapshot provider.Versioned[T], e
 	}, nil
 }
 
-func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (metadatacommon.Version, error) {
+func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Version, error) {
 	timer := m.storeLatencyHisto.Timer()
 	defer timer.Done()
 
 	m.Lock()
 	defer m.Unlock()
 
-	snapshot, err := m.loadLatestWithoutLock()
+	current, err := m.loadLatestWithoutLock()
 	if err != nil {
-		return snapshot.Version, err
+		return current.Version, err
 	}
-	version := snapshot.Version
 
-	if version != expectedVersion {
+	if current.Version != snapshot.Version {
 		slog.Error("Store metadata failed for version mismatch",
-			slog.Any("local-version", version),
-			slog.Any("expected-version", expectedVersion))
+			slog.Any("local-version", current.Version),
+			slog.Any("expected-version", snapshot.Version))
 		panic(metadatacommon.ErrBadVersion)
 	}
 
-	data, err := m.codec.MarshalYAML(value)
+	data, err := m.codec.MarshalYAML(snapshot.Value)
 	if err != nil {
 		return metadatacommon.NotExists, err
 	}
-	cmData := makeDesiredConfigMap(m.name, m.codec.GetKey(), data, expectedVersion)
+	cmData := makeDesiredConfigMap(m.name, m.codec.GetKey(), data, snapshot.Version)
 	desiredBytes, err := json.Marshal(cmData)
 	if err != nil {
 		return metadatacommon.NotExists, err
@@ -236,12 +235,12 @@ func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (me
 		if k8serrors.IsConflict(err) {
 			panic(metadatacommon.ErrBadVersion)
 		}
-		return version, err
+		return current.Version, err
 	}
-	version = metadatacommon.Version(cm.ResourceVersion)
+	version := metadatacommon.Version(cm.ResourceVersion)
 	m.metadataSize.Store(int64(len(cmData.Data[m.codec.GetKey()])))
 	m.watcher.Publish(provider.Versioned[T]{
-		Value:   m.codec.Clone(value),
+		Value:   m.codec.Clone(snapshot.Value),
 		Version: version,
 	})
 	return version, nil
@@ -320,8 +319,6 @@ func (m *Provider[T]) Watch() *commonwatch.Watch[provider.Versioned[T]] {
 }
 
 func (m *Provider[T]) watchLoop() {
-	retry := backoff.NewExponentialBackOff()
-	retry.InitialInterval = time.Second
 	_ = backoff.RetryNotify(func() error {
 		snapshot, err := m.loadLatest()
 		if err != nil {
@@ -329,7 +326,7 @@ func (m *Provider[T]) watchLoop() {
 		}
 		m.watcher.Publish(snapshot)
 		return m.watch()
-	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOffWithInitialInterval(m.ctx, time.Second), func(err error, duration time.Duration) {
 		m.logger.Warn("K8S config map watch failed, reconnecting",
 			slog.String("k8s-namespace", m.namespace),
 			slog.String("k8s-config-map", m.name),

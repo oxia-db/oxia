@@ -24,6 +24,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 
@@ -77,7 +78,10 @@ func TestCoordinatorE2E(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -114,7 +118,10 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -165,7 +172,10 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -268,7 +278,10 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -358,7 +371,10 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -405,7 +421,10 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 
 	slog.Info("Restarting coordinator")
 	newConfigProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = newConfigProvider.Store(newClusterConfig, metadatacommon.NotExists)
+	_, err = newConfigProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   newClusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	restartedCoordinator := newCoordinatorInstance(t, metadataProvider, newConfigProvider, rpc2.NewRpcProviderFactory(nil))
 	coordinatorInstance = restartedCoordinator
@@ -443,7 +462,10 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -473,7 +495,10 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		ReplicationFactor: 1,
 	})
 	version := configProvider.Watch().Load().Version
-	_, err = configProvider.Store(clusterConfig, version)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: version,
+	})
 	assert.NoError(t, err)
 
 	// Wait for all shards to be ready
@@ -529,7 +554,10 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -544,7 +572,10 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	clusterConfig.Servers = clusterConfig.Servers[1:]
 
 	version := configProvider.Watch().Load().Version
-	_, err = configProvider.Store(clusterConfig, version)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: version,
+	})
 	assert.NoError(t, err)
 
 	// Wait for all shards to be ready
@@ -588,7 +619,10 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3, sa4})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -619,7 +653,10 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	clusterConfig.Servers = d
 
 	version := configProvider.Watch().Load().Version
-	_, err = configProvider.Store(clusterConfig, version)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: version,
+	})
 	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
 		return len(c.ListDataServer()) == 3
@@ -661,7 +698,10 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -690,7 +730,10 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 
 	clusterConfig.Servers = clusterServer
 	version := configProvider.Watch().Load().Version
-	_, err = configProvider.Store(clusterConfig, version)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: version,
+	})
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {

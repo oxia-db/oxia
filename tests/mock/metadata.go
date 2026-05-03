@@ -42,6 +42,9 @@ func PutConfig(
 	t.Helper()
 
 	version := configProvider.Watch().Load().Version
-	_, err := configProvider.Store(clusterConfig, version)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: version,
+	})
 	require.NoError(t, err)
 }

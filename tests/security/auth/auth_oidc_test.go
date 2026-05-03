@@ -24,6 +24,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -109,7 +110,10 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
@@ -297,7 +301,10 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
@@ -448,7 +455,10 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))

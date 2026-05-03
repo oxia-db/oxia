@@ -31,7 +31,7 @@ type Versioned[T any] struct {
 type Provider[T gproto.Message] interface {
 	io.Closer
 
-	Store(value T, expectedVersion metadataconstant.Version) (newVersion metadataconstant.Version, err error)
+	Store(snapshot Versioned[T]) (newVersion metadataconstant.Version, err error)
 
 	WaitToBecomeLeader() error
 

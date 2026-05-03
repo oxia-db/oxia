@@ -28,6 +28,7 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -112,7 +113,10 @@ func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, 
 		return nil
 	}
 
-	_, err := m.statusProvider.Store(next, current.Version)
+	_, err := m.statusProvider.Store(provider.Versioned[*commonproto.ClusterStatus]{
+		Value:   next,
+		Version: current.Version,
+	})
 	return err
 }
 
@@ -156,7 +160,7 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 				status.InstanceId = uuid.NewString()
 				return status, true
 			})
-		}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+		}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 			m.logger.Warn(
 				"failed to initialize instance id",
 				slog.Any("error", err),
@@ -176,7 +180,7 @@ func (m *coordinatorMetadata) UpdateStatus(newStatus *commonproto.ClusterStatus)
 		return m.computeStatus(func(_ *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
 			return newStatus, true
 		})
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
 			"failed to update status",
 			slog.Any("error", err),
@@ -194,7 +198,7 @@ func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
 			status.ShardIdGenerator += int64(count)
 			return status, true
 		})
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
 			"failed to reserve shard ids",
 			slog.Any("error", err),
@@ -219,7 +223,7 @@ func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonp
 			created = true
 			return clusterStatus, true
 		})
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
 			"failed to create namespace status",
 			slog.Any("error", err),
@@ -269,7 +273,7 @@ func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Bo
 			}
 			return clusterStatus, changed
 		})
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
 			"failed to mark namespace deleting",
 			slog.Any("error", err),
@@ -294,7 +298,7 @@ func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, s
 			changed = true
 			return clusterStatus, true
 		})
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
 			"failed to update shard metadata",
 			slog.Any("error", err),
@@ -324,7 +328,7 @@ func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) {
 			changed = true
 			return clusterStatus, true
 		})
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
 			"failed to delete shard metadata",
 			slog.Any("error", err),

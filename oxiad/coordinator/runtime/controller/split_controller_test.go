@@ -20,6 +20,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,14 +84,17 @@ func setupSplitTest(t *testing.T, phase string) (
 	rpcMock := newMockRpcProvider()
 	metaProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(&proto.ClusterConfiguration{
-		Namespaces: []*proto.Namespace{{
-			Name:              constant.DefaultNamespace,
-			InitialShardCount: 1,
-			ReplicationFactor: 3,
-		}},
-		Servers: []*proto.DataServerIdentity{ps1, ps2, ps3},
-	}, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value: &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{{
+				Name:              constant.DefaultNamespace,
+				InitialShardCount: 1,
+				ReplicationFactor: 3,
+			}},
+			Servers: []*proto.DataServerIdentity{ps1, ps2, ps3},
+		},
+		Version: metadatacommon.NotExists,
+	})
 	require.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(metaProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
