@@ -54,15 +54,17 @@ func (m *mockMetadata) GetStatus() *proto.ClusterStatus { return m.status }
 
 func (m *mockMetadata) PutStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
 
-func (*mockMetadata) CreateNamespaceStatus(*proto.Namespace, coordmetadata.EnsembleSupplier) map[int64]*proto.ShardMetadata {
+func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }
+
+func (*mockMetadata) PutNamespaceStatusIfAbsent(string, *proto.NamespaceStatus) map[int64]*proto.ShardMetadata {
+	return nil
+}
+
+func (*mockMetadata) ListNamespaceStatus() []*proto.Namespace {
 	return nil
 }
 
 func (*mockMetadata) GetNamespaceStatus(string) (*proto.NamespaceStatus, bool) { return nil, false }
-
-func (*mockMetadata) ListNamespaces() *linkedhashset.Set[string] {
-	return linkedhashset.New[string]()
-}
 
 func (*mockMetadata) DeleteNamespace(string) []int64 { return nil }
 
