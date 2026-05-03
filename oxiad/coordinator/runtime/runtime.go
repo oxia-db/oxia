@@ -183,7 +183,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 		}
 	}
 
-	shardsToAdd := c.metadata.PutNamespaceStatusIfAbsent(name, namespaceStatus)
+	shardsToAdd := c.metadata.CreateNamespaceStatusIfAbsent(name, namespaceStatus)
 
 	c.Lock()
 	defer c.Unlock()
@@ -198,10 +198,14 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 }
 
 func (c *runtime) DeleteNamespace(namespace string) {
-	candidates := c.metadata.DeleteNamespace(namespace)
+	namespaceStatus := c.metadata.DeleteNamespaceStatus(namespace)
+	if namespaceStatus == nil {
+		return
+	}
+	c.logger.Info("Deleting namespace", slog.String("namespace", namespace), slog.Int("shards", len(namespaceStatus.GetShards())))
 	c.Lock()
 	defer c.Unlock()
-	for _, shard := range candidates {
+	for shard := range namespaceStatus.GetShards() {
 		if s, exist := c.shardControllers[shard]; exist {
 			s.DeleteShard()
 		}

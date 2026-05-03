@@ -56,21 +56,21 @@ func (m *mockMetadata) PutStatus(newStatus *proto.ClusterStatus) { m.status = ne
 
 func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }
 
-func (*mockMetadata) PutNamespaceStatusIfAbsent(string, *proto.NamespaceStatus) map[int64]*proto.ShardMetadata {
+func (*mockMetadata) CreateNamespaceStatusIfAbsent(string, *proto.NamespaceStatus) map[int64]*proto.ShardMetadata {
 	return nil
 }
 
-func (*mockMetadata) ListNamespaceStatus() []*proto.Namespace {
+func (*mockMetadata) ListNamespaceStatus() []string {
 	return nil
 }
 
 func (*mockMetadata) GetNamespaceStatus(string) (*proto.NamespaceStatus, bool) { return nil, false }
 
-func (*mockMetadata) DeleteNamespace(string) []int64 { return nil }
+func (*mockMetadata) DeleteNamespaceStatus(string) *proto.NamespaceStatus { return nil }
 
-func (*mockMetadata) PutShard(string, int64, *proto.ShardMetadata) {}
+func (*mockMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) {}
 
-func (*mockMetadata) DeleteShard(string, int64) {}
+func (*mockMetadata) DeleteShardStatus(string, int64) {}
 
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 

@@ -44,13 +44,13 @@ type Metadata interface {
 	GetStatus() *commonproto.ClusterStatus
 	PutStatus(newStatus *commonproto.ClusterStatus)
 	ReserveShardIDs(count uint32) int64
-	PutNamespaceStatusIfAbsent(name string, status *commonproto.NamespaceStatus) map[int64]*commonproto.ShardMetadata
+	CreateNamespaceStatusIfAbsent(name string, status *commonproto.NamespaceStatus) map[int64]*commonproto.ShardMetadata
 
-	ListNamespaceStatus() []*commonproto.Namespace
+	ListNamespaceStatus() []string
 	GetNamespaceStatus(namespace string) (*commonproto.NamespaceStatus, bool)
-	DeleteNamespace(namespace string) []int64
-	PutShard(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
-	DeleteShard(namespace string, shard int64)
+	DeleteNamespaceStatus(name string) *commonproto.NamespaceStatus
+	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
+	DeleteShardStatus(namespace string, shard int64)
 
 	GetConfig() *commonproto.ClusterConfiguration
 	ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration]
@@ -211,7 +211,7 @@ func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
 	return base
 }
 
-func (m *coordinatorMetadata) PutNamespaceStatusIfAbsent(name string, status *commonproto.NamespaceStatus) map[int64]*commonproto.ShardMetadata {
+func (m *coordinatorMetadata) CreateNamespaceStatusIfAbsent(name string, status *commonproto.NamespaceStatus) map[int64]*commonproto.ShardMetadata {
 	m.loadClusterConfigWithInitSlow()
 	serverCount := len(m.GetConfig().GetServers())
 
@@ -241,16 +241,13 @@ func (m *coordinatorMetadata) PutNamespaceStatusIfAbsent(name string, status *co
 	return shardsToAdd
 }
 
-func (m *coordinatorMetadata) ListNamespaceStatus() []*commonproto.Namespace {
+func (m *coordinatorMetadata) ListNamespaceStatus() []string {
 	m.statusLock.RLock()
 	defer m.statusLock.RUnlock()
 
-	namespaces := make([]*commonproto.Namespace, 0, len(m.currentStatus.Namespaces))
-	for name, status := range m.currentStatus.Namespaces {
-		namespaces = append(namespaces, &commonproto.Namespace{
-			Name:              name,
-			ReplicationFactor: status.GetReplicationFactor(),
-		})
+	namespaces := make([]string, 0, len(m.currentStatus.Namespaces))
+	for name := range m.currentStatus.Namespaces {
+		namespaces = append(namespaces, name)
 	}
 	return namespaces
 }
@@ -266,17 +263,16 @@ func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (*commonproto
 	return gproto.Clone(namespaceStatus).(*commonproto.NamespaceStatus), true //nolint:revive
 }
 
-func (m *coordinatorMetadata) DeleteNamespace(namespace string) []int64 {
+func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) *commonproto.NamespaceStatus {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
 	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
-	namespaceStatus, exists := clonedStatus.Namespaces[namespace]
+	namespaceStatus, exists := clonedStatus.Namespaces[name]
 	if !exists {
 		return nil
 	}
 
-	shardsToDelete := make([]int64, 0, len(namespaceStatus.Shards))
 	changed := false
 	for shardID, shardMetadata := range namespaceStatus.Shards {
 		if shardMetadata.Status != commonproto.ShardStatusDeleting {
@@ -284,16 +280,15 @@ func (m *coordinatorMetadata) DeleteNamespace(namespace string) []int64 {
 			namespaceStatus.Shards[shardID] = shardMetadata
 			changed = true
 		}
-		shardsToDelete = append(shardsToDelete, shardID)
 	}
 	if changed {
 		m.persistStatusLocked(clonedStatus, "failed to mark namespace deleting")
 		m.notifyStatusChange()
 	}
-	return shardsToDelete
+	return gproto.Clone(namespaceStatus).(*commonproto.NamespaceStatus) //nolint:revive
 }
 
-func (m *coordinatorMetadata) PutShard(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
+func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
@@ -307,7 +302,7 @@ func (m *coordinatorMetadata) PutShard(namespace string, shard int64, shardMetad
 	m.notifyStatusChange()
 }
 
-func (m *coordinatorMetadata) DeleteShard(namespace string, shard int64) {
+func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 

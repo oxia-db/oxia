@@ -39,11 +39,11 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 		r.runtime.CreateNamespace(namespace.GetName(), namespace)
 	}
 
-	for _, namespace := range metadata.ListNamespaceStatus() {
-		if _, exists := metadata.GetNamespace(namespace.GetName()); exists {
+	for _, name := range metadata.ListNamespaceStatus() {
+		if _, exists := metadata.GetNamespace(name); exists {
 			continue
 		}
-		r.runtime.DeleteNamespace(namespace.GetName())
+		r.runtime.DeleteNamespace(name)
 	}
 
 	return nil

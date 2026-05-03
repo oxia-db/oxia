@@ -648,7 +648,7 @@ func (sc *SplitController) abort() {
 
 	// Delete child shards from status.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		sc.metadata.DeleteShard(sc.namespace, childId)
+		sc.metadata.DeleteShardStatus(sc.namespace, childId)
 	}
 
 	// Clear parent split metadata.
