@@ -46,7 +46,7 @@ type Metadata interface {
 	ReserveShardIDs(count uint32) int64
 
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
-	ListNamespaceStatus() commonobject.Borrowed[map[string]*commonproto.NamespaceStatus]
+	ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 	GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool)
@@ -58,7 +58,7 @@ type Metadata interface {
 	ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
-	ListDataServer() commonobject.Borrowed[map[string]*commonproto.DataServer]
+	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool)
 }
 
@@ -234,15 +234,15 @@ func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonp
 	return true
 }
 
-func (m *coordinatorMetadata) ListNamespaceStatus() commonobject.Borrowed[map[string]*commonproto.NamespaceStatus] {
+func (m *coordinatorMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus] {
 	m.statusLock.RLock()
 	defer m.statusLock.RUnlock()
 
-	namespaces := make(map[string]*commonproto.NamespaceStatus, len(m.currentStatus.Namespaces))
+	namespaces := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], len(m.currentStatus.Namespaces))
 	for name, status := range m.currentStatus.Namespaces {
-		namespaces[name] = status
+		namespaces[name] = commonobject.Borrow(status)
 	}
-	return commonobject.Borrow(namespaces)
+	return namespaces
 }
 
 func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool) {
@@ -434,7 +434,7 @@ func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonpro
 	return commonobject.Borrow(m.GetConfig().UnsafeBorrow().GetLoadBalancerWithDefaults())
 }
 
-func (m *coordinatorMetadata) ListDataServer() commonobject.Borrowed[map[string]*commonproto.DataServer] {
+func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer] {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
 	if m.currentClusterConfig == nil {
@@ -443,7 +443,7 @@ func (m *coordinatorMetadata) ListDataServer() commonobject.Borrowed[map[string]
 		m.clusterConfigLock.RLock()
 	}
 
-	dataServers := make(map[string]*commonproto.DataServer, len(m.currentClusterConfig.GetServers()))
+	dataServers := make(map[string]commonobject.Borrowed[*commonproto.DataServer], len(m.currentClusterConfig.GetServers()))
 	for _, server := range m.currentClusterConfig.GetServers() {
 		name := server.GetNameOrDefault()
 		identity := server
@@ -461,9 +461,9 @@ func (m *coordinatorMetadata) ListDataServer() commonobject.Borrowed[map[string]
 		if value, found := m.currentClusterConfig.GetServerMetadata()[name]; found {
 			dataServer.Metadata = value
 		}
-		dataServers[name] = dataServer
+		dataServers[name] = commonobject.Borrow(dataServer)
 	}
-	return commonobject.Borrow(dataServers)
+	return dataServers
 }
 
 func (m *coordinatorMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool) {

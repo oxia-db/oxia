@@ -32,11 +32,12 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
 	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
 
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newDataServerController(context.Background(), addr, sap, nal, rpc, "test-instance", 1*time.Second)
+	nc := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
 
@@ -73,11 +74,12 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
 	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
 
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newDataServerController(context.Background(), addr, sap, nal, rpc, "test-instance", 1*time.Second)
+	nc := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
 
@@ -133,11 +135,12 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
 	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
 
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newDataServerController(context.Background(), addr, sap, nal, rpc, "test-instance", 1*time.Second)
+	nc := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
 

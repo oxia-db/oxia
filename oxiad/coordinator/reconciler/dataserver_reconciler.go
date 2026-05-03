@@ -44,7 +44,7 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 		r.runtime.CreateDataServer(serverName, dataServer)
 	}
 
-	for name := range r.runtime.NodeControllers() {
+	for name := range r.runtime.ListDataServer() {
 		if !desired.Contains(name) {
 			r.runtime.DeleteDataServer(name)
 		}

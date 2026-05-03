@@ -85,13 +85,14 @@ func (r *nodeBasedBalancer) quarantineNodes() *linkedhashset.Set[string] {
 	return nodes
 }
 
-func dataServersToCandidatesAndMetadata(dataServers map[string]*commonproto.DataServer) (
+func dataServersToCandidatesAndMetadata(dataServers map[string]commonobject.Borrowed[*commonproto.DataServer]) (
 	*linkedhashset.Set[string],
 	map[string]*commonproto.DataServerMetadata,
 ) {
 	candidates := linkedhashset.New[string]()
 	metadata := make(map[string]*commonproto.DataServerMetadata, len(dataServers))
-	for name, dataServer := range dataServers {
+	for name, borrowedDataServer := range dataServers {
+		dataServer := borrowedDataServer.UnsafeBorrow()
 		candidates.Add(name)
 		if dataServer.GetMetadata() != nil {
 			metadata[name] = dataServer.GetMetadata()
@@ -116,7 +117,7 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 
 	swapGroup := &sync.WaitGroup{}
 	currentStatus := r.metadata.GetStatus().UnsafeBorrow()
-	dataServers := r.metadata.ListDataServer().UnsafeBorrow()
+	dataServers := r.metadata.ListDataServer()
 	candidates, metadata := dataServersToCandidatesAndMetadata(dataServers)
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
@@ -338,7 +339,7 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
 	status := r.metadata.GetStatus().UnsafeBorrow()
-	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer().UnsafeBorrow())
+	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer())
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, status)
 	return r.loadRatioAlgorithm(
 		&model.RatioParams{
@@ -406,7 +407,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 	r.checkQuarantineShards()
 
 	status := r.metadata.GetStatus().UnsafeBorrow()
-	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer().UnsafeBorrow())
+	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer())
 	totalShards, electedShards, nodeLeaders := state.NodeShardLeaders(candidates, status)
 
 	electedRate := float64(electedShards) / float64(totalShards)

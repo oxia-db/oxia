@@ -534,7 +534,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	assert.NoError(t, err)
 	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 
-	assert.Equal(t, 3, len(c.NodeControllers()))
+	assert.Equal(t, 3, len(c.ListDataServer()))
 
 	// Add s4, s5
 	clusterConfig.Servers = append(clusterConfig.Servers,
@@ -551,16 +551,16 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		return len(c.NodeControllers()) == 4
+		return len(c.ListDataServer()) == 4
 	}, 10*time.Second, 10*time.Millisecond)
 
-	_, ok := c.NodeControllers()[sa1.Internal]
+	_, ok := c.ListDataServer()[sa1.Internal]
 	assert.False(t, ok)
 
-	_, ok = c.NodeControllers()[sa4.Internal]
+	_, ok = c.ListDataServer()[sa4.Internal]
 	assert.True(t, ok)
 
-	_, ok = c.NodeControllers()[sa5.Internal]
+	_, ok = c.ListDataServer()[sa5.Internal]
 	assert.True(t, ok)
 
 	assert.NoError(t, c.Close())
@@ -608,7 +608,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 		return true
 	}, 10*time.Second, 10*time.Millisecond)
 
-	assert.Equal(t, 4, len(c.NodeControllers()))
+	assert.Equal(t, 4, len(c.ListDataServer()))
 
 	// Remove leader dataserver
 	leaderID := metadata.GetStatus().UnsafeBorrow().Namespaces["my-ns-1"].Shards[0].Leader.GetNameOrDefault()
@@ -625,7 +625,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	_, err = configProvider.Store(clusterConfig, version)
 	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
-		return len(c.NodeControllers()) == 3
+		return len(c.ListDataServer()) == 3
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// Wait for all shards to be ready

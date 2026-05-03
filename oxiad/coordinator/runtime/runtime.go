@@ -25,6 +25,7 @@ import (
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
@@ -53,9 +54,9 @@ type runtime struct {
 
 	metadata coordmetadata.Metadata
 
-	shardControllers map[int64]controller.ShardController
-	splitControllers map[int64]*controller.SplitController // keyed by parent shard ID
-	nodeControllers  map[string]controller.DataServerController
+	shardControllers      map[int64]controller.ShardController
+	splitControllers      map[int64]*controller.SplitController // keyed by parent shard ID
+	dataServerControllers map[string]controller.DataServerController
 	// Draining nodes are nodes that were removed from the
 	// nodes list. We keep sending them assignments updates
 	// because they might be still reachable to clients.
@@ -89,14 +90,14 @@ func (c *runtime) Metadata() coordmetadata.Metadata {
 	return c.metadata
 }
 
-func (c *runtime) NodeControllers() map[string]controller.DataServerController {
+func (c *runtime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
 	c.RLock()
 	defer c.RUnlock()
-	res := make(map[string]controller.DataServerController, len(c.nodeControllers))
-	for k, v := range c.nodeControllers {
-		res[k] = v
+	dataServers := make(map[string]commonobject.Borrowed[*proto.DataServer], len(c.dataServerControllers))
+	for name, dataServerController := range c.dataServerControllers {
+		dataServers[name] = dataServerController.GetDataServer()
 	}
-	return res
+	return dataServers
 }
 
 func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bool {
@@ -107,7 +108,7 @@ func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bo
 	if identity == nil {
 		return false
 	}
-	if _, ok := c.nodeControllers[name]; ok {
+	if _, ok := c.dataServerControllers[name]; ok {
 		return false
 	}
 	c.logger.Info("Detected new node", slog.Any("server", identity))
@@ -115,9 +116,9 @@ func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bo
 		_ = nc.Close()
 		delete(c.drainingNodes, name)
 	}
-	c.nodeControllers[name] = controller.NewDataServerController(
+	c.dataServerControllers[name] = controller.NewDataServerController(
 		c.ctx,
-		identity,
+		dataServer,
 		c,
 		c,
 		c.rpc,
@@ -130,12 +131,12 @@ func (c *runtime) DeleteDataServer(name string) {
 	c.Lock()
 	defer c.Unlock()
 
-	nc, exist := c.nodeControllers[name]
+	nc, exist := c.dataServerControllers[name]
 	if !exist {
 		return
 	}
 	c.logger.Info("Detected a removed node", slog.Any("server", name))
-	delete(c.nodeControllers, name)
+	delete(c.dataServerControllers, name)
 	nc.SetStatus(controller.Draining)
 	c.drainingNodes[name] = nc
 }
@@ -228,7 +229,7 @@ func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity
 	features := make(map[string][]proto.Feature)
 	for _, dataServer := range dataServers {
 		dataServerID := dataServer.GetNameOrDefault()
-		if serverController, exist := c.nodeControllers[dataServerID]; exist {
+		if serverController, exist := c.dataServerControllers[dataServerID]; exist {
 			features[dataServerID] = serverController.SupportedFeatures()
 			continue
 		}
@@ -241,13 +242,14 @@ func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity
 	return features
 }
 
-func dataServersToCandidatesAndMetadata(dataServers map[string]*proto.DataServer) (
+func dataServersToCandidatesAndMetadata(dataServers map[string]commonobject.Borrowed[*proto.DataServer]) (
 	*linkedhashset.Set[string],
 	map[string]*proto.DataServerMetadata,
 ) {
 	candidates := linkedhashset.New[string]()
 	metadata := make(map[string]*proto.DataServerMetadata, len(dataServers))
-	for name, dataServer := range dataServers {
+	for name, borrowedDataServer := range dataServers {
+		dataServer := borrowedDataServer.UnsafeBorrow()
 		candidates.Add(name)
 		if dataServer.GetMetadata() != nil {
 			metadata[name] = dataServer.GetMetadata()
@@ -261,7 +263,7 @@ func dataServersToCandidatesAndMetadata(dataServers map[string]*proto.DataServer
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-	dataServers := c.metadata.ListDataServer().UnsafeBorrow()
+	dataServers := c.metadata.ListDataServer()
 	nodes, metadata := dataServersToCandidatesAndMetadata(dataServers)
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
@@ -281,7 +283,11 @@ func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.Cl
 	}
 	esm := make([]*proto.DataServerIdentity, 0)
 	for _, id := range ensembles {
-		dataServer, exist := dataServers[id]
+		borrowedDataServer, exist := dataServers[id]
+		if !exist {
+			return nil, fmt.Errorf("failed to find node %s", id)
+		}
+		dataServer := borrowedDataServer.UnsafeBorrow()
 		if !exist || dataServer.GetIdentity() == nil {
 			return nil, fmt.Errorf("failed to find node %s", id)
 		}
@@ -302,7 +308,7 @@ func (c *runtime) Close() error {
 		err = multierr.Append(err, sc.Close())
 	}
 
-	for _, nc := range c.nodeControllers {
+	for _, nc := range c.dataServerControllers {
 		err = multierr.Append(err, nc.Close())
 	}
 
@@ -797,13 +803,13 @@ func New(
 		logger: slog.With(
 			slog.String("component", "coordinator"),
 		),
-		ensembleSelector: ensemble.NewSelector(),
-		shardControllers: make(map[int64]controller.ShardController),
-		splitControllers: make(map[int64]*controller.SplitController),
-		nodeControllers:  make(map[string]controller.DataServerController),
-		drainingNodes:    make(map[string]controller.DataServerController),
-		metadata:         metadata,
-		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
+		ensembleSelector:      ensemble.NewSelector(),
+		shardControllers:      make(map[int64]controller.ShardController),
+		splitControllers:      make(map[int64]*controller.SplitController),
+		dataServerControllers: make(map[string]controller.DataServerController),
+		drainingNodes:         make(map[string]controller.DataServerController),
+		metadata:              metadata,
+		assignmentsWatch:      commonwatch.New(&proto.ShardAssignments{}),
 	}
 
 	c.ctx, c.ctxCancel = context.WithCancel(context.Background())
@@ -814,7 +820,7 @@ func New(
 		NodeAvailableJudger: func(nodeID string) bool {
 			c.RLock()
 			defer c.RUnlock()
-			nc := c.nodeControllers[nodeID]
+			nc := c.dataServerControllers[nodeID]
 			return nc.Status() == controller.Running
 		},
 	})
@@ -826,9 +832,10 @@ func New(
 
 	// init node controller
 	for _, node := range dataServersFromStatus(clusterStatus) {
-		c.nodeControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
+		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
+		c.dataServerControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
 			c.ctx,
-			node,
+			dataServer,
 			c,
 			c,
 			c.rpc,
