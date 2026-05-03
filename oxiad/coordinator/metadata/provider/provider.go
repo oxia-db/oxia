@@ -23,14 +23,17 @@ import (
 	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 )
 
+type Versioned[T any] struct {
+	Value   T
+	Version metadataconstant.Version
+}
+
 type Provider[T gproto.Message] interface {
 	io.Closer
-
-	Get() (value T, version metadataconstant.Version, err error)
 
 	Store(value T, expectedVersion metadataconstant.Version) (newVersion metadataconstant.Version, err error)
 
 	WaitToBecomeLeader() error
 
-	Watch() (*commonwatch.Receiver[T], error)
+	Watch() *commonwatch.Watch[Versioned[T]]
 }

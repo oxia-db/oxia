@@ -41,8 +41,7 @@ func PutConfig(
 ) {
 	t.Helper()
 
-	_, version, err := configProvider.Get()
-	require.NoError(t, err)
-	_, err = configProvider.Store(clusterConfig, version)
+	version := configProvider.Watch().Load().Version
+	_, err := configProvider.Store(clusterConfig, version)
 	require.NoError(t, err)
 }

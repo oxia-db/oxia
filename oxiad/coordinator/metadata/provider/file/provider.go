@@ -52,7 +52,7 @@ type Provider[T gproto.Message] struct {
 	ctxCancel context.CancelFunc
 	wg        sync.WaitGroup
 
-	watcher *commonwatch.Watch[T]
+	watcher *commonwatch.Watch[provider.Versioned[T]]
 	logger  *slog.Logger
 }
 
@@ -75,12 +75,12 @@ func NewProvider[T gproto.Message](ctx context.Context, path string, codec metad
 			return nil, err
 		}
 	}
+	initialSnapshot, err := p.loadLatest()
+	if err != nil {
+		return nil, err
+	}
+	p.watcher = commonwatch.New(initialSnapshot)
 	if watchEnabled.Enabled() {
-		initialValue, _, err := p.Get()
-		if err != nil {
-			return nil, err
-		}
-		p.watcher = commonwatch.New(initialValue)
 		p.wg.Go(func() {
 			process.DoWithLabels(p.ctx, map[string]string{
 				"component":     "metadata-provider",
@@ -116,27 +116,54 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func (m *Provider[T]) Get() (value T, version metadatacommon.Version, err error) {
+func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
+	retry := backoff.NewExponentialBackOff()
+	err = backoff.RetryNotify(func() error {
+		var readErr error
+		snapshot, readErr = m.loadLatestOnce()
+		return readErr
+	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn("Failed to read file metadata, retrying",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration))
+	})
+	return snapshot, err
+}
+
+func (m *Provider[T]) loadLatestOnce() (snapshot provider.Versioned[T], err error) {
 	content, err := os.ReadFile(m.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return value, metadatacommon.NotExists, nil
+			return provider.Versioned[T]{
+				Value:   m.codec.NewZero(),
+				Version: metadatacommon.NotExists,
+			}, nil
 		}
-		return value, metadatacommon.NotExists, err
+		return snapshot, err
 	}
 
 	if len(content) == 0 {
-		return value, metadatacommon.NotExists, nil
+		return provider.Versioned[T]{
+			Value:   m.codec.NewZero(),
+			Version: metadatacommon.NotExists,
+		}, nil
 	}
-	value, err = m.codec.UnmarshalYAML(content)
-	return value, m.version, err
+	value, err := m.codec.UnmarshalYAML(content)
+	if err != nil {
+		panic(err)
+	}
+	return provider.Versioned[T]{
+		Value:   value,
+		Version: m.version,
+	}, nil
 }
 
 func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (newVersion metadatacommon.Version, err error) {
-	_, existingVersion, err := m.Get()
+	existingSnapshot, err := m.loadLatest()
 	if err != nil {
 		return metadatacommon.NotExists, err
 	}
+	existingVersion := existingSnapshot.Version
 
 	if expectedVersion != existingVersion {
 		panic(metadatacommon.ErrBadVersion)
@@ -152,26 +179,27 @@ func (m *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (ne
 		return metadatacommon.NotExists, err
 	}
 	m.version = newVersion
+	m.watcher.Publish(provider.Versioned[T]{
+		Value:   m.codec.Clone(value),
+		Version: newVersion,
+	})
 
 	return newVersion, nil
 }
 
-func (m *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
-	if !m.watchEnabled.Enabled() || m.watcher == nil {
-		return nil, metadatacommon.ErrWatchUnsupported
-	}
-	return m.watcher.Subscribe(), nil
+func (m *Provider[T]) Watch() *commonwatch.Watch[provider.Versioned[T]] {
+	return m.watcher
 }
 
 func (m *Provider[T]) watchLoop() {
 	retry := backoff.NewExponentialBackOff()
 	retry.InitialInterval = time.Second
 	_ = backoff.RetryNotify(func() error {
-		value, _, err := m.Get()
+		snapshot, err := m.loadLatest()
 		if err != nil {
 			return err
 		}
-		m.watcher.Publish(value)
+		m.watcher.Publish(snapshot)
 		return m.watchOnce()
 	}, backoff.WithContext(retry, m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn("File metadata watch failed, reconnecting",
@@ -212,11 +240,11 @@ func (m *Provider[T]) watchOnce() error {
 			}
 			if filepath.Clean(event.Name) == watchedPath &&
 				event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) != 0 {
-				value, _, err := m.Get()
+				snapshot, err := m.loadLatest()
 				if err != nil {
 					return err
 				}
-				m.watcher.Publish(value)
+				m.watcher.Publish(snapshot)
 			}
 		}
 	}

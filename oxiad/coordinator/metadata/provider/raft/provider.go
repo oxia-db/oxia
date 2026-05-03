@@ -37,7 +37,7 @@ type Provider[T gproto.Message] struct {
 	ctx       context.Context
 	ctxCancel context.CancelFunc
 	wg        sync.WaitGroup
-	watch     *commonwatch.Watch[T]
+	watch     *commonwatch.Watch[provider.Versioned[T]]
 	logger    *slog.Logger
 }
 
@@ -54,18 +54,11 @@ func NewProvider[T gproto.Message](ctx context.Context, r *Raft, codec metadatac
 		),
 	}
 
-	value, version, err := p.Get()
-	if err != nil {
-		p.logger.Warn("Failed to load initial raft metadata", slog.Any("error", err))
-		value = p.codec.NewZero()
-	} else if version == metadatacommon.NotExists {
-		value = p.codec.NewZero()
-	}
-	p.watch = commonwatch.New(value)
+	p.watch = commonwatch.New(p.loadLatest())
 	return p
 }
 
-func (mpr *Provider[T]) OnApplied(key string, data []byte) {
+func (mpr *Provider[T]) OnApplied(key string, data []byte, version int64) {
 	if mpr.codec.GetKey() != key {
 		return
 	}
@@ -75,7 +68,10 @@ func (mpr *Provider[T]) OnApplied(key string, data []byte) {
 		mpr.logger.Warn("Failed to unmarshal data", slog.Any("error", err))
 		return
 	}
-	mpr.watch.Publish(entity)
+	mpr.watch.Publish(provider.Versioned[T]{
+		Value:   entity,
+		Version: toVersion(version),
+	})
 }
 
 func (mpr *Provider[T]) WaitToBecomeLeader() error {
@@ -98,7 +94,7 @@ func fromVersion(v metadatacommon.Version) int64 {
 	return n
 }
 
-func (mpr *Provider[T]) Get() (value T, version metadatacommon.Version, err error) {
+func (mpr *Provider[T]) loadLatest() provider.Versioned[T] {
 	mpr.raft.Lock()
 	defer mpr.raft.Unlock()
 
@@ -109,10 +105,19 @@ func (mpr *Provider[T]) Get() (value T, version metadatacommon.Version, err erro
 		slog.Any("metadata", document.State),
 		slog.Any("current-version", document.CurrentVersion))
 	if len(document.State) == 0 {
-		return value, toVersion(document.CurrentVersion), nil
+		return provider.Versioned[T]{
+			Value:   mpr.codec.NewZero(),
+			Version: toVersion(document.CurrentVersion),
+		}
 	}
-	value, err = mpr.codec.UnmarshalJSON(document.State)
-	return value, toVersion(document.CurrentVersion), err
+	value, err := mpr.codec.UnmarshalJSON(document.State)
+	if err != nil {
+		panic(err)
+	}
+	return provider.Versioned[T]{
+		Value:   value,
+		Version: toVersion(document.CurrentVersion),
+	}
 }
 
 func (mpr *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (newVersion metadatacommon.Version, err error) {
@@ -158,12 +163,14 @@ func (mpr *Provider[T]) Store(value T, expectedVersion metadatacommon.Version) (
 		panic(metadatacommon.ErrBadVersion)
 	}
 
-	return toVersion(applyRes.newVersion), nil
+	newVersion = toVersion(applyRes.newVersion)
+	mpr.watch.Publish(provider.Versioned[T]{
+		Value:   mpr.codec.Clone(value),
+		Version: newVersion,
+	})
+	return newVersion, nil
 }
 
-func (mpr *Provider[T]) Watch() (*commonwatch.Receiver[T], error) {
-	if !mpr.watchMode.Enabled() || mpr.watch == nil {
-		return nil, metadatacommon.ErrWatchUnsupported
-	}
-	return mpr.watch.Subscribe(), nil
+func (mpr *Provider[T]) Watch() *commonwatch.Watch[provider.Versioned[T]] {
+	return mpr.watch
 }

@@ -234,8 +234,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 	waitForLeadersBalanced(t, metadata, balancer, candidates, 4)
 
 	cc.Servers = append(cc.Servers, dataServers(s4ad, s5ad, s6ad)...)
-	_, version, err := configProvider.Get()
-	require.NoError(t, err)
+	version := configProvider.Watch().Load().Version
 	_, err = configProvider.Store(cc, version)
 	require.NoError(t, err)
 	candidates = linkedhashset.New(s1ad.GetNameOrDefault(), s2ad.GetNameOrDefault(), s3ad.GetNameOrDefault(), s4ad.GetNameOrDefault(), s5ad.GetNameOrDefault(), s6ad.GetNameOrDefault())

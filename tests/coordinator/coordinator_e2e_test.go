@@ -472,8 +472,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		InitialShardCount: 2,
 		ReplicationFactor: 1,
 	})
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
+	version := configProvider.Watch().Load().Version
 	_, err = configProvider.Store(clusterConfig, version)
 	assert.NoError(t, err)
 
@@ -544,8 +543,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	// Remove s1
 	clusterConfig.Servers = clusterConfig.Servers[1:]
 
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
+	version := configProvider.Watch().Load().Version
 	_, err = configProvider.Store(clusterConfig, version)
 	assert.NoError(t, err)
 
@@ -620,8 +618,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	}
 	clusterConfig.Servers = d
 
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
+	version := configProvider.Watch().Load().Version
 	_, err = configProvider.Store(clusterConfig, version)
 	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
@@ -692,8 +689,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	}
 
 	clusterConfig.Servers = clusterServer
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
+	version := configProvider.Watch().Load().Version
 	_, err = configProvider.Store(clusterConfig, version)
 	assert.NoError(t, err)
 

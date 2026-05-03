@@ -73,7 +73,7 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 	document.State = cloneBytes(opCmd.NewState)
 	document.CurrentVersion++
 	if sc.interceptor != nil {
-		sc.interceptor.OnApplied(opCmd.Key, document.State)
+		sc.interceptor.OnApplied(opCmd.Key, document.State, document.CurrentVersion)
 	}
 
 	sc.logger.Info("Applied raft log entry",

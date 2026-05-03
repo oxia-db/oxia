@@ -86,10 +86,10 @@ func TestProvider(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := newProvider(t)
 
-			res, version, err := m.Get()
-			assert.NoError(t, err)
+			snapshot := m.Watch().Load()
+			res, version := snapshot.Value, snapshot.Version
 			assert.Equal(t, metadatacommon.NotExists, version)
-			assert.Nil(t, res)
+			assert.True(t, gproto.Equal(&proto.ClusterStatus{}, res))
 
 			status := &proto.ClusterStatus{
 				Namespaces: map[string]*proto.NamespaceStatus{},
@@ -104,8 +104,8 @@ func TestProvider(t *testing.T) {
 			assert.NoError(t, err)
 			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 
-			res, version, err = m.Get()
-			assert.NoError(t, err)
+			snapshot = m.Watch().Load()
+			res, version = snapshot.Value, snapshot.Version
 			assert.EqualValues(t, metadatacommon.Version("0"), version)
 			assert.True(t, gproto.Equal(&proto.ClusterStatus{
 				Namespaces: map[string]*proto.NamespaceStatus{},
@@ -183,8 +183,8 @@ func TestProviderConfigResource(t *testing.T) {
 			assert.NoError(t, err)
 			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 
-			res, version, err := m.Get()
-			assert.NoError(t, err)
+			snapshot := m.Watch().Load()
+			res, version := snapshot.Value, snapshot.Version
 			assert.EqualValues(t, metadatacommon.Version("0"), version)
 			assert.True(t, gproto.Equal(config, res))
 

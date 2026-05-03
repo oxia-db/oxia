@@ -90,8 +90,7 @@ func TestNormalShardBalancer(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
+	version := configProvider.Watch().Load().Version
 	_, err = configProvider.Store(&cc, version)
 	assert.NoError(t, err)
 
@@ -200,8 +199,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
+	version := configProvider.Watch().Load().Version
 	_, err = configProvider.Store(&cc, version)
 	assert.NoError(t, err)
 
@@ -316,8 +314,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	}
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad, s6ad)...)
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
+	version := configProvider.Watch().Load().Version
 	_, err = configProvider.Store(&cc, version)
 	assert.NoError(t, err)
 
