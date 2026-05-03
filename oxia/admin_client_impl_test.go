@@ -50,10 +50,6 @@ func (*mockAdminRpcClient) ListNamespaces(context.Context, *proto.ListNamespaces
 	panic("unexpected ListNamespaces call")
 }
 
-func (*mockAdminRpcClient) ListNodes(context.Context, *proto.ListNodesRequest, ...grpc.CallOption) (*proto.ListNodesResponse, error) {
-	panic("unexpected ListNodes call")
-}
-
 func (*mockAdminRpcClient) SplitShard(context.Context, *proto.SplitShardRequest, ...grpc.CallOption) (*proto.SplitShardResponse, error) {
 	panic("unexpected SplitShard call")
 }

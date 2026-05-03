@@ -28,27 +28,12 @@ type AdminClient interface {
 
 	ListNamespaces() *ListNamespacesResult
 
-	// Deprecated: Use ListDataServers instead.
-	ListNodes() *ListNodesResult
-
 	SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
 }
 
 type ListNamespacesResult struct {
 	Namespaces []string
 	Error      error
-}
-
-type Node struct {
-	Name            *string
-	PublicAddress   string
-	InternalAddress string
-	Metadata        map[string]string
-}
-
-type ListNodesResult struct {
-	Nodes []*Node
-	Error error
 }
 
 type SplitShardResult struct {

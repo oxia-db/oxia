@@ -19,7 +19,6 @@ import (
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/cmd/admin/dataserver"
-	"github.com/oxia-db/oxia/cmd/admin/listnodes"
 	"github.com/oxia-db/oxia/cmd/admin/splitshard"
 
 	"github.com/oxia-db/oxia/cmd/admin/listnamespaces"
@@ -43,6 +42,5 @@ func init() {
 
 	Cmd.AddCommand(dataserver.Cmd)
 	Cmd.AddCommand(listnamespaces.Cmd)
-	Cmd.AddCommand(listnodes.Cmd)
 	Cmd.AddCommand(splitshard.Cmd)
 }
