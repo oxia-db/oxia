@@ -42,7 +42,7 @@ type Metadata interface {
 	io.Closer
 
 	GetStatus() *commonproto.ClusterStatus
-	PutStatus(newStatus *commonproto.ClusterStatus)
+	UpdateStatus(newStatus *commonproto.ClusterStatus)
 	ReserveShardIDs(count uint32) int64
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
 
@@ -191,7 +191,7 @@ func (m *coordinatorMetadata) GetStatus() *commonproto.ClusterStatus {
 	return m.currentStatus
 }
 
-func (m *coordinatorMetadata) PutStatus(newStatus *commonproto.ClusterStatus) {
+func (m *coordinatorMetadata) UpdateStatus(newStatus *commonproto.ClusterStatus) {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 

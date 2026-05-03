@@ -52,7 +52,7 @@ func (*mockMetadata) Close() error { return nil }
 
 func (m *mockMetadata) GetStatus() *proto.ClusterStatus { return m.status }
 
-func (m *mockMetadata) PutStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
+func (m *mockMetadata) UpdateStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
 
 func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }
 

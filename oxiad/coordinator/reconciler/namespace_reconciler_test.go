@@ -91,10 +91,10 @@ func (*mockNamespaceMetadata) Close() error { return nil }
 
 func (m *mockNamespaceMetadata) GetStatus() *proto.ClusterStatus { return m.status }
 
-func (m *mockNamespaceMetadata) PutStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
+func (m *mockNamespaceMetadata) UpdateStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
 
 func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) int64 {
-	cloned := gproto.Clone(m.status).(*proto.ClusterStatus) //nolint:revive
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	base := cloned.ShardIdGenerator
 	cloned.ShardIdGenerator += int64(count)
 	m.status = cloned
@@ -105,7 +105,7 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	name string,
 	status *proto.NamespaceStatus,
 ) bool {
-	cloned := gproto.Clone(m.status).(*proto.ClusterStatus) //nolint:revive
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	if cloned.Namespaces == nil {
 		cloned.Namespaces = map[string]*proto.NamespaceStatus{}
 	}
@@ -114,7 +114,7 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 		return false
 	}
 
-	namespaceStatus := gproto.Clone(status).(*proto.NamespaceStatus) //nolint:revive
+	namespaceStatus := gproto.Clone(status).(*proto.NamespaceStatus)
 	cloned.Namespaces[name] = namespaceStatus
 	cloned.ServerIdx = (cloned.ServerIdx + uint32(len(namespaceStatus.Shards))*namespaceStatus.GetReplicationFactor()) % uint32(len(m.configServers))
 
@@ -125,7 +125,7 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]*proto.NamespaceStatus {
 	namespaces := make(map[string]*proto.NamespaceStatus, len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
-		namespaces[name] = gproto.Clone(status).(*proto.NamespaceStatus) //nolint:revive
+		namespaces[name] = gproto.Clone(status).(*proto.NamespaceStatus)
 	}
 	return namespaces
 }
@@ -135,11 +135,11 @@ func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (*proto.Nam
 	if !exists {
 		return nil, false
 	}
-	return gproto.Clone(status).(*proto.NamespaceStatus), true //nolint:revive
+	return gproto.Clone(status).(*proto.NamespaceStatus), true
 }
 
 func (m *mockNamespaceMetadata) DeleteNamespaceStatus(name string) *proto.NamespaceStatus {
-	cloned := gproto.Clone(m.status).(*proto.ClusterStatus) //nolint:revive
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	namespaceStatus, exists := cloned.Namespaces[name]
 	if !exists {
 		return nil
@@ -150,7 +150,7 @@ func (m *mockNamespaceMetadata) DeleteNamespaceStatus(name string) *proto.Namesp
 		namespaceStatus.Shards[shardID] = shardMetadata
 	}
 	m.status = cloned
-	return gproto.Clone(namespaceStatus).(*proto.NamespaceStatus) //nolint:revive
+	return gproto.Clone(namespaceStatus).(*proto.NamespaceStatus)
 }
 
 func (*mockNamespaceMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) {}
@@ -197,7 +197,7 @@ type mockNamespaceRuntime struct {
 
 func (*mockNamespaceRuntime) Close() error { return nil }
 
-func (*mockNamespaceRuntime) InitiateSplit(string, int64, *uint32) (int64, int64, error) {
+func (*mockNamespaceRuntime) InitiateSplit(string, int64, *uint32) (left int64, right int64, err error) {
 	return 0, 0, nil
 }
 
@@ -207,7 +207,7 @@ func (*mockNamespaceRuntime) LeaderElected(int64, *proto.DataServerIdentity, []*
 func (*mockNamespaceRuntime) ShardDeleted(int64) {}
 
 func (*mockNamespaceRuntime) WaitForNextUpdate(context.Context, *proto.ShardAssignments) (*proto.ShardAssignments, error) {
-	return nil, nil
+	return nil, context.Canceled
 }
 
 func (*mockNamespaceRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
@@ -400,13 +400,13 @@ func TestNamespaceReconcilerNamespaceAddedPersistsAggregateStatus(t *testing.T) 
 					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
-				"ns-2": {
-					ReplicationFactor: 3,
-					Shards: map[int64]*proto.ShardMetadata{
-						1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s4, s1, s2}, 0, math.MaxUint32/2),
-						2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s4, s1, s2}, math.MaxUint32/2+1, math.MaxUint32),
-					},
+			"ns-2": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s4, s1, s2}, math.MaxUint32/2+1, math.MaxUint32),
 				},
+			},
 		},
 		ShardIdGenerator: 3,
 		ServerIdx:        1,
@@ -475,13 +475,13 @@ func TestNamespaceReconcilerNamespaceRemovedMarksDeletingAndDeletesRuntimeShards
 					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
 				},
 			},
-				"ns-2": {
-					ReplicationFactor: 3,
-					Shards: map[int64]*proto.ShardMetadata{
-						1: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServerIdentity{s4, s1, s2}, 0, math.MaxUint32/2),
-						2: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServerIdentity{s4, s1, s2}, math.MaxUint32/2+1, math.MaxUint32),
-					},
+			"ns-2": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					1: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServerIdentity{s4, s1, s2}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusDeleting, []*proto.DataServerIdentity{s4, s1, s2}, math.MaxUint32/2+1, math.MaxUint32),
 				},
+			},
 		},
 		ShardIdGenerator: 3,
 		ServerIdx:        1,

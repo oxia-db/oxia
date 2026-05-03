@@ -622,7 +622,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 
 	// Persist
-	c.metadata.PutStatus(cloned)
+	c.metadata.UpdateStatus(cloned)
 
 	c.logger.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
