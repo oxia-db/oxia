@@ -42,11 +42,10 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("s1", "s2", "s3", "s4"),
-		Status: &proto.ClusterStatus{
-			ServerIdx: 0,
-		},
-		HierarchyPolicies: nsPolicies,
-		Replicas:          3,
+		Namespace:          "ns-1",
+		Shard:              7,
+		HierarchyPolicies:  nsPolicies,
+		Replicas:           3,
 	}
 
 	esm, err := ensembleSelector.Select(context)

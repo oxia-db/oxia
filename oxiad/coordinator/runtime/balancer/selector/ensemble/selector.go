@@ -34,6 +34,8 @@ func (ensemble *ensemble) Select(context *Context) ([]string, error) {
 		Candidates:         context.Candidates,
 		CandidatesMetadata: context.CandidatesMetadata,
 		Status:             context.Status,
+		Namespace:          context.Namespace,
+		Shard:              context.Shard,
 		HierarchyPolicies:  context.HierarchyPolicies,
 		LoadRatioSupplier:  context.LoadRatioSupplier,
 	}

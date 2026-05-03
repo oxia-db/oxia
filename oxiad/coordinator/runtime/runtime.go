@@ -159,7 +159,6 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	}
 	status := &proto.ClusterStatus{
 		Namespaces: make(map[string]*proto.NamespaceStatus, len(currentStatus.GetNamespaces())+1),
-		ServerIdx:  currentStatus.GetServerIdx(),
 	}
 	for name, existingNamespaceStatus := range currentStatus.GetNamespaces() {
 		status.Namespaces[name] = existingNamespaceStatus
@@ -167,7 +166,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	status.Namespaces[name] = namespaceStatus
 
 	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
-		esm, err := c.selectNewEnsemble(namespaceConfig, status)
+		esm, err := c.selectNewEnsemble(name, shard.Id, namespaceConfig, status)
 		if err != nil {
 			c.logger.Error("failed to select new ensembles", slog.Any("shard", shard), slog.Any("error", err))
 			continue
@@ -262,7 +261,7 @@ func dataServersToCandidatesAndMetadata(dataServers map[string]commonobject.Borr
 
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
-func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
 	dataServers := c.metadata.ListDataServer()
 	nodes, metadata := dataServersToCandidatesAndMetadata(dataServers)
 	ensembleContext := &ensemble.Context{
@@ -270,6 +269,8 @@ func (c *runtime) selectNewEnsemble(ns *proto.Namespace, editingStatus *proto.Cl
 		CandidatesMetadata: metadata,
 		HierarchyPolicies:  ns.GetPolicy(),
 		Status:             editingStatus,
+		Namespace:          namespace,
+		Shard:              shard,
 		Replicas:           int(ns.GetReplicationFactor()),
 		LoadRatioSupplier: func() *model.Ratio {
 			groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(nodes, editingStatus)
@@ -582,7 +583,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	// status so the right child's selection sees the updated load distribution
 	// and picks a different server.
 	nsConfig := c.namespaceConfigForSplit(namespace)
-	leftEnsemble, err := c.selectNewEnsemble(nsConfig, cloned)
+	leftEnsemble, err := c.selectNewEnsemble(namespace, leftChildId, nsConfig, cloned)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "failed to select ensemble for left child")
 	}
@@ -596,9 +597,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 			Max: sp,
 		},
 	}
-	cloned.ServerIdx += nsConfig.GetReplicationFactor()
-
-	rightEnsemble, err := c.selectNewEnsemble(nsConfig, cloned)
+	rightEnsemble, err := c.selectNewEnsemble(namespace, rightChildId, nsConfig, cloned)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "failed to select ensemble for right child")
 	}
@@ -671,7 +670,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 		RpcProvider:   c.rpc,
 		EventListener: c,
 		EnsembleSelector: func(ns string) ([]*proto.DataServerIdentity, error) {
-			return c.selectNewEnsemble(c.namespaceConfigForSplit(ns), c.metadata.GetStatus().UnsafeBorrow())
+			return c.selectNewEnsemble(ns, 0, c.namespaceConfigForSplit(ns), c.metadata.GetStatus().UnsafeBorrow())
 		},
 	})
 	c.splitControllers[parentShardId] = sc
@@ -787,7 +786,7 @@ func (c *runtime) restartInProgressSplits(clusterStatus *proto.ClusterStatus) {
 				RpcProvider:   c.rpc,
 				EventListener: c,
 				EnsembleSelector: func(namespace string) ([]*proto.DataServerIdentity, error) {
-					return c.selectNewEnsemble(c.namespaceConfigForSplit(namespace), c.metadata.GetStatus().UnsafeBorrow())
+					return c.selectNewEnsemble(namespace, 0, c.namespaceConfigForSplit(namespace), c.metadata.GetStatus().UnsafeBorrow())
 				},
 			})
 			c.splitControllers[shardId] = sc

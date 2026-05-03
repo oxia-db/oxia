@@ -210,9 +210,6 @@ func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
 }
 
 func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool {
-	m.loadClusterConfigWithInitSlow()
-	serverCount := len(m.GetConfig().UnsafeBorrow().GetServers())
-
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
@@ -227,7 +224,6 @@ func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonp
 
 	namespaceStatus := gproto.Clone(status).(*commonproto.NamespaceStatus) //nolint:revive
 	clonedStatus.Namespaces[name] = namespaceStatus
-	clonedStatus.ServerIdx = (clonedStatus.ServerIdx + uint32(len(namespaceStatus.Shards))*namespaceStatus.GetReplicationFactor()) % uint32(serverCount)
 
 	m.persistStatusLocked(clonedStatus, "failed to create namespace status")
 	m.notifyStatusChange()

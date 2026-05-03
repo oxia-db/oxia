@@ -44,8 +44,8 @@ func shardMetadata(status string, ensemble []*proto.DataServerIdentity, start, e
 	}
 }
 
-func loadAwareEnsembleSupplier(servers []*proto.DataServerIdentity) func(*proto.Namespace, *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-	return func(nc *proto.Namespace, cs *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+func loadAwareEnsembleSupplier(servers []*proto.DataServerIdentity) func(*proto.Namespace, int64, *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+	return func(nc *proto.Namespace, _ int64, cs *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
 		load := make(map[string]int, len(servers))
 		for _, s := range servers {
 			load[s.GetInternal()] = 0
@@ -66,11 +66,12 @@ func loadAwareEnsembleSupplier(servers []*proto.DataServerIdentity) func(*proto.
 	}
 }
 
-func simpleEnsembleSupplier(candidates []*proto.DataServerIdentity, nc *proto.Namespace, cs *proto.ClusterStatus) []*proto.DataServerIdentity {
+func simpleEnsembleSupplier(candidates []*proto.DataServerIdentity, shardID int64, replicationFactor uint32) []*proto.DataServerIdentity {
 	n := len(candidates)
-	res := make([]*proto.DataServerIdentity, nc.GetReplicationFactor())
-	for i := uint32(0); i < nc.GetReplicationFactor(); i++ {
-		res[i] = candidates[int(cs.ServerIdx+i)%n]
+	res := make([]*proto.DataServerIdentity, replicationFactor)
+	start := int(shardID % int64(n))
+	for i := uint32(0); i < replicationFactor; i++ {
+		res[i] = candidates[(start+int(i))%n]
 	}
 	return res
 }
@@ -81,9 +82,8 @@ func assertStatusEqual(t *testing.T, expected, actual *proto.ClusterStatus) {
 }
 
 type mockNamespaceMetadata struct {
-	status        *proto.ClusterStatus
-	configServers []*proto.DataServerIdentity
-	configNS      map[string]*proto.Namespace
+	status   *proto.ClusterStatus
+	configNS map[string]*proto.Namespace
 }
 
 func (*mockNamespaceMetadata) Close() error { return nil }
@@ -117,7 +117,6 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 
 	namespaceStatus := gproto.Clone(status).(*proto.NamespaceStatus)
 	cloned.Namespaces[name] = namespaceStatus
-	cloned.ServerIdx = (cloned.ServerIdx + uint32(len(namespaceStatus.Shards))*namespaceStatus.GetReplicationFactor()) % uint32(len(m.configServers))
 
 	m.status = cloned
 	return true
@@ -190,7 +189,7 @@ var _ coordmetadata.Metadata = (*mockNamespaceMetadata)(nil)
 
 type mockNamespaceRuntime struct {
 	metadata            *mockNamespaceMetadata
-	selectNewEnsembleFn func(*proto.Namespace, *proto.ClusterStatus) ([]*proto.DataServerIdentity, error)
+	selectNewEnsembleFn func(*proto.Namespace, int64, *proto.ClusterStatus) ([]*proto.DataServerIdentity, error)
 	added               map[int64]string
 	deleted             []int64
 }
@@ -227,7 +226,6 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 	}
 	status := &proto.ClusterStatus{
 		Namespaces: make(map[string]*proto.NamespaceStatus, len(currentStatus.GetNamespaces())+1),
-		ServerIdx:  currentStatus.GetServerIdx(),
 	}
 	for name, existingNamespaceStatus := range currentStatus.GetNamespaces() {
 		status.Namespaces[name] = existingNamespaceStatus
@@ -235,7 +233,7 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 	status.Namespaces[name] = namespaceStatus
 
 	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
-		ensemble, err := m.selectNewEnsembleFn(namespaceConfig, status)
+		ensemble, err := m.selectNewEnsembleFn(namespaceConfig, shard.Id, status)
 		if err != nil {
 			continue
 		}
@@ -301,8 +299,7 @@ func TestNamespaceReconcilerInitialPlacementSeesPriorShards(t *testing.T) {
 	const replicationFactor = 3
 
 	metadata := &mockNamespaceMetadata{
-		status:        proto.NewClusterStatus(),
-		configServers: servers,
+		status: proto.NewClusterStatus(),
 		configNS: map[string]*proto.Namespace{
 			"ns-1": {
 				Name:              "ns-1",
@@ -357,9 +354,7 @@ func TestNamespaceReconcilerNamespaceAddedPersistsAggregateStatus(t *testing.T) 
 				},
 			},
 			ShardIdGenerator: 1,
-			ServerIdx:        3,
 		},
-		configServers: servers,
 		configNS: map[string]*proto.Namespace{
 			"ns-1": {
 				Name:              "ns-1",
@@ -375,8 +370,8 @@ func TestNamespaceReconcilerNamespaceAddedPersistsAggregateStatus(t *testing.T) 
 	}
 	runtime := &mockNamespaceRuntime{
 		metadata: metadata,
-		selectNewEnsembleFn: func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-			return simpleEnsembleSupplier(servers, namespaceConfig, status), nil
+		selectNewEnsembleFn: func(namespaceConfig *proto.Namespace, shardID int64, _ *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+			return simpleEnsembleSupplier(servers, shardID, namespaceConfig.GetReplicationFactor()), nil
 		},
 	}
 
@@ -405,13 +400,12 @@ func TestNamespaceReconcilerNamespaceAddedPersistsAggregateStatus(t *testing.T) 
 			"ns-2": {
 				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
-					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s4, s1, s2}, 0, math.MaxUint32/2),
-					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s4, s1, s2}, math.MaxUint32/2+1, math.MaxUint32),
+					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s2, s3, s4}, 0, math.MaxUint32/2),
+					2: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s3, s4, s1}, math.MaxUint32/2+1, math.MaxUint32),
 				},
 			},
 		},
 		ShardIdGenerator: 3,
-		ServerIdx:        1,
 	}, metadata.status)
 
 	assert.Equal(t, map[int64]string{
@@ -441,9 +435,7 @@ func TestNamespaceReconcilerNamespaceRemovedMarksDeletingAndDeletesRuntimeShards
 				},
 			},
 			ShardIdGenerator: 3,
-			ServerIdx:        1,
 		},
-		configServers: servers,
 		configNS: map[string]*proto.Namespace{
 			"ns-1": {
 				Name:              "ns-1",
@@ -454,8 +446,8 @@ func TestNamespaceReconcilerNamespaceRemovedMarksDeletingAndDeletesRuntimeShards
 	}
 	runtime := &mockNamespaceRuntime{
 		metadata: metadata,
-		selectNewEnsembleFn: func(namespaceConfig *proto.Namespace, status *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-			return simpleEnsembleSupplier(servers, namespaceConfig, status), nil
+		selectNewEnsembleFn: func(namespaceConfig *proto.Namespace, shardID int64, _ *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+			return simpleEnsembleSupplier(servers, shardID, namespaceConfig.GetReplicationFactor()), nil
 		},
 	}
 
@@ -486,7 +478,6 @@ func TestNamespaceReconcilerNamespaceRemovedMarksDeletingAndDeletesRuntimeShards
 			},
 		},
 		ShardIdGenerator: 3,
-		ServerIdx:        1,
 	}, metadata.status)
 
 	sort.Slice(runtime.deleted, func(i, j int) bool { return runtime.deleted[i] < runtime.deleted[j] })
