@@ -23,6 +23,7 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -50,7 +51,9 @@ var _ coordmetadata.Metadata = (*mockMetadata)(nil)
 
 func (*mockMetadata) Close() error { return nil }
 
-func (m *mockMetadata) GetStatus() *proto.ClusterStatus { return m.status }
+func (m *mockMetadata) GetStatus() commonobject.Borrowed[*proto.ClusterStatus] {
+	return commonobject.Borrow(m.status)
+}
 
 func (m *mockMetadata) UpdateStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
 
@@ -60,13 +63,17 @@ func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool 
 	return false
 }
 
-func (*mockMetadata) ListNamespaceStatus() map[string]*proto.NamespaceStatus {
-	return nil
+func (*mockMetadata) ListNamespaceStatus() commonobject.Borrowed[map[string]*proto.NamespaceStatus] {
+	return commonobject.Borrowed[map[string]*proto.NamespaceStatus]{}
 }
 
-func (*mockMetadata) GetNamespaceStatus(string) (*proto.NamespaceStatus, bool) { return nil, false }
+func (*mockMetadata) GetNamespaceStatus(string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
+	return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
+}
 
-func (*mockMetadata) DeleteNamespaceStatus(string) *proto.NamespaceStatus { return nil }
+func (*mockMetadata) DeleteNamespaceStatus(string) commonobject.Borrowed[*proto.NamespaceStatus] {
+	return commonobject.Borrowed[*proto.NamespaceStatus]{}
+}
 
 func (*mockMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) {}
 
@@ -74,51 +81,64 @@ func (*mockMetadata) DeleteShardStatus(string, int64) {}
 
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
-func (*mockMetadata) GetConfig() *proto.ClusterConfiguration { return nil }
+func (*mockMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
+	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
+}
 
 func (*mockMetadata) ConfigWatch() *commonwatch.Watch[*proto.ClusterConfiguration] {
 	return commonwatch.New(&proto.ClusterConfiguration{})
 }
 
-func (m *mockMetadata) GetLoadBalancer() *proto.LoadBalancer {
+func (m *mockMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalancer] {
 	if m.lbConfig != nil {
-		return m.lbConfig
+		return commonobject.Borrow(m.lbConfig)
 	}
-	return &proto.LoadBalancer{
+	return commonobject.Borrow(&proto.LoadBalancer{
 		ScheduleInterval: "30s",
 		QuarantineTime:   "5m",
-	}
+	})
 }
 
-func (m *mockMetadata) ListDataServers() *linkedhashset.Set[string] { return m.nodes }
-
-func (m *mockMetadata) ListDataServersWithMetadata() (*linkedhashset.Set[string], map[string]*proto.DataServerMetadata) {
-	return m.nodes, m.metadata
+func (m *mockMetadata) ListDataServers() commonobject.Borrowed[*linkedhashset.Set[string]] {
+	return commonobject.Borrow(m.nodes)
 }
 
-func (m *mockMetadata) GetNamespace(namespace string) (*proto.Namespace, bool) {
+func (m *mockMetadata) ListDataServersWithMetadata() (
+	commonobject.Borrowed[*linkedhashset.Set[string]],
+	commonobject.Borrowed[map[string]*proto.DataServerMetadata],
+) {
+	return commonobject.Borrow(m.nodes), commonobject.Borrow(m.metadata)
+}
+
+func (m *mockMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*proto.Namespace], bool) {
 	nc, ok := m.nsConfigs[namespace]
-	return nc, ok
+	if !ok {
+		return commonobject.Borrowed[*proto.Namespace]{}, false
+	}
+	return commonobject.Borrow(nc), true
 }
 
-func (m *mockMetadata) GetDataServerIdentity(id string) (*proto.DataServerIdentity, bool) {
-	n, ok := m.nodeMap[id]
-	return n, ok
-}
-
-func (m *mockMetadata) GetDataServer(id string) (*proto.DataServer, bool) {
+func (m *mockMetadata) GetDataServerIdentity(id string) (commonobject.Borrowed[*proto.DataServerIdentity], bool) {
 	n, ok := m.nodeMap[id]
 	if !ok {
-		return nil, false
+		return commonobject.Borrowed[*proto.DataServerIdentity]{}, false
+	}
+	return commonobject.Borrow(n), true
+}
+
+func (m *mockMetadata) GetDataServer(id string) (commonobject.Borrowed[*proto.DataServer], bool) {
+	n, ok := m.nodeMap[id]
+	if !ok {
+		return commonobject.Borrowed[*proto.DataServer]{}, false
 	}
 	metadata, ok := m.metadata[id]
 	if !ok {
 		metadata = &proto.DataServerMetadata{}
 	}
-	return &proto.DataServer{
+	return commonobject.Borrow(&proto.DataServer{
 		Identity: n,
 		Metadata: metadata,
-	}, true
+	}), true
 }
 
 // alwaysErrorSelector is a selector that always returns ErrUnsatisfiedAntiAffinity.
@@ -139,7 +159,7 @@ func newTestBalancer(
 		ctx:                     ctx,
 		ctxCancel:               cancel,
 		wg:                      sync.WaitGroup{},
-		loadBalancerConf:        metadata.GetLoadBalancer(),
+		loadBalancerConf:        metadata.GetLoadBalancer().UnsafeBorrow(),
 		metadata:                metadata,
 		selector:                sel,
 		loadRatioAlgorithm:      single.DefaultShardsRank,

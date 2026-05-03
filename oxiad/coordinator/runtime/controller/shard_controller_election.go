@@ -78,8 +78,8 @@ type ShardElection struct {
 func (e *ShardElection) refreshedEnsemble(ensemble []*proto.DataServerIdentity) []*proto.DataServerIdentity {
 	refreshedEnsembleDataServerAddress := make([]*proto.DataServerIdentity, len(ensemble))
 	for idx, candidate := range ensemble {
-		if refreshedAddress, exist := e.metadataStore.GetDataServerIdentity(candidate.GetNameOrDefault()); exist {
-			refreshedEnsembleDataServerAddress[idx] = refreshedAddress
+		if borrowedAddress, exist := e.metadataStore.GetDataServerIdentity(candidate.GetNameOrDefault()); exist {
+			refreshedEnsembleDataServerAddress[idx] = borrowedAddress.UnsafeBorrow()
 			continue
 		}
 		refreshedEnsembleDataServerAddress[idx] = candidate
@@ -225,7 +225,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[*proto.DataServerId
 	candidates := chooseCandidates(candidatesStatus)
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Status:     e.metadataStore.GetStatus(),
+		Status:     e.metadataStore.GetStatus().UnsafeBorrow(),
 	})
 	if err != nil {
 		return nil, nil, err

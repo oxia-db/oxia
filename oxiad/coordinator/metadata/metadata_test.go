@@ -47,7 +47,7 @@ func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
 		require.NoError(t, factory.Close())
 	}()
 
-	config := metadata.GetConfig()
+	config := metadata.GetConfig().UnsafeBorrow()
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
 }
@@ -78,7 +78,7 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 		require.NoError(t, factory.Close())
 	}()
 
-	config := metadata.GetConfig()
+	config := metadata.GetConfig().UnsafeBorrow()
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
 }

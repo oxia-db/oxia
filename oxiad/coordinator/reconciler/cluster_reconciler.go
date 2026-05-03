@@ -57,7 +57,7 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 	}
 
 	receiver := r.runtime.Metadata().ConfigWatch().Subscribe()
-	r.reconcile0(r.runtime.Metadata().GetConfig(), receiver)
+	r.reconcile0(r.runtime.Metadata().GetConfig().UnsafeBorrow(), receiver)
 
 	r.wg.Go(func() {
 		process.DoWithLabels(reconcilerCtx, map[string]string{
