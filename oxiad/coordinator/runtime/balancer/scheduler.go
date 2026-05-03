@@ -259,6 +259,8 @@ func (r *nodeBasedBalancer) swapShard(
 		CandidatesMetadata: metadata,
 		HierarchyPolicies:  nsc.GetPolicy(),
 		Status:             currentStatus,
+		Namespace:          candidateShard.Namespace,
+		Shard:              candidateShard.ShardID,
 		LoadRatioSupplier:  func() *model.Ratio { return loadRatios },
 	}
 	fromNodeID := fromNode.GetNameOrDefault()

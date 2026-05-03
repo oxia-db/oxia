@@ -26,6 +26,8 @@ type Context struct {
 	CandidatesMetadata map[string]*commonproto.DataServerMetadata
 	HierarchyPolicies  *commonproto.HierarchyPolicies
 	Status             *commonproto.ClusterStatus
+	Namespace          string
+	Shard              int64
 	Replicas           int
 
 	LoadRatioSupplier func() *model.Ratio

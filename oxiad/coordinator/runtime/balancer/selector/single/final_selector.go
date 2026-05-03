@@ -15,7 +15,9 @@
 package single
 
 import (
-	"math/rand/v2"
+	"encoding/binary"
+	"hash/fnv"
+	"sort"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
 )
@@ -25,14 +27,22 @@ var _ selector.Selector[*Context, string] = &finalSelector{}
 type finalSelector struct{}
 
 func (*finalSelector) Select(ssContext *Context) (string, error) {
-	status := ssContext.Status
 	candidatesArr := ssContext.Candidates.Values()
 	if len(candidatesArr) == 0 {
 		return "", selector.ErrNoFunctioning
 	}
-	if status != nil {
-		startIdx := ssContext.Status.ServerIdx
-		return candidatesArr[int(startIdx)%len(candidatesArr)], nil
+
+	sort.Strings(candidatesArr)
+	replicaOrdinal := 0
+	if ssContext.selected != nil {
+		replicaOrdinal = ssContext.selected.Size()
 	}
-	return candidatesArr[rand.IntN(len(candidatesArr))], nil //nolint:gosec
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(ssContext.Namespace))
+	var buf [16]byte
+	binary.LittleEndian.PutUint64(buf[:8], uint64(ssContext.Shard))
+	binary.LittleEndian.PutUint64(buf[8:], uint64(replicaOrdinal))
+	_, _ = hasher.Write(buf[:])
+	startIdx := int(hasher.Sum64() % uint64(len(candidatesArr)))
+	return candidatesArr[startIdx], nil
 }
