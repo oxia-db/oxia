@@ -30,8 +30,8 @@ type Runtime interface {
 	controller.ShardAssignmentsProvider
 	controller.DataServerEventListener
 
-	PutDataServerIfAbsent(server *proto.DataServer)
-	DeleteDataServer(dataServerID string)
+	CreateDataServer(name string, dataServer *proto.DataServer) bool
+	DeleteDataServer(name string)
 	SyncShardControllerServerAddresses()
 	CreateNamespace(name string, namespaceConfig *proto.Namespace) bool
 	DeleteNamespace(namespace string)

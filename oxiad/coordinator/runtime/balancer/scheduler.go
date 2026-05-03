@@ -85,6 +85,23 @@ func (r *nodeBasedBalancer) quarantineNodes() *linkedhashset.Set[string] {
 	return nodes
 }
 
+func dataServersToCandidatesAndMetadata(dataServers map[string]*commonproto.DataServer) (
+	*linkedhashset.Set[string],
+	map[string]*commonproto.DataServerMetadata,
+) {
+	candidates := linkedhashset.New[string]()
+	metadata := make(map[string]*commonproto.DataServerMetadata, len(dataServers))
+	for name, dataServer := range dataServers {
+		candidates.Add(name)
+		if dataServer.GetMetadata() != nil {
+			metadata[name] = dataServer.GetMetadata()
+			continue
+		}
+		metadata[name] = &commonproto.DataServerMetadata{}
+	}
+	return candidates, metadata
+}
+
 func (r *nodeBasedBalancer) quarantineShards() *linkedhashset.Set[int64] {
 	shards := linkedhashset.New[int64]()
 	r.shardQuarantineShardMap.Range(func(shardID, _ any) bool {
@@ -99,9 +116,8 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 
 	swapGroup := &sync.WaitGroup{}
 	currentStatus := r.metadata.GetStatus().UnsafeBorrow()
-	candidatesBorrowed, metadataBorrowed := r.metadata.ListDataServersWithMetadata()
-	candidates := candidatesBorrowed.UnsafeBorrow()
-	metadata := metadataBorrowed.UnsafeBorrow()
+	dataServers := r.metadata.ListDataServer().UnsafeBorrow()
+	candidates, metadata := dataServersToCandidatesAndMetadata(dataServers)
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
@@ -265,11 +281,14 @@ func (r *nodeBasedBalancer) swapShard(
 		return false, nil
 	}
 	var targetNode *commonproto.DataServerIdentity
-	var borrowedTargetNode commonobject.Borrowed[*commonproto.DataServerIdentity]
-	if borrowedTargetNode, exist = r.metadata.GetDataServerIdentity(targetNodeID); !exist {
+	var borrowedTargetNode commonobject.Borrowed[*commonproto.DataServer]
+	if borrowedTargetNode, exist = r.metadata.GetDataServer(targetNodeID); !exist {
 		return false, errors.New("target node does not exist")
 	}
-	targetNode = borrowedTargetNode.UnsafeBorrow()
+	targetNode = borrowedTargetNode.UnsafeBorrow().GetIdentity()
+	if targetNode == nil {
+		return false, errors.New("target node does not have identity")
+	}
 
 	r.logger.Info("propose to swap the shard", slog.Int64("shard", candidateShard.ShardID), slog.Any("from", fromNode), slog.Any("to", targetNodeID))
 	swapGroup.Add(1)
@@ -319,7 +338,7 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
 	status := r.metadata.GetStatus().UnsafeBorrow()
-	candidates := r.metadata.ListDataServers().UnsafeBorrow()
+	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer().UnsafeBorrow())
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, status)
 	return r.loadRatioAlgorithm(
 		&model.RatioParams{
@@ -387,7 +406,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 	r.checkQuarantineShards()
 
 	status := r.metadata.GetStatus().UnsafeBorrow()
-	candidates := r.metadata.ListDataServers().UnsafeBorrow()
+	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer().UnsafeBorrow())
 	totalShards, electedShards, nodeLeaders := state.NodeShardLeaders(candidates, status)
 
 	electedRate := float64(electedShards) / float64(totalShards)

@@ -20,7 +20,6 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
 	gproto "google.golang.org/protobuf/proto"
 
@@ -172,19 +171,8 @@ func (*mockNamespaceMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.Loa
 	return commonobject.Borrowed[*proto.LoadBalancer]{}
 }
 
-func (*mockNamespaceMetadata) ListDataServers() commonobject.Borrowed[*linkedhashset.Set[string]] {
-	return commonobject.Borrow(linkedhashset.New[string]())
-}
-
-func (*mockNamespaceMetadata) ListDataServersWithMetadata() (
-	commonobject.Borrowed[*linkedhashset.Set[string]],
-	commonobject.Borrowed[map[string]*proto.DataServerMetadata],
-) {
-	return commonobject.Borrow(linkedhashset.New[string]()), commonobject.Borrow(map[string]*proto.DataServerMetadata{})
-}
-
-func (*mockNamespaceMetadata) GetDataServerIdentity(string) (commonobject.Borrowed[*proto.DataServerIdentity], bool) {
-	return commonobject.Borrowed[*proto.DataServerIdentity]{}, false
+func (*mockNamespaceMetadata) ListDataServer() commonobject.Borrowed[map[string]*proto.DataServer] {
+	return commonobject.Borrow(map[string]*proto.DataServer{})
 }
 
 func (*mockNamespaceMetadata) GetDataServer(string) (commonobject.Borrowed[*proto.DataServer], bool) {
@@ -225,7 +213,7 @@ func (*mockNamespaceRuntime) WaitForNextUpdate(context.Context, *proto.ShardAssi
 
 func (*mockNamespaceRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
-func (*mockNamespaceRuntime) PutDataServerIfAbsent(*proto.DataServer) {}
+func (*mockNamespaceRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 
 func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 

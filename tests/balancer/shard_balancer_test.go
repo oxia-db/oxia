@@ -97,7 +97,7 @@ func TestNormalShardBalancer(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
+		_, exist := metadata.GetDataServer(s4ad.GetNameOrDefault())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 	assert.Eventually(t, func() bool {
@@ -209,7 +209,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
+		_, exist := metadata.GetDataServer(s4ad.GetNameOrDefault())
 		return exist
 	}, 10*time.Second, 50*time.Millisecond)
 	assert.Eventually(t, func() bool {
@@ -327,7 +327,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		_, exist := metadata.GetDataServerIdentity(s4ad.GetNameOrDefault())
+		_, exist := metadata.GetDataServer(s4ad.GetNameOrDefault())
 		return exist
 	}, 60*time.Second, 1*time.Second)
 
