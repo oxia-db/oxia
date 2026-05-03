@@ -224,3 +224,74 @@ func TestManagementServerGetDataServerRejectsEmptyLookup(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
 }
+
+func TestManagementServerCreateDataServer(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
+
+	res, err := management.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{
+				Name:     &serverName,
+				Public:   "public-1:6648",
+				Internal: "internal-1:6648",
+			},
+			Metadata: &proto.DataServerMetadata{
+				Labels: map[string]string{"rack": "rack-1"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.DataServer)
+	require.NotNil(t, res.DataServer.Identity)
+	require.NotNil(t, res.DataServer.Identity.Name)
+	assert.Equal(t, serverName, *res.DataServer.Identity.Name)
+
+	borrowedDataServer, found := management.metadata.GetDataServer(serverName)
+	require.True(t, found)
+	createdDataServer := borrowedDataServer.UnsafeBorrow()
+	require.NotNil(t, createdDataServer)
+	require.NotNil(t, createdDataServer.Identity)
+	require.NotNil(t, createdDataServer.Identity.Name)
+	assert.Equal(t, serverName, *createdDataServer.Identity.Name)
+	assert.Equal(t, "public-1:6648", createdDataServer.Identity.GetPublic())
+	assert.Equal(t, "internal-1:6648", createdDataServer.Identity.GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, createdDataServer.Metadata.GetLabels())
+}
+
+func TestManagementServerCreateDataServerRejectsMissingName(t *testing.T) {
+	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
+
+	_, err := management.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{
+				Public:   "public-1:6648",
+				Internal: "internal-1:6648",
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+}
+
+func TestManagementServerCreateDataServerRejectsDuplicateName(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{
+		Servers: []*proto.DataServerIdentity{
+			dataServer(&serverName, "public-1:6648", "internal-1:6648"),
+		},
+	}), nil)
+
+	_, err := management.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{
+				Name:     &serverName,
+				Public:   "public-1:6648",
+				Internal: "internal-1:6648",
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.AlreadyExists, grpcstatus.Code(err))
+}

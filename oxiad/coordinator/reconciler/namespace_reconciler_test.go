@@ -169,6 +169,8 @@ func (*mockNamespaceMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.Loa
 	return commonobject.Borrowed[*proto.LoadBalancer]{}
 }
 
+func (*mockNamespaceMetadata) CreateDataServer(string, *proto.DataServer) bool { return false }
+
 func (*mockNamespaceMetadata) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
 	return map[string]commonobject.Borrowed[*proto.DataServer]{}
 }

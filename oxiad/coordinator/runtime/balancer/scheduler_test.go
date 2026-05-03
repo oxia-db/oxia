@@ -101,6 +101,8 @@ func (m *mockMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalanc
 	})
 }
 
+func (*mockMetadata) CreateDataServer(string, *proto.DataServer) bool { return false }
+
 func (m *mockMetadata) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
 	dataServers := make(map[string]commonobject.Borrowed[*proto.DataServer], m.nodes.Size())
 	for _, id := range m.nodes.Values() {

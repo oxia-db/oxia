@@ -27,6 +27,8 @@ import (
 
 var _ AdminClient = (*adminClientImpl)(nil)
 
+const errUnableToConnectToAdminServer = "unable to connect to admin server"
+
 type adminClientImpl struct {
 	adminAddr string
 
@@ -40,7 +42,7 @@ func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
 	}
 
 	if client == nil {
-		return nil, wrapAdminError(ErrUnknown, errors.New("unable to connect to admin server"))
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
 	response, err := client.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
@@ -57,10 +59,29 @@ func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServe
 	}
 
 	if client == nil {
-		return nil, wrapAdminError(ErrUnknown, errors.New("unable to connect to admin server"))
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
 	response, err := client.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: dataServer})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServer, nil
+}
+
+func (admin *adminClientImpl) CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{
+		DataServer: dataServer,
+	})
 	if err != nil {
 		return nil, mapAdminError(err)
 	}
@@ -77,7 +98,7 @@ func (admin *adminClientImpl) ListNodes() *ListNodesResult {
 
 	if client == nil {
 		return &ListNodesResult{
-			Error: errors.New("unable to connect to admin server"),
+			Error: errors.New(errUnableToConnectToAdminServer),
 		}
 	}
 

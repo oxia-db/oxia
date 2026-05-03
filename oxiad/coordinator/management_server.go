@@ -24,6 +24,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
+	coordrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 )
@@ -77,6 +78,42 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 
 	return &proto.GetDataServerResponse{
 		DataServer: borrowedDataServer.UnsafeBorrow(),
+	}, nil
+}
+
+func (management *managementServer) CreateDataServer(
+	_ context.Context, req *proto.CreateDataServerRequest,
+) (*proto.CreateDataServerResponse, error) {
+	if req == nil || req.DataServer == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
+	}
+
+	identity := req.DataServer.GetIdentity()
+	if identity == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity must not be empty")
+	}
+	if identity.GetName() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity.name must not be empty")
+	}
+	if identity.GetPublic() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity.public must not be empty")
+	}
+	if err := coordrpc.ValidateAuthorityAddress(identity.GetPublic()); err != nil {
+		return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid data server public address: %v", err)
+	}
+	if identity.GetInternal() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity.internal must not be empty")
+	}
+	if err := coordrpc.ValidateAuthorityAddress(identity.GetInternal()); err != nil {
+		return nil, grpcstatus.Errorf(codes.InvalidArgument, "invalid data server internal address: %v", err)
+	}
+
+	if !management.metadata.CreateDataServer(identity.GetName(), req.DataServer) {
+		return nil, grpcstatus.Errorf(codes.AlreadyExists, "data server %q already exists", identity.GetName())
+	}
+
+	return &proto.CreateDataServerResponse{
+		DataServer: req.DataServer,
 	}, nil
 }
 

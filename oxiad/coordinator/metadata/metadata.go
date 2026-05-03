@@ -58,6 +58,7 @@ type Metadata interface {
 	ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
+	CreateDataServer(name string, dataServer *commonproto.DataServer) bool
 	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool)
 }
@@ -430,6 +431,71 @@ func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonpro
 	return commonobject.Borrow(m.GetConfig().UnsafeBorrow().GetLoadBalancerWithDefaults())
 }
 
+func (m *coordinatorMetadata) CreateDataServer(name string, dataServer *commonproto.DataServer) bool {
+	m.clusterConfigLock.Lock()
+	if m.currentClusterConfig == nil {
+		m.clusterConfigLock.Unlock()
+		m.loadClusterConfigWithInitSlow()
+		m.clusterConfigLock.Lock()
+	}
+
+	var publishConfig *commonproto.ClusterConfiguration
+	created := false
+	_ = backoff.RetryNotify(func() error {
+		currentConfig, version, err := m.configProvider.Get()
+		if err != nil {
+			return err
+		}
+		if currentConfig == nil {
+			return metadatacommon.ErrNotInitialized
+		}
+		if err := validateClusterConfig(currentConfig); err != nil {
+			return err
+		}
+		if _, exists := currentConfig.GetDataServer(name); exists {
+			created = false
+			return nil
+		}
+
+		clonedConfig := gproto.Clone(currentConfig).(*commonproto.ClusterConfiguration) //nolint:revive
+		clonedConfig.Servers = append(clonedConfig.Servers,
+			gproto.Clone(dataServer.GetIdentity()).(*commonproto.DataServerIdentity))
+		if metadata := dataServer.GetMetadata(); metadata != nil && len(metadata.GetLabels()) > 0 {
+			if clonedConfig.ServerMetadata == nil {
+				clonedConfig.ServerMetadata = map[string]*commonproto.DataServerMetadata{}
+			}
+			clonedConfig.ServerMetadata[name] =
+				gproto.Clone(metadata).(*commonproto.DataServerMetadata) //nolint:revive
+		}
+		if err := validateClusterConfig(clonedConfig); err != nil {
+			return backoff.Permanent(err)
+		}
+		if _, err := storeConfig(m.configProvider, clonedConfig, version); err != nil {
+			return err
+		}
+
+		m.currentClusterConfig = clonedConfig
+		m.rebuildConfigIndexesLocked()
+		publishConfig = clonedConfig
+		created = true
+		return nil
+	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to create data server",
+			slog.String("name", name),
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+
+	m.clusterConfigLock.Unlock()
+
+	if publishConfig != nil {
+		m.clusterConfigWatch.Publish(publishConfig)
+	}
+	return created
+}
+
 func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer] {
 	m.clusterConfigLock.RLock()
 	defer m.clusterConfigLock.RUnlock()
@@ -491,6 +557,27 @@ func (m *coordinatorMetadata) GetDataServer(name string) (commonobject.Borrowed[
 		return commonobject.Borrowed[*commonproto.DataServer]{}, false
 	}
 	return commonobject.Borrow(value), true
+}
+
+func storeConfig(
+	configProvider provider.Provider[*commonproto.ClusterConfiguration],
+	config *commonproto.ClusterConfiguration,
+	version metadatacommon.Version,
+) (newVersion metadatacommon.Version, err error) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+
+		recoveredErr, ok := recovered.(error)
+		if !ok {
+			panic(recovered)
+		}
+		err = recoveredErr
+	}()
+
+	return configProvider.Store(config, version)
 }
 
 func WaitForCondition(ctx context.Context, metadata Metadata, triggerFn func(), condition func(*commonproto.ClusterStatus) bool) error {
