@@ -60,6 +60,32 @@ func (ds *DataServer) GetNameOrDefault() string {
 	return ds.GetIdentity().GetNameOrDefault()
 }
 
+func (ds *DataServer) MergeFrom(other *DataServer) {
+	if ds == nil || other == nil {
+		return
+	}
+
+	if otherIdentity := other.GetIdentity(); otherIdentity != nil {
+		if ds.Identity == nil {
+			ds.Identity = &DataServerIdentity{}
+		}
+
+		if name := otherIdentity.GetName(); name != "" {
+			ds.Identity.Name = &name
+		}
+		if public := otherIdentity.GetPublic(); public != "" {
+			ds.Identity.Public = public
+		}
+		if internal := otherIdentity.GetInternal(); internal != "" {
+			ds.Identity.Internal = internal
+		}
+	}
+
+	if other.Metadata != nil {
+		ds.Metadata = other.Metadata
+	}
+}
+
 func NewClusterStatus() *ClusterStatus {
 	return &ClusterStatus{
 		Namespaces: map[string]*NamespaceStatus{},

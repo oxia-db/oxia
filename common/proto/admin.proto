@@ -29,6 +29,7 @@ service OxiaAdmin {
   rpc ListDataServers(ListDataServersRequest) returns (ListDataServersResponse);
   rpc GetDataServer(GetDataServerRequest) returns (GetDataServerResponse);
   rpc CreateDataServer(CreateDataServerRequest) returns (CreateDataServerResponse);
+  rpc PatchDataServer(PatchDataServerRequest) returns (PatchDataServerResponse);
 
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
 
@@ -60,6 +61,14 @@ message CreateDataServerRequest {
 }
 
 message CreateDataServerResponse {
+  DataServer data_server = 1;
+}
+
+message PatchDataServerRequest {
+  DataServer data_server = 1;
+}
+
+message PatchDataServerResponse {
   DataServer data_server = 1;
 }
 

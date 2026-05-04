@@ -54,6 +54,7 @@ type Metadata interface {
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
 	CreateDataServer(dataServer *commonproto.DataServer) error
+	PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error)
 	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool)
 }
@@ -374,6 +375,57 @@ func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServe
 
 		return config, nil
 	})
+}
+
+func (m *coordinatorMetadata) PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error) {
+	name := dataServer.GetIdentity().GetName()
+	var updated *commonproto.DataServer
+
+	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		for i, server := range config.GetServers() {
+			if server.GetNameOrDefault() != name {
+				continue
+			}
+
+			identity := server
+			if server.GetName() == "" {
+				normalizedName := server.GetNameOrDefault()
+				identity = &commonproto.DataServerIdentity{
+					Name:     &normalizedName,
+					Public:   server.GetPublic(),
+					Internal: server.GetInternal(),
+				}
+			}
+
+			current := &commonproto.DataServer{
+				Identity: identity,
+			}
+			if metadata, found := config.GetServerMetadata()[name]; found {
+				current.Metadata = metadata
+			}
+
+			current.MergeFrom(dataServer)
+			config.Servers[i] = current.GetIdentity()
+
+			if current.Metadata != nil {
+				if config.ServerMetadata == nil {
+					config.ServerMetadata = map[string]*commonproto.DataServerMetadata{}
+				}
+				config.ServerMetadata[name] = current.Metadata
+			} else if config.ServerMetadata != nil {
+				delete(config.ServerMetadata, name)
+			}
+
+			updated = current
+			return config, nil
+		}
+
+		return nil, metadatacommon.ErrNotFound
+	}); err != nil {
+		return nil, err
+	}
+
+	return updated, nil
 }
 
 func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer] {
