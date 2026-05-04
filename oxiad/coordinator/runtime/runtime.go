@@ -151,11 +151,13 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 }
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
-	baseShardID := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	namespaceConfig = c.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(namespaceConfig)
+	policy := namespaceConfig.GetPolicy()
+	baseShardID := c.metadata.ReserveShardIDs(policy.GetInitialShardCount())
 	currentStatus := c.metadata.GetStatus().UnsafeBorrow()
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
-		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
+		ReplicationFactor: policy.GetReplicationFactor(),
 	}
 	status := &proto.ClusterStatus{
 		Namespaces: make(map[string]*proto.NamespaceStatus, len(currentStatus.GetNamespaces())+1),
@@ -165,7 +167,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	}
 	status.Namespaces[name] = namespaceStatus
 
-	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
+	for _, shard := range sharding.GenerateShards(baseShardID, policy.GetInitialShardCount()) {
 		esm, err := c.selectNewEnsemble(name, shard.Id, namespaceConfig, status)
 		if err != nil {
 			c.logger.Error("failed to select new ensembles", slog.Any("shard", shard), slog.Any("error", err))
@@ -262,6 +264,7 @@ func dataServersToCandidatesAndMetadata(dataServers map[string]commonobject.Borr
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Namespace, editingStatus *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+	ns = c.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(ns)
 	dataServers := c.metadata.ListDataServer()
 	nodes, metadata := dataServersToCandidatesAndMetadata(dataServers)
 	ensembleContext := &ensemble.Context{
@@ -271,7 +274,7 @@ func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Nam
 		Status:             editingStatus,
 		Namespace:          namespace,
 		Shard:              shard,
-		Replicas:           int(ns.GetReplicationFactor()),
+		Replicas:           int(ns.GetPolicy().GetReplicationFactor()),
 		LoadRatioSupplier: func() *model.Ratio {
 			groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(nodes, editingStatus)
 			return c.loadBalancer.LoadRatioAlgorithm()(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
@@ -755,9 +758,9 @@ func (c *runtime) SplitAborted(parentShard int64, leftChild int64, rightChild in
 func (c *runtime) namespaceConfigForSplit(namespace string) *proto.Namespace {
 	borrowedNsConfig, exist := c.metadata.GetNamespace(namespace)
 	if !exist {
-		return &proto.Namespace{}
+		return c.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(&proto.Namespace{Name: namespace})
 	}
-	return borrowedNsConfig.UnsafeBorrow()
+	return c.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(borrowedNsConfig.UnsafeBorrow())
 }
 
 // restartInProgressSplits checks the cluster status for any shards that have
@@ -849,9 +852,9 @@ func New(
 			var nsConfig *proto.Namespace
 			borrowedNsConfig, exist := c.metadata.GetNamespace(ns)
 			if !exist {
-				nsConfig = &proto.Namespace{}
+				nsConfig = c.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(&proto.Namespace{Name: ns})
 			} else {
-				nsConfig = borrowedNsConfig.UnsafeBorrow()
+				nsConfig = c.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(borrowedNsConfig.UnsafeBorrow())
 			}
 			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
 				shardMetadata, c.metadata, c.findDataServerFeatures,

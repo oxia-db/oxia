@@ -21,28 +21,27 @@ import (
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/cmd/admin/namespace/option"
-	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
+	policyoutput "github.com/oxia-db/oxia/cmd/admin/policy/output"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxia"
 )
 
 var fields option.NamespaceFields
 
 var Cmd = &cobra.Command{
-	Use:          "patch <namespace>",
-	Short:        "Patch a namespace",
-	Long:         `Patch a namespace`,
-	Args:         cobra.ExactArgs(1),
+	Use:          "patch",
+	Short:        "Patch the cluster policy defaults",
+	Long:         `Patch the cluster policy defaults`,
+	Args:         cobra.NoArgs,
 	RunE:         exec,
 	SilenceUsage: true,
 }
 
 func init() {
-	fields.AddPatchFlags(Cmd)
+	fields.AddPolicyFlags(Cmd)
 }
 
-func exec(cmd *cobra.Command, args []string) error {
+func exec(cmd *cobra.Command, _ []string) error {
 	outputFormat, err := cmd.Flags().GetString("output")
 	if err != nil {
 		return err
@@ -51,29 +50,24 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	name := args[0]
-	if err := validation.ValidateNamespace(name); err != nil {
-		return err
-	}
-
-	replicationFactorChanged := cmd.Flags().Changed(option.ReplicationFactorFlagName)
-	notificationsChanged := cmd.Flags().Changed(option.NotificationsFlagName)
-	if !replicationFactorChanged && !notificationsChanged {
+	policy, changed := fields.PatchPolicy(cmd)
+	if !changed {
 		return errors.New("must specify at least one field to patch")
 	}
-	if replicationFactorChanged && fields.ReplicationFactor == 0 {
-		return errors.New("namespace replication factor must be greater than 0")
+	if policy.InitialShardCount != nil && policy.GetInitialShardCount() == 0 {
+		return errors.New("initial shard count must be greater than 0")
 	}
-
-	namespace := &proto.Namespace{
-		Name:   name,
-		Policy: &proto.HierarchyPolicies{},
+	if policy.ReplicationFactor != nil && policy.GetReplicationFactor() == 0 {
+		return errors.New("replication factor must be greater than 0")
 	}
-	if replicationFactorChanged {
-		namespace.Policy.SetReplicationFactor(fields.ReplicationFactor)
-	}
-	if notificationsChanged {
-		namespace.Policy.SetNotificationsEnabled(fields.Notifications)
+	if policy.KeySorting != nil {
+		keySorting, err := proto.ParseKeySortingType(policy.GetKeySorting())
+		if err != nil {
+			return err
+		}
+		if keySorting == proto.KeySortingType_UNKNOWN {
+			return errors.New(`key sorting must be one of "natural" or "hierarchical"`)
+		}
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
@@ -84,10 +78,10 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	patched, err := client.PatchNamespace(namespace)
+	patched, err := client.PatchClusterPolicy(policy)
 	if err != nil {
 		return err
 	}
 
-	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, patched)
+	return policyoutput.WritePolicy(cmd.OutOrStdout(), outputFormat, patched)
 }

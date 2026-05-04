@@ -140,6 +140,60 @@ servers:
 	require.Equal(t, KeySortingType_UNKNOWN, keySorting)
 }
 
+func TestResolveHierarchyPoliciesPrefersNamespacePolicy(t *testing.T) {
+	clusterPolicy := &HierarchyPolicies{}
+	clusterPolicy.SetInitialShardCount(1)
+	clusterPolicy.SetReplicationFactor(2)
+	clusterPolicy.SetNotificationsEnabled(true)
+	clusterPolicy.SetKeySorting("hierarchical")
+
+	namespacePolicy := &HierarchyPolicies{}
+	namespacePolicy.SetReplicationFactor(3)
+	namespacePolicy.SetNotificationsEnabled(false)
+	namespace := &Namespace{
+		Name:   "ns-1",
+		Policy: namespacePolicy,
+	}
+
+	effective := ResolveHierarchyPolicies(clusterPolicy, namespace)
+	require.EqualValues(t, 1, effective.GetInitialShardCount())
+	require.EqualValues(t, 3, effective.GetReplicationFactor())
+	require.False(t, effective.GetNotificationsEnabled())
+	require.Equal(t, "hierarchical", effective.GetKeySorting())
+}
+
+func TestResolveHierarchyPoliciesFallsBackToLegacyNamespaceFields(t *testing.T) {
+	namespace := &Namespace{
+		Name:              "ns-1",
+		InitialShardCount: 4,
+		ReplicationFactor: 3,
+		KeySorting:        "natural",
+	}
+
+	effective := ResolveHierarchyPolicies(NewDefaultHierarchyPolicies(), namespace)
+	require.EqualValues(t, 4, effective.GetInitialShardCount())
+	require.EqualValues(t, 3, effective.GetReplicationFactor())
+	require.Equal(t, "natural", effective.GetKeySorting())
+}
+
+func TestMaterializeNamespacePolicyMirrorsLegacyFields(t *testing.T) {
+	clusterPolicy := &HierarchyPolicies{}
+	clusterPolicy.SetInitialShardCount(4)
+	clusterPolicy.SetReplicationFactor(3)
+	clusterPolicy.SetNotificationsEnabled(false)
+	clusterPolicy.SetKeySorting("natural")
+
+	materialized := MaterializeNamespacePolicy(clusterPolicy, &Namespace{Name: "ns-1"})
+	require.Equal(t, "ns-1", materialized.GetName())
+	require.EqualValues(t, 4, materialized.GetInitialShardCount())
+	require.EqualValues(t, 3, materialized.GetReplicationFactor())
+	require.False(t, materialized.NotificationsEnabledOrDefault())
+	require.Equal(t, "natural", materialized.GetKeySorting())
+	require.Equal(t, materialized.GetPolicy().GetInitialShardCount(), materialized.GetInitialShardCount())
+	require.Equal(t, materialized.GetPolicy().GetReplicationFactor(), materialized.GetReplicationFactor())
+	require.Equal(t, materialized.GetPolicy().GetKeySorting(), materialized.GetKeySorting())
+}
+
 func TestValidateAllowsEmptyConfig(t *testing.T) {
 	config := &ClusterConfiguration{}
 	require.NoError(t, config.Validate())

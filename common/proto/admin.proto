@@ -37,6 +37,8 @@ service OxiaAdmin {
   rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse);
   rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+  rpc GetClusterPolicy(GetClusterPolicyRequest) returns (GetClusterPolicyResponse);
+  rpc PatchClusterPolicy(PatchClusterPolicyRequest) returns (PatchClusterPolicyResponse);
 
   /**
    * Triggers a shard split. The specified shard is split into two child
@@ -122,6 +124,21 @@ message GetNamespaceRequest {
 
 message GetNamespaceResponse {
   Namespace namespace = 1;
+}
+
+message GetClusterPolicyRequest {
+}
+
+message GetClusterPolicyResponse {
+  HierarchyPolicies policy = 1;
+}
+
+message PatchClusterPolicyRequest {
+  HierarchyPolicies policy = 1;
+}
+
+message PatchClusterPolicyResponse {
+  HierarchyPolicies policy = 1;
 }
 
 message SplitShardRequest {

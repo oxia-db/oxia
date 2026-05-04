@@ -36,17 +36,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OxiaAdmin_ListDataServers_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/ListDataServers"
-	OxiaAdmin_GetDataServer_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/GetDataServer"
-	OxiaAdmin_CreateDataServer_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/CreateDataServer"
-	OxiaAdmin_PatchDataServer_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/PatchDataServer"
-	OxiaAdmin_DeleteDataServer_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/DeleteDataServer"
-	OxiaAdmin_CreateNamespace_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/CreateNamespace"
-	OxiaAdmin_PatchNamespace_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/PatchNamespace"
-	OxiaAdmin_DeleteNamespace_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/DeleteNamespace"
-	OxiaAdmin_GetNamespace_FullMethodName     = "/io.oxia.proto.v1.OxiaAdmin/GetNamespace"
-	OxiaAdmin_ListNamespaces_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/ListNamespaces"
-	OxiaAdmin_SplitShard_FullMethodName       = "/io.oxia.proto.v1.OxiaAdmin/SplitShard"
+	OxiaAdmin_ListDataServers_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/ListDataServers"
+	OxiaAdmin_GetDataServer_FullMethodName      = "/io.oxia.proto.v1.OxiaAdmin/GetDataServer"
+	OxiaAdmin_CreateDataServer_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/CreateDataServer"
+	OxiaAdmin_PatchDataServer_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/PatchDataServer"
+	OxiaAdmin_DeleteDataServer_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/DeleteDataServer"
+	OxiaAdmin_CreateNamespace_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/CreateNamespace"
+	OxiaAdmin_PatchNamespace_FullMethodName     = "/io.oxia.proto.v1.OxiaAdmin/PatchNamespace"
+	OxiaAdmin_DeleteNamespace_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/DeleteNamespace"
+	OxiaAdmin_GetNamespace_FullMethodName       = "/io.oxia.proto.v1.OxiaAdmin/GetNamespace"
+	OxiaAdmin_ListNamespaces_FullMethodName     = "/io.oxia.proto.v1.OxiaAdmin/ListNamespaces"
+	OxiaAdmin_GetClusterPolicy_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/GetClusterPolicy"
+	OxiaAdmin_PatchClusterPolicy_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/PatchClusterPolicy"
+	OxiaAdmin_SplitShard_FullMethodName         = "/io.oxia.proto.v1.OxiaAdmin/SplitShard"
 )
 
 // OxiaAdminClient is the client API for OxiaAdmin service.
@@ -63,6 +65,8 @@ type OxiaAdminClient interface {
 	DeleteNamespace(ctx context.Context, in *DeleteNamespaceRequest, opts ...grpc.CallOption) (*DeleteNamespaceResponse, error)
 	GetNamespace(ctx context.Context, in *GetNamespaceRequest, opts ...grpc.CallOption) (*GetNamespaceResponse, error)
 	ListNamespaces(ctx context.Context, in *ListNamespacesRequest, opts ...grpc.CallOption) (*ListNamespacesResponse, error)
+	GetClusterPolicy(ctx context.Context, in *GetClusterPolicyRequest, opts ...grpc.CallOption) (*GetClusterPolicyResponse, error)
+	PatchClusterPolicy(ctx context.Context, in *PatchClusterPolicyRequest, opts ...grpc.CallOption) (*PatchClusterPolicyResponse, error)
 	// *
 	// Triggers a shard split. The specified shard is split into two child
 	// shards at the given split point (or midpoint if not specified).
@@ -177,6 +181,26 @@ func (c *oxiaAdminClient) ListNamespaces(ctx context.Context, in *ListNamespaces
 	return out, nil
 }
 
+func (c *oxiaAdminClient) GetClusterPolicy(ctx context.Context, in *GetClusterPolicyRequest, opts ...grpc.CallOption) (*GetClusterPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetClusterPolicyResponse)
+	err := c.cc.Invoke(ctx, OxiaAdmin_GetClusterPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *oxiaAdminClient) PatchClusterPolicy(ctx context.Context, in *PatchClusterPolicyRequest, opts ...grpc.CallOption) (*PatchClusterPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PatchClusterPolicyResponse)
+	err := c.cc.Invoke(ctx, OxiaAdmin_PatchClusterPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *oxiaAdminClient) SplitShard(ctx context.Context, in *SplitShardRequest, opts ...grpc.CallOption) (*SplitShardResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SplitShardResponse)
@@ -201,6 +225,8 @@ type OxiaAdminServer interface {
 	DeleteNamespace(context.Context, *DeleteNamespaceRequest) (*DeleteNamespaceResponse, error)
 	GetNamespace(context.Context, *GetNamespaceRequest) (*GetNamespaceResponse, error)
 	ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error)
+	GetClusterPolicy(context.Context, *GetClusterPolicyRequest) (*GetClusterPolicyResponse, error)
+	PatchClusterPolicy(context.Context, *PatchClusterPolicyRequest) (*PatchClusterPolicyResponse, error)
 	// *
 	// Triggers a shard split. The specified shard is split into two child
 	// shards at the given split point (or midpoint if not specified).
@@ -244,6 +270,12 @@ func (UnimplementedOxiaAdminServer) GetNamespace(context.Context, *GetNamespaceR
 }
 func (UnimplementedOxiaAdminServer) ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNamespaces not implemented")
+}
+func (UnimplementedOxiaAdminServer) GetClusterPolicy(context.Context, *GetClusterPolicyRequest) (*GetClusterPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetClusterPolicy not implemented")
+}
+func (UnimplementedOxiaAdminServer) PatchClusterPolicy(context.Context, *PatchClusterPolicyRequest) (*PatchClusterPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PatchClusterPolicy not implemented")
 }
 func (UnimplementedOxiaAdminServer) SplitShard(context.Context, *SplitShardRequest) (*SplitShardResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SplitShard not implemented")
@@ -449,6 +481,42 @@ func _OxiaAdmin_ListNamespaces_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OxiaAdmin_GetClusterPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetClusterPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaAdminServer).GetClusterPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaAdmin_GetClusterPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaAdminServer).GetClusterPolicy(ctx, req.(*GetClusterPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OxiaAdmin_PatchClusterPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PatchClusterPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaAdminServer).PatchClusterPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaAdmin_PatchClusterPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaAdminServer).PatchClusterPolicy(ctx, req.(*PatchClusterPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OxiaAdmin_SplitShard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SplitShardRequest)
 	if err := dec(in); err != nil {
@@ -513,6 +581,14 @@ var OxiaAdmin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListNamespaces",
 			Handler:    _OxiaAdmin_ListNamespaces_Handler,
+		},
+		{
+			MethodName: "GetClusterPolicy",
+			Handler:    _OxiaAdmin_GetClusterPolicy_Handler,
+		},
+		{
+			MethodName: "PatchClusterPolicy",
+			Handler:    _OxiaAdmin_PatchClusterPolicy_Handler,
 		},
 		{
 			MethodName: "SplitShard",

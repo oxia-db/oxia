@@ -34,6 +34,8 @@ type AdminClient interface {
 	DeleteNamespace(namespace string) (*proto.Namespace, error)
 	ListNamespaces() ([]*proto.Namespace, error)
 	GetNamespace(namespace string) (*proto.Namespace, error)
+	GetClusterPolicy() (*proto.HierarchyPolicies, error)
+	PatchClusterPolicy(policy *proto.HierarchyPolicies) (*proto.HierarchyPolicies, error)
 
 	SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
 }

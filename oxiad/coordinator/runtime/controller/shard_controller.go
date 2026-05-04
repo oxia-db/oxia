@@ -358,11 +358,10 @@ func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsem
 		EnableNotifications: true,
 		KeySorting:          proto.KeySortingType_UNKNOWN,
 	}
-	borrowedNamespaceConfig, exist := s.metadataStore.GetNamespace(s.namespace)
+	policy, exist := s.metadataStore.GetNamespaceEffectivePolicy(s.namespace)
 	if exist {
-		nsConfig := borrowedNamespaceConfig.UnsafeBorrow()
-		termOptions.EnableNotifications = nsConfig.NotificationsEnabledOrDefault()
-		termOptions.KeySorting, _ = nsConfig.GetKeySortingType()
+		termOptions.EnableNotifications = policy.GetNotificationsEnabled()
+		termOptions.KeySorting, _ = policy.GetKeySortingType()
 	}
 	s.currentElection = NewShardElection(s.ctx, s.logger, s.eventListener,
 		s.metadataStore, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,

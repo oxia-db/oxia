@@ -167,9 +167,13 @@ func (management *managementServer) DeleteDataServer(_ context.Context, req *pro
 
 func (management *managementServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
 	cnf := management.metadata.GetConfig().UnsafeBorrow()
+	namespaces := make([]*proto.Namespace, 0, len(cnf.GetNamespaces()))
+	for _, namespace := range cnf.GetNamespaces() {
+		namespaces = append(namespaces, cnf.MaterializeNamespace(namespace))
+	}
 
 	return &proto.ListNamespacesResponse{
-		Namespaces: cnf.GetNamespaces(),
+		Namespaces: namespaces,
 	}, nil
 }
 
@@ -180,13 +184,14 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 	if err := validation.ValidateNamespace(req.Namespace.GetName()); err != nil {
 		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
 	}
-	if req.Namespace.GetInitialShardCount() == 0 {
+	effectivePolicy := management.metadata.GetConfig().UnsafeBorrow().GetNamespaceEffectivePolicy(req.Namespace)
+	if effectivePolicy.GetInitialShardCount() == 0 {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace initial shard count must be greater than 0")
 	}
-	if req.Namespace.GetReplicationFactor() == 0 {
+	if effectivePolicy.GetReplicationFactor() == 0 {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace replication factor must be greater than 0")
 	}
-	keySorting, err := req.Namespace.GetKeySortingType()
+	keySorting, err := effectivePolicy.GetKeySortingType()
 	if err != nil {
 		return nil, grpcstatus.Errorf(codes.InvalidArgument, "namespace key sorting is invalid: %v", err)
 	}
@@ -209,7 +214,7 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 	}
 
 	return &proto.CreateNamespaceResponse{
-		Namespace: req.Namespace,
+		Namespace: management.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(req.Namespace),
 	}, nil
 }
 
@@ -220,13 +225,26 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	if err := validation.ValidateNamespace(req.Namespace.GetName()); err != nil {
 		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
 	}
-	if req.Namespace.GetInitialShardCount() != 0 {
+	if req.Namespace.HasLegacyInitialShardCount() {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace initial shard count cannot be patched")
 	}
-	if req.Namespace.GetKeySorting() != "" {
+	if req.Namespace.HasLegacyKeySorting() {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace key sorting cannot be patched")
 	}
-
+	if policy := req.Namespace.GetPolicy(); policy != nil {
+		if policy.InitialShardCount != nil {
+			return nil, grpcstatus.Error(codes.InvalidArgument, "namespace initial shard count cannot be patched")
+		}
+		if policy.KeySorting != nil {
+			return nil, grpcstatus.Error(codes.InvalidArgument, "namespace key sorting cannot be patched")
+		}
+		if policy.ReplicationFactor != nil && policy.GetReplicationFactor() == 0 {
+			return nil, grpcstatus.Error(codes.InvalidArgument, "namespace replication factor must be greater than 0")
+		}
+		if err := proto.ValidateHierarchyPolicies(policy); err != nil {
+			return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
+		}
+	}
 	namespace, err := management.metadata.PatchNamespace(req.Namespace)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrNotFound) {
@@ -242,7 +260,7 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	}
 
 	return &proto.PatchNamespaceResponse{
-		Namespace: namespace,
+		Namespace: management.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(namespace),
 	}, nil
 }
 
@@ -266,7 +284,7 @@ func (management *managementServer) DeleteNamespace(_ context.Context, req *prot
 	}
 
 	return &proto.DeleteNamespaceResponse{
-		Namespace: namespace,
+		Namespace: management.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(namespace),
 	}, nil
 }
 
@@ -281,7 +299,37 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 	}
 
 	return &proto.GetNamespaceResponse{
-		Namespace: namespace.UnsafeBorrow(),
+		Namespace: management.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(namespace.UnsafeBorrow()),
+	}, nil
+}
+
+func (management *managementServer) GetClusterPolicy(context.Context, *proto.GetClusterPolicyRequest) (*proto.GetClusterPolicyResponse, error) {
+	return &proto.GetClusterPolicyResponse{
+		Policy: management.metadata.GetClusterPolicy(),
+	}, nil
+}
+
+func (management *managementServer) PatchClusterPolicy(_ context.Context, req *proto.PatchClusterPolicyRequest) (*proto.PatchClusterPolicyResponse, error) {
+	if req == nil || req.Policy == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "cluster policy must not be nil")
+	}
+	if err := proto.ValidateHierarchyPolicies(req.Policy); err != nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
+	}
+
+	policy, err := management.metadata.PatchClusterPolicy(req.Policy)
+	if err != nil {
+		if errors.Is(err, metadatacommon.ErrBadVersion) {
+			return nil, grpcstatus.Error(codes.Aborted, "failed to patch cluster policy due to concurrent config update")
+		}
+		if errors.Is(err, metadatacommon.ErrFailedPrecondition) {
+			return nil, grpcstatus.Errorf(codes.FailedPrecondition, "failed to patch cluster policy: %v", err)
+		}
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to patch cluster policy: %v", err)
+	}
+
+	return &proto.PatchClusterPolicyResponse{
+		Policy: policy,
 	}, nil
 }
 

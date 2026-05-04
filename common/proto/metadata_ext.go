@@ -28,6 +28,10 @@ const (
 	defaultLoadBalancerQuarantineTime   = 5 * time.Minute
 	defaultLoadBalancerScheduleString   = "30s"
 	defaultLoadBalancerQuarantineString = "5m"
+	defaultInitialShardCount            = uint32(1)
+	defaultReplicationFactor            = uint32(1)
+	defaultNotificationsEnabled         = true
+	defaultKeySorting                   = "hierarchical"
 
 	AntiAffinityModeUnknown = ""
 	AntiAffinityModeStrict  = "strict"
@@ -105,8 +109,14 @@ func (sm *SplitMetadata) GetPhaseOrDefault() string {
 }
 
 func (ns *Namespace) NotificationsEnabledOrDefault() bool {
-	if ns == nil || ns.NotificationsEnabled == nil {
-		return true
+	if ns == nil {
+		return defaultNotificationsEnabled
+	}
+	if policy := ns.GetPolicy(); policy != nil && policy.NotificationsEnabled != nil {
+		return policy.GetNotificationsEnabled()
+	}
+	if ns.NotificationsEnabled == nil {
+		return defaultNotificationsEnabled
 	}
 	return ns.GetNotificationsEnabled()
 }
@@ -115,6 +125,9 @@ func (ns *Namespace) GetKeySortingType() (KeySortingType, error) {
 	if ns == nil {
 		return KeySortingType_UNKNOWN, nil
 	}
+	if policy := ns.GetPolicy(); policy != nil && policy.KeySorting != nil {
+		return ParseKeySortingType(policy.GetKeySorting())
+	}
 	return ParseKeySortingType(ns.GetKeySorting())
 }
 
@@ -122,7 +135,218 @@ func (ns *Namespace) SetKeySortingType(value KeySortingType) {
 	if ns == nil {
 		return
 	}
-	ns.KeySorting = formatKeySortingType(value)
+	keySorting := formatKeySortingType(value)
+	if ns.Policy == nil {
+		ns.Policy = &HierarchyPolicies{}
+	}
+	ns.Policy.SetKeySorting(keySorting)
+	ns.KeySorting = keySorting
+}
+
+func NewDefaultHierarchyPolicies() *HierarchyPolicies {
+	policy := &HierarchyPolicies{}
+	policy.SetInitialShardCount(defaultInitialShardCount)
+	policy.SetReplicationFactor(defaultReplicationFactor)
+	policy.SetNotificationsEnabled(defaultNotificationsEnabled)
+	policy.SetKeySorting(defaultKeySorting)
+	return policy
+}
+
+func (p *HierarchyPolicies) SetInitialShardCount(value uint32) {
+	if p == nil {
+		return
+	}
+	p.InitialShardCount = &value
+}
+
+func (p *HierarchyPolicies) SetReplicationFactor(value uint32) {
+	if p == nil {
+		return
+	}
+	p.ReplicationFactor = &value
+}
+
+func (p *HierarchyPolicies) SetNotificationsEnabled(value bool) {
+	if p == nil {
+		return
+	}
+	p.NotificationsEnabled = &value
+}
+
+func (p *HierarchyPolicies) SetKeySorting(value string) {
+	if p == nil {
+		return
+	}
+	p.KeySorting = &value
+}
+
+func (p *HierarchyPolicies) GetKeySortingType() (KeySortingType, error) {
+	if p == nil {
+		return KeySortingType_UNKNOWN, nil
+	}
+	return ParseKeySortingType(p.GetKeySorting())
+}
+
+func CloneHierarchyPolicies(policy *HierarchyPolicies) *HierarchyPolicies {
+	if policy == nil {
+		return nil
+	}
+
+	cloned := &HierarchyPolicies{}
+	if len(policy.GetAntiAffinities()) > 0 {
+		cloned.AntiAffinities = make([]*AntiAffinity, 0, len(policy.GetAntiAffinities()))
+		for _, antiAffinity := range policy.GetAntiAffinities() {
+			if antiAffinity == nil {
+				cloned.AntiAffinities = append(cloned.AntiAffinities, nil)
+				continue
+			}
+			cloned.AntiAffinities = append(cloned.AntiAffinities, &AntiAffinity{
+				Labels: append([]string(nil), antiAffinity.GetLabels()...),
+				Mode:   antiAffinity.GetMode(),
+			})
+		}
+	}
+	if policy.InitialShardCount != nil {
+		cloned.SetInitialShardCount(policy.GetInitialShardCount())
+	}
+	if policy.ReplicationFactor != nil {
+		cloned.SetReplicationFactor(policy.GetReplicationFactor())
+	}
+	if policy.NotificationsEnabled != nil {
+		cloned.SetNotificationsEnabled(policy.GetNotificationsEnabled())
+	}
+	if policy.KeySorting != nil {
+		cloned.SetKeySorting(policy.GetKeySorting())
+	}
+	return cloned
+}
+
+func ResolveHierarchyPolicies(clusterPolicy *HierarchyPolicies, namespace *Namespace) *HierarchyPolicies {
+	effective := NewDefaultHierarchyPolicies()
+	applyHierarchyPolicy(effective, clusterPolicy)
+
+	if namespace != nil {
+		applyLegacyNamespacePolicy(effective, namespace)
+		applyHierarchyPolicy(effective, namespace.GetPolicy())
+	}
+
+	return effective
+}
+
+func applyHierarchyPolicy(effective *HierarchyPolicies, policy *HierarchyPolicies) {
+	if policy == nil {
+		return
+	}
+	if len(policy.GetAntiAffinities()) > 0 {
+		effective.AntiAffinities = CloneHierarchyPolicies(policy).GetAntiAffinities()
+	}
+	if policy.InitialShardCount != nil {
+		effective.SetInitialShardCount(policy.GetInitialShardCount())
+	}
+	if policy.ReplicationFactor != nil {
+		effective.SetReplicationFactor(policy.GetReplicationFactor())
+	}
+	if policy.NotificationsEnabled != nil {
+		effective.SetNotificationsEnabled(policy.GetNotificationsEnabled())
+	}
+	if policy.KeySorting != nil {
+		effective.SetKeySorting(policy.GetKeySorting())
+	}
+}
+
+func applyLegacyNamespacePolicy(effective *HierarchyPolicies, namespace *Namespace) {
+	if namespace.GetInitialShardCount() != 0 {
+		effective.SetInitialShardCount(namespace.GetInitialShardCount())
+	}
+	if namespace.GetReplicationFactor() != 0 {
+		effective.SetReplicationFactor(namespace.GetReplicationFactor())
+	}
+	if namespace.NotificationsEnabled != nil {
+		effective.SetNotificationsEnabled(namespace.GetNotificationsEnabled())
+	}
+	if namespace.GetKeySorting() != "" {
+		effective.SetKeySorting(namespace.GetKeySorting())
+	}
+}
+
+func MaterializeNamespacePolicy(clusterPolicy *HierarchyPolicies, namespace *Namespace) *Namespace {
+	if namespace == nil {
+		return nil
+	}
+
+	effectivePolicy := ResolveHierarchyPolicies(clusterPolicy, namespace)
+	materialized := &Namespace{
+		Name:              namespace.GetName(),
+		InitialShardCount: effectivePolicy.GetInitialShardCount(),
+		ReplicationFactor: effectivePolicy.GetReplicationFactor(),
+		KeySorting:        effectivePolicy.GetKeySorting(),
+		Policy:            effectivePolicy,
+	}
+	notificationsEnabled := effectivePolicy.GetNotificationsEnabled()
+	materialized.NotificationsEnabled = &notificationsEnabled
+	return materialized
+}
+
+func (cc *ClusterConfiguration) GetNamespaceEffectivePolicy(namespace *Namespace) *HierarchyPolicies {
+	if cc == nil {
+		return ResolveHierarchyPolicies(nil, namespace)
+	}
+	return ResolveHierarchyPolicies(cc.GetPolicy(), namespace)
+}
+
+func (cc *ClusterConfiguration) GetNamespaceEffectivePolicyByName(name string) (*HierarchyPolicies, bool) {
+	if cc == nil {
+		return nil, false
+	}
+	for _, namespace := range cc.GetNamespaces() {
+		if namespace.GetName() == name {
+			return cc.GetNamespaceEffectivePolicy(namespace), true
+		}
+	}
+	return nil, false
+}
+
+func (cc *ClusterConfiguration) MaterializeNamespace(namespace *Namespace) *Namespace {
+	if cc == nil {
+		return MaterializeNamespacePolicy(nil, namespace)
+	}
+	return MaterializeNamespacePolicy(cc.GetPolicy(), namespace)
+}
+
+func (ns *Namespace) HasLegacyInitialShardCount() bool {
+	return ns != nil && ns.GetInitialShardCount() != 0
+}
+
+func (ns *Namespace) HasLegacyKeySorting() bool {
+	return ns != nil && ns.GetKeySorting() != ""
+}
+
+func (ns *Namespace) LegacyReplicationFactor() uint32 {
+	if ns == nil {
+		return 0
+	}
+	return ns.GetReplicationFactor()
+}
+
+func (ns *Namespace) LegacyNotificationsEnabled() (value bool, found bool) {
+	if ns == nil || ns.NotificationsEnabled == nil {
+		return false, false
+	}
+	return ns.GetNotificationsEnabled(), true
+}
+
+func (ns *Namespace) SetLegacyReplicationFactor(value uint32) {
+	if ns == nil {
+		return
+	}
+	ns.ReplicationFactor = value
+}
+
+func (ns *Namespace) SetLegacyNotificationsEnabled(value bool) {
+	if ns == nil {
+		return
+	}
+	ns.NotificationsEnabled = &value
 }
 
 func ParseKeySortingType(value string) (KeySortingType, error) {
@@ -201,28 +425,41 @@ func (cc *ClusterConfiguration) Validate() error {
 		return errors.New("cluster configuration: must not be nil")
 	}
 
+	if err := validateHierarchyPolicies("cluster configuration: policy", cc.GetPolicy()); err != nil {
+		return err
+	}
+
 	for _, ns := range cc.GetNamespaces() {
 		if err := validation.ValidateNamespace(ns.GetName()); err != nil {
 			return fmt.Errorf("cluster configuration: %w", err)
 		}
 
-		if ns.GetReplicationFactor() < 1 {
+		if err := validateHierarchyPolicies(fmt.Sprintf("cluster configuration: namespace %q policy", ns.GetName()), ns.GetPolicy()); err != nil {
+			return err
+		}
+
+		effectivePolicy := cc.GetNamespaceEffectivePolicy(ns)
+		if effectivePolicy.GetReplicationFactor() < 1 {
 			return fmt.Errorf("cluster configuration: namespace %q has invalid replicationFactor=%d, must be >= 1",
-				ns.GetName(), ns.GetReplicationFactor())
+				ns.GetName(), effectivePolicy.GetReplicationFactor())
 		}
 
-		if ns.GetInitialShardCount() < 1 {
+		if effectivePolicy.GetInitialShardCount() < 1 {
 			return fmt.Errorf("cluster configuration: namespace %q has invalid initialShardCount=%d, must be >= 1",
-				ns.GetName(), ns.GetInitialShardCount())
+				ns.GetName(), effectivePolicy.GetInitialShardCount())
 		}
 
-		if _, err := ns.GetKeySortingType(); err != nil {
+		keySorting, err := effectivePolicy.GetKeySortingType()
+		if err != nil {
 			return fmt.Errorf("cluster configuration: namespace %q has invalid keySorting: %w", ns.GetName(), err)
 		}
+		if keySorting == KeySortingType_UNKNOWN {
+			return fmt.Errorf(`cluster configuration: namespace %q has invalid keySorting: must be one of "natural" or "hierarchical"`, ns.GetName())
+		}
 
-		if ns.GetReplicationFactor() > uint32(len(cc.GetServers())) {
+		if effectivePolicy.GetReplicationFactor() > uint32(len(cc.GetServers())) {
 			return fmt.Errorf("cluster configuration: namespace %q has replicationFactor=%d but only %d servers are configured",
-				ns.GetName(), ns.GetReplicationFactor(), len(cc.GetServers()))
+				ns.GetName(), effectivePolicy.GetReplicationFactor(), len(cc.GetServers()))
 		}
 	}
 
@@ -235,6 +472,37 @@ func (cc *ClusterConfiguration) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func ValidateHierarchyPolicies(policy *HierarchyPolicies) error {
+	return validateHierarchyPolicies("hierarchy policy", policy)
+}
+
+func validateHierarchyPolicies(prefix string, policy *HierarchyPolicies) error {
+	if policy == nil {
+		return nil
+	}
+	if policy.InitialShardCount != nil && policy.GetInitialShardCount() < 1 {
+		return fmt.Errorf("%s has invalid initialShardCount=%d, must be >= 1", prefix, policy.GetInitialShardCount())
+	}
+	if policy.ReplicationFactor != nil && policy.GetReplicationFactor() < 1 {
+		return fmt.Errorf("%s has invalid replicationFactor=%d, must be >= 1", prefix, policy.GetReplicationFactor())
+	}
+	if policy.KeySorting != nil {
+		keySorting, err := policy.GetKeySortingType()
+		if err != nil {
+			return fmt.Errorf("%s has invalid keySorting: %w", prefix, err)
+		}
+		if keySorting == KeySortingType_UNKNOWN {
+			return fmt.Errorf(`%s has invalid keySorting: must be one of "natural" or "hierarchical"`, prefix)
+		}
+	}
+	for i, antiAffinity := range policy.GetAntiAffinities() {
+		if antiAffinity.GetModeOrDefault() == AntiAffinityModeUnknown {
+			return fmt.Errorf("%s antiAffinities[%d] has invalid mode %q", prefix, i, antiAffinity.GetMode())
+		}
+	}
 	return nil
 }
 

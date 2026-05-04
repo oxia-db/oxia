@@ -66,10 +66,11 @@ func Test_cmd_getNamespace(t *testing.T) {
 
 	var namespace proto.Namespace
 	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
+	policy := proto.ResolveHierarchyPolicies(nil, &namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.Equal(t, proto.KeySortingType_NATURAL.String(), policy.GetKeySorting())
 }
 
 func Test_cmd_getNamespaces(t *testing.T) {

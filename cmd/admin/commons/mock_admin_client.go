@@ -117,6 +117,22 @@ func (m *MockAdminClient) GetNamespace(namespace string) (*proto.Namespace, erro
 	return nil, errors.New("namespace not found")
 }
 
+func (m *MockAdminClient) GetClusterPolicy() (*proto.HierarchyPolicies, error) {
+	args := m.MethodCalled("GetClusterPolicy")
+	if v, ok := args.Get(0).(*proto.HierarchyPolicies); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("cluster policy not found")
+}
+
+func (m *MockAdminClient) PatchClusterPolicy(policy *proto.HierarchyPolicies) (*proto.HierarchyPolicies, error) {
+	args := m.MethodCalled("PatchClusterPolicy", policy)
+	if v, ok := args.Get(0).(*proto.HierarchyPolicies); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("failed to patch cluster policy")
+}
+
 func (m *MockAdminClient) SplitShard(namespace string, shardId int64, splitPoint *uint32) *oxia.SplitShardResult {
 	args := m.MethodCalled("SplitShard", namespace, shardId, splitPoint)
 	if v, ok := args.Get(0).(*oxia.SplitShardResult); ok {

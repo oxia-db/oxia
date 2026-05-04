@@ -306,7 +306,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 			if !ok {
 				return false
 			}
-			if len(namespaceStatus.Shards) != int(namespace.InitialShardCount) {
+			if len(namespaceStatus.Shards) != int(config.GetNamespaceEffectivePolicy(namespace).GetInitialShardCount()) {
 				return false
 			}
 			for _, shard := range namespaceStatus.Shards {

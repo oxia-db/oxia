@@ -117,6 +117,14 @@ func (m *mockMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalanc
 	})
 }
 
+func (*mockMetadata) GetClusterPolicy() *proto.HierarchyPolicies {
+	return proto.NewDefaultHierarchyPolicies()
+}
+
+func (*mockMetadata) PatchClusterPolicy(*proto.HierarchyPolicies) (*proto.HierarchyPolicies, error) {
+	return proto.NewDefaultHierarchyPolicies(), nil
+}
+
 func (*mockMetadata) CreateDataServer(*proto.DataServer) error {
 	return nil
 }
@@ -158,6 +166,14 @@ func (m *mockMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*pr
 		return commonobject.Borrowed[*proto.Namespace]{}, false
 	}
 	return commonobject.Borrow(nc), true
+}
+
+func (m *mockMetadata) GetNamespaceEffectivePolicy(namespace string) (*proto.HierarchyPolicies, bool) {
+	nc, ok := m.nsConfigs[namespace]
+	if !ok {
+		return nil, false
+	}
+	return proto.ResolveHierarchyPolicies(nil, nc), true
 }
 
 func (m *mockMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.DataServer], bool) {

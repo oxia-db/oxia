@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/cmd/admin/namespace/option"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -58,11 +57,12 @@ func Test_cmd_createNamespace(t *testing.T) {
 
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("CreateNamespace", mock.MatchedBy(func(namespace *proto.Namespace) bool {
+		policy := namespace.GetPolicy()
 		return namespace.GetName() == "ns-1" &&
-			namespace.GetInitialShardCount() == 4 &&
-			namespace.GetReplicationFactor() == 3 &&
-			namespace.GetNotificationsEnabled() == notificationsEnabled &&
-			namespace.GetKeySorting() == "natural"
+			policy.GetInitialShardCount() == 4 &&
+			policy.GetReplicationFactor() == 3 &&
+			policy.GetNotificationsEnabled() == notificationsEnabled &&
+			policy.GetKeySorting() == "natural"
 	})).Return(expected, nil)
 
 	cmd := &cobra.Command{
@@ -74,19 +74,18 @@ func Test_cmd_createNamespace(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3",
 		"--notifications=false", "--key-sorting", "natural", "-o", "json")
 
 	require.NoError(t, err)
 	var namespace proto.Namespace
 	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
+	policy := proto.ResolveHierarchyPolicies(nil, &namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.False(t, namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.False(t, policy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", policy.GetKeySorting())
 }
 
 func Test_cmd_createNamespace_DefaultTable(t *testing.T) {
@@ -110,8 +109,6 @@ func Test_cmd_createNamespace_DefaultTable(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3")
 
 	require.NoError(t, err)
@@ -145,9 +142,7 @@ func Test_cmd_createNamespace_Name(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
-	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3", "-o", "name")
+	out, err := runCmd(cmd, "ns-1", "-o", "name")
 
 	require.NoError(t, err)
 	assert.Equal(t, "namespace/ns-1", out)
@@ -166,8 +161,6 @@ func Test_cmd_createNamespace_RejectsInvalidName(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "../ns", "--initial-shards", "4", "--replication-factor", "3")
 
 	require.Error(t, err)
@@ -188,8 +181,6 @@ func Test_cmd_createNamespace_RejectsInvalidKeySorting(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3", "--key-sorting", "unknown")
 
 	require.Error(t, err)
