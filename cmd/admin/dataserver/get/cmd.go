@@ -31,17 +31,6 @@ var Cmd = &cobra.Command{
 	SilenceUsage: true,
 }
 
-func newCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:          Cmd.Use,
-		Short:        Cmd.Short,
-		Long:         Cmd.Long,
-		Args:         Cmd.Args,
-		RunE:         Cmd.RunE,
-		SilenceUsage: Cmd.SilenceUsage,
-	}
-}
-
 func exec(cmd *cobra.Command, args []string) error {
 	outputFormat, err := cmd.Flags().GetString("output")
 	if err != nil {

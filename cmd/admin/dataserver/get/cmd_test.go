@@ -29,11 +29,11 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func runCmd(args ...string) (string, error) {
+func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	actual := new(bytes.Buffer)
 	root := &cobra.Command{Use: "admin"}
 	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
-	root.AddCommand(newCmd())
+	root.AddCommand(cmd)
 	root.SetOut(actual)
 	root.SetErr(actual)
 	root.SetArgs(append([]string{"get"}, args...))
@@ -57,7 +57,15 @@ func Test_cmd_getDataServer(t *testing.T) {
 		},
 	}, nil)
 
-	out, err := runCmd("-o", "json", serverName)
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd, "-o", "json", serverName)
 
 	assert.NoError(t, err)
 	var dataServer proto.DataServer
@@ -99,7 +107,15 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 		},
 	}, nil)
 
-	out, err := runCmd("-o", "json")
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd, "-o", "json")
 
 	assert.NoError(t, err)
 	var dataServers []proto.DataServer
@@ -135,7 +151,15 @@ func Test_cmd_getDataServer_YAML(t *testing.T) {
 		},
 	}, nil)
 
-	out, err := runCmd("-o", "yaml", serverName)
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd, "-o", "yaml", serverName)
 
 	assert.NoError(t, err)
 	var dataServer map[string]any
@@ -170,7 +194,15 @@ func Test_cmd_getDataServersIdentities_Name(t *testing.T) {
 		},
 	}, nil)
 
-	out, err := runCmd("-o", "name")
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd, "-o", "name")
 
 	assert.NoError(t, err)
 	assert.Equal(t, "dataserver/server-1\ndataserver/internal2", out)
@@ -179,7 +211,15 @@ func Test_cmd_getDataServersIdentities_Name(t *testing.T) {
 func Test_cmd_getDataServer_InvalidOutput(t *testing.T) {
 	commons.MockedAdminClient = nil
 
-	out, err := runCmd("-o", "xml")
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd, "-o", "xml")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), `unsupported output format "xml"`)
@@ -202,7 +242,15 @@ func Test_cmd_getDataServer_DefaultTable(t *testing.T) {
 		},
 	}, nil)
 
-	out, err := runCmd(serverName)
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd, serverName)
 
 	assert.NoError(t, err)
 	assert.Contains(t, out, "NAME")
@@ -238,7 +286,15 @@ func Test_cmd_getDataServersIdentities_DefaultTable(t *testing.T) {
 		},
 	}, nil)
 
-	out, err := runCmd()
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd)
 
 	assert.NoError(t, err)
 	assert.Contains(t, out, "NAME")

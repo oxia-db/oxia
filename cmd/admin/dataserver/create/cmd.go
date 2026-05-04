@@ -49,23 +49,6 @@ func init() {
 	_ = Cmd.MarkFlagRequired(internalFlagName)
 }
 
-func newCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:          Cmd.Use,
-		Short:        Cmd.Short,
-		Long:         Cmd.Long,
-		Args:         Cmd.Args,
-		RunE:         Cmd.RunE,
-		SilenceUsage: Cmd.SilenceUsage,
-	}
-	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
-	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
-	_ = cmd.MarkFlagRequired(publicFlagName)
-	_ = cmd.MarkFlagRequired(internalFlagName)
-	return cmd
-}
-
 func exec(cmd *cobra.Command, args []string) error {
 	var (
 		outputFormat    string

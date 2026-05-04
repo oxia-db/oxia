@@ -29,11 +29,10 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func runCmd(args ...string) (string, error) {
+func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	actual := new(bytes.Buffer)
 	root := &cobra.Command{Use: "admin"}
 	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
-	cmd := newCmd()
 	root.AddCommand(cmd)
 	root.SetOut(actual)
 	root.SetErr(actual)
@@ -66,7 +65,20 @@ func Test_cmd_createDataServer(t *testing.T) {
 			ds.GetMetadata().GetLabels()["rack"] == "rack-1"
 	})).Return(expected, nil)
 
-	out, err := runCmd(serverName, "--public", "public1", "--internal", "internal1", "--label", "rack=rack-1", "-o", "json")
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
+	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	_ = cmd.MarkFlagRequired(publicFlagName)
+	_ = cmd.MarkFlagRequired(internalFlagName)
+	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1", "--label", "rack=rack-1", "-o", "json")
 
 	assert.NoError(t, err)
 	var dataServer proto.DataServer
@@ -96,7 +108,20 @@ func Test_cmd_createDataServer_DefaultTable(t *testing.T) {
 		},
 	}, nil)
 
-	out, err := runCmd(serverName, "--public", "public1", "--internal", "internal1")
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
+	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	_ = cmd.MarkFlagRequired(publicFlagName)
+	_ = cmd.MarkFlagRequired(internalFlagName)
+	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1")
 
 	assert.NoError(t, err)
 	assert.Contains(t, out, "NAME")
@@ -122,7 +147,20 @@ func Test_cmd_createDataServer_Name(t *testing.T) {
 		},
 	}, nil)
 
-	out, err := runCmd(serverName, "--public", "public1", "--internal", "internal1", "-o", "name")
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
+	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	_ = cmd.MarkFlagRequired(publicFlagName)
+	_ = cmd.MarkFlagRequired(internalFlagName)
+	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1", "-o", "name")
 
 	assert.NoError(t, err)
 	assert.Equal(t, "dataserver/server-1", out)
@@ -132,7 +170,20 @@ func Test_cmd_createDataServer_InvalidLabel(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
-	out, err := runCmd("server-1", "--public", "public1", "--internal", "internal1", "--label", "rack")
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
+	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	_ = cmd.MarkFlagRequired(publicFlagName)
+	_ = cmd.MarkFlagRequired(internalFlagName)
+	out, err := runCmd(cmd, "server-1", "--public", "public1", "--internal", "internal1", "--label", "rack")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), `invalid entry "rack", expected key=value`)
@@ -143,7 +194,20 @@ func Test_cmd_createDataServer_RejectsEmptyName(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
-	out, err := runCmd("   ", "--public", "public1", "--internal", "internal1")
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
+	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	_ = cmd.MarkFlagRequired(publicFlagName)
+	_ = cmd.MarkFlagRequired(internalFlagName)
+	out, err := runCmd(cmd, "   ", "--public", "public1", "--internal", "internal1")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "data server name must not be empty")
