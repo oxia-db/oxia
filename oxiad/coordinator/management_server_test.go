@@ -197,6 +197,51 @@ func TestManagementServerGetDataServerRejectsEmptyLookup(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
 }
 
+func TestManagementServerGetNamespace(t *testing.T) {
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{{
+				Name:              "ns-1",
+				InitialShardCount: 4,
+				ReplicationFactor: 3,
+				KeySorting:        proto.KeySortingType_NATURAL.String(),
+			}},
+		}),
+		nil,
+	)
+
+	res, err := management.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: "ns-1"})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Namespace)
+	assert.Equal(t, "ns-1", res.Namespace.GetName())
+	assert.EqualValues(t, 4, res.Namespace.GetInitialShardCount())
+	assert.EqualValues(t, 3, res.Namespace.GetReplicationFactor())
+	assert.Equal(t, proto.KeySortingType_NATURAL.String(), res.Namespace.GetKeySorting())
+}
+
+func TestManagementServerGetNamespaceRejectsEmptyLookup(t *testing.T) {
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{}),
+		nil,
+	)
+
+	_, err := management.GetNamespace(context.Background(), &proto.GetNamespaceRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+}
+
+func TestManagementServerGetNamespaceNotFound(t *testing.T) {
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{}),
+		nil,
+	)
+
+	_, err := management.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: "missing"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
+}
+
 func TestManagementServerCreateDataServer(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),

@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,44 +12,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package listnamespaces
+package get
 
 import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-
-	cc "github.com/oxia-db/oxia/cmd/client/common"
+	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
 	"github.com/oxia-db/oxia/oxia"
 )
 
-func init() {
-}
-
 var Cmd = &cobra.Command{
-	Use:          "list-namespaces",
-	Short:        "List namespaces",
-	Long:         `List namespaces`,
-	Deprecated:   "use namespace get <namespace> instead",
-	Args:         cobra.ExactArgs(0),
+	Use:          "get <namespace>",
+	Short:        "Get a namespace",
+	Long:         `Get a namespace`,
+	Args:         cobra.ExactArgs(1),
 	RunE:         exec,
 	SilenceUsage: true,
 }
 
-func exec(cmd *cobra.Command, _ []string) error {
+func exec(cmd *cobra.Command, args []string) error {
+	outputFormat, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
+	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
+		return err
+	}
+
 	client, err := commons.AdminConfig.NewAdminClient()
+	if err != nil {
+		return err
+	}
 	defer func(client oxia.AdminClient) {
 		_ = client.Close()
 	}(client)
 
+	namespace, err := client.GetNamespace(args[0])
 	if err != nil {
 		return err
 	}
-
-	result := client.ListNamespaces() //nolint:staticcheck // Deprecated command intentionally keeps using the deprecated API.
-	if result.Error != nil {
-		return result.Error
-	}
-	cc.WriteOutput(cmd.OutOrStdout(), result.Namespaces)
-	return nil
+	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, namespace)
 }

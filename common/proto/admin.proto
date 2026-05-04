@@ -32,7 +32,11 @@ service OxiaAdmin {
   rpc PatchDataServer(PatchDataServerRequest) returns (PatchDataServerResponse);
   rpc DeleteDataServer(DeleteDataServerRequest) returns (DeleteDataServerResponse);
 
-  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+  rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
+  // Deprecated: Use GetNamespace instead.
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse) {
+    option deprecated = true;
+  }
 
   /**
    * Triggers a shard split. The specified shard is split into two child
@@ -86,6 +90,14 @@ message ListNamespacesRequest {
 
 message ListNamespacesResponse {
   repeated string namespaces = 1;
+}
+
+message GetNamespaceRequest {
+  string namespace = 1;
+}
+
+message GetNamespaceResponse {
+  Namespace namespace = 1;
 }
 
 message SplitShardRequest {

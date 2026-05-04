@@ -177,6 +177,21 @@ func (management *managementServer) ListNamespaces(context.Context, *proto.ListN
 	}, nil
 }
 
+func (management *managementServer) GetNamespace(_ context.Context, req *proto.GetNamespaceRequest) (*proto.GetNamespaceResponse, error) {
+	if req == nil || req.Namespace == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be empty")
+	}
+
+	namespace, found := management.metadata.GetNamespace(req.Namespace)
+	if !found {
+		return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
+	}
+
+	return &proto.GetNamespaceResponse{
+		Namespace: namespace.UnsafeBorrow(),
+	}, nil
+}
+
 func (management *managementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
 	if management.shardSplitter == nil {
 		return nil, errors.New("split shard not supported")

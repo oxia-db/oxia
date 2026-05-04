@@ -128,6 +128,24 @@ func (admin *adminClientImpl) Close() error {
 	return admin.clientPool.Close()
 }
 
+func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: namespace})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.Namespace, nil
+}
+
+// Deprecated: Use GetNamespace instead.
 func (admin *adminClientImpl) ListNamespaces() *ListNamespacesResult {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {

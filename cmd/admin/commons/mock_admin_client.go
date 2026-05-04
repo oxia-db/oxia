@@ -87,6 +87,14 @@ func (m *MockAdminClient) DeleteDataServer(dataServer string) (*proto.DataServer
 	return nil, errors.New("failed to delete data server")
 }
 
+func (m *MockAdminClient) GetNamespace(namespace string) (*proto.Namespace, error) {
+	args := m.MethodCalled("GetNamespace", namespace)
+	if v, ok := args.Get(0).(*proto.Namespace); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("namespace not found")
+}
+
 func (m *MockAdminClient) SplitShard(namespace string, shardId int64, splitPoint *uint32) *oxia.SplitShardResult {
 	args := m.MethodCalled("SplitShard", namespace, shardId, splitPoint)
 	if v, ok := args.Get(0).(*oxia.SplitShardResult); ok {
