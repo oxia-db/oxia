@@ -32,6 +32,7 @@ service OxiaAdmin {
   rpc PatchDataServer(PatchDataServerRequest) returns (PatchDataServerResponse);
   rpc DeleteDataServer(DeleteDataServerRequest) returns (DeleteDataServerResponse);
 
+  rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
 
   /**
@@ -85,7 +86,15 @@ message ListNamespacesRequest {
 }
 
 message ListNamespacesResponse {
-  repeated string namespaces = 1;
+  repeated Namespace namespaces = 1;
+}
+
+message GetNamespaceRequest {
+  string namespace = 1;
+}
+
+message GetNamespaceResponse {
+  Namespace namespace = 1;
 }
 
 message SplitShardRequest {

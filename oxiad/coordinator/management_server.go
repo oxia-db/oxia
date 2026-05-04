@@ -19,7 +19,6 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/emirpasic/gods/v2/sets/hashset"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
@@ -168,12 +167,23 @@ func (management *managementServer) DeleteDataServer(_ context.Context, req *pro
 func (management *managementServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
 	cnf := management.metadata.GetConfig().UnsafeBorrow()
 
-	namespaceNames := hashset.New[string]()
-	for _, nsConfig := range cnf.GetNamespaces() {
-		namespaceNames.Add(nsConfig.GetName())
-	}
 	return &proto.ListNamespacesResponse{
-		Namespaces: namespaceNames.Values(),
+		Namespaces: cnf.GetNamespaces(),
+	}, nil
+}
+
+func (management *managementServer) GetNamespace(_ context.Context, req *proto.GetNamespaceRequest) (*proto.GetNamespaceResponse, error) {
+	if req == nil || req.Namespace == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be empty")
+	}
+
+	namespace, found := management.metadata.GetNamespace(req.Namespace)
+	if !found {
+		return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
+	}
+
+	return &proto.GetNamespaceResponse{
+		Namespace: namespace.UnsafeBorrow(),
 	}, nil
 }
 
