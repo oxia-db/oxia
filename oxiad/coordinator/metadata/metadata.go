@@ -55,6 +55,7 @@ type Metadata interface {
 
 	CreateDataServer(dataServer *commonproto.DataServer) error
 	PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error)
+	DeleteDataServer(name string) (*commonproto.DataServer, error)
 	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool)
 }
@@ -416,6 +417,30 @@ func (m *coordinatorMetadata) PatchDataServer(desireDataServer *commonproto.Data
 	}
 
 	return updated, nil
+}
+
+func (m *coordinatorMetadata) DeleteDataServer(name string) (*commonproto.DataServer, error) {
+	var deleted *commonproto.DataServer
+	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		for i, identity := range config.GetServers() {
+			if identity.GetNameOrDefault() != name {
+				continue
+			}
+
+			dataServer, _ := config.GetDataServer(name)
+			deleted = dataServer
+			config.Servers = append(config.Servers[:i], config.Servers[i+1:]...)
+			if config.ServerMetadata != nil {
+				delete(config.ServerMetadata, name)
+			}
+			return config, nil
+		}
+		return nil, metadatacommon.ErrNotFound
+	}); err != nil {
+		return nil, err
+	}
+
+	return deleted, nil
 }
 
 func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer] {

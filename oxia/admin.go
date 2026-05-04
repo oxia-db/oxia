@@ -27,6 +27,7 @@ type AdminClient interface {
 	GetDataServer(dataServer string) (*proto.DataServer, error)
 	CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error)
 	PatchDataServer(dataServer *proto.DataServer) (*proto.DataServer, error)
+	DeleteDataServer(dataServer string) (*proto.DataServer, error)
 
 	ListNamespaces() *ListNamespacesResult
 

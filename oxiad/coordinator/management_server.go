@@ -141,6 +141,27 @@ func (management *managementServer) PatchDataServer(_ context.Context, req *prot
 	}, nil
 }
 
+func (management *managementServer) DeleteDataServer(_ context.Context, req *proto.DeleteDataServerRequest) (*proto.DeleteDataServerResponse, error) {
+	if req == nil || req.DataServer == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
+	}
+
+	dataServer, err := management.metadata.DeleteDataServer(req.DataServer)
+	if err != nil {
+		if errors.Is(err, metadatacommon.ErrNotFound) {
+			return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
+		}
+		if errors.Is(err, metadatacommon.ErrBadVersion) {
+			return nil, grpcstatus.Errorf(codes.Aborted, "failed to delete data server %q due to concurrent config update", req.DataServer)
+		}
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to delete data server %q: %v", req.DataServer, err)
+	}
+
+	return &proto.DeleteDataServerResponse{
+		DataServer: dataServer,
+	}, nil
+}
+
 func (management *managementServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
 	cnf := management.metadata.GetConfig().UnsafeBorrow()
 
