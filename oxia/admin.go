@@ -30,6 +30,7 @@ type AdminClient interface {
 	DeleteDataServer(dataServer string) (*proto.DataServer, error)
 
 	CreateNamespace(namespace *proto.Namespace) (*proto.Namespace, error)
+	PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error)
 	ListNamespaces() ([]*proto.Namespace, error)
 	GetNamespace(namespace string) (*proto.Namespace, error)
 

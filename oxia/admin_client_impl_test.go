@@ -44,6 +44,8 @@ type mockAdminRpcClient struct {
 	deleteDataServerErr     error
 	createNamespaceResp     *proto.CreateNamespaceResponse
 	createNamespaceErr      error
+	patchNamespaceResp      *proto.PatchNamespaceResponse
+	patchNamespaceErr       error
 	listNamespacesResp      *proto.ListNamespacesResponse
 	listNamespacesErr       error
 	getNamespaceResp        *proto.GetNamespaceResponse
@@ -72,6 +74,10 @@ func (m *mockAdminRpcClient) DeleteDataServer(context.Context, *proto.DeleteData
 
 func (m *mockAdminRpcClient) CreateNamespace(context.Context, *proto.CreateNamespaceRequest, ...grpc.CallOption) (*proto.CreateNamespaceResponse, error) {
 	return m.createNamespaceResp, m.createNamespaceErr
+}
+
+func (m *mockAdminRpcClient) PatchNamespace(context.Context, *proto.PatchNamespaceRequest, ...grpc.CallOption) (*proto.PatchNamespaceResponse, error) {
+	return m.patchNamespaceResp, m.patchNamespaceErr
 }
 
 func (m *mockAdminRpcClient) GetNamespace(context.Context, *proto.GetNamespaceRequest, ...grpc.CallOption) (*proto.GetNamespaceResponse, error) {
@@ -377,6 +383,32 @@ func TestAdminClientCreateNamespaceReturnsResponse(t *testing.T) {
 	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
 	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetKeySorting())
+}
+
+func TestAdminClientPatchNamespaceReturnsResponse(t *testing.T) {
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				patchNamespaceResp: &proto.PatchNamespaceResponse{
+					Namespace: &proto.Namespace{
+						Name:              "ns-1",
+						InitialShardCount: 4,
+						ReplicationFactor: 3,
+						KeySorting:        "natural",
+					},
+				},
+			},
+		},
+	}
+
+	namespace, err := admin.PatchNamespace(&proto.Namespace{Name: "ns-1", KeySorting: "natural"})
+	require.NoError(t, err)
+	require.NotNil(t, namespace)
+	assert.Equal(t, "ns-1", namespace.GetName())
+	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
+	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
+	assert.Equal(t, "natural", namespace.GetKeySorting())
 }
 
 func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {

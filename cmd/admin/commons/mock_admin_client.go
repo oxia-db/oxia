@@ -93,6 +93,14 @@ func (m *MockAdminClient) CreateNamespace(namespace *proto.Namespace) (*proto.Na
 	return nil, errors.New("failed to create namespace")
 }
 
+func (m *MockAdminClient) PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
+	args := m.MethodCalled("PatchNamespace", namespace)
+	if v, ok := args.Get(0).(*proto.Namespace); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("failed to patch namespace")
+}
+
 func (m *MockAdminClient) GetNamespace(namespace string) (*proto.Namespace, error) {
 	args := m.MethodCalled("GetNamespace", namespace)
 	if v, ok := args.Get(0).(*proto.Namespace); ok {

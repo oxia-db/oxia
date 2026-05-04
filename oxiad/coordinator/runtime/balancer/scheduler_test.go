@@ -88,6 +88,10 @@ func (*mockMetadata) CreateNamespace(*proto.Namespace) error {
 	return nil
 }
 
+func (*mockMetadata) PatchNamespace(*proto.Namespace) (*proto.Namespace, error) {
+	return &proto.Namespace{}, nil
+}
+
 func (*mockMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
 	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
 }
