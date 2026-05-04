@@ -186,11 +186,15 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 	if req.Namespace.GetReplicationFactor() == 0 {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace replication factor must be greater than 0")
 	}
-	if _, err := req.Namespace.GetKeySortingType(); err != nil {
+	keySorting, err := req.Namespace.GetKeySortingType()
+	if err != nil {
 		return nil, grpcstatus.Errorf(codes.InvalidArgument, "namespace key sorting is invalid: %v", err)
 	}
+	if keySorting == proto.KeySortingType_UNKNOWN {
+		return nil, grpcstatus.Error(codes.InvalidArgument, `namespace key sorting must be one of "natural" or "hierarchical"`)
+	}
 
-	err := management.metadata.CreateNamespace(req.Namespace)
+	err = management.metadata.CreateNamespace(req.Namespace)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrAlreadyExists) {
 			return nil, grpcstatus.Errorf(codes.AlreadyExists, "namespace %q already exists", req.Namespace.GetName())

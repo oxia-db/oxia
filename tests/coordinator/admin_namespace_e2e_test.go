@@ -69,7 +69,7 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 		InitialShardCount:    2,
 		ReplicationFactor:    1,
 		NotificationsEnabled: &notificationsEnabled,
-		KeySorting:           proto.KeySortingType_NATURAL.String(),
+		KeySorting:           "natural",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created)
@@ -77,7 +77,7 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	assert.EqualValues(t, 2, created.GetInitialShardCount())
 	assert.EqualValues(t, 1, created.GetReplicationFactor())
 	assert.False(t, created.NotificationsEnabledOrDefault())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), created.GetKeySorting())
+	assert.Equal(t, "natural", created.GetKeySorting())
 
 	found, err := client.GetNamespace("ns-1")
 	require.NoError(t, err)

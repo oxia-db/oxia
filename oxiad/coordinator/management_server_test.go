@@ -268,7 +268,7 @@ func TestManagementServerCreateNamespace(t *testing.T) {
 			InitialShardCount:    4,
 			ReplicationFactor:    3,
 			NotificationsEnabled: &notificationsEnabled,
-			KeySorting:           proto.KeySortingType_NATURAL.String(),
+			KeySorting:           "natural",
 		},
 	})
 	require.NoError(t, err)
@@ -278,7 +278,7 @@ func TestManagementServerCreateNamespace(t *testing.T) {
 	assert.EqualValues(t, 4, res.Namespace.GetInitialShardCount())
 	assert.EqualValues(t, 3, res.Namespace.GetReplicationFactor())
 	assert.False(t, res.Namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), res.Namespace.GetKeySorting())
+	assert.Equal(t, "natural", res.Namespace.GetKeySorting())
 
 	namespace, found := management.metadata.GetNamespace("ns-1")
 	require.True(t, found)
@@ -317,6 +317,17 @@ func TestManagementServerCreateNamespaceRejectsInvalidRequest(t *testing.T) {
 			ReplicationFactor: 1,
 			KeySorting:        "invalid",
 		}}},
+		{name: "empty key sorting", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+		}}},
+		{name: "unknown key sorting", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+			KeySorting:        proto.KeySortingType_UNKNOWN.String(),
+		}}},
 	}
 
 	for _, tt := range testCases {
@@ -326,6 +337,30 @@ func TestManagementServerCreateNamespaceRejectsInvalidRequest(t *testing.T) {
 			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
 		})
 	}
+}
+
+func TestManagementServerCreateNamespacePreservesKeySorting(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	res, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
+		Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+			KeySorting:        "NATURAL",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, "NATURAL", res.Namespace.GetKeySorting())
 }
 
 func TestManagementServerCreateNamespaceAlreadyExists(t *testing.T) {
@@ -349,6 +384,7 @@ func TestManagementServerCreateNamespaceAlreadyExists(t *testing.T) {
 			Name:              "ns-1",
 			InitialShardCount: 1,
 			ReplicationFactor: 1,
+			KeySorting:        "natural",
 		},
 	})
 	require.Error(t, err)
@@ -371,6 +407,7 @@ func TestManagementServerCreateNamespaceFailedPrecondition(t *testing.T) {
 			Name:              "ns-1",
 			InitialShardCount: 1,
 			ReplicationFactor: 2,
+			KeySorting:        "natural",
 		},
 	})
 	require.Error(t, err)
