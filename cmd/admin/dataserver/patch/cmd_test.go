@@ -72,7 +72,7 @@ func Test_cmd_patchDataServer(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
+	fields.AddFlags(cmd.Flags())
 
 	out, err := runCmd(cmd, serverName, "--public", "public2", "--label", "rack=rack-2", "-o", "json")
 	require.NoError(t, err)
@@ -99,7 +99,7 @@ func Test_cmd_patchDataServer_RejectsNoChanges(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
+	fields.AddFlags(cmd.Flags())
 
 	out, err := runCmd(cmd, "server-1")
 	require.Error(t, err)

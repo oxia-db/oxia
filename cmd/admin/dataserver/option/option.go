@@ -20,16 +20,22 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const (
+	PublicFlagName   = "public"
+	InternalFlagName = "internal"
+	LabelFlagName    = "label"
+)
+
 type DataServerFields struct {
 	PublicAddress   *string
 	InternalAddress *string
 	Labels          *[]string
 }
 
-func (f *DataServerFields) AddFlags(flagSet *pflag.FlagSet, publicName, internalName, labelName string) {
-	flagSet.Var(&optionalStringValue{target: &f.PublicAddress}, publicName, "Public address for the data server")
-	flagSet.Var(&optionalStringValue{target: &f.InternalAddress}, internalName, "Internal address for the data server")
-	flagSet.Var(&optionalStringArrayValue{target: &f.Labels}, labelName, "Label to attach to the data server in key=value form")
+func (f *DataServerFields) AddFlags(flagSet *pflag.FlagSet) {
+	flagSet.Var(&optionalStringValue{target: &f.PublicAddress}, PublicFlagName, "Public address for the data server")
+	flagSet.Var(&optionalStringValue{target: &f.InternalAddress}, InternalFlagName, "Internal address for the data server")
+	flagSet.Var(&optionalStringArrayValue{target: &f.Labels}, LabelFlagName, "Label to attach to the data server in key=value form")
 }
 
 func (f *DataServerFields) Reset() {

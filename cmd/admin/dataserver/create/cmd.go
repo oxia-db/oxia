@@ -28,12 +28,6 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 )
 
-const (
-	publicFlagName   = "public"
-	internalFlagName = "internal"
-	labelFlagName    = "label"
-)
-
 var fields option.DataServerFields
 
 var Cmd = &cobra.Command{
@@ -46,9 +40,9 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
-	fields.AddFlags(Cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
-	_ = Cmd.MarkFlagRequired(publicFlagName)
-	_ = Cmd.MarkFlagRequired(internalFlagName)
+	fields.AddFlags(Cmd.Flags())
+	_ = Cmd.MarkFlagRequired(option.PublicFlagName)
+	_ = Cmd.MarkFlagRequired(option.InternalFlagName)
 }
 
 func exec(cmd *cobra.Command, args []string) error {

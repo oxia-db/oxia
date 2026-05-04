@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
+	"github.com/oxia-db/oxia/cmd/admin/dataserver/option"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -74,9 +75,9 @@ func Test_cmd_createDataServer(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
-	_ = cmd.MarkFlagRequired(publicFlagName)
-	_ = cmd.MarkFlagRequired(internalFlagName)
+	fields.AddFlags(cmd.Flags())
+	_ = cmd.MarkFlagRequired(option.PublicFlagName)
+	_ = cmd.MarkFlagRequired(option.InternalFlagName)
 	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1", "--label", "rack=rack-1", "-o", "json")
 
 	assert.NoError(t, err)
@@ -115,9 +116,9 @@ func Test_cmd_createDataServer_DefaultTable(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
-	_ = cmd.MarkFlagRequired(publicFlagName)
-	_ = cmd.MarkFlagRequired(internalFlagName)
+	fields.AddFlags(cmd.Flags())
+	_ = cmd.MarkFlagRequired(option.PublicFlagName)
+	_ = cmd.MarkFlagRequired(option.InternalFlagName)
 	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1")
 
 	assert.NoError(t, err)
@@ -152,9 +153,9 @@ func Test_cmd_createDataServer_Name(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
-	_ = cmd.MarkFlagRequired(publicFlagName)
-	_ = cmd.MarkFlagRequired(internalFlagName)
+	fields.AddFlags(cmd.Flags())
+	_ = cmd.MarkFlagRequired(option.PublicFlagName)
+	_ = cmd.MarkFlagRequired(option.InternalFlagName)
 	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1", "-o", "name")
 
 	assert.NoError(t, err)
@@ -173,9 +174,9 @@ func Test_cmd_createDataServer_InvalidLabel(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
-	_ = cmd.MarkFlagRequired(publicFlagName)
-	_ = cmd.MarkFlagRequired(internalFlagName)
+	fields.AddFlags(cmd.Flags())
+	_ = cmd.MarkFlagRequired(option.PublicFlagName)
+	_ = cmd.MarkFlagRequired(option.InternalFlagName)
 	out, err := runCmd(cmd, "server-1", "--public", "public1", "--internal", "internal1", "--label", "rack")
 
 	assert.Error(t, err)
@@ -195,9 +196,9 @@ func Test_cmd_createDataServer_RejectsEmptyName(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
-	_ = cmd.MarkFlagRequired(publicFlagName)
-	_ = cmd.MarkFlagRequired(internalFlagName)
+	fields.AddFlags(cmd.Flags())
+	_ = cmd.MarkFlagRequired(option.PublicFlagName)
+	_ = cmd.MarkFlagRequired(option.InternalFlagName)
 	out, err := runCmd(cmd, "   ", "--public", "public1", "--internal", "internal1")
 
 	assert.Error(t, err)
