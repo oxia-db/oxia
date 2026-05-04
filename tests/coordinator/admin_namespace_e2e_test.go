@@ -90,7 +90,6 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	patched, err := client.PatchNamespace(&proto.Namespace{
 		Name:                 "ns-1",
 		NotificationsEnabled: &notificationsEnabled,
-		KeySorting:           "hierarchical",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, patched)
@@ -98,13 +97,13 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	assert.EqualValues(t, 2, patched.GetInitialShardCount())
 	assert.EqualValues(t, 1, patched.GetReplicationFactor())
 	assert.True(t, patched.NotificationsEnabledOrDefault())
-	assert.Equal(t, "hierarchical", patched.GetKeySorting())
+	assert.Equal(t, "natural", patched.GetKeySorting())
 
 	found, err = client.GetNamespace("ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.True(t, found.NotificationsEnabledOrDefault())
-	assert.Equal(t, "hierarchical", found.GetKeySorting())
+	assert.Equal(t, "natural", found.GetKeySorting())
 
 	namespaces, err := client.ListNamespaces()
 	require.NoError(t, err)

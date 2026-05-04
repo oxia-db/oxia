@@ -220,14 +220,11 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	if err := validation.ValidateNamespace(req.Namespace.GetName()); err != nil {
 		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
 	}
-	if keySorting := req.Namespace.GetKeySorting(); keySorting != "" {
-		parsedKeySorting, err := req.Namespace.GetKeySortingType()
-		if err != nil {
-			return nil, grpcstatus.Errorf(codes.InvalidArgument, "namespace key sorting is invalid: %v", err)
-		}
-		if parsedKeySorting == proto.KeySortingType_UNKNOWN {
-			return nil, grpcstatus.Error(codes.InvalidArgument, `namespace key sorting must be one of "natural" or "hierarchical"`)
-		}
+	if req.Namespace.GetInitialShardCount() != 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace initial shard count cannot be patched")
+	}
+	if req.Namespace.GetKeySorting() != "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace key sorting cannot be patched")
 	}
 
 	namespace, err := management.metadata.PatchNamespace(req.Namespace)

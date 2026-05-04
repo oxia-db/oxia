@@ -437,27 +437,25 @@ func TestManagementServerPatchNamespace(t *testing.T) {
 	res, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
 		Namespace: &proto.Namespace{
 			Name:                 "ns-1",
-			InitialShardCount:    2,
 			ReplicationFactor:    2,
 			NotificationsEnabled: &notificationsEnabled,
-			KeySorting:           "natural",
 		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Namespace)
 	assert.Equal(t, "ns-1", res.Namespace.GetName())
-	assert.EqualValues(t, 2, res.Namespace.GetInitialShardCount())
+	assert.EqualValues(t, 1, res.Namespace.GetInitialShardCount())
 	assert.EqualValues(t, 2, res.Namespace.GetReplicationFactor())
 	assert.False(t, res.Namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", res.Namespace.GetKeySorting())
+	assert.Equal(t, "hierarchical", res.Namespace.GetKeySorting())
 
 	namespace, found := management.metadata.GetNamespace("ns-1")
 	require.True(t, found)
-	assert.EqualValues(t, 2, namespace.UnsafeBorrow().GetInitialShardCount())
+	assert.EqualValues(t, 1, namespace.UnsafeBorrow().GetInitialShardCount())
 	assert.EqualValues(t, 2, namespace.UnsafeBorrow().GetReplicationFactor())
 	assert.False(t, namespace.UnsafeBorrow().NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", namespace.UnsafeBorrow().GetKeySorting())
+	assert.Equal(t, "hierarchical", namespace.UnsafeBorrow().GetKeySorting())
 }
 
 func TestManagementServerPatchNamespacePreservesUnspecifiedFields(t *testing.T) {
@@ -481,8 +479,8 @@ func TestManagementServerPatchNamespacePreservesUnspecifiedFields(t *testing.T) 
 
 	res, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
 		Namespace: &proto.Namespace{
-			Name:       "ns-1",
-			KeySorting: "natural",
+			Name:                 "ns-1",
+			NotificationsEnabled: &notificationsEnabled,
 		},
 	})
 	require.NoError(t, err)
@@ -490,7 +488,7 @@ func TestManagementServerPatchNamespacePreservesUnspecifiedFields(t *testing.T) 
 	assert.EqualValues(t, 4, res.Namespace.GetInitialShardCount())
 	assert.EqualValues(t, 1, res.Namespace.GetReplicationFactor())
 	assert.True(t, res.Namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", res.Namespace.GetKeySorting())
+	assert.Equal(t, "hierarchical", res.Namespace.GetKeySorting())
 }
 
 func TestManagementServerPatchNamespaceRejectsInvalidRequest(t *testing.T) {
@@ -507,16 +505,16 @@ func TestManagementServerPatchNamespaceRejectsInvalidRequest(t *testing.T) {
 		{name: "nil namespace", req: &proto.PatchNamespaceRequest{}},
 		{name: "empty name", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{}}},
 		{name: "invalid name", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{
-			Name:       "../ns",
-			KeySorting: "natural",
+			Name:              "../ns",
+			ReplicationFactor: 1,
 		}}},
-		{name: "invalid key sorting", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{
+		{name: "initial shard count", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+		}}},
+		{name: "key sorting", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{
 			Name:       "ns-1",
 			KeySorting: "invalid",
-		}}},
-		{name: "unknown key sorting", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{
-			Name:       "ns-1",
-			KeySorting: proto.KeySortingType_UNKNOWN.String(),
 		}}},
 	}
 
@@ -537,8 +535,8 @@ func TestManagementServerPatchNamespaceNotFound(t *testing.T) {
 
 	_, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
 		Namespace: &proto.Namespace{
-			Name:       "missing",
-			KeySorting: "natural",
+			Name:              "missing",
+			ReplicationFactor: 1,
 		},
 	})
 	require.Error(t, err)

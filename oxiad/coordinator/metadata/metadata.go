@@ -387,9 +387,6 @@ func (m *coordinatorMetadata) PatchNamespace(desiredNamespace *commonproto.Names
 			if namespace.GetName() != desiredNamespace.GetName() {
 				continue
 			}
-			if initialShardCount := desiredNamespace.GetInitialShardCount(); initialShardCount != 0 {
-				namespace.InitialShardCount = initialShardCount
-			}
 			if replicationFactor := desiredNamespace.GetReplicationFactor(); replicationFactor != 0 {
 				if replicationFactor > uint32(len(config.GetServers())) {
 					return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
@@ -400,9 +397,6 @@ func (m *coordinatorMetadata) PatchNamespace(desiredNamespace *commonproto.Names
 			if desiredNamespace.NotificationsEnabled != nil {
 				notificationsEnabled := desiredNamespace.GetNotificationsEnabled()
 				namespace.NotificationsEnabled = &notificationsEnabled
-			}
-			if keySorting := desiredNamespace.GetKeySorting(); keySorting != "" {
-				namespace.KeySorting = keySorting
 			}
 			if policy := desiredNamespace.GetPolicy(); policy != nil {
 				namespace.Policy = policy

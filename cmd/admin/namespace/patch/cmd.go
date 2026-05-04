@@ -39,7 +39,7 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
-	fields.AddFlags(Cmd)
+	fields.AddPatchFlags(Cmd)
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -56,9 +56,23 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	namespace, err := namespaceFromFlags(cmd, name)
-	if err != nil {
-		return err
+	replicationFactorChanged := cmd.Flags().Changed(option.ReplicationFactorFlagName)
+	notificationsChanged := cmd.Flags().Changed(option.NotificationsFlagName)
+	if !replicationFactorChanged && !notificationsChanged {
+		return errors.New("must specify at least one field to patch")
+	}
+	if replicationFactorChanged && fields.ReplicationFactor == 0 {
+		return errors.New("namespace replication factor must be greater than 0")
+	}
+
+	namespace := &proto.Namespace{
+		Name: name,
+	}
+	if replicationFactorChanged {
+		namespace.ReplicationFactor = fields.ReplicationFactor
+	}
+	if notificationsChanged {
+		namespace.NotificationsEnabled = &fields.Notifications
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
@@ -75,47 +89,4 @@ func exec(cmd *cobra.Command, args []string) error {
 	}
 
 	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, patched)
-}
-
-func namespaceFromFlags(cmd *cobra.Command, name string) (*proto.Namespace, error) {
-	initialShardCountChanged := cmd.Flags().Changed(option.InitialShardsFlagName)
-	replicationFactorChanged := cmd.Flags().Changed(option.ReplicationFactorFlagName)
-	notificationsChanged := cmd.Flags().Changed(option.NotificationsFlagName)
-	keySortingChanged := cmd.Flags().Changed(option.KeySortingFlagName)
-	if !initialShardCountChanged && !replicationFactorChanged && !notificationsChanged && !keySortingChanged {
-		return nil, errors.New("must specify at least one field to patch")
-	}
-	if initialShardCountChanged && fields.InitialShardCount == 0 {
-		return nil, errors.New("namespace initial shard count must be greater than 0")
-	}
-	if replicationFactorChanged && fields.ReplicationFactor == 0 {
-		return nil, errors.New("namespace replication factor must be greater than 0")
-	}
-	if keySortingChanged {
-		keySorting, err := proto.ParseKeySortingType(fields.KeySorting)
-		if err != nil {
-			return nil, err
-		}
-		if keySorting == proto.KeySortingType_UNKNOWN {
-			return nil, errors.New(`key sorting must be one of "natural" or "hierarchical"`)
-		}
-	}
-
-	namespace := &proto.Namespace{
-		Name: name,
-	}
-	if initialShardCountChanged {
-		namespace.InitialShardCount = fields.InitialShardCount
-	}
-	if replicationFactorChanged {
-		namespace.ReplicationFactor = fields.ReplicationFactor
-	}
-	if notificationsChanged {
-		namespace.NotificationsEnabled = &fields.Notifications
-	}
-	if keySortingChanged {
-		namespace.KeySorting = fields.KeySorting
-	}
-
-	return namespace, nil
 }

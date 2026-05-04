@@ -386,28 +386,31 @@ func TestAdminClientCreateNamespaceReturnsResponse(t *testing.T) {
 }
 
 func TestAdminClientPatchNamespaceReturnsResponse(t *testing.T) {
+	notificationsEnabled := false
 	admin := &adminClientImpl{
 		adminAddr: "admin-addr",
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
 				patchNamespaceResp: &proto.PatchNamespaceResponse{
 					Namespace: &proto.Namespace{
-						Name:              "ns-1",
-						InitialShardCount: 4,
-						ReplicationFactor: 3,
-						KeySorting:        "natural",
+						Name:                 "ns-1",
+						InitialShardCount:    4,
+						ReplicationFactor:    3,
+						NotificationsEnabled: &notificationsEnabled,
+						KeySorting:           "natural",
 					},
 				},
 			},
 		},
 	}
 
-	namespace, err := admin.PatchNamespace(&proto.Namespace{Name: "ns-1", KeySorting: "natural"})
+	namespace, err := admin.PatchNamespace(&proto.Namespace{Name: "ns-1", NotificationsEnabled: &notificationsEnabled})
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
 	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
 	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
+	assert.False(t, namespace.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", namespace.GetKeySorting())
 }
 

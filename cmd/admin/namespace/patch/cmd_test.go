@@ -61,7 +61,7 @@ func Test_cmd_patchNamespace(t *testing.T) {
 			namespace.GetInitialShardCount() == 0 &&
 			namespace.GetReplicationFactor() == 2 &&
 			namespace.GetNotificationsEnabled() == notificationsEnabled &&
-			namespace.GetKeySorting() == "natural"
+			namespace.GetKeySorting() == ""
 	})).Return(expected, nil)
 
 	cmd := &cobra.Command{
@@ -72,9 +72,9 @@ func Test_cmd_patchNamespace(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
+	fields.AddPatchFlags(cmd)
 	out, err := runCmd(cmd, "ns-1", "--replication-factor", "2",
-		"--notifications=false", "--key-sorting", "natural", "-o", "json")
+		"--notifications=false", "-o", "json")
 
 	require.NoError(t, err)
 	var namespace proto.Namespace
@@ -106,8 +106,8 @@ func Test_cmd_patchNamespace_DefaultTable(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
-	out, err := runCmd(cmd, "ns-1", "--key-sorting", "natural")
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "ns-1", "--replication-factor", "2")
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "NAME")
@@ -139,7 +139,7 @@ func Test_cmd_patchNamespace_Name(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
+	fields.AddPatchFlags(cmd)
 	out, err := runCmd(cmd, "ns-1", "--notifications=false", "-o", "name")
 
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func Test_cmd_patchNamespace_RejectsEmptyPatch(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
+	fields.AddPatchFlags(cmd)
 	out, err := runCmd(cmd, "ns-1")
 
 	require.Error(t, err)
@@ -172,15 +172,44 @@ func Test_cmd_patchNamespace_RejectsInvalidName(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
-	out, err := runCmd(cmd, "../ns", "--key-sorting", "natural")
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "../ns", "--notifications=false")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid path traversal sequence")
 	assert.Contains(t, out, "invalid path traversal sequence")
 }
 
-func Test_cmd_patchNamespace_RejectsInvalidKeySorting(t *testing.T) {
+func Test_cmd_patchNamespace_RejectsUnsupportedFlags(t *testing.T) {
+	testCases := []struct {
+		name string
+		flag string
+	}{
+		{name: "initial shard count", flag: "--initial-shards"},
+		{name: "key sorting", flag: "--key-sorting"},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{
+				Use:          Cmd.Use,
+				Short:        Cmd.Short,
+				Long:         Cmd.Long,
+				Args:         Cmd.Args,
+				RunE:         Cmd.RunE,
+				SilenceUsage: Cmd.SilenceUsage,
+			}
+			fields.AddPatchFlags(cmd)
+			out, err := runCmd(cmd, "ns-1", tt.flag, "1")
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unknown flag")
+			assert.Contains(t, out, "unknown flag")
+		})
+	}
+}
+
+func Test_cmd_patchNamespace_RejectsInvalidReplicationFactor(t *testing.T) {
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
 		Short:        Cmd.Short,
@@ -189,10 +218,10 @@ func Test_cmd_patchNamespace_RejectsInvalidKeySorting(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
-	out, err := runCmd(cmd, "ns-1", "--key-sorting", "unknown")
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "ns-1", "--replication-factor", "0")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `key sorting must be one of "natural" or "hierarchical"`)
-	assert.Contains(t, out, `key sorting must be one of "natural" or "hierarchical"`)
+	assert.Contains(t, err.Error(), "namespace replication factor must be greater than 0")
+	assert.Contains(t, out, "namespace replication factor must be greater than 0")
 }

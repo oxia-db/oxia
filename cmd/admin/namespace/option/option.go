@@ -31,13 +31,18 @@ type NamespaceFields struct {
 }
 
 func (f *NamespaceFields) AddFlags(cmd *cobra.Command) {
-	f.Notifications = true
-	f.KeySorting = "hierarchical"
+	f.Reset()
 	cmd.Flags().Uint32Var(&f.InitialShardCount, InitialShardsFlagName, 0, "Initial shard count for the namespace")
 	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor for the namespace")
 	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
 	cmd.Flags().StringVar(&f.KeySorting, KeySortingFlagName, f.KeySorting, `Key sorting. allowed: "hierarchical", "natural"`)
 	_ = cmd.RegisterFlagCompletionFunc(KeySortingFlagName, keySortingCompletion)
+}
+
+func (f *NamespaceFields) AddPatchFlags(cmd *cobra.Command) {
+	f.Reset()
+	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor for the namespace")
+	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
 }
 
 func (f *NamespaceFields) Reset() {
