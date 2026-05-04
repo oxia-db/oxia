@@ -25,13 +25,13 @@ const (
 type DataServerFields struct {
 	PublicAddress   *string
 	InternalAddress *string
-	Labels          *[]string
+	Labels          []string
 }
 
 func (f *DataServerFields) AddFlags(flagSet *pflag.FlagSet) {
 	f.PublicAddress = flagSet.String(PublicFlagName, "", "Public address for the data server")
 	f.InternalAddress = flagSet.String(InternalFlagName, "", "Internal address for the data server")
-	f.Labels = flagSet.StringArray(LabelFlagName, nil, "Label to attach to the data server in key=value form")
+	flagSet.StringArrayVar(&f.Labels, LabelFlagName, nil, "Label to attach to the data server in key=value form")
 }
 
 func (f *DataServerFields) Reset() {

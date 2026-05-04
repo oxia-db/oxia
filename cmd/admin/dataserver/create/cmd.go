@@ -65,11 +65,7 @@ func exec(cmd *cobra.Command, args []string) error {
 		return errors.New("data server internal address must not be empty")
 	}
 
-	var rawLabels []string
-	if fields.Labels != nil {
-		rawLabels = *fields.Labels
-	}
-	labels, err := cmdparse.StringMap(rawLabels)
+	labels, err := cmdparse.StringMap(fields.Labels)
 	if err != nil {
 		return err
 	}

@@ -67,18 +67,13 @@ func exec(cmd *cobra.Command, args []string) error {
 	if fields.InternalAddress != nil {
 		internalAddress = strings.TrimSpace(*fields.InternalAddress)
 	}
-	var rawLabels []string
-	if fields.Labels != nil {
-		rawLabels = *fields.Labels
-	}
-
-	if publicAddress == "" && internalAddress == "" && len(rawLabels) == 0 {
+	if publicAddress == "" && internalAddress == "" && len(fields.Labels) == 0 {
 		return errors.New("must specify at least one field to patch")
 	}
 
 	var metadata *proto.DataServerMetadata
-	if len(rawLabels) > 0 {
-		parsedLabels, err := cmdparse.StringMap(rawLabels)
+	if len(fields.Labels) > 0 {
+		parsedLabels, err := cmdparse.StringMap(fields.Labels)
 		if err != nil {
 			return err
 		}
