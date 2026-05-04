@@ -45,6 +45,7 @@ type Metadata interface {
 	ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
+	CreateNamespace(namespace *commonproto.Namespace) error
 	GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool)
 
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
@@ -357,6 +358,25 @@ func (m *coordinatorMetadata) SubscribeConfig() *commonwatch.Receiver[provider.V
 
 func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer] {
 	return commonobject.Borrow(m.GetConfig().UnsafeBorrow().GetLoadBalancerWithDefaults())
+}
+
+func (m *coordinatorMetadata) CreateNamespace(namespace *commonproto.Namespace) error {
+	name := namespace.GetName()
+
+	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		for _, existing := range config.GetNamespaces() {
+			if existing.GetName() == name {
+				return nil, metadatacommon.ErrAlreadyExists
+			}
+		}
+		if namespace.GetReplicationFactor() > uint32(len(config.GetServers())) {
+			return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
+				metadatacommon.ErrFailedPrecondition, name, namespace.GetReplicationFactor(), len(config.GetServers()))
+		}
+
+		config.Namespaces = append(config.Namespaces, namespace)
+		return config, nil
+	})
 }
 
 func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {

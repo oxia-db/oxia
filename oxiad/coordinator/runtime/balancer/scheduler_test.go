@@ -84,6 +84,10 @@ func (*mockMetadata) DeleteShardStatus(string, int64) {}
 
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
+func (*mockMetadata) CreateNamespace(*proto.Namespace) error {
+	return nil
+}
+
 func (*mockMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
 	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
 }

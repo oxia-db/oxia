@@ -246,6 +246,174 @@ func TestManagementServerListNamespaces(t *testing.T) {
 	assert.Equal(t, "ns-2", res.Namespaces[1].GetName())
 }
 
+func TestManagementServerCreateNamespace(t *testing.T) {
+	serverName1 := "server-1"
+	serverName2 := "server-2"
+	serverName3 := "server-3"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName1, "public-1", "internal-1"),
+				dataServer(&serverName2, "public-2", "internal-2"),
+				dataServer(&serverName3, "public-3", "internal-3"),
+			},
+		}),
+		nil,
+	)
+
+	notificationsEnabled := false
+	res, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
+		Namespace: &proto.Namespace{
+			Name:                 "ns-1",
+			InitialShardCount:    4,
+			ReplicationFactor:    3,
+			NotificationsEnabled: &notificationsEnabled,
+			KeySorting:           "natural",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Namespace)
+	assert.Equal(t, "ns-1", res.Namespace.GetName())
+	assert.EqualValues(t, 4, res.Namespace.GetInitialShardCount())
+	assert.EqualValues(t, 3, res.Namespace.GetReplicationFactor())
+	assert.False(t, res.Namespace.NotificationsEnabledOrDefault())
+	assert.Equal(t, "natural", res.Namespace.GetKeySorting())
+
+	namespace, found := management.metadata.GetNamespace("ns-1")
+	require.True(t, found)
+	assert.Equal(t, "ns-1", namespace.UnsafeBorrow().GetName())
+}
+
+func TestManagementServerCreateNamespaceRejectsInvalidRequest(t *testing.T) {
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{}),
+		nil,
+	)
+
+	testCases := []struct {
+		name string
+		req  *proto.CreateNamespaceRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "nil namespace", req: &proto.CreateNamespaceRequest{}},
+		{name: "empty name", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{}}},
+		{name: "invalid name", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name:              "../ns",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+		}}},
+		{name: "empty initial shard count", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			ReplicationFactor: 1,
+		}}},
+		{name: "empty replication factor", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+		}}},
+		{name: "invalid key sorting", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+			KeySorting:        "invalid",
+		}}},
+		{name: "empty key sorting", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+		}}},
+		{name: "unknown key sorting", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+			KeySorting:        proto.KeySortingType_UNKNOWN.String(),
+		}}},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := management.CreateNamespace(context.Background(), tt.req)
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+		})
+	}
+}
+
+func TestManagementServerCreateNamespacePreservesKeySorting(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	res, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
+		Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+			KeySorting:        "NATURAL",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, "NATURAL", res.Namespace.GetKeySorting())
+}
+
+func TestManagementServerCreateNamespaceAlreadyExists(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{{
+				Name:              "ns-1",
+				InitialShardCount: 1,
+				ReplicationFactor: 1,
+			}},
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	_, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
+		Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 1,
+			KeySorting:        "natural",
+		},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.AlreadyExists, grpcstatus.Code(err))
+}
+
+func TestManagementServerCreateNamespaceFailedPrecondition(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	_, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
+		Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 1,
+			ReplicationFactor: 2,
+			KeySorting:        "natural",
+		},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err))
+}
+
 func TestManagementServerGetNamespaceRejectsEmptyLookup(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
