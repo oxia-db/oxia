@@ -69,7 +69,7 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	labels, err := commons.ParseLabels(labelValues)
+	labels, err := commons.ParseStringMap(labelValues)
 	if err != nil {
 		return err
 	}

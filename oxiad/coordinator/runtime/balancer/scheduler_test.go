@@ -105,8 +105,8 @@ func (m *mockMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalanc
 	})
 }
 
-func (*mockMetadata) CreateDataServer(*proto.DataServer) (bool, error) {
-	return false, nil
+func (*mockMetadata) CreateDataServer(*proto.DataServer) error {
+	return nil
 }
 
 func (m *mockMetadata) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {

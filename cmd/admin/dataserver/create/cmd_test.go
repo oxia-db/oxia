@@ -131,8 +131,8 @@ func Test_cmd_createDataServer_InvalidLabel(t *testing.T) {
 	out, err := runCmd("server-1", "--public", "public1", "--internal", "internal1", "--label", "rack")
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), `invalid label "rack", expected key=value`)
-	assert.Contains(t, out, `invalid label "rack", expected key=value`)
+	assert.Contains(t, err.Error(), `invalid entry "rack", expected key=value`)
+	assert.Contains(t, out, `invalid entry "rack", expected key=value`)
 }
 
 func Test_cmd_createDataServer_RejectsEmptyName(t *testing.T) {

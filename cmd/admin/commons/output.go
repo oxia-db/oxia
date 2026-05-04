@@ -91,7 +91,7 @@ func FormatLabels(labels map[string]string) string {
 	return strings.Join(parts, ",")
 }
 
-func ParseLabels(values []string) (map[string]string, error) {
+func ParseStringMap(values []string) (map[string]string, error) {
 	if len(values) == 0 {
 		return map[string]string{}, nil
 	}
@@ -103,7 +103,7 @@ func ParseLabels(values []string) (map[string]string, error) {
 		}
 		key, labelValue, ok := strings.Cut(value, "=")
 		if !ok || key == "" {
-			return nil, errors.Errorf("invalid label %q, expected key=value", value)
+			return nil, errors.Errorf("invalid entry %q, expected key=value", value)
 		}
 		labels[key] = labelValue
 	}

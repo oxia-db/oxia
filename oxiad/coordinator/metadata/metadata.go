@@ -53,7 +53,7 @@ type Metadata interface {
 	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
-	CreateDataServer(dataServer *commonproto.DataServer) (bool, error)
+	CreateDataServer(dataServer *commonproto.DataServer) error
 	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool)
 }
@@ -356,13 +356,14 @@ func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonpro
 	return commonobject.Borrow(m.GetConfig().UnsafeBorrow().GetLoadBalancerWithDefaults())
 }
 
-func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServer) (bool, error) {
+func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {
 	name := dataServer.GetIdentity().GetName()
-	created := false
+	alreadyExists := false
 
 	err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, bool) {
 		if _, exists := config.GetDataServer(name); exists {
-			return config, false
+			alreadyExists = true
+			return nil, false
 		}
 
 		config.Servers = append(config.Servers, cloneDataServerIdentity(dataServer.GetIdentity()))
@@ -373,10 +374,15 @@ func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServe
 			config.ServerMetadata[name] = cloneDataServerMetadata(metadata)
 		}
 
-		created = true
 		return config, true
 	})
-	return created, err
+	if err != nil {
+		return err
+	}
+	if alreadyExists {
+		return metadatacommon.ErrAlreadyExists
+	}
+	return nil
 }
 
 func cloneDataServerIdentity(identity *commonproto.DataServerIdentity) *commonproto.DataServerIdentity {

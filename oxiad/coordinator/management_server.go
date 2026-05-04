@@ -98,15 +98,15 @@ func (management *managementServer) CreateDataServer(_ context.Context, req *pro
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server internal address must not be empty")
 	}
 
-	created, err := management.metadata.CreateDataServer(req.DataServer)
+	err := management.metadata.CreateDataServer(req.DataServer)
 	if err != nil {
+		if errors.Is(err, metadatacommon.ErrAlreadyExists) {
+			return nil, grpcstatus.Errorf(codes.AlreadyExists, "data server %q already exists", req.DataServer.GetNameOrDefault())
+		}
 		if errors.Is(err, metadatacommon.ErrBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to create data server %q due to concurrent config update", req.DataServer.GetNameOrDefault())
 		}
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to create data server %q: %v", req.DataServer.GetNameOrDefault(), err)
-	}
-	if !created {
-		return nil, grpcstatus.Errorf(codes.AlreadyExists, "data server %q already exists", req.DataServer.GetNameOrDefault())
 	}
 
 	return &proto.CreateDataServerResponse{
