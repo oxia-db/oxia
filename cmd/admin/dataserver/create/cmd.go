@@ -46,9 +46,7 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
-	Cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
-	Cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
-	Cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	fields.AddFlags(Cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
 	_ = Cmd.MarkFlagRequired(publicFlagName)
 	_ = Cmd.MarkFlagRequired(internalFlagName)
 }
@@ -62,14 +60,24 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	labels, err := cmdparse.StringMap(fields.Labels)
-	if err != nil {
-		return err
-	}
-
 	name := strings.TrimSpace(args[0])
 	if name == "" {
 		return errors.New("data server name must not be empty")
+	}
+	if fields.PublicAddress == nil || strings.TrimSpace(*fields.PublicAddress) == "" {
+		return errors.New("data server public address must not be empty")
+	}
+	if fields.InternalAddress == nil || strings.TrimSpace(*fields.InternalAddress) == "" {
+		return errors.New("data server internal address must not be empty")
+	}
+
+	var rawLabels []string
+	if fields.Labels != nil {
+		rawLabels = *fields.Labels
+	}
+	labels, err := cmdparse.StringMap(rawLabels)
+	if err != nil {
+		return err
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
@@ -83,8 +91,8 @@ func exec(cmd *cobra.Command, args []string) error {
 	created, err := client.CreateDataServer(&proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &name,
-			Public:   fields.PublicAddress,
-			Internal: fields.InternalAddress,
+			Public:   *fields.PublicAddress,
+			Internal: *fields.InternalAddress,
 		},
 		Metadata: &proto.DataServerMetadata{
 			Labels: labels,

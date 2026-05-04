@@ -48,9 +48,7 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
-	Cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
-	Cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
-	Cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	fields.AddFlags(Cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -67,24 +65,20 @@ func exec(cmd *cobra.Command, args []string) error {
 		return errors.New("data server name must not be empty")
 	}
 
-	publicChanged := cmd.Flags().Changed(publicFlagName)
-	internalChanged := cmd.Flags().Changed(internalFlagName)
-	labelChanged := cmd.Flags().Changed(labelFlagName)
-
-	if !publicChanged && !internalChanged && !labelChanged {
+	if fields.PublicAddress == nil && fields.InternalAddress == nil && fields.Labels == nil {
 		return errors.New("must specify at least one field to patch")
 	}
 
-	if publicChanged && strings.TrimSpace(fields.PublicAddress) == "" {
+	if fields.PublicAddress != nil && strings.TrimSpace(*fields.PublicAddress) == "" {
 		return errors.New("data server public address must not be empty")
 	}
-	if internalChanged && strings.TrimSpace(fields.InternalAddress) == "" {
+	if fields.InternalAddress != nil && strings.TrimSpace(*fields.InternalAddress) == "" {
 		return errors.New("data server internal address must not be empty")
 	}
 
 	var metadata *proto.DataServerMetadata
-	if labelChanged {
-		parsedLabels, err := cmdparse.StringMap(fields.Labels)
+	if fields.Labels != nil {
+		parsedLabels, err := cmdparse.StringMap(*fields.Labels)
 		if err != nil {
 			return err
 		}
@@ -97,11 +91,11 @@ func exec(cmd *cobra.Command, args []string) error {
 		},
 		Metadata: metadata,
 	}
-	if publicChanged {
-		dataServer.Identity.Public = fields.PublicAddress
+	if fields.PublicAddress != nil {
+		dataServer.Identity.Public = *fields.PublicAddress
 	}
-	if internalChanged {
-		dataServer.Identity.Internal = fields.InternalAddress
+	if fields.InternalAddress != nil {
+		dataServer.Identity.Internal = *fields.InternalAddress
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()

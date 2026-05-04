@@ -72,9 +72,7 @@ func Test_cmd_patchDataServer(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
-	cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	fields.AddFlags(cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
 
 	out, err := runCmd(cmd, serverName, "--public", "public2", "--label", "rack=rack-2", "-o", "json")
 	require.NoError(t, err)
@@ -101,9 +99,7 @@ func Test_cmd_patchDataServer_RejectsNoChanges(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
-	cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	fields.AddFlags(cmd.Flags(), publicFlagName, internalFlagName, labelFlagName)
 
 	out, err := runCmd(cmd, "server-1")
 	require.Error(t, err)
