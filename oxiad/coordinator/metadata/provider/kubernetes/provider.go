@@ -199,18 +199,6 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 	m.Lock()
 	defer m.Unlock()
 
-	current, err := m.loadLatestWithoutLock()
-	if err != nil {
-		return current.Version, err
-	}
-
-	if current.Version != snapshot.Version {
-		slog.Error("Store metadata failed for version mismatch",
-			slog.Any("local-version", current.Version),
-			slog.Any("expected-version", snapshot.Version))
-		panic(metadatacommon.ErrBadVersion)
-	}
-
 	data, err := m.codec.MarshalYAML(snapshot.Value)
 	if err != nil {
 		return metadatacommon.NotExists, err
@@ -224,18 +212,26 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 	ctx, cancel := context.WithTimeout(m.ctx, k8sRequestTimeout)
 	defer cancel()
 
-	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Patch(ctx, m.name, types.ApplyPatchType, desiredBytes, metav1.PatchOptions{
-		FieldManager: fieldManager,
-		Force:        gproto.Bool(true),
-	})
-	if k8serrors.IsNotFound(err) {
+	var cm *corev1.ConfigMap
+	if snapshot.Version == metadatacommon.NotExists {
 		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Create(ctx, cmData, metav1.CreateOptions{})
-	}
-	if err != nil {
-		if k8serrors.IsConflict(err) {
+		if k8serrors.IsAlreadyExists(err) {
 			panic(metadatacommon.ErrBadVersion)
 		}
-		return current.Version, err
+	} else {
+		if snapshot.Version == "" {
+			panic(metadatacommon.ErrBadVersion)
+		}
+		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Patch(ctx, m.name, types.ApplyPatchType, desiredBytes, metav1.PatchOptions{
+			FieldManager: fieldManager,
+			Force:        gproto.Bool(true),
+		})
+		if k8serrors.IsNotFound(err) || k8serrors.IsConflict(err) {
+			panic(metadatacommon.ErrBadVersion)
+		}
+	}
+	if err != nil {
+		return metadatacommon.NotExists, err
 	}
 	version := metadatacommon.Version(cm.ResourceVersion)
 	m.metadataSize.Store(int64(len(cmData.Data[m.codec.GetKey()])))
