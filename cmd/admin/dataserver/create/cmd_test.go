@@ -38,6 +38,7 @@ func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	root.SetErr(actual)
 	root.SetArgs(append([]string{"create"}, args...))
 	err := root.Execute()
+	fields.Reset()
 	return strings.TrimSpace(actual.String()), err
 }
 
@@ -73,9 +74,9 @@ func Test_cmd_createDataServer(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
-	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
+	cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 	_ = cmd.MarkFlagRequired(publicFlagName)
 	_ = cmd.MarkFlagRequired(internalFlagName)
 	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1", "--label", "rack=rack-1", "-o", "json")
@@ -116,9 +117,9 @@ func Test_cmd_createDataServer_DefaultTable(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
-	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
+	cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 	_ = cmd.MarkFlagRequired(publicFlagName)
 	_ = cmd.MarkFlagRequired(internalFlagName)
 	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1")
@@ -155,9 +156,9 @@ func Test_cmd_createDataServer_Name(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
-	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
+	cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 	_ = cmd.MarkFlagRequired(publicFlagName)
 	_ = cmd.MarkFlagRequired(internalFlagName)
 	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1", "-o", "name")
@@ -178,9 +179,9 @@ func Test_cmd_createDataServer_InvalidLabel(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
-	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
+	cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 	_ = cmd.MarkFlagRequired(publicFlagName)
 	_ = cmd.MarkFlagRequired(internalFlagName)
 	out, err := runCmd(cmd, "server-1", "--public", "public1", "--internal", "internal1", "--label", "rack")
@@ -202,9 +203,9 @@ func Test_cmd_createDataServer_RejectsEmptyName(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
-	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
+	cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 	_ = cmd.MarkFlagRequired(publicFlagName)
 	_ = cmd.MarkFlagRequired(internalFlagName)
 	out, err := runCmd(cmd, "   ", "--public", "public1", "--internal", "internal1")

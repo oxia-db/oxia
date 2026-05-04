@@ -324,7 +324,6 @@ func TestManagementServerPatchDataServer(t *testing.T) {
 
 func TestManagementServerPatchDataServerRejectsInvalidRequest(t *testing.T) {
 	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
-	serverName := "server-1"
 
 	testCases := []struct {
 		name string

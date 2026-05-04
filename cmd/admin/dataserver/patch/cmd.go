@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
+	"github.com/oxia-db/oxia/cmd/admin/dataserver/option"
 	dataserveroutput "github.com/oxia-db/oxia/cmd/admin/dataserver/output"
 	cmdparse "github.com/oxia-db/oxia/cmd/common/parse"
 	"github.com/oxia-db/oxia/common/proto"
@@ -34,16 +35,8 @@ const (
 )
 
 var (
-	publicAddress   string
-	internalAddress string
-	labels          []string
+	fields option.DataServerFields
 )
-
-func resetFlags() {
-	publicAddress = ""
-	internalAddress = ""
-	labels = nil
-}
 
 var Cmd = &cobra.Command{
 	Use:          "patch <name>",
@@ -55,9 +48,9 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
-	Cmd.Flags().StringVar(&publicAddress, publicFlagName, "", "Public address for the data server")
-	Cmd.Flags().StringVar(&internalAddress, internalFlagName, "", "Internal address for the data server")
-	Cmd.Flags().StringArrayVar(&labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	Cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
+	Cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
+	Cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -82,16 +75,16 @@ func exec(cmd *cobra.Command, args []string) error {
 		return errors.New("must specify at least one field to patch")
 	}
 
-	if publicChanged && strings.TrimSpace(publicAddress) == "" {
+	if publicChanged && strings.TrimSpace(fields.PublicAddress) == "" {
 		return errors.New("data server public address must not be empty")
 	}
-	if internalChanged && strings.TrimSpace(internalAddress) == "" {
+	if internalChanged && strings.TrimSpace(fields.InternalAddress) == "" {
 		return errors.New("data server internal address must not be empty")
 	}
 
 	var metadata *proto.DataServerMetadata
 	if labelChanged {
-		parsedLabels, err := cmdparse.StringMap(labels)
+		parsedLabels, err := cmdparse.StringMap(fields.Labels)
 		if err != nil {
 			return err
 		}
@@ -105,10 +98,10 @@ func exec(cmd *cobra.Command, args []string) error {
 		Metadata: metadata,
 	}
 	if publicChanged {
-		dataServer.Identity.Public = publicAddress
+		dataServer.Identity.Public = fields.PublicAddress
 	}
 	if internalChanged {
-		dataServer.Identity.Internal = internalAddress
+		dataServer.Identity.Internal = fields.InternalAddress
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()

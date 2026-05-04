@@ -384,23 +384,21 @@ func (m *coordinatorMetadata) PatchDataServer(desireDataServer *commonproto.Data
 			if existID.GetNameOrDefault() != desireDataServer.GetNameOrDefault() {
 				continue
 			}
-
 			if public := desireDataServer.GetIdentity().GetPublic(); public != "" {
 				existID.Public = public
 			}
 			if internal := desireDataServer.GetIdentity().GetInternal(); internal != "" {
 				existID.Internal = internal
 			}
-
+			if config.ServerMetadata == nil {
+				config.ServerMetadata = map[string]*commonproto.DataServerMetadata{}
+			}
 			var dsMeta *commonproto.DataServerMetadata
 			var ok bool
+			if dsMeta, ok = config.ServerMetadata[existID.GetNameOrDefault()]; !ok {
+				dsMeta = &commonproto.DataServerMetadata{}
+			}
 			if desireDataServer.Metadata != nil {
-				if config.ServerMetadata == nil {
-					config.ServerMetadata = map[string]*commonproto.DataServerMetadata{}
-				}
-				if dsMeta, ok = config.ServerMetadata[existID.GetNameOrDefault()]; !ok {
-					dsMeta = &commonproto.DataServerMetadata{}
-				}
 				if desireDataServer.Metadata.Labels != nil {
 					dsMeta.Labels = desireDataServer.Metadata.Labels
 				}

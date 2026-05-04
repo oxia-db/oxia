@@ -38,7 +38,7 @@ func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	root.SetErr(actual)
 	root.SetArgs(append([]string{"patch"}, args...))
 	err := root.Execute()
-	resetFlags()
+	fields.Reset()
 	return strings.TrimSpace(actual.String()), err
 }
 
@@ -72,9 +72,9 @@ func Test_cmd_patchDataServer(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().StringVar(&publicAddress, publicFlagName, "", "Public address for the data server")
-	cmd.Flags().StringVar(&internalAddress, internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArrayVar(&labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
+	cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 
 	out, err := runCmd(cmd, serverName, "--public", "public2", "--label", "rack=rack-2", "-o", "json")
 	require.NoError(t, err)
@@ -101,9 +101,9 @@ func Test_cmd_patchDataServer_RejectsNoChanges(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().StringVar(&publicAddress, publicFlagName, "", "Public address for the data server")
-	cmd.Flags().StringVar(&internalAddress, internalFlagName, "", "Internal address for the data server")
-	cmd.Flags().StringArrayVar(&labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
+	cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
+	cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 
 	out, err := runCmd(cmd, "server-1")
 	require.Error(t, err)

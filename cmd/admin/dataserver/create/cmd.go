@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
+	"github.com/oxia-db/oxia/cmd/admin/dataserver/option"
 	dataserveroutput "github.com/oxia-db/oxia/cmd/admin/dataserver/output"
 	cmdparse "github.com/oxia-db/oxia/cmd/common/parse"
 	"github.com/oxia-db/oxia/common/proto"
@@ -30,7 +31,10 @@ import (
 const (
 	publicFlagName   = "public"
 	internalFlagName = "internal"
+	labelFlagName    = "label"
 )
+
+var fields option.DataServerFields
 
 var Cmd = &cobra.Command{
 	Use:          "create <name> --public <address> --internal <address>",
@@ -42,38 +46,23 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
-	Cmd.Flags().String(publicFlagName, "", "Public address for the data server")
-	Cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
-	Cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	Cmd.Flags().StringVar(&fields.PublicAddress, publicFlagName, "", "Public address for the data server")
+	Cmd.Flags().StringVar(&fields.InternalAddress, internalFlagName, "", "Internal address for the data server")
+	Cmd.Flags().StringArrayVar(&fields.Labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 	_ = Cmd.MarkFlagRequired(publicFlagName)
 	_ = Cmd.MarkFlagRequired(internalFlagName)
 }
 
 func exec(cmd *cobra.Command, args []string) error {
-	var (
-		outputFormat    string
-		publicAddress   string
-		internalAddress string
-		labelValues     []string
-		err             error
-	)
-	if outputFormat, err = cmd.Flags().GetString("output"); err != nil {
+	outputFormat, err := cmd.Flags().GetString("output")
+	if err != nil {
 		return err
 	}
 	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
 		return err
 	}
-	if publicAddress, err = cmd.Flags().GetString(publicFlagName); err != nil {
-		return err
-	}
-	if internalAddress, err = cmd.Flags().GetString(internalFlagName); err != nil {
-		return err
-	}
-	if labelValues, err = cmd.Flags().GetStringArray("label"); err != nil {
-		return err
-	}
 
-	labels, err := cmdparse.StringMap(labelValues)
+	labels, err := cmdparse.StringMap(fields.Labels)
 	if err != nil {
 		return err
 	}
@@ -94,8 +83,8 @@ func exec(cmd *cobra.Command, args []string) error {
 	created, err := client.CreateDataServer(&proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &name,
-			Public:   publicAddress,
-			Internal: internalAddress,
+			Public:   fields.PublicAddress,
+			Internal: fields.InternalAddress,
 		},
 		Metadata: &proto.DataServerMetadata{
 			Labels: labels,
