@@ -75,9 +75,35 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	dataServer, err := patchRequestFromFlags(cmd, args[0])
-	if err != nil {
-		return err
+	name := strings.TrimSpace(args[0])
+	if name == "" {
+		return errors.New("data server name must not be empty")
+	}
+
+	labelChanged := cmd.Flags().Changed(labelFlagName)
+	if strings.TrimSpace(Config.publicAddress) == "" {
+		return errors.New("data server public address must not be empty")
+	}
+	if strings.TrimSpace(Config.internalAddress) == "" {
+		return errors.New("data server internal address must not be empty")
+	}
+
+	var metadata *proto.DataServerMetadata
+	if labelChanged {
+		labels, err := cmdparse.StringMap(Config.labels)
+		if err != nil {
+			return err
+		}
+		metadata = &proto.DataServerMetadata{Labels: labels}
+	}
+
+	dataServer := &proto.DataServer{
+		Identity: &proto.DataServerIdentity{
+			Name:     &name,
+			Public:   Config.publicAddress,
+			Internal: Config.internalAddress,
+		},
+		Metadata: metadata,
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
@@ -94,38 +120,4 @@ func exec(cmd *cobra.Command, args []string) error {
 	}
 
 	return dataserveroutput.WriteDataServer(cmd.OutOrStdout(), outputFormat, patched)
-}
-
-func patchRequestFromFlags(cmd *cobra.Command, rawName string) (*proto.DataServer, error) {
-	name := strings.TrimSpace(rawName)
-	if name == "" {
-		return nil, errors.New("data server name must not be empty")
-	}
-
-	labelChanged := cmd.Flags().Changed(labelFlagName)
-	if strings.TrimSpace(Config.publicAddress) == "" {
-		return nil, errors.New("data server public address must not be empty")
-	}
-	if strings.TrimSpace(Config.internalAddress) == "" {
-		return nil, errors.New("data server internal address must not be empty")
-	}
-
-	var metadata *proto.DataServerMetadata
-	if labelChanged {
-		labels, err := cmdparse.StringMap(Config.labels)
-		if err != nil {
-			return nil, err
-		}
-		metadata = &proto.DataServerMetadata{Labels: labels}
-	}
-
-	dataServer := &proto.DataServer{
-		Identity: &proto.DataServerIdentity{
-			Name:     &name,
-			Public:   Config.publicAddress,
-			Internal: Config.internalAddress,
-		},
-		Metadata: metadata,
-	}
-	return dataServer, nil
 }
