@@ -27,18 +27,32 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 )
 
-var Cmd = newCmd()
+var Cmd = &cobra.Command{
+	Use:          "create <name> --public <address> --internal <address>",
+	Short:        "Create a data server",
+	Long:         `Create a data server`,
+	Args:         cobra.ExactArgs(1),
+	RunE:         exec,
+	SilenceUsage: true,
+}
+
+func init() {
+	Cmd.Flags().String("public", "", "Public address for the data server")
+	Cmd.Flags().String("internal", "", "Internal address for the data server")
+	Cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	_ = Cmd.MarkFlagRequired("public")
+	_ = Cmd.MarkFlagRequired("internal")
+}
 
 func newCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "create <name> --public <address> --internal <address>",
-		Short:        "Create a data server",
-		Long:         `Create a data server`,
-		Args:         cobra.ExactArgs(1),
-		RunE:         exec,
-		SilenceUsage: true,
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
 	}
-
 	cmd.Flags().String("public", "", "Public address for the data server")
 	cmd.Flags().String("internal", "", "Internal address for the data server")
 	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")

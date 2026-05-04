@@ -22,16 +22,23 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 )
 
-var Cmd = newCmd()
+var Cmd = &cobra.Command{
+	Use:          "get [dataserver]",
+	Short:        "Get a data server or list data server identities",
+	Long:         `Get a data server or list data server identities`,
+	Args:         cobra.MaximumNArgs(1),
+	RunE:         exec,
+	SilenceUsage: true,
+}
 
 func newCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:          "get [dataserver]",
-		Short:        "Get a data server or list data server identities",
-		Long:         `Get a data server or list data server identities`,
-		Args:         cobra.MaximumNArgs(1),
-		RunE:         exec,
-		SilenceUsage: true,
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
 	}
 }
 
