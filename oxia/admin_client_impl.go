@@ -105,6 +105,25 @@ func (admin *adminClientImpl) PatchDataServer(dataServer *proto.DataServer) (*pr
 	return response.DataServer, nil
 }
 
+func (admin *adminClientImpl) DeleteDataServer(dataServer string) (*proto.DataServer, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.DeleteDataServer(context.Background(), &proto.DeleteDataServerRequest{
+		DataServer: dataServer,
+	})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServer, nil
+}
+
 func (admin *adminClientImpl) Close() error {
 	return admin.clientPool.Close()
 }

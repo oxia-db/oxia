@@ -362,3 +362,89 @@ func TestManagementServerPatchDataServerNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }
+
+func TestManagementServerDeleteDataServer(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+			ServerMetadata: map[string]*proto.DataServerMetadata{
+				serverName: {Labels: map[string]string{"rack": "rack-1"}},
+			},
+		}),
+		nil,
+	)
+
+	res, err := management.DeleteDataServer(context.Background(), &proto.DeleteDataServerRequest{DataServer: serverName})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.DataServer)
+	require.NotNil(t, res.DataServer.Identity)
+	require.NotNil(t, res.DataServer.Identity.Name)
+	assert.Equal(t, serverName, *res.DataServer.Identity.Name)
+	assert.Equal(t, "public-1", res.DataServer.Identity.GetPublic())
+	assert.Equal(t, "internal-1", res.DataServer.Identity.GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, res.DataServer.Metadata.GetLabels())
+
+	_, found := management.metadata.GetDataServer(serverName)
+	assert.False(t, found)
+}
+
+func TestManagementServerDeleteDataServerRejectsInvalidRequest(t *testing.T) {
+	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
+
+	testCases := []struct {
+		name string
+		req  *proto.DeleteDataServerRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "empty name", req: &proto.DeleteDataServerRequest{}},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := management.DeleteDataServer(context.Background(), tt.req)
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+		})
+	}
+}
+
+func TestManagementServerDeleteDataServerNotFound(t *testing.T) {
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{}),
+		nil,
+	)
+
+	_, err := management.DeleteDataServer(context.Background(), &proto.DeleteDataServerRequest{DataServer: "missing"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
+}
+
+func TestManagementServerDeleteDataServerFailedPrecondition(t *testing.T) {
+	serverName1 := "server-1"
+	serverName2 := "server-2"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{{
+				Name:              "default",
+				ReplicationFactor: 2,
+				InitialShardCount: 1,
+			}},
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName1, "public-1", "internal-1"),
+				dataServer(&serverName2, "public-2", "internal-2"),
+			},
+		}),
+		nil,
+	)
+
+	_, err := management.DeleteDataServer(context.Background(), &proto.DeleteDataServerRequest{DataServer: serverName1})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err))
+
+	_, found := management.metadata.GetDataServer(serverName1)
+	assert.True(t, found)
+}

@@ -79,6 +79,14 @@ func (m *MockAdminClient) PatchDataServer(dataServer *proto.DataServer) (*proto.
 	return nil, errors.New("failed to patch data server")
 }
 
+func (m *MockAdminClient) DeleteDataServer(dataServer string) (*proto.DataServer, error) {
+	args := m.MethodCalled("DeleteDataServer", dataServer)
+	if v, ok := args.Get(0).(*proto.DataServer); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("failed to delete data server")
+}
+
 func (m *MockAdminClient) SplitShard(namespace string, shardId int64, splitPoint *uint32) *oxia.SplitShardResult {
 	args := m.MethodCalled("SplitShard", namespace, shardId, splitPoint)
 	if v, ok := args.Get(0).(*oxia.SplitShardResult); ok {

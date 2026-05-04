@@ -181,6 +181,10 @@ func (*mockNamespaceMetadata) PatchDataServer(*proto.DataServer) (*proto.DataSer
 	return &proto.DataServer{}, nil
 }
 
+func (*mockNamespaceMetadata) DeleteDataServer(string) (*proto.DataServer, error) {
+	return &proto.DataServer{}, nil
+}
+
 func (*mockNamespaceMetadata) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
 	return map[string]commonobject.Borrowed[*proto.DataServer]{}
 }
