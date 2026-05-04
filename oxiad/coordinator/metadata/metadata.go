@@ -586,7 +586,7 @@ func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[
 	return dataServers
 }
 
-func (m *coordinatorMetadata) GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*commonproto.Namespace], bool) {
+func (m *coordinatorMetadata) GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*commonproto.Namespace], bool) { //nolint:revive
 	config := m.GetConfig().UnsafeBorrow()
 	for _, ns := range config.GetNamespaces() {
 		if ns.GetName() == namespace {

@@ -220,7 +220,7 @@ func (*mockNamespaceMetadata) GetDataServer(string) (commonobject.Borrowed[*prot
 	return commonobject.Borrowed[*proto.DataServer]{}, false
 }
 
-func (m *mockNamespaceMetadata) GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*proto.Namespace], bool) {
+func (m *mockNamespaceMetadata) GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*proto.Namespace], bool) { //nolint:revive
 	ns, exists := m.configNS[namespace]
 	if !exists {
 		return commonobject.Borrowed[*proto.Namespace]{}, false

@@ -167,8 +167,8 @@ func migrateClusterConfigurationYAML(value any) any {
 			continue
 		}
 
-		policy, _ := namespace["policy"].(map[string]any)
-		if policy == nil {
+		policy, ok := namespace["policy"].(map[string]any)
+		if !ok {
 			policy = map[string]any{}
 		}
 

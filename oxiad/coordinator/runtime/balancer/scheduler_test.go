@@ -167,7 +167,7 @@ func (m *mockMetadata) ListDataServer() map[string]commonobject.Borrowed[*proto.
 	return dataServers
 }
 
-func (m *mockMetadata) GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*proto.Namespace], bool) {
+func (m *mockMetadata) GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*proto.Namespace], bool) { //nolint:revive
 	nc, ok := m.nsConfigs[namespace]
 	if !ok {
 		return commonobject.Borrowed[*proto.Namespace]{}, false
