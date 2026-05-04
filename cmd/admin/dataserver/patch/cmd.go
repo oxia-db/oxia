@@ -59,20 +59,26 @@ func exec(cmd *cobra.Command, args []string) error {
 		return errors.New("data server name must not be empty")
 	}
 
-	if fields.PublicAddress == nil && fields.InternalAddress == nil && fields.Labels == nil {
+	publicAddress := ""
+	if fields.PublicAddress != nil {
+		publicAddress = strings.TrimSpace(*fields.PublicAddress)
+	}
+	internalAddress := ""
+	if fields.InternalAddress != nil {
+		internalAddress = strings.TrimSpace(*fields.InternalAddress)
+	}
+	var rawLabels []string
+	if fields.Labels != nil {
+		rawLabels = *fields.Labels
+	}
+
+	if publicAddress == "" && internalAddress == "" && len(rawLabels) == 0 {
 		return errors.New("must specify at least one field to patch")
 	}
 
-	if fields.PublicAddress != nil && strings.TrimSpace(*fields.PublicAddress) == "" {
-		return errors.New("data server public address must not be empty")
-	}
-	if fields.InternalAddress != nil && strings.TrimSpace(*fields.InternalAddress) == "" {
-		return errors.New("data server internal address must not be empty")
-	}
-
 	var metadata *proto.DataServerMetadata
-	if fields.Labels != nil {
-		parsedLabels, err := cmdparse.StringMap(*fields.Labels)
+	if len(rawLabels) > 0 {
+		parsedLabels, err := cmdparse.StringMap(rawLabels)
 		if err != nil {
 			return err
 		}
@@ -85,11 +91,11 @@ func exec(cmd *cobra.Command, args []string) error {
 		},
 		Metadata: metadata,
 	}
-	if fields.PublicAddress != nil {
-		dataServer.Identity.Public = *fields.PublicAddress
+	if publicAddress != "" {
+		dataServer.Identity.Public = publicAddress
 	}
-	if fields.InternalAddress != nil {
-		dataServer.Identity.Internal = *fields.InternalAddress
+	if internalAddress != "" {
+		dataServer.Identity.Internal = internalAddress
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()

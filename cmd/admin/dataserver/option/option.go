@@ -14,11 +14,7 @@
 
 package option
 
-import (
-	"strings"
-
-	"github.com/spf13/pflag"
-)
+import "github.com/spf13/pflag"
 
 const (
 	PublicFlagName   = "public"
@@ -33,61 +29,13 @@ type DataServerFields struct {
 }
 
 func (f *DataServerFields) AddFlags(flagSet *pflag.FlagSet) {
-	flagSet.Var(&optionalStringValue{target: &f.PublicAddress}, PublicFlagName, "Public address for the data server")
-	flagSet.Var(&optionalStringValue{target: &f.InternalAddress}, InternalFlagName, "Internal address for the data server")
-	flagSet.Var(&optionalStringArrayValue{target: &f.Labels}, LabelFlagName, "Label to attach to the data server in key=value form")
+	f.PublicAddress = flagSet.String(PublicFlagName, "", "Public address for the data server")
+	f.InternalAddress = flagSet.String(InternalFlagName, "", "Internal address for the data server")
+	f.Labels = flagSet.StringArray(LabelFlagName, nil, "Label to attach to the data server in key=value form")
 }
 
 func (f *DataServerFields) Reset() {
 	f.PublicAddress = nil
 	f.InternalAddress = nil
 	f.Labels = nil
-}
-
-type optionalStringValue struct {
-	target **string
-}
-
-func (v *optionalStringValue) String() string {
-	if *v.target == nil {
-		return ""
-	}
-	return **v.target
-}
-
-func (v *optionalStringValue) Set(value string) error {
-	copied := value
-	*v.target = &copied
-	return nil
-}
-
-func (*optionalStringValue) Type() string {
-	return "string"
-}
-
-type optionalStringArrayValue struct {
-	target **[]string
-}
-
-func (v *optionalStringArrayValue) String() string {
-	if *v.target == nil {
-		return ""
-	}
-	return strings.Join(**v.target, ",")
-}
-
-func (v *optionalStringArrayValue) Set(value string) error {
-	if *v.target == nil {
-		values := []string{value}
-		*v.target = &values
-		return nil
-	}
-
-	values := append(**v.target, value)
-	*v.target = &values
-	return nil
-}
-
-func (*optionalStringArrayValue) Type() string {
-	return "stringArray"
 }
