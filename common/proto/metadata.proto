@@ -39,29 +39,29 @@ message AntiAffinity {
 }
 
 message HierarchyPolicies {
-  repeated AntiAffinity antiAffinities = 1;
+  repeated AntiAffinity anti_affinities = 1;
 }
 
 message Namespace {
   string name = 1;
-  uint32 initialShardCount = 2;
-  uint32 replicationFactor = 3;
-  optional bool notificationsEnabled = 4;
-  string keySorting = 5;
+  uint32 initial_shard_count = 2;
+  uint32 replication_factor = 3;
+  optional bool notifications_enabled = 4;
+  string key_sorting = 5;
   HierarchyPolicies policy = 6;
 }
 
 message LoadBalancer {
-  string scheduleInterval = 1;
-  string quarantineTime = 2;
+  string schedule_interval = 1;
+  string quarantine_time = 2;
 }
 
 message ClusterConfiguration {
   repeated Namespace namespaces = 1;
   repeated DataServerIdentity servers = 2;
-  repeated string allowExtraAuthorities = 3;
-  map<string, DataServerMetadata> serverMetadata = 4;
-  LoadBalancer loadBalancer = 5;
+  repeated string allow_extra_authorities = 3;
+  map<string, DataServerMetadata> server_metadata = 4;
+  LoadBalancer load_balancer = 5;
 }
 
 message HashRange {
@@ -71,12 +71,12 @@ message HashRange {
 
 message SplitMetadata {
   string phase = 1;
-  int64 parentShardId = 2;
-  repeated int64 childShardIds = 3;
-  uint32 splitPoint = 4;
-  int64 snapshotOffset = 5;
-  int64 parentTermAtBootstrap = 6;
-  map<int64, string> childLeadersAtBootstrap = 7;
+  int64 parent_shard_id = 2;
+  repeated int64 child_shard_ids = 3;
+  uint32 split_point = 4;
+  int64 snapshot_offset = 5;
+  int64 parent_term_at_bootstrap = 6;
+  map<int64, string> child_leaders_at_bootstrap = 7;
 }
 
 message ShardMetadata {
@@ -84,20 +84,20 @@ message ShardMetadata {
   int64 term = 2;
   DataServerIdentity leader = 3;
   repeated DataServerIdentity ensemble = 4;
-  repeated DataServerIdentity removedNodes = 5;
-  repeated DataServerIdentity pendingDeleteShardNodes = 6;
-  HashRange int32HashRange = 7;
+  repeated DataServerIdentity removed_nodes = 5;
+  repeated DataServerIdentity pending_delete_shard_nodes = 6;
+  HashRange int32_hash_range = 7;
   SplitMetadata split = 8;
 }
 
 message NamespaceStatus {
-  uint32 replicationFactor = 1;
+  uint32 replication_factor = 1;
   map<int64, ShardMetadata> shards = 2;
 }
 
 message ClusterStatus {
   map<string, NamespaceStatus> namespaces = 1;
-  int64 shardIdGenerator = 2;
-  uint32 serverIdx = 3;
-  string instanceId = 4;
+  int64 shard_id_generator = 2;
+  uint32 server_idx = 3;
+  string instance_id = 4;
 }
