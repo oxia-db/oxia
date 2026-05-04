@@ -231,14 +231,6 @@ func (m *mockNamespaceMetadata) GetNamespace(namespace string, effective bool) (
 	return commonobject.Borrow(ns), true
 }
 
-func (m *mockNamespaceMetadata) GetNamespaceEffectivePolicy(namespace string) (*proto.HierarchyPolicies, bool) {
-	ns, exists := m.configNS[namespace]
-	if !exists {
-		return nil, false
-	}
-	return proto.ResolveHierarchyPolicies(nil, ns), true
-}
-
 var _ coordmetadata.Metadata = (*mockNamespaceMetadata)(nil)
 
 type mockNamespaceRuntime struct {

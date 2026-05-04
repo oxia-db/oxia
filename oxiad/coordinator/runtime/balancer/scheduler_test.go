@@ -178,14 +178,6 @@ func (m *mockMetadata) GetNamespace(namespace string, effective bool) (commonobj
 	return commonobject.Borrow(nc), true
 }
 
-func (m *mockMetadata) GetNamespaceEffectivePolicy(namespace string) (*proto.HierarchyPolicies, bool) {
-	nc, ok := m.nsConfigs[namespace]
-	if !ok {
-		return nil, false
-	}
-	return proto.ResolveHierarchyPolicies(nil, nc), true
-}
-
 func (m *mockMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.DataServer], bool) {
 	n, ok := m.nodeMap[name]
 	if !ok {

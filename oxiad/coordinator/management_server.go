@@ -167,13 +167,9 @@ func (management *managementServer) DeleteDataServer(_ context.Context, req *pro
 
 func (management *managementServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
 	cnf := management.metadata.GetConfig().UnsafeBorrow()
-	namespaces := make([]*proto.Namespace, 0, len(cnf.GetNamespaces()))
-	for _, namespace := range cnf.GetNamespaces() {
-		namespaces = append(namespaces, cnf.MaterializeNamespace(namespace))
-	}
 
 	return &proto.ListNamespacesResponse{
-		Namespaces: namespaces,
+		Namespaces: cnf.GetNamespaces(),
 	}, nil
 }
 
@@ -254,7 +250,7 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	}
 
 	return &proto.PatchNamespaceResponse{
-		Namespace: management.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(namespace),
+		Namespace: namespace,
 	}, nil
 }
 
@@ -278,7 +274,7 @@ func (management *managementServer) DeleteNamespace(_ context.Context, req *prot
 	}
 
 	return &proto.DeleteNamespaceResponse{
-		Namespace: management.metadata.GetConfig().UnsafeBorrow().MaterializeNamespace(namespace),
+		Namespace: namespace,
 	}, nil
 }
 

@@ -230,6 +230,32 @@ func TestManagementServerGetNamespace(t *testing.T) {
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), policy.GetKeySorting())
 }
 
+func TestManagementServerGetNamespaceEffective(t *testing.T) {
+	clusterPolicy := &proto.HierarchyPolicies{}
+	clusterPolicy.SetInitialShardCount(4)
+	clusterPolicy.SetReplicationFactor(3)
+	clusterPolicy.SetNotificationsEnabled(false)
+	clusterPolicy.SetKeySorting("natural")
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Policy: clusterPolicy,
+			Namespaces: []*proto.Namespace{{
+				Name: "ns-1",
+			}},
+		}),
+		nil,
+	)
+
+	res, err := management.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: "ns-1", Effective: true})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	policy := res.GetNamespace().GetPolicy()
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.False(t, policy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", policy.GetKeySorting())
+}
+
 func TestManagementServerListNamespaces(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
