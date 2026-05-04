@@ -50,7 +50,7 @@ func (flags *flags) Reset() {
 }
 
 var Cmd = &cobra.Command{
-	Use:          "patch <name>",
+	Use:          "patch <name> --public <address> --internal <address>",
 	Short:        "Patch a data server",
 	Long:         `Patch a data server`,
 	Args:         cobra.ExactArgs(1),
@@ -62,6 +62,8 @@ func init() {
 	Cmd.Flags().StringVar(&Config.publicAddress, publicFlagName, "", "Public address for the data server")
 	Cmd.Flags().StringVar(&Config.internalAddress, internalFlagName, "", "Internal address for the data server")
 	Cmd.Flags().StringArrayVar(&Config.labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	_ = Cmd.MarkFlagRequired(publicFlagName)
+	_ = Cmd.MarkFlagRequired(internalFlagName)
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -100,17 +102,11 @@ func patchRequestFromFlags(cmd *cobra.Command, rawName string) (*proto.DataServe
 		return nil, errors.New("data server name must not be empty")
 	}
 
-	publicChanged := cmd.Flags().Changed(publicFlagName)
-	internalChanged := cmd.Flags().Changed(internalFlagName)
 	labelChanged := cmd.Flags().Changed(labelFlagName)
-	if !publicChanged && !internalChanged && !labelChanged {
-		return nil, errors.New("must specify at least one field to patch")
-	}
-
-	if publicChanged && strings.TrimSpace(Config.publicAddress) == "" {
+	if strings.TrimSpace(Config.publicAddress) == "" {
 		return nil, errors.New("data server public address must not be empty")
 	}
-	if internalChanged && strings.TrimSpace(Config.internalAddress) == "" {
+	if strings.TrimSpace(Config.internalAddress) == "" {
 		return nil, errors.New("data server internal address must not be empty")
 	}
 
@@ -125,15 +121,11 @@ func patchRequestFromFlags(cmd *cobra.Command, rawName string) (*proto.DataServe
 
 	dataServer := &proto.DataServer{
 		Identity: &proto.DataServerIdentity{
-			Name: &name,
+			Name:     &name,
+			Public:   Config.publicAddress,
+			Internal: Config.internalAddress,
 		},
 		Metadata: metadata,
-	}
-	if publicChanged {
-		dataServer.Identity.Public = Config.publicAddress
-	}
-	if internalChanged {
-		dataServer.Identity.Internal = Config.internalAddress
 	}
 	return dataServer, nil
 }

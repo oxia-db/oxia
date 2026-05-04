@@ -51,7 +51,7 @@ func Test_cmd_patchDataServer(t *testing.T) {
 	commons.MockedAdminClient.On("PatchDataServer", mock.MatchedBy(func(ds *proto.DataServer) bool {
 		return ds.GetNameOrDefault() == serverName &&
 			ds.GetIdentity().GetPublic() == "public2" &&
-			ds.GetIdentity().GetInternal() == "" &&
+			ds.GetIdentity().GetInternal() == "internal1" &&
 			ds.GetMetadata().GetLabels()["rack"] == "rack-2"
 	})).Return(&proto.DataServer{
 		Identity: &proto.DataServerIdentity{
@@ -75,8 +75,10 @@ func Test_cmd_patchDataServer(t *testing.T) {
 	cmd.Flags().StringVar(&Config.publicAddress, publicFlagName, "", "Public address for the data server")
 	cmd.Flags().StringVar(&Config.internalAddress, internalFlagName, "", "Internal address for the data server")
 	cmd.Flags().StringArrayVar(&Config.labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	_ = cmd.MarkFlagRequired(publicFlagName)
+	_ = cmd.MarkFlagRequired(internalFlagName)
 
-	out, err := runCmd(cmd, serverName, "--public", "public2", "--label", "rack=rack-2", "-o", "json")
+	out, err := runCmd(cmd, serverName, "--public", "public2", "--internal", "internal1", "--label", "rack=rack-2", "-o", "json")
 	require.NoError(t, err)
 
 	var dataServer proto.DataServer
@@ -89,7 +91,7 @@ func Test_cmd_patchDataServer(t *testing.T) {
 	assert.Equal(t, map[string]string{"rack": "rack-2"}, dataServer.GetMetadata().GetLabels())
 }
 
-func Test_cmd_patchDataServer_RejectsNoChanges(t *testing.T) {
+func Test_cmd_patchDataServer_RejectsMissingRequiredFlags(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
@@ -104,9 +106,11 @@ func Test_cmd_patchDataServer_RejectsNoChanges(t *testing.T) {
 	cmd.Flags().StringVar(&Config.publicAddress, publicFlagName, "", "Public address for the data server")
 	cmd.Flags().StringVar(&Config.internalAddress, internalFlagName, "", "Internal address for the data server")
 	cmd.Flags().StringArrayVar(&Config.labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
+	_ = cmd.MarkFlagRequired(publicFlagName)
+	_ = cmd.MarkFlagRequired(internalFlagName)
 
-	out, err := runCmd(cmd, "server-1")
+	out, err := runCmd(cmd, "server-1", "--public", "public1")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must specify at least one field to patch")
-	assert.Contains(t, out, "must specify at least one field to patch")
+	assert.Contains(t, err.Error(), `required flag(s) "internal" not set`)
+	assert.Contains(t, out, `required flag(s) "internal" not set`)
 }

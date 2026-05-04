@@ -124,8 +124,11 @@ func (management *managementServer) PatchDataServer(_ context.Context, req *prot
 	if req.DataServer.Identity.GetName() == "" {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity name must not be empty")
 	}
-	if req.DataServer.Identity.GetPublic() == "" && req.DataServer.Identity.GetInternal() == "" && req.DataServer.Metadata == nil {
-		return nil, grpcstatus.Error(codes.InvalidArgument, "data server patch must specify at least one field to update")
+	if req.DataServer.Identity.GetPublic() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server public address must not be empty")
+	}
+	if req.DataServer.Identity.GetInternal() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server internal address must not be empty")
 	}
 
 	dataServer, err := management.metadata.PatchDataServer(req.DataServer)
