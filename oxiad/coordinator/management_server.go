@@ -114,6 +114,33 @@ func (management *managementServer) CreateDataServer(_ context.Context, req *pro
 	}, nil
 }
 
+func (management *managementServer) PatchDataServer(_ context.Context, req *proto.PatchDataServerRequest) (*proto.PatchDataServerResponse, error) {
+	if req == nil || req.DataServer == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be nil")
+	}
+	if req.DataServer.Identity == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity must not be nil")
+	}
+	if req.DataServer.Identity.GetName() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity name must not be empty")
+	}
+
+	dataServer, err := management.metadata.PatchDataServer(req.DataServer)
+	if err != nil {
+		if errors.Is(err, metadatacommon.ErrNotFound) {
+			return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer.GetNameOrDefault())
+		}
+		if errors.Is(err, metadatacommon.ErrBadVersion) {
+			return nil, grpcstatus.Errorf(codes.Aborted, "failed to patch data server %q due to concurrent config update", req.DataServer.GetNameOrDefault())
+		}
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to patch data server %q: %v", req.DataServer.GetNameOrDefault(), err)
+	}
+
+	return &proto.PatchDataServerResponse{
+		DataServer: dataServer,
+	}, nil
+}
+
 func (management *managementServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
 	cnf := management.metadata.GetConfig().UnsafeBorrow()
 

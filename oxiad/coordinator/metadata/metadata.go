@@ -54,6 +54,7 @@ type Metadata interface {
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
 	CreateDataServer(dataServer *commonproto.DataServer) error
+	PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error)
 	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool)
 }
@@ -374,6 +375,47 @@ func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServe
 
 		return config, nil
 	})
+}
+
+func (m *coordinatorMetadata) PatchDataServer(desireDataServer *commonproto.DataServer) (*commonproto.DataServer, error) {
+	var updated *commonproto.DataServer
+	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		for _, existID := range config.GetServers() {
+			if existID.GetNameOrDefault() != desireDataServer.GetNameOrDefault() {
+				continue
+			}
+			if public := desireDataServer.GetIdentity().GetPublic(); public != "" {
+				existID.Public = public
+			}
+			if internal := desireDataServer.GetIdentity().GetInternal(); internal != "" {
+				existID.Internal = internal
+			}
+			if config.ServerMetadata == nil {
+				config.ServerMetadata = map[string]*commonproto.DataServerMetadata{}
+			}
+			var dsMeta *commonproto.DataServerMetadata
+			var ok bool
+			if dsMeta, ok = config.ServerMetadata[existID.GetNameOrDefault()]; !ok {
+				dsMeta = &commonproto.DataServerMetadata{}
+			}
+			if desireDataServer.Metadata != nil {
+				if desireDataServer.Metadata.Labels != nil {
+					dsMeta.Labels = desireDataServer.Metadata.Labels
+				}
+				config.ServerMetadata[existID.GetNameOrDefault()] = dsMeta
+			}
+			updated = &commonproto.DataServer{
+				Identity: existID,
+				Metadata: dsMeta,
+			}
+			return config, nil
+		}
+		return nil, metadatacommon.ErrNotFound
+	}); err != nil {
+		return nil, err
+	}
+
+	return updated, nil
 }
 
 func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer] {

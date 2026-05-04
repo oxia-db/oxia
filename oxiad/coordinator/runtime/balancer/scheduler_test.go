@@ -109,6 +109,10 @@ func (*mockMetadata) CreateDataServer(*proto.DataServer) error {
 	return nil
 }
 
+func (*mockMetadata) PatchDataServer(*proto.DataServer) (*proto.DataServer, error) {
+	return &proto.DataServer{}, nil
+}
+
 func (m *mockMetadata) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
 	dataServers := make(map[string]commonobject.Borrowed[*proto.DataServer], m.nodes.Size())
 	for _, id := range m.nodes.Values() {
