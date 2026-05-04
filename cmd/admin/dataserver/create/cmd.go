@@ -27,6 +27,11 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 )
 
+const (
+	publicFlagName   = "public"
+	internalFlagName = "internal"
+)
+
 var Cmd = &cobra.Command{
 	Use:          "create <name> --public <address> --internal <address>",
 	Short:        "Create a data server",
@@ -37,11 +42,11 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
-	Cmd.Flags().String("public", "", "Public address for the data server")
-	Cmd.Flags().String("internal", "", "Internal address for the data server")
+	Cmd.Flags().String(publicFlagName, "", "Public address for the data server")
+	Cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
 	Cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
-	_ = Cmd.MarkFlagRequired("public")
-	_ = Cmd.MarkFlagRequired("internal")
+	_ = Cmd.MarkFlagRequired(publicFlagName)
+	_ = Cmd.MarkFlagRequired(internalFlagName)
 }
 
 func newCmd() *cobra.Command {
@@ -53,11 +58,11 @@ func newCmd() *cobra.Command {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	cmd.Flags().String("public", "", "Public address for the data server")
-	cmd.Flags().String("internal", "", "Internal address for the data server")
+	cmd.Flags().String(publicFlagName, "", "Public address for the data server")
+	cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
 	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
-	_ = cmd.MarkFlagRequired("public")
-	_ = cmd.MarkFlagRequired("internal")
+	_ = cmd.MarkFlagRequired(publicFlagName)
+	_ = cmd.MarkFlagRequired(internalFlagName)
 	return cmd
 }
 
@@ -75,10 +80,10 @@ func exec(cmd *cobra.Command, args []string) error {
 	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
 		return err
 	}
-	if publicAddress, err = cmd.Flags().GetString("public"); err != nil {
+	if publicAddress, err = cmd.Flags().GetString(publicFlagName); err != nil {
 		return err
 	}
-	if internalAddress, err = cmd.Flags().GetString("internal"); err != nil {
+	if internalAddress, err = cmd.Flags().GetString(internalFlagName); err != nil {
 		return err
 	}
 	if labelValues, err = cmd.Flags().GetStringArray("label"); err != nil {

@@ -113,21 +113,21 @@ func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, 
 	return err
 }
 
-func (m *coordinatorMetadata) computeConfig(fn func(*commonproto.ClusterConfiguration, metadatacommon.Version) (*commonproto.ClusterConfiguration, bool)) error {
+func (m *coordinatorMetadata) computeConfig(fn func(*commonproto.ClusterConfiguration, metadatacommon.Version) (*commonproto.ClusterConfiguration, error)) error {
 	m.configLock.Lock()
 	defer m.configLock.Unlock()
 
 	current := m.configProvider.Watch().Load()
-	next, changed := fn(metadatacommon.ClusterConfigCodec.Clone(current.Value), current.Version)
-	if !changed {
-		return nil
+	next, err := fn(metadatacommon.ClusterConfigCodec.Clone(current.Value), current.Version)
+	if err != nil {
+		return err
 	}
 
 	if err := next.Validate(); err != nil {
 		return err
 	}
 
-	_, err := m.configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
+	_, err = m.configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
 		Value:   next,
 		Version: current.Version,
 	})
@@ -358,12 +358,10 @@ func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonpro
 
 func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {
 	name := dataServer.GetIdentity().GetName()
-	var createErr error
 
-	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, bool) {
+	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		if _, exists := config.GetDataServer(name); exists {
-			createErr = metadatacommon.ErrAlreadyExists
-			return nil, false
+			return nil, metadatacommon.ErrAlreadyExists
 		}
 
 		config.Servers = append(config.Servers, dataServer.GetIdentity())
@@ -374,11 +372,8 @@ func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServe
 			config.ServerMetadata[name] = metadata
 		}
 
-		return config, true
-	}); err != nil {
-		return err
-	}
-	return createErr
+		return config, nil
+	})
 }
 
 func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer] {
