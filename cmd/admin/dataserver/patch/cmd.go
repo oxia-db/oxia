@@ -61,12 +61,22 @@ func exec(cmd *cobra.Command, args []string) error {
 
 	publicAddress := strings.TrimSpace(fields.PublicAddress)
 	internalAddress := strings.TrimSpace(fields.InternalAddress)
-	if publicAddress == "" && internalAddress == "" && len(fields.Labels) == 0 {
+	publicChanged := cmd.Flags().Changed(option.PublicFlagName)
+	internalChanged := cmd.Flags().Changed(option.InternalFlagName)
+	labelChanged := cmd.Flags().Changed(option.LabelFlagName)
+
+	if !publicChanged && !internalChanged && !labelChanged {
 		return errors.New("must specify at least one field to patch")
+	}
+	if publicChanged && publicAddress == "" {
+		return errors.New("data server public address must not be empty")
+	}
+	if internalChanged && internalAddress == "" {
+		return errors.New("data server internal address must not be empty")
 	}
 
 	var metadata *proto.DataServerMetadata
-	if len(fields.Labels) > 0 {
+	if labelChanged {
 		parsedLabels, err := cmdparse.StringMap(fields.Labels)
 		if err != nil {
 			return err
@@ -80,10 +90,10 @@ func exec(cmd *cobra.Command, args []string) error {
 		},
 		Metadata: metadata,
 	}
-	if publicAddress != "" {
+	if publicChanged {
 		dataServer.Identity.Public = publicAddress
 	}
-	if internalAddress != "" {
+	if internalChanged {
 		dataServer.Identity.Internal = internalAddress
 	}
 
