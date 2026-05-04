@@ -21,6 +21,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
@@ -71,7 +72,10 @@ func TestNormalShardBalancer(t *testing.T) {
 	}
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(&cc, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   &cc,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -90,9 +94,11 @@ func TestNormalShardBalancer(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
-	_, err = configProvider.Store(&cc, version)
+	version := configProvider.Watch().Load().Version
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   &cc,
+		Version: version,
+	})
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
@@ -181,7 +187,10 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(&cc, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   &cc,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -200,9 +209,11 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad)...)
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
-	_, err = configProvider.Store(&cc, version)
+	version := configProvider.Watch().Load().Version
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   &cc,
+		Version: version,
+	})
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
@@ -278,7 +289,10 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(&cc, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   &cc,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
 	coordinator := mock.NewCoordinator(t, configProvider)
 	defer coordinator.Close()
@@ -316,9 +330,11 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	}
 
 	cc.Servers = append(cc.Servers, shardBalancerDataServers(s4ad, s5ad, s6ad)...)
-	_, version, err := configProvider.Get()
-	assert.NoError(t, err)
-	_, err = configProvider.Store(&cc, version)
+	version := configProvider.Watch().Load().Version
+	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   &cc,
+		Version: version,
+	})
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {

@@ -17,24 +17,20 @@ package metadata
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"sync"
 	"time"
 
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-
 	"github.com/cenkalti/backoff/v4"
-	"github.com/emirpasic/gods/v2/trees/redblacktree"
 	"github.com/google/uuid"
-	gproto "google.golang.org/protobuf/proto"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/common/rpc"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -55,7 +51,7 @@ type Metadata interface {
 	DeleteShardStatus(namespace string, shard int64)
 
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
-	ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration]
+	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
 	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
@@ -68,184 +64,190 @@ type EnsembleSupplier func(
 ) ([]*commonproto.DataServerIdentity, error)
 
 type coordinatorMetadata struct {
-	logger    *slog.Logger
-	ctx       context.Context
-	ctxCancel context.CancelFunc
-	wg        sync.WaitGroup
+	logger *slog.Logger
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
 	statusProvider provider.Provider[*commonproto.ClusterStatus]
+	statusLock     sync.Mutex
+	changeChLock   sync.RWMutex
+	changeCh       chan struct{}
+
 	configProvider provider.Provider[*commonproto.ClusterConfiguration]
-
-	statusLock       sync.RWMutex
-	currentStatus    *commonproto.ClusterStatus
-	currentVersionID metadatacommon.Version
-	changeCh         chan struct{}
-
-	clusterConfigLock     sync.RWMutex
-	currentClusterConfig  *commonproto.ClusterConfiguration
-	clusterConfigWatch    *commonwatch.Watch[*commonproto.ClusterConfiguration]
-	namespaceConfigsIndex *redblacktree.Tree[string, *commonproto.Namespace]
+	configWatch    *commonwatch.Watch[provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]]
 }
 
 func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration]) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
+	configSnapshot := configProvider.Watch().Load()
 	m := &coordinatorMetadata{
-		logger:             slog.With(slog.String("component", "coordinator-metadata")),
-		ctx:                metadataCtx,
-		ctxCancel:          cancel,
-		wg:                 sync.WaitGroup{},
-		statusProvider:     statusProvider,
-		configProvider:     configProvider,
-		currentVersionID:   metadatacommon.NotExists,
-		changeCh:           make(chan struct{}),
-		clusterConfigWatch: commonwatch.New(&commonproto.ClusterConfiguration{}),
+		logger:         slog.With(slog.String("component", "coordinator-metadata")),
+		ctx:            metadataCtx,
+		cancel:         cancel,
+		statusProvider: statusProvider,
+		changeCh:       make(chan struct{}),
+		configProvider: configProvider,
+		configWatch: commonwatch.New(provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]{
+			Value:   commonobject.Borrow(configSnapshot.Value),
+			Version: configSnapshot.Version,
+		}),
 	}
 
 	m.doStatusRecovery()
-
-	if configWatch, err := configProvider.Watch(); err != nil && !errors.Is(err, metadatacommon.ErrWatchUnsupported) {
-		m.logger.Warn("failed to watch cluster config provider", slog.Any("error", err))
-	} else if configWatch != nil {
-		m.wg.Go(func() {
-			process.DoWithLabels(metadataCtx, map[string]string{
-				"component": "coordinator-metadata-config-watcher",
-			}, func() {
-				m.waitForConfigUpdates(configWatch)
-			})
-		})
-	}
-
+	m.wg.Go(func() {
+		process.DoWithLabels(metadataCtx, map[string]string{
+			"component": "coordinator-metadata-config-watcher",
+		}, m.relayConfigUpdates)
+	})
 	return m
 }
 
+func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, metadatacommon.Version) (*commonproto.ClusterStatus, bool)) error {
+	m.statusLock.Lock()
+	defer m.statusLock.Unlock()
+
+	current := m.statusProvider.Watch().Load()
+	next, changed := fn(metadatacommon.ClusterStatusCodec.Clone(current.Value), current.Version)
+	if !changed {
+		return nil
+	}
+
+	_, err := m.statusProvider.Store(provider.Versioned[*commonproto.ClusterStatus]{
+		Value:   next,
+		Version: current.Version,
+	})
+	return err
+}
+
 func (m *coordinatorMetadata) Close() error {
-	m.ctxCancel()
+	m.cancel()
 	m.wg.Wait()
 	return nil
 }
 
+func (m *coordinatorMetadata) relayConfigUpdates() {
+	receiver := m.configProvider.Watch().Subscribe()
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-receiver.Changed():
+			snapshot := receiver.Load()
+			m.configWatch.Publish(provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]{
+				Value:   commonobject.Borrow(snapshot.Value),
+				Version: snapshot.Version,
+			})
+		}
+	}
+}
+
 func (m *coordinatorMetadata) notifyStatusChange() {
+	m.changeChLock.Lock()
+	defer m.changeChLock.Unlock()
 	close(m.changeCh)
 	m.changeCh = make(chan struct{})
 }
 
 func (m *coordinatorMetadata) doStatusRecovery() {
-	m.statusLock.Lock()
-	defer m.statusLock.Unlock()
-
-	_ = backoff.RetryNotify(func() error {
-		clusterStatus, version, err := m.statusProvider.Get()
-		if err != nil {
-			return err
-		}
-		if clusterStatus == nil {
-			m.currentStatus = nil
-			m.currentVersionID = version
-			return nil
-		}
-		m.currentStatus = clusterStatus
-		m.currentVersionID = version
-		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to load status, retrying later",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
-
-	if m.currentStatus == nil {
-		m.currentStatus = commonproto.NewClusterStatus()
-	}
-	if m.currentStatus.InstanceId == "" {
-		clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
-		clonedStatus.InstanceId = uuid.NewString()
-		m.persistStatusLocked(clonedStatus, "failed to initialize instance id")
+	status := m.statusProvider.Watch().Load().Value
+	if status.GetInstanceId() == "" {
+		_ = backoff.RetryNotify(func() error {
+			return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+				if status.GetInstanceId() != "" {
+					return status, false
+				}
+				status.InstanceId = uuid.NewString()
+				return status, true
+			})
+		}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+			m.logger.Warn(
+				"failed to initialize instance id",
+				slog.Any("error", err),
+				slog.Duration("retry-after", duration),
+			)
+		})
 		m.notifyStatusChange()
 	}
 }
 
-func (m *coordinatorMetadata) persistStatusLocked(newStatus *commonproto.ClusterStatus, warnMessage string) {
+func (m *coordinatorMetadata) GetStatus() commonobject.Borrowed[*commonproto.ClusterStatus] {
+	return commonobject.Borrow(m.statusProvider.Watch().Load().Value)
+}
+
+func (m *coordinatorMetadata) UpdateStatus(newStatus *commonproto.ClusterStatus) {
 	_ = backoff.RetryNotify(func() error {
-		versionID, err := m.statusProvider.Store(newStatus, m.currentVersionID)
-		if err != nil {
-			return err
-		}
-		m.currentStatus = newStatus
-		m.currentVersionID = versionID
-		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+		return m.computeStatus(func(_ *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			return newStatus, true
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
-			warnMessage,
+			"failed to update status",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
 	})
-}
-
-func (m *coordinatorMetadata) GetStatus() commonobject.Borrowed[*commonproto.ClusterStatus] {
-	m.statusLock.RLock()
-	defer m.statusLock.RUnlock()
-	return commonobject.Borrow(m.currentStatus)
-}
-
-func (m *coordinatorMetadata) UpdateStatus(newStatus *commonproto.ClusterStatus) {
-	m.statusLock.Lock()
-	defer m.statusLock.Unlock()
-
-	m.persistStatusLocked(newStatus, "failed to update status")
 	m.notifyStatusChange()
 }
 
 func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
-	m.statusLock.Lock()
-	defer m.statusLock.Unlock()
-
-	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
-	base := clonedStatus.ShardIdGenerator
-	clonedStatus.ShardIdGenerator += int64(count)
-	m.persistStatusLocked(clonedStatus, "failed to reserve shard ids")
+	var base int64
+	_ = backoff.RetryNotify(func() error {
+		return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			base = status.GetShardIdGenerator()
+			status.ShardIdGenerator += int64(count)
+			return status, true
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to reserve shard ids",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
 	m.notifyStatusChange()
 	return base
 }
 
 func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool {
-	m.statusLock.Lock()
-	defer m.statusLock.Unlock()
-
-	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
-	if clonedStatus.Namespaces == nil {
-		clonedStatus.Namespaces = map[string]*commonproto.NamespaceStatus{}
+	created := false
+	_ = backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			if clusterStatus.Namespaces == nil {
+				clusterStatus.Namespaces = map[string]*commonproto.NamespaceStatus{}
+			}
+			if _, exists := clusterStatus.Namespaces[name]; exists {
+				return clusterStatus, false
+			}
+			clusterStatus.Namespaces[name] = status
+			created = true
+			return clusterStatus, true
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to create namespace status",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if created {
+		m.notifyStatusChange()
 	}
-
-	if _, exists := clonedStatus.Namespaces[name]; exists {
-		return false
-	}
-
-	namespaceStatus := gproto.Clone(status).(*commonproto.NamespaceStatus) //nolint:revive
-	clonedStatus.Namespaces[name] = namespaceStatus
-
-	m.persistStatusLocked(clonedStatus, "failed to create namespace status")
-	m.notifyStatusChange()
-	return true
+	return created
 }
 
 func (m *coordinatorMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus] {
-	m.statusLock.RLock()
-	defer m.statusLock.RUnlock()
-
-	namespaces := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], len(m.currentStatus.Namespaces))
-	for name, status := range m.currentStatus.Namespaces {
+	status := m.statusProvider.Watch().Load().Value
+	namespaces := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], len(status.GetNamespaces()))
+	for name, status := range status.GetNamespaces() {
 		namespaces[name] = commonobject.Borrow(status)
 	}
 	return namespaces
 }
 
 func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool) {
-	m.statusLock.RLock()
-	defer m.statusLock.RUnlock()
-
-	namespaceStatus, exists := m.currentStatus.Namespaces[namespace]
+	status := m.statusProvider.Watch().Load().Value
+	namespaceStatus, exists := status.GetNamespaces()[namespace]
 	if !exists {
 		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false
 	}
@@ -253,177 +255,103 @@ func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject
 }
 
 func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus] {
-	m.statusLock.Lock()
-	defer m.statusLock.Unlock()
-
-	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
-	namespaceStatus, exists := clonedStatus.Namespaces[name]
-	if !exists {
-		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}
-	}
-
+	var namespaceStatus *commonproto.NamespaceStatus
 	changed := false
-	for shardID, shardMetadata := range namespaceStatus.Shards {
-		if shardMetadata.Status != commonproto.ShardStatusDeleting {
-			shardMetadata.Status = commonproto.ShardStatusDeleting
-			namespaceStatus.Shards[shardID] = shardMetadata
-			changed = true
-		}
-	}
+	_ = backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			ns, exists := clusterStatus.Namespaces[name]
+			if !exists {
+				return clusterStatus, false
+			}
+			namespaceStatus = ns
+			for shardID, shardMetadata := range ns.Shards {
+				if shardMetadata.Status != commonproto.ShardStatusDeleting {
+					shardMetadata.Status = commonproto.ShardStatusDeleting
+					ns.Shards[shardID] = shardMetadata
+					changed = true
+				}
+			}
+			return clusterStatus, changed
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to mark namespace deleting",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
 	if changed {
-		m.persistStatusLocked(clonedStatus, "failed to mark namespace deleting")
 		m.notifyStatusChange()
 	}
 	return commonobject.Borrow(namespaceStatus)
 }
 
 func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
-	m.statusLock.Lock()
-	defer m.statusLock.Unlock()
-
-	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
-	ns, exist := clonedStatus.Namespaces[namespace]
-	if !exist {
-		return
-	}
-	ns.Shards[shard] = gproto.Clone(shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
-	m.persistStatusLocked(clonedStatus, "failed to update shard metadata")
-	m.notifyStatusChange()
-}
-
-func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) {
-	m.statusLock.Lock()
-	defer m.statusLock.Unlock()
-
-	clonedStatus := gproto.Clone(m.currentStatus).(*commonproto.ClusterStatus) //nolint:revive
-	ns, exist := clonedStatus.Namespaces[namespace]
-	if !exist {
-		return
-	}
-	delete(ns.Shards, shard)
-	if len(ns.Shards) == 0 {
-		delete(clonedStatus.Namespaces, namespace)
-	}
-	m.persistStatusLocked(clonedStatus, "failed to delete shard metadata")
-	m.notifyStatusChange()
-}
-
-func (m *coordinatorMetadata) statusChangeNotify() <-chan struct{} {
-	m.statusLock.RLock()
-	defer m.statusLock.RUnlock()
-	return m.changeCh
-}
-
-func (m *coordinatorMetadata) loadClusterConfigWithInitSlow() {
-	m.clusterConfigLock.Lock()
-	defer m.clusterConfigLock.Unlock()
-	if m.currentClusterConfig != nil {
-		return
-	}
-
+	changed := false
 	_ = backoff.RetryNotify(func() error {
-		newConfig, err := loadClusterConfigFromProvider(m.configProvider)
-		if err != nil {
-			return err
-		}
-		m.currentClusterConfig = gproto.Clone(newConfig).(*commonproto.ClusterConfiguration) //nolint:revive
-		m.rebuildConfigIndexesLocked()
-		m.clusterConfigWatch.Publish(m.currentClusterConfig)
-		return nil
-	}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			ns, exist := clusterStatus.Namespaces[namespace]
+			if !exist {
+				return clusterStatus, false
+			}
+			ns.Shards[shard] = shardMetadata
+			changed = true
+			return clusterStatus, true
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
-			"failed to load cluster configuration, retrying later",
+			"failed to update shard metadata",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
 	})
-}
-
-func loadClusterConfigFromProvider(configProvider provider.Provider[*commonproto.ClusterConfiguration]) (*commonproto.ClusterConfiguration, error) {
-	config, _, err := configProvider.Get()
-	if err != nil {
-		return nil, err
-	}
-	if config == nil {
-		return nil, metadatacommon.ErrNotInitialized
-	}
-	if err := validateClusterConfig(config); err != nil {
-		return nil, err
-	}
-	return config, nil
-}
-
-func validateClusterConfig(config *commonproto.ClusterConfiguration) error {
-	if config == nil {
-		return metadatacommon.ErrNotInitialized
-	}
-	if err := config.Validate(); err != nil {
-		return err
-	}
-	for _, authority := range config.GetAllowExtraAuthorities() {
-		if err := rpc.ValidateAuthorityAddress(authority); err != nil {
-			return fmt.Errorf("cluster configuration: invalid allowExtraAuthorities entry %q: %w", authority, err)
-		}
-	}
-	return nil
-}
-
-func (m *coordinatorMetadata) rebuildConfigIndexesLocked() {
-	namespaceConfigs := redblacktree.New[string, *commonproto.Namespace]()
-	for _, ns := range m.currentClusterConfig.GetNamespaces() {
-		namespaceConfigs.Put(ns.GetName(), ns)
-	}
-	m.namespaceConfigsIndex = namespaceConfigs
-}
-
-func (m *coordinatorMetadata) waitForConfigUpdates(configWatch *commonwatch.Receiver[*commonproto.ClusterConfiguration]) {
-	m.applyConfigWatchValue(configWatch)
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-
-		case <-configWatch.Changed():
-			m.logger.Info("Received cluster config change event")
-			m.applyConfigWatchValue(configWatch)
-		}
+	if changed {
+		m.notifyStatusChange()
 	}
 }
 
-func (m *coordinatorMetadata) applyConfigWatchValue(configWatch *commonwatch.Receiver[*commonproto.ClusterConfiguration]) {
-	config := configWatch.Load()
-	if err := validateClusterConfig(config); err != nil {
-		m.logger.Warn("received invalid cluster config watch value", slog.Any("error", err))
-		return
+func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) {
+	changed := false
+	_ = backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			ns, exist := clusterStatus.Namespaces[namespace]
+			if !exist {
+				return clusterStatus, false
+			}
+			if _, exists := ns.Shards[shard]; !exists {
+				return clusterStatus, false
+			}
+			delete(ns.Shards, shard)
+			if len(ns.Shards) == 0 {
+				delete(clusterStatus.Namespaces, namespace)
+			}
+			changed = true
+			return clusterStatus, true
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to delete shard metadata",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if changed {
+		m.notifyStatusChange()
 	}
-	clonedConfig := gproto.Clone(config).(*commonproto.ClusterConfiguration) //nolint:revive
+}
 
-	m.clusterConfigLock.Lock()
-	oldClusterConfig := m.currentClusterConfig
-	m.currentClusterConfig = clonedConfig
-	m.rebuildConfigIndexesLocked()
-	m.clusterConfigLock.Unlock()
-
-	if gproto.Equal(oldClusterConfig, clonedConfig) {
-		m.logger.Info("No cluster config changes detected")
-		return
-	}
-	m.clusterConfigWatch.Publish(clonedConfig)
+func (m *coordinatorMetadata) statusChangeNotify() <-chan struct{} {
+	m.changeChLock.RLock()
+	defer m.changeChLock.RUnlock()
+	return m.changeCh
 }
 
 func (m *coordinatorMetadata) GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration] {
-	m.clusterConfigLock.RLock()
-	defer m.clusterConfigLock.RUnlock()
-	if m.currentClusterConfig == nil {
-		m.clusterConfigLock.RUnlock()
-		m.loadClusterConfigWithInitSlow()
-		m.clusterConfigLock.RLock()
-	}
-	return commonobject.Borrow(m.currentClusterConfig)
+	return commonobject.Borrow(m.configProvider.Watch().Load().Value)
 }
 
-func (m *coordinatorMetadata) ConfigWatch() *commonwatch.Watch[*commonproto.ClusterConfiguration] {
-	return m.clusterConfigWatch
+func (m *coordinatorMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]] {
+	return m.configWatch.Subscribe()
 }
 
 func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer] {
@@ -431,16 +359,9 @@ func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonpro
 }
 
 func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer] {
-	m.clusterConfigLock.RLock()
-	defer m.clusterConfigLock.RUnlock()
-	if m.currentClusterConfig == nil {
-		m.clusterConfigLock.RUnlock()
-		m.loadClusterConfigWithInitSlow()
-		m.clusterConfigLock.RLock()
-	}
-
-	dataServers := make(map[string]commonobject.Borrowed[*commonproto.DataServer], len(m.currentClusterConfig.GetServers()))
-	for _, server := range m.currentClusterConfig.GetServers() {
+	config := m.GetConfig().UnsafeBorrow()
+	dataServers := make(map[string]commonobject.Borrowed[*commonproto.DataServer], len(config.GetServers()))
+	for _, server := range config.GetServers() {
 		name := server.GetNameOrDefault()
 		identity := server
 		if server.GetName() == "" {
@@ -454,7 +375,7 @@ func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[
 			Identity: identity,
 			Metadata: &commonproto.DataServerMetadata{},
 		}
-		if value, found := m.currentClusterConfig.GetServerMetadata()[name]; found {
+		if value, found := config.GetServerMetadata()[name]; found {
 			dataServer.Metadata = value
 		}
 		dataServers[name] = commonobject.Borrow(dataServer)
@@ -463,30 +384,16 @@ func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[
 }
 
 func (m *coordinatorMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool) {
-	m.clusterConfigLock.RLock()
-	defer m.clusterConfigLock.RUnlock()
-	if m.currentClusterConfig == nil {
-		m.clusterConfigLock.RUnlock()
-		m.loadClusterConfigWithInitSlow()
-		m.clusterConfigLock.RLock()
+	for _, ns := range m.GetConfig().UnsafeBorrow().GetNamespaces() {
+		if ns.GetName() == namespace {
+			return commonobject.Borrow(ns), true
+		}
 	}
-	value, ok := m.namespaceConfigsIndex.Get(namespace)
-	if !ok {
-		return commonobject.Borrowed[*commonproto.Namespace]{}, false
-	}
-	return commonobject.Borrow(value), true
+	return commonobject.Borrowed[*commonproto.Namespace]{}, false
 }
 
 func (m *coordinatorMetadata) GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool) {
-	m.clusterConfigLock.RLock()
-	defer m.clusterConfigLock.RUnlock()
-	if m.currentClusterConfig == nil {
-		m.clusterConfigLock.RUnlock()
-		m.loadClusterConfigWithInitSlow()
-		m.clusterConfigLock.RLock()
-	}
-
-	value, ok := m.currentClusterConfig.GetDataServer(name)
+	value, ok := m.GetConfig().UnsafeBorrow().GetDataServer(name)
 	if !ok {
 		return commonobject.Borrowed[*commonproto.DataServer]{}, false
 	}

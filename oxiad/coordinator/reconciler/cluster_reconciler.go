@@ -23,10 +23,12 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"go.uber.org/multierr"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
@@ -56,8 +58,8 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 		},
 	}
 
-	receiver := r.runtime.Metadata().ConfigWatch().Subscribe()
-	r.reconcile0(r.runtime.Metadata().GetConfig().UnsafeBorrow(), receiver)
+	receiver := r.runtime.Metadata().SubscribeConfig()
+	r.reconcile0(receiver.Load().Value.UnsafeBorrow(), receiver)
 
 	r.wg.Go(func() {
 		process.DoWithLabels(reconcilerCtx, map[string]string{
@@ -89,23 +91,23 @@ func (r *clusterReconciler) Reconcile(_ context.Context, snapshot *proto.Cluster
 	return nil
 }
 
-func (r *clusterReconciler) bgWatchClusterConfiguration(receiver *commonwatch.Receiver[*proto.ClusterConfiguration]) {
+func (r *clusterReconciler) bgWatchClusterConfiguration(receiver *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*proto.ClusterConfiguration]]]) {
 	for {
 		select {
 		case <-r.ctx.Done():
 			return
 		case <-receiver.Changed():
-			r.reconcile0(receiver.Load(), receiver)
+			r.reconcile0(receiver.Load().Value.UnsafeBorrow(), receiver)
 		}
 	}
 }
 
-func (r *clusterReconciler) reconcile0(snapshot *proto.ClusterConfiguration, receiver *commonwatch.Receiver[*proto.ClusterConfiguration]) {
+func (r *clusterReconciler) reconcile0(snapshot *proto.ClusterConfiguration, receiver *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*proto.ClusterConfiguration]]]) {
 	_ = backoff.RetryNotify(func() error {
 		// update the snapshot when we are retrying
 		select {
 		case <-receiver.Changed():
-			snapshot = receiver.Load()
+			snapshot = receiver.Load().Value.UnsafeBorrow()
 		default:
 		}
 		return r.Reconcile(r.ctx, snapshot)

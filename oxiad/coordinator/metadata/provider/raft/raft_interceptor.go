@@ -15,5 +15,5 @@
 package raft
 
 type Interceptor interface {
-	OnApplied(key string, data []byte)
+	OnApplied(key string, data []byte, version int64)
 }

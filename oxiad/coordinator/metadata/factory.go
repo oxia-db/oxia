@@ -44,11 +44,11 @@ type Factory struct {
 	raftInterceptor raft.Interceptor
 }
 
-func (f *Factory) OnApplied(key string, data []byte) {
+func (f *Factory) OnApplied(key string, data []byte, version int64) {
 	if f.raftInterceptor == nil {
 		return
 	}
-	f.raftInterceptor.OnApplied(key, data)
+	f.raftInterceptor.OnApplied(key, data, version)
 }
 
 func NewFactoryWithProviders(

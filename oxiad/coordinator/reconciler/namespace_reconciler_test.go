@@ -28,6 +28,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 )
 
@@ -161,8 +162,11 @@ func (*mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterCo
 	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
 }
 
-func (*mockNamespaceMetadata) ConfigWatch() *commonwatch.Watch[*proto.ClusterConfiguration] {
-	return commonwatch.New(&proto.ClusterConfiguration{})
+func (*mockNamespaceMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*proto.ClusterConfiguration]]] {
+	return commonwatch.New(provider.Versioned[commonobject.Borrowed[*proto.ClusterConfiguration]]{
+		Value:   commonobject.Borrow(&proto.ClusterConfiguration{}),
+		Version: "",
+	}).Subscribe()
 }
 
 func (*mockNamespaceMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalancer] {

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,7 +64,10 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	require.NoError(t, err)
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	clientPool := rpc.NewClientPool(nil, nil)
@@ -324,7 +328,10 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	require.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(
@@ -878,7 +885,10 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			}}, []*proto.DataServerIdentity{sa1})
 
 			configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-			_, err = configProvider.Store(clusterConfig, metadatacommon.NotExists)
+			_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+				Value:   clusterConfig,
+				Version: metadatacommon.NotExists,
+			})
 			require.NoError(t, err)
 			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 

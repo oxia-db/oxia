@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,10 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		},
 	}
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	require.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(
 		memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled),
@@ -121,7 +125,10 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		}},
 	}
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(clusterConfig, metadatacommon.NotExists)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	require.NoError(t, err)
 	metadataFactory := coordmetadata.NewFactoryWithProviders(
 		memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled),

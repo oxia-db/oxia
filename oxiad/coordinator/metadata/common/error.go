@@ -17,7 +17,6 @@ package common
 import "github.com/pkg/errors"
 
 var (
-	ErrNotInitialized   = errors.New("metadata not initialized")
-	ErrBadVersion       = errors.New("metadata bad version")
-	ErrWatchUnsupported = errors.New("metadata watch unsupported")
+	ErrNotInitialized = errors.New("metadata not initialized")
+	ErrBadVersion     = errors.New("metadata bad version")
 )
