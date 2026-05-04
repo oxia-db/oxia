@@ -67,6 +67,23 @@ func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServe
 	return response.DataServer, nil
 }
 
+func (admin *adminClientImpl) CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New("unable to connect to admin server"))
+	}
+
+	response, err := client.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{DataServer: dataServer})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServer, nil
+}
+
 func (admin *adminClientImpl) Close() error {
 	return admin.clientPool.Close()
 }

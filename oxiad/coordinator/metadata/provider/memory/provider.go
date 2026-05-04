@@ -65,7 +65,7 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadata
 	defer m.Unlock()
 
 	if snapshot.Version != m.version {
-		panic(metadatacommon.ErrBadVersion)
+		return metadatacommon.NotExists, metadatacommon.ErrBadVersion
 	}
 
 	m.value = m.codec.Clone(snapshot.Value)

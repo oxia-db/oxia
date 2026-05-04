@@ -16,15 +16,16 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
-	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 )
 
@@ -77,6 +78,39 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 
 	return &proto.GetDataServerResponse{
 		DataServer: borrowedDataServer.UnsafeBorrow(),
+	}, nil
+}
+
+func (management *managementServer) CreateDataServer(_ context.Context, req *proto.CreateDataServerRequest) (*proto.CreateDataServerResponse, error) {
+	if req == nil || req.DataServer == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be nil")
+	}
+	if req.DataServer.Identity == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity must not be nil")
+	}
+	if req.DataServer.Identity.GetName() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity name must not be empty")
+	}
+	if req.DataServer.Identity.GetPublic() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server public address must not be empty")
+	}
+	if req.DataServer.Identity.GetInternal() == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "data server internal address must not be empty")
+	}
+
+	err := management.metadata.CreateDataServer(req.DataServer)
+	if err != nil {
+		if errors.Is(err, metadatacommon.ErrAlreadyExists) {
+			return nil, grpcstatus.Errorf(codes.AlreadyExists, "data server %q already exists", req.DataServer.GetNameOrDefault())
+		}
+		if errors.Is(err, metadatacommon.ErrBadVersion) {
+			return nil, grpcstatus.Errorf(codes.Aborted, "failed to create data server %q due to concurrent config update", req.DataServer.GetNameOrDefault())
+		}
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to create data server %q: %v", req.DataServer.GetNameOrDefault(), err)
+	}
+
+	return &proto.CreateDataServerResponse{
+		DataServer: req.DataServer,
 	}, nil
 }
 

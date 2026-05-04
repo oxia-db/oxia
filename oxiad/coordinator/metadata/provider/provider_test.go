@@ -95,13 +95,11 @@ func TestProvider(t *testing.T) {
 				Namespaces: map[string]*proto.NamespaceStatus{},
 			}
 
-			assert.PanicsWithError(t, metadatacommon.ErrBadVersion.Error(), func() {
-				_, err := m.Store(provider.Versioned[*proto.ClusterStatus]{
-					Value:   status,
-					Version: "",
-				})
-				assert.NoError(t, err)
+			_, err := m.Store(provider.Versioned[*proto.ClusterStatus]{
+				Value:   status,
+				Version: "",
 			})
+			assert.ErrorIs(t, err, metadatacommon.ErrBadVersion)
 
 			newVersion, err := m.Store(provider.Versioned[*proto.ClusterStatus]{
 				Value:   status,

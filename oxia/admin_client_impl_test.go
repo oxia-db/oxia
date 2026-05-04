@@ -36,6 +36,8 @@ type mockAdminRpcClient struct {
 	listDataServersErr      error
 	getDataServerResponse   *proto.GetDataServerResponse
 	getDataServerErr        error
+	createDataServerResp    *proto.CreateDataServerResponse
+	createDataServerErr     error
 }
 
 func (m *mockAdminRpcClient) ListDataServers(context.Context, *proto.ListDataServersRequest, ...grpc.CallOption) (*proto.ListDataServersResponse, error) {
@@ -44,6 +46,10 @@ func (m *mockAdminRpcClient) ListDataServers(context.Context, *proto.ListDataSer
 
 func (m *mockAdminRpcClient) GetDataServer(context.Context, *proto.GetDataServerRequest, ...grpc.CallOption) (*proto.GetDataServerResponse, error) {
 	return m.getDataServerResponse, m.getDataServerErr
+}
+
+func (m *mockAdminRpcClient) CreateDataServer(context.Context, *proto.CreateDataServerRequest, ...grpc.CallOption) (*proto.CreateDataServerResponse, error) {
+	return m.createDataServerResp, m.createDataServerErr
 }
 
 func (*mockAdminRpcClient) ListNamespaces(context.Context, *proto.ListNamespacesRequest, ...grpc.CallOption) (*proto.ListNamespacesResponse, error) {
@@ -198,6 +204,45 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	}
 
 	dataServer, err := admin.GetDataServer(serverName)
+	require.NoError(t, err)
+	require.NotNil(t, dataServer)
+	require.NotNil(t, dataServer.Identity)
+	require.NotNil(t, dataServer.Identity.Name)
+	assert.Equal(t, serverName, *dataServer.Identity.Name)
+	assert.Equal(t, "public-1", dataServer.Identity.GetPublic())
+	assert.Equal(t, "internal-1", dataServer.Identity.GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
+}
+
+func TestAdminClientCreateDataServerReturnsResponse(t *testing.T) {
+	serverName := "server-1"
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				createDataServerResp: &proto.CreateDataServerResponse{
+					DataServer: &proto.DataServer{
+						Identity: &proto.DataServerIdentity{
+							Name:     &serverName,
+							Public:   "public-1",
+							Internal: "internal-1",
+						},
+						Metadata: &proto.DataServerMetadata{
+							Labels: map[string]string{"rack": "rack-1"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	dataServer, err := admin.CreateDataServer(&proto.DataServer{
+		Identity: &proto.DataServerIdentity{
+			Name:     &serverName,
+			Public:   "public-1",
+			Internal: "internal-1",
+		},
+	})
 	require.NoError(t, err)
 	require.NotNil(t, dataServer)
 	require.NotNil(t, dataServer.Identity)

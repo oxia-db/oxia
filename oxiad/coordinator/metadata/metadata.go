@@ -53,6 +53,7 @@ type Metadata interface {
 	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
+	CreateDataServer(dataServer *commonproto.DataServer) error
 	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool)
 }
@@ -74,6 +75,7 @@ type coordinatorMetadata struct {
 	changeCh       chan struct{}
 
 	configProvider provider.Provider[*commonproto.ClusterConfiguration]
+	configLock     sync.Mutex
 }
 
 func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration]) Metadata {
@@ -102,6 +104,30 @@ func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, 
 	}
 
 	_, err := m.statusProvider.Store(provider.Versioned[*commonproto.ClusterStatus]{
+		Value:   next,
+		Version: current.Version,
+	})
+	if errors.Is(err, metadatacommon.ErrBadVersion) {
+		panic(err)
+	}
+	return err
+}
+
+func (m *coordinatorMetadata) computeConfig(fn func(*commonproto.ClusterConfiguration, metadatacommon.Version) (*commonproto.ClusterConfiguration, error)) error {
+	m.configLock.Lock()
+	defer m.configLock.Unlock()
+
+	current := m.configProvider.Watch().Load()
+	next, err := fn(metadatacommon.ClusterConfigCodec.Clone(current.Value), current.Version)
+	if err != nil {
+		return err
+	}
+
+	if err := next.Validate(); err != nil {
+		return err
+	}
+
+	_, err = m.configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
 		Value:   next,
 		Version: current.Version,
 	})
@@ -328,6 +354,26 @@ func (m *coordinatorMetadata) SubscribeConfig() *commonwatch.Receiver[provider.V
 
 func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer] {
 	return commonobject.Borrow(m.GetConfig().UnsafeBorrow().GetLoadBalancerWithDefaults())
+}
+
+func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {
+	name := dataServer.GetIdentity().GetName()
+
+	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		if _, exists := config.GetDataServer(name); exists {
+			return nil, metadatacommon.ErrAlreadyExists
+		}
+
+		config.Servers = append(config.Servers, dataServer.GetIdentity())
+		if metadata := dataServer.GetMetadata(); metadata != nil {
+			if config.ServerMetadata == nil {
+				config.ServerMetadata = map[string]*commonproto.DataServerMetadata{}
+			}
+			config.ServerMetadata[name] = metadata
+		}
+
+		return config, nil
+	})
 }
 
 func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer] {

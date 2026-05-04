@@ -31,10 +31,6 @@ var Cmd = &cobra.Command{
 	SilenceUsage: true,
 }
 
-func init() {
-	Cmd.Flags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
-}
-
 func exec(cmd *cobra.Command, args []string) error {
 	outputFormat, err := cmd.Flags().GetString("output")
 	if err != nil {

@@ -216,18 +216,18 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 	if snapshot.Version == metadatacommon.NotExists {
 		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Create(ctx, cmData, metav1.CreateOptions{})
 		if k8serrors.IsAlreadyExists(err) {
-			panic(metadatacommon.ErrBadVersion)
+			return metadatacommon.NotExists, metadatacommon.ErrBadVersion
 		}
 	} else {
 		if snapshot.Version == "" {
-			panic(metadatacommon.ErrBadVersion)
+			return metadatacommon.NotExists, metadatacommon.ErrBadVersion
 		}
 		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Patch(ctx, m.name, types.ApplyPatchType, desiredBytes, metav1.PatchOptions{
 			FieldManager: fieldManager,
 			Force:        gproto.Bool(true),
 		})
 		if k8serrors.IsNotFound(err) || k8serrors.IsConflict(err) {
-			panic(metadatacommon.ErrBadVersion)
+			return metadatacommon.NotExists, metadatacommon.ErrBadVersion
 		}
 	}
 	if err != nil {

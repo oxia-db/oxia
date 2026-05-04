@@ -12,24 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dataserver
+package parse
 
 import (
-	createcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/create"
-	getcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/get"
+	"strings"
 
-	"github.com/spf13/cobra"
+	"github.com/pkg/errors"
 )
 
-var (
-	Cmd = &cobra.Command{
-		Use:   "dataserver",
-		Short: "Oxia admin operations on data servers",
-		Long:  `Oxia admin operations on data servers`,
+func StringMap(values []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return map[string]string{}, nil
 	}
-)
 
-func init() {
-	Cmd.AddCommand(createcmd.Cmd)
-	Cmd.AddCommand(getcmd.Cmd)
+	result := make(map[string]string, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		key, mapValue, ok := strings.Cut(value, "=")
+		if !ok || key == "" {
+			return nil, errors.Errorf("invalid entry %q, expected key=value", value)
+		}
+		result[key] = mapValue
+	}
+	return result, nil
 }

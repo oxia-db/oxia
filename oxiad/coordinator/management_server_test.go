@@ -196,3 +196,86 @@ func TestManagementServerGetDataServerRejectsEmptyLookup(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
 }
+
+func TestManagementServerCreateDataServer(t *testing.T) {
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{}),
+		nil,
+	)
+
+	serverName := "server-1"
+	res, err := management.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{
+				Name:     &serverName,
+				Public:   "public-1",
+				Internal: "internal-1",
+			},
+			Metadata: &proto.DataServerMetadata{
+				Labels: map[string]string{"rack": "rack-1"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.DataServer)
+	require.NotNil(t, res.DataServer.Identity)
+	require.NotNil(t, res.DataServer.Identity.Name)
+	assert.Equal(t, serverName, *res.DataServer.Identity.Name)
+	assert.Equal(t, "public-1", res.DataServer.Identity.GetPublic())
+	assert.Equal(t, "internal-1", res.DataServer.Identity.GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, res.DataServer.Metadata.GetLabels())
+
+	created, found := management.metadata.GetDataServer(serverName)
+	require.True(t, found)
+	assert.Equal(t, "public-1", created.UnsafeBorrow().Identity.GetPublic())
+}
+
+func TestManagementServerCreateDataServerRejectsInvalidRequest(t *testing.T) {
+	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
+	serverName := "server-1"
+
+	testCases := []struct {
+		name string
+		req  *proto.CreateDataServerRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "nil dataserver", req: &proto.CreateDataServerRequest{}},
+		{name: "nil identity", req: &proto.CreateDataServerRequest{DataServer: &proto.DataServer{}}},
+		{name: "empty name", req: &proto.CreateDataServerRequest{DataServer: &proto.DataServer{Identity: &proto.DataServerIdentity{Public: "public", Internal: "internal"}}}},
+		{name: "empty public", req: &proto.CreateDataServerRequest{DataServer: &proto.DataServer{Identity: &proto.DataServerIdentity{Name: &serverName, Internal: "internal"}}}},
+		{name: "empty internal", req: &proto.CreateDataServerRequest{DataServer: &proto.DataServer{Identity: &proto.DataServerIdentity{Name: &serverName, Public: "public"}}}},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := management.CreateDataServer(context.Background(), tt.req)
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+		})
+	}
+}
+
+func TestManagementServerCreateDataServerAlreadyExists(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	_, err := management.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{
+				Name:     &serverName,
+				Public:   "public-1",
+				Internal: "internal-1",
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.AlreadyExists, grpcstatus.Code(err))
+}

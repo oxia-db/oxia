@@ -63,6 +63,14 @@ func (m *MockAdminClient) GetDataServer(dataServer string) (*proto.DataServer, e
 	return nil, errors.New("data server not found")
 }
 
+func (m *MockAdminClient) CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
+	args := m.MethodCalled("CreateDataServer", dataServer)
+	if v, ok := args.Get(0).(*proto.DataServer); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("failed to create data server")
+}
+
 func (m *MockAdminClient) SplitShard(namespace string, shardId int64, splitPoint *uint32) *oxia.SplitShardResult {
 	args := m.MethodCalled("SplitShard", namespace, shardId, splitPoint)
 	if v, ok := args.Get(0).(*oxia.SplitShardResult); ok {
