@@ -154,6 +154,9 @@ func (management *managementServer) DeleteDataServer(_ context.Context, req *pro
 		if errors.Is(err, metadatacommon.ErrBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to delete data server %q due to concurrent config update", req.DataServer)
 		}
+		if errors.Is(err, metadatacommon.ErrFailedPrecondition) {
+			return nil, grpcstatus.Errorf(codes.FailedPrecondition, "failed to delete data server %q: %v", req.DataServer, err)
+		}
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to delete data server %q: %v", req.DataServer, err)
 	}
 

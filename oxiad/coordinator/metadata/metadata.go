@@ -17,6 +17,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -429,6 +430,17 @@ func (m *coordinatorMetadata) DeleteDataServer(name string) (*commonproto.DataSe
 
 			dataServer, _ := config.GetDataServer(name)
 			deleted = dataServer
+			remainingServerCount := len(config.GetServers()) - 1
+			for _, namespace := range config.GetNamespaces() {
+				if uint64(namespace.GetReplicationFactor()) > uint64(remainingServerCount) {
+					return nil, fmt.Errorf("%w: cannot delete data server %q because namespace %q replicationFactor=%d exceeds remaining data servers=%d",
+						metadatacommon.ErrFailedPrecondition,
+						name,
+						namespace.GetName(),
+						namespace.GetReplicationFactor(),
+						remainingServerCount)
+				}
+			}
 			config.Servers = append(config.Servers[:i], config.Servers[i+1:]...)
 			if config.ServerMetadata != nil {
 				delete(config.ServerMetadata, name)

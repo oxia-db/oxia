@@ -422,3 +422,29 @@ func TestManagementServerDeleteDataServerNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }
+
+func TestManagementServerDeleteDataServerFailedPrecondition(t *testing.T) {
+	serverName1 := "server-1"
+	serverName2 := "server-2"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{{
+				Name:              "default",
+				ReplicationFactor: 2,
+				InitialShardCount: 1,
+			}},
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName1, "public-1", "internal-1"),
+				dataServer(&serverName2, "public-2", "internal-2"),
+			},
+		}),
+		nil,
+	)
+
+	_, err := management.DeleteDataServer(context.Background(), &proto.DeleteDataServerRequest{DataServer: serverName1})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err))
+
+	_, found := management.metadata.GetDataServer(serverName1)
+	assert.True(t, found)
+}
