@@ -109,12 +109,28 @@ func (m *MockAdminClient) DeleteNamespace(namespace string) (*proto.Namespace, e
 	return nil, errors.New("failed to delete namespace")
 }
 
-func (m *MockAdminClient) GetNamespace(namespace string) (*proto.Namespace, error) {
-	args := m.MethodCalled("GetNamespace", namespace)
+func (m *MockAdminClient) GetNamespace(namespace string, effective bool) (*proto.Namespace, error) {
+	args := m.MethodCalled("GetNamespace", namespace, effective)
 	if v, ok := args.Get(0).(*proto.Namespace); ok {
 		return v, args.Error(1)
 	}
 	return nil, errors.New("namespace not found")
+}
+
+func (m *MockAdminClient) GetClusterPolicy() (*proto.HierarchyPolicies, error) {
+	args := m.MethodCalled("GetClusterPolicy")
+	if v, ok := args.Get(0).(*proto.HierarchyPolicies); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("cluster policy not found")
+}
+
+func (m *MockAdminClient) PatchClusterPolicy(policy *proto.HierarchyPolicies) (*proto.HierarchyPolicies, error) {
+	args := m.MethodCalled("PatchClusterPolicy", policy)
+	if v, ok := args.Get(0).(*proto.HierarchyPolicies); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("failed to patch cluster policy")
 }
 
 func (m *MockAdminClient) SplitShard(namespace string, shardId int64, splitPoint *uint32) *oxia.SplitShardResult {

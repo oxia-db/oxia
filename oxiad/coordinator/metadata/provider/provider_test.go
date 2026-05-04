@@ -173,9 +173,8 @@ func TestProviderConfigResource(t *testing.T) {
 			m := newProvider(t)
 			config := &proto.ClusterConfiguration{
 				Namespaces: []*proto.Namespace{{
-					Name:              "default",
-					ReplicationFactor: 1,
-					InitialShardCount: 1,
+					Name:   "default",
+					Policy: proto.NewHierarchyPolicies(1, 1, true, "hierarchical"),
 				}},
 				Servers: []*proto.DataServerIdentity{{
 					Public:   "s1:9091",

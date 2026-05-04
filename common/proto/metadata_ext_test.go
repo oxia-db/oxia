@@ -66,11 +66,11 @@ loadBalancer:
 	require.Len(t, config.GetNamespaces(), 2)
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
 	require.True(t, config.GetNamespaces()[0].NotificationsEnabledOrDefault())
-	require.Nil(t, config.GetNamespaces()[0].NotificationsEnabled)
+	require.Nil(t, config.GetNamespaces()[0].GetPolicy().NotificationsEnabled)
 
 	require.Equal(t, "analytics", config.GetNamespaces()[1].GetName())
 	require.False(t, config.GetNamespaces()[1].NotificationsEnabledOrDefault())
-	require.Equal(t, "natural", config.GetNamespaces()[1].GetKeySorting())
+	require.Equal(t, "natural", config.GetNamespaces()[1].GetPolicy().GetKeySorting())
 	require.Len(t, config.GetNamespaces()[1].GetPolicy().GetAntiAffinities(), 2)
 	require.Equal(t, AntiAffinityModeStrict,
 		config.GetNamespaces()[1].GetPolicy().GetAntiAffinities()[0].GetMode())
@@ -117,7 +117,7 @@ func TestDecodeJSONCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, config.Validate())
 	require.Len(t, config.GetNamespaces(), 1)
-	require.Equal(t, "hierarchical", config.GetNamespaces()[0].GetKeySorting())
+	require.Equal(t, "hierarchical", config.GetNamespaces()[0].GetPolicy().GetKeySorting())
 	require.Equal(t, map[string]string{"rack": "rack-a"}, config.GetServerMetadata()["node-1"].GetLabels())
 }
 
@@ -134,10 +134,59 @@ servers:
 	require.NoError(t, err)
 	require.NoError(t, config.Validate())
 	require.Len(t, config.GetNamespaces(), 1)
-	require.Empty(t, config.GetNamespaces()[0].GetKeySorting())
+	require.Empty(t, config.GetNamespaces()[0].GetPolicy().GetKeySorting())
 	keySorting, err := config.GetNamespaces()[0].GetKeySortingType()
 	require.NoError(t, err)
 	require.Equal(t, KeySortingType_UNKNOWN, keySorting)
+}
+
+func TestResolveHierarchyPoliciesPrefersNamespacePolicy(t *testing.T) {
+	clusterPolicy := &HierarchyPolicies{}
+	clusterPolicy.SetInitialShardCount(1)
+	clusterPolicy.SetReplicationFactor(2)
+	clusterPolicy.SetNotificationsEnabled(true)
+	clusterPolicy.SetKeySorting("hierarchical")
+
+	namespacePolicy := &HierarchyPolicies{}
+	namespacePolicy.SetReplicationFactor(3)
+	namespacePolicy.SetNotificationsEnabled(false)
+	namespace := &Namespace{
+		Name:   "ns-1",
+		Policy: namespacePolicy,
+	}
+
+	effective := ResolveHierarchyPolicies(clusterPolicy, namespace)
+	require.EqualValues(t, 1, effective.GetInitialShardCount())
+	require.EqualValues(t, 3, effective.GetReplicationFactor())
+	require.False(t, effective.GetNotificationsEnabled())
+	require.Equal(t, "hierarchical", effective.GetKeySorting())
+}
+
+func TestResolveHierarchyPoliciesPrefersNamespaceFields(t *testing.T) {
+	namespace := &Namespace{
+		Name:   "ns-1",
+		Policy: NewHierarchyPolicies(4, 3, true, "natural"),
+	}
+
+	effective := ResolveHierarchyPolicies(NewDefaultHierarchyPolicies(), namespace)
+	require.EqualValues(t, 4, effective.GetInitialShardCount())
+	require.EqualValues(t, 3, effective.GetReplicationFactor())
+	require.Equal(t, "natural", effective.GetKeySorting())
+}
+
+func TestMaterializeNamespacePolicyStoresEffectivePolicy(t *testing.T) {
+	clusterPolicy := &HierarchyPolicies{}
+	clusterPolicy.SetInitialShardCount(4)
+	clusterPolicy.SetReplicationFactor(3)
+	clusterPolicy.SetNotificationsEnabled(false)
+	clusterPolicy.SetKeySorting("natural")
+
+	materialized := MaterializeNamespacePolicy(clusterPolicy, &Namespace{Name: "ns-1"})
+	require.Equal(t, "ns-1", materialized.GetName())
+	require.False(t, materialized.NotificationsEnabledOrDefault())
+	require.EqualValues(t, 4, materialized.GetPolicy().GetInitialShardCount())
+	require.EqualValues(t, 3, materialized.GetPolicy().GetReplicationFactor())
+	require.Equal(t, "natural", materialized.GetPolicy().GetKeySorting())
 }
 
 func TestValidateAllowsEmptyConfig(t *testing.T) {
@@ -151,19 +200,8 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 	config := &ClusterConfiguration{
 		Namespaces: []*Namespace{
 			{
-				Name:                 "default",
-				InitialShardCount:    1,
-				ReplicationFactor:    3,
-				KeySorting:           "hierarchical",
-				NotificationsEnabled: &notificationsEnabled,
-				Policy: &HierarchyPolicies{
-					AntiAffinities: []*AntiAffinity{
-						{
-							Labels: []string{"zone"},
-							Mode:   AntiAffinityModeStrict,
-						},
-					},
-				},
+				Name:   "default",
+				Policy: NewHierarchyPolicies(1, 3, notificationsEnabled, "hierarchical"),
 			},
 		},
 		Servers: []*DataServerIdentity{
@@ -190,6 +228,12 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 		LoadBalancer: &LoadBalancer{
 			ScheduleInterval: "30s",
 			QuarantineTime:   "5m",
+		},
+	}
+	config.Namespaces[0].Policy.AntiAffinities = []*AntiAffinity{
+		{
+			Labels: []string{"zone"},
+			Mode:   AntiAffinityModeStrict,
 		},
 	}
 

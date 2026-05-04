@@ -87,9 +87,8 @@ func setupSplitTest(t *testing.T, phase string) (
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value: &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
-				Name:              constant.DefaultNamespace,
-				InitialShardCount: 1,
-				ReplicationFactor: 3,
+				Name:   constant.DefaultNamespace,
+				Policy: proto.NewHierarchyPolicies(1, 3, true, "hierarchical"),
 			}},
 			Servers: []*proto.DataServerIdentity{ps1, ps2, ps3},
 		},

@@ -80,12 +80,13 @@ func writeNamespaceTable(out io.Writer, namespaces []*proto.Namespace) error {
 		if namespace == nil {
 			continue
 		}
+		policy := proto.ResolveHierarchyPolicies(nil, namespace)
 		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\t%t\t%s\n",
 			namespace.GetName(),
-			namespace.GetInitialShardCount(),
-			namespace.GetReplicationFactor(),
-			namespace.NotificationsEnabledOrDefault(),
-			namespace.GetKeySorting(),
+			policy.GetInitialShardCount(),
+			policy.GetReplicationFactor(),
+			policy.GetNotificationsEnabled(),
+			policy.GetKeySorting(),
 		); err != nil {
 			return err
 		}

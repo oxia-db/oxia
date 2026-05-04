@@ -48,20 +48,18 @@ func Test_cmd_patchNamespace(t *testing.T) {
 
 	notificationsEnabled := false
 	expected := &proto.Namespace{
-		Name:                 "ns-1",
-		InitialShardCount:    4,
-		ReplicationFactor:    2,
-		NotificationsEnabled: &notificationsEnabled,
-		KeySorting:           "natural",
+		Name:   "ns-1",
+		Policy: proto.NewHierarchyPolicies(4, 2, notificationsEnabled, "natural"),
 	}
 
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("PatchNamespace", mock.MatchedBy(func(namespace *proto.Namespace) bool {
+		policy := namespace.GetPolicy()
 		return namespace.GetName() == "ns-1" &&
-			namespace.GetInitialShardCount() == 0 &&
-			namespace.GetReplicationFactor() == 2 &&
-			namespace.GetNotificationsEnabled() == notificationsEnabled &&
-			namespace.GetKeySorting() == ""
+			policy.InitialShardCount == nil &&
+			policy.GetReplicationFactor() == 2 &&
+			policy.GetNotificationsEnabled() == notificationsEnabled &&
+			policy.KeySorting == nil
 	})).Return(expected, nil)
 
 	cmd := &cobra.Command{
@@ -79,11 +77,12 @@ func Test_cmd_patchNamespace(t *testing.T) {
 	require.NoError(t, err)
 	var namespace proto.Namespace
 	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
+	policy := proto.ResolveHierarchyPolicies(nil, &namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 2, namespace.GetReplicationFactor())
-	assert.False(t, namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 2, policy.GetReplicationFactor())
+	assert.False(t, policy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", policy.GetKeySorting())
 }
 
 func Test_cmd_patchNamespace_DefaultTable(t *testing.T) {
@@ -92,10 +91,8 @@ func Test_cmd_patchNamespace_DefaultTable(t *testing.T) {
 
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("PatchNamespace", mock.Anything).Return(&proto.Namespace{
-		Name:              "ns-1",
-		InitialShardCount: 4,
-		ReplicationFactor: 2,
-		KeySorting:        "natural",
+		Name:   "ns-1",
+		Policy: proto.NewHierarchyPolicies(4, 2, true, "natural"),
 	}, nil)
 
 	cmd := &cobra.Command{

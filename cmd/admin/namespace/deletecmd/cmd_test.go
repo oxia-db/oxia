@@ -47,11 +47,8 @@ func Test_cmd_deleteNamespace(t *testing.T) {
 	notificationsEnabled := false
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("DeleteNamespace", "ns-1").Return(&proto.Namespace{
-		Name:                 "ns-1",
-		InitialShardCount:    4,
-		ReplicationFactor:    3,
-		NotificationsEnabled: &notificationsEnabled,
-		KeySorting:           "natural",
+		Name:   "ns-1",
+		Policy: proto.NewHierarchyPolicies(4, 3, notificationsEnabled, "natural"),
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -67,11 +64,12 @@ func Test_cmd_deleteNamespace(t *testing.T) {
 
 	var namespace proto.Namespace
 	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
+	policy := proto.ResolveHierarchyPolicies(nil, &namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.False(t, namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.False(t, policy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", policy.GetKeySorting())
 }
 
 func Test_cmd_deleteNamespace_Name(t *testing.T) {

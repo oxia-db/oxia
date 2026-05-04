@@ -38,9 +38,8 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 
 	clusterConfig := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
-			Name:              "default",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
+			Name:   "default",
+			Policy: proto.NewHierarchyPolicies(1, 1, true, "hierarchical"),
 		}},
 		Servers: []*proto.DataServerIdentity{{
 			Public:   leader.Public,
@@ -115,9 +114,8 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 
 	clusterConfig := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
-			Name:              "default",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
+			Name:   "default",
+			Policy: proto.NewHierarchyPolicies(1, 1, true, "hierarchical"),
 		}},
 		Servers: []*proto.DataServerIdentity{{
 			Public:   active.Public,

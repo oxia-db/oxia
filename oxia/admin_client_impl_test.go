@@ -52,6 +52,10 @@ type mockAdminRpcClient struct {
 	listNamespacesErr       error
 	getNamespaceResp        *proto.GetNamespaceResponse
 	getNamespaceErr         error
+	getClusterPolicyResp    *proto.GetClusterPolicyResponse
+	getClusterPolicyErr     error
+	patchClusterPolicyResp  *proto.PatchClusterPolicyResponse
+	patchClusterPolicyErr   error
 }
 
 func (m *mockAdminRpcClient) ListDataServers(context.Context, *proto.ListDataServersRequest, ...grpc.CallOption) (*proto.ListDataServersResponse, error) {
@@ -92,6 +96,14 @@ func (m *mockAdminRpcClient) GetNamespace(context.Context, *proto.GetNamespaceRe
 
 func (m *mockAdminRpcClient) ListNamespaces(context.Context, *proto.ListNamespacesRequest, ...grpc.CallOption) (*proto.ListNamespacesResponse, error) {
 	return m.listNamespacesResp, m.listNamespacesErr
+}
+
+func (m *mockAdminRpcClient) GetClusterPolicy(context.Context, *proto.GetClusterPolicyRequest, ...grpc.CallOption) (*proto.GetClusterPolicyResponse, error) {
+	return m.getClusterPolicyResp, m.getClusterPolicyErr
+}
+
+func (m *mockAdminRpcClient) PatchClusterPolicy(context.Context, *proto.PatchClusterPolicyRequest, ...grpc.CallOption) (*proto.PatchClusterPolicyResponse, error) {
+	return m.patchClusterPolicyResp, m.patchClusterPolicyErr
 }
 
 func (*mockAdminRpcClient) SplitShard(context.Context, *proto.SplitShardRequest, ...grpc.CallOption) (*proto.SplitShardResponse, error) {
@@ -372,10 +384,8 @@ func TestAdminClientCreateNamespaceReturnsResponse(t *testing.T) {
 			adminClient: &mockAdminRpcClient{
 				createNamespaceResp: &proto.CreateNamespaceResponse{
 					Namespace: &proto.Namespace{
-						Name:              "ns-1",
-						InitialShardCount: 4,
-						ReplicationFactor: 3,
-						KeySorting:        proto.KeySortingType_NATURAL.String(),
+						Name:   "ns-1",
+						Policy: proto.NewHierarchyPolicies(4, 3, true, proto.KeySortingType_NATURAL.String()),
 					},
 				},
 			},
@@ -385,10 +395,11 @@ func TestAdminClientCreateNamespaceReturnsResponse(t *testing.T) {
 	namespace, err := admin.CreateNamespace(&proto.Namespace{Name: "ns-1"})
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
+	policy := proto.ResolveHierarchyPolicies(nil, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.Equal(t, proto.KeySortingType_NATURAL.String(), policy.GetKeySorting())
 }
 
 func TestAdminClientPatchNamespaceReturnsResponse(t *testing.T) {
@@ -399,25 +410,25 @@ func TestAdminClientPatchNamespaceReturnsResponse(t *testing.T) {
 			adminClient: &mockAdminRpcClient{
 				patchNamespaceResp: &proto.PatchNamespaceResponse{
 					Namespace: &proto.Namespace{
-						Name:                 "ns-1",
-						InitialShardCount:    4,
-						ReplicationFactor:    3,
-						NotificationsEnabled: &notificationsEnabled,
-						KeySorting:           "natural",
+						Name:   "ns-1",
+						Policy: proto.NewHierarchyPolicies(4, 3, notificationsEnabled, "natural"),
 					},
 				},
 			},
 		},
 	}
 
-	namespace, err := admin.PatchNamespace(&proto.Namespace{Name: "ns-1", NotificationsEnabled: &notificationsEnabled})
+	patchPolicy := &proto.HierarchyPolicies{}
+	patchPolicy.SetNotificationsEnabled(notificationsEnabled)
+	namespace, err := admin.PatchNamespace(&proto.Namespace{Name: "ns-1", Policy: patchPolicy})
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
+	policy := proto.ResolveHierarchyPolicies(nil, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.False(t, namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.False(t, policy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", policy.GetKeySorting())
 }
 
 func TestAdminClientDeleteNamespaceReturnsResponse(t *testing.T) {
@@ -427,10 +438,8 @@ func TestAdminClientDeleteNamespaceReturnsResponse(t *testing.T) {
 			adminClient: &mockAdminRpcClient{
 				deleteNamespaceResp: &proto.DeleteNamespaceResponse{
 					Namespace: &proto.Namespace{
-						Name:              "ns-1",
-						InitialShardCount: 4,
-						ReplicationFactor: 3,
-						KeySorting:        "natural",
+						Name:   "ns-1",
+						Policy: proto.NewHierarchyPolicies(4, 3, true, "natural"),
 					},
 				},
 			},
@@ -440,10 +449,11 @@ func TestAdminClientDeleteNamespaceReturnsResponse(t *testing.T) {
 	namespace, err := admin.DeleteNamespace("ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
+	policy := proto.ResolveHierarchyPolicies(nil, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.Equal(t, "natural", namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.Equal(t, "natural", policy.GetKeySorting())
 }
 
 func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {
@@ -454,9 +464,8 @@ func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {
 				listNamespacesResp: &proto.ListNamespacesResponse{
 					Namespaces: []*proto.Namespace{
 						{
-							Name:              "ns-1",
-							InitialShardCount: 4,
-							ReplicationFactor: 3,
+							Name:   "ns-1",
+							Policy: proto.NewHierarchyPolicies(4, 3, true, "hierarchical"),
 						},
 					},
 				},
@@ -467,9 +476,10 @@ func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {
 	namespaces, err := admin.ListNamespaces()
 	require.NoError(t, err)
 	require.Len(t, namespaces, 1)
+	policy := proto.ResolveHierarchyPolicies(nil, namespaces[0])
 	assert.Equal(t, "ns-1", namespaces[0].GetName())
-	assert.EqualValues(t, 4, namespaces[0].GetInitialShardCount())
-	assert.EqualValues(t, 3, namespaces[0].GetReplicationFactor())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
 }
 
 func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
@@ -479,23 +489,67 @@ func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
 			adminClient: &mockAdminRpcClient{
 				getNamespaceResp: &proto.GetNamespaceResponse{
 					Namespace: &proto.Namespace{
-						Name:              "ns-1",
-						InitialShardCount: 4,
-						ReplicationFactor: 3,
-						KeySorting:        proto.KeySortingType_NATURAL.String(),
+						Name:   "ns-1",
+						Policy: proto.NewHierarchyPolicies(4, 3, true, proto.KeySortingType_NATURAL.String()),
 					},
 				},
 			},
 		},
 	}
 
-	namespace, err := admin.GetNamespace("ns-1")
+	namespace, err := admin.GetNamespace("ns-1", false)
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
+	policy := proto.ResolveHierarchyPolicies(nil, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.Equal(t, proto.KeySortingType_NATURAL.String(), policy.GetKeySorting())
+}
+
+func TestAdminClientGetClusterPolicyReturnsResponse(t *testing.T) {
+	initialShardCount := uint32(4)
+	replicationFactor := uint32(3)
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				getClusterPolicyResp: &proto.GetClusterPolicyResponse{
+					Policy: &proto.HierarchyPolicies{
+						InitialShardCount: &initialShardCount,
+						ReplicationFactor: &replicationFactor,
+					},
+				},
+			},
+		},
+	}
+
+	policy, err := admin.GetClusterPolicy()
+	require.NoError(t, err)
+	require.NotNil(t, policy)
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+}
+
+func TestAdminClientPatchClusterPolicyReturnsResponse(t *testing.T) {
+	replicationFactor := uint32(2)
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				patchClusterPolicyResp: &proto.PatchClusterPolicyResponse{
+					Policy: &proto.HierarchyPolicies{
+						ReplicationFactor: &replicationFactor,
+					},
+				},
+			},
+		},
+	}
+
+	policy, err := admin.PatchClusterPolicy(&proto.HierarchyPolicies{ReplicationFactor: &replicationFactor})
+	require.NoError(t, err)
+	require.NotNil(t, policy)
+	assert.EqualValues(t, 2, policy.GetReplicationFactor())
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

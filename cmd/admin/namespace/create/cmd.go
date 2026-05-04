@@ -30,7 +30,7 @@ import (
 var fields option.NamespaceFields
 
 var Cmd = &cobra.Command{
-	Use:          "create <namespace> --initial-shards <count> --replication-factor <factor>",
+	Use:          "create <namespace>",
 	Short:        "Create a namespace",
 	Long:         `Create a namespace`,
 	Args:         cobra.ExactArgs(1),
@@ -40,8 +40,6 @@ var Cmd = &cobra.Command{
 
 func init() {
 	fields.AddFlags(Cmd)
-	_ = Cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = Cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -57,18 +55,21 @@ func exec(cmd *cobra.Command, args []string) error {
 	if err := validation.ValidateNamespace(name); err != nil {
 		return err
 	}
-	if fields.InitialShardCount == 0 {
+	policy, policyChanged := fields.PatchPolicy(cmd)
+	if policy.InitialShardCount != nil && policy.GetInitialShardCount() == 0 {
 		return errors.New("namespace initial shard count must be greater than 0")
 	}
-	if fields.ReplicationFactor == 0 {
+	if policy.ReplicationFactor != nil && policy.GetReplicationFactor() == 0 {
 		return errors.New("namespace replication factor must be greater than 0")
 	}
-	keySorting, err := proto.ParseKeySortingType(fields.KeySorting)
-	if err != nil {
-		return err
-	}
-	if keySorting == proto.KeySortingType_UNKNOWN {
-		return errors.New(`key sorting must be one of "natural" or "hierarchical"`)
+	if policy.KeySorting != nil {
+		keySorting, err := proto.ParseKeySortingType(policy.GetKeySorting())
+		if err != nil {
+			return err
+		}
+		if keySorting == proto.KeySortingType_UNKNOWN {
+			return errors.New(`key sorting must be one of "natural" or "hierarchical"`)
+		}
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
@@ -79,13 +80,11 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	created, err := client.CreateNamespace(&proto.Namespace{
-		Name:                 name,
-		InitialShardCount:    fields.InitialShardCount,
-		ReplicationFactor:    fields.ReplicationFactor,
-		NotificationsEnabled: &fields.Notifications,
-		KeySorting:           fields.KeySorting,
-	})
+	namespace := &proto.Namespace{Name: name}
+	if policyChanged {
+		namespace.Policy = policy
+	}
+	created, err := client.CreateNamespace(namespace)
 	if err != nil {
 		return err
 	}

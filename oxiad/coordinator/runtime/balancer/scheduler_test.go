@@ -50,6 +50,13 @@ func dataServer(id string) *proto.DataServerIdentity {
 	}
 }
 
+func testNamespace(name string, replicationFactor uint32) *proto.Namespace {
+	return &proto.Namespace{
+		Name:   name,
+		Policy: proto.NewHierarchyPolicies(1, replicationFactor, true, "hierarchical"),
+	}
+}
+
 var _ coordmetadata.Metadata = (*mockMetadata)(nil)
 
 func (*mockMetadata) Close() error { return nil }
@@ -117,6 +124,14 @@ func (m *mockMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalanc
 	})
 }
 
+func (*mockMetadata) GetClusterPolicy() *proto.HierarchyPolicies {
+	return proto.NewDefaultHierarchyPolicies()
+}
+
+func (*mockMetadata) PatchClusterPolicy(*proto.HierarchyPolicies) (*proto.HierarchyPolicies, error) {
+	return proto.NewDefaultHierarchyPolicies(), nil
+}
+
 func (*mockMetadata) CreateDataServer(*proto.DataServer) error {
 	return nil
 }
@@ -152,12 +167,23 @@ func (m *mockMetadata) ListDataServer() map[string]commonobject.Borrowed[*proto.
 	return dataServers
 }
 
-func (m *mockMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*proto.Namespace], bool) {
+func (m *mockMetadata) GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*proto.Namespace], bool) {
 	nc, ok := m.nsConfigs[namespace]
 	if !ok {
 		return commonobject.Borrowed[*proto.Namespace]{}, false
 	}
+	if effective {
+		return commonobject.Borrow(proto.MaterializeNamespacePolicy(nil, nc)), true
+	}
 	return commonobject.Borrow(nc), true
+}
+
+func (m *mockMetadata) GetNamespaceEffectivePolicy(namespace string) (*proto.HierarchyPolicies, bool) {
+	nc, ok := m.nsConfigs[namespace]
+	if !ok {
+		return nil, false
+	}
+	return proto.ResolveHierarchyPolicies(nil, nc), true
 }
 
 func (m *mockMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.DataServer], bool) {
@@ -253,7 +279,7 @@ func TestSwapShardSkipsRF1Namespace(t *testing.T) {
 		nodes:    nodes,
 		metadata: map[string]*proto.DataServerMetadata{},
 		nsConfigs: map[string]*proto.Namespace{
-			"rf1ns": {Name: "rf1ns", ReplicationFactor: 1},
+			"rf1ns": testNamespace("rf1ns", 1),
 		},
 		nodeMap: map[string]*proto.DataServerIdentity{
 			"sv-1": sv1,
@@ -303,7 +329,7 @@ func TestSwapShardPassesNamespaceAndShardToSelector(t *testing.T) {
 		nodes:    nodes,
 		metadata: map[string]*proto.DataServerMetadata{},
 		nsConfigs: map[string]*proto.Namespace{
-			"ns-1": {Name: "ns-1", ReplicationFactor: 2},
+			"ns-1": testNamespace("ns-1", 2),
 		},
 		nodeMap: map[string]*proto.DataServerIdentity{
 			"sv-1": sv1,
@@ -383,7 +409,7 @@ func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
 		nodes:    nodes,
 		metadata: map[string]*proto.DataServerMetadata{},
 		nsConfigs: map[string]*proto.Namespace{
-			"ns": {Name: "ns", ReplicationFactor: 3},
+			"ns": testNamespace("ns", 3),
 		},
 		nodeMap: map[string]*proto.DataServerIdentity{
 			"sv-1": sv1,

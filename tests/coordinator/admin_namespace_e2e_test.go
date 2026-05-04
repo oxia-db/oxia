@@ -65,45 +65,48 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 
 	notificationsEnabled := false
 	created, err := client.CreateNamespace(&proto.Namespace{
-		Name:                 "ns-1",
-		InitialShardCount:    2,
-		ReplicationFactor:    1,
-		NotificationsEnabled: &notificationsEnabled,
-		KeySorting:           "natural",
+		Name:   "ns-1",
+		Policy: proto.NewHierarchyPolicies(2, 1, notificationsEnabled, "natural"),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created)
+	createdPolicy := proto.ResolveHierarchyPolicies(nil, created)
 	assert.Equal(t, "ns-1", created.GetName())
-	assert.EqualValues(t, 2, created.GetInitialShardCount())
-	assert.EqualValues(t, 1, created.GetReplicationFactor())
-	assert.False(t, created.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", created.GetKeySorting())
+	assert.EqualValues(t, 2, createdPolicy.GetInitialShardCount())
+	assert.EqualValues(t, 1, createdPolicy.GetReplicationFactor())
+	assert.False(t, createdPolicy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", createdPolicy.GetKeySorting())
 
-	found, err := client.GetNamespace("ns-1")
+	found, err := client.GetNamespace("ns-1", true)
 	require.NoError(t, err)
 	require.NotNil(t, found)
+	foundPolicy := proto.ResolveHierarchyPolicies(nil, found)
 	assert.Equal(t, "ns-1", found.GetName())
-	assert.EqualValues(t, 2, found.GetInitialShardCount())
-	assert.False(t, found.NotificationsEnabledOrDefault())
+	assert.EqualValues(t, 2, foundPolicy.GetInitialShardCount())
+	assert.False(t, foundPolicy.GetNotificationsEnabled())
 
 	notificationsEnabled = true
+	patchPolicy := &proto.HierarchyPolicies{}
+	patchPolicy.SetNotificationsEnabled(notificationsEnabled)
 	patched, err := client.PatchNamespace(&proto.Namespace{
-		Name:                 "ns-1",
-		NotificationsEnabled: &notificationsEnabled,
+		Name:   "ns-1",
+		Policy: patchPolicy,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, patched)
+	patchedPolicy := proto.ResolveHierarchyPolicies(nil, patched)
 	assert.Equal(t, "ns-1", patched.GetName())
-	assert.EqualValues(t, 2, patched.GetInitialShardCount())
-	assert.EqualValues(t, 1, patched.GetReplicationFactor())
-	assert.True(t, patched.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", patched.GetKeySorting())
+	assert.EqualValues(t, 2, patchedPolicy.GetInitialShardCount())
+	assert.EqualValues(t, 1, patchedPolicy.GetReplicationFactor())
+	assert.True(t, patchedPolicy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", patchedPolicy.GetKeySorting())
 
-	found, err = client.GetNamespace("ns-1")
+	found, err = client.GetNamespace("ns-1", true)
 	require.NoError(t, err)
 	require.NotNil(t, found)
-	assert.True(t, found.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", found.GetKeySorting())
+	foundPolicy = proto.ResolveHierarchyPolicies(nil, found)
+	assert.True(t, foundPolicy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", foundPolicy.GetKeySorting())
 
 	namespaces, err := client.ListNamespaces()
 	require.NoError(t, err)
@@ -113,11 +116,12 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	deleted, err := client.DeleteNamespace("ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, deleted)
+	deletedPolicy := proto.ResolveHierarchyPolicies(nil, deleted)
 	assert.Equal(t, "ns-1", deleted.GetName())
-	assert.EqualValues(t, 2, deleted.GetInitialShardCount())
-	assert.EqualValues(t, 1, deleted.GetReplicationFactor())
-	assert.True(t, deleted.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", deleted.GetKeySorting())
+	assert.EqualValues(t, 2, deletedPolicy.GetInitialShardCount())
+	assert.EqualValues(t, 1, deletedPolicy.GetReplicationFactor())
+	assert.True(t, deletedPolicy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", deletedPolicy.GetKeySorting())
 
 	namespaces, err = client.ListNamespaces()
 	require.NoError(t, err)

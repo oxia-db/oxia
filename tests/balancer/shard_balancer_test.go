@@ -38,6 +38,24 @@ func shardBalancerDataServers(servers ...*proto.DataServerIdentity) []*proto.Dat
 	return servers
 }
 
+func testShardNamespace(name string, initialShardCount uint32, replicationFactor uint32) *proto.Namespace {
+	return &proto.Namespace{
+		Name:   name,
+		Policy: proto.NewHierarchyPolicies(initialShardCount, replicationFactor, true, "hierarchical"),
+	}
+}
+
+func antiAffinityShardNamespace(name string) *proto.Namespace {
+	namespace := testShardNamespace(name, 3, 3)
+	namespace.Policy.AntiAffinities = []*proto.AntiAffinity{
+		{
+			Labels: []string{"zone"},
+			Mode:   proto.AntiAffinityModeStrict,
+		},
+	}
+	return namespace
+}
+
 func TestNormalShardBalancer(t *testing.T) {
 	s1, s1ad := mock.NewServer(t, "sv-1")
 	defer s1.Close()
@@ -52,21 +70,9 @@ func TestNormalShardBalancer(t *testing.T) {
 
 	cc := proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
-			{
-				Name:              "ns-1",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-2",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-3",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
+			testShardNamespace("ns-1", 3, 3),
+			testShardNamespace("ns-2", 3, 3),
+			testShardNamespace("ns-3", 3, 3),
 		},
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
@@ -150,37 +156,9 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 
 	cc := proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
-			{
-				Name:              "ns-1",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-				Policy: &proto.HierarchyPolicies{
-					AntiAffinities: []*proto.AntiAffinity{
-						{
-							Labels: []string{"zone"},
-							Mode:   proto.AntiAffinityModeStrict,
-						},
-					},
-				},
-			},
-			{
-				Name:              "ns-2",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-				Policy: &proto.HierarchyPolicies{
-					AntiAffinities: []*proto.AntiAffinity{
-						{
-							Labels: []string{"zone"},
-							Mode:   proto.AntiAffinityModeStrict,
-						},
-					},
-				},
-			},
-			{
-				Name:              "ns-3",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
+			antiAffinityShardNamespace("ns-1"),
+			antiAffinityShardNamespace("ns-2"),
+			testShardNamespace("ns-3", 3, 3),
 		},
 		ServerMetadata: serverMetadata,
 		Servers:        shardBalancerDataServers(s1ad, s2ad, s3ad),
@@ -270,21 +248,9 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 	// config
 	cc := proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
-			{
-				Name:              "ns-1",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-2",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-3",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
+			testShardNamespace("ns-1", 3, 3),
+			testShardNamespace("ns-2", 3, 3),
+			testShardNamespace("ns-3", 3, 3),
 		},
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
@@ -306,7 +272,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 			if !ok {
 				return false
 			}
-			if len(namespaceStatus.Shards) != int(namespace.InitialShardCount) {
+			if len(namespaceStatus.Shards) != int(config.GetNamespaceEffectivePolicy(namespace).GetInitialShardCount()) {
 				return false
 			}
 			for _, shard := range namespaceStatus.Shards {

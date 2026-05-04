@@ -57,11 +57,9 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              constant.DefaultNamespace,
-		ReplicationFactor: 3,
-		InitialShardCount: 1,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace(constant.DefaultNamespace, 1, 3),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -322,11 +320,9 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 	}
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              constant.DefaultNamespace,
-		ReplicationFactor: 3,
-		InitialShardCount: 1,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace(constant.DefaultNamespace, 1, 3),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
@@ -877,12 +873,9 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			if keySorting == proto.KeySortingType_NATURAL {
 				keySortingValue = "natural"
 			}
-			clusterConfig := newClusterConfig([]*proto.Namespace{{
-				Name:              constant.DefaultNamespace,
-				ReplicationFactor: 1,
-				InitialShardCount: 1,
-				KeySorting:        keySortingValue,
-			}}, []*proto.DataServerIdentity{sa1})
+			clusterConfig := newClusterConfig([]*proto.Namespace{
+				testNamespaceWithKeySorting(constant.DefaultNamespace, 1, 1, keySortingValue),
+			}, []*proto.DataServerIdentity{sa1})
 
 			configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 			_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{

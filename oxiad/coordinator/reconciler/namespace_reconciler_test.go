@@ -63,7 +63,7 @@ func loadAwareEnsembleSupplier(servers []*proto.DataServerIdentity) func(*proto.
 		sort.SliceStable(ranked, func(i, j int) bool {
 			return load[ranked[i].GetInternal()] < load[ranked[j].GetInternal()]
 		})
-		return ranked[:nc.GetReplicationFactor()], nil
+		return ranked[:proto.ResolveHierarchyPolicies(nil, nc).GetReplicationFactor()], nil
 	}
 }
 
@@ -75,6 +75,13 @@ func simpleEnsembleSupplier(candidates []*proto.DataServerIdentity, shardID int6
 		res[i] = candidates[(start+int(i))%n]
 	}
 	return res
+}
+
+func testNamespace(name string, initialShardCount uint32, replicationFactor uint32) *proto.Namespace {
+	return &proto.Namespace{
+		Name:   name,
+		Policy: proto.NewHierarchyPolicies(initialShardCount, replicationFactor, true, "hierarchical"),
+	}
 }
 
 func assertStatusEqual(t *testing.T, expected, actual *proto.ClusterStatus) {
@@ -185,6 +192,14 @@ func (*mockNamespaceMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.Loa
 	return commonobject.Borrowed[*proto.LoadBalancer]{}
 }
 
+func (*mockNamespaceMetadata) GetClusterPolicy() *proto.HierarchyPolicies {
+	return proto.NewDefaultHierarchyPolicies()
+}
+
+func (*mockNamespaceMetadata) PatchClusterPolicy(*proto.HierarchyPolicies) (*proto.HierarchyPolicies, error) {
+	return proto.NewDefaultHierarchyPolicies(), nil
+}
+
 func (*mockNamespaceMetadata) CreateDataServer(*proto.DataServer) error {
 	return nil
 }
@@ -205,12 +220,23 @@ func (*mockNamespaceMetadata) GetDataServer(string) (commonobject.Borrowed[*prot
 	return commonobject.Borrowed[*proto.DataServer]{}, false
 }
 
-func (m *mockNamespaceMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*proto.Namespace], bool) {
+func (m *mockNamespaceMetadata) GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*proto.Namespace], bool) {
 	ns, exists := m.configNS[namespace]
 	if !exists {
 		return commonobject.Borrowed[*proto.Namespace]{}, false
 	}
+	if effective {
+		return commonobject.Borrow(proto.MaterializeNamespacePolicy(nil, ns)), true
+	}
 	return commonobject.Borrow(ns), true
+}
+
+func (m *mockNamespaceMetadata) GetNamespaceEffectivePolicy(namespace string) (*proto.HierarchyPolicies, bool) {
+	ns, exists := m.configNS[namespace]
+	if !exists {
+		return nil, false
+	}
+	return proto.ResolveHierarchyPolicies(nil, ns), true
 }
 
 var _ coordmetadata.Metadata = (*mockNamespaceMetadata)(nil)
@@ -246,11 +272,12 @@ func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
 func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
-	baseShardID := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	policy := proto.ResolveHierarchyPolicies(nil, namespaceConfig)
+	baseShardID := m.metadata.ReserveShardIDs(policy.GetInitialShardCount())
 	currentStatus := m.metadata.GetStatus().UnsafeBorrow()
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
-		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
+		ReplicationFactor: policy.GetReplicationFactor(),
 	}
 	status := &proto.ClusterStatus{
 		Namespaces: make(map[string]*proto.NamespaceStatus, len(currentStatus.GetNamespaces())+1),
@@ -260,7 +287,7 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 	}
 	status.Namespaces[name] = namespaceStatus
 
-	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
+	for _, shard := range sharding.GenerateShards(baseShardID, policy.GetInitialShardCount()) {
 		ensemble, err := m.selectNewEnsembleFn(namespaceConfig, shard.Id, status)
 		if err != nil {
 			continue
@@ -329,11 +356,7 @@ func TestNamespaceReconcilerInitialPlacementSeesPriorShards(t *testing.T) {
 	metadata := &mockNamespaceMetadata{
 		status: proto.NewClusterStatus(),
 		configNS: map[string]*proto.Namespace{
-			"ns-1": {
-				Name:              "ns-1",
-				InitialShardCount: shardCount,
-				ReplicationFactor: replicationFactor,
-			},
+			"ns-1": testNamespace("ns-1", shardCount, replicationFactor),
 		},
 	}
 	runtime := &mockNamespaceRuntime{
@@ -342,11 +365,9 @@ func TestNamespaceReconcilerInitialPlacementSeesPriorShards(t *testing.T) {
 	}
 
 	err := (&namespaceReconciler{runtime: runtime}).Reconcile(context.Background(), &proto.ClusterConfiguration{
-		Namespaces: []*proto.Namespace{{
-			Name:              "ns-1",
-			InitialShardCount: shardCount,
-			ReplicationFactor: replicationFactor,
-		}},
+		Namespaces: []*proto.Namespace{
+			testNamespace("ns-1", shardCount, replicationFactor),
+		},
 		Servers: servers,
 	})
 	assert.NoError(t, err)
@@ -384,35 +405,22 @@ func TestNamespaceReconcilerNamespaceAddedPersistsAggregateStatus(t *testing.T) 
 			ShardIdGenerator: 1,
 		},
 		configNS: map[string]*proto.Namespace{
-			"ns-1": {
-				Name:              "ns-1",
-				InitialShardCount: 1,
-				ReplicationFactor: 3,
-			},
-			"ns-2": {
-				Name:              "ns-2",
-				InitialShardCount: 2,
-				ReplicationFactor: 3,
-			},
+			"ns-1": testNamespace("ns-1", 1, 3),
+			"ns-2": testNamespace("ns-2", 2, 3),
 		},
 	}
 	runtime := &mockNamespaceRuntime{
 		metadata: metadata,
 		selectNewEnsembleFn: func(namespaceConfig *proto.Namespace, shardID int64, _ *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-			return simpleEnsembleSupplier(servers, shardID, namespaceConfig.GetReplicationFactor()), nil
+			return simpleEnsembleSupplier(servers, shardID, proto.ResolveHierarchyPolicies(nil, namespaceConfig).GetReplicationFactor()), nil
 		},
 	}
 
 	err := (&namespaceReconciler{runtime: runtime}).Reconcile(context.Background(), &proto.ClusterConfiguration{
-		Namespaces: []*proto.Namespace{{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 3,
-		}, {
-			Name:              "ns-2",
-			InitialShardCount: 2,
-			ReplicationFactor: 3,
-		}},
+		Namespaces: []*proto.Namespace{
+			testNamespace("ns-1", 1, 3),
+			testNamespace("ns-2", 2, 3),
+		},
 		Servers: servers,
 	})
 	assert.NoError(t, err)
@@ -465,26 +473,20 @@ func TestNamespaceReconcilerNamespaceRemovedMarksDeletingAndDeletesRuntimeShards
 			ShardIdGenerator: 3,
 		},
 		configNS: map[string]*proto.Namespace{
-			"ns-1": {
-				Name:              "ns-1",
-				InitialShardCount: 1,
-				ReplicationFactor: 3,
-			},
+			"ns-1": testNamespace("ns-1", 1, 3),
 		},
 	}
 	runtime := &mockNamespaceRuntime{
 		metadata: metadata,
 		selectNewEnsembleFn: func(namespaceConfig *proto.Namespace, shardID int64, _ *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
-			return simpleEnsembleSupplier(servers, shardID, namespaceConfig.GetReplicationFactor()), nil
+			return simpleEnsembleSupplier(servers, shardID, proto.ResolveHierarchyPolicies(nil, namespaceConfig).GetReplicationFactor()), nil
 		},
 	}
 
 	err := (&namespaceReconciler{runtime: runtime}).Reconcile(context.Background(), &proto.ClusterConfiguration{
-		Namespaces: []*proto.Namespace{{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 3,
-		}},
+		Namespaces: []*proto.Namespace{
+			testNamespace("ns-1", 1, 3),
+		},
 		Servers: servers,
 	})
 	assert.NoError(t, err)

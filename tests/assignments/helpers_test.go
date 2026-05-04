@@ -56,9 +56,8 @@ func newCoordinatorInstance(
 func newDefaultClusterConfig(servers ...*proto.DataServerIdentity) *proto.ClusterConfiguration {
 	return &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
+			Name:   constant.DefaultNamespace,
+			Policy: proto.NewHierarchyPolicies(1, 3, true, "hierarchical"),
 		}},
 		Servers: servers,
 	}

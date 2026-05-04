@@ -69,9 +69,8 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 1,
-			InitialShardCount: 3,
+			Name:   constant.DefaultNamespace,
+			Policy: proto.NewHierarchyPolicies(3, 1, true, "hierarchical"),
 		}},
 		Servers:               cluster.addresses,
 		AllowExtraAuthorities: []string{cluster.authority},

@@ -39,6 +39,17 @@ func dataServer(name *string, public, internal string) *proto.DataServerIdentity
 	}
 }
 
+func testNamespace(name string, initialShardCount uint32, replicationFactor uint32, notificationsEnabled bool, keySorting string) *proto.Namespace {
+	return &proto.Namespace{
+		Name:   name,
+		Policy: proto.NewHierarchyPolicies(initialShardCount, replicationFactor, notificationsEnabled, keySorting),
+	}
+}
+
+func ptr[T any](value T) *T {
+	return &value
+}
+
 func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
@@ -201,10 +212,8 @@ func TestManagementServerGetNamespace(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
-				Name:              "ns-1",
-				InitialShardCount: 4,
-				ReplicationFactor: 3,
-				KeySorting:        proto.KeySortingType_NATURAL.String(),
+				Name:   "ns-1",
+				Policy: proto.NewHierarchyPolicies(4, 3, true, proto.KeySortingType_NATURAL.String()),
 			}},
 		}),
 		nil,
@@ -214,26 +223,19 @@ func TestManagementServerGetNamespace(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Namespace)
+	policy := proto.ResolveHierarchyPolicies(nil, res.Namespace)
 	assert.Equal(t, "ns-1", res.Namespace.GetName())
-	assert.EqualValues(t, 4, res.Namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, res.Namespace.GetReplicationFactor())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), res.Namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.Equal(t, proto.KeySortingType_NATURAL.String(), policy.GetKeySorting())
 }
 
 func TestManagementServerListNamespaces(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{
-				{
-					Name:              "ns-1",
-					InitialShardCount: 4,
-					ReplicationFactor: 3,
-				},
-				{
-					Name:              "ns-2",
-					InitialShardCount: 2,
-					ReplicationFactor: 1,
-				},
+				testNamespace("ns-1", 4, 3, true, "hierarchical"),
+				testNamespace("ns-2", 2, 1, true, "hierarchical"),
 			},
 		}),
 		nil,
@@ -244,6 +246,54 @@ func TestManagementServerListNamespaces(t *testing.T) {
 	require.Len(t, res.Namespaces, 2)
 	assert.Equal(t, "ns-1", res.Namespaces[0].GetName())
 	assert.Equal(t, "ns-2", res.Namespaces[1].GetName())
+}
+
+func TestManagementServerGetClusterPolicy(t *testing.T) {
+	policy := &proto.HierarchyPolicies{}
+	policy.SetInitialShardCount(4)
+	policy.SetReplicationFactor(3)
+	policy.SetNotificationsEnabled(false)
+	policy.SetKeySorting("natural")
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Policy: policy,
+		}),
+		nil,
+	)
+
+	res, err := management.GetClusterPolicy(context.Background(), &proto.GetClusterPolicyRequest{})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.EqualValues(t, 4, res.GetPolicy().GetInitialShardCount())
+	assert.EqualValues(t, 3, res.GetPolicy().GetReplicationFactor())
+	assert.False(t, res.GetPolicy().GetNotificationsEnabled())
+	assert.Equal(t, "natural", res.GetPolicy().GetKeySorting())
+}
+
+func TestManagementServerPatchClusterPolicy(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	policy := &proto.HierarchyPolicies{}
+	policy.SetInitialShardCount(2)
+	policy.SetReplicationFactor(1)
+	policy.SetNotificationsEnabled(false)
+	policy.SetKeySorting("natural")
+	res, err := management.PatchClusterPolicy(context.Background(), &proto.PatchClusterPolicyRequest{Policy: policy})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.EqualValues(t, 2, res.GetPolicy().GetInitialShardCount())
+	assert.EqualValues(t, 1, res.GetPolicy().GetReplicationFactor())
+	assert.False(t, res.GetPolicy().GetNotificationsEnabled())
+	assert.Equal(t, "natural", res.GetPolicy().GetKeySorting())
+	assert.Equal(t, "natural", management.metadata.GetConfig().UnsafeBorrow().GetPolicy().GetKeySorting())
 }
 
 func TestManagementServerCreateNamespace(t *testing.T) {
@@ -263,24 +313,19 @@ func TestManagementServerCreateNamespace(t *testing.T) {
 
 	notificationsEnabled := false
 	res, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
-		Namespace: &proto.Namespace{
-			Name:                 "ns-1",
-			InitialShardCount:    4,
-			ReplicationFactor:    3,
-			NotificationsEnabled: &notificationsEnabled,
-			KeySorting:           "natural",
-		},
+		Namespace: testNamespace("ns-1", 4, 3, notificationsEnabled, "natural"),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Namespace)
+	policy := proto.ResolveHierarchyPolicies(nil, res.Namespace)
 	assert.Equal(t, "ns-1", res.Namespace.GetName())
-	assert.EqualValues(t, 4, res.Namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, res.Namespace.GetReplicationFactor())
-	assert.False(t, res.Namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", res.Namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.False(t, policy.GetNotificationsEnabled())
+	assert.Equal(t, "natural", policy.GetKeySorting())
 
-	namespace, found := management.metadata.GetNamespace("ns-1")
+	namespace, found := management.metadata.GetNamespace("ns-1", false)
 	require.True(t, found)
 	assert.Equal(t, "ns-1", namespace.UnsafeBorrow().GetName())
 }
@@ -291,50 +336,53 @@ func TestManagementServerCreateNamespaceRejectsInvalidRequest(t *testing.T) {
 		nil,
 	)
 
+	zero := uint32(0)
+	emptyKeySorting := ""
 	testCases := []struct {
 		name string
 		req  *proto.CreateNamespaceRequest
+		code codes.Code
 	}{
-		{name: "nil request", req: nil},
-		{name: "nil namespace", req: &proto.CreateNamespaceRequest{}},
-		{name: "empty name", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{}}},
+		{name: "nil request", req: nil, code: codes.InvalidArgument},
+		{name: "nil namespace", req: &proto.CreateNamespaceRequest{}, code: codes.InvalidArgument},
+		{name: "empty name", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{}}, code: codes.InvalidArgument},
 		{name: "invalid name", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
-			Name:              "../ns",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
-		}}},
-		{name: "empty initial shard count", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			ReplicationFactor: 1,
-		}}},
-		{name: "empty replication factor", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-		}}},
+			Name:   "../ns",
+			Policy: proto.NewHierarchyPolicies(1, 1, true, "hierarchical"),
+		}}, code: codes.InvalidArgument},
+		{name: "zero policy initial shard count", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name: "ns-1",
+			Policy: &proto.HierarchyPolicies{
+				InitialShardCount: &zero,
+			},
+		}}, code: codes.InvalidArgument},
+		{name: "zero policy replication factor", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name: "ns-1",
+			Policy: &proto.HierarchyPolicies{
+				ReplicationFactor: &zero,
+			},
+		}}, code: codes.InvalidArgument},
 		{name: "invalid key sorting", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
-			KeySorting:        "invalid",
-		}}},
-		{name: "empty key sorting", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
-		}}},
+			Name:   "ns-1",
+			Policy: proto.NewHierarchyPolicies(1, 1, true, "invalid"),
+		}}, code: codes.InvalidArgument},
+		{name: "empty policy key sorting", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
+			Name: "ns-1",
+			Policy: &proto.HierarchyPolicies{
+				KeySorting: &emptyKeySorting,
+			},
+		}}, code: codes.InvalidArgument},
 		{name: "unknown key sorting", req: &proto.CreateNamespaceRequest{Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
-			KeySorting:        proto.KeySortingType_UNKNOWN.String(),
-		}}},
+			Name:   "ns-1",
+			Policy: proto.NewHierarchyPolicies(1, 1, true, proto.KeySortingType_UNKNOWN.String()),
+		}}, code: codes.InvalidArgument},
 	}
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := management.CreateNamespace(context.Background(), tt.req)
 			require.Error(t, err)
-			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+			assert.Equal(t, tt.code, grpcstatus.Code(err))
 		})
 	}
 }
@@ -351,16 +399,11 @@ func TestManagementServerCreateNamespacePreservesKeySorting(t *testing.T) {
 	)
 
 	res, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
-		Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
-			KeySorting:        "NATURAL",
-		},
+		Namespace: testNamespace("ns-1", 1, 1, true, "NATURAL"),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	assert.Equal(t, "NATURAL", res.Namespace.GetKeySorting())
+	assert.Equal(t, "NATURAL", proto.ResolveHierarchyPolicies(nil, res.Namespace).GetKeySorting())
 }
 
 func TestManagementServerCreateNamespaceAlreadyExists(t *testing.T) {
@@ -368,9 +411,8 @@ func TestManagementServerCreateNamespaceAlreadyExists(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
-				Name:              "ns-1",
-				InitialShardCount: 1,
-				ReplicationFactor: 1,
+				Name:   "ns-1",
+				Policy: proto.NewHierarchyPolicies(1, 1, true, "hierarchical"),
 			}},
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-1", "internal-1"),
@@ -380,12 +422,7 @@ func TestManagementServerCreateNamespaceAlreadyExists(t *testing.T) {
 	)
 
 	_, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
-		Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
-			KeySorting:        "natural",
-		},
+		Namespace: testNamespace("ns-1", 1, 1, true, "natural"),
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.AlreadyExists, grpcstatus.Code(err))
@@ -403,12 +440,7 @@ func TestManagementServerCreateNamespaceFailedPrecondition(t *testing.T) {
 	)
 
 	_, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
-		Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 2,
-			KeySorting:        "natural",
-		},
+		Namespace: testNamespace("ns-1", 1, 2, true, "natural"),
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err))
@@ -420,10 +452,8 @@ func TestManagementServerPatchNamespace(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
-				Name:              "ns-1",
-				InitialShardCount: 1,
-				ReplicationFactor: 1,
-				KeySorting:        "hierarchical",
+				Name:   "ns-1",
+				Policy: proto.NewHierarchyPolicies(1, 1, true, "hierarchical"),
 			}},
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName1, "public-1", "internal-1"),
@@ -434,28 +464,32 @@ func TestManagementServerPatchNamespace(t *testing.T) {
 	)
 
 	notificationsEnabled := false
+	patchPolicy := &proto.HierarchyPolicies{}
+	patchPolicy.SetReplicationFactor(2)
+	patchPolicy.SetNotificationsEnabled(notificationsEnabled)
 	res, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
 		Namespace: &proto.Namespace{
-			Name:                 "ns-1",
-			ReplicationFactor:    2,
-			NotificationsEnabled: &notificationsEnabled,
+			Name:   "ns-1",
+			Policy: patchPolicy,
 		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Namespace)
+	policy := proto.ResolveHierarchyPolicies(nil, res.Namespace)
 	assert.Equal(t, "ns-1", res.Namespace.GetName())
-	assert.EqualValues(t, 1, res.Namespace.GetInitialShardCount())
-	assert.EqualValues(t, 2, res.Namespace.GetReplicationFactor())
-	assert.False(t, res.Namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, "hierarchical", res.Namespace.GetKeySorting())
+	assert.EqualValues(t, 1, policy.GetInitialShardCount())
+	assert.EqualValues(t, 2, policy.GetReplicationFactor())
+	assert.False(t, policy.GetNotificationsEnabled())
+	assert.Equal(t, "hierarchical", policy.GetKeySorting())
 
-	namespace, found := management.metadata.GetNamespace("ns-1")
+	namespace, found := management.metadata.GetNamespace("ns-1", false)
 	require.True(t, found)
-	assert.EqualValues(t, 1, namespace.UnsafeBorrow().GetInitialShardCount())
-	assert.EqualValues(t, 2, namespace.UnsafeBorrow().GetReplicationFactor())
-	assert.False(t, namespace.UnsafeBorrow().NotificationsEnabledOrDefault())
-	assert.Equal(t, "hierarchical", namespace.UnsafeBorrow().GetKeySorting())
+	storedPolicy := proto.ResolveHierarchyPolicies(nil, namespace.UnsafeBorrow())
+	assert.EqualValues(t, 1, storedPolicy.GetInitialShardCount())
+	assert.EqualValues(t, 2, storedPolicy.GetReplicationFactor())
+	assert.False(t, storedPolicy.GetNotificationsEnabled())
+	assert.Equal(t, "hierarchical", storedPolicy.GetKeySorting())
 }
 
 func TestManagementServerPatchNamespacePreservesUnspecifiedFields(t *testing.T) {
@@ -464,11 +498,8 @@ func TestManagementServerPatchNamespacePreservesUnspecifiedFields(t *testing.T) 
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
-				Name:                 "ns-1",
-				InitialShardCount:    4,
-				ReplicationFactor:    1,
-				NotificationsEnabled: &notificationsEnabled,
-				KeySorting:           "hierarchical",
+				Name:   "ns-1",
+				Policy: proto.NewHierarchyPolicies(4, 1, notificationsEnabled, "hierarchical"),
 			}},
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-1", "internal-1"),
@@ -477,18 +508,21 @@ func TestManagementServerPatchNamespacePreservesUnspecifiedFields(t *testing.T) 
 		nil,
 	)
 
+	patchPolicy := &proto.HierarchyPolicies{}
+	patchPolicy.SetNotificationsEnabled(notificationsEnabled)
 	res, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
 		Namespace: &proto.Namespace{
-			Name:                 "ns-1",
-			NotificationsEnabled: &notificationsEnabled,
+			Name:   "ns-1",
+			Policy: patchPolicy,
 		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	assert.EqualValues(t, 4, res.Namespace.GetInitialShardCount())
-	assert.EqualValues(t, 1, res.Namespace.GetReplicationFactor())
-	assert.True(t, res.Namespace.NotificationsEnabledOrDefault())
-	assert.Equal(t, "hierarchical", res.Namespace.GetKeySorting())
+	policy := proto.ResolveHierarchyPolicies(nil, res.Namespace)
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 1, policy.GetReplicationFactor())
+	assert.True(t, policy.GetNotificationsEnabled())
+	assert.Equal(t, "hierarchical", policy.GetKeySorting())
 }
 
 func TestManagementServerPatchNamespaceRejectsInvalidRequest(t *testing.T) {
@@ -505,16 +539,16 @@ func TestManagementServerPatchNamespaceRejectsInvalidRequest(t *testing.T) {
 		{name: "nil namespace", req: &proto.PatchNamespaceRequest{}},
 		{name: "empty name", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{}}},
 		{name: "invalid name", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{
-			Name:              "../ns",
-			ReplicationFactor: 1,
+			Name:   "../ns",
+			Policy: proto.NewHierarchyPolicies(1, 1, true, "hierarchical"),
 		}}},
 		{name: "initial shard count", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			InitialShardCount: 1,
+			Name:   "ns-1",
+			Policy: proto.NewHierarchyPolicies(1, 1, true, "hierarchical"),
 		}}},
 		{name: "key sorting", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{
-			Name:       "ns-1",
-			KeySorting: "invalid",
+			Name:   "ns-1",
+			Policy: proto.NewHierarchyPolicies(0, 0, true, "invalid"),
 		}}},
 	}
 
@@ -535,8 +569,8 @@ func TestManagementServerPatchNamespaceNotFound(t *testing.T) {
 
 	_, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
 		Namespace: &proto.Namespace{
-			Name:              "missing",
-			ReplicationFactor: 1,
+			Name:   "missing",
+			Policy: &proto.HierarchyPolicies{ReplicationFactor: ptr(uint32(1))},
 		},
 	})
 	require.Error(t, err)
@@ -548,10 +582,8 @@ func TestManagementServerPatchNamespaceFailedPrecondition(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
-				Name:              "ns-1",
-				InitialShardCount: 1,
-				ReplicationFactor: 1,
-				KeySorting:        "natural",
+				Name:   "ns-1",
+				Policy: proto.NewHierarchyPolicies(1, 1, true, "natural"),
 			}},
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-1", "internal-1"),
@@ -562,8 +594,8 @@ func TestManagementServerPatchNamespaceFailedPrecondition(t *testing.T) {
 
 	_, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
 		Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			ReplicationFactor: 2,
+			Name:   "ns-1",
+			Policy: &proto.HierarchyPolicies{ReplicationFactor: ptr(uint32(2))},
 		},
 	})
 	require.Error(t, err)
@@ -575,18 +607,8 @@ func TestManagementServerDeleteNamespace(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{
-				{
-					Name:              "ns-1",
-					InitialShardCount: 1,
-					ReplicationFactor: 1,
-					KeySorting:        "natural",
-				},
-				{
-					Name:              "ns-2",
-					InitialShardCount: 2,
-					ReplicationFactor: 1,
-					KeySorting:        "hierarchical",
-				},
+				testNamespace("ns-1", 1, 1, true, "natural"),
+				testNamespace("ns-2", 2, 1, true, "hierarchical"),
 			},
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-1", "internal-1"),
@@ -599,13 +621,14 @@ func TestManagementServerDeleteNamespace(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Namespace)
+	policy := proto.ResolveHierarchyPolicies(nil, res.Namespace)
 	assert.Equal(t, "ns-1", res.Namespace.GetName())
-	assert.EqualValues(t, 1, res.Namespace.GetInitialShardCount())
-	assert.Equal(t, "natural", res.Namespace.GetKeySorting())
+	assert.EqualValues(t, 1, policy.GetInitialShardCount())
+	assert.Equal(t, "natural", policy.GetKeySorting())
 
-	_, found := management.metadata.GetNamespace("ns-1")
+	_, found := management.metadata.GetNamespace("ns-1", false)
 	assert.False(t, found)
-	namespace, found := management.metadata.GetNamespace("ns-2")
+	namespace, found := management.metadata.GetNamespace("ns-2", false)
 	require.True(t, found)
 	assert.Equal(t, "ns-2", namespace.UnsafeBorrow().GetName())
 }
@@ -899,9 +922,8 @@ func TestManagementServerDeleteDataServerFailedPrecondition(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
-				Name:              "default",
-				ReplicationFactor: 2,
-				InitialShardCount: 1,
+				Name:   "default",
+				Policy: proto.NewHierarchyPolicies(1, 2, true, "hierarchical"),
 			}},
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName1, "public-1", "internal-1"),

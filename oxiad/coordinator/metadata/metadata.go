@@ -48,7 +48,7 @@ type Metadata interface {
 	CreateNamespace(namespace *commonproto.Namespace) error
 	PatchNamespace(namespace *commonproto.Namespace) (*commonproto.Namespace, error)
 	DeleteNamespace(name string) (*commonproto.Namespace, error)
-	GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool)
+	GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*commonproto.Namespace], bool)
 
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
 	DeleteShardStatus(namespace string, shard int64)
@@ -56,6 +56,8 @@ type Metadata interface {
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
 	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
+	GetClusterPolicy() *commonproto.HierarchyPolicies
+	PatchClusterPolicy(policy *commonproto.HierarchyPolicies) (*commonproto.HierarchyPolicies, error)
 
 	CreateDataServer(dataServer *commonproto.DataServer) error
 	PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error)
@@ -362,6 +364,26 @@ func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonpro
 	return commonobject.Borrow(m.GetConfig().UnsafeBorrow().GetLoadBalancerWithDefaults())
 }
 
+func (m *coordinatorMetadata) GetClusterPolicy() *commonproto.HierarchyPolicies {
+	return commonproto.ResolveHierarchyPolicies(m.GetConfig().UnsafeBorrow().GetPolicy(), nil)
+}
+
+func (m *coordinatorMetadata) PatchClusterPolicy(policy *commonproto.HierarchyPolicies) (*commonproto.HierarchyPolicies, error) {
+	var updated *commonproto.HierarchyPolicies
+	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		if config.Policy == nil {
+			config.Policy = &commonproto.HierarchyPolicies{}
+		}
+		mergeHierarchyPolicies(config.Policy, policy)
+		updated = commonproto.ResolveHierarchyPolicies(config.GetPolicy(), nil)
+		return config, nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return updated, nil
+}
+
 func (m *coordinatorMetadata) CreateNamespace(namespace *commonproto.Namespace) error {
 	name := namespace.GetName()
 
@@ -371,9 +393,11 @@ func (m *coordinatorMetadata) CreateNamespace(namespace *commonproto.Namespace) 
 				return nil, metadatacommon.ErrAlreadyExists
 			}
 		}
-		if namespace.GetReplicationFactor() > uint32(len(config.GetServers())) {
+		namespace = config.MaterializeNamespace(namespace)
+		policy := namespace.GetPolicy()
+		if policy.GetReplicationFactor() > uint32(len(config.GetServers())) {
 			return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-				metadatacommon.ErrFailedPrecondition, name, namespace.GetReplicationFactor(), len(config.GetServers()))
+				metadatacommon.ErrFailedPrecondition, name, policy.GetReplicationFactor(), len(config.GetServers()))
 		}
 
 		config.Namespaces = append(config.Namespaces, namespace)
@@ -388,22 +412,28 @@ func (m *coordinatorMetadata) PatchNamespace(desiredNamespace *commonproto.Names
 			if namespace.GetName() != desiredNamespace.GetName() {
 				continue
 			}
-			if replicationFactor := desiredNamespace.GetReplicationFactor(); replicationFactor != 0 {
-				if replicationFactor > uint32(len(config.GetServers())) {
+
+			if namespace.Policy == nil {
+				namespace.Policy = &commonproto.HierarchyPolicies{}
+			}
+			desiredPolicy := desiredNamespace.GetPolicy()
+			if desiredPolicy != nil {
+				mergeHierarchyPolicies(namespace.Policy, &commonproto.HierarchyPolicies{
+					AntiAffinities: desiredPolicy.GetAntiAffinities(),
+				})
+			}
+			if desiredPolicy != nil && desiredPolicy.ReplicationFactor != nil {
+				if desiredPolicy.GetReplicationFactor() > uint32(len(config.GetServers())) {
 					return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-						metadatacommon.ErrFailedPrecondition, namespace.GetName(), replicationFactor, len(config.GetServers()))
+						metadatacommon.ErrFailedPrecondition, namespace.GetName(), desiredPolicy.GetReplicationFactor(), len(config.GetServers()))
 				}
-				namespace.ReplicationFactor = replicationFactor
+				namespace.Policy.SetReplicationFactor(desiredPolicy.GetReplicationFactor())
 			}
-			if desiredNamespace.NotificationsEnabled != nil {
-				notificationsEnabled := desiredNamespace.GetNotificationsEnabled()
-				namespace.NotificationsEnabled = &notificationsEnabled
-			}
-			if policy := desiredNamespace.GetPolicy(); policy != nil {
-				namespace.Policy = policy
+			if desiredPolicy != nil && desiredPolicy.NotificationsEnabled != nil {
+				namespace.Policy.SetNotificationsEnabled(desiredPolicy.GetNotificationsEnabled())
 			}
 
-			updated = namespace
+			updated = config.MaterializeNamespace(namespace)
 			return config, nil
 		}
 		return nil, metadatacommon.ErrNotFound
@@ -507,12 +537,13 @@ func (m *coordinatorMetadata) DeleteDataServer(name string) (*commonproto.DataSe
 			deleted = dataServer
 			remainingServerCount := len(config.GetServers()) - 1
 			for _, namespace := range config.GetNamespaces() {
-				if uint64(namespace.GetReplicationFactor()) > uint64(remainingServerCount) {
+				replicationFactor := config.GetNamespaceEffectivePolicy(namespace).GetReplicationFactor()
+				if uint64(replicationFactor) > uint64(remainingServerCount) {
 					return nil, fmt.Errorf("%w: cannot delete data server %q because namespace %q replicationFactor=%d exceeds remaining data servers=%d",
 						metadatacommon.ErrFailedPrecondition,
 						name,
 						namespace.GetName(),
-						namespace.GetReplicationFactor(),
+						replicationFactor,
 						remainingServerCount)
 				}
 			}
@@ -555,9 +586,13 @@ func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[
 	return dataServers
 }
 
-func (m *coordinatorMetadata) GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool) {
-	for _, ns := range m.GetConfig().UnsafeBorrow().GetNamespaces() {
+func (m *coordinatorMetadata) GetNamespace(namespace string, effective bool) (commonobject.Borrowed[*commonproto.Namespace], bool) {
+	config := m.GetConfig().UnsafeBorrow()
+	for _, ns := range config.GetNamespaces() {
 		if ns.GetName() == namespace {
+			if effective {
+				return commonobject.Borrow(config.MaterializeNamespace(ns)), true
+			}
 			return commonobject.Borrow(ns), true
 		}
 	}
@@ -570,6 +605,27 @@ func (m *coordinatorMetadata) GetDataServer(name string) (commonobject.Borrowed[
 		return commonobject.Borrowed[*commonproto.DataServer]{}, false
 	}
 	return commonobject.Borrow(value), true
+}
+
+func mergeHierarchyPolicies(target *commonproto.HierarchyPolicies, patch *commonproto.HierarchyPolicies) {
+	if target == nil || patch == nil {
+		return
+	}
+	if patch.AntiAffinities != nil {
+		target.AntiAffinities = commonproto.CloneHierarchyPolicies(patch).GetAntiAffinities()
+	}
+	if patch.InitialShardCount != nil {
+		target.SetInitialShardCount(patch.GetInitialShardCount())
+	}
+	if patch.ReplicationFactor != nil {
+		target.SetReplicationFactor(patch.GetReplicationFactor())
+	}
+	if patch.NotificationsEnabled != nil {
+		target.SetNotificationsEnabled(patch.GetNotificationsEnabled())
+	}
+	if patch.KeySorting != nil {
+		target.SetKeySorting(patch.GetKeySorting())
+	}
 }
 
 func WaitForCondition(ctx context.Context, metadata Metadata, triggerFn func(), condition func(*commonproto.ClusterStatus) bool) error {

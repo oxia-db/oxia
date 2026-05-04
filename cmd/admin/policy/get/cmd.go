@@ -18,39 +18,26 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
+	policyoutput "github.com/oxia-db/oxia/cmd/admin/policy/output"
 	"github.com/oxia-db/oxia/oxia"
 )
 
 var Cmd = &cobra.Command{
-	Use:          "get [namespace]",
-	Short:        "Get a namespace or list namespaces",
-	Long:         `Get a namespace or list namespaces`,
-	Args:         cobra.MaximumNArgs(1),
+	Use:          "get",
+	Short:        "Get the cluster policy defaults",
+	Long:         `Get the cluster policy defaults`,
+	Args:         cobra.NoArgs,
 	RunE:         exec,
 	SilenceUsage: true,
 }
 
-const effectiveFlagName = "effective"
-
-func init() {
-	Cmd.Flags().Bool(effectiveFlagName, false, "Return the namespace with cluster defaults applied")
-}
-
-func exec(cmd *cobra.Command, args []string) error {
+func exec(cmd *cobra.Command, _ []string) error {
 	outputFormat, err := cmd.Flags().GetString("output")
 	if err != nil {
 		return err
 	}
 	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
 		return err
-	}
-	effective := false
-	if cmd.Flags().Lookup(effectiveFlagName) != nil {
-		effective, err = cmd.Flags().GetBool(effectiveFlagName)
-		if err != nil {
-			return err
-		}
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
@@ -61,17 +48,10 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	if len(args) == 0 {
-		namespaces, err := client.ListNamespaces()
-		if err != nil {
-			return err
-		}
-		return namespaceoutput.WriteNamespaces(cmd.OutOrStdout(), outputFormat, namespaces)
-	}
-
-	namespace, err := client.GetNamespace(args[0], effective)
+	policy, err := client.GetClusterPolicy()
 	if err != nil {
 		return err
 	}
-	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, namespace)
+
+	return policyoutput.WritePolicy(cmd.OutOrStdout(), outputFormat, policy)
 }

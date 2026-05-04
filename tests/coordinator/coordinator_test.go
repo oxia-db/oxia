@@ -28,6 +28,17 @@ import (
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
+func testNamespace(name string, initialShardCount uint32, replicationFactor uint32) *proto.Namespace {
+	return testNamespaceWithKeySorting(name, initialShardCount, replicationFactor, "hierarchical")
+}
+
+func testNamespaceWithKeySorting(name string, initialShardCount uint32, replicationFactor uint32, keySorting string) *proto.Namespace {
+	return &proto.Namespace{
+		Name:   name,
+		Policy: proto.NewHierarchyPolicies(initialShardCount, replicationFactor, true, keySorting),
+	}
+}
+
 func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	s1, sa1 := newServer(t)
 	s2, sa2 := newServer(t)
@@ -37,11 +48,9 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer s3.Close()
 
 	metadataProvider := metadata2.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              "default",
-		ReplicationFactor: 1,
-		InitialShardCount: 2,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace("default", 2, 1),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := metadata2.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{

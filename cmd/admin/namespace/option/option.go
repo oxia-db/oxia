@@ -14,7 +14,11 @@
 
 package option
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/common/proto"
+)
 
 const (
 	InitialShardsFlagName     = "initial-shards"
@@ -39,10 +43,50 @@ func (f *NamespaceFields) AddFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(KeySortingFlagName, keySortingCompletion)
 }
 
+func (f *NamespaceFields) AddPolicyFlags(cmd *cobra.Command) {
+	f.Reset()
+	cmd.Flags().Uint32Var(&f.InitialShardCount, InitialShardsFlagName, 0, "Initial shard count")
+	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor")
+	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
+	cmd.Flags().StringVar(&f.KeySorting, KeySortingFlagName, f.KeySorting, `Key sorting. allowed: "hierarchical", "natural"`)
+	_ = cmd.RegisterFlagCompletionFunc(KeySortingFlagName, keySortingCompletion)
+}
+
 func (f *NamespaceFields) AddPatchFlags(cmd *cobra.Command) {
 	f.Reset()
 	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor for the namespace")
 	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
+}
+
+func (f *NamespaceFields) ToPolicy() *proto.HierarchyPolicies {
+	policy := &proto.HierarchyPolicies{}
+	policy.SetInitialShardCount(f.InitialShardCount)
+	policy.SetReplicationFactor(f.ReplicationFactor)
+	policy.SetNotificationsEnabled(f.Notifications)
+	policy.SetKeySorting(f.KeySorting)
+	return policy
+}
+
+func (f *NamespaceFields) PatchPolicy(cmd *cobra.Command) (*proto.HierarchyPolicies, bool) {
+	policy := &proto.HierarchyPolicies{}
+	changed := false
+	if cmd.Flags().Changed(InitialShardsFlagName) {
+		policy.SetInitialShardCount(f.InitialShardCount)
+		changed = true
+	}
+	if cmd.Flags().Changed(ReplicationFactorFlagName) {
+		policy.SetReplicationFactor(f.ReplicationFactor)
+		changed = true
+	}
+	if cmd.Flags().Changed(NotificationsFlagName) {
+		policy.SetNotificationsEnabled(f.Notifications)
+		changed = true
+	}
+	if cmd.Flags().Changed(KeySortingFlagName) {
+		policy.SetKeySorting(f.KeySorting)
+		changed = true
+	}
+	return policy, changed
 }
 
 func (f *NamespaceFields) Reset() {

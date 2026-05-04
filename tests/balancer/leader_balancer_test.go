@@ -35,6 +35,13 @@ func dataServers(servers ...*proto.DataServerIdentity) []*proto.DataServerIdenti
 	return servers
 }
 
+func testNamespace(name string, initialShardCount uint32, replicationFactor uint32) *proto.Namespace {
+	return &proto.Namespace{
+		Name:   name,
+		Policy: proto.NewHierarchyPolicies(initialShardCount, replicationFactor, true, "hierarchical"),
+	}
+}
+
 func waitForSteadyState(t *testing.T, metadata coordmetadata.Metadata, expectedNamespaces int) {
 	t.Helper()
 	ctx := t.Context()
@@ -83,21 +90,9 @@ func TestLeaderBalanced(t *testing.T) {
 
 	cc := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
-			{
-				Name:              "ns-1",
-				InitialShardCount: 5,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-2",
-				InitialShardCount: 4,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-3",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
+			testNamespace("ns-1", 5, 3),
+			testNamespace("ns-2", 4, 3),
+			testNamespace("ns-3", 3, 3),
 		},
 		Servers: []*proto.DataServerIdentity{s1ad, s2ad, s3ad},
 		LoadBalancer: &proto.LoadBalancer{
@@ -131,21 +126,9 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 
 	cc := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
-			{
-				Name:              "ns-1",
-				InitialShardCount: 5,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-2",
-				InitialShardCount: 4,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-3",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
+			testNamespace("ns-1", 5, 3),
+			testNamespace("ns-2", 4, 3),
+			testNamespace("ns-3", 3, 3),
 		},
 		Servers: dataServers(s1ad, s2ad, s3ad),
 		LoadBalancer: &proto.LoadBalancer{
@@ -206,21 +189,9 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 
 	cc := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
-			{
-				Name:              "ns-1",
-				InitialShardCount: 5,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-2",
-				InitialShardCount: 4,
-				ReplicationFactor: 3,
-			},
-			{
-				Name:              "ns-3",
-				InitialShardCount: 3,
-				ReplicationFactor: 3,
-			},
+			testNamespace("ns-1", 5, 3),
+			testNamespace("ns-2", 4, 3),
+			testNamespace("ns-3", 3, 3),
 		},
 		Servers: dataServers(s1ad, s2ad, s3ad),
 		LoadBalancer: &proto.LoadBalancer{

@@ -46,11 +46,9 @@ func Test_cmd_getNamespace(t *testing.T) {
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetNamespace", "ns-1").Return(&proto.Namespace{
-		Name:              "ns-1",
-		InitialShardCount: 4,
-		ReplicationFactor: 3,
-		KeySorting:        proto.KeySortingType_NATURAL.String(),
+	commons.MockedAdminClient.On("GetNamespace", "ns-1", false).Return(&proto.Namespace{
+		Name:   "ns-1",
+		Policy: proto.NewHierarchyPolicies(4, 3, true, proto.KeySortingType_NATURAL.String()),
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -66,10 +64,11 @@ func Test_cmd_getNamespace(t *testing.T) {
 
 	var namespace proto.Namespace
 	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
+	policy := proto.ResolveHierarchyPolicies(nil, &namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetKeySorting())
+	assert.EqualValues(t, 4, policy.GetInitialShardCount())
+	assert.EqualValues(t, 3, policy.GetReplicationFactor())
+	assert.Equal(t, proto.KeySortingType_NATURAL.String(), policy.GetKeySorting())
 }
 
 func Test_cmd_getNamespaces(t *testing.T) {
@@ -79,14 +78,12 @@ func Test_cmd_getNamespaces(t *testing.T) {
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("ListNamespaces").Return([]*proto.Namespace{
 		{
-			Name:              "ns-1",
-			InitialShardCount: 4,
-			ReplicationFactor: 3,
+			Name:   "ns-1",
+			Policy: proto.NewHierarchyPolicies(4, 3, true, "hierarchical"),
 		},
 		{
-			Name:              "ns-2",
-			InitialShardCount: 2,
-			ReplicationFactor: 1,
+			Name:   "ns-2",
+			Policy: proto.NewHierarchyPolicies(2, 1, true, "hierarchical"),
 		},
 	}, nil)
 
@@ -110,9 +107,8 @@ func Test_cmd_getNamespaces_JSON(t *testing.T) {
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("ListNamespaces").Return([]*proto.Namespace{
 		{
-			Name:              "ns-1",
-			InitialShardCount: 4,
-			ReplicationFactor: 3,
+			Name:   "ns-1",
+			Policy: proto.NewHierarchyPolicies(4, 3, true, "hierarchical"),
 		},
 	}, nil)
 
@@ -138,10 +134,9 @@ func Test_cmd_getNamespace_Name(t *testing.T) {
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetNamespace", "ns-1").Return(&proto.Namespace{
-		Name:              "ns-1",
-		InitialShardCount: 4,
-		ReplicationFactor: 3,
+	commons.MockedAdminClient.On("GetNamespace", "ns-1", false).Return(&proto.Namespace{
+		Name:   "ns-1",
+		Policy: proto.NewHierarchyPolicies(4, 3, true, "hierarchical"),
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -162,11 +157,9 @@ func Test_cmd_getNamespace_DefaultTable(t *testing.T) {
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetNamespace", "ns-1").Return(&proto.Namespace{
-		Name:              "ns-1",
-		InitialShardCount: 4,
-		ReplicationFactor: 3,
-		KeySorting:        proto.KeySortingType_NATURAL.String(),
+	commons.MockedAdminClient.On("GetNamespace", "ns-1", false).Return(&proto.Namespace{
+		Name:   "ns-1",
+		Policy: proto.NewHierarchyPolicies(4, 3, true, proto.KeySortingType_NATURAL.String()),
 	}, nil)
 
 	cmd := &cobra.Command{

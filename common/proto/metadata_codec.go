@@ -38,7 +38,7 @@ func UnmarshalClusterConfigurationYAML(data []byte) (*ClusterConfiguration, erro
 		return nil, err
 	}
 
-	jsonBytes, err := json.Marshal(yamlJSONCompatibleValue(generic))
+	jsonBytes, err := json.Marshal(migrateClusterConfigurationYAML(yamlJSONCompatibleValue(generic)))
 	if err != nil {
 		return nil, err
 	}
@@ -148,4 +148,71 @@ func yamlJSONCompatibleValue(value any) any {
 	default:
 		return v
 	}
+}
+
+func migrateClusterConfigurationYAML(value any) any {
+	config, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+
+	namespaces, ok := config["namespaces"].([]any)
+	if !ok {
+		return value
+	}
+
+	for _, item := range namespaces {
+		namespace, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		policy, _ := namespace["policy"].(map[string]any)
+		if policy == nil {
+			policy = map[string]any{}
+		}
+
+		changed := false
+		changed = moveLegacyNamespacePolicyField(namespace, policy, "initialShardCount", "initial_shard_count") || changed
+		changed = moveLegacyNamespacePolicyField(namespace, policy, "replicationFactor", "replication_factor") || changed
+		changed = moveLegacyNamespacePolicyField(namespace, policy, "notificationsEnabled", "notifications_enabled") || changed
+		changed = moveLegacyNamespacePolicyField(namespace, policy, "keySorting", "key_sorting") || changed
+		if changed {
+			namespace["policy"] = policy
+		}
+	}
+
+	return value
+}
+
+func moveLegacyNamespacePolicyField(namespace map[string]any, policy map[string]any, jsonName string, protoName string) bool {
+	value, found := popAny(namespace, jsonName, protoName)
+	if !found {
+		return false
+	}
+	if _, exists := getAny(policy, jsonName, protoName); !exists {
+		policy[jsonName] = value
+	}
+	return true
+}
+
+func popAny(values map[string]any, keys ...string) (any, bool) {
+	for _, key := range keys {
+		value, found := values[key]
+		if found {
+			delete(values, key)
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func getAny(values map[string]any, keys ...string) (any, bool) {
+	for _, key := range keys {
+		value, found := values[key]
+		if found {
+			return value, true
+		}
+	}
+	return nil, false
 }

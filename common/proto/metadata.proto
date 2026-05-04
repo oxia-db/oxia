@@ -40,14 +40,14 @@ message AntiAffinity {
 
 message HierarchyPolicies {
   repeated AntiAffinity anti_affinities = 1;
+  optional uint32 initial_shard_count = 2;
+  optional uint32 replication_factor = 3;
+  optional bool notifications_enabled = 4;
+  optional string key_sorting = 5;
 }
 
 message Namespace {
   string name = 1;
-  uint32 initial_shard_count = 2;
-  uint32 replication_factor = 3;
-  optional bool notifications_enabled = 4;
-  string key_sorting = 5;
   HierarchyPolicies policy = 6;
 }
 
@@ -62,6 +62,7 @@ message ClusterConfiguration {
   repeated string allow_extra_authorities = 3;
   map<string, DataServerMetadata> server_metadata = 4;
   LoadBalancer load_balancer = 5;
+  HierarchyPolicies policy = 6;
 }
 
 message HashRange {

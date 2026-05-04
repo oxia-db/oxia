@@ -39,9 +39,8 @@ func TestSubscribePublish(t *testing.T) {
 
 	config := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
-			Name:              "default",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
+			Name:   "default",
+			Policy: proto.NewHierarchyPolicies(1, 1, true, "hierarchical"),
 		}},
 	}
 	w.Publish(config)

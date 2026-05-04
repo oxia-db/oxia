@@ -223,11 +223,13 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	policy := &commonproto.HierarchyPolicies{}
+	policy.SetReplicationFactor(3)
+	policy.SetInitialShardCount(1)
 	clusterConfig := &commonproto.ClusterConfiguration{
 		Namespaces: []*commonproto.Namespace{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
+			Name:   constant.DefaultNamespace,
+			Policy: policy,
 		}},
 		Servers: servers,
 	}

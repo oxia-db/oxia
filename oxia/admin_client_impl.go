@@ -202,7 +202,7 @@ func (admin *adminClientImpl) ListNamespaces() ([]*proto.Namespace, error) {
 	return response.Namespaces, nil
 }
 
-func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, error) {
+func (admin *adminClientImpl) GetNamespace(namespace string, effective bool) (*proto.Namespace, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -212,11 +212,50 @@ func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, 
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: namespace})
+	response, err := client.GetNamespace(context.Background(), &proto.GetNamespaceRequest{
+		Namespace: namespace,
+		Effective: effective,
+	})
 	if err != nil {
 		return nil, mapAdminError(err)
 	}
 	return response.Namespace, nil
+}
+
+func (admin *adminClientImpl) GetClusterPolicy() (*proto.HierarchyPolicies, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.GetClusterPolicy(context.Background(), &proto.GetClusterPolicyRequest{})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.Policy, nil
+}
+
+func (admin *adminClientImpl) PatchClusterPolicy(policy *proto.HierarchyPolicies) (*proto.HierarchyPolicies, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.PatchClusterPolicy(context.Background(), &proto.PatchClusterPolicyRequest{
+		Policy: policy,
+	})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.Policy, nil
 }
 
 func (admin *adminClientImpl) SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult {

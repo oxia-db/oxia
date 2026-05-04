@@ -40,9 +40,8 @@ import (
 )
 
 var namespaceConfig = &proto.Namespace{
-	Name:              "my-namespace",
-	InitialShardCount: 1,
-	ReplicationFactor: 3,
+	Name:   "my-namespace",
+	Policy: proto.NewHierarchyPolicies(1, 3, true, "hierarchical"),
 }
 
 func newTestMetadata(t *testing.T, metadataProvider provider.Provider[*proto.ClusterStatus], clusterConfig *proto.ClusterConfiguration) coordmetadata.Metadata {
@@ -392,10 +391,8 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled), &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{
 			{
-				Name:                 "default",
-				InitialShardCount:    1,
-				ReplicationFactor:    1,
-				NotificationsEnabled: &notificationsEnabled,
+				Name:   "default",
+				Policy: proto.NewHierarchyPolicies(1, 1, notificationsEnabled, "hierarchical"),
 			},
 		},
 	})

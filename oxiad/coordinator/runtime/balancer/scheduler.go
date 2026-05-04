@@ -238,26 +238,25 @@ func (r *nodeBasedBalancer) swapShard(
 	candidates *linkedhashset.Set[string],
 	metadata map[string]*commonproto.DataServerMetadata,
 	currentStatus *commonproto.ClusterStatus) (bool, error) {
-	var nsc *commonproto.Namespace
 	var exist bool
 	var err error
 
-	var borrowedNamespace commonobject.Borrowed[*commonproto.Namespace]
-	if borrowedNamespace, exist = r.metadata.GetNamespace(candidateShard.Namespace); !exist {
+	var namespace commonobject.Borrowed[*commonproto.Namespace]
+	if namespace, exist = r.metadata.GetNamespace(candidateShard.Namespace, true); !exist {
 		return false, nil
 	}
-	nsc = borrowedNamespace.UnsafeBorrow()
+	policy := namespace.UnsafeBorrow().GetPolicy()
 
 	// With RF=1, an ensemble swap cannot safely transfer data (there's no
 	// follower to replicate from). Skip rebalancing for such namespaces.
-	if nsc.GetReplicationFactor() <= 1 {
+	if policy.GetReplicationFactor() <= 1 {
 		return false, nil
 	}
 
 	sContext := &single.Context{
 		Candidates:         candidates,
 		CandidatesMetadata: metadata,
-		HierarchyPolicies:  nsc.GetPolicy(),
+		HierarchyPolicies:  policy,
 		Status:             currentStatus,
 		Namespace:          candidateShard.Namespace,
 		Shard:              candidateShard.ShardID,

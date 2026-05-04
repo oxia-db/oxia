@@ -71,11 +71,9 @@ func TestCoordinatorE2E(t *testing.T) {
 	s3, sa3 := newServer(t)
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              constant.DefaultNamespace,
-		ReplicationFactor: 3,
-		InitialShardCount: 1,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace(constant.DefaultNamespace, 1, 3),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -111,11 +109,9 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 	s3, sa3 := newServer(t)
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              constant.DefaultNamespace,
-		ReplicationFactor: 3,
-		InitialShardCount: 4,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace(constant.DefaultNamespace, 4, 3),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -165,11 +161,9 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              constant.DefaultNamespace,
-		ReplicationFactor: 3,
-		InitialShardCount: 1,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace(constant.DefaultNamespace, 1, 3),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -263,19 +257,11 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              constant.DefaultNamespace,
-		ReplicationFactor: 3,
-		InitialShardCount: 1,
-	}, {
-		Name:              "my-ns-1",
-		ReplicationFactor: 1,
-		InitialShardCount: 2,
-	}, {
-		Name:              "my-ns-2",
-		ReplicationFactor: 2,
-		InitialShardCount: 3,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace(constant.DefaultNamespace, 1, 3),
+		testNamespace("my-ns-1", 2, 1),
+		testNamespace("my-ns-2", 3, 2),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -364,11 +350,9 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              "my-ns-1",
-		ReplicationFactor: 1,
-		InitialShardCount: 2,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace("my-ns-1", 2, 1),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -455,11 +439,9 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              "my-ns-1",
-		ReplicationFactor: 1,
-		InitialShardCount: 2,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace("my-ns-1", 2, 1),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -489,11 +471,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 
 	slog.Info("Cluster is ready")
 
-	clusterConfig.Namespaces = append(clusterConfig.Namespaces, &proto.Namespace{
-		Name:              "my-ns-2",
-		InitialShardCount: 2,
-		ReplicationFactor: 1,
-	})
+	clusterConfig.Namespaces = append(clusterConfig.Namespaces, testNamespace("my-ns-2", 2, 1))
 	version := configProvider.Watch().Load().Version
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
@@ -547,11 +525,9 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              "my-ns-1",
-		ReplicationFactor: 1,
-		InitialShardCount: 2,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace("my-ns-1", 2, 1),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -612,11 +588,9 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	}
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              "my-ns-1",
-		ReplicationFactor: 1,
-		InitialShardCount: 1,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3, sa4})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace("my-ns-1", 1, 1),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3, sa4})
 
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -692,11 +666,9 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	s3, sa3 := newServer(t)
 
 	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	clusterConfig := newClusterConfig([]*proto.Namespace{{
-		Name:              "my-ns-1",
-		ReplicationFactor: 3,
-		InitialShardCount: 1,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	clusterConfig := newClusterConfig([]*proto.Namespace{
+		testNamespace("my-ns-1", 1, 3),
+	}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
