@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -30,13 +31,13 @@ import (
 
 func runCmd(args ...string) (string, error) {
 	actual := new(bytes.Buffer)
-	Cmd.SetOut(actual)
-	Cmd.SetErr(actual)
-	Cmd.SetArgs(args)
-	if err := Cmd.Flags().Set("output", ""); err != nil {
-		return strings.TrimSpace(actual.String()), err
-	}
-	err := Cmd.Execute()
+	root := &cobra.Command{Use: "admin"}
+	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
+	root.AddCommand(newCmd())
+	root.SetOut(actual)
+	root.SetErr(actual)
+	root.SetArgs(append([]string{"get"}, args...))
+	err := root.Execute()
 	return strings.TrimSpace(actual.String()), err
 }
 

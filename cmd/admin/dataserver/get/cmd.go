@@ -22,17 +22,17 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 )
 
-var Cmd = &cobra.Command{
-	Use:          "get [dataserver]",
-	Short:        "Get a data server or list data server identities",
-	Long:         `Get a data server or list data server identities`,
-	Args:         cobra.MaximumNArgs(1),
-	RunE:         exec,
-	SilenceUsage: true,
-}
+var Cmd = newCmd()
 
-func init() {
-	Cmd.Flags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
+func newCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:          "get [dataserver]",
+		Short:        "Get a data server or list data server identities",
+		Long:         `Get a data server or list data server identities`,
+		Args:         cobra.MaximumNArgs(1),
+		RunE:         exec,
+		SilenceUsage: true,
+	}
 }
 
 func exec(cmd *cobra.Command, args []string) error {

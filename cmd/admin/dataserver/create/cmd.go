@@ -22,6 +22,7 @@ import (
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	dataserveroutput "github.com/oxia-db/oxia/cmd/admin/dataserver/output"
+	cmdparse "github.com/oxia-db/oxia/cmd/common/parse"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 )
@@ -38,7 +39,6 @@ func newCmd() *cobra.Command {
 		SilenceUsage: true,
 	}
 
-	cmd.Flags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
 	cmd.Flags().String("public", "", "Public address for the data server")
 	cmd.Flags().String("internal", "", "Internal address for the data server")
 	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
@@ -48,28 +48,30 @@ func newCmd() *cobra.Command {
 }
 
 func exec(cmd *cobra.Command, args []string) error {
-	outputFormat, err := cmd.Flags().GetString("output")
-	if err != nil {
+	var (
+		outputFormat    string
+		publicAddress   string
+		internalAddress string
+		labelValues     []string
+		err             error
+	)
+	if outputFormat, err = cmd.Flags().GetString("output"); err != nil {
 		return err
 	}
 	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
 		return err
 	}
-
-	publicAddress, err := cmd.Flags().GetString("public")
-	if err != nil {
+	if publicAddress, err = cmd.Flags().GetString("public"); err != nil {
 		return err
 	}
-	internalAddress, err := cmd.Flags().GetString("internal")
-	if err != nil {
+	if internalAddress, err = cmd.Flags().GetString("internal"); err != nil {
 		return err
 	}
-	labelValues, err := cmd.Flags().GetStringArray("label")
-	if err != nil {
+	if labelValues, err = cmd.Flags().GetStringArray("label"); err != nil {
 		return err
 	}
 
-	labels, err := commons.ParseStringMap(labelValues)
+	labels, err := cmdparse.StringMap(labelValues)
 	if err != nil {
 		return err
 	}

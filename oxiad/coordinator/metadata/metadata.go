@@ -366,12 +366,12 @@ func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServe
 			return nil, false
 		}
 
-		config.Servers = append(config.Servers, cloneDataServerIdentity(dataServer.GetIdentity()))
+		config.Servers = append(config.Servers, dataServer.GetIdentity())
 		if metadata := dataServer.GetMetadata(); metadata != nil {
 			if config.ServerMetadata == nil {
 				config.ServerMetadata = map[string]*commonproto.DataServerMetadata{}
 			}
-			config.ServerMetadata[name] = cloneDataServerMetadata(metadata)
+			config.ServerMetadata[name] = metadata
 		}
 
 		return config, true
@@ -383,37 +383,6 @@ func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServe
 		return metadatacommon.ErrAlreadyExists
 	}
 	return nil
-}
-
-func cloneDataServerIdentity(identity *commonproto.DataServerIdentity) *commonproto.DataServerIdentity {
-	if identity == nil {
-		return nil
-	}
-
-	cloned := &commonproto.DataServerIdentity{
-		Public:   identity.GetPublic(),
-		Internal: identity.GetInternal(),
-	}
-	if identity.Name != nil {
-		name := identity.GetName()
-		cloned.Name = &name
-	}
-	return cloned
-}
-
-func cloneDataServerMetadata(metadata *commonproto.DataServerMetadata) *commonproto.DataServerMetadata {
-	if metadata == nil {
-		return nil
-	}
-
-	cloned := &commonproto.DataServerMetadata{}
-	if len(metadata.GetLabels()) > 0 {
-		cloned.Labels = make(map[string]string, len(metadata.GetLabels()))
-		for key, value := range metadata.GetLabels() {
-			cloned.Labels[key] = value
-		}
-	}
-	return cloned
 }
 
 func (m *coordinatorMetadata) ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer] {

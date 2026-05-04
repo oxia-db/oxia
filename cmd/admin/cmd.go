@@ -39,6 +39,7 @@ var (
 func init() {
 	defaultAdminClientAddress := fmt.Sprintf("localhost:%d", oxiacommon.DefaultAdminPort)
 	Cmd.PersistentFlags().StringVar(&commons.AdminConfig.AdminAddress, "admin-address", defaultAdminClientAddress, "Admin client address")
+	Cmd.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
 
 	Cmd.AddCommand(dataserver.Cmd)
 	Cmd.AddCommand(listnamespaces.Cmd)

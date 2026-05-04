@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -29,12 +30,15 @@ import (
 )
 
 func runCmd(args ...string) (string, error) {
-	cmd := newCmd()
 	actual := new(bytes.Buffer)
-	cmd.SetOut(actual)
-	cmd.SetErr(actual)
-	cmd.SetArgs(args)
-	err := cmd.Execute()
+	root := &cobra.Command{Use: "admin"}
+	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
+	cmd := newCmd()
+	root.AddCommand(cmd)
+	root.SetOut(actual)
+	root.SetErr(actual)
+	root.SetArgs(append([]string{"create"}, args...))
+	err := root.Execute()
 	return strings.TrimSpace(actual.String()), err
 }
 

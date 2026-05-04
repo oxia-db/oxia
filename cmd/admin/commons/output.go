@@ -91,25 +91,6 @@ func FormatLabels(labels map[string]string) string {
 	return strings.Join(parts, ",")
 }
 
-func ParseStringMap(values []string) (map[string]string, error) {
-	if len(values) == 0 {
-		return map[string]string{}, nil
-	}
-
-	labels := make(map[string]string, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		key, labelValue, ok := strings.Cut(value, "=")
-		if !ok || key == "" {
-			return nil, errors.Errorf("invalid entry %q, expected key=value", value)
-		}
-		labels[key] = labelValue
-	}
-	return labels, nil
-}
-
 func writeJSON(out io.Writer, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
