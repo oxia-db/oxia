@@ -30,7 +30,24 @@ import (
 const (
 	publicFlagName   = "public"
 	internalFlagName = "internal"
+	labelFlagName    = "label"
 )
+
+var (
+	Config = flags{}
+)
+
+type flags struct {
+	publicAddress   string
+	internalAddress string
+	labels          []string
+}
+
+func (flags *flags) Reset() {
+	flags.publicAddress = ""
+	flags.internalAddress = ""
+	flags.labels = nil
+}
 
 var Cmd = &cobra.Command{
 	Use:          "patch <name>",
@@ -42,9 +59,9 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
-	Cmd.Flags().String(publicFlagName, "", "Public address for the data server")
-	Cmd.Flags().String(internalFlagName, "", "Internal address for the data server")
-	Cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	Cmd.Flags().StringVar(&Config.publicAddress, publicFlagName, "", "Public address for the data server")
+	Cmd.Flags().StringVar(&Config.internalAddress, internalFlagName, "", "Internal address for the data server")
+	Cmd.Flags().StringArrayVar(&Config.labels, labelFlagName, nil, "Label to attach to the data server in key=value form")
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -83,36 +100,23 @@ func patchRequestFromFlags(cmd *cobra.Command, rawName string) (*proto.DataServe
 		return nil, errors.New("data server name must not be empty")
 	}
 
-	publicAddress, err := cmd.Flags().GetString(publicFlagName)
-	if err != nil {
-		return nil, err
-	}
-	internalAddress, err := cmd.Flags().GetString(internalFlagName)
-	if err != nil {
-		return nil, err
-	}
-	labelValues, err := cmd.Flags().GetStringArray("label")
-	if err != nil {
-		return nil, err
-	}
-
 	publicChanged := cmd.Flags().Changed(publicFlagName)
 	internalChanged := cmd.Flags().Changed(internalFlagName)
-	labelChanged := cmd.Flags().Changed("label")
+	labelChanged := cmd.Flags().Changed(labelFlagName)
 	if !publicChanged && !internalChanged && !labelChanged {
 		return nil, errors.New("must specify at least one field to patch")
 	}
 
-	if publicChanged && strings.TrimSpace(publicAddress) == "" {
+	if publicChanged && strings.TrimSpace(Config.publicAddress) == "" {
 		return nil, errors.New("data server public address must not be empty")
 	}
-	if internalChanged && strings.TrimSpace(internalAddress) == "" {
+	if internalChanged && strings.TrimSpace(Config.internalAddress) == "" {
 		return nil, errors.New("data server internal address must not be empty")
 	}
 
 	var metadata *proto.DataServerMetadata
 	if labelChanged {
-		labels, err := cmdparse.StringMap(labelValues)
+		labels, err := cmdparse.StringMap(Config.labels)
 		if err != nil {
 			return nil, err
 		}
@@ -126,10 +130,10 @@ func patchRequestFromFlags(cmd *cobra.Command, rawName string) (*proto.DataServe
 		Metadata: metadata,
 	}
 	if publicChanged {
-		dataServer.Identity.Public = publicAddress
+		dataServer.Identity.Public = Config.publicAddress
 	}
 	if internalChanged {
-		dataServer.Identity.Internal = internalAddress
+		dataServer.Identity.Internal = Config.internalAddress
 	}
 	return dataServer, nil
 }
