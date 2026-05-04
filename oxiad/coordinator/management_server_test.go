@@ -297,9 +297,8 @@ func TestManagementServerPatchDataServer(t *testing.T) {
 	res, err := management.PatchDataServer(context.Background(), &proto.PatchDataServerRequest{
 		DataServer: &proto.DataServer{
 			Identity: &proto.DataServerIdentity{
-				Name:     &serverName,
-				Public:   "public-2",
-				Internal: "internal-1",
+				Name:   &serverName,
+				Public: "public-2",
 			},
 			Metadata: &proto.DataServerMetadata{
 				Labels: map[string]string{"rack": "rack-2"},
@@ -334,9 +333,7 @@ func TestManagementServerPatchDataServerRejectsInvalidRequest(t *testing.T) {
 		{name: "nil request", req: nil},
 		{name: "nil dataserver", req: &proto.PatchDataServerRequest{}},
 		{name: "nil identity", req: &proto.PatchDataServerRequest{DataServer: &proto.DataServer{}}},
-		{name: "empty name", req: &proto.PatchDataServerRequest{DataServer: &proto.DataServer{Identity: &proto.DataServerIdentity{Public: "public", Internal: "internal"}}}},
-		{name: "empty public", req: &proto.PatchDataServerRequest{DataServer: &proto.DataServer{Identity: &proto.DataServerIdentity{Name: &serverName, Internal: "internal"}}}},
-		{name: "empty internal", req: &proto.PatchDataServerRequest{DataServer: &proto.DataServer{Identity: &proto.DataServerIdentity{Name: &serverName, Public: "public"}}}},
+		{name: "empty name", req: &proto.PatchDataServerRequest{DataServer: &proto.DataServer{Identity: &proto.DataServerIdentity{Public: "public"}}}},
 	}
 
 	for _, tt := range testCases {
@@ -358,9 +355,8 @@ func TestManagementServerPatchDataServerNotFound(t *testing.T) {
 	_, err := management.PatchDataServer(context.Background(), &proto.PatchDataServerRequest{
 		DataServer: &proto.DataServer{
 			Identity: &proto.DataServerIdentity{
-				Name:     &serverName,
-				Public:   "public-2",
-				Internal: "internal-2",
+				Name:   &serverName,
+				Public: "public-2",
 			},
 		},
 	})

@@ -377,49 +377,41 @@ func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServe
 	})
 }
 
-func (m *coordinatorMetadata) PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error) {
-	name := dataServer.GetIdentity().GetName()
+func (m *coordinatorMetadata) PatchDataServer(desireDataServer *commonproto.DataServer) (*commonproto.DataServer, error) {
 	var updated *commonproto.DataServer
-
 	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
-		for i, server := range config.GetServers() {
-			if server.GetNameOrDefault() != name {
+		for _, existID := range config.GetServers() {
+			if existID.GetNameOrDefault() != desireDataServer.GetNameOrDefault() {
 				continue
 			}
 
-			identity := server
-			if server.GetName() == "" {
-				normalizedName := server.GetNameOrDefault()
-				identity = &commonproto.DataServerIdentity{
-					Name:     &normalizedName,
-					Public:   server.GetPublic(),
-					Internal: server.GetInternal(),
-				}
+			if public := desireDataServer.GetIdentity().GetPublic(); public != "" {
+				existID.Public = public
+			}
+			if internal := desireDataServer.GetIdentity().GetInternal(); internal != "" {
+				existID.Internal = internal
 			}
 
-			current := &commonproto.DataServer{
-				Identity: identity,
-			}
-			if metadata, found := config.GetServerMetadata()[name]; found {
-				current.Metadata = metadata
-			}
-
-			current.MergeFrom(dataServer)
-			config.Servers[i] = current.GetIdentity()
-
-			if current.Metadata != nil {
+			var dsMeta *commonproto.DataServerMetadata
+			var ok bool
+			if desireDataServer.Metadata != nil {
 				if config.ServerMetadata == nil {
 					config.ServerMetadata = map[string]*commonproto.DataServerMetadata{}
 				}
-				config.ServerMetadata[name] = current.Metadata
-			} else if config.ServerMetadata != nil {
-				delete(config.ServerMetadata, name)
+				if dsMeta, ok = config.ServerMetadata[existID.GetNameOrDefault()]; !ok {
+					dsMeta = &commonproto.DataServerMetadata{}
+				}
+				if desireDataServer.Metadata.Labels != nil {
+					dsMeta.Labels = desireDataServer.Metadata.Labels
+				}
+				config.ServerMetadata[existID.GetNameOrDefault()] = dsMeta
 			}
-
-			updated = current
+			updated = &commonproto.DataServer{
+				Identity: existID,
+				Metadata: dsMeta,
+			}
 			return config, nil
 		}
-
 		return nil, metadatacommon.ErrNotFound
 	}); err != nil {
 		return nil, err
