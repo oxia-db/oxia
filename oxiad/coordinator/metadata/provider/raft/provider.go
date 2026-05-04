@@ -160,7 +160,7 @@ func (mpr *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metada
 		return metadatacommon.NotExists, errors.New("failed to apply new cluster state")
 	}
 	if !applyRes.changeApplied {
-		panic(metadatacommon.ErrBadVersion)
+		return metadatacommon.NotExists, metadatacommon.ErrBadVersion
 	}
 
 	newVersion = toVersion(applyRes.newVersion)

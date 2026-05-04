@@ -166,7 +166,7 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadata
 	existingVersion := existingSnapshot.Version
 
 	if snapshot.Version != existingVersion {
-		panic(metadatacommon.ErrBadVersion)
+		return metadatacommon.NotExists, metadatacommon.ErrBadVersion
 	}
 
 	newVersion = metadatacommon.NextVersion(existingVersion)
