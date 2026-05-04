@@ -246,6 +246,30 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	}, nil
 }
 
+func (management *managementServer) DeleteNamespace(_ context.Context, req *proto.DeleteNamespaceRequest) (*proto.DeleteNamespaceResponse, error) {
+	if req == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be nil")
+	}
+	if err := validation.ValidateNamespace(req.Namespace); err != nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
+	}
+
+	namespace, err := management.metadata.DeleteNamespace(req.Namespace)
+	if err != nil {
+		if errors.Is(err, metadatacommon.ErrNotFound) {
+			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
+		}
+		if errors.Is(err, metadatacommon.ErrBadVersion) {
+			return nil, grpcstatus.Errorf(codes.Aborted, "failed to delete namespace %q due to concurrent config update", req.Namespace)
+		}
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to delete namespace %q: %v", req.Namespace, err)
+	}
+
+	return &proto.DeleteNamespaceResponse{
+		Namespace: namespace,
+	}, nil
+}
+
 func (management *managementServer) GetNamespace(_ context.Context, req *proto.GetNamespaceRequest) (*proto.GetNamespaceResponse, error) {
 	if req == nil || req.Namespace == "" {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be empty")

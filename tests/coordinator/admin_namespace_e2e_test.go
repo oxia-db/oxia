@@ -109,4 +109,17 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, namespaces, 1)
 	assert.Equal(t, "ns-1", namespaces[0].GetName())
+
+	deleted, err := client.DeleteNamespace("ns-1")
+	require.NoError(t, err)
+	require.NotNil(t, deleted)
+	assert.Equal(t, "ns-1", deleted.GetName())
+	assert.EqualValues(t, 2, deleted.GetInitialShardCount())
+	assert.EqualValues(t, 1, deleted.GetReplicationFactor())
+	assert.True(t, deleted.NotificationsEnabledOrDefault())
+	assert.Equal(t, "natural", deleted.GetKeySorting())
+
+	namespaces, err = client.ListNamespaces()
+	require.NoError(t, err)
+	assert.Empty(t, namespaces)
 }

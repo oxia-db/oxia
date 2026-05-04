@@ -570,6 +570,81 @@ func TestManagementServerPatchNamespaceFailedPrecondition(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err))
 }
 
+func TestManagementServerDeleteNamespace(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{
+				{
+					Name:              "ns-1",
+					InitialShardCount: 1,
+					ReplicationFactor: 1,
+					KeySorting:        "natural",
+				},
+				{
+					Name:              "ns-2",
+					InitialShardCount: 2,
+					ReplicationFactor: 1,
+					KeySorting:        "hierarchical",
+				},
+			},
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	res, err := management.DeleteNamespace(context.Background(), &proto.DeleteNamespaceRequest{Namespace: "ns-1"})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Namespace)
+	assert.Equal(t, "ns-1", res.Namespace.GetName())
+	assert.EqualValues(t, 1, res.Namespace.GetInitialShardCount())
+	assert.Equal(t, "natural", res.Namespace.GetKeySorting())
+
+	_, found := management.metadata.GetNamespace("ns-1")
+	assert.False(t, found)
+	namespace, found := management.metadata.GetNamespace("ns-2")
+	require.True(t, found)
+	assert.Equal(t, "ns-2", namespace.UnsafeBorrow().GetName())
+}
+
+func TestManagementServerDeleteNamespaceRejectsInvalidRequest(t *testing.T) {
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{}),
+		nil,
+	)
+
+	testCases := []struct {
+		name string
+		req  *proto.DeleteNamespaceRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "empty name", req: &proto.DeleteNamespaceRequest{}},
+		{name: "invalid name", req: &proto.DeleteNamespaceRequest{Namespace: "../ns"}},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := management.DeleteNamespace(context.Background(), tt.req)
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+		})
+	}
+}
+
+func TestManagementServerDeleteNamespaceNotFound(t *testing.T) {
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{}),
+		nil,
+	)
+
+	_, err := management.DeleteNamespace(context.Background(), &proto.DeleteNamespaceRequest{Namespace: "missing"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
+}
+
 func TestManagementServerGetNamespaceRejectsEmptyLookup(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),

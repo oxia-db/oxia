@@ -16,6 +16,7 @@ package namespace
 
 import (
 	createcmd "github.com/oxia-db/oxia/cmd/admin/namespace/create"
+	"github.com/oxia-db/oxia/cmd/admin/namespace/deletecmd"
 	getcmd "github.com/oxia-db/oxia/cmd/admin/namespace/get"
 	patchcmd "github.com/oxia-db/oxia/cmd/admin/namespace/patch"
 
@@ -30,6 +31,7 @@ var Cmd = &cobra.Command{
 
 func init() {
 	Cmd.AddCommand(createcmd.Cmd)
+	Cmd.AddCommand(deletecmd.Cmd)
 	Cmd.AddCommand(getcmd.Cmd)
 	Cmd.AddCommand(patchcmd.Cmd)
 }
