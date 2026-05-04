@@ -46,6 +46,7 @@ type Metadata interface {
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 	CreateNamespace(namespace *commonproto.Namespace) error
+	PatchNamespace(namespace *commonproto.Namespace) (*commonproto.Namespace, error)
 	GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool)
 
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
@@ -377,6 +378,39 @@ func (m *coordinatorMetadata) CreateNamespace(namespace *commonproto.Namespace) 
 		config.Namespaces = append(config.Namespaces, namespace)
 		return config, nil
 	})
+}
+
+func (m *coordinatorMetadata) PatchNamespace(desiredNamespace *commonproto.Namespace) (*commonproto.Namespace, error) {
+	var updated *commonproto.Namespace
+	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		for _, namespace := range config.GetNamespaces() {
+			if namespace.GetName() != desiredNamespace.GetName() {
+				continue
+			}
+			if replicationFactor := desiredNamespace.GetReplicationFactor(); replicationFactor != 0 {
+				if replicationFactor > uint32(len(config.GetServers())) {
+					return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
+						metadatacommon.ErrFailedPrecondition, namespace.GetName(), replicationFactor, len(config.GetServers()))
+				}
+				namespace.ReplicationFactor = replicationFactor
+			}
+			if desiredNamespace.NotificationsEnabled != nil {
+				notificationsEnabled := desiredNamespace.GetNotificationsEnabled()
+				namespace.NotificationsEnabled = &notificationsEnabled
+			}
+			if policy := desiredNamespace.GetPolicy(); policy != nil {
+				namespace.Policy = policy
+			}
+
+			updated = namespace
+			return config, nil
+		}
+		return nil, metadatacommon.ErrNotFound
+	}); err != nil {
+		return nil, err
+	}
+
+	return updated, nil
 }
 
 func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {

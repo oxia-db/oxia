@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package create
+package patch
 
 import (
 	"errors"
@@ -30,18 +30,16 @@ import (
 var fields option.NamespaceFields
 
 var Cmd = &cobra.Command{
-	Use:          "create <namespace> --initial-shards <count> --replication-factor <factor>",
-	Short:        "Create a namespace",
-	Long:         `Create a namespace`,
+	Use:          "patch <namespace>",
+	Short:        "Patch a namespace",
+	Long:         `Patch a namespace`,
 	Args:         cobra.ExactArgs(1),
 	RunE:         exec,
 	SilenceUsage: true,
 }
 
 func init() {
-	fields.AddFlags(Cmd)
-	_ = Cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = Cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
+	fields.AddPatchFlags(Cmd)
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -57,18 +55,24 @@ func exec(cmd *cobra.Command, args []string) error {
 	if err := validation.ValidateNamespace(name); err != nil {
 		return err
 	}
-	if fields.InitialShardCount == 0 {
-		return errors.New("namespace initial shard count must be greater than 0")
+
+	replicationFactorChanged := cmd.Flags().Changed(option.ReplicationFactorFlagName)
+	notificationsChanged := cmd.Flags().Changed(option.NotificationsFlagName)
+	if !replicationFactorChanged && !notificationsChanged {
+		return errors.New("must specify at least one field to patch")
 	}
-	if fields.ReplicationFactor == 0 {
+	if replicationFactorChanged && fields.ReplicationFactor == 0 {
 		return errors.New("namespace replication factor must be greater than 0")
 	}
-	keySorting, err := proto.ParseKeySortingType(fields.KeySorting)
-	if err != nil {
-		return err
+
+	namespace := &proto.Namespace{
+		Name: name,
 	}
-	if keySorting == proto.KeySortingType_UNKNOWN {
-		return errors.New(`key sorting must be one of "natural" or "hierarchical"`)
+	if replicationFactorChanged {
+		namespace.ReplicationFactor = fields.ReplicationFactor
+	}
+	if notificationsChanged {
+		namespace.NotificationsEnabled = &fields.Notifications
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
@@ -79,16 +83,10 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	created, err := client.CreateNamespace(&proto.Namespace{
-		Name:                 name,
-		InitialShardCount:    fields.InitialShardCount,
-		ReplicationFactor:    fields.ReplicationFactor,
-		NotificationsEnabled: &fields.Notifications,
-		KeySorting:           fields.KeySorting,
-	})
+	patched, err := client.PatchNamespace(namespace)
 	if err != nil {
 		return err
 	}
 
-	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, created)
+	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, patched)
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package create
+package patch
 
 import (
 	"bytes"
@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/cmd/admin/namespace/option"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -37,13 +36,13 @@ func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	root.AddCommand(cmd)
 	root.SetOut(actual)
 	root.SetErr(actual)
-	root.SetArgs(append([]string{"create"}, args...))
+	root.SetArgs(append([]string{"patch"}, args...))
 	err := root.Execute()
 	fields.Reset()
 	return strings.TrimSpace(actual.String()), err
 }
 
-func Test_cmd_createNamespace(t *testing.T) {
+func Test_cmd_patchNamespace(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
@@ -51,18 +50,18 @@ func Test_cmd_createNamespace(t *testing.T) {
 	expected := &proto.Namespace{
 		Name:                 "ns-1",
 		InitialShardCount:    4,
-		ReplicationFactor:    3,
+		ReplicationFactor:    2,
 		NotificationsEnabled: &notificationsEnabled,
 		KeySorting:           "natural",
 	}
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("CreateNamespace", mock.MatchedBy(func(namespace *proto.Namespace) bool {
+	commons.MockedAdminClient.On("PatchNamespace", mock.MatchedBy(func(namespace *proto.Namespace) bool {
 		return namespace.GetName() == "ns-1" &&
-			namespace.GetInitialShardCount() == 4 &&
-			namespace.GetReplicationFactor() == 3 &&
+			namespace.GetInitialShardCount() == 0 &&
+			namespace.GetReplicationFactor() == 2 &&
 			namespace.GetNotificationsEnabled() == notificationsEnabled &&
-			namespace.GetKeySorting() == "natural"
+			namespace.GetKeySorting() == ""
 	})).Return(expected, nil)
 
 	cmd := &cobra.Command{
@@ -73,32 +72,30 @@ func Test_cmd_createNamespace(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
-	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3",
-		"--notifications=false", "--key-sorting", "natural", "-o", "json")
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "ns-1", "--replication-factor", "2",
+		"--notifications=false", "-o", "json")
 
 	require.NoError(t, err)
 	var namespace proto.Namespace
 	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
 	assert.Equal(t, "ns-1", namespace.GetName())
 	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
+	assert.EqualValues(t, 2, namespace.GetReplicationFactor())
 	assert.False(t, namespace.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", namespace.GetKeySorting())
 }
 
-func Test_cmd_createNamespace_DefaultTable(t *testing.T) {
+func Test_cmd_patchNamespace_DefaultTable(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("CreateNamespace", mock.Anything).Return(&proto.Namespace{
+	commons.MockedAdminClient.On("PatchNamespace", mock.Anything).Return(&proto.Namespace{
 		Name:              "ns-1",
 		InitialShardCount: 4,
-		ReplicationFactor: 3,
-		KeySorting:        "hierarchical",
+		ReplicationFactor: 2,
+		KeySorting:        "natural",
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -109,10 +106,8 @@ func Test_cmd_createNamespace_DefaultTable(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
-	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3")
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "ns-1", "--replication-factor", "2")
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "NAME")
@@ -122,17 +117,17 @@ func Test_cmd_createNamespace_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "KEY_SORTING")
 	assert.Contains(t, out, "ns-1")
 	assert.Contains(t, out, "4")
-	assert.Contains(t, out, "3")
+	assert.Contains(t, out, "2")
 	assert.Contains(t, out, "true")
-	assert.Contains(t, out, "hierarchical")
+	assert.Contains(t, out, "natural")
 }
 
-func Test_cmd_createNamespace_Name(t *testing.T) {
+func Test_cmd_patchNamespace_Name(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("CreateNamespace", mock.Anything).Return(&proto.Namespace{
+	commons.MockedAdminClient.On("PatchNamespace", mock.Anything).Return(&proto.Namespace{
 		Name: "ns-1",
 	}, nil)
 
@@ -144,19 +139,14 @@ func Test_cmd_createNamespace_Name(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
-	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3", "-o", "name")
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "ns-1", "--notifications=false", "-o", "name")
 
 	require.NoError(t, err)
 	assert.Equal(t, "namespace/ns-1", out)
 }
 
-func Test_cmd_createNamespace_RejectsInvalidName(t *testing.T) {
-	commons.MockedAdminClient = commons.NewMockAdminClient()
-	t.Cleanup(func() { commons.MockedAdminClient = nil })
-
+func Test_cmd_patchNamespace_RejectsEmptyPatch(t *testing.T) {
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
 		Short:        Cmd.Short,
@@ -165,20 +155,61 @@ func Test_cmd_createNamespace_RejectsInvalidName(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
-	out, err := runCmd(cmd, "../ns", "--initial-shards", "4", "--replication-factor", "3")
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "ns-1")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must specify at least one field to patch")
+	assert.Contains(t, out, "must specify at least one field to patch")
+}
+
+func Test_cmd_patchNamespace_RejectsInvalidName(t *testing.T) {
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "../ns", "--notifications=false")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid path traversal sequence")
 	assert.Contains(t, out, "invalid path traversal sequence")
 }
 
-func Test_cmd_createNamespace_RejectsInvalidKeySorting(t *testing.T) {
-	commons.MockedAdminClient = commons.NewMockAdminClient()
-	t.Cleanup(func() { commons.MockedAdminClient = nil })
+func Test_cmd_patchNamespace_RejectsUnsupportedFlags(t *testing.T) {
+	testCases := []struct {
+		name string
+		flag string
+	}{
+		{name: "initial shard count", flag: "--initial-shards"},
+		{name: "key sorting", flag: "--key-sorting"},
+	}
 
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{
+				Use:          Cmd.Use,
+				Short:        Cmd.Short,
+				Long:         Cmd.Long,
+				Args:         Cmd.Args,
+				RunE:         Cmd.RunE,
+				SilenceUsage: Cmd.SilenceUsage,
+			}
+			fields.AddPatchFlags(cmd)
+			out, err := runCmd(cmd, "ns-1", tt.flag, "1")
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unknown flag")
+			assert.Contains(t, out, "unknown flag")
+		})
+	}
+}
+
+func Test_cmd_patchNamespace_RejectsInvalidReplicationFactor(t *testing.T) {
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
 		Short:        Cmd.Short,
@@ -187,12 +218,10 @@ func Test_cmd_createNamespace_RejectsInvalidKeySorting(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
-	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3", "--key-sorting", "unknown")
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "ns-1", "--replication-factor", "0")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `key sorting must be one of "natural" or "hierarchical"`)
-	assert.Contains(t, out, `key sorting must be one of "natural" or "hierarchical"`)
+	assert.Contains(t, err.Error(), "namespace replication factor must be greater than 0")
+	assert.Contains(t, out, "namespace replication factor must be greater than 0")
 }

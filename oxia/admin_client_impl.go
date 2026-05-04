@@ -147,6 +147,25 @@ func (admin *adminClientImpl) CreateNamespace(namespace *proto.Namespace) (*prot
 	return response.Namespace, nil
 }
 
+func (admin *adminClientImpl) PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
+		Namespace: namespace,
+	})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.Namespace, nil
+}
+
 func (admin *adminClientImpl) ListNamespaces() ([]*proto.Namespace, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {

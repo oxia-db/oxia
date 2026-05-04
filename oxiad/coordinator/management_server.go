@@ -213,6 +213,39 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 	}, nil
 }
 
+func (management *managementServer) PatchNamespace(_ context.Context, req *proto.PatchNamespaceRequest) (*proto.PatchNamespaceResponse, error) {
+	if req == nil || req.Namespace == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be nil")
+	}
+	if err := validation.ValidateNamespace(req.Namespace.GetName()); err != nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
+	}
+	if req.Namespace.GetInitialShardCount() != 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace initial shard count cannot be patched")
+	}
+	if req.Namespace.GetKeySorting() != "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace key sorting cannot be patched")
+	}
+
+	namespace, err := management.metadata.PatchNamespace(req.Namespace)
+	if err != nil {
+		if errors.Is(err, metadatacommon.ErrNotFound) {
+			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace.GetName())
+		}
+		if errors.Is(err, metadatacommon.ErrBadVersion) {
+			return nil, grpcstatus.Errorf(codes.Aborted, "failed to patch namespace %q due to concurrent config update", req.Namespace.GetName())
+		}
+		if errors.Is(err, metadatacommon.ErrFailedPrecondition) {
+			return nil, grpcstatus.Errorf(codes.FailedPrecondition, "failed to patch namespace %q: %v", req.Namespace.GetName(), err)
+		}
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to patch namespace %q: %v", req.Namespace.GetName(), err)
+	}
+
+	return &proto.PatchNamespaceResponse{
+		Namespace: namespace,
+	}, nil
+}
+
 func (management *managementServer) GetNamespace(_ context.Context, req *proto.GetNamespaceRequest) (*proto.GetNamespaceResponse, error) {
 	if req == nil || req.Namespace == "" {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be empty")
