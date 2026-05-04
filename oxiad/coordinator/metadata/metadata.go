@@ -47,6 +47,7 @@ type Metadata interface {
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 	CreateNamespace(namespace *commonproto.Namespace) error
 	PatchNamespace(namespace *commonproto.Namespace) (*commonproto.Namespace, error)
+	DeleteNamespace(name string) (*commonproto.Namespace, error)
 	GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool)
 
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
@@ -411,6 +412,26 @@ func (m *coordinatorMetadata) PatchNamespace(desiredNamespace *commonproto.Names
 	}
 
 	return updated, nil
+}
+
+func (m *coordinatorMetadata) DeleteNamespace(name string) (*commonproto.Namespace, error) {
+	var deleted *commonproto.Namespace
+	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		for i, namespace := range config.GetNamespaces() {
+			if namespace.GetName() != name {
+				continue
+			}
+
+			deleted = namespace
+			config.Namespaces = append(config.Namespaces[:i], config.Namespaces[i+1:]...)
+			return config, nil
+		}
+		return nil, metadatacommon.ErrNotFound
+	}); err != nil {
+		return nil, err
+	}
+
+	return deleted, nil
 }
 
 func (m *coordinatorMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {

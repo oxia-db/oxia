@@ -31,6 +31,7 @@ type AdminClient interface {
 
 	CreateNamespace(namespace *proto.Namespace) (*proto.Namespace, error)
 	PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error)
+	DeleteNamespace(namespace string) (*proto.Namespace, error)
 	ListNamespaces() ([]*proto.Namespace, error)
 	GetNamespace(namespace string) (*proto.Namespace, error)
 
