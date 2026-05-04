@@ -42,6 +42,8 @@ type mockAdminRpcClient struct {
 	patchDataServerErr      error
 	deleteDataServerResp    *proto.DeleteDataServerResponse
 	deleteDataServerErr     error
+	listNamespacesResp      *proto.ListNamespacesResponse
+	listNamespacesErr       error
 	getNamespaceResp        *proto.GetNamespaceResponse
 	getNamespaceErr         error
 }
@@ -70,8 +72,8 @@ func (m *mockAdminRpcClient) GetNamespace(context.Context, *proto.GetNamespaceRe
 	return m.getNamespaceResp, m.getNamespaceErr
 }
 
-func (*mockAdminRpcClient) ListNamespaces(context.Context, *proto.ListNamespacesRequest, ...grpc.CallOption) (*proto.ListNamespacesResponse, error) {
-	panic("unexpected ListNamespaces call")
+func (m *mockAdminRpcClient) ListNamespaces(context.Context, *proto.ListNamespacesRequest, ...grpc.CallOption) (*proto.ListNamespacesResponse, error) {
+	return m.listNamespacesResp, m.listNamespacesErr
 }
 
 func (*mockAdminRpcClient) SplitShard(context.Context, *proto.SplitShardRequest, ...grpc.CallOption) (*proto.SplitShardResponse, error) {
@@ -343,6 +345,32 @@ func TestAdminClientDeleteDataServerReturnsResponse(t *testing.T) {
 	assert.Equal(t, "public-1", dataServer.Identity.GetPublic())
 	assert.Equal(t, "internal-1", dataServer.Identity.GetInternal())
 	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
+}
+
+func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				listNamespacesResp: &proto.ListNamespacesResponse{
+					Namespaces: []*proto.Namespace{
+						{
+							Name:              "ns-1",
+							InitialShardCount: 4,
+							ReplicationFactor: 3,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	namespaces, err := admin.ListNamespaces()
+	require.NoError(t, err)
+	require.Len(t, namespaces, 1)
+	assert.Equal(t, "ns-1", namespaces[0].GetName())
+	assert.EqualValues(t, 4, namespaces[0].GetInitialShardCount())
+	assert.EqualValues(t, 3, namespaces[0].GetReplicationFactor())
 }
 
 func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {

@@ -29,16 +29,10 @@ type AdminClient interface {
 	PatchDataServer(dataServer *proto.DataServer) (*proto.DataServer, error)
 	DeleteDataServer(dataServer string) (*proto.DataServer, error)
 
+	ListNamespaces() ([]*proto.Namespace, error)
 	GetNamespace(namespace string) (*proto.Namespace, error)
-	// Deprecated: Use GetNamespace instead.
-	ListNamespaces() *ListNamespacesResult
 
 	SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
-}
-
-type ListNamespacesResult struct {
-	Namespaces []string
-	Error      error
 }
 
 type SplitShardResult struct {

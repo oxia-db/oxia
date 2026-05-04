@@ -220,6 +220,32 @@ func TestManagementServerGetNamespace(t *testing.T) {
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), res.Namespace.GetKeySorting())
 }
 
+func TestManagementServerListNamespaces(t *testing.T) {
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{
+				{
+					Name:              "ns-1",
+					InitialShardCount: 4,
+					ReplicationFactor: 3,
+				},
+				{
+					Name:              "ns-2",
+					InitialShardCount: 2,
+					ReplicationFactor: 1,
+				},
+			},
+		}),
+		nil,
+	)
+
+	res, err := management.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
+	require.NoError(t, err)
+	require.Len(t, res.Namespaces, 2)
+	assert.Equal(t, "ns-1", res.Namespaces[0].GetName())
+	assert.Equal(t, "ns-2", res.Namespaces[1].GetName())
+}
+
 func TestManagementServerGetNamespaceRejectsEmptyLookup(t *testing.T) {
 	management := newManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),

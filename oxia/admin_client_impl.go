@@ -128,6 +128,23 @@ func (admin *adminClientImpl) Close() error {
 	return admin.clientPool.Close()
 }
 
+func (admin *adminClientImpl) ListNamespaces() ([]*proto.Namespace, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.Namespaces, nil
+}
+
 func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
@@ -143,31 +160,6 @@ func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, 
 		return nil, mapAdminError(err)
 	}
 	return response.Namespace, nil
-}
-
-// Deprecated: Use GetNamespace instead.
-func (admin *adminClientImpl) ListNamespaces() *ListNamespacesResult {
-	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
-	if err != nil {
-		return &ListNamespacesResult{
-			Error: err,
-		}
-	}
-	if client == nil {
-		return &ListNamespacesResult{
-			Error: errors.New("no coordinator admin client available"),
-		}
-	}
-
-	namespaces, err := client.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
-	if err != nil {
-		return &ListNamespacesResult{
-			Error: err,
-		}
-	}
-	return &ListNamespacesResult{
-		Namespaces: namespaces.Namespaces,
-	}
 }
 
 func (admin *adminClientImpl) SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult {

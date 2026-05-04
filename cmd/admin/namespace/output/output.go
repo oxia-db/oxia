@@ -25,6 +25,10 @@ import (
 )
 
 func WriteNamespace(out io.Writer, format string, namespace *proto.Namespace) error {
+	if namespace == nil {
+		return errors.New("namespace must not be nil")
+	}
+
 	if err := commons.ValidateOutputFormat(format); err != nil {
 		return err
 	}
@@ -37,6 +41,31 @@ func WriteNamespace(out io.Writer, format string, namespace *proto.Namespace) er
 		return commons.WriteResourceNames(out, "namespace", []string{namespace.GetName()})
 	case commons.OutputTable:
 		return writeNamespaceTable(out, []*proto.Namespace{namespace})
+	default:
+		return errors.Errorf("unsupported output format %q", format)
+	}
+}
+
+func WriteNamespaces(out io.Writer, format string, namespaces []*proto.Namespace) error {
+	if err := commons.ValidateOutputFormat(format); err != nil {
+		return err
+	}
+	for _, namespace := range namespaces {
+		if namespace == nil {
+			return errors.New("namespace must not be nil")
+		}
+	}
+
+	if format == "" {
+		format = commons.OutputName
+	}
+	switch format {
+	case commons.OutputJSON, commons.OutputYAML:
+		return commons.WriteStructuredOutput(out, format, namespaces)
+	case commons.OutputName:
+		return commons.WriteResourceNames(out, "namespace", namespaceNames(namespaces))
+	case commons.OutputTable:
+		return writeNamespaceTable(out, namespaces)
 	default:
 		return errors.Errorf("unsupported output format %q", format)
 	}
@@ -62,4 +91,15 @@ func writeNamespaceTable(out io.Writer, namespaces []*proto.Namespace) error {
 		}
 	}
 	return tw.Flush()
+}
+
+func namespaceNames(namespaces []*proto.Namespace) []string {
+	names := make([]string, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		if namespace == nil {
+			continue
+		}
+		names = append(names, namespace.GetName())
+	}
+	return names
 }

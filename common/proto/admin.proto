@@ -33,10 +33,7 @@ service OxiaAdmin {
   rpc DeleteDataServer(DeleteDataServerRequest) returns (DeleteDataServerResponse);
 
   rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
-  // Deprecated: Use GetNamespace instead.
-  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse) {
-    option deprecated = true;
-  }
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
 
   /**
    * Triggers a shard split. The specified shard is split into two child
@@ -89,7 +86,7 @@ message ListNamespacesRequest {
 }
 
 message ListNamespacesResponse {
-  repeated string namespaces = 1;
+  repeated Namespace namespaces = 1;
 }
 
 message GetNamespaceRequest {

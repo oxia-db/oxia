@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
+	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -69,6 +70,67 @@ func Test_cmd_getNamespace(t *testing.T) {
 	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
 	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetKeySorting())
+}
+
+func Test_cmd_getNamespaces(t *testing.T) {
+	commons.MockedAdminClient = commons.NewMockAdminClient()
+	t.Cleanup(func() { commons.MockedAdminClient = nil })
+
+	commons.MockedAdminClient.On("Close").Return(nil)
+	commons.MockedAdminClient.On("ListNamespaces").Return([]*proto.Namespace{
+		{
+			Name:              "ns-1",
+			InitialShardCount: 4,
+			ReplicationFactor: 3,
+		},
+		{
+			Name:              "ns-2",
+			InitialShardCount: 2,
+			ReplicationFactor: 1,
+		},
+	}, nil)
+
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "namespace/ns-1\nnamespace/ns-2", out)
+}
+
+func Test_cmd_getNamespaces_JSON(t *testing.T) {
+	commons.MockedAdminClient = commons.NewMockAdminClient()
+	t.Cleanup(func() { commons.MockedAdminClient = nil })
+
+	commons.MockedAdminClient.On("Close").Return(nil)
+	commons.MockedAdminClient.On("ListNamespaces").Return([]*proto.Namespace{
+		{
+			Name:              "ns-1",
+			InitialShardCount: 4,
+			ReplicationFactor: 3,
+		},
+	}, nil)
+
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd, "-o", "json")
+	require.NoError(t, err)
+
+	var namespaces []proto.Namespace
+	require.NoError(t, json.Unmarshal([]byte(out), &namespaces))
+	require.Len(t, namespaces, 1)
+	assert.Equal(t, "ns-1", namespaces[0].GetName())
 }
 
 func Test_cmd_getNamespace_Name(t *testing.T) {
@@ -144,4 +206,10 @@ func Test_cmd_getNamespace_InvalidOutput(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unsupported output format "xml"`)
 	assert.Contains(t, out, `unsupported output format "xml"`)
+}
+
+func TestWriteNamespaceRejectsNilNamespace(t *testing.T) {
+	err := namespaceoutput.WriteNamespace(new(bytes.Buffer), "", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "namespace must not be nil")
 }

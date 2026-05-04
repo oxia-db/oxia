@@ -56,8 +56,6 @@ type OxiaAdminClient interface {
 	PatchDataServer(ctx context.Context, in *PatchDataServerRequest, opts ...grpc.CallOption) (*PatchDataServerResponse, error)
 	DeleteDataServer(ctx context.Context, in *DeleteDataServerRequest, opts ...grpc.CallOption) (*DeleteDataServerResponse, error)
 	GetNamespace(ctx context.Context, in *GetNamespaceRequest, opts ...grpc.CallOption) (*GetNamespaceResponse, error)
-	// Deprecated: Do not use.
-	// Deprecated: Use GetNamespace instead.
 	ListNamespaces(ctx context.Context, in *ListNamespacesRequest, opts ...grpc.CallOption) (*ListNamespacesResponse, error)
 	// *
 	// Triggers a shard split. The specified shard is split into two child
@@ -133,7 +131,6 @@ func (c *oxiaAdminClient) GetNamespace(ctx context.Context, in *GetNamespaceRequ
 	return out, nil
 }
 
-// Deprecated: Do not use.
 func (c *oxiaAdminClient) ListNamespaces(ctx context.Context, in *ListNamespacesRequest, opts ...grpc.CallOption) (*ListNamespacesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListNamespacesResponse)
@@ -164,8 +161,6 @@ type OxiaAdminServer interface {
 	PatchDataServer(context.Context, *PatchDataServerRequest) (*PatchDataServerResponse, error)
 	DeleteDataServer(context.Context, *DeleteDataServerRequest) (*DeleteDataServerResponse, error)
 	GetNamespace(context.Context, *GetNamespaceRequest) (*GetNamespaceResponse, error)
-	// Deprecated: Do not use.
-	// Deprecated: Use GetNamespace instead.
 	ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error)
 	// *
 	// Triggers a shard split. The specified shard is split into two child

@@ -37,14 +37,12 @@ func (m *MockAdminClient) Close() error {
 	return args.Error(0)
 }
 
-func (m *MockAdminClient) ListNamespaces() *oxia.ListNamespacesResult {
+func (m *MockAdminClient) ListNamespaces() ([]*proto.Namespace, error) {
 	args := m.MethodCalled("ListNamespaces")
-	if v, ok := args.Get(0).(*oxia.ListNamespacesResult); ok {
-		return v
+	if v, ok := args.Get(0).([]*proto.Namespace); ok {
+		return v, args.Error(1)
 	}
-	return &oxia.ListNamespacesResult{
-		Error: errors.New("no namespaces available"),
-	}
+	return nil, errors.New("no namespaces available")
 }
 
 func (m *MockAdminClient) ListDataServers() ([]*proto.DataServer, error) {

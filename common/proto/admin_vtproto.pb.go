@@ -217,8 +217,10 @@ func (m *ListNamespacesResponse) CloneVT() *ListNamespacesResponse {
 	}
 	r := new(ListNamespacesResponse)
 	if rhs := m.Namespaces; rhs != nil {
-		tmpContainer := make([]string, len(rhs))
-		copy(tmpContainer, rhs)
+		tmpContainer := make([]*Namespace, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
 		r.Namespaces = tmpContainer
 	}
 	if len(m.unknownFields) > 0 {
@@ -534,8 +536,16 @@ func (this *ListNamespacesResponse) EqualVT(that *ListNamespacesResponse) bool {
 	}
 	for i, vx := range this.Namespaces {
 		vy := that.Namespaces[i]
-		if vx != vy {
-			return false
+		if p, q := vx, vy; p != q {
+			if p == nil {
+				p = &Namespace{}
+			}
+			if q == nil {
+				q = &Namespace{}
+			}
+			if !p.EqualVT(q) {
+				return false
+			}
 		}
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1114,9 +1124,12 @@ func (m *ListNamespacesResponse) MarshalToSizedBufferVT(dAtA []byte) (int, error
 	}
 	if len(m.Namespaces) > 0 {
 		for iNdEx := len(m.Namespaces) - 1; iNdEx >= 0; iNdEx-- {
-			i -= len(m.Namespaces[iNdEx])
-			copy(dAtA[i:], m.Namespaces[iNdEx])
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Namespaces[iNdEx])))
+			size, err := m.Namespaces[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
 			i--
 			dAtA[i] = 0xa
 		}
@@ -1455,8 +1468,8 @@ func (m *ListNamespacesResponse) SizeVT() (n int) {
 	var l int
 	_ = l
 	if len(m.Namespaces) > 0 {
-		for _, s := range m.Namespaces {
-			l = len(s)
+		for _, e := range m.Namespaces {
+			l = e.SizeVT()
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
 	}
@@ -2436,7 +2449,7 @@ func (m *ListNamespacesResponse) UnmarshalVT(dAtA []byte) error {
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Namespaces", wireType)
 			}
-			var stringLen uint64
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -2446,23 +2459,25 @@ func (m *ListNamespacesResponse) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if msglen < 0 {
 				return protohelpers.ErrInvalidLength
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + msglen
 			if postIndex < 0 {
 				return protohelpers.ErrInvalidLength
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Namespaces = append(m.Namespaces, string(dAtA[iNdEx:postIndex]))
+			m.Namespaces = append(m.Namespaces, &Namespace{})
+			if err := m.Namespaces[len(m.Namespaces)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -3783,7 +3798,7 @@ func (m *ListNamespacesResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Namespaces", wireType)
 			}
-			var stringLen uint64
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -3793,27 +3808,25 @@ func (m *ListNamespacesResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if msglen < 0 {
 				return protohelpers.ErrInvalidLength
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + msglen
 			if postIndex < 0 {
 				return protohelpers.ErrInvalidLength
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			var stringValue string
-			if intStringLen > 0 {
-				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
+			m.Namespaces = append(m.Namespaces, &Namespace{})
+			if err := m.Namespaces[len(m.Namespaces)-1].UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+				return err
 			}
-			m.Namespaces = append(m.Namespaces, stringValue)
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

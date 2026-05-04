@@ -19,7 +19,6 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/emirpasic/gods/v2/sets/hashset"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
@@ -168,12 +167,8 @@ func (management *managementServer) DeleteDataServer(_ context.Context, req *pro
 func (management *managementServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
 	cnf := management.metadata.GetConfig().UnsafeBorrow()
 
-	namespaceNames := hashset.New[string]()
-	for _, nsConfig := range cnf.GetNamespaces() {
-		namespaceNames.Add(nsConfig.GetName())
-	}
 	return &proto.ListNamespacesResponse{
-		Namespaces: namespaceNames.Values(),
+		Namespaces: cnf.GetNamespaces(),
 	}, nil
 }
 

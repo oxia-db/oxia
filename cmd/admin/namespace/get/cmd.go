@@ -23,10 +23,10 @@ import (
 )
 
 var Cmd = &cobra.Command{
-	Use:          "get <namespace>",
-	Short:        "Get a namespace",
-	Long:         `Get a namespace`,
-	Args:         cobra.ExactArgs(1),
+	Use:          "get [namespace]",
+	Short:        "Get a namespace or list namespaces",
+	Long:         `Get a namespace or list namespaces`,
+	Args:         cobra.MaximumNArgs(1),
 	RunE:         exec,
 	SilenceUsage: true,
 }
@@ -47,6 +47,14 @@ func exec(cmd *cobra.Command, args []string) error {
 	defer func(client oxia.AdminClient) {
 		_ = client.Close()
 	}(client)
+
+	if len(args) == 0 {
+		namespaces, err := client.ListNamespaces()
+		if err != nil {
+			return err
+		}
+		return namespaceoutput.WriteNamespaces(cmd.OutOrStdout(), outputFormat, namespaces)
+	}
 
 	namespace, err := client.GetNamespace(args[0])
 	if err != nil {
