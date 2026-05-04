@@ -26,7 +26,6 @@ import (
 	"github.com/google/uuid"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
-	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
@@ -51,7 +50,7 @@ type Metadata interface {
 	DeleteShardStatus(namespace string, shard int64)
 
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
-	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]]
+	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
 	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
@@ -75,12 +74,10 @@ type coordinatorMetadata struct {
 	changeCh       chan struct{}
 
 	configProvider provider.Provider[*commonproto.ClusterConfiguration]
-	configWatch    *commonwatch.Watch[provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]]
 }
 
 func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration]) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
-	configSnapshot := configProvider.Watch().Load()
 	m := &coordinatorMetadata{
 		logger:         slog.With(slog.String("component", "coordinator-metadata")),
 		ctx:            metadataCtx,
@@ -88,18 +85,9 @@ func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonpr
 		statusProvider: statusProvider,
 		changeCh:       make(chan struct{}),
 		configProvider: configProvider,
-		configWatch: commonwatch.New(provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]{
-			Value:   commonobject.Borrow(configSnapshot.Value),
-			Version: configSnapshot.Version,
-		}),
 	}
 
 	m.doStatusRecovery()
-	m.wg.Go(func() {
-		process.DoWithLabels(metadataCtx, map[string]string{
-			"component": "coordinator-metadata-config-watcher",
-		}, m.relayConfigUpdates)
-	})
 	return m
 }
 
@@ -124,22 +112,6 @@ func (m *coordinatorMetadata) Close() error {
 	m.cancel()
 	m.wg.Wait()
 	return nil
-}
-
-func (m *coordinatorMetadata) relayConfigUpdates() {
-	receiver := m.configProvider.Watch().Subscribe()
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-receiver.Changed():
-			snapshot := receiver.Load()
-			m.configWatch.Publish(provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]{
-				Value:   commonobject.Borrow(snapshot.Value),
-				Version: snapshot.Version,
-			})
-		}
-	}
 }
 
 func (m *coordinatorMetadata) notifyStatusChange() {
@@ -350,8 +322,8 @@ func (m *coordinatorMetadata) GetConfig() commonobject.Borrowed[*commonproto.Clu
 	return commonobject.Borrow(m.configProvider.Watch().Load().Value)
 }
 
-func (m *coordinatorMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*commonproto.ClusterConfiguration]]] {
-	return m.configWatch.Subscribe()
+func (m *coordinatorMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]] {
+	return m.configProvider.Watch().Subscribe()
 }
 
 func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer] {

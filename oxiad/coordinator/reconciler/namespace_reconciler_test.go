@@ -162,9 +162,9 @@ func (*mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterCo
 	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
 }
 
-func (*mockNamespaceMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*proto.ClusterConfiguration]]] {
-	return commonwatch.New(provider.Versioned[commonobject.Borrowed[*proto.ClusterConfiguration]]{
-		Value:   commonobject.Borrow(&proto.ClusterConfiguration{}),
+func (*mockNamespaceMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*proto.ClusterConfiguration]] {
+	return commonwatch.New(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   &proto.ClusterConfiguration{},
 		Version: "",
 	}).Subscribe()
 }

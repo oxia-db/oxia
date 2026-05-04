@@ -23,7 +23,6 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"go.uber.org/multierr"
 
-	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
@@ -59,7 +58,7 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 	}
 
 	receiver := r.runtime.Metadata().SubscribeConfig()
-	r.reconcile0(receiver.Load().Value.UnsafeBorrow(), receiver)
+	r.reconcile0(receiver.Load().Value, receiver)
 
 	r.wg.Go(func() {
 		process.DoWithLabels(reconcilerCtx, map[string]string{
@@ -91,23 +90,23 @@ func (r *clusterReconciler) Reconcile(_ context.Context, snapshot *proto.Cluster
 	return nil
 }
 
-func (r *clusterReconciler) bgWatchClusterConfiguration(receiver *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*proto.ClusterConfiguration]]]) {
+func (r *clusterReconciler) bgWatchClusterConfiguration(receiver *commonwatch.Receiver[provider.Versioned[*proto.ClusterConfiguration]]) {
 	for {
 		select {
 		case <-r.ctx.Done():
 			return
 		case <-receiver.Changed():
-			r.reconcile0(receiver.Load().Value.UnsafeBorrow(), receiver)
+			r.reconcile0(receiver.Load().Value, receiver)
 		}
 	}
 }
 
-func (r *clusterReconciler) reconcile0(snapshot *proto.ClusterConfiguration, receiver *commonwatch.Receiver[provider.Versioned[commonobject.Borrowed[*proto.ClusterConfiguration]]]) {
+func (r *clusterReconciler) reconcile0(snapshot *proto.ClusterConfiguration, receiver *commonwatch.Receiver[provider.Versioned[*proto.ClusterConfiguration]]) {
 	_ = backoff.RetryNotify(func() error {
 		// update the snapshot when we are retrying
 		select {
 		case <-receiver.Changed():
-			snapshot = receiver.Load().Value.UnsafeBorrow()
+			snapshot = receiver.Load().Value
 		default:
 		}
 		return r.Reconcile(r.ctx, snapshot)
