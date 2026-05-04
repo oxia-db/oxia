@@ -58,10 +58,10 @@ func exec(cmd *cobra.Command, args []string) error {
 	if name == "" {
 		return errors.New("data server name must not be empty")
 	}
-	if fields.PublicAddress == nil || strings.TrimSpace(*fields.PublicAddress) == "" {
+	if strings.TrimSpace(fields.PublicAddress) == "" {
 		return errors.New("data server public address must not be empty")
 	}
-	if fields.InternalAddress == nil || strings.TrimSpace(*fields.InternalAddress) == "" {
+	if strings.TrimSpace(fields.InternalAddress) == "" {
 		return errors.New("data server internal address must not be empty")
 	}
 
@@ -81,8 +81,8 @@ func exec(cmd *cobra.Command, args []string) error {
 	created, err := client.CreateDataServer(&proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &name,
-			Public:   *fields.PublicAddress,
-			Internal: *fields.InternalAddress,
+			Public:   fields.PublicAddress,
+			Internal: fields.InternalAddress,
 		},
 		Metadata: &proto.DataServerMetadata{
 			Labels: labels,

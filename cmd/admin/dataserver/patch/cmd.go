@@ -59,14 +59,8 @@ func exec(cmd *cobra.Command, args []string) error {
 		return errors.New("data server name must not be empty")
 	}
 
-	publicAddress := ""
-	if fields.PublicAddress != nil {
-		publicAddress = strings.TrimSpace(*fields.PublicAddress)
-	}
-	internalAddress := ""
-	if fields.InternalAddress != nil {
-		internalAddress = strings.TrimSpace(*fields.InternalAddress)
-	}
+	publicAddress := strings.TrimSpace(fields.PublicAddress)
+	internalAddress := strings.TrimSpace(fields.InternalAddress)
 	if publicAddress == "" && internalAddress == "" && len(fields.Labels) == 0 {
 		return errors.New("must specify at least one field to patch")
 	}
