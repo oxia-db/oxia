@@ -245,7 +245,7 @@ func (x *AntiAffinity) GetMode() string {
 
 type HierarchyPolicies struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	AntiAffinities []*AntiAffinity        `protobuf:"bytes,1,rep,name=antiAffinities,proto3" json:"antiAffinities,omitempty"`
+	AntiAffinities []*AntiAffinity        `protobuf:"bytes,1,rep,name=anti_affinities,json=antiAffinities,proto3" json:"anti_affinities,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -290,10 +290,10 @@ func (x *HierarchyPolicies) GetAntiAffinities() []*AntiAffinity {
 type Namespace struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Name                 string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	InitialShardCount    uint32                 `protobuf:"varint,2,opt,name=initialShardCount,proto3" json:"initialShardCount,omitempty"`
-	ReplicationFactor    uint32                 `protobuf:"varint,3,opt,name=replicationFactor,proto3" json:"replicationFactor,omitempty"`
-	NotificationsEnabled *bool                  `protobuf:"varint,4,opt,name=notificationsEnabled,proto3,oneof" json:"notificationsEnabled,omitempty"`
-	KeySorting           string                 `protobuf:"bytes,5,opt,name=keySorting,proto3" json:"keySorting,omitempty"`
+	InitialShardCount    uint32                 `protobuf:"varint,2,opt,name=initial_shard_count,json=initialShardCount,proto3" json:"initial_shard_count,omitempty"`
+	ReplicationFactor    uint32                 `protobuf:"varint,3,opt,name=replication_factor,json=replicationFactor,proto3" json:"replication_factor,omitempty"`
+	NotificationsEnabled *bool                  `protobuf:"varint,4,opt,name=notifications_enabled,json=notificationsEnabled,proto3,oneof" json:"notifications_enabled,omitempty"`
+	KeySorting           string                 `protobuf:"bytes,5,opt,name=key_sorting,json=keySorting,proto3" json:"key_sorting,omitempty"`
 	Policy               *HierarchyPolicies     `protobuf:"bytes,6,opt,name=policy,proto3" json:"policy,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
@@ -373,8 +373,8 @@ func (x *Namespace) GetPolicy() *HierarchyPolicies {
 
 type LoadBalancer struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	ScheduleInterval string                 `protobuf:"bytes,1,opt,name=scheduleInterval,proto3" json:"scheduleInterval,omitempty"`
-	QuarantineTime   string                 `protobuf:"bytes,2,opt,name=quarantineTime,proto3" json:"quarantineTime,omitempty"`
+	ScheduleInterval string                 `protobuf:"bytes,1,opt,name=schedule_interval,json=scheduleInterval,proto3" json:"schedule_interval,omitempty"`
+	QuarantineTime   string                 `protobuf:"bytes,2,opt,name=quarantine_time,json=quarantineTime,proto3" json:"quarantine_time,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -427,9 +427,9 @@ type ClusterConfiguration struct {
 	state                 protoimpl.MessageState         `protogen:"open.v1"`
 	Namespaces            []*Namespace                   `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty"`
 	Servers               []*DataServerIdentity          `protobuf:"bytes,2,rep,name=servers,proto3" json:"servers,omitempty"`
-	AllowExtraAuthorities []string                       `protobuf:"bytes,3,rep,name=allowExtraAuthorities,proto3" json:"allowExtraAuthorities,omitempty"`
-	ServerMetadata        map[string]*DataServerMetadata `protobuf:"bytes,4,rep,name=serverMetadata,proto3" json:"serverMetadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	LoadBalancer          *LoadBalancer                  `protobuf:"bytes,5,opt,name=loadBalancer,proto3" json:"loadBalancer,omitempty"`
+	AllowExtraAuthorities []string                       `protobuf:"bytes,3,rep,name=allow_extra_authorities,json=allowExtraAuthorities,proto3" json:"allow_extra_authorities,omitempty"`
+	ServerMetadata        map[string]*DataServerMetadata `protobuf:"bytes,4,rep,name=server_metadata,json=serverMetadata,proto3" json:"server_metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	LoadBalancer          *LoadBalancer                  `protobuf:"bytes,5,opt,name=load_balancer,json=loadBalancer,proto3" json:"load_balancer,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -554,12 +554,12 @@ func (x *HashRange) GetMax() uint32 {
 type SplitMetadata struct {
 	state                   protoimpl.MessageState `protogen:"open.v1"`
 	Phase                   string                 `protobuf:"bytes,1,opt,name=phase,proto3" json:"phase,omitempty"`
-	ParentShardId           int64                  `protobuf:"varint,2,opt,name=parentShardId,proto3" json:"parentShardId,omitempty"`
-	ChildShardIds           []int64                `protobuf:"varint,3,rep,packed,name=childShardIds,proto3" json:"childShardIds,omitempty"`
-	SplitPoint              uint32                 `protobuf:"varint,4,opt,name=splitPoint,proto3" json:"splitPoint,omitempty"`
-	SnapshotOffset          int64                  `protobuf:"varint,5,opt,name=snapshotOffset,proto3" json:"snapshotOffset,omitempty"`
-	ParentTermAtBootstrap   int64                  `protobuf:"varint,6,opt,name=parentTermAtBootstrap,proto3" json:"parentTermAtBootstrap,omitempty"`
-	ChildLeadersAtBootstrap map[int64]string       `protobuf:"bytes,7,rep,name=childLeadersAtBootstrap,proto3" json:"childLeadersAtBootstrap,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ParentShardId           int64                  `protobuf:"varint,2,opt,name=parent_shard_id,json=parentShardId,proto3" json:"parent_shard_id,omitempty"`
+	ChildShardIds           []int64                `protobuf:"varint,3,rep,packed,name=child_shard_ids,json=childShardIds,proto3" json:"child_shard_ids,omitempty"`
+	SplitPoint              uint32                 `protobuf:"varint,4,opt,name=split_point,json=splitPoint,proto3" json:"split_point,omitempty"`
+	SnapshotOffset          int64                  `protobuf:"varint,5,opt,name=snapshot_offset,json=snapshotOffset,proto3" json:"snapshot_offset,omitempty"`
+	ParentTermAtBootstrap   int64                  `protobuf:"varint,6,opt,name=parent_term_at_bootstrap,json=parentTermAtBootstrap,proto3" json:"parent_term_at_bootstrap,omitempty"`
+	ChildLeadersAtBootstrap map[int64]string       `protobuf:"bytes,7,rep,name=child_leaders_at_bootstrap,json=childLeadersAtBootstrap,proto3" json:"child_leaders_at_bootstrap,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -649,9 +649,9 @@ type ShardMetadata struct {
 	Term                    int64                  `protobuf:"varint,2,opt,name=term,proto3" json:"term,omitempty"`
 	Leader                  *DataServerIdentity    `protobuf:"bytes,3,opt,name=leader,proto3" json:"leader,omitempty"`
 	Ensemble                []*DataServerIdentity  `protobuf:"bytes,4,rep,name=ensemble,proto3" json:"ensemble,omitempty"`
-	RemovedNodes            []*DataServerIdentity  `protobuf:"bytes,5,rep,name=removedNodes,proto3" json:"removedNodes,omitempty"`
-	PendingDeleteShardNodes []*DataServerIdentity  `protobuf:"bytes,6,rep,name=pendingDeleteShardNodes,proto3" json:"pendingDeleteShardNodes,omitempty"`
-	Int32HashRange          *HashRange             `protobuf:"bytes,7,opt,name=int32HashRange,proto3" json:"int32HashRange,omitempty"`
+	RemovedNodes            []*DataServerIdentity  `protobuf:"bytes,5,rep,name=removed_nodes,json=removedNodes,proto3" json:"removed_nodes,omitempty"`
+	PendingDeleteShardNodes []*DataServerIdentity  `protobuf:"bytes,6,rep,name=pending_delete_shard_nodes,json=pendingDeleteShardNodes,proto3" json:"pending_delete_shard_nodes,omitempty"`
+	Int32HashRange          *HashRange             `protobuf:"bytes,7,opt,name=int32_hash_range,json=int32HashRange,proto3" json:"int32_hash_range,omitempty"`
 	Split                   *SplitMetadata         `protobuf:"bytes,8,opt,name=split,proto3" json:"split,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
@@ -745,7 +745,7 @@ func (x *ShardMetadata) GetSplit() *SplitMetadata {
 
 type NamespaceStatus struct {
 	state             protoimpl.MessageState   `protogen:"open.v1"`
-	ReplicationFactor uint32                   `protobuf:"varint,1,opt,name=replicationFactor,proto3" json:"replicationFactor,omitempty"`
+	ReplicationFactor uint32                   `protobuf:"varint,1,opt,name=replication_factor,json=replicationFactor,proto3" json:"replication_factor,omitempty"`
 	Shards            map[int64]*ShardMetadata `protobuf:"bytes,2,rep,name=shards,proto3" json:"shards,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
@@ -798,9 +798,9 @@ func (x *NamespaceStatus) GetShards() map[int64]*ShardMetadata {
 type ClusterStatus struct {
 	state            protoimpl.MessageState      `protogen:"open.v1"`
 	Namespaces       map[string]*NamespaceStatus `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	ShardIdGenerator int64                       `protobuf:"varint,2,opt,name=shardIdGenerator,proto3" json:"shardIdGenerator,omitempty"`
-	ServerIdx        uint32                      `protobuf:"varint,3,opt,name=serverIdx,proto3" json:"serverIdx,omitempty"`
-	InstanceId       string                      `protobuf:"bytes,4,opt,name=instanceId,proto3" json:"instanceId,omitempty"`
+	ShardIdGenerator int64                       `protobuf:"varint,2,opt,name=shard_id_generator,json=shardIdGenerator,proto3" json:"shard_id_generator,omitempty"`
+	ServerIdx        uint32                      `protobuf:"varint,3,opt,name=server_idx,json=serverIdx,proto3" json:"server_idx,omitempty"`
+	InstanceId       string                      `protobuf:"bytes,4,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -884,72 +884,70 @@ const file_metadata_proto_rawDesc = "" +
 	"\bmetadata\x18\x02 \x01(\v2$.io.oxia.proto.v1.DataServerMetadataR\bmetadata\":\n" +
 	"\fAntiAffinity\x12\x16\n" +
 	"\x06labels\x18\x01 \x03(\tR\x06labels\x12\x12\n" +
-	"\x04mode\x18\x02 \x01(\tR\x04mode\"[\n" +
-	"\x11HierarchyPolicies\x12F\n" +
-	"\x0eantiAffinities\x18\x01 \x03(\v2\x1e.io.oxia.proto.v1.AntiAffinityR\x0eantiAffinities\"\xaa\x02\n" +
+	"\x04mode\x18\x02 \x01(\tR\x04mode\"\\\n" +
+	"\x11HierarchyPolicies\x12G\n" +
+	"\x0fanti_affinities\x18\x01 \x03(\v2\x1e.io.oxia.proto.v1.AntiAffinityR\x0eantiAffinities\"\xb0\x02\n" +
 	"\tNamespace\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12,\n" +
-	"\x11initialShardCount\x18\x02 \x01(\rR\x11initialShardCount\x12,\n" +
-	"\x11replicationFactor\x18\x03 \x01(\rR\x11replicationFactor\x127\n" +
-	"\x14notificationsEnabled\x18\x04 \x01(\bH\x00R\x14notificationsEnabled\x88\x01\x01\x12\x1e\n" +
-	"\n" +
-	"keySorting\x18\x05 \x01(\tR\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12.\n" +
+	"\x13initial_shard_count\x18\x02 \x01(\rR\x11initialShardCount\x12-\n" +
+	"\x12replication_factor\x18\x03 \x01(\rR\x11replicationFactor\x128\n" +
+	"\x15notifications_enabled\x18\x04 \x01(\bH\x00R\x14notificationsEnabled\x88\x01\x01\x12\x1f\n" +
+	"\vkey_sorting\x18\x05 \x01(\tR\n" +
 	"keySorting\x12;\n" +
-	"\x06policy\x18\x06 \x01(\v2#.io.oxia.proto.v1.HierarchyPoliciesR\x06policyB\x17\n" +
-	"\x15_notificationsEnabled\"b\n" +
-	"\fLoadBalancer\x12*\n" +
-	"\x10scheduleInterval\x18\x01 \x01(\tR\x10scheduleInterval\x12&\n" +
-	"\x0equarantineTime\x18\x02 \x01(\tR\x0equarantineTime\"\xda\x03\n" +
+	"\x06policy\x18\x06 \x01(\v2#.io.oxia.proto.v1.HierarchyPoliciesR\x06policyB\x18\n" +
+	"\x16_notifications_enabled\"d\n" +
+	"\fLoadBalancer\x12+\n" +
+	"\x11schedule_interval\x18\x01 \x01(\tR\x10scheduleInterval\x12'\n" +
+	"\x0fquarantine_time\x18\x02 \x01(\tR\x0equarantineTime\"\xde\x03\n" +
 	"\x14ClusterConfiguration\x12;\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\v2\x1b.io.oxia.proto.v1.NamespaceR\n" +
 	"namespaces\x12>\n" +
-	"\aservers\x18\x02 \x03(\v2$.io.oxia.proto.v1.DataServerIdentityR\aservers\x124\n" +
-	"\x15allowExtraAuthorities\x18\x03 \x03(\tR\x15allowExtraAuthorities\x12b\n" +
-	"\x0eserverMetadata\x18\x04 \x03(\v2:.io.oxia.proto.v1.ClusterConfiguration.ServerMetadataEntryR\x0eserverMetadata\x12B\n" +
-	"\floadBalancer\x18\x05 \x01(\v2\x1e.io.oxia.proto.v1.LoadBalancerR\floadBalancer\x1ag\n" +
+	"\aservers\x18\x02 \x03(\v2$.io.oxia.proto.v1.DataServerIdentityR\aservers\x126\n" +
+	"\x17allow_extra_authorities\x18\x03 \x03(\tR\x15allowExtraAuthorities\x12c\n" +
+	"\x0fserver_metadata\x18\x04 \x03(\v2:.io.oxia.proto.v1.ClusterConfiguration.ServerMetadataEntryR\x0eserverMetadata\x12C\n" +
+	"\rload_balancer\x18\x05 \x01(\v2\x1e.io.oxia.proto.v1.LoadBalancerR\floadBalancer\x1ag\n" +
 	"\x13ServerMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
 	"\x05value\x18\x02 \x01(\v2$.io.oxia.proto.v1.DataServerMetadataR\x05value:\x028\x01\"/\n" +
 	"\tHashRange\x12\x10\n" +
 	"\x03min\x18\x01 \x01(\rR\x03min\x12\x10\n" +
-	"\x03max\x18\x02 \x01(\rR\x03max\"\xb3\x03\n" +
+	"\x03max\x18\x02 \x01(\rR\x03max\"\xbf\x03\n" +
 	"\rSplitMetadata\x12\x14\n" +
-	"\x05phase\x18\x01 \x01(\tR\x05phase\x12$\n" +
-	"\rparentShardId\x18\x02 \x01(\x03R\rparentShardId\x12$\n" +
-	"\rchildShardIds\x18\x03 \x03(\x03R\rchildShardIds\x12\x1e\n" +
-	"\n" +
-	"splitPoint\x18\x04 \x01(\rR\n" +
-	"splitPoint\x12&\n" +
-	"\x0esnapshotOffset\x18\x05 \x01(\x03R\x0esnapshotOffset\x124\n" +
-	"\x15parentTermAtBootstrap\x18\x06 \x01(\x03R\x15parentTermAtBootstrap\x12v\n" +
-	"\x17childLeadersAtBootstrap\x18\a \x03(\v2<.io.oxia.proto.v1.SplitMetadata.ChildLeadersAtBootstrapEntryR\x17childLeadersAtBootstrap\x1aJ\n" +
+	"\x05phase\x18\x01 \x01(\tR\x05phase\x12&\n" +
+	"\x0fparent_shard_id\x18\x02 \x01(\x03R\rparentShardId\x12&\n" +
+	"\x0fchild_shard_ids\x18\x03 \x03(\x03R\rchildShardIds\x12\x1f\n" +
+	"\vsplit_point\x18\x04 \x01(\rR\n" +
+	"splitPoint\x12'\n" +
+	"\x0fsnapshot_offset\x18\x05 \x01(\x03R\x0esnapshotOffset\x127\n" +
+	"\x18parent_term_at_bootstrap\x18\x06 \x01(\x03R\x15parentTermAtBootstrap\x12y\n" +
+	"\x1achild_leaders_at_bootstrap\x18\a \x03(\v2<.io.oxia.proto.v1.SplitMetadata.ChildLeadersAtBootstrapEntryR\x17childLeadersAtBootstrap\x1aJ\n" +
 	"\x1cChildLeadersAtBootstrapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\x03R\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe1\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe7\x03\n" +
 	"\rShardMetadata\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x12\n" +
 	"\x04term\x18\x02 \x01(\x03R\x04term\x12<\n" +
 	"\x06leader\x18\x03 \x01(\v2$.io.oxia.proto.v1.DataServerIdentityR\x06leader\x12@\n" +
-	"\bensemble\x18\x04 \x03(\v2$.io.oxia.proto.v1.DataServerIdentityR\bensemble\x12H\n" +
-	"\fremovedNodes\x18\x05 \x03(\v2$.io.oxia.proto.v1.DataServerIdentityR\fremovedNodes\x12^\n" +
-	"\x17pendingDeleteShardNodes\x18\x06 \x03(\v2$.io.oxia.proto.v1.DataServerIdentityR\x17pendingDeleteShardNodes\x12C\n" +
-	"\x0eint32HashRange\x18\a \x01(\v2\x1b.io.oxia.proto.v1.HashRangeR\x0eint32HashRange\x125\n" +
-	"\x05split\x18\b \x01(\v2\x1f.io.oxia.proto.v1.SplitMetadataR\x05split\"\xe2\x01\n" +
-	"\x0fNamespaceStatus\x12,\n" +
-	"\x11replicationFactor\x18\x01 \x01(\rR\x11replicationFactor\x12E\n" +
+	"\bensemble\x18\x04 \x03(\v2$.io.oxia.proto.v1.DataServerIdentityR\bensemble\x12I\n" +
+	"\rremoved_nodes\x18\x05 \x03(\v2$.io.oxia.proto.v1.DataServerIdentityR\fremovedNodes\x12a\n" +
+	"\x1apending_delete_shard_nodes\x18\x06 \x03(\v2$.io.oxia.proto.v1.DataServerIdentityR\x17pendingDeleteShardNodes\x12E\n" +
+	"\x10int32_hash_range\x18\a \x01(\v2\x1b.io.oxia.proto.v1.HashRangeR\x0eint32HashRange\x125\n" +
+	"\x05split\x18\b \x01(\v2\x1f.io.oxia.proto.v1.SplitMetadataR\x05split\"\xe3\x01\n" +
+	"\x0fNamespaceStatus\x12-\n" +
+	"\x12replication_factor\x18\x01 \x01(\rR\x11replicationFactor\x12E\n" +
 	"\x06shards\x18\x02 \x03(\v2-.io.oxia.proto.v1.NamespaceStatus.ShardsEntryR\x06shards\x1aZ\n" +
 	"\vShardsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\x03R\x03key\x125\n" +
-	"\x05value\x18\x02 \x01(\v2\x1f.io.oxia.proto.v1.ShardMetadataR\x05value:\x028\x01\"\xac\x02\n" +
+	"\x05value\x18\x02 \x01(\v2\x1f.io.oxia.proto.v1.ShardMetadataR\x05value:\x028\x01\"\xb0\x02\n" +
 	"\rClusterStatus\x12O\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\v2/.io.oxia.proto.v1.ClusterStatus.NamespacesEntryR\n" +
-	"namespaces\x12*\n" +
-	"\x10shardIdGenerator\x18\x02 \x01(\x03R\x10shardIdGenerator\x12\x1c\n" +
-	"\tserverIdx\x18\x03 \x01(\rR\tserverIdx\x12\x1e\n" +
+	"namespaces\x12,\n" +
+	"\x12shard_id_generator\x18\x02 \x01(\x03R\x10shardIdGenerator\x12\x1d\n" +
 	"\n" +
-	"instanceId\x18\x04 \x01(\tR\n" +
+	"server_idx\x18\x03 \x01(\rR\tserverIdx\x12\x1f\n" +
+	"\vinstance_id\x18\x04 \x01(\tR\n" +
 	"instanceId\x1a`\n" +
 	"\x0fNamespacesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x127\n" +
@@ -992,18 +990,18 @@ var file_metadata_proto_depIdxs = []int32{
 	13, // 0: io.oxia.proto.v1.DataServerMetadata.labels:type_name -> io.oxia.proto.v1.DataServerMetadata.LabelsEntry
 	0,  // 1: io.oxia.proto.v1.DataServer.identity:type_name -> io.oxia.proto.v1.DataServerIdentity
 	1,  // 2: io.oxia.proto.v1.DataServer.metadata:type_name -> io.oxia.proto.v1.DataServerMetadata
-	3,  // 3: io.oxia.proto.v1.HierarchyPolicies.antiAffinities:type_name -> io.oxia.proto.v1.AntiAffinity
+	3,  // 3: io.oxia.proto.v1.HierarchyPolicies.anti_affinities:type_name -> io.oxia.proto.v1.AntiAffinity
 	4,  // 4: io.oxia.proto.v1.Namespace.policy:type_name -> io.oxia.proto.v1.HierarchyPolicies
 	5,  // 5: io.oxia.proto.v1.ClusterConfiguration.namespaces:type_name -> io.oxia.proto.v1.Namespace
 	0,  // 6: io.oxia.proto.v1.ClusterConfiguration.servers:type_name -> io.oxia.proto.v1.DataServerIdentity
-	14, // 7: io.oxia.proto.v1.ClusterConfiguration.serverMetadata:type_name -> io.oxia.proto.v1.ClusterConfiguration.ServerMetadataEntry
-	6,  // 8: io.oxia.proto.v1.ClusterConfiguration.loadBalancer:type_name -> io.oxia.proto.v1.LoadBalancer
-	15, // 9: io.oxia.proto.v1.SplitMetadata.childLeadersAtBootstrap:type_name -> io.oxia.proto.v1.SplitMetadata.ChildLeadersAtBootstrapEntry
+	14, // 7: io.oxia.proto.v1.ClusterConfiguration.server_metadata:type_name -> io.oxia.proto.v1.ClusterConfiguration.ServerMetadataEntry
+	6,  // 8: io.oxia.proto.v1.ClusterConfiguration.load_balancer:type_name -> io.oxia.proto.v1.LoadBalancer
+	15, // 9: io.oxia.proto.v1.SplitMetadata.child_leaders_at_bootstrap:type_name -> io.oxia.proto.v1.SplitMetadata.ChildLeadersAtBootstrapEntry
 	0,  // 10: io.oxia.proto.v1.ShardMetadata.leader:type_name -> io.oxia.proto.v1.DataServerIdentity
 	0,  // 11: io.oxia.proto.v1.ShardMetadata.ensemble:type_name -> io.oxia.proto.v1.DataServerIdentity
-	0,  // 12: io.oxia.proto.v1.ShardMetadata.removedNodes:type_name -> io.oxia.proto.v1.DataServerIdentity
-	0,  // 13: io.oxia.proto.v1.ShardMetadata.pendingDeleteShardNodes:type_name -> io.oxia.proto.v1.DataServerIdentity
-	8,  // 14: io.oxia.proto.v1.ShardMetadata.int32HashRange:type_name -> io.oxia.proto.v1.HashRange
+	0,  // 12: io.oxia.proto.v1.ShardMetadata.removed_nodes:type_name -> io.oxia.proto.v1.DataServerIdentity
+	0,  // 13: io.oxia.proto.v1.ShardMetadata.pending_delete_shard_nodes:type_name -> io.oxia.proto.v1.DataServerIdentity
+	8,  // 14: io.oxia.proto.v1.ShardMetadata.int32_hash_range:type_name -> io.oxia.proto.v1.HashRange
 	9,  // 15: io.oxia.proto.v1.ShardMetadata.split:type_name -> io.oxia.proto.v1.SplitMetadata
 	16, // 16: io.oxia.proto.v1.NamespaceStatus.shards:type_name -> io.oxia.proto.v1.NamespaceStatus.ShardsEntry
 	17, // 17: io.oxia.proto.v1.ClusterStatus.namespaces:type_name -> io.oxia.proto.v1.ClusterStatus.NamespacesEntry
