@@ -109,13 +109,8 @@ func (management *managementServer) CreateDataServer(_ context.Context, req *pro
 		return nil, grpcstatus.Errorf(codes.AlreadyExists, "data server %q already exists", req.DataServer.GetNameOrDefault())
 	}
 
-	dataServer, found := management.metadata.GetDataServer(req.DataServer.GetIdentity().GetName())
-	if !found {
-		return nil, grpcstatus.Errorf(codes.Internal, "created data server %q not found in config", req.DataServer.GetNameOrDefault())
-	}
-
 	return &proto.CreateDataServerResponse{
-		DataServer: dataServer.UnsafeBorrow(),
+		DataServer: req.DataServer,
 	}, nil
 }
 

@@ -15,7 +15,7 @@
 package create
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -26,22 +26,25 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 )
 
-var Cmd = &cobra.Command{
-	Use:          "create <name> --public <address> --internal <address>",
-	Short:        "Create a data server",
-	Long:         `Create a data server`,
-	Args:         cobra.ExactArgs(1),
-	RunE:         exec,
-	SilenceUsage: true,
-}
+var Cmd = newCmd()
 
-func init() {
-	Cmd.Flags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
-	Cmd.Flags().String("public", "", "Public address for the data server")
-	Cmd.Flags().String("internal", "", "Internal address for the data server")
-	Cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
-	_ = Cmd.MarkFlagRequired("public")
-	_ = Cmd.MarkFlagRequired("internal")
+func newCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:          "create <name> --public <address> --internal <address>",
+		Short:        "Create a data server",
+		Long:         `Create a data server`,
+		Args:         cobra.ExactArgs(1),
+		RunE:         exec,
+		SilenceUsage: true,
+	}
+
+	cmd.Flags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
+	cmd.Flags().String("public", "", "Public address for the data server")
+	cmd.Flags().String("internal", "", "Internal address for the data server")
+	cmd.Flags().StringArray("label", nil, "Label to attach to the data server in key=value form")
+	_ = cmd.MarkFlagRequired("public")
+	_ = cmd.MarkFlagRequired("internal")
+	return cmd
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -66,9 +69,14 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	labels, err := parseLabels(labelValues)
+	labels, err := commons.ParseLabels(labelValues)
 	if err != nil {
 		return err
+	}
+
+	name := strings.TrimSpace(args[0])
+	if name == "" {
+		return errors.New("data server name must not be empty")
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
@@ -79,7 +87,6 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	name := args[0]
 	created, err := client.CreateDataServer(&proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &name,
@@ -95,20 +102,4 @@ func exec(cmd *cobra.Command, args []string) error {
 	}
 
 	return dataserveroutput.WriteDataServer(cmd.OutOrStdout(), outputFormat, created)
-}
-
-func parseLabels(values []string) (map[string]string, error) {
-	if len(values) == 0 {
-		return map[string]string{}, nil
-	}
-
-	labels := make(map[string]string, len(values))
-	for _, value := range values {
-		key, labelValue, ok := strings.Cut(value, "=")
-		if !ok || key == "" {
-			return nil, fmt.Errorf("invalid label %q, expected key=value", value)
-		}
-		labels[key] = labelValue
-	}
-	return labels, nil
 }

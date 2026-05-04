@@ -29,14 +29,12 @@ import (
 )
 
 func runCmd(args ...string) (string, error) {
+	cmd := newCmd()
 	actual := new(bytes.Buffer)
-	Cmd.SetOut(actual)
-	Cmd.SetErr(actual)
-	Cmd.SetArgs(args)
-	if err := Cmd.Flags().Set("output", ""); err != nil {
-		return strings.TrimSpace(actual.String()), err
-	}
-	err := Cmd.Execute()
+	cmd.SetOut(actual)
+	cmd.SetErr(actual)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
 	return strings.TrimSpace(actual.String()), err
 }
 
@@ -106,6 +104,26 @@ func Test_cmd_createDataServer_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "internal1")
 }
 
+func Test_cmd_createDataServer_Name(t *testing.T) {
+	serverName := "server-1"
+	commons.MockedAdminClient = commons.NewMockAdminClient()
+	t.Cleanup(func() { commons.MockedAdminClient = nil })
+
+	commons.MockedAdminClient.On("Close").Return(nil)
+	commons.MockedAdminClient.On("CreateDataServer", mock.Anything).Return(&proto.DataServer{
+		Identity: &proto.DataServerIdentity{
+			Name:     &serverName,
+			Public:   "public1",
+			Internal: "internal1",
+		},
+	}, nil)
+
+	out, err := runCmd(serverName, "--public", "public1", "--internal", "internal1", "-o", "name")
+
+	assert.NoError(t, err)
+	assert.Equal(t, "dataserver/server-1", out)
+}
+
 func Test_cmd_createDataServer_InvalidLabel(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
@@ -115,4 +133,15 @@ func Test_cmd_createDataServer_InvalidLabel(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), `invalid label "rack", expected key=value`)
 	assert.Contains(t, out, `invalid label "rack", expected key=value`)
+}
+
+func Test_cmd_createDataServer_RejectsEmptyName(t *testing.T) {
+	commons.MockedAdminClient = commons.NewMockAdminClient()
+	t.Cleanup(func() { commons.MockedAdminClient = nil })
+
+	out, err := runCmd("   ", "--public", "public1", "--internal", "internal1")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "data server name must not be empty")
+	assert.Contains(t, out, "data server name must not be empty")
 }
