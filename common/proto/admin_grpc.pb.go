@@ -41,6 +41,7 @@ const (
 	OxiaAdmin_CreateDataServer_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/CreateDataServer"
 	OxiaAdmin_PatchDataServer_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/PatchDataServer"
 	OxiaAdmin_DeleteDataServer_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/DeleteDataServer"
+	OxiaAdmin_CreateNamespace_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/CreateNamespace"
 	OxiaAdmin_GetNamespace_FullMethodName     = "/io.oxia.proto.v1.OxiaAdmin/GetNamespace"
 	OxiaAdmin_ListNamespaces_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/ListNamespaces"
 	OxiaAdmin_SplitShard_FullMethodName       = "/io.oxia.proto.v1.OxiaAdmin/SplitShard"
@@ -55,6 +56,7 @@ type OxiaAdminClient interface {
 	CreateDataServer(ctx context.Context, in *CreateDataServerRequest, opts ...grpc.CallOption) (*CreateDataServerResponse, error)
 	PatchDataServer(ctx context.Context, in *PatchDataServerRequest, opts ...grpc.CallOption) (*PatchDataServerResponse, error)
 	DeleteDataServer(ctx context.Context, in *DeleteDataServerRequest, opts ...grpc.CallOption) (*DeleteDataServerResponse, error)
+	CreateNamespace(ctx context.Context, in *CreateNamespaceRequest, opts ...grpc.CallOption) (*CreateNamespaceResponse, error)
 	GetNamespace(ctx context.Context, in *GetNamespaceRequest, opts ...grpc.CallOption) (*GetNamespaceResponse, error)
 	ListNamespaces(ctx context.Context, in *ListNamespacesRequest, opts ...grpc.CallOption) (*ListNamespacesResponse, error)
 	// *
@@ -121,6 +123,16 @@ func (c *oxiaAdminClient) DeleteDataServer(ctx context.Context, in *DeleteDataSe
 	return out, nil
 }
 
+func (c *oxiaAdminClient) CreateNamespace(ctx context.Context, in *CreateNamespaceRequest, opts ...grpc.CallOption) (*CreateNamespaceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateNamespaceResponse)
+	err := c.cc.Invoke(ctx, OxiaAdmin_CreateNamespace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *oxiaAdminClient) GetNamespace(ctx context.Context, in *GetNamespaceRequest, opts ...grpc.CallOption) (*GetNamespaceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetNamespaceResponse)
@@ -160,6 +172,7 @@ type OxiaAdminServer interface {
 	CreateDataServer(context.Context, *CreateDataServerRequest) (*CreateDataServerResponse, error)
 	PatchDataServer(context.Context, *PatchDataServerRequest) (*PatchDataServerResponse, error)
 	DeleteDataServer(context.Context, *DeleteDataServerRequest) (*DeleteDataServerResponse, error)
+	CreateNamespace(context.Context, *CreateNamespaceRequest) (*CreateNamespaceResponse, error)
 	GetNamespace(context.Context, *GetNamespaceRequest) (*GetNamespaceResponse, error)
 	ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error)
 	// *
@@ -190,6 +203,9 @@ func (UnimplementedOxiaAdminServer) PatchDataServer(context.Context, *PatchDataS
 }
 func (UnimplementedOxiaAdminServer) DeleteDataServer(context.Context, *DeleteDataServerRequest) (*DeleteDataServerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteDataServer not implemented")
+}
+func (UnimplementedOxiaAdminServer) CreateNamespace(context.Context, *CreateNamespaceRequest) (*CreateNamespaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateNamespace not implemented")
 }
 func (UnimplementedOxiaAdminServer) GetNamespace(context.Context, *GetNamespaceRequest) (*GetNamespaceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNamespace not implemented")
@@ -311,6 +327,24 @@ func _OxiaAdmin_DeleteDataServer_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OxiaAdmin_CreateNamespace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateNamespaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaAdminServer).CreateNamespace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaAdmin_CreateNamespace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaAdminServer).CreateNamespace(ctx, req.(*CreateNamespaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OxiaAdmin_GetNamespace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetNamespaceRequest)
 	if err := dec(in); err != nil {
@@ -391,6 +425,10 @@ var OxiaAdmin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteDataServer",
 			Handler:    _OxiaAdmin_DeleteDataServer_Handler,
+		},
+		{
+			MethodName: "CreateNamespace",
+			Handler:    _OxiaAdmin_CreateNamespace_Handler,
 		},
 		{
 			MethodName: "GetNamespace",

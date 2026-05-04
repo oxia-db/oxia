@@ -85,6 +85,14 @@ func (m *MockAdminClient) DeleteDataServer(dataServer string) (*proto.DataServer
 	return nil, errors.New("failed to delete data server")
 }
 
+func (m *MockAdminClient) CreateNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
+	args := m.MethodCalled("CreateNamespace", namespace)
+	if v, ok := args.Get(0).(*proto.Namespace); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("failed to create namespace")
+}
+
 func (m *MockAdminClient) GetNamespace(namespace string) (*proto.Namespace, error) {
 	args := m.MethodCalled("GetNamespace", namespace)
 	if v, ok := args.Get(0).(*proto.Namespace); ok {

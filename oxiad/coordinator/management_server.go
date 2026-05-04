@@ -23,6 +23,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/validation"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
@@ -169,6 +170,42 @@ func (management *managementServer) ListNamespaces(context.Context, *proto.ListN
 
 	return &proto.ListNamespacesResponse{
 		Namespaces: cnf.GetNamespaces(),
+	}, nil
+}
+
+func (management *managementServer) CreateNamespace(_ context.Context, req *proto.CreateNamespaceRequest) (*proto.CreateNamespaceResponse, error) {
+	if req == nil || req.Namespace == nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be nil")
+	}
+	if err := validation.ValidateNamespace(req.Namespace.GetName()); err != nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
+	}
+	if req.Namespace.GetInitialShardCount() == 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace initial shard count must be greater than 0")
+	}
+	if req.Namespace.GetReplicationFactor() == 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace replication factor must be greater than 0")
+	}
+	if _, err := req.Namespace.GetKeySortingType(); err != nil {
+		return nil, grpcstatus.Errorf(codes.InvalidArgument, "namespace key sorting is invalid: %v", err)
+	}
+
+	err := management.metadata.CreateNamespace(req.Namespace)
+	if err != nil {
+		if errors.Is(err, metadatacommon.ErrAlreadyExists) {
+			return nil, grpcstatus.Errorf(codes.AlreadyExists, "namespace %q already exists", req.Namespace.GetName())
+		}
+		if errors.Is(err, metadatacommon.ErrBadVersion) {
+			return nil, grpcstatus.Errorf(codes.Aborted, "failed to create namespace %q due to concurrent config update", req.Namespace.GetName())
+		}
+		if errors.Is(err, metadatacommon.ErrFailedPrecondition) {
+			return nil, grpcstatus.Errorf(codes.FailedPrecondition, "failed to create namespace %q: %v", req.Namespace.GetName(), err)
+		}
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to create namespace %q: %v", req.Namespace.GetName(), err)
+	}
+
+	return &proto.CreateNamespaceResponse{
+		Namespace: req.Namespace,
 	}, nil
 }
 

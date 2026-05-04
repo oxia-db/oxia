@@ -158,6 +158,10 @@ func (*mockNamespaceMetadata) UpdateShardStatus(string, int64, *proto.ShardMetad
 
 func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) {}
 
+func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {
+	return nil
+}
+
 func (*mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
 	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
 }
