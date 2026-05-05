@@ -25,6 +25,7 @@ import (
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
@@ -73,13 +74,13 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	factory := &Factory{}
 	switch meta.ProviderName {
 	case metadatacommon.NameMemory:
-		factory.statusProvider = memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-		factory.configProvider = memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+		factory.statusProvider = memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+		factory.configProvider = memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	case metadatacommon.NameFile:
-		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
+		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
 			return nil, err
 		}
-		if factory.configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
+		if factory.configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
 			return nil, err
 		}
 	case metadatacommon.NameConfigMap:
@@ -87,17 +88,17 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 		if err != nil {
 			return nil, err
 		}
-		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
+		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
 			return nil, err
 		}
-		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
+		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
 			return nil, err
 		}
 	case metadatacommon.NameRaft:
 		if factory.raft, err = raft.New(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir, factory); err != nil {
 			return nil, fmt.Errorf("failed to create raft metadata provider: %w", err)
 		}
-		factory.configProvider = raft.NewProvider(ctx, factory.raft, metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+		factory.configProvider = raft.NewProvider(ctx, factory.raft, metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 		// Raft apply callbacks only drive the config watch today.
 		// Status watch is intentionally unsupported; if we add it later,
 		// this needs to fan out to the status provider too.
@@ -106,7 +107,7 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 			return nil, errors.New("failed to create raft config provider")
 		}
 		factory.raftInterceptor = configProvider
-		factory.statusProvider = raft.NewProvider(ctx, factory.raft, metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+		factory.statusProvider = raft.NewProvider(ctx, factory.raft, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	default:
 		return nil, errors.New(`must be one of "memory", "configmap", "raft" or "file"`)
 	}

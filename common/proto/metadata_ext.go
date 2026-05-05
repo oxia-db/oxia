@@ -33,14 +33,14 @@ const (
 	AntiAffinityModeStrict  = "strict"
 	AntiAffinityModeRelaxed = "relaxed"
 
-	ShardStatusUnknown     = "Unknown"
-	ShardStatusSteadyState = "SteadyState"
-	ShardStatusElection    = "Election"
-	ShardStatusDeleting    = "Deleting"
+	ShardStatusUnknown     = ShardStatus_ShardStatusUnknown
+	ShardStatusSteadyState = ShardStatus_SteadyState
+	ShardStatusElection    = ShardStatus_Election
+	ShardStatusDeleting    = ShardStatus_Deleting
 
-	SplitPhaseBootstrap = "Bootstrap"
-	SplitPhaseCatchUp   = "CatchUp"
-	SplitPhaseCutover   = "Cutover"
+	SplitPhaseBootstrap = SplitPhase_Bootstrap
+	SplitPhaseCatchUp   = SplitPhase_CatchUp
+	SplitPhaseCutover   = SplitPhase_Cutover
 )
 
 func (ds *DataServerIdentity) GetNameOrDefault() string {
@@ -66,7 +66,7 @@ func NewClusterStatus() *ClusterStatus {
 	}
 }
 
-func ParseShardStatus(value string) string {
+func ParseShardStatus(value ShardStatus) ShardStatus {
 	switch value {
 	case ShardStatusSteadyState:
 		return ShardStatusSteadyState
@@ -79,14 +79,14 @@ func ParseShardStatus(value string) string {
 	}
 }
 
-func (sm *ShardMetadata) GetStatusOrDefault() string {
+func (sm *ShardMetadata) GetStatusOrDefault() ShardStatus {
 	if sm == nil {
 		return ShardStatusUnknown
 	}
 	return ParseShardStatus(sm.GetStatus())
 }
 
-func ParseSplitPhase(value string) string {
+func ParseSplitPhase(value SplitPhase) SplitPhase {
 	switch value {
 	case SplitPhaseCatchUp:
 		return SplitPhaseCatchUp
@@ -97,7 +97,7 @@ func ParseSplitPhase(value string) string {
 	}
 }
 
-func (sm *SplitMetadata) GetPhaseOrDefault() string {
+func (sm *SplitMetadata) GetPhaseOrDefault() SplitPhase {
 	if sm == nil {
 		return SplitPhaseBootstrap
 	}

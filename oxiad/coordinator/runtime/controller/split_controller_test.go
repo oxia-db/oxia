@@ -20,6 +20,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
@@ -74,7 +75,7 @@ var (
 
 // setupSplitTest creates a cluster status with a parent shard in SteadyState,
 // two child shards ready for split, and returns the test resources.
-func setupSplitTest(t *testing.T, phase string) (
+func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 	*mockRpcProvider,
 	coordmetadata.Metadata,
 	*mockSplitEventListener,
@@ -82,8 +83,8 @@ func setupSplitTest(t *testing.T, phase string) (
 	t.Helper()
 
 	rpcMock := newMockRpcProvider()
-	metaProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	metaProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value: &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{

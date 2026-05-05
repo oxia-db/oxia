@@ -31,6 +31,7 @@ import (
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -104,7 +105,7 @@ func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, 
 	defer m.statusLock.Unlock()
 
 	current := m.statusProvider.Watch().Load()
-	next, changed := fn(metadatacommon.ClusterStatusCodec.Clone(current.Value), current.Version)
+	next, changed := fn(metadatacodec.ClusterStatusCodec.Clone(current.Value), current.Version)
 	if !changed {
 		return nil
 	}
@@ -124,7 +125,7 @@ func (m *coordinatorMetadata) computeConfig(fn func(*commonproto.ClusterConfigur
 	defer m.configLock.Unlock()
 
 	current := m.configProvider.Watch().Load()
-	next, err := fn(metadatacommon.ClusterConfigCodec.Clone(current.Value), current.Version)
+	next, err := fn(metadatacodec.ClusterConfigCodec.Clone(current.Value), current.Version)
 	if err != nil {
 		return err
 	}

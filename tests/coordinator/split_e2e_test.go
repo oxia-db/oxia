@@ -24,6 +24,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
@@ -56,14 +57,14 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -321,13 +322,13 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -866,7 +867,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 			}
 
-			metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			var keySorting proto.KeySortingType
 			if test.sorting == "natural" {
 				keySorting = proto.KeySortingType_NATURAL
@@ -884,7 +885,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				KeySorting:        keySortingValue,
 			}}, []*proto.DataServerIdentity{sa1})
 
-			configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+			configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 			_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 				Value:   clusterConfig,
 				Version: metadatacommon.NotExists,
@@ -933,7 +934,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 
 // waitForSplitPhase waits until the parent shard's split metadata reaches the
 // given phase, or fails the test if the timeout is exceeded.
-func waitForSplitPhase(t *testing.T, metadata coordmetadata.Metadata, parentShardId int64, phase string, timeout time.Duration) {
+func waitForSplitPhase(t *testing.T, metadata coordmetadata.Metadata, parentShardId int64, phase proto.SplitPhase, timeout time.Duration) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		status := metadata.GetStatus().UnsafeBorrow()

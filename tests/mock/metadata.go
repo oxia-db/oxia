@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 
 	"github.com/stretchr/testify/require"
 
@@ -29,7 +30,7 @@ import (
 func NewConfigProvider(t *testing.T, clusterConfig *proto.ClusterConfiguration) provider.Provider[*proto.ClusterConfiguration] {
 	t.Helper()
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	PutConfig(t, configProvider, clusterConfig)
 	return configProvider
 }

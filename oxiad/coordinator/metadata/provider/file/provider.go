@@ -33,6 +33,7 @@ import (
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -44,7 +45,7 @@ const parentDirectoryMode = 0o755
 type Provider[T gproto.Message] struct {
 	mu           sync.Mutex
 	path         string
-	codec        metadatacommon.Codec[T]
+	codec        metadatacodec.Codec[T]
 	fileLock     *fslock.Lock
 	lockAcquired bool
 	watchEnabled metadatacommon.WatchMode
@@ -58,7 +59,7 @@ type Provider[T gproto.Message] struct {
 	logger  *slog.Logger
 }
 
-func NewProvider[T gproto.Message](ctx context.Context, path string, codec metadatacommon.Codec[T], watchEnabled metadatacommon.WatchMode) (provider.Provider[T], error) {
+func NewProvider[T gproto.Message](ctx context.Context, path string, codec metadatacodec.Codec[T], watchEnabled metadatacommon.WatchMode) (provider.Provider[T], error) {
 	p := &Provider[T]{
 		path:         path,
 		codec:        codec,

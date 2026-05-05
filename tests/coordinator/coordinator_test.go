@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
@@ -36,14 +37,14 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata2.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := metadata2.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              "default",
 		ReplicationFactor: 1,
 		InitialShardCount: 2,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := metadata2.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := metadata2.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,

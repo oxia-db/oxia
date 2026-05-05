@@ -776,7 +776,7 @@ func (c *runtime) restartInProgressSplits(clusterStatus *proto.ClusterStatus) {
 			c.logger.Info("Resuming in-progress split",
 				slog.String("namespace", ns),
 				slog.Int64("parent-shard", shardId),
-				slog.String("phase", meta.Split.GetPhaseOrDefault()),
+				slog.String("phase", meta.Split.GetPhaseOrDefault().String()),
 			)
 
 			sc := controller.NewSplitController(controller.SplitControllerConfig{

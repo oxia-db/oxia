@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 )
 
 func TestStateContainerApplySupportsV0163StatusLog(t *testing.T) {
@@ -36,7 +36,7 @@ func TestStateContainerApplySupportsV0163StatusLog(t *testing.T) {
 			"default": {},
 		},
 	}
-	statusBytes, err := metadatacommon.ClusterStatusCodec.MarshalJSON(status)
+	statusBytes, err := metadatacodec.ClusterStatusCodec.MarshalJSON(status)
 	require.NoError(t, err)
 
 	// v0.16.3 only stored `new_state` and `expected_version`.
@@ -53,8 +53,8 @@ func TestStateContainerApplySupportsV0163StatusLog(t *testing.T) {
 	require.True(t, applyRes.changeApplied)
 	require.Equal(t, int64(0), applyRes.newVersion)
 
-	document := sc.document(metadatacommon.ClusterStatusCodec.GetKey())
-	decoded, err := metadatacommon.ClusterStatusCodec.UnmarshalJSON(document.State)
+	document := sc.document(metadatacodec.ClusterStatusCodec.GetKey())
+	decoded, err := metadatacodec.ClusterStatusCodec.UnmarshalJSON(document.State)
 	require.NoError(t, err)
 	require.Equal(t, status.GetInstanceId(), decoded.GetInstanceId())
 }

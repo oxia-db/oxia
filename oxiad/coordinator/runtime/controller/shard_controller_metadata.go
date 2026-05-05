@@ -46,7 +46,7 @@ func (s *Metadata) Store(metadata *commonproto.ShardMetadata) {
 	s.shardMetadata = gproto.Clone(metadata).(*commonproto.ShardMetadata) //nolint:revive
 }
 
-func (s *Metadata) Status() string {
+func (s *Metadata) Status() commonproto.ShardStatus {
 	s.RLock()
 	defer s.RUnlock()
 	return s.shardMetadata.GetStatusOrDefault()

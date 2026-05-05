@@ -36,7 +36,7 @@ func hashRange(start, end uint32) *proto.HashRange {
 	return &proto.HashRange{Min: start, Max: end}
 }
 
-func shardMetadata(status string, ensemble []*proto.DataServerIdentity, start, end uint32) *proto.ShardMetadata {
+func shardMetadata(status proto.ShardStatus, ensemble []*proto.DataServerIdentity, start, end uint32) *proto.ShardMetadata {
 	return &proto.ShardMetadata{
 		Status:         status,
 		Term:           -1,

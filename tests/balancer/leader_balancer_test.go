@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
@@ -105,7 +106,7 @@ func TestLeaderBalanced(t *testing.T) {
 		},
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   cc,
 		Version: metadatacommon.NotExists,
@@ -153,7 +154,7 @@ func TestLeaderBalancedNodeCrashAndBack(t *testing.T) {
 		},
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   cc,
 		Version: metadatacommon.NotExists,
@@ -228,7 +229,7 @@ func TestLeaderBalancedNodeAdded(t *testing.T) {
 		},
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   cc,
 		Version: metadatacommon.NotExists,

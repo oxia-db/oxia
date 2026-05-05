@@ -22,7 +22,7 @@ import (
 	"github.com/hashicorp/raft"
 	"go.uber.org/multierr"
 
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 )
 
 type raftOpCmd struct {
@@ -56,7 +56,7 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 		return &applyResult{changeApplied: false}
 	}
 	if opCmd.Key == "" {
-		opCmd.Key = metadatacommon.ClusterStatusCodec.GetKey()
+		opCmd.Key = metadatacodec.ClusterStatusCodec.GetKey()
 	}
 
 	document := sc.document(opCmd.Key)
@@ -106,7 +106,7 @@ func (sc *stateContainer) Restore(rc io.ReadCloser) error {
 	}
 
 	sc.Documents = map[string]*documentContainer{
-		metadatacommon.ClusterStatusCodec.GetKey(): {
+		metadatacodec.ClusterStatusCodec.GetKey(): {
 			State:          cloneBytes(persisted.State),
 			CurrentVersion: persisted.CurrentVersion,
 		},

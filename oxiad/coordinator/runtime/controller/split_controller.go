@@ -161,7 +161,10 @@ func (sc *SplitController) run() {
 	// If we exited due to timeout/cancellation and the split isn't done,
 	// abort and clean up.
 	if sc.ctx.Err() != nil {
-		phase := sc.currentPhase()
+		phase, exists := sc.currentPhase()
+		if !exists {
+			return
+		}
 		if phase == proto.SplitPhaseBootstrap || phase == proto.SplitPhaseCatchUp {
 			sc.abort()
 		}
@@ -174,13 +177,13 @@ func (sc *SplitController) driveStateMachine() error {
 			return backoff.Permanent(err)
 		}
 
-		phase := sc.currentPhase()
-		if phase == "" {
+		phase, exists := sc.currentPhase()
+		if !exists {
 			// Split is done or metadata was cleaned up
 			return nil
 		}
 
-		sc.logger.Info("Running split phase", slog.String("phase", phase))
+		sc.logger.Info("Running split phase", slog.String("phase", phase.String()))
 
 		var err error
 		switch phase {
@@ -201,21 +204,21 @@ func (sc *SplitController) driveStateMachine() error {
 	}
 }
 
-func (sc *SplitController) currentPhase() string {
+func (sc *SplitController) currentPhase() (proto.SplitPhase, bool) {
 	status := sc.metadata.GetStatus().UnsafeBorrow()
 	ns, exists := status.Namespaces[sc.namespace]
 	if !exists {
-		return ""
+		return proto.SplitPhaseBootstrap, false
 	}
 	parentMeta, exists := ns.Shards[sc.parentShardId]
 	if !exists || parentMeta.Split == nil {
-		return ""
+		return proto.SplitPhaseBootstrap, false
 	}
-	return parentMeta.Split.GetPhaseOrDefault()
+	return parentMeta.Split.GetPhaseOrDefault(), true
 }
 
 // updatePhase atomically updates the split phase on both parent and children.
-func (sc *SplitController) updatePhase(newPhase string) {
+func (sc *SplitController) updatePhase(newPhase proto.SplitPhase) {
 	status := sc.metadata.GetStatus().UnsafeBorrow()
 	cloned := gproto.Clone(status).(*proto.ClusterStatus) //nolint:revive
 

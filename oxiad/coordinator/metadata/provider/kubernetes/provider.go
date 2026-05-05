@@ -45,6 +45,7 @@ import (
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -64,7 +65,7 @@ type Provider[T gproto.Message] struct {
 	mu              sync.Mutex
 	kubernetes      kubernetes.Interface
 	namespace, name string
-	codec           metadatacommon.Codec[T]
+	codec           metadatacodec.Codec[T]
 	watchEnabled    metadatacommon.WatchMode
 
 	metadataSize      atomic.Int64
@@ -85,7 +86,7 @@ func NewProvider[T gproto.Message](
 	ctx context.Context,
 	kc kubernetes.Interface,
 	namespace, name string,
-	codec metadatacommon.Codec[T],
+	codec metadatacodec.Codec[T],
 	watchEnabled metadatacommon.WatchMode,
 ) (provider.Provider[T], error) {
 	m := &Provider[T]{

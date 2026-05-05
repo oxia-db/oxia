@@ -21,6 +21,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
@@ -71,7 +72,7 @@ func TestNormalShardBalancer(t *testing.T) {
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   &cc,
 		Version: metadatacommon.NotExists,
@@ -182,7 +183,7 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 		Servers:        shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   &cc,
 		Version: metadatacommon.NotExists,
@@ -284,7 +285,7 @@ func TestBalanceWithoutDeadlock(t *testing.T) {
 		},
 		Servers: shardBalancerDataServers(s1ad, s2ad, s3ad),
 	}
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   &cc,
 		Version: metadatacommon.NotExists,
