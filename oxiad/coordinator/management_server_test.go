@@ -39,6 +39,10 @@ func dataServer(name *string, public, internal string) *proto.DataServerIdentity
 	}
 }
 
+func boolPtr(value bool) *bool {
+	return &value
+}
+
 func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
@@ -486,8 +490,8 @@ func TestManagementServerPatchNamespaceAntiAffinities(t *testing.T) {
 				Labels: []string{"zone"},
 				Mode:   proto.AntiAffinityModeRelaxed,
 			}},
+			UpdateAntiAffinities: boolPtr(true),
 		},
-		UpdateAntiAffinities: true,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -525,9 +529,9 @@ func TestManagementServerPatchNamespaceClearsAntiAffinities(t *testing.T) {
 
 	res, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
 		Namespace: &proto.Namespace{
-			Name: "ns-1",
+			Name:                 "ns-1",
+			UpdateAntiAffinities: boolPtr(true),
 		},
-		UpdateAntiAffinities: true,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -610,8 +614,8 @@ func TestManagementServerPatchNamespaceRejectsInvalidRequest(t *testing.T) {
 					Labels: []string{"zone"},
 					Mode:   "unknown",
 				}},
+				UpdateAntiAffinities: boolPtr(true),
 			},
-			UpdateAntiAffinities: true,
 		}},
 	}
 

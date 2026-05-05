@@ -46,7 +46,7 @@ type Metadata interface {
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 	CreateNamespace(namespace *commonproto.Namespace) error
-	PatchNamespace(patch NamespacePatch) (*commonproto.Namespace, error)
+	PatchNamespace(namespace *commonproto.Namespace) (*commonproto.Namespace, error)
 	DeleteNamespace(name string) (*commonproto.Namespace, error)
 	GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool)
 
@@ -62,11 +62,6 @@ type Metadata interface {
 	DeleteDataServer(name string) (*commonproto.DataServer, error)
 	ListDataServer() map[string]commonobject.Borrowed[*commonproto.DataServer]
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool)
-}
-
-type NamespacePatch struct {
-	Namespace            *commonproto.Namespace
-	UpdateAntiAffinities bool
 }
 
 type EnsembleSupplier func(
@@ -369,6 +364,8 @@ func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonpro
 
 func (m *coordinatorMetadata) CreateNamespace(namespace *commonproto.Namespace) error {
 	name := namespace.GetName()
+	namespace = namespace.CloneVT()
+	namespace.UpdateAntiAffinities = nil
 
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		for _, existing := range config.GetNamespaces() {
@@ -386,10 +383,9 @@ func (m *coordinatorMetadata) CreateNamespace(namespace *commonproto.Namespace) 
 	})
 }
 
-func (m *coordinatorMetadata) PatchNamespace(patch NamespacePatch) (*commonproto.Namespace, error) {
+func (m *coordinatorMetadata) PatchNamespace(desiredNamespace *commonproto.Namespace) (*commonproto.Namespace, error) {
 	var updated *commonproto.Namespace
 	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
-		desiredNamespace := patch.Namespace
 		for _, namespace := range config.GetNamespaces() {
 			if namespace.GetName() != desiredNamespace.GetName() {
 				continue
@@ -405,9 +401,10 @@ func (m *coordinatorMetadata) PatchNamespace(patch NamespacePatch) (*commonproto
 				notificationsEnabled := desiredNamespace.GetNotificationsEnabled()
 				namespace.NotificationsEnabled = &notificationsEnabled
 			}
-			if patch.UpdateAntiAffinities {
+			if desiredNamespace.UpdateAntiAffinities != nil {
 				namespace.AntiAffinities = desiredNamespace.GetAntiAffinities()
 			}
+			namespace.UpdateAntiAffinities = nil
 
 			updated = namespace
 			return config, nil

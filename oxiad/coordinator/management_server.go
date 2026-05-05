@@ -231,10 +231,10 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	if req.Namespace.GetKeySorting() != "" {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace key sorting cannot be patched")
 	}
-	if len(req.Namespace.GetAntiAffinities()) > 0 && !req.GetUpdateAntiAffinities() {
+	if len(req.Namespace.GetAntiAffinities()) > 0 && req.Namespace.UpdateAntiAffinities == nil {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace anti-affinities require update anti-affinities")
 	}
-	if req.GetUpdateAntiAffinities() {
+	if req.Namespace.UpdateAntiAffinities != nil {
 		for idx, antiAffinity := range req.Namespace.GetAntiAffinities() {
 			if err := antiAffinity.Validate(); err != nil {
 				return nil, grpcstatus.Errorf(codes.InvalidArgument, "namespace anti-affinities[%d] is invalid: %v", idx, err)
@@ -242,10 +242,7 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 		}
 	}
 
-	namespace, err := management.metadata.PatchNamespace(coordmetadata.NamespacePatch{
-		Namespace:            req.Namespace,
-		UpdateAntiAffinities: req.GetUpdateAntiAffinities(),
-	})
+	namespace, err := management.metadata.PatchNamespace(req.Namespace)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace.GetName())

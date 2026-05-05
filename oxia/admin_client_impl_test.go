@@ -420,7 +420,7 @@ func TestAdminClientPatchNamespaceReturnsResponse(t *testing.T) {
 	namespace, err := admin.PatchNamespace(&proto.Namespace{Name: "ns-1", NotificationsEnabled: &notificationsEnabled})
 	require.NoError(t, err)
 	require.NotNil(t, adminClient.patchNamespaceReq)
-	assert.False(t, adminClient.patchNamespaceReq.GetUpdateAntiAffinities())
+	assert.Nil(t, adminClient.patchNamespaceReq.GetNamespace().UpdateAntiAffinities)
 	require.NotNil(t, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
 	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
@@ -451,7 +451,8 @@ func TestAdminClientPatchNamespaceSetsAntiAffinitiesUpdateFlag(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
 	require.NotNil(t, adminClient.patchNamespaceReq)
-	assert.True(t, adminClient.patchNamespaceReq.GetUpdateAntiAffinities())
+	require.NotNil(t, adminClient.patchNamespaceReq.GetNamespace().UpdateAntiAffinities)
+	assert.True(t, adminClient.patchNamespaceReq.GetNamespace().GetUpdateAntiAffinities())
 	assert.Empty(t, adminClient.patchNamespaceReq.GetNamespace().GetAntiAffinities())
 }
 

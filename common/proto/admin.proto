@@ -95,7 +95,6 @@ message CreateNamespaceResponse {
 
 message PatchNamespaceRequest {
   Namespace namespace = 1;
-  bool update_anti_affinities = 2;
 }
 
 message PatchNamespaceResponse {

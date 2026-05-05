@@ -251,6 +251,7 @@ type Namespace struct {
 	NotificationsEnabled *bool                  `protobuf:"varint,4,opt,name=notifications_enabled,json=notificationsEnabled,proto3,oneof" json:"notifications_enabled,omitempty"`
 	KeySorting           string                 `protobuf:"bytes,5,opt,name=key_sorting,json=keySorting,proto3" json:"key_sorting,omitempty"`
 	AntiAffinities       []*AntiAffinity        `protobuf:"bytes,6,rep,name=anti_affinities,json=antiAffinities,proto3" json:"anti_affinities,omitempty"`
+	UpdateAntiAffinities *bool                  `protobuf:"varint,7,opt,name=update_anti_affinities,json=updateAntiAffinities,proto3,oneof" json:"update_anti_affinities,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -325,6 +326,13 @@ func (x *Namespace) GetAntiAffinities() []*AntiAffinity {
 		return x.AntiAffinities
 	}
 	return nil
+}
+
+func (x *Namespace) GetUpdateAntiAffinities() bool {
+	if x != nil && x.UpdateAntiAffinities != nil {
+		return *x.UpdateAntiAffinities
+	}
+	return false
 }
 
 type LoadBalancer struct {
@@ -840,7 +848,7 @@ const file_metadata_proto_rawDesc = "" +
 	"\bmetadata\x18\x02 \x01(\v2$.io.oxia.proto.v1.DataServerMetadataR\bmetadata\":\n" +
 	"\fAntiAffinity\x12\x16\n" +
 	"\x06labels\x18\x01 \x03(\tR\x06labels\x12\x12\n" +
-	"\x04mode\x18\x02 \x01(\tR\x04mode\"\xbc\x02\n" +
+	"\x04mode\x18\x02 \x01(\tR\x04mode\"\x92\x03\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12.\n" +
 	"\x13initial_shard_count\x18\x02 \x01(\rR\x11initialShardCount\x12-\n" +
@@ -848,8 +856,10 @@ const file_metadata_proto_rawDesc = "" +
 	"\x15notifications_enabled\x18\x04 \x01(\bH\x00R\x14notificationsEnabled\x88\x01\x01\x12\x1f\n" +
 	"\vkey_sorting\x18\x05 \x01(\tR\n" +
 	"keySorting\x12G\n" +
-	"\x0fanti_affinities\x18\x06 \x03(\v2\x1e.io.oxia.proto.v1.AntiAffinityR\x0eantiAffinitiesB\x18\n" +
-	"\x16_notifications_enabled\"d\n" +
+	"\x0fanti_affinities\x18\x06 \x03(\v2\x1e.io.oxia.proto.v1.AntiAffinityR\x0eantiAffinities\x129\n" +
+	"\x16update_anti_affinities\x18\a \x01(\bH\x01R\x14updateAntiAffinities\x88\x01\x01B\x18\n" +
+	"\x16_notifications_enabledB\x19\n" +
+	"\x17_update_anti_affinities\"d\n" +
 	"\fLoadBalancer\x12+\n" +
 	"\x11schedule_interval\x18\x01 \x01(\tR\x10scheduleInterval\x12'\n" +
 	"\x0fquarantine_time\x18\x02 \x01(\tR\x0equarantineTime\"\xde\x03\n" +

@@ -162,7 +162,7 @@ func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {
 	return nil
 }
 
-func (*mockNamespaceMetadata) PatchNamespace(coordmetadata.NamespacePatch) (*proto.Namespace, error) {
+func (*mockNamespaceMetadata) PatchNamespace(*proto.Namespace) (*proto.Namespace, error) {
 	return &proto.Namespace{}, nil
 }
 
