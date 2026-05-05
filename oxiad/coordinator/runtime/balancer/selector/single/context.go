@@ -27,7 +27,7 @@ import (
 type Context struct {
 	Candidates         *linkedhashset.Set[string]
 	CandidatesMetadata map[string]*commonproto.DataServerMetadata
-	HierarchyPolicies  *commonproto.HierarchyPolicies
+	AntiAffinities     []*commonproto.AntiAffinity
 	Status             *commonproto.ClusterStatus
 	Namespace          string
 	Shard              int64

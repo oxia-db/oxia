@@ -399,8 +399,8 @@ func (m *coordinatorMetadata) PatchNamespace(desiredNamespace *commonproto.Names
 				notificationsEnabled := desiredNamespace.GetNotificationsEnabled()
 				namespace.NotificationsEnabled = &notificationsEnabled
 			}
-			if policy := desiredNamespace.GetPolicy(); policy != nil {
-				namespace.Policy = policy
+			if len(desiredNamespace.GetAntiAffinities()) > 0 {
+				namespace.AntiAffinities = desiredNamespace.GetAntiAffinities()
 			}
 
 			updated = namespace

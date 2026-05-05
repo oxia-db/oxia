@@ -154,12 +154,10 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 				Name:              "ns-1",
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
-				Policy: &proto.HierarchyPolicies{
-					AntiAffinities: []*proto.AntiAffinity{
-						{
-							Labels: []string{"zone"},
-							Mode:   proto.AntiAffinityModeStrict,
-						},
+				AntiAffinities: []*proto.AntiAffinity{
+					{
+						Labels: []string{"zone"},
+						Mode:   proto.AntiAffinityModeStrict,
 					},
 				},
 			},
@@ -167,12 +165,10 @@ func TestPolicyBasedShardBalancer(t *testing.T) {
 				Name:              "ns-2",
 				InitialShardCount: 3,
 				ReplicationFactor: 3,
-				Policy: &proto.HierarchyPolicies{
-					AntiAffinities: []*proto.AntiAffinity{
-						{
-							Labels: []string{"zone"},
-							Mode:   proto.AntiAffinityModeStrict,
-						},
+				AntiAffinities: []*proto.AntiAffinity{
+					{
+						Labels: []string{"zone"},
+						Mode:   proto.AntiAffinityModeStrict,
 					},
 				},
 			},

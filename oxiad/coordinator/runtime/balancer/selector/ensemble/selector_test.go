@@ -32,11 +32,9 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 		"s3": {Labels: map[string]string{"region": "us-south", "type": "storage1"}},
 		"s4": {Labels: map[string]string{"region": "us-west", "type": "storage2"}},
 	}
-	nsPolicies := &proto.HierarchyPolicies{
-		AntiAffinities: []*proto.AntiAffinity{
-			{Labels: []string{"region"}, Mode: proto.AntiAffinityModeStrict},
-			{Labels: []string{"type"}, Mode: proto.AntiAffinityModeStrict},
-		},
+	antiAffinities := []*proto.AntiAffinity{
+		{Labels: []string{"region"}, Mode: proto.AntiAffinityModeStrict},
+		{Labels: []string{"type"}, Mode: proto.AntiAffinityModeStrict},
 	}
 
 	context := &Context{
@@ -44,7 +42,7 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 		Candidates:         linkedhashset.New("s1", "s2", "s3", "s4"),
 		Namespace:          "ns-1",
 		Shard:              7,
-		HierarchyPolicies:  nsPolicies,
+		AntiAffinities:     antiAffinities,
 		Replicas:           3,
 	}
 

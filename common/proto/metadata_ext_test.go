@@ -33,12 +33,11 @@ namespaces:
     replicationFactor: 2
     notificationsEnabled: false
     keySorting: natural
-    policy:
-      antiAffinities:
-        - labels: ["zone"]
-          mode: strict
-        - labels: ["rack"]
-          mode: relaxed
+    antiAffinities:
+      - labels: ["zone"]
+        mode: strict
+      - labels: ["rack"]
+        mode: relaxed
 servers:
   - name: node-1
     public: localhost:6648
@@ -71,11 +70,11 @@ loadBalancer:
 	require.Equal(t, "analytics", config.GetNamespaces()[1].GetName())
 	require.False(t, config.GetNamespaces()[1].NotificationsEnabledOrDefault())
 	require.Equal(t, "natural", config.GetNamespaces()[1].GetKeySorting())
-	require.Len(t, config.GetNamespaces()[1].GetPolicy().GetAntiAffinities(), 2)
+	require.Len(t, config.GetNamespaces()[1].GetAntiAffinities(), 2)
 	require.Equal(t, AntiAffinityModeStrict,
-		config.GetNamespaces()[1].GetPolicy().GetAntiAffinities()[0].GetMode())
+		config.GetNamespaces()[1].GetAntiAffinities()[0].GetMode())
 	require.Equal(t, AntiAffinityModeRelaxed,
-		config.GetNamespaces()[1].GetPolicy().GetAntiAffinities()[1].GetMode())
+		config.GetNamespaces()[1].GetAntiAffinities()[1].GetMode())
 
 	require.Len(t, config.GetServers(), 3)
 	require.Equal(t, "node-1", config.GetServers()[0].GetNameOrDefault())
@@ -156,12 +155,10 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 				ReplicationFactor:    3,
 				KeySorting:           "hierarchical",
 				NotificationsEnabled: &notificationsEnabled,
-				Policy: &HierarchyPolicies{
-					AntiAffinities: []*AntiAffinity{
-						{
-							Labels: []string{"zone"},
-							Mode:   AntiAffinityModeStrict,
-						},
+				AntiAffinities: []*AntiAffinity{
+					{
+						Labels: []string{"zone"},
+						Mode:   AntiAffinityModeStrict,
 					},
 				},
 			},

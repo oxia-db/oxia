@@ -36,7 +36,7 @@ func (ensemble *ensemble) Select(context *Context) ([]string, error) {
 		Status:             context.Status,
 		Namespace:          context.Namespace,
 		Shard:              context.Shard,
-		HierarchyPolicies:  context.HierarchyPolicies,
+		AntiAffinities:     context.AntiAffinities,
 		LoadRatioSupplier:  context.LoadRatioSupplier,
 	}
 	selected := linkedhashset.New[string]()
