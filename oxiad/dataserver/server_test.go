@@ -70,9 +70,8 @@ func TestNewServerClosableWithHealthWatch(t *testing.T) {
 
 	clientPool := rpc.NewClientPool(nil, nil)
 
-	client, closer, err := clientPool.GetHealthRpc(fmt.Sprintf("127.0.0.1:%v", server.InternalPort()))
+	client, err := clientPool.GetHealthRpc(fmt.Sprintf("127.0.0.1:%v", server.InternalPort()))
 	assert.NoError(t, err)
-	defer closer.Close()
 	watchStream, err := client.Watch(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: ""})
 	assert.NoError(t, err)
 
@@ -80,4 +79,27 @@ func TestNewServerClosableWithHealthWatch(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NoError(t, watchStream.CloseSend())
+}
+
+func TestNewServerExposesHealthOnPublicEndpoint(t *testing.T) {
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.BindAddress = "localhost:0"
+	options.Storage.Database.Dir = t.TempDir()
+	options.Storage.WAL.Dir = t.TempDir()
+
+	server, err := New(t.Context(), commonwatch.New(options))
+	assert.NoError(t, err)
+	defer server.Close()
+
+	clientPool := rpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
+
+	client, err := clientPool.GetHealthRpc(fmt.Sprintf("127.0.0.1:%v", server.PublicPort()))
+	assert.NoError(t, err)
+
+	response, err := client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: ""})
+	assert.NoError(t, err)
+	assert.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, response.Status)
 }

@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"io"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -31,8 +30,6 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-const rpcTimeout = 30 * time.Second
-
 type Provider interface {
 	io.Closer
 
@@ -44,10 +41,7 @@ type Provider interface {
 	DeleteShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
 	Handshake(ctx context.Context, node *proto.DataServerIdentity, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error)
 	RemoveObserver(ctx context.Context, node *proto.DataServerIdentity, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error)
-
-	GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, io.Closer, error)
-
-	ClearPooledConnections(node *proto.DataServerIdentity)
+	GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error)
 }
 
 type rpcProvider struct {
@@ -83,7 +77,7 @@ func (r *rpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentit
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, commonrpc.DefaultRpcTimeout)
 	defer cancel()
 
 	return client.NewTerm(ctx, req)
@@ -95,7 +89,7 @@ func (r *rpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerId
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, commonrpc.DefaultRpcTimeout)
 	defer cancel()
 
 	return client.BecomeLeader(ctx, req)
@@ -107,7 +101,7 @@ func (r *rpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIde
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, commonrpc.DefaultRpcTimeout)
 	defer cancel()
 
 	return client.AddFollower(ctx, req)
@@ -119,7 +113,7 @@ func (r *rpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdent
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, commonrpc.DefaultRpcTimeout)
 	defer cancel()
 
 	return client.GetStatus(ctx, req)
@@ -131,7 +125,7 @@ func (r *rpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdent
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, commonrpc.DefaultRpcTimeout)
 	defer cancel()
 
 	res, err := client.Handshake(ctx, &proto.HandshakeRequest{
@@ -160,7 +154,7 @@ func (r *rpcProvider) DeleteShard(ctx context.Context, node *proto.DataServerIde
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, commonrpc.DefaultRpcTimeout)
 	defer cancel()
 
 	return client.DeleteShard(ctx, req)
@@ -172,16 +166,12 @@ func (r *rpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServer
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, commonrpc.DefaultRpcTimeout)
 	defer cancel()
 
 	return client.RemoveObserver(ctx, req)
 }
 
-func (r *rpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, io.Closer, error) {
+func (r *rpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
 	return r.pool.GetHealthRpc(node.Internal)
-}
-
-func (r *rpcProvider) ClearPooledConnections(node *proto.DataServerIdentity) {
-	r.pool.Clear(node.Internal)
 }

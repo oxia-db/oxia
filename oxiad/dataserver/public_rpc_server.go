@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -63,15 +64,17 @@ type publicRpcServer struct {
 	assignmentDispatcher       assignment.ShardAssignmentsDispatcher
 	disableAuthorityValidation bool
 	grpcServer                 oxiadcommonrpc.GrpcServer
+	healthServer               oxiadcommonrpc.HealthServer
 	log                        *slog.Logger
 }
 
 func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
-	disableAuthorityValidation bool, tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
+	healthServer oxiadcommonrpc.HealthServer, disableAuthorityValidation bool, tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
 		shardsDirector:             shardsDirector,
 		assignmentDispatcher:       assignmentDispatcher,
 		disableAuthorityValidation: disableAuthorityValidation,
+		healthServer:               healthServer,
 		log: slog.With(
 			slog.String("component", "public-rpc-server"),
 		),
@@ -81,6 +84,7 @@ func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string
 	server.grpcServer, err = provider.StartGrpcServer("public", bindAddress, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaClientServer(registrar, server)
 		compat.RegisterOxiaClientServer(registrar, &compatPublicRpcServer{impl: server})
+		grpc_health_v1.RegisterHealthServer(registrar, server.healthServer)
 	}, tlsConf, options, nil)
 	if err != nil {
 		return nil, err

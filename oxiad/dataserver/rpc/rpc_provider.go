@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"time"
 
 	"google.golang.org/grpc/metadata"
 
@@ -28,8 +27,6 @@ import (
 	"github.com/oxia-db/oxia/common/security"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 )
-
-const rpcTimeout = 30 * time.Second
 
 type ReplicateStreamProvider interface {
 	GetReplicateStream(ctx context.Context, follower string, namespace string, shard int64, term int64) (proto.OxiaLogReplication_ReplicateClient, error)
@@ -97,7 +94,7 @@ func (r *replicationRpcProvider) Truncate(follower string, req *proto.TruncateRe
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), commonrpc.DefaultRpcTimeout)
 	defer cancel()
 
 	return client.Truncate(ctx, req)
