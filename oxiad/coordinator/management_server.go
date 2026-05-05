@@ -193,6 +193,11 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 	if keySorting == proto.KeySortingType_UNKNOWN {
 		return nil, grpcstatus.Error(codes.InvalidArgument, `namespace key sorting must be one of "natural" or "hierarchical"`)
 	}
+	for idx, antiAffinity := range req.Namespace.GetAntiAffinities() {
+		if err := antiAffinity.Validate(); err != nil {
+			return nil, grpcstatus.Errorf(codes.InvalidArgument, "namespace anti-affinities[%d] is invalid: %v", idx, err)
+		}
+	}
 
 	err = management.metadata.CreateNamespace(req.Namespace)
 	if err != nil {
@@ -226,11 +231,21 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	if req.Namespace.GetKeySorting() != "" {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace key sorting cannot be patched")
 	}
-	if len(req.Namespace.GetAntiAffinities()) > 0 {
-		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace anti-affinities cannot be patched")
+	if len(req.Namespace.GetAntiAffinities()) > 0 && !req.GetUpdateAntiAffinities() {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace anti-affinities require update anti-affinities")
+	}
+	if req.GetUpdateAntiAffinities() {
+		for idx, antiAffinity := range req.Namespace.GetAntiAffinities() {
+			if err := antiAffinity.Validate(); err != nil {
+				return nil, grpcstatus.Errorf(codes.InvalidArgument, "namespace anti-affinities[%d] is invalid: %v", idx, err)
+			}
+		}
 	}
 
-	namespace, err := management.metadata.PatchNamespace(req.Namespace)
+	namespace, err := management.metadata.PatchNamespace(coordmetadata.NamespacePatch{
+		Namespace:            req.Namespace,
+		UpdateAntiAffinities: req.GetUpdateAntiAffinities(),
+	})
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace.GetName())

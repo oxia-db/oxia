@@ -21,6 +21,7 @@ const (
 	ReplicationFactorFlagName = "replication-factor"
 	NotificationsFlagName     = "notifications"
 	KeySortingFlagName        = "key-sorting"
+	AntiAffinityFlagName      = "anti-affinity"
 )
 
 type NamespaceFields struct {
@@ -28,6 +29,7 @@ type NamespaceFields struct {
 	ReplicationFactor uint32
 	Notifications     bool
 	KeySorting        string
+	AntiAffinities    []string
 }
 
 func (f *NamespaceFields) AddFlags(cmd *cobra.Command) {
@@ -36,6 +38,7 @@ func (f *NamespaceFields) AddFlags(cmd *cobra.Command) {
 	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor for the namespace")
 	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
 	cmd.Flags().StringVar(&f.KeySorting, KeySortingFlagName, f.KeySorting, `Key sorting. allowed: "hierarchical", "natural"`)
+	cmd.Flags().StringArrayVar(&f.AntiAffinities, AntiAffinityFlagName, nil, `Anti-affinity rule in labels=mode form. Example: "zone=strict" or "zone,rack=strict"`)
 	_ = cmd.RegisterFlagCompletionFunc(KeySortingFlagName, keySortingCompletion)
 }
 
@@ -43,6 +46,7 @@ func (f *NamespaceFields) AddPatchFlags(cmd *cobra.Command) {
 	f.Reset()
 	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor for the namespace")
 	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
+	cmd.Flags().StringArrayVar(&f.AntiAffinities, AntiAffinityFlagName, nil, `Anti-affinity rule in labels=mode form. Example: "zone=strict" or "zone,rack=strict"`)
 }
 
 func (f *NamespaceFields) Reset() {
@@ -50,6 +54,7 @@ func (f *NamespaceFields) Reset() {
 	f.ReplicationFactor = 0
 	f.Notifications = true
 	f.KeySorting = "hierarchical"
+	f.AntiAffinities = nil
 }
 
 func keySortingCompletion(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {

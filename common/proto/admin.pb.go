@@ -559,10 +559,11 @@ func (x *CreateNamespaceResponse) GetNamespace() *Namespace {
 }
 
 type PatchNamespaceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Namespace     *Namespace             `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Namespace            *Namespace             `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	UpdateAntiAffinities bool                   `protobuf:"varint,2,opt,name=update_anti_affinities,json=updateAntiAffinities,proto3" json:"update_anti_affinities,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *PatchNamespaceRequest) Reset() {
@@ -600,6 +601,13 @@ func (x *PatchNamespaceRequest) GetNamespace() *Namespace {
 		return x.Namespace
 	}
 	return nil
+}
+
+func (x *PatchNamespaceRequest) GetUpdateAntiAffinities() bool {
+	if x != nil {
+		return x.UpdateAntiAffinities
+	}
+	return false
 }
 
 type PatchNamespaceResponse struct {
@@ -1050,9 +1058,10 @@ const file_admin_proto_rawDesc = "" +
 	"\x16CreateNamespaceRequest\x129\n" +
 	"\tnamespace\x18\x01 \x01(\v2\x1b.io.oxia.proto.v1.NamespaceR\tnamespace\"T\n" +
 	"\x17CreateNamespaceResponse\x129\n" +
-	"\tnamespace\x18\x01 \x01(\v2\x1b.io.oxia.proto.v1.NamespaceR\tnamespace\"R\n" +
+	"\tnamespace\x18\x01 \x01(\v2\x1b.io.oxia.proto.v1.NamespaceR\tnamespace\"\x88\x01\n" +
 	"\x15PatchNamespaceRequest\x129\n" +
-	"\tnamespace\x18\x01 \x01(\v2\x1b.io.oxia.proto.v1.NamespaceR\tnamespace\"S\n" +
+	"\tnamespace\x18\x01 \x01(\v2\x1b.io.oxia.proto.v1.NamespaceR\tnamespace\x124\n" +
+	"\x16update_anti_affinities\x18\x02 \x01(\bR\x14updateAntiAffinities\"S\n" +
 	"\x16PatchNamespaceResponse\x129\n" +
 	"\tnamespace\x18\x01 \x01(\v2\x1b.io.oxia.proto.v1.NamespaceR\tnamespace\"6\n" +
 	"\x16DeleteNamespaceRequest\x12\x1c\n" +

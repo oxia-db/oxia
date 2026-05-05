@@ -458,6 +458,86 @@ func TestManagementServerPatchNamespace(t *testing.T) {
 	assert.Equal(t, "hierarchical", namespace.UnsafeBorrow().GetKeySorting())
 }
 
+func TestManagementServerPatchNamespaceAntiAffinities(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{{
+				Name:              "ns-1",
+				InitialShardCount: 1,
+				ReplicationFactor: 1,
+				KeySorting:        "hierarchical",
+				AntiAffinities: []*proto.AntiAffinity{{
+					Labels: []string{"rack"},
+					Mode:   proto.AntiAffinityModeStrict,
+				}},
+			}},
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	res, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
+		Namespace: &proto.Namespace{
+			Name: "ns-1",
+			AntiAffinities: []*proto.AntiAffinity{{
+				Labels: []string{"zone"},
+				Mode:   proto.AntiAffinityModeRelaxed,
+			}},
+		},
+		UpdateAntiAffinities: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Len(t, res.Namespace.GetAntiAffinities(), 1)
+	assert.Equal(t, []string{"zone"}, res.Namespace.GetAntiAffinities()[0].GetLabels())
+	assert.Equal(t, proto.AntiAffinityModeRelaxed, res.Namespace.GetAntiAffinities()[0].GetMode())
+
+	namespace, found := management.metadata.GetNamespace("ns-1")
+	require.True(t, found)
+	require.Len(t, namespace.UnsafeBorrow().GetAntiAffinities(), 1)
+	assert.Equal(t, []string{"zone"}, namespace.UnsafeBorrow().GetAntiAffinities()[0].GetLabels())
+	assert.Equal(t, proto.AntiAffinityModeRelaxed, namespace.UnsafeBorrow().GetAntiAffinities()[0].GetMode())
+}
+
+func TestManagementServerPatchNamespaceClearsAntiAffinities(t *testing.T) {
+	serverName := "server-1"
+	management := newManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{{
+				Name:              "ns-1",
+				InitialShardCount: 1,
+				ReplicationFactor: 1,
+				KeySorting:        "hierarchical",
+				AntiAffinities: []*proto.AntiAffinity{{
+					Labels: []string{"zone"},
+					Mode:   proto.AntiAffinityModeStrict,
+				}},
+			}},
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	res, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
+		Namespace: &proto.Namespace{
+			Name: "ns-1",
+		},
+		UpdateAntiAffinities: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Empty(t, res.Namespace.GetAntiAffinities())
+
+	namespace, found := management.metadata.GetNamespace("ns-1")
+	require.True(t, found)
+	assert.Empty(t, namespace.UnsafeBorrow().GetAntiAffinities())
+}
+
 func TestManagementServerPatchNamespacePreservesUnspecifiedFields(t *testing.T) {
 	serverName := "server-1"
 	notificationsEnabled := true
@@ -523,6 +603,16 @@ func TestManagementServerPatchNamespaceRejectsInvalidRequest(t *testing.T) {
 				Mode:   proto.AntiAffinityModeStrict,
 			}},
 		}}},
+		{name: "invalid anti affinity", req: &proto.PatchNamespaceRequest{
+			Namespace: &proto.Namespace{
+				Name: "ns-1",
+				AntiAffinities: []*proto.AntiAffinity{{
+					Labels: []string{"zone"},
+					Mode:   "unknown",
+				}},
+			},
+			UpdateAntiAffinities: true,
+		}},
 	}
 
 	for _, tt := range testCases {

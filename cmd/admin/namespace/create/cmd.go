@@ -22,6 +22,7 @@ import (
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/cmd/admin/namespace/option"
 	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
+	cmdparse "github.com/oxia-db/oxia/cmd/common/parse"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxia"
@@ -70,6 +71,10 @@ func exec(cmd *cobra.Command, args []string) error {
 	if keySorting == proto.KeySortingType_UNKNOWN {
 		return errors.New(`key sorting must be one of "natural" or "hierarchical"`)
 	}
+	antiAffinities, err := cmdparse.AntiAffinities(fields.AntiAffinities)
+	if err != nil {
+		return err
+	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
 	if err != nil {
@@ -85,6 +90,7 @@ func exec(cmd *cobra.Command, args []string) error {
 		ReplicationFactor:    fields.ReplicationFactor,
 		NotificationsEnabled: &fields.Notifications,
 		KeySorting:           fields.KeySorting,
+		AntiAffinities:       antiAffinities,
 	})
 	if err != nil {
 		return err

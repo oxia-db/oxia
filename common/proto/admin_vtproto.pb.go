@@ -235,6 +235,7 @@ func (m *PatchNamespaceRequest) CloneVT() *PatchNamespaceRequest {
 	}
 	r := new(PatchNamespaceRequest)
 	r.Namespace = m.Namespace.CloneVT()
+	r.UpdateAntiAffinities = m.UpdateAntiAffinities
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -656,6 +657,9 @@ func (this *PatchNamespaceRequest) EqualVT(that *PatchNamespaceRequest) bool {
 		return false
 	}
 	if !this.Namespace.EqualVT(that.Namespace) {
+		return false
+	}
+	if this.UpdateAntiAffinities != that.UpdateAntiAffinities {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1391,6 +1395,16 @@ func (m *PatchNamespaceRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error)
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.UpdateAntiAffinities {
+		i--
+		if m.UpdateAntiAffinities {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x10
+	}
 	if m.Namespace != nil {
 		size, err := m.Namespace.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
@@ -1959,6 +1973,9 @@ func (m *PatchNamespaceRequest) SizeVT() (n int) {
 	if m.Namespace != nil {
 		l = m.Namespace.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.UpdateAntiAffinities {
+		n += 2
 	}
 	n += len(m.unknownFields)
 	return n
@@ -3159,6 +3176,26 @@ func (m *PatchNamespaceRequest) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field UpdateAntiAffinities", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.UpdateAntiAffinities = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -5026,6 +5063,26 @@ func (m *PatchNamespaceRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field UpdateAntiAffinities", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.UpdateAntiAffinities = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
