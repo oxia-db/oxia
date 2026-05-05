@@ -20,7 +20,7 @@ import (
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/cmd/admin/dataserver"
 	"github.com/oxia-db/oxia/cmd/admin/namespace"
-	"github.com/oxia-db/oxia/cmd/admin/splitshard"
+	"github.com/oxia-db/oxia/cmd/admin/shard"
 	oxiacommon "github.com/oxia-db/oxia/common/constant"
 
 	"github.com/spf13/cobra"
@@ -41,5 +41,5 @@ func init() {
 
 	Cmd.AddCommand(dataserver.Cmd)
 	Cmd.AddCommand(namespace.Cmd)
-	Cmd.AddCommand(splitshard.Cmd)
+	Cmd.AddCommand(shard.Cmd)
 }

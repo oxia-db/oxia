@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package splitshard
+package split
 
 import (
 	"github.com/spf13/cobra"
@@ -37,7 +37,7 @@ func init() {
 }
 
 var Cmd = &cobra.Command{
-	Use:          "split-shard",
+	Use:          "split",
 	Short:        "Split a shard into two children",
 	Long:         `Split a shard into two children at the specified split point (or midpoint if not specified)`,
 	Args:         cobra.ExactArgs(0),
