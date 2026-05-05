@@ -30,7 +30,7 @@ import (
 )
 
 type Raft struct {
-	sync.Mutex
+	mu          sync.Mutex
 	sc          *stateContainer
 	node        *hashicorpraft.Raft
 	store       *kvRaftStore
