@@ -46,6 +46,8 @@ func init() {
 	Cmd.PersistentFlags().StringVarP(&common.Config.ServiceAddr, "service-address", "a", defaultServiceAddress, "Service address")
 	Cmd.PersistentFlags().StringVarP(&common.Config.Namespace, "namespace", "n", oxia.DefaultNamespace, "The Oxia namespace to use")
 	Cmd.PersistentFlags().DurationVar(&common.Config.RequestTimeout, "request-timeout", oxia.DefaultRequestTimeout, "Requests timeout")
+	Cmd.PersistentFlags().StringVar(&common.Config.Auth.Token, "auth-token", "", "Bearer token for authenticated requests")
+	Cmd.PersistentFlags().StringVar(&common.Config.Auth.TokenFile, "auth-token-file", "", "Path to bearer token file for authenticated requests")
 
 	Cmd.AddCommand(put.Cmd)
 	Cmd.AddCommand(del.Cmd)
