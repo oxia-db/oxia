@@ -45,12 +45,9 @@ func exec(cmd *cobra.Command, args []string) error {
 	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
 		return err
 	}
-	effective := false
-	if cmd.Flags().Lookup(effectiveFlagName) != nil {
-		effective, err = cmd.Flags().GetBool(effectiveFlagName)
-		if err != nil {
-			return err
-		}
+	effective, err := cmd.Flags().GetBool(effectiveFlagName)
+	if err != nil {
+		return err
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()

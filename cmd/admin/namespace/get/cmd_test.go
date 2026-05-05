@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -29,16 +30,24 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func runCmd(cmd *cobra.Command, args ...string) (string, error) {
+func runCmd(args ...string) (string, error) {
 	actual := new(bytes.Buffer)
 	root := &cobra.Command{Use: "admin"}
 	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
-	root.AddCommand(cmd)
+	root.AddCommand(Cmd)
 	root.SetOut(actual)
 	root.SetErr(actual)
 	root.SetArgs(append([]string{"get"}, args...))
 	err := root.Execute()
+	resetCmd()
 	return strings.TrimSpace(actual.String()), err
+}
+
+func resetCmd() {
+	Cmd.Flags().VisitAll(func(flag *pflag.Flag) {
+		_ = flag.Value.Set(flag.DefValue)
+		flag.Changed = false
+	})
 }
 
 func Test_cmd_getNamespace(t *testing.T) {
@@ -51,15 +60,7 @@ func Test_cmd_getNamespace(t *testing.T) {
 		Policy: proto.NewHierarchyPolicies(4, 3, true, proto.KeySortingType_NATURAL.String()),
 	}, nil)
 
-	cmd := &cobra.Command{
-		Use:          Cmd.Use,
-		Short:        Cmd.Short,
-		Long:         Cmd.Long,
-		Args:         Cmd.Args,
-		RunE:         Cmd.RunE,
-		SilenceUsage: Cmd.SilenceUsage,
-	}
-	out, err := runCmd(cmd, "-o", "json", "ns-1")
+	out, err := runCmd("-o", "json", "ns-1")
 	require.NoError(t, err)
 
 	var namespace proto.Namespace
@@ -69,6 +70,21 @@ func Test_cmd_getNamespace(t *testing.T) {
 	assert.EqualValues(t, 4, policy.GetInitialShardCount())
 	assert.EqualValues(t, 3, policy.GetReplicationFactor())
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), policy.GetKeySorting())
+}
+
+func Test_cmd_getNamespace_Effective(t *testing.T) {
+	commons.MockedAdminClient = commons.NewMockAdminClient()
+	t.Cleanup(func() { commons.MockedAdminClient = nil })
+
+	commons.MockedAdminClient.On("Close").Return(nil)
+	commons.MockedAdminClient.On("GetNamespace", "ns-1", true).Return(&proto.Namespace{
+		Name:   "ns-1",
+		Policy: proto.NewHierarchyPolicies(4, 3, true, proto.KeySortingType_NATURAL.String()),
+	}, nil)
+
+	out, err := runCmd("--effective", "-o", "name", "ns-1")
+	require.NoError(t, err)
+	assert.Equal(t, "namespace/ns-1", out)
 }
 
 func Test_cmd_getNamespaces(t *testing.T) {
@@ -87,15 +103,7 @@ func Test_cmd_getNamespaces(t *testing.T) {
 		},
 	}, nil)
 
-	cmd := &cobra.Command{
-		Use:          Cmd.Use,
-		Short:        Cmd.Short,
-		Long:         Cmd.Long,
-		Args:         Cmd.Args,
-		RunE:         Cmd.RunE,
-		SilenceUsage: Cmd.SilenceUsage,
-	}
-	out, err := runCmd(cmd)
+	out, err := runCmd()
 	require.NoError(t, err)
 	assert.Equal(t, "namespace/ns-1\nnamespace/ns-2", out)
 }
@@ -112,15 +120,7 @@ func Test_cmd_getNamespaces_JSON(t *testing.T) {
 		},
 	}, nil)
 
-	cmd := &cobra.Command{
-		Use:          Cmd.Use,
-		Short:        Cmd.Short,
-		Long:         Cmd.Long,
-		Args:         Cmd.Args,
-		RunE:         Cmd.RunE,
-		SilenceUsage: Cmd.SilenceUsage,
-	}
-	out, err := runCmd(cmd, "-o", "json")
+	out, err := runCmd("-o", "json")
 	require.NoError(t, err)
 
 	var namespaces []proto.Namespace
@@ -139,15 +139,7 @@ func Test_cmd_getNamespace_Name(t *testing.T) {
 		Policy: proto.NewHierarchyPolicies(4, 3, true, "hierarchical"),
 	}, nil)
 
-	cmd := &cobra.Command{
-		Use:          Cmd.Use,
-		Short:        Cmd.Short,
-		Long:         Cmd.Long,
-		Args:         Cmd.Args,
-		RunE:         Cmd.RunE,
-		SilenceUsage: Cmd.SilenceUsage,
-	}
-	out, err := runCmd(cmd, "-o", "name", "ns-1")
+	out, err := runCmd("-o", "name", "ns-1")
 	require.NoError(t, err)
 	assert.Equal(t, "namespace/ns-1", out)
 }
@@ -162,15 +154,7 @@ func Test_cmd_getNamespace_DefaultTable(t *testing.T) {
 		Policy: proto.NewHierarchyPolicies(4, 3, true, proto.KeySortingType_NATURAL.String()),
 	}, nil)
 
-	cmd := &cobra.Command{
-		Use:          Cmd.Use,
-		Short:        Cmd.Short,
-		Long:         Cmd.Long,
-		Args:         Cmd.Args,
-		RunE:         Cmd.RunE,
-		SilenceUsage: Cmd.SilenceUsage,
-	}
-	out, err := runCmd(cmd, "ns-1")
+	out, err := runCmd("ns-1")
 	require.NoError(t, err)
 	assert.Contains(t, out, "NAME")
 	assert.Contains(t, out, "INITIAL_SHARDS")
@@ -187,15 +171,7 @@ func Test_cmd_getNamespace_DefaultTable(t *testing.T) {
 func Test_cmd_getNamespace_InvalidOutput(t *testing.T) {
 	commons.MockedAdminClient = nil
 
-	cmd := &cobra.Command{
-		Use:          Cmd.Use,
-		Short:        Cmd.Short,
-		Long:         Cmd.Long,
-		Args:         Cmd.Args,
-		RunE:         Cmd.RunE,
-		SilenceUsage: Cmd.SilenceUsage,
-	}
-	out, err := runCmd(cmd, "-o", "xml", "ns-1")
+	out, err := runCmd("-o", "xml", "ns-1")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unsupported output format "xml"`)
 	assert.Contains(t, out, `unsupported output format "xml"`)
