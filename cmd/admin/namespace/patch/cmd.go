@@ -22,7 +22,6 @@ import (
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/cmd/admin/namespace/option"
 	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
-	cmdparse "github.com/oxia-db/oxia/cmd/common/parse"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxia"
@@ -59,16 +58,11 @@ func exec(cmd *cobra.Command, args []string) error {
 
 	replicationFactorChanged := cmd.Flags().Changed(option.ReplicationFactorFlagName)
 	notificationsChanged := cmd.Flags().Changed(option.NotificationsFlagName)
-	antiAffinitiesChanged := cmd.Flags().Changed(option.AntiAffinityFlagName)
-	if !replicationFactorChanged && !notificationsChanged && !antiAffinitiesChanged {
+	if !replicationFactorChanged && !notificationsChanged {
 		return errors.New("must specify at least one field to patch")
 	}
 	if replicationFactorChanged && fields.ReplicationFactor == 0 {
 		return errors.New("namespace replication factor must be greater than 0")
-	}
-	antiAffinities, err := cmdparse.AntiAffinities(fields.AntiAffinities)
-	if err != nil {
-		return err
 	}
 
 	namespace := &proto.Namespace{
@@ -79,9 +73,6 @@ func exec(cmd *cobra.Command, args []string) error {
 	}
 	if notificationsChanged {
 		namespace.NotificationsEnabled = &fields.Notifications
-	}
-	if antiAffinitiesChanged {
-		namespace.AntiAffinities = antiAffinities
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()

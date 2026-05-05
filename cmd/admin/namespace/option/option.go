@@ -14,18 +14,13 @@
 
 package option
 
-import (
-	"github.com/spf13/cobra"
-
-	cmdparse "github.com/oxia-db/oxia/cmd/common/parse"
-)
+import "github.com/spf13/cobra"
 
 const (
 	InitialShardsFlagName     = "initial-shards"
 	ReplicationFactorFlagName = "replication-factor"
 	NotificationsFlagName     = "notifications"
 	KeySortingFlagName        = "key-sorting"
-	AntiAffinityFlagName      = "anti-affinity"
 )
 
 type NamespaceFields struct {
@@ -33,7 +28,6 @@ type NamespaceFields struct {
 	ReplicationFactor uint32
 	Notifications     bool
 	KeySorting        string
-	AntiAffinities    []string
 }
 
 func (f *NamespaceFields) AddFlags(cmd *cobra.Command) {
@@ -42,7 +36,6 @@ func (f *NamespaceFields) AddFlags(cmd *cobra.Command) {
 	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor for the namespace")
 	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
 	cmd.Flags().StringVar(&f.KeySorting, KeySortingFlagName, f.KeySorting, `Key sorting. allowed: "hierarchical", "natural"`)
-	addAntiAffinityFlag(cmd, &f.AntiAffinities)
 	_ = cmd.RegisterFlagCompletionFunc(KeySortingFlagName, keySortingCompletion)
 }
 
@@ -50,7 +43,6 @@ func (f *NamespaceFields) AddPatchFlags(cmd *cobra.Command) {
 	f.Reset()
 	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor for the namespace")
 	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
-	addAntiAffinityFlag(cmd, &f.AntiAffinities)
 }
 
 func (f *NamespaceFields) Reset() {
@@ -58,7 +50,6 @@ func (f *NamespaceFields) Reset() {
 	f.ReplicationFactor = 0
 	f.Notifications = true
 	f.KeySorting = "hierarchical"
-	f.AntiAffinities = nil
 }
 
 func keySortingCompletion(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
@@ -66,14 +57,4 @@ func keySortingCompletion(_ *cobra.Command, _ []string, _ string) ([]string, cob
 		"hierarchical\tUse file-system like hierarchical sorting based on `/`",
 		"natural\tUse natural, byte-wise sorting",
 	}, cobra.ShellCompDirectiveDefault
-}
-
-func addAntiAffinityFlag(cmd *cobra.Command, target *[]string) {
-	cmd.Flags().StringArrayVar(
-		target,
-		AntiAffinityFlagName,
-		nil,
-		`Anti-affinity rule in labels=mode form. Example: "--anti-affinity=zone=strict" or "--anti-affinity=zone,rack=strict". Use without a value to clear.`,
-	)
-	cmd.Flags().Lookup(AntiAffinityFlagName).NoOptDefVal = cmdparse.AntiAffinityClearValue
 }

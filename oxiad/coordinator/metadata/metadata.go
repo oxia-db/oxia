@@ -364,8 +364,6 @@ func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonpro
 
 func (m *coordinatorMetadata) CreateNamespace(namespace *commonproto.Namespace) error {
 	name := namespace.GetName()
-	namespace = namespace.CloneVT()
-	namespace.UpdateAntiAffinities = nil
 
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		for _, existing := range config.GetNamespaces() {
@@ -401,10 +399,6 @@ func (m *coordinatorMetadata) PatchNamespace(desiredNamespace *commonproto.Names
 				notificationsEnabled := desiredNamespace.GetNotificationsEnabled()
 				namespace.NotificationsEnabled = &notificationsEnabled
 			}
-			if desiredNamespace.UpdateAntiAffinities != nil {
-				namespace.AntiAffinities = desiredNamespace.GetAntiAffinities()
-			}
-			namespace.UpdateAntiAffinities = nil
 
 			updated = namespace
 			return config, nil

@@ -45,7 +45,6 @@ message Namespace {
   optional bool notifications_enabled = 4;
   string key_sorting = 5;
   repeated AntiAffinity anti_affinities = 6;
-  optional bool update_anti_affinities = 7;
 }
 
 message LoadBalancer {

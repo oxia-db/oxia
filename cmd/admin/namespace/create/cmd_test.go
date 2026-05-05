@@ -54,10 +54,6 @@ func Test_cmd_createNamespace(t *testing.T) {
 		ReplicationFactor:    3,
 		NotificationsEnabled: &notificationsEnabled,
 		KeySorting:           "natural",
-		AntiAffinities: []*proto.AntiAffinity{{
-			Labels: []string{"zone"},
-			Mode:   proto.AntiAffinityModeStrict,
-		}},
 	}
 
 	commons.MockedAdminClient.On("Close").Return(nil)
@@ -67,9 +63,7 @@ func Test_cmd_createNamespace(t *testing.T) {
 			namespace.GetReplicationFactor() == 3 &&
 			namespace.GetNotificationsEnabled() == notificationsEnabled &&
 			namespace.GetKeySorting() == "natural" &&
-			len(namespace.GetAntiAffinities()) == 1 &&
-			assert.ObjectsAreEqual([]string{"zone"}, namespace.GetAntiAffinities()[0].GetLabels()) &&
-			namespace.GetAntiAffinities()[0].GetMode() == proto.AntiAffinityModeStrict
+			len(namespace.GetAntiAffinities()) == 0
 	})).Return(expected, nil)
 
 	cmd := &cobra.Command{
@@ -84,7 +78,7 @@ func Test_cmd_createNamespace(t *testing.T) {
 	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
 	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3",
-		"--notifications=false", "--key-sorting", "natural", "--anti-affinity=zone=strict", "-o", "json")
+		"--notifications=false", "--key-sorting", "natural", "-o", "json")
 
 	require.NoError(t, err)
 	var namespace proto.Namespace
@@ -94,9 +88,7 @@ func Test_cmd_createNamespace(t *testing.T) {
 	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
 	assert.False(t, namespace.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", namespace.GetKeySorting())
-	require.Len(t, namespace.GetAntiAffinities(), 1)
-	assert.Equal(t, []string{"zone"}, namespace.GetAntiAffinities()[0].GetLabels())
-	assert.Equal(t, proto.AntiAffinityModeStrict, namespace.GetAntiAffinities()[0].GetMode())
+	assert.Empty(t, namespace.GetAntiAffinities())
 }
 
 func Test_cmd_createNamespace_DefaultTable(t *testing.T) {

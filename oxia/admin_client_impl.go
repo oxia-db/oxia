@@ -157,14 +157,8 @@ func (admin *adminClientImpl) PatchNamespace(namespace *proto.Namespace) (*proto
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	requestNamespace := namespace
-	if namespace != nil && namespace.AntiAffinities != nil {
-		requestNamespace = namespace.CloneVT()
-		updateAntiAffinities := true
-		requestNamespace.UpdateAntiAffinities = &updateAntiAffinities
-	}
 	response, err := client.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
-		Namespace: requestNamespace,
+		Namespace: namespace,
 	})
 	if err != nil {
 		return nil, mapAdminError(err)

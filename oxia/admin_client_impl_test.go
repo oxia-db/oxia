@@ -419,41 +419,12 @@ func TestAdminClientPatchNamespaceReturnsResponse(t *testing.T) {
 
 	namespace, err := admin.PatchNamespace(&proto.Namespace{Name: "ns-1", NotificationsEnabled: &notificationsEnabled})
 	require.NoError(t, err)
-	require.NotNil(t, adminClient.patchNamespaceReq)
-	assert.Nil(t, adminClient.patchNamespaceReq.GetNamespace().UpdateAntiAffinities)
 	require.NotNil(t, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
 	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
 	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
 	assert.False(t, namespace.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", namespace.GetKeySorting())
-}
-
-func TestAdminClientPatchNamespaceSetsAntiAffinitiesUpdateFlag(t *testing.T) {
-	adminClient := &mockAdminRpcClient{
-		patchNamespaceResp: &proto.PatchNamespaceResponse{
-			Namespace: &proto.Namespace{
-				Name: "ns-1",
-			},
-		},
-	}
-	admin := &adminClientImpl{
-		adminAddr: "admin-addr",
-		clientPool: &mockAdminClientPool{
-			adminClient: adminClient,
-		},
-	}
-
-	namespace, err := admin.PatchNamespace(&proto.Namespace{
-		Name:           "ns-1",
-		AntiAffinities: []*proto.AntiAffinity{},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, namespace)
-	require.NotNil(t, adminClient.patchNamespaceReq)
-	require.NotNil(t, adminClient.patchNamespaceReq.GetNamespace().UpdateAntiAffinities)
-	assert.True(t, adminClient.patchNamespaceReq.GetNamespace().GetUpdateAntiAffinities())
-	assert.Empty(t, adminClient.patchNamespaceReq.GetNamespace().GetAntiAffinities())
 }
 
 func TestAdminClientDeleteNamespaceReturnsResponse(t *testing.T) {
