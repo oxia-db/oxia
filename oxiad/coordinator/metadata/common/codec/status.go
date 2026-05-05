@@ -51,7 +51,7 @@ func (statusCodec) NewZero() *commonproto.ClusterStatus {
 	return &commonproto.ClusterStatus{}
 }
 
-func (codec statusCodec) MarshalYAML(value *commonproto.ClusterStatus) ([]byte, error) {
+func (statusCodec) MarshalYAML(value *commonproto.ClusterStatus) ([]byte, error) {
 	jsonBytes, err := protojson.MarshalOptions{
 		UseProtoNames:   false,
 		EmitUnpopulated: false,
