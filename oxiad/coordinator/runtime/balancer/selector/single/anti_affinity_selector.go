@@ -26,8 +26,7 @@ var _ selector.Selector[*Context, string] = &serverAntiAffinitiesSelector{}
 type serverAntiAffinitiesSelector struct{}
 
 func (*serverAntiAffinitiesSelector) Select(ssContext *Context) (string, error) { //nolint:revive
-	nsPolicies := ssContext.HierarchyPolicies
-	if nsPolicies == nil || len(nsPolicies.AntiAffinities) == 0 {
+	if len(ssContext.AntiAffinities) == 0 {
 		return "", selector.ErrNoFunctioning
 	}
 	if ssContext.selected == nil {
@@ -35,7 +34,7 @@ func (*serverAntiAffinitiesSelector) Select(ssContext *Context) (string, error) 
 	}
 	selectedLabelValues := ssContext.LabelGroupedSelectedLabelValues()
 	candidates := linkedhashset.New[string]()
-	for affinityIdx, affinity := range nsPolicies.AntiAffinities {
+	for affinityIdx, affinity := range ssContext.AntiAffinities {
 		for _, label := range affinity.Labels {
 			labelSatisfiedCandidates := linkedhashset.New[string]()
 			labelGroupedCandidates := ssContext.LabelValueGroupedCandidates()[label]

@@ -399,9 +399,6 @@ func (m *coordinatorMetadata) PatchNamespace(desiredNamespace *commonproto.Names
 				notificationsEnabled := desiredNamespace.GetNotificationsEnabled()
 				namespace.NotificationsEnabled = &notificationsEnabled
 			}
-			if policy := desiredNamespace.GetPolicy(); policy != nil {
-				namespace.Policy = policy
-			}
 
 			updated = namespace
 			return config, nil

@@ -38,17 +38,13 @@ message AntiAffinity {
   string mode = 2;
 }
 
-message HierarchyPolicies {
-  repeated AntiAffinity anti_affinities = 1;
-}
-
 message Namespace {
   string name = 1;
   uint32 initial_shard_count = 2;
   uint32 replication_factor = 3;
   optional bool notifications_enabled = 4;
   string key_sorting = 5;
-  HierarchyPolicies policy = 6;
+  repeated AntiAffinity anti_affinities = 6;
 }
 
 message LoadBalancer {

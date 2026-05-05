@@ -36,12 +36,9 @@ func TestSelectNoAntiAffinities(t *testing.T) {
 		"server5": {Labels: map[string]string{"region": "ap-east"}},
 		"server6": {Labels: map[string]string{"region": "ap-west"}},
 	}
-	var nsPolicies *proto.HierarchyPolicies
-
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New[string]("server1", "server2", "server3", "server4", "server5", "server6"),
-		HierarchyPolicies:  nsPolicies,
 	}
 	context.SetSelected(linkedhashset.New[string]())
 
@@ -59,12 +56,10 @@ func TestSelectSatisfiedAntiAffinities(t *testing.T) {
 		"server5": {Labels: map[string]string{"region": "ap-east"}},
 		"server6": {Labels: map[string]string{"region": "ap-west"}},
 	}
-	nsPolicies := &proto.HierarchyPolicies{
-		AntiAffinities: []*proto.AntiAffinity{
-			{
-				Labels: []string{"region"},
-				Mode:   proto.AntiAffinityModeStrict,
-			},
+	antiAffinities := []*proto.AntiAffinity{
+		{
+			Labels: []string{"region"},
+			Mode:   proto.AntiAffinityModeStrict,
 		},
 	}
 	selected := linkedhashset.New[string]()
@@ -72,7 +67,7 @@ func TestSelectSatisfiedAntiAffinities(t *testing.T) {
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("server1", "server2", "server3", "server4", "server5", "server6"),
-		HierarchyPolicies:  nsPolicies,
+		AntiAffinities:     antiAffinities,
 	}
 	context.SetSelected(selected)
 
@@ -114,19 +109,17 @@ func TestSelectUnsatisfiedAntiAffinitiesStrict(t *testing.T) {
 		"server5": {Labels: map[string]string{"region": "us-east"}},
 		"server6": {Labels: map[string]string{"region": "us-east"}},
 	}
-	nsPolicies := &proto.HierarchyPolicies{
-		AntiAffinities: []*proto.AntiAffinity{
-			{
-				Labels: []string{"region"},
-				Mode:   proto.AntiAffinityModeStrict,
-			},
+	antiAffinities := []*proto.AntiAffinity{
+		{
+			Labels: []string{"region"},
+			Mode:   proto.AntiAffinityModeStrict,
 		},
 	}
 	selected := linkedhashset.New[string]()
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("server1", "server2", "server3", "server4", "server5", "server6"),
-		HierarchyPolicies:  nsPolicies,
+		AntiAffinities:     antiAffinities,
 	}
 	result, err := saSelector.Select(context)
 	assert.ErrorIs(t, err, selector.ErrMultipleResult)
@@ -155,19 +148,17 @@ func TestSelectUnsatisfiedAntiAffinitiesRelax(t *testing.T) {
 		"server5": {Labels: map[string]string{"region": "us-east"}},
 		"server6": {Labels: map[string]string{"region": "us-east"}},
 	}
-	nsPolicies := &proto.HierarchyPolicies{
-		AntiAffinities: []*proto.AntiAffinity{
-			{
-				Labels: []string{"region"},
-				Mode:   proto.AntiAffinityModeRelaxed,
-			},
+	antiAffinities := []*proto.AntiAffinity{
+		{
+			Labels: []string{"region"},
+			Mode:   proto.AntiAffinityModeRelaxed,
 		},
 	}
 	selectedServers := linkedhashset.New[string]()
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("server1", "server2", "server3", "server4", "server5", "server6"),
-		HierarchyPolicies:  nsPolicies,
+		AntiAffinities:     antiAffinities,
 	}
 	context.SetSelected(selectedServers)
 	result, err := saSelector.Select(context)
@@ -195,18 +186,16 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 		"s3": {Labels: map[string]string{"region": "us-south", "type": "storage1"}},
 		"s4": {Labels: map[string]string{"region": "us-west", "type": "storage2"}},
 	}
-	nsPolicies := &proto.HierarchyPolicies{
-		AntiAffinities: []*proto.AntiAffinity{
-			{Labels: []string{"region"}, Mode: proto.AntiAffinityModeStrict},
-			{Labels: []string{"type"}, Mode: proto.AntiAffinityModeStrict},
-		},
+	antiAffinities := []*proto.AntiAffinity{
+		{Labels: []string{"region"}, Mode: proto.AntiAffinityModeStrict},
+		{Labels: []string{"type"}, Mode: proto.AntiAffinityModeStrict},
 	}
 
 	selectedServers := linkedhashset.New[string]()
 	context := &Context{
 		CandidatesMetadata: candidatesMetadata,
 		Candidates:         linkedhashset.New("s1", "s2", "s3", "s4"),
-		HierarchyPolicies:  nsPolicies,
+		AntiAffinities:     antiAffinities,
 	}
 	context.SetSelected(selectedServers)
 

@@ -105,29 +105,6 @@ func (m *AntiAffinity) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
-func (m *HierarchyPolicies) CloneVT() *HierarchyPolicies {
-	if m == nil {
-		return (*HierarchyPolicies)(nil)
-	}
-	r := new(HierarchyPolicies)
-	if rhs := m.AntiAffinities; rhs != nil {
-		tmpContainer := make([]*AntiAffinity, len(rhs))
-		for k, v := range rhs {
-			tmpContainer[k] = v.CloneVT()
-		}
-		r.AntiAffinities = tmpContainer
-	}
-	if len(m.unknownFields) > 0 {
-		r.unknownFields = make([]byte, len(m.unknownFields))
-		copy(r.unknownFields, m.unknownFields)
-	}
-	return r
-}
-
-func (m *HierarchyPolicies) CloneMessageVT() proto.Message {
-	return m.CloneVT()
-}
-
 func (m *Namespace) CloneVT() *Namespace {
 	if m == nil {
 		return (*Namespace)(nil)
@@ -137,10 +114,16 @@ func (m *Namespace) CloneVT() *Namespace {
 	r.InitialShardCount = m.InitialShardCount
 	r.ReplicationFactor = m.ReplicationFactor
 	r.KeySorting = m.KeySorting
-	r.Policy = m.Policy.CloneVT()
 	if rhs := m.NotificationsEnabled; rhs != nil {
 		tmpVal := *rhs
 		r.NotificationsEnabled = &tmpVal
+	}
+	if rhs := m.AntiAffinities; rhs != nil {
+		tmpContainer := make([]*AntiAffinity, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.AntiAffinities = tmpContainer
 	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -460,39 +443,6 @@ func (this *AntiAffinity) EqualMessageVT(thatMsg proto.Message) bool {
 	}
 	return this.EqualVT(that)
 }
-func (this *HierarchyPolicies) EqualVT(that *HierarchyPolicies) bool {
-	if this == that {
-		return true
-	} else if this == nil || that == nil {
-		return false
-	}
-	if len(this.AntiAffinities) != len(that.AntiAffinities) {
-		return false
-	}
-	for i, vx := range this.AntiAffinities {
-		vy := that.AntiAffinities[i]
-		if p, q := vx, vy; p != q {
-			if p == nil {
-				p = &AntiAffinity{}
-			}
-			if q == nil {
-				q = &AntiAffinity{}
-			}
-			if !p.EqualVT(q) {
-				return false
-			}
-		}
-	}
-	return string(this.unknownFields) == string(that.unknownFields)
-}
-
-func (this *HierarchyPolicies) EqualMessageVT(thatMsg proto.Message) bool {
-	that, ok := thatMsg.(*HierarchyPolicies)
-	if !ok {
-		return false
-	}
-	return this.EqualVT(that)
-}
 func (this *Namespace) EqualVT(that *Namespace) bool {
 	if this == that {
 		return true
@@ -514,8 +464,22 @@ func (this *Namespace) EqualVT(that *Namespace) bool {
 	if this.KeySorting != that.KeySorting {
 		return false
 	}
-	if !this.Policy.EqualVT(that.Policy) {
+	if len(this.AntiAffinities) != len(that.AntiAffinities) {
 		return false
+	}
+	for i, vx := range this.AntiAffinities {
+		vy := that.AntiAffinities[i]
+		if p, q := vx, vy; p != q {
+			if p == nil {
+				p = &AntiAffinity{}
+			}
+			if q == nil {
+				q = &AntiAffinity{}
+			}
+			if !p.EqualVT(q) {
+				return false
+			}
+		}
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -1079,51 +1043,6 @@ func (m *AntiAffinity) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *HierarchyPolicies) MarshalVT() (dAtA []byte, err error) {
-	if m == nil {
-		return nil, nil
-	}
-	size := m.SizeVT()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBufferVT(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *HierarchyPolicies) MarshalToVT(dAtA []byte) (int, error) {
-	size := m.SizeVT()
-	return m.MarshalToSizedBufferVT(dAtA[:size])
-}
-
-func (m *HierarchyPolicies) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
-	if m == nil {
-		return 0, nil
-	}
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.unknownFields != nil {
-		i -= len(m.unknownFields)
-		copy(dAtA[i:], m.unknownFields)
-	}
-	if len(m.AntiAffinities) > 0 {
-		for iNdEx := len(m.AntiAffinities) - 1; iNdEx >= 0; iNdEx-- {
-			size, err := m.AntiAffinities[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
-			if err != nil {
-				return 0, err
-			}
-			i -= size
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
-			i--
-			dAtA[i] = 0xa
-		}
-	}
-	return len(dAtA) - i, nil
-}
-
 func (m *Namespace) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
@@ -1154,15 +1073,17 @@ func (m *Namespace) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if m.Policy != nil {
-		size, err := m.Policy.MarshalToSizedBufferVT(dAtA[:i])
-		if err != nil {
-			return 0, err
+	if len(m.AntiAffinities) > 0 {
+		for iNdEx := len(m.AntiAffinities) - 1; iNdEx >= 0; iNdEx-- {
+			size, err := m.AntiAffinities[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+			i--
+			dAtA[i] = 0x32
 		}
-		i -= size
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
-		i--
-		dAtA[i] = 0x32
 	}
 	if len(m.KeySorting) > 0 {
 		i -= len(m.KeySorting)
@@ -1806,22 +1727,6 @@ func (m *AntiAffinity) SizeVT() (n int) {
 	return n
 }
 
-func (m *HierarchyPolicies) SizeVT() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if len(m.AntiAffinities) > 0 {
-		for _, e := range m.AntiAffinities {
-			l = e.SizeVT()
-			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
-		}
-	}
-	n += len(m.unknownFields)
-	return n
-}
-
 func (m *Namespace) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -1845,9 +1750,11 @@ func (m *Namespace) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
-	if m.Policy != nil {
-		l = m.Policy.SizeVT()
-		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	if len(m.AntiAffinities) > 0 {
+		for _, e := range m.AntiAffinities {
+			l = e.SizeVT()
+			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
 	}
 	n += len(m.unknownFields)
 	return n
@@ -2643,91 +2550,6 @@ func (m *AntiAffinity) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *HierarchyPolicies) UnmarshalVT(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return protohelpers.ErrIntOverflow
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: HierarchyPolicies: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: HierarchyPolicies: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AntiAffinities", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.AntiAffinities = append(m.AntiAffinities, &AntiAffinity{})
-			if err := m.AntiAffinities[len(m.AntiAffinities)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.unknownFields = append(m.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
 func (m *Namespace) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -2882,7 +2704,7 @@ func (m *Namespace) UnmarshalVT(dAtA []byte) error {
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Policy", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field AntiAffinities", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -2909,10 +2731,8 @@ func (m *Namespace) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.Policy == nil {
-				m.Policy = &HierarchyPolicies{}
-			}
-			if err := m.Policy.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+			m.AntiAffinities = append(m.AntiAffinities, &AntiAffinity{})
+			if err := m.AntiAffinities[len(m.AntiAffinities)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -5145,91 +4965,6 @@ func (m *AntiAffinity) UnmarshalVTUnsafe(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *HierarchyPolicies) UnmarshalVTUnsafe(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return protohelpers.ErrIntOverflow
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: HierarchyPolicies: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: HierarchyPolicies: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AntiAffinities", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.AntiAffinities = append(m.AntiAffinities, &AntiAffinity{})
-			if err := m.AntiAffinities[len(m.AntiAffinities)-1].UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.unknownFields = append(m.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
 func (m *Namespace) UnmarshalVTUnsafe(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -5392,7 +5127,7 @@ func (m *Namespace) UnmarshalVTUnsafe(dAtA []byte) error {
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Policy", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field AntiAffinities", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -5419,10 +5154,8 @@ func (m *Namespace) UnmarshalVTUnsafe(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.Policy == nil {
-				m.Policy = &HierarchyPolicies{}
-			}
-			if err := m.Policy.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+			m.AntiAffinities = append(m.AntiAffinities, &AntiAffinity{})
+			if err := m.AntiAffinities[len(m.AntiAffinities)-1].UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

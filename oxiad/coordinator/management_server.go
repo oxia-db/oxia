@@ -193,6 +193,9 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 	if keySorting == proto.KeySortingType_UNKNOWN {
 		return nil, grpcstatus.Error(codes.InvalidArgument, `namespace key sorting must be one of "natural" or "hierarchical"`)
 	}
+	if len(req.Namespace.GetAntiAffinities()) > 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace anti-affinities cannot be set on create")
+	}
 
 	err = management.metadata.CreateNamespace(req.Namespace)
 	if err != nil {
@@ -225,6 +228,9 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	}
 	if req.Namespace.GetKeySorting() != "" {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace key sorting cannot be patched")
+	}
+	if len(req.Namespace.GetAntiAffinities()) > 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace anti-affinities cannot be patched")
 	}
 
 	namespace, err := management.metadata.PatchNamespace(req.Namespace)

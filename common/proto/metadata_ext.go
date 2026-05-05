@@ -220,6 +220,13 @@ func (cc *ClusterConfiguration) Validate() error {
 			return fmt.Errorf("cluster configuration: namespace %q has invalid keySorting: %w", ns.GetName(), err)
 		}
 
+		for idx, antiAffinity := range ns.GetAntiAffinities() {
+			if err := antiAffinity.Validate(); err != nil {
+				return fmt.Errorf("cluster configuration: namespace %q has invalid antiAffinities[%d]: %w",
+					ns.GetName(), idx, err)
+			}
+		}
+
 		if ns.GetReplicationFactor() > uint32(len(cc.GetServers())) {
 			return fmt.Errorf("cluster configuration: namespace %q has replicationFactor=%d but only %d servers are configured",
 				ns.GetName(), ns.GetReplicationFactor(), len(cc.GetServers()))
@@ -235,6 +242,21 @@ func (cc *ClusterConfiguration) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func (a *AntiAffinity) Validate() error {
+	if len(a.GetLabels()) == 0 {
+		return errors.New("labels must not be empty")
+	}
+	for _, label := range a.GetLabels() {
+		if strings.TrimSpace(label) == "" {
+			return errors.New("labels must not contain empty values")
+		}
+	}
+	if a.GetModeOrDefault() == AntiAffinityModeUnknown {
+		return errors.New(`mode must be one of "strict" or "relaxed"`)
+	}
 	return nil
 }
 

@@ -187,6 +187,7 @@ func Test_cmd_patchNamespace_RejectsUnsupportedFlags(t *testing.T) {
 	}{
 		{name: "initial shard count", flag: "--initial-shards"},
 		{name: "key sorting", flag: "--key-sorting"},
+		{name: "anti affinity", flag: "--anti-affinity"},
 	}
 
 	for _, tt := range testCases {

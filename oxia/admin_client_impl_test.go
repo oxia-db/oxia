@@ -45,6 +45,7 @@ type mockAdminRpcClient struct {
 	createNamespaceResp     *proto.CreateNamespaceResponse
 	createNamespaceErr      error
 	patchNamespaceResp      *proto.PatchNamespaceResponse
+	patchNamespaceReq       *proto.PatchNamespaceRequest
 	patchNamespaceErr       error
 	deleteNamespaceResp     *proto.DeleteNamespaceResponse
 	deleteNamespaceErr      error
@@ -78,7 +79,12 @@ func (m *mockAdminRpcClient) CreateNamespace(context.Context, *proto.CreateNames
 	return m.createNamespaceResp, m.createNamespaceErr
 }
 
-func (m *mockAdminRpcClient) PatchNamespace(context.Context, *proto.PatchNamespaceRequest, ...grpc.CallOption) (*proto.PatchNamespaceResponse, error) {
+func (m *mockAdminRpcClient) PatchNamespace(
+	_ context.Context,
+	req *proto.PatchNamespaceRequest,
+	_ ...grpc.CallOption,
+) (*proto.PatchNamespaceResponse, error) {
+	m.patchNamespaceReq = req
 	return m.patchNamespaceResp, m.patchNamespaceErr
 }
 
@@ -393,20 +399,21 @@ func TestAdminClientCreateNamespaceReturnsResponse(t *testing.T) {
 
 func TestAdminClientPatchNamespaceReturnsResponse(t *testing.T) {
 	notificationsEnabled := false
+	adminClient := &mockAdminRpcClient{
+		patchNamespaceResp: &proto.PatchNamespaceResponse{
+			Namespace: &proto.Namespace{
+				Name:                 "ns-1",
+				InitialShardCount:    4,
+				ReplicationFactor:    3,
+				NotificationsEnabled: &notificationsEnabled,
+				KeySorting:           "natural",
+			},
+		},
+	}
 	admin := &adminClientImpl{
 		adminAddr: "admin-addr",
 		clientPool: &mockAdminClientPool{
-			adminClient: &mockAdminRpcClient{
-				patchNamespaceResp: &proto.PatchNamespaceResponse{
-					Namespace: &proto.Namespace{
-						Name:                 "ns-1",
-						InitialShardCount:    4,
-						ReplicationFactor:    3,
-						NotificationsEnabled: &notificationsEnabled,
-						KeySorting:           "natural",
-					},
-				},
-			},
+			adminClient: adminClient,
 		},
 	}
 

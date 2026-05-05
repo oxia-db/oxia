@@ -62,7 +62,8 @@ func Test_cmd_createNamespace(t *testing.T) {
 			namespace.GetInitialShardCount() == 4 &&
 			namespace.GetReplicationFactor() == 3 &&
 			namespace.GetNotificationsEnabled() == notificationsEnabled &&
-			namespace.GetKeySorting() == "natural"
+			namespace.GetKeySorting() == "natural" &&
+			len(namespace.GetAntiAffinities()) == 0
 	})).Return(expected, nil)
 
 	cmd := &cobra.Command{
@@ -87,6 +88,7 @@ func Test_cmd_createNamespace(t *testing.T) {
 	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
 	assert.False(t, namespace.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", namespace.GetKeySorting())
+	assert.Empty(t, namespace.GetAntiAffinities())
 }
 
 func Test_cmd_createNamespace_DefaultTable(t *testing.T) {

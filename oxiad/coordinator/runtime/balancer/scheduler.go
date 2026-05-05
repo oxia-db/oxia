@@ -257,7 +257,7 @@ func (r *nodeBasedBalancer) swapShard(
 	sContext := &single.Context{
 		Candidates:         candidates,
 		CandidatesMetadata: metadata,
-		HierarchyPolicies:  nsc.GetPolicy(),
+		AntiAffinities:     nsc.GetAntiAffinities(),
 		Status:             currentStatus,
 		Namespace:          candidateShard.Namespace,
 		Shard:              candidateShard.ShardID,

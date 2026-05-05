@@ -267,7 +267,7 @@ func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Nam
 	ensembleContext := &ensemble.Context{
 		Candidates:         nodes,
 		CandidatesMetadata: metadata,
-		HierarchyPolicies:  ns.GetPolicy(),
+		AntiAffinities:     ns.GetAntiAffinities(),
 		Status:             editingStatus,
 		Namespace:          namespace,
 		Shard:              shard,
