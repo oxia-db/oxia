@@ -14,7 +14,11 @@
 
 package option
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	cmdparse "github.com/oxia-db/oxia/cmd/common/parse"
+)
 
 const (
 	InitialShardsFlagName     = "initial-shards"
@@ -38,7 +42,7 @@ func (f *NamespaceFields) AddFlags(cmd *cobra.Command) {
 	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor for the namespace")
 	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
 	cmd.Flags().StringVar(&f.KeySorting, KeySortingFlagName, f.KeySorting, `Key sorting. allowed: "hierarchical", "natural"`)
-	cmd.Flags().StringArrayVar(&f.AntiAffinities, AntiAffinityFlagName, nil, `Anti-affinity rule in labels=mode form. Example: "zone=strict" or "zone,rack=strict"`)
+	addAntiAffinityFlag(cmd, &f.AntiAffinities)
 	_ = cmd.RegisterFlagCompletionFunc(KeySortingFlagName, keySortingCompletion)
 }
 
@@ -46,7 +50,7 @@ func (f *NamespaceFields) AddPatchFlags(cmd *cobra.Command) {
 	f.Reset()
 	cmd.Flags().Uint32Var(&f.ReplicationFactor, ReplicationFactorFlagName, 0, "Replication factor for the namespace")
 	cmd.Flags().BoolVar(&f.Notifications, NotificationsFlagName, true, "Whether notifications are enabled")
-	cmd.Flags().StringArrayVar(&f.AntiAffinities, AntiAffinityFlagName, nil, `Anti-affinity rule in labels=mode form. Example: "zone=strict" or "zone,rack=strict"`)
+	addAntiAffinityFlag(cmd, &f.AntiAffinities)
 }
 
 func (f *NamespaceFields) Reset() {
@@ -62,4 +66,14 @@ func keySortingCompletion(_ *cobra.Command, _ []string, _ string) ([]string, cob
 		"hierarchical\tUse file-system like hierarchical sorting based on `/`",
 		"natural\tUse natural, byte-wise sorting",
 	}, cobra.ShellCompDirectiveDefault
+}
+
+func addAntiAffinityFlag(cmd *cobra.Command, target *[]string) {
+	cmd.Flags().StringArrayVar(
+		target,
+		AntiAffinityFlagName,
+		nil,
+		`Anti-affinity rule in labels=mode form. Example: "--anti-affinity=zone=strict" or "--anti-affinity=zone,rack=strict". Use without a value to clear.`,
+	)
+	cmd.Flags().Lookup(AntiAffinityFlagName).NoOptDefVal = cmdparse.AntiAffinityClearValue
 }

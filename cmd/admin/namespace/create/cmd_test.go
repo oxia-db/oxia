@@ -84,7 +84,7 @@ func Test_cmd_createNamespace(t *testing.T) {
 	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
 	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3",
-		"--notifications=false", "--key-sorting", "natural", "--anti-affinity", "zone=strict", "-o", "json")
+		"--notifications=false", "--key-sorting", "natural", "--anti-affinity=zone=strict", "-o", "json")
 
 	require.NoError(t, err)
 	var namespace proto.Namespace

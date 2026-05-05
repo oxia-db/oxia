@@ -22,13 +22,21 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+const AntiAffinityClearValue = "__oxia_clear_anti_affinities__"
+
 func AntiAffinities(values []string) ([]*proto.AntiAffinity, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
+	if len(values) == 1 && values[0] == AntiAffinityClearValue {
+		return []*proto.AntiAffinity{}, nil
+	}
 
 	antiAffinities := make([]*proto.AntiAffinity, 0, len(values))
 	for _, value := range values {
+		if value == AntiAffinityClearValue {
+			return nil, errors.New("anti-affinity without value cannot be combined with anti-affinity rules")
+		}
 		labelsValue, modeValue, ok := strings.Cut(value, "=")
 		if !ok {
 			return nil, errors.Errorf("invalid anti-affinity %q, expected labels=mode", value)

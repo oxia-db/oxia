@@ -121,8 +121,8 @@ func Test_cmd_patchNamespace_AntiAffinities(t *testing.T) {
 	}
 	fields.AddPatchFlags(cmd)
 	out, err := runCmd(cmd, "ns-1",
-		"--anti-affinity", "zone=strict",
-		"--anti-affinity", "zone,rack=relaxed",
+		"--anti-affinity=zone=strict",
+		"--anti-affinity=zone,rack=relaxed",
 		"-o", "json")
 
 	require.NoError(t, err)
@@ -133,6 +133,42 @@ func Test_cmd_patchNamespace_AntiAffinities(t *testing.T) {
 	assert.Equal(t, proto.AntiAffinityModeStrict, namespace.GetAntiAffinities()[0].GetMode())
 	assert.Equal(t, []string{"zone", "rack"}, namespace.GetAntiAffinities()[1].GetLabels())
 	assert.Equal(t, proto.AntiAffinityModeRelaxed, namespace.GetAntiAffinities()[1].GetMode())
+}
+
+func Test_cmd_patchNamespace_ClearAntiAffinities(t *testing.T) {
+	commons.MockedAdminClient = commons.NewMockAdminClient()
+	t.Cleanup(func() { commons.MockedAdminClient = nil })
+
+	expected := &proto.Namespace{
+		Name:              "ns-1",
+		InitialShardCount: 4,
+		ReplicationFactor: 3,
+		KeySorting:        "natural",
+		AntiAffinities:    []*proto.AntiAffinity{},
+	}
+
+	commons.MockedAdminClient.On("Close").Return(nil)
+	commons.MockedAdminClient.On("PatchNamespace", mock.MatchedBy(func(namespace *proto.Namespace) bool {
+		return namespace.GetName() == "ns-1" &&
+			namespace.AntiAffinities != nil &&
+			len(namespace.GetAntiAffinities()) == 0
+	})).Return(expected, nil)
+
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "ns-1", "--anti-affinity", "-o", "json")
+
+	require.NoError(t, err)
+	var namespace proto.Namespace
+	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
+	assert.Empty(t, namespace.GetAntiAffinities())
 }
 
 func Test_cmd_patchNamespace_DefaultTable(t *testing.T) {
@@ -285,9 +321,26 @@ func Test_cmd_patchNamespace_RejectsInvalidAntiAffinity(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddPatchFlags(cmd)
-	out, err := runCmd(cmd, "ns-1", "--anti-affinity", "zone=unknown")
+	out, err := runCmd(cmd, "ns-1", "--anti-affinity=zone=unknown")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `invalid anti-affinity mode "unknown"`)
 	assert.Contains(t, out, `invalid anti-affinity mode "unknown"`)
+}
+
+func Test_cmd_patchNamespace_RejectsMixedEmptyAntiAffinity(t *testing.T) {
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	fields.AddPatchFlags(cmd)
+	out, err := runCmd(cmd, "ns-1", "--anti-affinity", "--anti-affinity=zone=strict")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "anti-affinity without value cannot be combined")
+	assert.Contains(t, out, "anti-affinity without value cannot be combined")
 }
