@@ -477,3 +477,30 @@ func TestEncodeClusterStatusYAMLRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, gproto.Equal(status, decoded))
 }
+
+func TestEncodeClusterStatusJSONCompatibility(t *testing.T) {
+	status := &commonproto.ClusterStatus{
+		Namespaces: map[string]*commonproto.NamespaceStatus{
+			"default": {
+				ReplicationFactor: 2,
+				Shards: map[int64]*commonproto.ShardMetadata{
+					1: {
+						Status: commonproto.ShardStatusSteadyState,
+						Split: &commonproto.SplitMetadata{
+							Phase: commonproto.SplitPhaseCatchUp,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	data, err := ClusterStatusCodec.MarshalJSON(status)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"status":"SteadyState"`)
+	require.Contains(t, string(data), `"phase":"CatchUp"`)
+
+	decoded, err := ClusterStatusCodec.UnmarshalJSON(data)
+	require.NoError(t, err)
+	require.True(t, gproto.Equal(status, decoded))
+}

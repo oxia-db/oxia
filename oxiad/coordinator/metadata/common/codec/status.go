@@ -52,7 +52,11 @@ func (statusCodec) NewZero() *commonproto.ClusterStatus {
 }
 
 func (codec statusCodec) MarshalYAML(value *commonproto.ClusterStatus) ([]byte, error) {
-	jsonBytes, err := codec.MarshalJSON(value)
+	jsonBytes, err := protojson.MarshalOptions{
+		UseProtoNames:   false,
+		EmitUnpopulated: false,
+		UseEnumNumbers:  true,
+	}.Marshal(value)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +78,6 @@ func (statusCodec) MarshalJSON(value *commonproto.ClusterStatus) ([]byte, error)
 	return protojson.MarshalOptions{
 		UseProtoNames:   false,
 		EmitUnpopulated: false,
-		UseEnumNumbers:  true,
 	}.Marshal(value)
 }
 
