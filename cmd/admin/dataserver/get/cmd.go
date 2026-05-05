@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	dataserveroutput "github.com/oxia-db/oxia/cmd/admin/dataserver/output"
+	dataservercli "github.com/oxia-db/oxia/cmd/admin/dataserver/cli"
 	"github.com/oxia-db/oxia/oxia"
 )
 
@@ -53,12 +53,12 @@ func exec(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		return dataserveroutput.WriteDataServers(cmd.OutOrStdout(), outputFormat, dataServers)
+		return dataservercli.WriteDataServers(cmd.OutOrStdout(), outputFormat, dataServers)
 	}
 
 	dataServer, err := client.GetDataServer(args[0])
 	if err != nil {
 		return err
 	}
-	return dataserveroutput.WriteDataServer(cmd.OutOrStdout(), outputFormat, dataServer)
+	return dataservercli.WriteDataServer(cmd.OutOrStdout(), outputFormat, dataServer)
 }

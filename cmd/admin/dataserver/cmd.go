@@ -16,7 +16,7 @@ package dataserver
 
 import (
 	createcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/create"
-	"github.com/oxia-db/oxia/cmd/admin/dataserver/deletecmd"
+	deletecmd "github.com/oxia-db/oxia/cmd/admin/dataserver/delete"
 	getcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/get"
 	patchcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/patch"
 

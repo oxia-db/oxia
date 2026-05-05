@@ -20,14 +20,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/cmd/admin/namespace/option"
-	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
+	namespacecli "github.com/oxia-db/oxia/cmd/admin/namespace/cli"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxia"
 )
 
-var fields option.NamespaceFields
+var fields namespacecli.NamespaceFields
 
 var Cmd = &cobra.Command{
 	Use:          "patch <namespace>",
@@ -56,8 +55,8 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	replicationFactorChanged := cmd.Flags().Changed(option.ReplicationFactorFlagName)
-	notificationsChanged := cmd.Flags().Changed(option.NotificationsFlagName)
+	replicationFactorChanged := cmd.Flags().Changed(namespacecli.ReplicationFactorFlagName)
+	notificationsChanged := cmd.Flags().Changed(namespacecli.NotificationsFlagName)
 	if !replicationFactorChanged && !notificationsChanged {
 		return errors.New("must specify at least one field to patch")
 	}
@@ -88,5 +87,5 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, patched)
+	return namespacecli.WriteNamespace(cmd.OutOrStdout(), outputFormat, patched)
 }

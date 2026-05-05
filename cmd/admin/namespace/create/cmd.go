@@ -20,14 +20,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/cmd/admin/namespace/option"
-	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
+	namespacecli "github.com/oxia-db/oxia/cmd/admin/namespace/cli"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxia"
 )
 
-var fields option.NamespaceFields
+var fields namespacecli.NamespaceFields
 
 var Cmd = &cobra.Command{
 	Use:          "create <namespace> --initial-shards <count> --replication-factor <factor>",
@@ -40,8 +39,8 @@ var Cmd = &cobra.Command{
 
 func init() {
 	fields.AddFlags(Cmd)
-	_ = Cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = Cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
+	_ = Cmd.MarkFlagRequired(namespacecli.InitialShardsFlagName)
+	_ = Cmd.MarkFlagRequired(namespacecli.ReplicationFactorFlagName)
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -90,5 +89,5 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, created)
+	return namespacecli.WriteNamespace(cmd.OutOrStdout(), outputFormat, created)
 }

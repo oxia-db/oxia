@@ -21,14 +21,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/cmd/admin/dataserver/option"
-	dataserveroutput "github.com/oxia-db/oxia/cmd/admin/dataserver/output"
+	dataservercli "github.com/oxia-db/oxia/cmd/admin/dataserver/cli"
 	cmdparse "github.com/oxia-db/oxia/cmd/common/parse"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 )
 
-var fields option.DataServerFields
+var fields dataservercli.DataServerFields
 
 var Cmd = &cobra.Command{
 	Use:          "create <name> --public <address> --internal <address>",
@@ -41,8 +40,8 @@ var Cmd = &cobra.Command{
 
 func init() {
 	fields.AddFlags(Cmd.Flags())
-	_ = Cmd.MarkFlagRequired(option.PublicFlagName)
-	_ = Cmd.MarkFlagRequired(option.InternalFlagName)
+	_ = Cmd.MarkFlagRequired(dataservercli.PublicFlagName)
+	_ = Cmd.MarkFlagRequired(dataservercli.InternalFlagName)
 }
 
 func exec(cmd *cobra.Command, args []string) error {
@@ -92,5 +91,5 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return dataserveroutput.WriteDataServer(cmd.OutOrStdout(), outputFormat, created)
+	return dataservercli.WriteDataServer(cmd.OutOrStdout(), outputFormat, created)
 }
