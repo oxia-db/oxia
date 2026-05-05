@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"sync"
 
@@ -45,9 +44,6 @@ type maelstromCoordinatorRpcProvider struct {
 
 func (m *maelstromCoordinatorRpcProvider) Close() error {
 	return nil
-}
-
-func (m *maelstromCoordinatorRpcProvider) ClearPooledConnections(node *proto.DataServerIdentity) {
 }
 
 func newRpcProvider(dispatcher *dispatcher) rpc.Provider {
@@ -116,13 +112,13 @@ func (m *maelstromCoordinatorRpcProvider) Handshake(ctx context.Context, node *p
 	}, nil
 }
 
-func (m *maelstromCoordinatorRpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, io.Closer, error) {
+func (m *maelstromCoordinatorRpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
 	c := &maelstromHealthCheckClient{
 		provider: m,
 		node:     node.GetInternal(),
 	}
 
-	return c, c, nil
+	return c, nil
 }
 
 type maelstromShardAssignmentClient struct {

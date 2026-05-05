@@ -17,7 +17,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -374,9 +373,6 @@ func (r *mockRpcProvider) Close() error {
 	return nil
 }
 
-func (r *mockRpcProvider) ClearPooledConnections(node *proto.DataServerIdentity) {
-}
-
 func newMockRpcProvider() *mockRpcProvider {
 	return &mockRpcProvider{
 		channels: make(map[string]*mockPerNodeChannels),
@@ -595,9 +591,8 @@ func (r *mockRpcProvider) RemoveObserver(ctx context.Context, node *proto.DataSe
 	}
 }
 
-func (r *mockRpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, io.Closer, error) {
-	c := r.GetNode(node).healthClient
-	return c, c, nil
+func (r *mockRpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
+	return r.GetNode(node).healthClient, nil
 }
 
 type mockShardAssignmentClient struct {

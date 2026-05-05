@@ -56,6 +56,7 @@ type Standalone struct {
 	walFactory                wal.Factory
 	shardsDirector            controller.ShardsDirector
 	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
+	healthServer              rpc2.HealthServer
 
 	metrics *metric.PrometheusMetrics
 }
@@ -80,7 +81,10 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		slog.Any("config", config),
 	)
 
-	s := &Standalone{config: config}
+	s := &Standalone{
+		config:       config,
+		healthServer: rpc2.NewClosableHealthServer(context.Background()),
+	}
 
 	storageOptions := config.DataServerOptions.Storage
 	kvOptions := kvstore.FactoryOptions{
@@ -114,7 +118,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 	s.rpc, err = newPublicRpcServer(rpc2.Default, publicServer.BindAddress, s.shardsDirector,
-		s.shardAssignmentDispatcher, false, serverTLS, &auth.Disabled)
+		s.shardAssignmentDispatcher, s.healthServer, false, serverTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +187,7 @@ func (s *Standalone) Close() error {
 
 	return multierr.Combine(
 		err,
+		s.healthServer.Close(),
 		s.shardsDirector.Close(),
 		s.shardAssignmentDispatcher.Close(),
 		s.rpc.Close(),

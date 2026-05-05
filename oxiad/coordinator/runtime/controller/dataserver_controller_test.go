@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -37,9 +38,9 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
-
 	node := rpc.GetNode(addr)
+	nc, err := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
+	require.NoError(t, err)
 
 	// Controller starts as NotRunning and transitions to Running on first health check
 	assert.Eventually(t, func() bool {
@@ -79,9 +80,9 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
-
 	node := rpc.GetNode(addr)
+	nc, err := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
+	require.NoError(t, err)
 
 	// Wait for the initial Handshake call that happens when the controller starts
 	// (the controller starts in Running state, transitions through health check)
@@ -140,9 +141,9 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
-
 	node := rpc.GetNode(addr)
+	nc, err := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
+	require.NoError(t, err)
 
 	resp := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{

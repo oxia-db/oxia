@@ -17,7 +17,6 @@ package oxia
 import (
 	"context"
 	"errors"
-	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -117,8 +116,8 @@ func (m *mockAdminClientPool) GetClientRpc(string) (proto.OxiaClientClient, erro
 	return nil, errors.New("unexpected GetClientRpc call")
 }
 
-func (m *mockAdminClientPool) GetHealthRpc(string) (grpc_health_v1.HealthClient, io.Closer, error) {
-	return nil, nil, errors.New("unexpected GetHealthRpc call")
+func (m *mockAdminClientPool) GetHealthRpc(string) (grpc_health_v1.HealthClient, error) {
+	return nil, errors.New("unexpected GetHealthRpc call")
 }
 
 func (m *mockAdminClientPool) GetCoordinationRpc(string) (proto.OxiaCoordinationClient, error) {

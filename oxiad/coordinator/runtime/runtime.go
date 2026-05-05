@@ -116,7 +116,7 @@ func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bo
 		_ = nc.Close()
 		delete(c.drainingNodes, name)
 	}
-	c.dataServerControllers[name] = controller.NewDataServerController(
+	nc, err := controller.NewDataServerController(
 		c.ctx,
 		dataServer,
 		c,
@@ -124,6 +124,11 @@ func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bo
 		c.rpc,
 		c.insID,
 	)
+	if err != nil {
+		c.logger.Warn("Failed to create data server controller", slog.Any("server", identity), slog.Any("error", err))
+		return false
+	}
+	c.dataServerControllers[name] = nc
 	return true
 }
 
@@ -832,7 +837,7 @@ func New(
 	// init node controller
 	for _, node := range dataServersFromStatus(clusterStatus) {
 		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
-		c.dataServerControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
+		nc, err := controller.NewDataServerController(
 			c.ctx,
 			dataServer,
 			c,
@@ -840,6 +845,10 @@ func New(
 			c.rpc,
 			c.insID,
 		)
+		if err != nil {
+			return nil, err
+		}
+		c.dataServerControllers[node.GetNameOrDefault()] = nc
 	}
 
 	// init shard controller
