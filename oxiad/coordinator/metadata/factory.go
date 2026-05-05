@@ -52,16 +52,6 @@ func (f *Factory) OnApplied(key string, data []byte, version int64) {
 	f.raftInterceptor.OnApplied(key, data, version)
 }
 
-func NewFactoryWithProviders(
-	statusProvider provider.Provider[*commonproto.ClusterStatus],
-	configProvider provider.Provider[*commonproto.ClusterConfiguration],
-) *Factory {
-	return &Factory{
-		statusProvider: statusProvider,
-		configProvider: configProvider,
-	}
-}
-
 func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	if options == nil {
 		return nil, errors.New("options must not be nil")

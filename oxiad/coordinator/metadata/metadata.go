@@ -78,8 +78,6 @@ type coordinatorMetadata struct {
 
 	statusProvider provider.Provider[*commonproto.ClusterStatus]
 	statusLock     sync.Mutex
-	changeChLock   sync.RWMutex
-	changeCh       chan struct{}
 
 	configProvider provider.Provider[*commonproto.ClusterConfiguration]
 	configLock     sync.Mutex
@@ -92,7 +90,6 @@ func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonpr
 		ctx:            metadataCtx,
 		cancel:         cancel,
 		statusProvider: statusProvider,
-		changeCh:       make(chan struct{}),
 		configProvider: configProvider,
 	}
 
@@ -147,13 +144,6 @@ func (m *coordinatorMetadata) Close() error {
 	return nil
 }
 
-func (m *coordinatorMetadata) notifyStatusChange() {
-	m.changeChLock.Lock()
-	defer m.changeChLock.Unlock()
-	close(m.changeCh)
-	m.changeCh = make(chan struct{})
-}
-
 func (m *coordinatorMetadata) doStatusRecovery() {
 	status := m.statusProvider.Watch().Load().Value
 	if status.GetInstanceId() == "" {
@@ -172,7 +162,6 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 				slog.Duration("retry-after", duration),
 			)
 		})
-		m.notifyStatusChange()
 	}
 }
 
@@ -192,7 +181,6 @@ func (m *coordinatorMetadata) UpdateStatus(newStatus *commonproto.ClusterStatus)
 			slog.Duration("retry-after", duration),
 		)
 	})
-	m.notifyStatusChange()
 }
 
 func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
@@ -210,7 +198,6 @@ func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
 			slog.Duration("retry-after", duration),
 		)
 	})
-	m.notifyStatusChange()
 	return base
 }
 
@@ -235,9 +222,6 @@ func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonp
 			slog.Duration("retry-after", duration),
 		)
 	})
-	if created {
-		m.notifyStatusChange()
-	}
 	return created
 }
 
@@ -285,14 +269,10 @@ func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Bo
 			slog.Duration("retry-after", duration),
 		)
 	})
-	if changed {
-		m.notifyStatusChange()
-	}
 	return commonobject.Borrow(namespaceStatus)
 }
 
 func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
-	changed := false
 	_ = backoff.RetryNotify(func() error {
 		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
 			ns, exist := clusterStatus.Namespaces[namespace]
@@ -300,7 +280,6 @@ func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, s
 				return clusterStatus, false
 			}
 			ns.Shards[shard] = shardMetadata
-			changed = true
 			return clusterStatus, true
 		})
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
@@ -310,13 +289,9 @@ func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, s
 			slog.Duration("retry-after", duration),
 		)
 	})
-	if changed {
-		m.notifyStatusChange()
-	}
 }
 
 func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) {
-	changed := false
 	_ = backoff.RetryNotify(func() error {
 		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
 			ns, exist := clusterStatus.Namespaces[namespace]
@@ -330,7 +305,6 @@ func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) {
 			if len(ns.Shards) == 0 {
 				delete(clusterStatus.Namespaces, namespace)
 			}
-			changed = true
 			return clusterStatus, true
 		})
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
@@ -340,15 +314,6 @@ func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) {
 			slog.Duration("retry-after", duration),
 		)
 	})
-	if changed {
-		m.notifyStatusChange()
-	}
-}
-
-func (m *coordinatorMetadata) statusChangeNotify() <-chan struct{} {
-	m.changeChLock.RLock()
-	defer m.changeChLock.RUnlock()
-	return m.changeCh
 }
 
 func (m *coordinatorMetadata) GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration] {
@@ -568,25 +533,4 @@ func (m *coordinatorMetadata) GetDataServer(name string) (commonobject.Borrowed[
 		return commonobject.Borrowed[*commonproto.DataServer]{}, false
 	}
 	return commonobject.Borrow(value), true
-}
-
-func WaitForCondition(ctx context.Context, metadata Metadata, triggerFn func(), condition func(*commonproto.ClusterStatus) bool) error {
-	notifier, ok := metadata.(interface{ statusChangeNotify() <-chan struct{} })
-	if !ok {
-		return errors.New("metadata does not support status change notifications")
-	}
-	for {
-		ch := notifier.statusChangeNotify()
-		if condition(metadata.GetStatus().UnsafeBorrow()) {
-			return nil
-		}
-		if triggerFn != nil {
-			triggerFn()
-		}
-		select {
-		case <-ch:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
 }

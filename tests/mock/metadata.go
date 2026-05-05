@@ -15,17 +15,25 @@
 package mock
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 )
+
+const metadataFilePerm = 0o600
 
 func NewConfigProvider(t *testing.T, clusterConfig *proto.ClusterConfiguration) provider.Provider[*proto.ClusterConfiguration] {
 	t.Helper()
@@ -48,4 +56,93 @@ func PutConfig(
 		Version: version,
 	})
 	require.NoError(t, err)
+}
+
+func NewMetadataFromProviders(
+	t *testing.T,
+	statusProvider provider.Provider[*proto.ClusterStatus],
+	configProvider provider.Provider[*proto.ClusterConfiguration],
+) (*coordmetadata.Factory, coordmetadata.Metadata) {
+	t.Helper()
+
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, coordoption.DefaultFileStatusName)
+	configPath := filepath.Join(dir, coordoption.DefaultFileConfigName)
+	writeSnapshot(t, statusPath, metadatacodec.ClusterStatusCodec, statusProvider.Watch().Load().Value)
+	writeSnapshot(t, configPath, metadatacodec.ClusterConfigCodec, configProvider.Watch().Load().Value)
+	mirrorProviderToFile(t, configPath, metadatacodec.ClusterConfigCodec, configProvider)
+
+	metadataFactory, err := coordmetadata.New(t.Context(), &coordoption.Options{
+		Metadata: coordoption.MetadataOptions{
+			ProviderOptions: coordoption.ProviderOptions{
+				ProviderName: metadatacommon.NameFile,
+				File: coordoption.FileMetadata{
+					Dir: dir,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	require.NoError(t, err)
+	return metadataFactory, metadata
+}
+
+func mirrorProviderToFile[T interface {
+	gproto.Message
+	*proto.ClusterStatus | *proto.ClusterConfiguration
+}](
+	t *testing.T,
+	path string,
+	codec metadatacodec.Codec[T],
+	source provider.Provider[T],
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+
+	receiver := source.Watch().Subscribe()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-receiver.Changed():
+				if err := writeSnapshotFile(path, codec, receiver.Load().Value); err != nil {
+					panic(err)
+				}
+			}
+		}
+	}()
+}
+
+func writeSnapshot[T interface {
+	gproto.Message
+	*proto.ClusterStatus | *proto.ClusterConfiguration
+}](
+	t *testing.T,
+	path string,
+	codec metadatacodec.Codec[T],
+	value T,
+) {
+	t.Helper()
+
+	require.NoError(t, writeSnapshotFile(path, codec, value))
+}
+
+func writeSnapshotFile[T interface {
+	gproto.Message
+	*proto.ClusterStatus | *proto.ClusterConfiguration
+}](
+	path string,
+	codec metadatacodec.Codec[T],
+	value T,
+) error {
+	data, err := codec.MarshalYAML(value)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, metadataFilePerm)
 }

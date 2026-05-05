@@ -340,16 +340,52 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 }
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
+	configNamespaces := r.metadata.GetConfig().UnsafeBorrow().GetNamespaces()
+	if len(configNamespaces) != len(r.metadata.ListNamespaceStatus()) {
+		return false
+	}
+	for _, namespace := range configNamespaces {
+		if _, exists := r.metadata.GetNamespaceStatus(namespace.GetName()); !exists {
+			return false
+		}
+	}
+
 	status := r.metadata.GetStatus().UnsafeBorrow()
 	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer())
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, status)
-	return r.loadRatioAlgorithm(
+	shardsBalanced := r.loadRatioAlgorithm(
 		&model.RatioParams{
 			NodeShardsInfos: groupedStatus,
 			HistoryNodes:    historyNodes,
 			QuarantineNodes: r.quarantineNodes(),
 		},
 	).IsBalanced()
+	if !shardsBalanced {
+		return false
+	}
+	return r.leaderBalanced(candidates, status)
+}
+
+func (*nodeBasedBalancer) leaderBalanced(candidates *linkedhashset.Set[string], status *commonproto.ClusterStatus) bool {
+	totalShards, electedShards, nodeLeaders := state.NodeShardLeaders(candidates, status)
+	if totalShards == 0 {
+		return true
+	}
+	if electedShards != totalShards {
+		return false
+	}
+
+	maxLeaders, minLeaders := -1, -1
+	for _, leaders := range nodeLeaders {
+		leaderCount := leaders.Size()
+		if maxLeaders == -1 || leaderCount > maxLeaders {
+			maxLeaders = leaderCount
+		}
+		if minLeaders == -1 || leaderCount < minLeaders {
+			minLeaders = leaderCount
+		}
+	}
+	return maxLeaders-minLeaders <= 1
 }
 
 func (r *nodeBasedBalancer) Trigger() {

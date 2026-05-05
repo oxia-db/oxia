@@ -20,11 +20,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
-	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
+	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func newCoordinatorInstance(
@@ -35,9 +35,7 @@ func newCoordinatorInstance(
 ) coordruntime.Runtime {
 	t.Helper()
 
-	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
-	metadata, err := metadataFactory.CreateMetadata(t.Context())
-	require.NoError(t, err)
+	metadataFactory, metadata := mock.NewMetadataFromProviders(t, metadataProvider, configProvider)
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
 		require.NoError(t, metadataFactory.Close())
