@@ -17,6 +17,8 @@ package commons
 import (
 	"time"
 
+	"github.com/oxia-db/oxia/cmd/common/clientauth"
+	"github.com/oxia-db/oxia/common/auth"
 	"github.com/oxia-db/oxia/oxia"
 )
 
@@ -28,11 +30,22 @@ var (
 type AdminClientConfig struct {
 	AdminAddress   string
 	RequestTimeout time.Duration
+	Auth           clientauth.Config
 }
 
-func (AdminClientConfig) NewAdminClient() (oxia.AdminClient, error) {
+func (config AdminClientConfig) NewAdminClient() (oxia.AdminClient, error) {
 	if MockedAdminClient != nil {
 		return MockedAdminClient, nil
 	}
-	return oxia.NewAdminClient(AdminConfig.AdminAddress, nil, nil)
+
+	var authentication auth.Authentication
+	if config.Auth.Enabled() {
+		var err error
+		authentication, err = config.Auth.GetAuthentication()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return oxia.NewAdminClient(config.AdminAddress, nil, authentication)
 }
