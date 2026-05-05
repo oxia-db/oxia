@@ -42,6 +42,7 @@ var _ provider.Provider[*commonproto.ClusterConfiguration] = (*Provider[*commonp
 const parentDirectoryMode = 0o755
 
 type Provider[T gproto.Message] struct {
+	mu           sync.Mutex
 	path         string
 	codec        metadatacommon.Codec[T]
 	fileLock     *fslock.Lock
@@ -120,7 +121,7 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
 	err = backoff.RetryNotify(func() error {
 		var readErr error
-		snapshot, readErr = m.loadLatestOnce()
+		snapshot, readErr = m.loadLatestOnceLocked()
 		return readErr
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn("Failed to read file metadata, retrying",
@@ -130,7 +131,14 @@ func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
 	return snapshot, err
 }
 
-func (m *Provider[T]) loadLatestOnce() (snapshot provider.Versioned[T], err error) {
+func (m *Provider[T]) loadLatestOnceLocked() (snapshot provider.Versioned[T], err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.loadLatestOnceWithoutLock()
+}
+
+func (m *Provider[T]) loadLatestOnceWithoutLock() (snapshot provider.Versioned[T], err error) {
 	content, err := os.ReadFile(m.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -159,7 +167,10 @@ func (m *Provider[T]) loadLatestOnce() (snapshot provider.Versioned[T], err erro
 }
 
 func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadatacommon.Version, err error) {
-	existingSnapshot, err := m.loadLatest()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existingSnapshot, err := m.loadLatestOnceWithoutLock()
 	if err != nil {
 		return metadatacommon.NotExists, err
 	}

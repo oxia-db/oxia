@@ -29,8 +29,7 @@ var _ provider.Provider[*proto.ClusterStatus] = (*Provider[*proto.ClusterStatus]
 var _ provider.Provider[*proto.ClusterConfiguration] = (*Provider[*proto.ClusterConfiguration])(nil)
 
 type Provider[T gproto.Message] struct {
-	sync.Mutex
-
+	mu           sync.Mutex
 	codec        metadatacommon.Codec[T]
 	value        T
 	version      metadatacommon.Version
@@ -61,8 +60,8 @@ func (*Provider[T]) Close() error {
 }
 
 func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadatacommon.Version, err error) {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if snapshot.Version != m.version {
 		return metadatacommon.NotExists, metadatacommon.ErrBadVersion

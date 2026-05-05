@@ -95,8 +95,8 @@ func fromVersion(v metadatacommon.Version) int64 {
 }
 
 func (mpr *Provider[T]) loadLatest() provider.Versioned[T] {
-	mpr.raft.Lock()
-	defer mpr.raft.Unlock()
+	mpr.raft.mu.Lock()
+	defer mpr.raft.mu.Unlock()
 
 	document := mpr.raft.sc.document(mpr.codec.GetKey())
 
@@ -121,8 +121,8 @@ func (mpr *Provider[T]) loadLatest() provider.Versioned[T] {
 }
 
 func (mpr *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadatacommon.Version, err error) {
-	mpr.raft.Lock()
-	defer mpr.raft.Unlock()
+	mpr.raft.mu.Lock()
+	defer mpr.raft.mu.Unlock()
 
 	if err = mpr.raft.node.VerifyLeader().Error(); err != nil {
 		return metadatacommon.NotExists, err

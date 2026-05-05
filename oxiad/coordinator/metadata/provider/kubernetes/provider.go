@@ -61,7 +61,7 @@ const (
 )
 
 type Provider[T gproto.Message] struct {
-	sync.Mutex
+	mu              sync.Mutex
 	kubernetes      kubernetes.Interface
 	namespace, name string
 	codec           metadatacommon.Codec[T]
@@ -141,8 +141,8 @@ func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
 	timer := m.getLatencyHisto.Timer()
 	defer timer.Done()
 
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	err = backoff.RetryNotify(func() error {
 		var getErr error
 		snapshot, getErr = m.loadLatestWithoutLock()
@@ -196,8 +196,8 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 	timer := m.storeLatencyHisto.Timer()
 	defer timer.Done()
 
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	data, err := m.codec.MarshalYAML(snapshot.Value)
 	if err != nil {
