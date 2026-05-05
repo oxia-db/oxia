@@ -22,6 +22,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -30,7 +31,7 @@ var _ provider.Provider[*proto.ClusterConfiguration] = (*Provider[*proto.Cluster
 
 type Provider[T gproto.Message] struct {
 	mu           sync.Mutex
-	codec        metadatacommon.Codec[T]
+	codec        metadatacodec.Codec[T]
 	value        T
 	version      metadatacommon.Version
 	watchEnabled metadatacommon.WatchMode
@@ -41,7 +42,7 @@ func (*Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func NewProvider[T gproto.Message](codec metadatacommon.Codec[T], watchEnabled metadatacommon.WatchMode) provider.Provider[T] {
+func NewProvider[T gproto.Message](codec metadatacodec.Codec[T], watchEnabled metadatacommon.WatchMode) provider.Provider[T] {
 	p := &Provider[T]{
 		codec:        codec,
 		value:        codec.NewZero(),

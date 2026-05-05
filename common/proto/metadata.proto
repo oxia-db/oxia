@@ -65,8 +65,14 @@ message HashRange {
   uint32 max = 2;
 }
 
+enum SplitPhase {
+  Bootstrap = 0;
+  CatchUp = 1;
+  Cutover = 2;
+}
+
 message SplitMetadata {
-  string phase = 1;
+  SplitPhase phase = 1;
   int64 parent_shard_id = 2;
   repeated int64 child_shard_ids = 3;
   uint32 split_point = 4;
@@ -75,8 +81,15 @@ message SplitMetadata {
   map<int64, string> child_leaders_at_bootstrap = 7;
 }
 
+enum ShardStatus {
+  ShardStatusUnknown = 0;
+  SteadyState = 1;
+  Election = 2;
+  Deleting = 3;
+}
+
 message ShardMetadata {
-  string status = 1;
+  ShardStatus status = 1;
   int64 term = 2;
   DataServerIdentity leader = 3;
   repeated DataServerIdentity ensemble = 4;

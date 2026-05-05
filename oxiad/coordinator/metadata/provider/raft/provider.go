@@ -27,11 +27,12 @@ import (
 
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
 type Provider[T gproto.Message] struct {
-	codec     metadatacommon.Codec[T]
+	codec     metadatacodec.Codec[T]
 	raft      *Raft
 	watchMode metadatacommon.WatchMode
 	ctx       context.Context
@@ -41,7 +42,7 @@ type Provider[T gproto.Message] struct {
 	logger    *slog.Logger
 }
 
-func NewProvider[T gproto.Message](ctx context.Context, r *Raft, codec metadatacommon.Codec[T], watchEnabled metadatacommon.WatchMode) provider.Provider[T] {
+func NewProvider[T gproto.Message](ctx context.Context, r *Raft, codec metadatacodec.Codec[T], watchEnabled metadatacommon.WatchMode) provider.Provider[T] {
 	ctx, cancel := context.WithCancel(ctx)
 	p := &Provider[T]{
 		codec:     codec,

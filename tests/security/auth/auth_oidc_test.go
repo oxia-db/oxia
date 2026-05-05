@@ -24,6 +24,7 @@ import (
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -106,10 +107,10 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -298,9 +299,9 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -452,9 +453,9 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,

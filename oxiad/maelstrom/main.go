@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -232,8 +233,8 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 		Servers: servers,
 	}
 
-	statusProvider := memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	configProvider := memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 	if _, err := configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,

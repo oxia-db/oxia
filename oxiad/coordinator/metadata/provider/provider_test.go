@@ -33,6 +33,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/file"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/kubernetes"
@@ -52,19 +53,19 @@ var (
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			return memory.NewProvider(metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			return memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
 		"configmap": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "n", metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "n", metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
@@ -74,7 +75,7 @@ var (
 			addr := freeAddress(t)
 			r, err := raft.New(addr, []string{addr}, filepath.Join(t.TempDir(), "raft"), nil)
 			assert.NoError(t, err)
-			p := raft.NewProvider(t.Context(), r, metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			p := raft.NewProvider(t.Context(), r, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, p.WaitToBecomeLeader())
 			return p
 		},
@@ -125,10 +126,10 @@ func TestClusterStatusCodecUnmarshalYAMLLegacyClusterStatus(t *testing.T) {
 		Namespaces: map[string]*proto.NamespaceStatus{},
 		InstanceId: "legacy-instance",
 	}
-	data, err := proto.MarshalClusterStatusJSON(status)
+	data, err := metadatacodec.ClusterStatusCodec.MarshalJSON(status)
 	require.NoError(t, err)
 
-	value, err := metadatacommon.ClusterStatusCodec.UnmarshalYAML([]byte(fmt.Sprintf(`{"clusterStatus":%s,"version":"2"}`, data)))
+	value, err := metadatacodec.ClusterStatusCodec.UnmarshalYAML([]byte(fmt.Sprintf(`{"clusterStatus":%s,"version":"2"}`, data)))
 	require.NoError(t, err)
 	assert.Equal(t, "legacy-instance", value.GetInstanceId())
 	assert.True(t, gproto.Equal(status, value))
@@ -139,19 +140,19 @@ func TestProviderConfigResource(t *testing.T) {
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			return memory.NewProvider(metadatacommon.ClusterConfigCodec, metadatacommon.WatchEnabled)
+			return memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), metadatacommon.ClusterConfigCodec, metadatacommon.WatchDisabled)
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
 		"configmap": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "config", metadatacommon.ClusterConfigCodec, metadatacommon.WatchDisabled)
+			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "config", metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, err)
 			return p
 		},
@@ -161,8 +162,8 @@ func TestProviderConfigResource(t *testing.T) {
 			addr := freeAddress(t)
 			r, err := raft.New(addr, []string{addr}, filepath.Join(t.TempDir(), "raft"), nil)
 			assert.NoError(t, err)
-			statusProvider := raft.NewProvider(t.Context(), r, metadatacommon.ClusterStatusCodec, metadatacommon.WatchDisabled)
-			configProvider := raft.NewProvider(t.Context(), r, metadatacommon.ClusterConfigCodec, metadatacommon.WatchDisabled)
+			statusProvider := raft.NewProvider(t.Context(), r, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			configProvider := raft.NewProvider(t.Context(), r, metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled)
 			assert.NoError(t, statusProvider.WaitToBecomeLeader())
 			return configProvider
 		},
