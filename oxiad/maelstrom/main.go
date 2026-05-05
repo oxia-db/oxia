@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -31,8 +30,7 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
@@ -233,21 +231,35 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 		Servers: servers,
 	}
 
-	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	if _, err := configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
-		Value:   clusterConfig,
-		Version: metadatacommon.NotExists,
-	}); err != nil {
-		return errors.Wrap(err, "failed to seed coordinator config provider")
+	metadataFactory, err := coordmetadata.New(ctx, &coordoption.Options{
+		Metadata: coordoption.MetadataOptions{
+			ProviderOptions: coordoption.ProviderOptions{
+				ProviderName: metadatacommon.NameMemory,
+			},
+		},
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create coordinator metadata factory")
 	}
-
-	metadataFactory := coordmetadata.NewFactoryWithProviders(statusProvider, configProvider)
 
 	metadata, err := metadataFactory.CreateMetadata(ctx)
 	if err != nil {
 		_ = commonio.CloseIfNotNil(metadataFactory)
 		return errors.Wrap(err, "failed to create coordinator metadata")
+	}
+	for _, server := range clusterConfig.GetServers() {
+		if err := metadata.CreateDataServer(&commonproto.DataServer{Identity: server}); err != nil {
+			_ = commonio.CloseIfNotNil(metadata)
+			_ = commonio.CloseIfNotNil(metadataFactory)
+			return errors.Wrap(err, "failed to seed coordinator data servers")
+		}
+	}
+	for _, namespace := range clusterConfig.GetNamespaces() {
+		if err := metadata.CreateNamespace(namespace); err != nil {
+			_ = commonio.CloseIfNotNil(metadata)
+			_ = commonio.CloseIfNotNil(metadataFactory)
+			return errors.Wrap(err, "failed to seed coordinator namespaces")
+		}
 	}
 
 	coordinatorRuntime, err := coordruntime.New(

@@ -66,12 +66,20 @@ func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool 
 	return false
 }
 
-func (*mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
-	return map[string]commonobject.Borrowed[*proto.NamespaceStatus]{}
+func (m *mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
+	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
+	for name, status := range m.status.GetNamespaces() {
+		statuses[name] = commonobject.Borrow(status)
+	}
+	return statuses
 }
 
-func (*mockMetadata) GetNamespaceStatus(string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
-	return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
+func (m *mockMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
+	status, exists := m.status.GetNamespaces()[namespace]
+	if !exists {
+		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
+	}
+	return commonobject.Borrow(status), true
 }
 
 func (*mockMetadata) DeleteNamespaceStatus(string) commonobject.Borrowed[*proto.NamespaceStatus] {
@@ -96,8 +104,14 @@ func (*mockMetadata) DeleteNamespace(string) (*proto.Namespace, error) {
 	return &proto.Namespace{}, nil
 }
 
-func (*mockMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
-	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
+func (m *mockMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
+	namespaces := make([]*proto.Namespace, 0, len(m.nsConfigs))
+	for _, namespace := range m.nsConfigs {
+		namespaces = append(namespaces, namespace)
+	}
+	return commonobject.Borrow(&proto.ClusterConfiguration{
+		Namespaces: namespaces,
+	})
 }
 
 func (*mockMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*proto.ClusterConfiguration]] {
@@ -203,6 +217,84 @@ func newTestBalancer(
 		triggerCh:               make(chan any, 1),
 		nodeAvailableJudger:     func(_ string) bool { return true },
 	}
+}
+
+func TestIsBalancedRequiresBalancedLeaders(t *testing.T) {
+	sv1 := dataServer("sv-1")
+	sv2 := dataServer("sv-2")
+	sv3 := dataServer("sv-3")
+
+	status := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
+			"ns": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					0: {Status: proto.ShardStatusSteadyState, Leader: sv1, Ensemble: []*proto.DataServerIdentity{sv1, sv2, sv3}},
+					1: {Status: proto.ShardStatusSteadyState, Leader: sv1, Ensemble: []*proto.DataServerIdentity{sv1, sv2, sv3}},
+					2: {Status: proto.ShardStatusSteadyState, Leader: sv1, Ensemble: []*proto.DataServerIdentity{sv1, sv2, sv3}},
+				},
+			},
+		},
+	}
+
+	nodes := linkedhashset.New("sv-1", "sv-2", "sv-3")
+	metadata := &mockMetadata{
+		status:   status,
+		nodes:    nodes,
+		metadata: map[string]*proto.DataServerMetadata{},
+		nsConfigs: map[string]*proto.Namespace{
+			"ns": {Name: "ns", ReplicationFactor: 3},
+		},
+		nodeMap: map[string]*proto.DataServerIdentity{
+			"sv-1": sv1,
+			"sv-2": sv2,
+			"sv-3": sv3,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	b := newTestBalancer(ctx, cancel, metadata, &alwaysErrorSelector{})
+	assert.False(t, b.IsBalanced())
+
+	status.Namespaces["ns"].Shards[1].Leader = sv2
+	status.Namespaces["ns"].Shards[2].Leader = sv3
+	assert.True(t, b.IsBalanced())
+}
+
+func TestIsBalancedRequiresNamespaceStatus(t *testing.T) {
+	sv1 := dataServer("sv-1")
+	sv2 := dataServer("sv-2")
+	sv3 := dataServer("sv-3")
+
+	metadata := &mockMetadata{
+		status: &proto.ClusterStatus{
+			Namespaces: map[string]*proto.NamespaceStatus{},
+		},
+		nodes:    linkedhashset.New("sv-1", "sv-2", "sv-3"),
+		metadata: map[string]*proto.DataServerMetadata{},
+		nsConfigs: map[string]*proto.Namespace{
+			"ns": {Name: "ns", ReplicationFactor: 3},
+		},
+		nodeMap: map[string]*proto.DataServerIdentity{
+			"sv-1": sv1,
+			"sv-2": sv2,
+			"sv-3": sv3,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	b := newTestBalancer(ctx, cancel, metadata, &alwaysErrorSelector{})
+	assert.False(t, b.IsBalanced())
+
+	metadata.status.Namespaces = map[string]*proto.NamespaceStatus{
+		"ns":      {},
+		"deleted": {},
+	}
+	assert.False(t, b.IsBalanced())
 }
 
 // selectRecordingSelector records whether Select was ever called.

@@ -15,12 +15,13 @@
 package runtime
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,8 +29,37 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
+
+func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
+	t.Helper()
+
+	dir := t.TempDir()
+	data, err := metadatacodec.ClusterConfigCodec.MarshalYAML(config)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileConfigName), data, 0o600))
+
+	metadataFactory, err := coordmetadata.New(t.Context(), &coordoption.Options{
+		Metadata: coordoption.MetadataOptions{
+			ProviderOptions: coordoption.ProviderOptions{
+				ProviderName: metadatacommon.NameFile,
+				File: coordoption.FileMetadata{
+					Dir: dir,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, metadata.Close())
+		require.NoError(t, metadataFactory.Close())
+	})
+	return metadata
+}
 
 func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	leader := &proto.DataServerIdentity{
@@ -52,22 +82,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 			leader.Public,
 		},
 	}
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
-		Value:   clusterConfig,
-		Version: metadatacommon.NotExists,
-	})
-	require.NoError(t, err)
-	metadataFactory := coordmetadata.NewFactoryWithProviders(
-		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled),
-		configProvider,
-	)
-	metadata, err := metadataFactory.CreateMetadata(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, metadata.Close())
-		require.NoError(t, metadataFactory.Close())
-	})
+	metadata := newTestMetadata(t, clusterConfig)
 	metadata.UpdateStatus(&proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{
 			"default": {
@@ -125,22 +140,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 			Internal: active.Internal,
 		}},
 	}
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
-		Value:   clusterConfig,
-		Version: metadatacommon.NotExists,
-	})
-	require.NoError(t, err)
-	metadataFactory := coordmetadata.NewFactoryWithProviders(
-		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled),
-		configProvider,
-	)
-	metadata, err := metadataFactory.CreateMetadata(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, metadata.Close())
-		require.NoError(t, metadataFactory.Close())
-	})
+	metadata := newTestMetadata(t, clusterConfig)
 	metadata.UpdateStatus(&proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{
 			"default": {

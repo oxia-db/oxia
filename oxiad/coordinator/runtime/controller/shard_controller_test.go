@@ -17,6 +17,8 @@ package controller
 import (
 	"context"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +33,7 @@ import (
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
 
@@ -63,13 +66,24 @@ func newTestMetadata(t *testing.T, metadataProvider provider.Provider[*proto.Clu
 		}
 	}
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
-		Value:   clusterConfig,
-		Version: metadatacommon.NotExists,
+	dir := t.TempDir()
+	statusData, err := metadatacodec.ClusterStatusCodec.MarshalYAML(metadataProvider.Watch().Load().Value)
+	assert.NoError(t, err)
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileStatusName), statusData, 0o600))
+	configData, err := metadatacodec.ClusterConfigCodec.MarshalYAML(clusterConfig)
+	assert.NoError(t, err)
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileConfigName), configData, 0o600))
+	metadataFactory, err := coordmetadata.New(t.Context(), &coordoption.Options{
+		Metadata: coordoption.MetadataOptions{
+			ProviderOptions: coordoption.ProviderOptions{
+				ProviderName: metadatacommon.NameFile,
+				File: coordoption.FileMetadata{
+					Dir: dir,
+				},
+			},
+		},
 	})
 	assert.NoError(t, err)
-	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	assert.NoError(t, err)
 	t.Cleanup(func() {

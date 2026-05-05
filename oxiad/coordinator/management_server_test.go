@@ -16,11 +16,12 @@ package coordinator
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
 func dataServer(name *string, public, internal string) *proto.DataServerIdentity {
@@ -47,16 +48,21 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 		config = &proto.ClusterConfiguration{}
 	}
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
-		Value:   config,
-		Version: metadatacommon.NotExists,
+	dir := t.TempDir()
+	data, err := metadatacodec.ClusterConfigCodec.MarshalYAML(config)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileConfigName), data, 0o600))
+	metadataFactory, err := coordmetadata.New(t.Context(), &coordoption.Options{
+		Metadata: coordoption.MetadataOptions{
+			ProviderOptions: coordoption.ProviderOptions{
+				ProviderName: metadatacommon.NameFile,
+				File: coordoption.FileMetadata{
+					Dir: dir,
+				},
+			},
+		},
 	})
 	require.NoError(t, err)
-	metadataFactory := coordmetadata.NewFactoryWithProviders(
-		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled),
-		configProvider,
-	)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {

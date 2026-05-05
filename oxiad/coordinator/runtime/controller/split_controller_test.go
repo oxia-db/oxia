@@ -16,12 +16,13 @@ package controller
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,6 +30,7 @@ import (
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
+	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/common/constant"
 
@@ -84,23 +86,38 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 
 	rpcMock := newMockRpcProvider()
 	metaProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
-	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
-		Value: &proto.ClusterConfiguration{
-			Namespaces: []*proto.Namespace{{
-				Name:              constant.DefaultNamespace,
-				InitialShardCount: 1,
-				ReplicationFactor: 3,
-			}},
-			Servers: []*proto.DataServerIdentity{ps1, ps2, ps3},
+	clusterConfig := &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			InitialShardCount: 1,
+			ReplicationFactor: 3,
+		}},
+		Servers: []*proto.DataServerIdentity{ps1, ps2, ps3},
+	}
+	dir := t.TempDir()
+	statusData, err := metadatacodec.ClusterStatusCodec.MarshalYAML(metaProvider.Watch().Load().Value)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileStatusName), statusData, 0o600))
+	configData, err := metadatacodec.ClusterConfigCodec.MarshalYAML(clusterConfig)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileConfigName), configData, 0o600))
+	metadataFactory, err := coordmetadata.New(t.Context(), &coordoption.Options{
+		Metadata: coordoption.MetadataOptions{
+			ProviderOptions: coordoption.ProviderOptions{
+				ProviderName: metadatacommon.NameFile,
+				File: coordoption.FileMetadata{
+					Dir: dir,
+				},
+			},
 		},
-		Version: metadatacommon.NotExists,
 	})
 	require.NoError(t, err)
-	metadataFactory := coordmetadata.NewFactoryWithProviders(metaProvider, configProvider)
 	metadata, err := metadataFactory.CreateMetadata(t.Context())
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, metadata.Close()) })
+	t.Cleanup(func() {
+		assert.NoError(t, metadata.Close())
+		assert.NoError(t, metadataFactory.Close())
+	})
 
 	clusterStatus := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{

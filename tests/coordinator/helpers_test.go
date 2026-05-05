@@ -25,6 +25,7 @@ import (
 	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
+	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func createCoordinatorMetadata(
@@ -34,13 +35,10 @@ func createCoordinatorMetadata(
 ) coordmetadata.Metadata {
 	t.Helper()
 
-	metadataFactory := coordmetadata.NewFactoryWithProviders(metadataProvider, configProvider)
+	metadataFactory, metadata := mock.NewMetadataFromProviders(t, metadataProvider, configProvider)
 	t.Cleanup(func() {
 		require.NoError(t, metadataFactory.Close())
 	})
-
-	metadata, err := metadataFactory.CreateMetadata(t.Context())
-	require.NoError(t, err)
 	return metadata
 }
 
