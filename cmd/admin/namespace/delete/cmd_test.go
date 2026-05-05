@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//nolint:revive // delete is a Go keyword, so this package keeps the command suffix.
 package deletecmd
 
 import (
@@ -40,21 +41,18 @@ func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	return strings.TrimSpace(actual.String()), err
 }
 
-func Test_cmd_deleteDataServer(t *testing.T) {
-	serverName := "server-1"
+func Test_cmd_deleteNamespace(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
+	notificationsEnabled := false
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("DeleteDataServer", serverName).Return(&proto.DataServer{
-		Identity: &proto.DataServerIdentity{
-			Name:     &serverName,
-			Public:   "public1",
-			Internal: "internal1",
-		},
-		Metadata: &proto.DataServerMetadata{
-			Labels: map[string]string{"rack": "rack-1"},
-		},
+	commons.MockedAdminClient.On("DeleteNamespace", "ns-1").Return(&proto.Namespace{
+		Name:                 "ns-1",
+		InitialShardCount:    4,
+		ReplicationFactor:    3,
+		NotificationsEnabled: &notificationsEnabled,
+		KeySorting:           "natural",
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -65,23 +63,54 @@ func Test_cmd_deleteDataServer(t *testing.T) {
 		RunE:         Cmd.RunE,
 		SilenceUsage: Cmd.SilenceUsage,
 	}
-	out, err := runCmd(cmd, serverName, "-o", "json")
+	out, err := runCmd(cmd, "ns-1", "-o", "json")
 	require.NoError(t, err)
 
-	var dataServer proto.DataServer
-	require.NoError(t, json.Unmarshal([]byte(out), &dataServer))
-	require.NotNil(t, dataServer.Identity)
-	require.NotNil(t, dataServer.Identity.Name)
-	assert.Equal(t, serverName, *dataServer.Identity.Name)
-	assert.Equal(t, "public1", dataServer.Identity.GetPublic())
-	assert.Equal(t, "internal1", dataServer.Identity.GetInternal())
-	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.GetMetadata().GetLabels())
+	var namespace proto.Namespace
+	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
+	assert.Equal(t, "ns-1", namespace.GetName())
+	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
+	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
+	assert.False(t, namespace.NotificationsEnabledOrDefault())
+	assert.Equal(t, "natural", namespace.GetKeySorting())
 }
 
-func Test_cmd_deleteDataServer_RejectsEmptyName(t *testing.T) {
+func Test_cmd_deleteNamespace_Name(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
+	commons.MockedAdminClient.On("Close").Return(nil)
+	commons.MockedAdminClient.On("DeleteNamespace", "ns-1").Return(&proto.Namespace{Name: "ns-1"}, nil)
+
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd, "ns-1", "-o", "name")
+	require.NoError(t, err)
+	assert.Equal(t, "namespace/ns-1", out)
+}
+
+func Test_cmd_deleteNamespace_RejectsInvalidName(t *testing.T) {
+	cmd := &cobra.Command{
+		Use:          Cmd.Use,
+		Short:        Cmd.Short,
+		Long:         Cmd.Long,
+		Args:         Cmd.Args,
+		RunE:         Cmd.RunE,
+		SilenceUsage: Cmd.SilenceUsage,
+	}
+	out, err := runCmd(cmd, "../ns")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid path traversal sequence")
+	assert.Contains(t, out, "invalid path traversal sequence")
+}
+
+func Test_cmd_deleteNamespace_RejectsEmptyName(t *testing.T) {
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
 		Short:        Cmd.Short,
@@ -92,6 +121,6 @@ func Test_cmd_deleteDataServer_RejectsEmptyName(t *testing.T) {
 	}
 	out, err := runCmd(cmd, "   ")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "data server name must not be empty")
-	assert.Contains(t, out, "data server name must not be empty")
+	assert.Contains(t, err.Error(), "namespace must not be empty")
+	assert.Contains(t, out, "namespace must not be empty")
 }

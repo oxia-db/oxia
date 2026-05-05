@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/cmd/admin/namespace/option"
+	namespacecli "github.com/oxia-db/oxia/cmd/admin/namespace/cli"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -75,8 +75,8 @@ func Test_cmd_createNamespace(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.InitialShardsFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3",
 		"--notifications=false", "--key-sorting", "natural", "-o", "json")
 
@@ -112,8 +112,8 @@ func Test_cmd_createNamespace_DefaultTable(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.InitialShardsFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3")
 
 	require.NoError(t, err)
@@ -147,8 +147,8 @@ func Test_cmd_createNamespace_Name(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.InitialShardsFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3", "-o", "name")
 
 	require.NoError(t, err)
@@ -168,8 +168,8 @@ func Test_cmd_createNamespace_RejectsInvalidName(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.InitialShardsFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "../ns", "--initial-shards", "4", "--replication-factor", "3")
 
 	require.Error(t, err)
@@ -190,8 +190,8 @@ func Test_cmd_createNamespace_RejectsInvalidKeySorting(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	fields.AddFlags(cmd)
-	_ = cmd.MarkFlagRequired(option.InitialShardsFlagName)
-	_ = cmd.MarkFlagRequired(option.ReplicationFactorFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.InitialShardsFlagName)
+	_ = cmd.MarkFlagRequired(namespacecli.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3", "--key-sorting", "unknown")
 
 	require.Error(t, err)

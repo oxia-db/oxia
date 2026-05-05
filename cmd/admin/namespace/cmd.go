@@ -16,7 +16,7 @@ package namespace
 
 import (
 	createcmd "github.com/oxia-db/oxia/cmd/admin/namespace/create"
-	"github.com/oxia-db/oxia/cmd/admin/namespace/deletecmd"
+	deletecmd "github.com/oxia-db/oxia/cmd/admin/namespace/delete"
 	getcmd "github.com/oxia-db/oxia/cmd/admin/namespace/get"
 	patchcmd "github.com/oxia-db/oxia/cmd/admin/namespace/patch"
 

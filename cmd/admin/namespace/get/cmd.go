@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
+	namespacecli "github.com/oxia-db/oxia/cmd/admin/namespace/cli"
 	"github.com/oxia-db/oxia/oxia"
 )
 
@@ -53,12 +53,12 @@ func exec(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		return namespaceoutput.WriteNamespaces(cmd.OutOrStdout(), outputFormat, namespaces)
+		return namespacecli.WriteNamespaces(cmd.OutOrStdout(), outputFormat, namespaces)
 	}
 
 	namespace, err := client.GetNamespace(args[0])
 	if err != nil {
 		return err
 	}
-	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, namespace)
+	return namespacecli.WriteNamespace(cmd.OutOrStdout(), outputFormat, namespace)
 }

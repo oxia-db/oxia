@@ -12,23 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//nolint:revive // delete is a Go keyword, so this package keeps the command suffix.
 package deletecmd
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
-	"github.com/oxia-db/oxia/common/validation"
+	dataservercli "github.com/oxia-db/oxia/cmd/admin/dataserver/cli"
 	"github.com/oxia-db/oxia/oxia"
 )
 
 var Cmd = &cobra.Command{
-	Use:          "delete <namespace>",
-	Short:        "Delete a namespace",
-	Long:         `Delete a namespace`,
+	Use:          "delete <name>",
+	Short:        "Delete a data server",
+	Long:         `Delete a data server`,
 	Args:         cobra.ExactArgs(1),
 	RunE:         exec,
 	SilenceUsage: true,
@@ -44,8 +45,8 @@ func exec(cmd *cobra.Command, args []string) error {
 	}
 
 	name := strings.TrimSpace(args[0])
-	if err := validation.ValidateNamespace(name); err != nil {
-		return err
+	if name == "" {
+		return errors.New("data server name must not be empty")
 	}
 
 	client, err := commons.AdminConfig.NewAdminClient()
@@ -56,10 +57,10 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	deleted, err := client.DeleteNamespace(name)
+	deleted, err := client.DeleteDataServer(name)
 	if err != nil {
 		return err
 	}
 
-	return namespaceoutput.WriteNamespace(cmd.OutOrStdout(), outputFormat, deleted)
+	return dataservercli.WriteDataServer(cmd.OutOrStdout(), outputFormat, deleted)
 }

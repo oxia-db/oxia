@@ -21,15 +21,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/cmd/admin/dataserver/option"
-	dataserveroutput "github.com/oxia-db/oxia/cmd/admin/dataserver/output"
+	dataservercli "github.com/oxia-db/oxia/cmd/admin/dataserver/cli"
 	cmdparse "github.com/oxia-db/oxia/cmd/common/parse"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 )
 
 var (
-	fields option.DataServerFields
+	fields dataservercli.DataServerFields
 )
 
 var Cmd = &cobra.Command{
@@ -61,9 +60,9 @@ func exec(cmd *cobra.Command, args []string) error {
 
 	publicAddress := strings.TrimSpace(fields.PublicAddress)
 	internalAddress := strings.TrimSpace(fields.InternalAddress)
-	publicChanged := cmd.Flags().Changed(option.PublicFlagName)
-	internalChanged := cmd.Flags().Changed(option.InternalFlagName)
-	labelChanged := cmd.Flags().Changed(option.LabelFlagName)
+	publicChanged := cmd.Flags().Changed(dataservercli.PublicFlagName)
+	internalChanged := cmd.Flags().Changed(dataservercli.InternalFlagName)
+	labelChanged := cmd.Flags().Changed(dataservercli.LabelFlagName)
 
 	if !publicChanged && !internalChanged && !labelChanged {
 		return errors.New("must specify at least one field to patch")
@@ -110,5 +109,5 @@ func exec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return dataserveroutput.WriteDataServer(cmd.OutOrStdout(), outputFormat, patched)
+	return dataservercli.WriteDataServer(cmd.OutOrStdout(), outputFormat, patched)
 }

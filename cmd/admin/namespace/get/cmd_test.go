@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	namespaceoutput "github.com/oxia-db/oxia/cmd/admin/namespace/output"
+	namespacecli "github.com/oxia-db/oxia/cmd/admin/namespace/cli"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -209,7 +209,7 @@ func Test_cmd_getNamespace_InvalidOutput(t *testing.T) {
 }
 
 func TestWriteNamespaceRejectsNilNamespace(t *testing.T) {
-	err := namespaceoutput.WriteNamespace(new(bytes.Buffer), "", nil)
+	err := namespacecli.WriteNamespace(new(bytes.Buffer), "", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "namespace must not be nil")
 }
