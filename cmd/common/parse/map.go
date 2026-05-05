@@ -30,19 +30,11 @@ func StringMap(values []string) (map[string]string, error) {
 		if value == "" {
 			continue
 		}
-		key, mapValue, err := KeyValue(value, "entry")
-		if err != nil {
-			return nil, err
+		key, mapValue, ok := strings.Cut(value, "=")
+		if !ok || key == "" {
+			return nil, errors.Errorf("invalid entry %q, expected key=value", value)
 		}
 		result[key] = mapValue
 	}
 	return result, nil
-}
-
-func KeyValue(value string, name string) (key string, mapValue string, err error) {
-	key, mapValue, ok := strings.Cut(value, "=")
-	if !ok || key == "" {
-		return "", "", errors.Errorf("invalid %s %q, expected key=value", name, value)
-	}
-	return key, mapValue, nil
 }
