@@ -58,3 +58,49 @@ func TestStateContainerApplySupportsV0163StatusLog(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, status.GetInstanceId(), decoded.GetInstanceId())
 }
+
+func TestStateContainerSnapshotIncludesV0163StatusState(t *testing.T) {
+	sc := newStateContainer(slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+
+	status := &commonproto.ClusterStatus{
+		InstanceId: "v0163-snapshot",
+		Namespaces: map[string]*commonproto.NamespaceStatus{
+			"default": {
+				Shards: map[int64]*commonproto.ShardMetadata{
+					1: {
+						Status: commonproto.ShardStatusSteadyState,
+						Split: &commonproto.SplitMetadata{
+							Phase: commonproto.SplitPhaseCatchUp,
+						},
+					},
+				},
+			},
+		},
+	}
+	statusBytes, err := metadatacodec.ClusterStatusCodec.MarshalJSON(status)
+	require.NoError(t, err)
+
+	statusDocument := sc.document(metadatacodec.ClusterStatusCodec.GetKey())
+	statusDocument.State = statusBytes
+	statusDocument.CurrentVersion = 4
+
+	payload, err := marshalStateContainer(sc)
+	require.NoError(t, err)
+
+	var legacySnapshot struct {
+		State          json.RawMessage `json:"state"`
+		CurrentVersion int64           `json:"current_version"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &legacySnapshot))
+	require.Equal(t, int64(4), legacySnapshot.CurrentVersion)
+
+	decoded, err := metadatacodec.ClusterStatusCodec.UnmarshalJSON(legacySnapshot.State)
+	require.NoError(t, err)
+	require.Equal(t, "v0163-snapshot", decoded.GetInstanceId())
+	require.Equal(t, commonproto.ShardStatusSteadyState, decoded.GetNamespaces()["default"].GetShards()[1].GetStatusOrDefault())
+	require.Equal(t, commonproto.SplitPhaseCatchUp, decoded.GetNamespaces()["default"].GetShards()[1].GetSplit().GetPhaseOrDefault())
+
+	var currentSnapshot persistedStateContainer
+	require.NoError(t, json.Unmarshal(payload, &currentSnapshot))
+	require.Contains(t, currentSnapshot.Documents, metadatacodec.ClusterStatusCodec.GetKey())
+}

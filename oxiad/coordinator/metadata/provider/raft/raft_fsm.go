@@ -143,9 +143,17 @@ type documentContainer struct {
 }
 
 func marshalStateContainer(sc *stateContainer) ([]byte, error) {
-	return json.Marshal(persistedStateContainer{
-		Documents: cloneDocuments(sc.Documents),
-	})
+	persisted := persistedStateContainer{
+		Documents:      sc.Documents,
+		CurrentVersion: -1,
+	}
+
+	if statusDocument, ok := sc.Documents[metadatacodec.ClusterStatusCodec.GetKey()]; ok && statusDocument != nil {
+		persisted.State = statusDocument.State
+		persisted.CurrentVersion = statusDocument.CurrentVersion
+	}
+
+	return json.Marshal(persisted)
 }
 
 func (sc *stateContainer) document(key string) *documentContainer {
