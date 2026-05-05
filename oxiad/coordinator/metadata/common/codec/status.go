@@ -15,9 +15,6 @@
 package codec
 
 import (
-	"encoding/json"
-	"fmt"
-
 	"google.golang.org/protobuf/encoding/protojson"
 	gproto "google.golang.org/protobuf/proto"
 	"sigs.k8s.io/yaml"
@@ -27,15 +24,6 @@ import (
 )
 
 func (codec statusCodec) UnmarshalYAML(data []byte) (*commonproto.ClusterStatus, error) {
-	legacyStatus, legacyErr := unmarshalLegacyClusterStatus(data)
-	if legacyErr == nil {
-		typedStatus, ok := legacyStatus.(*commonproto.ClusterStatus)
-		if !ok {
-			return nil, fmt.Errorf("expected *ClusterStatus from legacy cluster status container, got %T", legacyStatus)
-		}
-		return typedStatus, nil
-	}
-
 	jsonBytes, err := yaml.YAMLToJSON(data)
 	if err != nil {
 		return nil, err
@@ -83,19 +71,4 @@ func (statusCodec) MarshalJSON(value *commonproto.ClusterStatus) ([]byte, error)
 
 func (statusCodec) GetKey() string {
 	return metadatacommon.ClusterStatusConfigMapDataKey
-}
-
-type legacyClusterStatusContainer struct {
-	ClusterStatus json.RawMessage `json:"clusterStatus,omitempty"`
-}
-
-func unmarshalLegacyClusterStatus(data []byte) (gproto.Message, error) {
-	container := legacyClusterStatusContainer{}
-	if err := json.Unmarshal(data, &container); err != nil {
-		return nil, err
-	}
-	if len(container.ClusterStatus) == 0 {
-		return nil, metadatacommon.ErrNotInitialized
-	}
-	return statusCodec{}.UnmarshalJSON(container.ClusterStatus)
 }

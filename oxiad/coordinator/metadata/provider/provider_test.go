@@ -16,14 +16,12 @@ package provider_test
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -119,20 +117,6 @@ func TestProvider(t *testing.T) {
 			assert.NoError(t, m.Close())
 		})
 	}
-}
-
-func TestClusterStatusCodecUnmarshalYAMLLegacyClusterStatus(t *testing.T) {
-	status := &proto.ClusterStatus{
-		Namespaces: map[string]*proto.NamespaceStatus{},
-		InstanceId: "legacy-instance",
-	}
-	data, err := metadatacodec.ClusterStatusCodec.MarshalJSON(status)
-	require.NoError(t, err)
-
-	value, err := metadatacodec.ClusterStatusCodec.UnmarshalYAML([]byte(fmt.Sprintf(`{"clusterStatus":%s,"version":"2"}`, data)))
-	require.NoError(t, err)
-	assert.Equal(t, "legacy-instance", value.GetInstanceId())
-	assert.True(t, gproto.Equal(status, value))
 }
 
 func TestProviderConfigResource(t *testing.T) {
