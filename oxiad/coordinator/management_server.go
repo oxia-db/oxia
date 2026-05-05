@@ -226,6 +226,9 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	if req.Namespace.GetKeySorting() != "" {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace key sorting cannot be patched")
 	}
+	if len(req.Namespace.GetAntiAffinities()) > 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace anti-affinities cannot be patched")
+	}
 
 	namespace, err := management.metadata.PatchNamespace(req.Namespace)
 	if err != nil {

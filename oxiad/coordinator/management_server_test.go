@@ -516,6 +516,13 @@ func TestManagementServerPatchNamespaceRejectsInvalidRequest(t *testing.T) {
 			Name:       "ns-1",
 			KeySorting: "invalid",
 		}}},
+		{name: "anti affinities", req: &proto.PatchNamespaceRequest{Namespace: &proto.Namespace{
+			Name: "ns-1",
+			AntiAffinities: []*proto.AntiAffinity{{
+				Labels: []string{"zone"},
+				Mode:   proto.AntiAffinityModeStrict,
+			}},
+		}}},
 	}
 
 	for _, tt := range testCases {
