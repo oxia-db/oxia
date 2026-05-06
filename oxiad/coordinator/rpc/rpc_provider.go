@@ -45,9 +45,7 @@ type Provider interface {
 	Handshake(ctx context.Context, node *proto.DataServerIdentity, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error)
 	RemoveObserver(ctx context.Context, node *proto.DataServerIdentity, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error)
 
-	GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, io.Closer, error)
-
-	ClearPooledConnections(node *proto.DataServerIdentity)
+	GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error)
 }
 
 type rpcProvider struct {
@@ -178,10 +176,6 @@ func (r *rpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServer
 	return client.RemoveObserver(ctx, req)
 }
 
-func (r *rpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, io.Closer, error) {
+func (r *rpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
 	return r.pool.GetHealthRpc(node.Internal)
-}
-
-func (r *rpcProvider) ClearPooledConnections(node *proto.DataServerIdentity) {
-	r.pool.Clear(node.Internal)
 }

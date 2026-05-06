@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	"go.uber.org/multierr"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -56,6 +57,7 @@ type Standalone struct {
 	walFactory                wal.Factory
 	shardsDirector            controller.ShardsDirector
 	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
+	healthServer              rpc2.HealthServer
 
 	metrics *metric.PrometheusMetrics
 }
@@ -107,6 +109,8 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 	}
 
 	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards)
+	s.healthServer = rpc2.NewClosableHealthServer(context.Background())
+	s.healthServer.SetServingStatus(rpc2.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
 
 	publicServer := config.DataServerOptions.Server.Public
 	serverTLS, err := publicServer.TLS.TryIntoServerTLSConf()
@@ -114,7 +118,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 	s.rpc, err = newPublicRpcServer(rpc2.Default, publicServer.BindAddress, s.shardsDirector,
-		s.shardAssignmentDispatcher, false, serverTLS, &auth.Disabled)
+		s.shardAssignmentDispatcher, false, s.healthServer, serverTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +187,7 @@ func (s *Standalone) Close() error {
 
 	return multierr.Combine(
 		err,
+		s.healthServer.Close(),
 		s.shardsDirector.Close(),
 		s.shardAssignmentDispatcher.Close(),
 		s.rpc.Close(),

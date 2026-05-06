@@ -19,17 +19,11 @@ import (
 	"crypto/tls"
 	"io"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
-	grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
-	"github.com/pkg/errors"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 
 	"github.com/oxia-db/oxia/common/auth"
@@ -38,27 +32,19 @@ import (
 
 const DefaultRpcTimeout = 30 * time.Second
 const AddressSchemaTLS = "tls://"
-const (
-	defaultGrpcClientKeepAliveTime       = time.Second * 10
-	defaultGrpcClientKeepAliveTimeout    = time.Second * 5
-	defaultGrpcClientPermitWithoutStream = true
-)
 
 type ClientPool interface {
 	io.Closer
 	GetClientRpc(target string) (proto.OxiaClientClient, error)
-	GetHealthRpc(target string) (grpc_health_v1.HealthClient, io.Closer, error)
+	GetHealthRpc(target string) (grpc_health_v1.HealthClient, error)
 	GetCoordinationRpc(target string) (proto.OxiaCoordinationClient, error)
 	GetReplicationRpc(target string) (proto.OxiaLogReplicationClient, error)
 	GetAminRpc(target string) (proto.OxiaAdminClient, error)
-
-	// Clear all the pooled client instances for the given target
-	Clear(target string)
 }
 
 type clientPool struct {
 	sync.RWMutex
-	connections map[string]*grpc.ClientConn
+	connections map[string]*connection
 
 	tls            *tls.Config
 	authentication auth.Authentication
@@ -76,7 +62,7 @@ func (cp *clientPool) GetAminRpc(target string) (proto.OxiaAdminClient, error) {
 
 func NewClientPool(tlsConf *tls.Config, authentication auth.Authentication, dialOptions ...grpc.DialOption) ClientPool {
 	return &clientPool{
-		connections:    make(map[string]*grpc.ClientConn),
+		connections:    make(map[string]*connection),
 		tls:            tlsConf,
 		authentication: authentication,
 		dialOptions:    dialOptions,
@@ -103,14 +89,13 @@ func (cp *clientPool) Close() error {
 	return nil
 }
 
-func (cp *clientPool) GetHealthRpc(target string) (grpc_health_v1.HealthClient, io.Closer, error) {
-	// Skip the pooling for health-checks
-	cnx, err := cp.newConnection(target)
+func (cp *clientPool) GetHealthRpc(target string) (grpc_health_v1.HealthClient, error) {
+	cnx, err := cp.getConnectionFromPool(target)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return grpc_health_v1.NewHealthClient(cnx), cnx, nil
+	return grpc_health_v1.NewHealthClient(cnx), nil
 }
 
 func (cp *clientPool) GetClientRpc(target string) (proto.OxiaClientClient, error) {
@@ -140,23 +125,6 @@ func (cp *clientPool) GetReplicationRpc(target string) (proto.OxiaLogReplication
 	return proto.NewOxiaLogReplicationClient(cnx), nil
 }
 
-func (cp *clientPool) Clear(target string) {
-	cp.Lock()
-	defer cp.Unlock()
-
-	if cnx, ok := cp.connections[target]; ok {
-		if err := cnx.Close(); err != nil {
-			cp.log.Warn(
-				"Failed to close GRPC connection",
-				slog.String("server_address", target),
-				slog.Any("error", err),
-			)
-		}
-
-		delete(cp.connections, target)
-	}
-}
-
 func (cp *clientPool) getConnectionFromPool(target string) (grpc.ClientConnInterface, error) {
 	cp.RLock()
 	cnx, ok := cp.connections[target]
@@ -173,7 +141,13 @@ func (cp *clientPool) getConnectionFromPool(target string) (grpc.ClientConnInter
 		return cnx, nil
 	}
 
-	cnx, err := cp.newConnection(target)
+	cnx, err := newConnection(
+		target,
+		cp.tls,
+		cp.authentication,
+		cp.dialOptions,
+		cp.removeConnection,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -181,54 +155,25 @@ func (cp *clientPool) getConnectionFromPool(target string) (grpc.ClientConnInter
 	return cnx, nil
 }
 
-func (cp *clientPool) newConnection(target string) (*grpc.ClientConn, error) {
-	cp.log.Debug(
-		"Creating new GRPC connection",
-		slog.String("server_address", target),
-	)
-
-	tcs := cp.getTransportCredential(target)
-
-	options := []grpc.DialOption{
-		grpc.WithTransportCredentials(tcs),
-		grpc.WithChainStreamInterceptor(grpcprometheus.StreamClientInterceptor),
-		grpc.WithChainUnaryInterceptor(grpcprometheus.UnaryClientInterceptor),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			PermitWithoutStream: defaultGrpcClientPermitWithoutStream,
-			Time:                defaultGrpcClientKeepAliveTime,
-			Timeout:             defaultGrpcClientKeepAliveTimeout,
-		}),
+func (cp *clientPool) removeConnection(target string) {
+	cp.Lock()
+	cnx, ok := cp.connections[target]
+	if ok {
+		delete(cp.connections, target)
 	}
-	if cp.authentication != nil {
-		options = append(options, grpc.WithPerRPCCredentials(cp.authentication))
-	}
-	options = append(options, cp.dialOptions...)
+	cp.Unlock()
 
-	cnx, err := grpc.NewClient(cp.getActualAddress(target), options...)
-	if err != nil {
-		return nil, errors.Wrapf(err, "error connecting to %s", target)
+	if !ok {
+		return
 	}
 
-	return cnx, nil
-}
-
-func (*clientPool) getActualAddress(target string) string {
-	if strings.HasPrefix(target, AddressSchemaTLS) {
-		after, _ := strings.CutPrefix(target, AddressSchemaTLS)
-		return after
+	if err := cnx.Close(); err != nil {
+		cp.log.Warn(
+			"Failed to close GRPC connection",
+			slog.String("server_address", target),
+			slog.Any("error", err),
+		)
 	}
-	return target
-}
-
-func (cp *clientPool) getTransportCredential(target string) credentials.TransportCredentials {
-	tcs := insecure.NewCredentials()
-	if strings.HasPrefix(target, AddressSchemaTLS) {
-		tcs = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
-	}
-	if cp.tls != nil {
-		tcs = credentials.NewTLS(cp.tls)
-	}
-	return tcs
 }
 
 func GetPeer(ctx context.Context) string {
