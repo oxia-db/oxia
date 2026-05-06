@@ -61,5 +61,5 @@ func (c Config) GetAuthentication() (auth.Authentication, error) {
 		return nil, ErrAuthTokenRequired
 	}
 
-	return auth.NewTokenAuthenticationWithToken(token, true), nil
+	return auth.NewTokenAuthenticationWithToken(token, false), nil
 }
