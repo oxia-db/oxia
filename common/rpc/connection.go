@@ -39,11 +39,11 @@ import (
 )
 
 const (
-	defaultGrpcConnectionHealthPingInterval   = 5 * time.Second
-	defaultGrpcConnectionHealthPingTimeout    = 5 * time.Second
+	defaultGrpcClientKeepAliveTime            = 10 * time.Second
+	defaultGrpcClientKeepAliveTimeout         = 3 * time.Second
+	defaultGrpcConnectionHealthPingInterval   = defaultGrpcClientKeepAliveTime
+	defaultGrpcConnectionHealthPingTimeout    = defaultGrpcClientKeepAliveTimeout
 	defaultGrpcConnectionHealthFailureTimeout = 30 * time.Second
-	defaultGrpcClientKeepAliveTime            = time.Second * 10
-	defaultGrpcClientKeepAliveTimeout         = time.Second * 5
 	defaultGrpcClientPermitWithoutStream      = true
 )
 
