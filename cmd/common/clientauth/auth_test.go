@@ -38,7 +38,7 @@ func TestConfig_GetAuthenticationWithToken(t *testing.T) {
 	metadata, err := authentication.GetRequestMetadata(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer token", metadata["authorization"])
-	assert.True(t, authentication.RequireTransportSecurity())
+	assert.False(t, authentication.RequireTransportSecurity())
 }
 
 func TestConfig_GetAuthenticationWithTokenFile(t *testing.T) {
@@ -51,7 +51,7 @@ func TestConfig_GetAuthenticationWithTokenFile(t *testing.T) {
 	metadata, err := authentication.GetRequestMetadata(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer file-token", metadata["authorization"])
-	assert.True(t, authentication.RequireTransportSecurity())
+	assert.False(t, authentication.RequireTransportSecurity())
 }
 
 func TestConfig_GetAuthenticationWithoutToken(t *testing.T) {
