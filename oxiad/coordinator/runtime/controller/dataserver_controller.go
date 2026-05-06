@@ -30,7 +30,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
-	"github.com/oxia-db/oxia/common/commonio"
 	commonobject "github.com/oxia-db/oxia/common/object"
 
 	"github.com/oxia-db/oxia/common/metric"
@@ -88,10 +87,6 @@ type dataServerController struct {
 	status            DataServerStatus
 	supportedFeatures atomic.Value
 
-	healthClientOnce   sync.Once
-	healthClient       grpc_health_v1.HealthClient
-	healthClientCloser io.Closer
-
 	healthCheckBackoff         *commontime.ConcurrentBackOff
 	dispatchAssignmentsBackoff backoff.BackOff
 
@@ -121,26 +116,6 @@ func (n *dataServerController) SetStatus(status DataServerStatus) {
 	n.logger.Info("Changed status", slog.Any("from", previous), slog.Any("to", status))
 }
 
-func (n *dataServerController) maybeInitHealthClient() {
-	n.healthClientOnce.Do(func() {
-		_ = backoff.RetryNotify(func() error {
-			health, closer, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
-			if err != nil {
-				return err
-			}
-			n.healthClient = health
-			n.healthClientCloser = closer
-			return nil
-		}, backoff.NewExponentialBackOff(), func(err error, duration time.Duration) {
-			n.logger.Warn(
-				"Failed to create health client to storage data server",
-				slog.Duration("retry-after", duration),
-				slog.Any("error", err),
-			)
-		})
-	})
-}
-
 func (n *dataServerController) Close() error {
 	if !n.closed.CompareAndSwap(false, true) {
 		return nil
@@ -149,12 +124,8 @@ func (n *dataServerController) Close() error {
 	n.ctxCancel()
 	n.wg.Wait()
 
-	var err error
-	if err = n.healthClientCloser.Close(); err != nil {
-		n.logger.Warn("close data server controller health client failed", slog.Any("error", err))
-	}
 	n.logger.Info("Closed data server controller")
-	return err
+	return nil
 }
 
 func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
@@ -207,18 +178,22 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 	})
 }
 
-func (n *dataServerController) doHealthPing() error {
+func (n *dataServerController) doHealthPing(healthClient grpc_health_v1.HealthClient) error {
 	pingCtx, pingCancel := context.WithTimeout(n.ctx, healthCheckProbeTimeout)
-	response, err := n.healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
+	response, err := healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 	pingCancel()
 	return n.healthCheckHandler(response, err)
 }
 
 func (n *dataServerController) healthPingWithRetries() {
 	_ = backoff.RetryNotify(func() error {
-		n.maybeInitHealthClient()
+		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
+		if err != nil {
+			return err
+		}
+
 		// Immediate check on startup instead of waiting for first tick
-		if err := n.doHealthPing(); err != nil {
+		if err := n.doHealthPing(healthClient); err != nil {
 			return err
 		}
 		ticker := time.NewTicker(healthCheckProbeInterval)
@@ -228,7 +203,7 @@ func (n *dataServerController) healthPingWithRetries() {
 			case <-n.ctx.Done():
 				return nil
 			case <-ticker.C:
-				if err := n.doHealthPing(); err != nil {
+				if err := n.doHealthPing(healthClient); err != nil {
 					n.logger.Warn("Data server stopped responding to ping")
 					return err
 				}
@@ -247,9 +222,12 @@ func (n *dataServerController) healthPingWithRetries() {
 func (n *dataServerController) healthWatchWithRetries() {
 	_ = backoff.RetryNotify(func() error {
 		n.logger.Debug("Start new health watch cycle")
-		n.maybeInitHealthClient()
+		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
+		if err != nil {
+			return err
+		}
 
-		watchStream, err := n.healthClient.Watch(n.ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
+		watchStream, err := healthClient.Watch(n.ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 		if err != nil {
 			return err
 		}
@@ -298,9 +276,6 @@ func (n *dataServerController) becomeAvailable() {
 
 	n.logger.Info("Storage data server is back online")
 
-	// To avoid the send assignments stream to miss the notification about the current
-	// dataServer went down, we interrupt the current stream when the ping on the dataServer fails
-	n.rpc.ClearPooledConnections(n.dataServer.GetIdentity())
 	n.healthCheckBackoff.Reset()
 
 	// Bind the node before it can receive other internal traffic.
@@ -368,28 +343,26 @@ func newDataServerController(ctx context.Context, dataServer *proto.DataServer,
 	dataServerCtx, cancel := context.WithCancel(ctx)
 	dataServerID := dataServer.GetIdentity().GetNameOrDefault()
 	labels := map[string]any{"data-server": dataServerID}
+	logger := slog.With(
+		slog.String("component", "data-server-controller"),
+		slog.Any("data-server", dataServerID),
+	)
 
 	supportedFeatures := atomic.Value{}
 	supportedFeatures.Store(make([]proto.Feature, 0))
 
 	nc := &dataServerController{
-		ctx:                      dataServerCtx,
-		ctxCancel:                cancel,
-		dataServer:               dataServer,
-		ShardAssignmentsProvider: shardAssignmentsProvider,
-		DataServerEventListener:  dataServerEventListener,
-		rpc:                      rpcProvider,
-		insID:                    insID,
-		statusLock:               sync.RWMutex{},
-		status:                   NotRunning,
-		supportedFeatures:        supportedFeatures,
-		logger: slog.With(
-			slog.String("component", "data-server-controller"),
-			slog.Any("data-server", dataServerID),
-		),
-		healthClientOnce:           sync.Once{},
-		healthClient:               nil,
-		healthClientCloser:         &commonio.NopCloser{},
+		ctx:                        dataServerCtx,
+		ctxCancel:                  cancel,
+		dataServer:                 dataServer,
+		ShardAssignmentsProvider:   shardAssignmentsProvider,
+		DataServerEventListener:    dataServerEventListener,
+		rpc:                        rpcProvider,
+		insID:                      insID,
+		statusLock:                 sync.RWMutex{},
+		status:                     NotRunning,
+		supportedFeatures:          supportedFeatures,
+		logger:                     logger,
 		healthCheckBackoff:         commontime.NewConcurrentBackOff(commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff)),
 		dispatchAssignmentsBackoff: commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff),
 		failedHealthChecks: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
