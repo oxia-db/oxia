@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/oxia-db/oxia/common/auth"
+	clientrpc "github.com/oxia-db/oxia/common/rpc"
 )
 
 var (
@@ -43,7 +44,7 @@ func (c Config) Enabled() bool {
 }
 
 // GetAuthentication creates Oxia token credentials from the CLI auth options.
-func (c Config) GetAuthentication() (auth.Authentication, error) {
+func (c Config) GetAuthentication(address string) (auth.Authentication, error) {
 	if c.Token != "" && c.TokenFile != "" {
 		return nil, ErrAuthTokenConflict
 	}
@@ -61,5 +62,5 @@ func (c Config) GetAuthentication() (auth.Authentication, error) {
 		return nil, ErrAuthTokenRequired
 	}
 
-	return auth.NewTokenAuthenticationWithToken(token, true), nil
+	return auth.NewTokenAuthenticationWithToken(token, strings.HasPrefix(address, clientrpc.AddressSchemaTLS)), nil
 }

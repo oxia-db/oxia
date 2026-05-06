@@ -32,12 +32,19 @@ func TestConfig_Enabled(t *testing.T) {
 }
 
 func TestConfig_GetAuthenticationWithToken(t *testing.T) {
-	authentication, err := Config{Token: " token\n"}.GetAuthentication()
+	authentication, err := Config{Token: " token\n"}.GetAuthentication("localhost:6648")
 	require.NoError(t, err)
 
 	metadata, err := authentication.GetRequestMetadata(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer token", metadata["authorization"])
+	assert.False(t, authentication.RequireTransportSecurity())
+}
+
+func TestConfig_GetAuthenticationWithTLSAddress(t *testing.T) {
+	authentication, err := Config{Token: "token"}.GetAuthentication("tls://localhost:6648")
+	require.NoError(t, err)
+
 	assert.True(t, authentication.RequireTransportSecurity())
 }
 
@@ -45,27 +52,27 @@ func TestConfig_GetAuthenticationWithTokenFile(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	require.NoError(t, os.WriteFile(tokenFile, []byte("file-token\n"), 0o600))
 
-	authentication, err := Config{TokenFile: tokenFile}.GetAuthentication()
+	authentication, err := Config{TokenFile: tokenFile}.GetAuthentication("localhost:6648")
 	require.NoError(t, err)
 
 	metadata, err := authentication.GetRequestMetadata(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer file-token", metadata["authorization"])
-	assert.True(t, authentication.RequireTransportSecurity())
+	assert.False(t, authentication.RequireTransportSecurity())
 }
 
 func TestConfig_GetAuthenticationWithoutToken(t *testing.T) {
-	_, err := Config{}.GetAuthentication()
+	_, err := Config{}.GetAuthentication("localhost:6648")
 	require.ErrorIs(t, err, ErrAuthTokenRequired)
 }
 
 func TestConfig_GetAuthenticationWithConflictingTokenSources(t *testing.T) {
-	_, err := Config{Token: "token", TokenFile: "token-file"}.GetAuthentication()
+	_, err := Config{Token: "token", TokenFile: "token-file"}.GetAuthentication("localhost:6648")
 	require.ErrorIs(t, err, ErrAuthTokenConflict)
 }
 
 func TestConfig_GetAuthenticationWithEmptyToken(t *testing.T) {
-	_, err := Config{Token: " \n"}.GetAuthentication()
+	_, err := Config{Token: " \n"}.GetAuthentication("localhost:6648")
 	require.ErrorIs(t, err, ErrAuthTokenRequired)
 }
 
@@ -73,13 +80,13 @@ func TestConfig_GetAuthenticationWithEmptyTokenFile(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	require.NoError(t, os.WriteFile(tokenFile, []byte("\n"), 0o600))
 
-	_, err := Config{TokenFile: tokenFile}.GetAuthentication()
+	_, err := Config{TokenFile: tokenFile}.GetAuthentication("localhost:6648")
 	require.ErrorIs(t, err, ErrAuthTokenRequired)
 }
 
 func TestConfig_GetAuthenticationWithMissingTokenFile(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "missing")
-	_, err := Config{TokenFile: tokenFile}.GetAuthentication()
+	_, err := Config{TokenFile: tokenFile}.GetAuthentication("localhost:6648")
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrAuthTokenRequired))
 	assert.Contains(t, err.Error(), tokenFile)

@@ -44,7 +44,7 @@ func (config ClientConfig) NewClient() (oxia.SyncClient, error) {
 		oxia.WithNamespace(config.Namespace),
 	}
 	if config.Auth.Enabled() {
-		authentication, err := config.Auth.GetAuthentication()
+		authentication, err := config.Auth.GetAuthentication(config.ServiceAddr)
 		if err != nil {
 			return nil, err
 		}

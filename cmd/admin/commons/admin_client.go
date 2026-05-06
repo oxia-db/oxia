@@ -41,7 +41,7 @@ func (config AdminClientConfig) NewAdminClient() (oxia.AdminClient, error) {
 	var authentication auth.Authentication
 	if config.Auth.Enabled() {
 		var err error
-		authentication, err = config.Auth.GetAuthentication()
+		authentication, err = config.Auth.GetAuthentication(config.AdminAddress)
 		if err != nil {
 			return nil, err
 		}
