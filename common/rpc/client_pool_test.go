@@ -93,6 +93,27 @@ func TestClientPool_KeepsConnectionWhenHealthRecoversBeforeTimeout(t *testing.T)
 	}, 250*time.Millisecond, 10*time.Millisecond)
 }
 
+func TestClientPool_KeepsConnectionWhenHealthCheckIsUnsupported(t *testing.T) {
+	_, target := newTestGrpcServerWithoutHealth(t)
+
+	pool := NewClientPool(nil, nil).(*clientPool)
+	defer pool.Close()
+
+	conn, err := newTestConnectionWithHealthConfig(pool, target,
+		10*time.Millisecond, 10*time.Millisecond, 50*time.Millisecond)
+	require.NoError(t, err)
+
+	pool.Lock()
+	pool.connections[target] = conn
+	pool.Unlock()
+
+	require.Never(t, func() bool {
+		pool.RLock()
+		defer pool.RUnlock()
+		return pool.connections[target] != conn
+	}, 100*time.Millisecond, 10*time.Millisecond)
+}
+
 func newTestConnectionWithHealthConfig(
 	pool *clientPool,
 	target string,
@@ -170,6 +191,24 @@ func newTestBlockingHealthServer(t *testing.T) (*grpc.Server, string) {
 	server := grpc.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, &blockingHealthServer{})
 
+	go func() {
+		_ = server.Serve(listener)
+	}()
+
+	t.Cleanup(func() {
+		server.Stop()
+	})
+
+	return server, listener.Addr().String()
+}
+
+func newTestGrpcServerWithoutHealth(t *testing.T) (*grpc.Server, string) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	server := grpc.NewServer()
 	go func() {
 		_ = server.Serve(listener)
 	}()

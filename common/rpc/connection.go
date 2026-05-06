@@ -27,10 +27,12 @@ import (
 	grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/auth"
 	"github.com/oxia-db/oxia/common/process"
@@ -165,6 +167,11 @@ func (c *connection) healthCheckLoop() {
 		ctx, cancel := context.WithTimeout(c.ctx, c.healthPingTimeout)
 		response, err := c.healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 		cancel()
+
+		if status.Code(err) == codes.Unimplemented {
+			c.log.Debug("Connection health ping is unsupported")
+			return
+		}
 
 		if err == nil && response.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING {
 			firstFailure = time.Time{}
