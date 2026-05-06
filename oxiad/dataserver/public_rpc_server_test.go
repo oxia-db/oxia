@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/protoadapt"
@@ -33,6 +34,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
@@ -135,6 +137,23 @@ func TestWriteClientClose(t *testing.T) {
 	t.Logf("resp %v err %v", resp, err)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestPublicHealthCheck(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := grpc_health_v1.NewHealthClient(conn)
+	resp, err := client.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{
+		Service: oxiadcommonrpc.ReadinessProbeService,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.Status)
 }
 
 func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {

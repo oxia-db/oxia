@@ -17,7 +17,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -367,9 +366,6 @@ type mockRpcProvider struct {
 	channels map[string]*mockPerNodeChannels
 }
 
-func (r *mockRpcProvider) ClearPooledConnections(node model.Server) {
-}
-
 func newMockRpcProvider() *mockRpcProvider {
 	return &mockRpcProvider{
 		channels: make(map[string]*mockPerNodeChannels),
@@ -573,9 +569,9 @@ func (r *mockRpcProvider) RemoveObserver(ctx context.Context, node model.Server,
 	}
 }
 
-func (r *mockRpcProvider) GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, io.Closer, error) {
+func (r *mockRpcProvider) GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, error) {
 	c := r.GetNode(node).healthClient
-	return c, c, nil
+	return c, nil
 }
 
 type mockShardAssignmentClient struct {

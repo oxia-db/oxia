@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"sync"
 
@@ -44,9 +43,6 @@ type maelstromCoordinatorRpcProvider struct {
 
 	dispatcher        *dispatcher
 	assignmentStreams map[int64]*maelstromShardAssignmentClient
-}
-
-func (m *maelstromCoordinatorRpcProvider) ClearPooledConnections(node model.Server) {
 }
 
 func newRpcProvider(dispatcher *dispatcher) rpc.Provider {
@@ -114,13 +110,13 @@ func (m *maelstromCoordinatorRpcProvider) GetInfo(ctx context.Context, node mode
 	}, nil
 }
 
-func (m *maelstromCoordinatorRpcProvider) GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, io.Closer, error) {
+func (m *maelstromCoordinatorRpcProvider) GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, error) {
 	c := &maelstromHealthCheckClient{
 		provider: m,
 		node:     node.Internal,
 	}
 
-	return c, c, nil
+	return c, nil
 }
 
 type maelstromShardAssignmentClient struct {

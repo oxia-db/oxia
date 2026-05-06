@@ -65,14 +65,14 @@ func init() {
 
 func exec(*cobra.Command, []string) error {
 	clientPool := rpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
 
 	serverAddress := fmt.Sprintf("%s:%d", config.Host, config.Port)
 
-	client, closer, err := clientPool.GetHealthRpc(serverAddress)
+	client, err := clientPool.GetHealthRpc(serverAddress)
 	if err != nil {
 		return err
 	}
-	defer closer.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 	defer cancel()
