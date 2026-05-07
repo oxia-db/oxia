@@ -39,12 +39,9 @@ import (
 )
 
 const (
-	defaultGrpcClientKeepAliveTime            = 10 * time.Second
-	defaultGrpcClientKeepAliveTimeout         = 3 * time.Second
-	defaultGrpcConnectionHealthPingInterval   = defaultGrpcClientKeepAliveTime
-	defaultGrpcConnectionHealthPingTimeout    = defaultGrpcClientKeepAliveTimeout
-	defaultGrpcConnectionHealthFailureTimeout = 30 * time.Second
-	defaultGrpcClientPermitWithoutStream      = true
+	defaultGrpcClientKeepAliveTime       = 10 * time.Second
+	defaultGrpcClientKeepAliveTimeout    = 3 * time.Second
+	defaultGrpcClientPermitWithoutStream = true
 )
 
 type connectionFailureCallback func(target string)
@@ -60,7 +57,6 @@ type connection struct {
 	healthClient      grpc_health_v1.HealthClient
 	onFailure         connectionFailureCallback
 	healthPingTimeout time.Duration
-	healthTimeout     time.Duration
 	healthInterval    time.Duration
 	closeOnce         sync.Once
 	disconnected      atomic.Bool
@@ -83,9 +79,8 @@ func newConnection(
 		authentication,
 		dialOptions,
 		onFailure,
-		defaultGrpcConnectionHealthPingInterval,
-		defaultGrpcConnectionHealthPingTimeout,
-		defaultGrpcConnectionHealthFailureTimeout,
+		defaultGrpcClientKeepAliveTime,
+		defaultGrpcClientKeepAliveTimeout,
 	)
 }
 
@@ -97,7 +92,6 @@ func newConnectionWithHealthConfig(
 	onFailure connectionFailureCallback,
 	healthInterval time.Duration,
 	healthPingTimeout time.Duration,
-	healthTimeout time.Duration,
 ) (*connection, error) {
 	log := slog.With(slog.String("component", "rpc-connection"), slog.String("target", target))
 	log.Debug("Creating new GRPC connection")
@@ -139,7 +133,6 @@ func newConnectionWithHealthConfig(
 		healthClient:      grpc_health_v1.NewHealthClient(clientConn),
 		onFailure:         onFailure,
 		healthPingTimeout: healthPingTimeout,
-		healthTimeout:     healthTimeout,
 		healthInterval:    healthInterval,
 		ctx:               ctx,
 		cancel:            cancel,
@@ -159,7 +152,6 @@ func newConnectionWithHealthConfig(
 }
 
 func (c *connection) healthCheckLoop() {
-	var firstFailure time.Time
 	ticker := time.NewTicker(c.healthInterval)
 	defer ticker.Stop()
 
@@ -173,18 +165,13 @@ func (c *connection) healthCheckLoop() {
 			return
 		}
 
-		if err == nil && response.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING {
-			firstFailure = time.Time{}
-		} else {
+		if err != nil || response.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
 			if err != nil {
-				c.log.Debug("Connection health ping failed", slog.Any("error", err))
+				c.log.Warn("Connection health ping failed", slog.Any("error", err))
 			} else {
-				c.log.Debug("Connection health ping returned unhealthy status", slog.Any("status", response.GetStatus()))
+				c.log.Warn("Connection health ping returned unhealthy status", slog.Any("status", response.GetStatus()))
 			}
-			if firstFailure.IsZero() {
-				firstFailure = time.Now()
-			}
-			if time.Since(firstFailure) >= c.healthTimeout && c.disconnected.CompareAndSwap(false, true) {
+			if c.disconnected.CompareAndSwap(false, true) {
 				c.notifyDisconnect()
 				return
 			}
@@ -199,7 +186,6 @@ func (c *connection) healthCheckLoop() {
 }
 
 func (c *connection) notifyDisconnect() {
-	c.log.Warn("Connection health check timed out", slog.Duration("timeout", c.healthTimeout))
 	go process.DoWithLabels(
 		context.Background(),
 		map[string]string{

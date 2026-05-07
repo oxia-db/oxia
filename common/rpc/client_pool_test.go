@@ -27,14 +27,14 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
-func TestClientPool_RemovesConnectionAfterHealthTimeout(t *testing.T) {
+func TestClientPool_RemovesConnectionAfterHealthFailure(t *testing.T) {
 	_, _, target := newTestHealthServer(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
 	pool := NewClientPool(nil, nil).(*clientPool)
 	defer pool.Close()
 
 	conn, err := newTestConnectionWithHealthConfig(pool, target,
-		10*time.Millisecond, 10*time.Millisecond, 50*time.Millisecond)
+		10*time.Millisecond, 10*time.Millisecond)
 	require.NoError(t, err)
 
 	pool.Lock()
@@ -56,7 +56,7 @@ func TestClientPool_RemovesConnectionWhenHealthPingHangs(t *testing.T) {
 	defer pool.Close()
 
 	conn, err := newTestConnectionWithHealthConfig(pool, target,
-		10*time.Millisecond, 10*time.Millisecond, 50*time.Millisecond)
+		10*time.Millisecond, 10*time.Millisecond)
 	require.NoError(t, err)
 
 	pool.Lock()
@@ -71,21 +71,20 @@ func TestClientPool_RemovesConnectionWhenHealthPingHangs(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
-func TestClientPool_KeepsConnectionWhenHealthRecoversBeforeTimeout(t *testing.T) {
-	_, healthServer, target := newTestHealthServer(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+func TestClientPool_KeepsConnectionWhenHealthIsServing(t *testing.T) {
+	_, _, target := newTestHealthServer(t, grpc_health_v1.HealthCheckResponse_SERVING)
 
 	pool := NewClientPool(nil, nil).(*clientPool)
 	defer pool.Close()
 
 	conn, err := newTestConnectionWithHealthConfig(pool, target,
-		10*time.Millisecond, 10*time.Millisecond, 200*time.Millisecond)
+		10*time.Millisecond, 10*time.Millisecond)
 	require.NoError(t, err)
 
 	pool.Lock()
 	pool.connections[target] = conn
 	pool.Unlock()
 
-	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
 	require.Never(t, func() bool {
 		pool.RLock()
 		defer pool.RUnlock()
@@ -100,7 +99,7 @@ func TestClientPool_KeepsConnectionWhenHealthCheckIsUnsupported(t *testing.T) {
 	defer pool.Close()
 
 	conn, err := newTestConnectionWithHealthConfig(pool, target,
-		10*time.Millisecond, 10*time.Millisecond, 50*time.Millisecond)
+		10*time.Millisecond, 10*time.Millisecond)
 	require.NoError(t, err)
 
 	pool.Lock()
@@ -119,7 +118,6 @@ func newTestConnectionWithHealthConfig(
 	target string,
 	healthInterval time.Duration,
 	healthPingTimeout time.Duration,
-	healthTimeout time.Duration,
 ) (*connection, error) {
 	return newConnectionWithHealthConfig(
 		target,
@@ -129,7 +127,6 @@ func newTestConnectionWithHealthConfig(
 		pool.removeConnection,
 		healthInterval,
 		healthPingTimeout,
-		healthTimeout,
 	)
 }
 
