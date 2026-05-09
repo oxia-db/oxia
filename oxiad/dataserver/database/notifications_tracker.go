@@ -172,7 +172,7 @@ func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startO
 	}
 
 	if nt.closed.Load() {
-		return constant.ErrAlreadyClosed
+		return constant.ErrResourceUnavailable
 	}
 
 	return nil

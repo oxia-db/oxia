@@ -17,7 +17,6 @@ package dataserver
 import (
 	"context"
 	"crypto/tls"
-	stderrors "errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -93,33 +92,6 @@ func (s *internalRpcServer) Close() error {
 	return s.grpcServer.Close()
 }
 
-// toGRPCError converts domain errors from the dataserver layer into gRPC
-// status errors so that remote callers (e.g. the coordinator) can match on
-// the expected gRPC error codes. If the error is already a gRPC status error,
-// it is returned as-is. Unknown domain errors are mapped to codes.Unknown.
-func toGRPCError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if _, ok := status.FromError(err); ok {
-		return err
-	}
-	switch {
-	case stderrors.Is(err, dserror.ErrInvalidTerm):
-		return status.Error(constant.CodeInvalidTerm, err.Error())
-	case stderrors.Is(err, dserror.ErrNodeIsNotMember):
-		return status.Error(constant.CodeNodeIsNotMember, err.Error())
-	case stderrors.Is(err, dserror.ErrInvalidStatus):
-		return status.Error(constant.CodeInvalidStatus, err.Error())
-	case stderrors.Is(err, dserror.ErrResourceConflict):
-		return status.Error(constant.CodeAlreadyClosed, err.Error())
-	case stderrors.Is(err, dserror.ErrResourceNotAvailable):
-		return status.Error(codes.Unavailable, err.Error())
-	default:
-		return status.Error(codes.Unknown, err.Error())
-	}
-}
-
 func (s *internalRpcServer) PushShardAssignments(srv proto.OxiaCoordination_PushShardAssignmentsServer) error {
 	s.log.Info(
 		"Received shard assignment request from coordinator",
@@ -191,7 +163,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 	// NewTerm applies to both followers and leaders
 	// First check if we have already a follower controller running
 	if follower, err := s.shardsDirector.GetFollower(req.Shard); err != nil { //nolint:revive
-		if status.Code(err) != constant.CodeNodeIsNotFollower {
+		if status.Code(err) != codes.NotFound {
 			log.Warn(
 				"NewTerm failed: could not get follower controller",
 				slog.Any("error", err),
@@ -216,7 +188,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 				slog.Any("error", err2),
 			)
 		}
-		return res, toGRPCError(err2)
+		return res, dserror.IntoGRPCError(err2)
 	}
 
 	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard, req.Options)
@@ -365,7 +337,7 @@ func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateReque
 			slog.Any("error", err),
 		)
 	}
-	return res, toGRPCError(err)
+	return res, dserror.IntoGRPCError(err)
 }
 
 func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServer) error {
@@ -424,7 +396,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 			slog.Any("error", err),
 		)
 	}
-	return toGRPCError(err)
+	return dserror.IntoGRPCError(err)
 }
 
 func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapshotServer) error {
@@ -492,26 +464,26 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
 	}
-	return toGRPCError(err)
+	return dserror.IntoGRPCError(err)
 }
 
 func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	follower, err := s.shardsDirector.GetFollower(req.Shard)
 	if err == nil {
 		res, err := follower.GetStatus(req)
-		return res, toGRPCError(err)
+		return res, dserror.IntoGRPCError(err)
 	}
 
-	if status.Code(err) != constant.CodeNodeIsNotFollower {
+	if status.Code(err) != codes.NotFound {
 		return nil, err
 	}
 
 	// If we don't have a follower, fallback to checking the leader controller
 	leader, err := s.shardsDirector.GetLeader(req.Shard)
 	if err != nil {
-		if status.Code(err) == constant.CodeNodeIsNotLeader {
+		if status.Code(err) == status.Code(constant.ErrNodeIsNotLeader) {
 			// Node is neither follower nor leader for this shard
-			return nil, status.Errorf(constant.CodeNodeIsNotMember, "node is not a member for shard %d", req.Shard)
+			return nil, constant.ErrNodeIsNotMember
 		}
 		return nil, err
 	}
@@ -521,7 +493,7 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 
 func (s *internalRpcServer) DeleteShard(_ context.Context, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	res, err := s.shardsDirector.DeleteShard(req)
-	return res, toGRPCError(err)
+	return res, dserror.IntoGRPCError(err)
 }
 
 func readHeader(md metadata.MD, key string) (value string, err error) {

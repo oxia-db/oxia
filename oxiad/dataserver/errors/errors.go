@@ -14,12 +14,43 @@
 
 package errors
 
-import "errors"
+import (
+	stderrors "errors"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/oxia-db/oxia/common/constant"
+)
 
 var (
-	ErrInvalidTerm          = errors.New("invalid term")
-	ErrResourceNotAvailable = errors.New("resource not available")
-	ErrResourceConflict     = errors.New("resource conflict")
-	ErrInvalidStatus        = errors.New("invalid status")
-	ErrNodeIsNotMember      = errors.New("node is not a member")
+	ErrInvalidTerm          = stderrors.New("invalid term")
+	ErrResourceNotAvailable = stderrors.New("resource not available")
+	ErrResourceConflict     = stderrors.New("resource conflict")
+	ErrInvalidStatus        = stderrors.New("invalid status")
+	ErrNodeIsNotMember      = stderrors.New("node is not a member")
 )
+
+// IntoGRPCError converts dataserver-internal errors into public gRPC errors.
+func IntoGRPCError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := status.FromError(err); ok {
+		return err
+	}
+	switch {
+	case stderrors.Is(err, ErrInvalidTerm):
+		return constant.ErrInvalidTerm
+	case stderrors.Is(err, ErrNodeIsNotMember):
+		return constant.ErrNodeIsNotMember
+	case stderrors.Is(err, ErrInvalidStatus):
+		return constant.ErrInvalidStatus
+	case stderrors.Is(err, ErrResourceConflict):
+		return constant.ErrResourceUnavailable
+	case stderrors.Is(err, ErrResourceNotAvailable):
+		return status.Error(codes.Unavailable, err.Error())
+	default:
+		return status.Error(codes.Unknown, err.Error())
+	}
+}

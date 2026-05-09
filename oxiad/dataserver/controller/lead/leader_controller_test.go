@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
@@ -79,7 +80,7 @@ func TestLeaderController_NotInitialized(t *testing.T) {
 	})
 
 	assert.Nil(t, res)
-	assert.Equal(t, constant.CodeInvalidStatus, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	responses := make(chan *oentity.TWithError[*proto.GetResponse], 1000)
 	lc.Read(context.Background(), &proto.ReadRequest{
@@ -88,7 +89,7 @@ func TestLeaderController_NotInitialized(t *testing.T) {
 	}, concurrent.ReadFromStreamCallback(responses))
 
 	_, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
-	assert.Equal(t, constant.CodeInvalidStatus, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -116,7 +117,7 @@ func TestLeaderController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res)
-	assert.Equal(t, constant.CodeAlreadyClosed, status.Code(err))
+	assert.Equal(t, codes.Unavailable, status.Code(err))
 
 	res2, err := lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:        shard,
@@ -125,7 +126,7 @@ func TestLeaderController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res2)
-	assert.Equal(t, constant.CodeAlreadyClosed, status.Code(err))
+	assert.Equal(t, codes.Unavailable, status.Code(err))
 
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
@@ -150,7 +151,7 @@ func TestLeaderController_BecomeLeader_NoFencing(t *testing.T) {
 		FollowerMaps:      nil,
 	})
 	assert.Nil(t, resp)
-	assert.Equal(t, constant.CodeInvalidStatus, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -239,7 +240,7 @@ func TestLeaderController_BecomeLeader_RF1(t *testing.T) {
 	})
 
 	assert.Nil(t, res3)
-	assert.Equal(t, constant.CodeInvalidStatus, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	responses = make(chan *oentity.TWithError[*proto.GetResponse], 1000)
 	lc.Read(context.Background(), &proto.ReadRequest{
@@ -248,7 +249,7 @@ func TestLeaderController_BecomeLeader_RF1(t *testing.T) {
 	}, concurrent.ReadFromStreamCallback(responses))
 
 	_, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
-	assert.Equal(t, constant.CodeInvalidStatus, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -347,7 +348,7 @@ func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	})
 
 	assert.Nil(t, res3)
-	assert.Equal(t, constant.CodeInvalidStatus, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	responses = make(chan *oentity.TWithError[*proto.GetResponse], 1000)
 	lc.Read(context.Background(), &proto.ReadRequest{
@@ -356,7 +357,7 @@ func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	}, concurrent.ReadFromStreamCallback(responses))
 
 	_, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
-	assert.Equal(t, constant.CodeInvalidStatus, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	close(provider.AckResps)
 	assert.NoError(t, lc.Close())
@@ -432,7 +433,7 @@ func TestLeaderController_FenceTerm(t *testing.T) {
 		Term:  4,
 	})
 	assert.Nil(t, fr)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
 
 	// Same term will succeed
@@ -478,7 +479,7 @@ func TestLeaderController_BecomeLeaderTerm(t *testing.T) {
 		FollowerMaps:      nil,
 	})
 	assert.Nil(t, resp)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	// Higher term will fail
 	resp, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
@@ -488,7 +489,7 @@ func TestLeaderController_BecomeLeaderTerm(t *testing.T) {
 		FollowerMaps:      nil,
 	})
 	assert.Nil(t, resp)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	// Same term will succeed
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
@@ -967,7 +968,7 @@ func TestLeaderController_AddFollowerCheckTerm(t *testing.T) {
 		FollowerHeadEntryId: constant2.InvalidEntryId,
 	})
 	assert.Nil(t, afRes)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	afRes, err = lc.AddFollower(&proto.AddFollowerRequest{
 		Shard:               shard,
@@ -976,7 +977,7 @@ func TestLeaderController_AddFollowerCheckTerm(t *testing.T) {
 		FollowerHeadEntryId: constant2.InvalidEntryId,
 	})
 	assert.Nil(t, afRes)
-	assert.Equal(t, constant.CodeInvalidTerm, status.Code(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -1160,7 +1161,7 @@ func TestLeaderController_NotificationsWhenNotReady(t *testing.T) {
 
 	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
 	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
-	assert.Equal(t, status.Code(adaptor.Error()), constant.CodeInvalidStatus)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(adaptor.Error()))
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())

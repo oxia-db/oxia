@@ -459,7 +459,7 @@ func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSess
 	}
 	res, err := lc.CloseSession(req)
 	if err != nil {
-		if status.Code(err) != constant.CodeSessionNotFound {
+		if status.Code(err) != status.Code(constant.ErrSessionNotFound) {
 			s.log.Warn("Failed to close session", slog.Any("error", err))
 		}
 		return nil, err
@@ -513,8 +513,8 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 	shardID := *shardId
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
-		if status.Code(err) == constant.CodeNodeIsNotLeader {
-			return nil, constant.NewNodeIsNotLeaderWithHint(shardID, s.assignmentDispatcher.GetLeader(shardID))
+		if status.Code(err) == status.Code(constant.ErrNodeIsNotLeader) {
+			return nil, constant.WithLeaderHint(status.Convert(err), shardID, s.assignmentDispatcher.GetLeader(shardID))
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
 		return nil, err

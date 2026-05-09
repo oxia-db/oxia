@@ -24,11 +24,8 @@ import (
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
 
-// WriteRerouter is called when a write batch detects its target shard was
-// deleted (e.g. after a split). It re-submits operations to the correct shards.
 type WriteRerouter func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 
-// ReadRerouter is called when a read batch detects its target shard was deleted.
 type ReadRerouter func([]model.GetCall)
 
 type BatcherFactory struct {

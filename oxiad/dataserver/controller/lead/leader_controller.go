@@ -24,7 +24,6 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
 
@@ -264,7 +263,7 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	defer lc.Unlock()
 
 	if lc.isClosed() {
-		return nil, constant.ErrAlreadyClosed
+		return nil, constant.ErrResourceUnavailable
 	}
 
 	currentTerm := lc.term.Load()
@@ -346,7 +345,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	defer lc.Unlock()
 
 	if lc.isClosed() {
-		return nil, constant.ErrAlreadyClosed
+		return nil, constant.ErrResourceUnavailable
 	}
 
 	if lc.status != proto.ServingStatus_FENCED {
@@ -1110,7 +1109,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			for {
 				select {
 				case <-lc.ctx.Done():
-					cb.OnComplete(constant.ErrAlreadyClosed)
+					cb.OnComplete(constant.ErrResourceUnavailable)
 					return
 				case <-ctx.Done():
 					cb.OnComplete(nil)
@@ -1293,7 +1292,7 @@ func (lc *leaderController) Checksum() crc.Checksum {
 
 func checkStatusIsLeader(actual proto.ServingStatus) error {
 	if actual != proto.ServingStatus_LEADER {
-		return status.Errorf(constant.CodeInvalidStatus, "Received message in the wrong state. In %+v, should be %+v.", actual, proto.ServingStatus_LEADER)
+		return constant.ErrInvalidStatus
 	}
 	return nil
 }

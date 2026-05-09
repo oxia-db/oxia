@@ -291,7 +291,7 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 	defer timer.Done()
 
 	if t.isClosed() {
-		return constant.ErrAlreadyClosed
+		return constant.ErrResourceUnavailable
 	}
 
 	if err := t.checkNextOffset(entry.Offset); err != nil {

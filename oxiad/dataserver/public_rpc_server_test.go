@@ -184,7 +184,7 @@ func TestValidateAuthorityReturnsNotInitializedBeforeAssignmentsReady(t *testing
 
 	err := server.validateAuthority(ctx)
 	require.Error(t, err)
-	assert.Equal(t, constant.CodeNotInitialized, grpcstatus.Code(err))
+	assert.Equal(t, codes.Unavailable, grpcstatus.Code(err))
 }
 
 func TestValidateAuthorityCanBeDisabled(t *testing.T) {
@@ -244,7 +244,7 @@ func TestResolveLeaderValidatesAuthorityBeforeLeaderLookup(t *testing.T) {
 		log: slog.Default(),
 		shardsDirector: &testShardsDirector{
 			getLeader: func(int64) (lead.LeaderController, error) {
-				return nil, constant.NewNodeIsNotLeaderWithHint(1, "leader:6648")
+				return nil, constant.WithLeaderHint(grpcstatus.Convert(constant.ErrNodeIsNotLeader), 1, "leader:6648")
 			},
 		},
 		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{

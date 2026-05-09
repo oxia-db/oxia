@@ -86,7 +86,7 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 		if err == nil {
 			return false
 		}
-		hint := constant.FindLeaderHint(err)
+		hint := constant.GetLeaderHint(err)
 		if hint == nil {
 			return false
 		}
@@ -147,7 +147,7 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 		if err == nil {
 			return false
 		}
-		hint := constant.FindLeaderHint(err)
+		hint := constant.GetLeaderHint(err)
 		if hint == nil {
 			return false
 		}
@@ -260,7 +260,7 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 		if err == nil {
 			return false
 		}
-		hint := constant.FindLeaderHint(err)
+		hint := constant.GetLeaderHint(err)
 		if hint == nil {
 			return false
 		}

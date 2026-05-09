@@ -12,16 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package batch
+package constant
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/common/constant"
+	"google.golang.org/grpc/status"
 )
 
-func TestIsRetriable_NotInitialized(t *testing.T) {
-	assert.True(t, IsRetriable(constant.ErrNotInitialized))
+func TestWithLeaderHint(t *testing.T) {
+	err := WithLeaderHint(status.Convert(ErrNodeIsNotLeader), 1, "leader:6648")
+	hint := GetLeaderHint(err)
+	assert.NotNil(t, hint)
+	assert.Equal(t, int64(1), hint.Shard)
+	assert.Equal(t, "leader:6648", hint.LeaderAddress)
 }
