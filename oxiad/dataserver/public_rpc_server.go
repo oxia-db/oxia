@@ -513,8 +513,8 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 	shardID := *shardId
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
-		if status.Code(err) == status.Code(constant.ErrNodeIsNotLeader) {
-			return nil, constant.WithLeaderHint(status.Convert(err), shardID, s.assignmentDispatcher.GetLeader(shardID))
+		if errors.Is(err, constant.ErrNodeIsNotLeader) {
+			return nil, constant.IntoGrpcStatus(err, constant.WithLeaderHint(shardID, s.assignmentDispatcher.GetLeader(shardID))).Err()
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
 		return nil, err

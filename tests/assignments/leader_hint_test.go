@@ -86,11 +86,12 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 		if err == nil {
 			return false
 		}
-		hint := constant.GetLeaderHint(err)
-		if hint == nil {
+		_, metadata := constant.FromGrpcError(err)
+		_, leader, ok := metadata.GetLeaderHint()
+		if !ok {
 			return false
 		}
-		assert.Equal(t, shard.Leader.Public, hint.LeaderAddress)
+		assert.Equal(t, shard.Leader.Public, leader)
 		return true
 	}, 20*time.Second, 100*time.Millisecond)
 }
@@ -147,11 +148,12 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 		if err == nil {
 			return false
 		}
-		hint := constant.GetLeaderHint(err)
-		if hint == nil {
+		_, metadata := constant.FromGrpcError(err)
+		_, leader, ok := metadata.GetLeaderHint()
+		if !ok {
 			return false
 		}
-		assert.Equal(t, shard.Leader.Public, hint.LeaderAddress)
+		assert.Equal(t, shard.Leader.Public, leader)
 		return true
 	}, 20*time.Second, 100*time.Millisecond)
 }
@@ -260,11 +262,12 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 		if err == nil {
 			return false
 		}
-		hint := constant.GetLeaderHint(err)
-		if hint == nil {
+		_, metadata := constant.FromGrpcError(err)
+		_, leader, ok := metadata.GetLeaderHint()
+		if !ok {
 			return false
 		}
-		assert.Equal(t, shard.Leader.Public, hint.LeaderAddress)
+		assert.Equal(t, shard.Leader.Public, leader)
 		return true
 	}, 20*time.Second, 100*time.Millisecond)
 }

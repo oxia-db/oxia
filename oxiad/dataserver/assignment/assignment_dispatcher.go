@@ -116,7 +116,7 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 		select {
 		case assignments := <-clientCh:
 			if assignments == nil {
-				return constant.ErrCancelled
+				return constant.ErrAborted
 			}
 
 			assignments = filterByNamespace(assignments, namespace)

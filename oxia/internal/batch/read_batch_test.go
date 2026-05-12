@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
@@ -145,7 +144,7 @@ func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
 	execute := func(_ context.Context, _ *proto.ReadRequest, _ *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
 		executeCount++
 		shardDeleted = true
-		return nil, constant.WithLeaderHint(status.Convert(constant.ErrNodeIsNotLeader), 1, "")
+		return nil, constant.IntoGrpcStatus(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, "")).Err()
 	}
 
 	var reroutedGets []model.GetCall

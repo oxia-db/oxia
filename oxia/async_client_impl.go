@@ -431,7 +431,7 @@ func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, 
 			slog.Int64("shard", shardId),
 			slog.Duration("retry-after", duration),
 		)
-		if leaderHint := constant.GetLeaderHint(err); leaderHint != nil {
+		if leaderHint := leaderHintFromError(err); leaderHint != nil {
 			hint = leaderHint
 		}
 	})
@@ -529,7 +529,7 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 			slog.Int64("shard", shardId),
 			slog.Duration("retry-after", duration),
 		)
-		if leaderHint := constant.GetLeaderHint(err); leaderHint != nil {
+		if leaderHint := leaderHintFromError(err); leaderHint != nil {
 			hint = leaderHint
 		}
 	})
@@ -666,6 +666,18 @@ func (c *clientImpl) getShardForKey(key string, options baseOptionsIf) int64 {
 	}
 
 	return c.shardManager.Get(key)
+}
+
+func leaderHintFromError(err error) *proto.LeaderHint {
+	_, metadata := constant.FromGrpcError(err)
+	shard, leader, ok := metadata.GetLeaderHint()
+	if !ok {
+		return nil
+	}
+	return &proto.LeaderHint{
+		Shard:         shard,
+		LeaderAddress: leader,
+	}
 }
 
 func (c *clientImpl) GetNotifications() (Notifications, error) {

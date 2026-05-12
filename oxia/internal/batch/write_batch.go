@@ -25,8 +25,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/oxia-db/oxia/common/constant"
-
 	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxia/batch"
 
@@ -160,7 +158,7 @@ func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response
 			slog.Int64("shard", *b.shardId),
 			slog.Duration("retry-after", duration),
 		)
-		if leaderHint := constant.GetLeaderHint(err); leaderHint != nil {
+		if leaderHint := leaderHintFromError(err); leaderHint != nil {
 			hint = leaderHint
 		}
 	})

@@ -2336,6 +2336,7 @@ func (x *Notification) GetKeyRangeLast() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in client.proto.
 type LeaderHint struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Shard         int64                  `protobuf:"varint,1,opt,name=shard,proto3" json:"shard,omitempty"`
@@ -2557,11 +2558,11 @@ const file_client_proto_rawDesc = "" +
 	"version_id\x18\x02 \x01(\x03H\x00R\tversionId\x88\x01\x01\x12)\n" +
 	"\x0ekey_range_last\x18\x03 \x01(\tH\x01R\fkeyRangeLast\x88\x01\x01B\r\n" +
 	"\v_version_idB\x11\n" +
-	"\x0f_key_range_last\"I\n" +
+	"\x0f_key_range_last\"M\n" +
 	"\n" +
 	"LeaderHint\x12\x14\n" +
 	"\x05shard\x18\x01 \x01(\x03R\x05shard\x12%\n" +
-	"\x0eleader_address\x18\x02 \x01(\tR\rleaderAddress**\n" +
+	"\x0eleader_address\x18\x02 \x01(\tR\rleaderAddress:\x02\x18\x01**\n" +
 	"\x0eShardKeyRouter\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
 	"\aXXHASH3\x10\x01*M\n" +

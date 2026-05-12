@@ -14,6 +14,23 @@
 
 package batch
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/proto"
+)
 
 var errShardNotFound = errors.New("shard not found in shard manager")
+
+func leaderHintFromError(err error) *proto.LeaderHint {
+	_, metadata := constant.FromGrpcError(err)
+	shard, leader, ok := metadata.GetLeaderHint()
+	if !ok {
+		return nil
+	}
+	return &proto.LeaderHint{
+		Shard:         shard,
+		LeaderAddress: leader,
+	}
+}
