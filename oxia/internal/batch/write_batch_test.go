@@ -24,7 +24,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/metric/noop"
-	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
@@ -230,7 +229,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
 		executeCount++
 		shardDeleted = true
-		return nil, constant.WithLeaderHint(status.Convert(constant.ErrNodeIsNotLeader), 1, "")
+		return nil, constant.IntoGrpcStatus(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, "")).Err()
 	}
 
 	var reroutedPuts []model.PutCall
@@ -278,7 +277,7 @@ func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
 	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
 		callCount++
 		if callCount == 1 {
-			return nil, constant.ErrNodeIsNotLeader
+			return nil, constant.IntoGrpcStatus(constant.ErrNodeIsNotLeader).Err()
 		}
 		return &proto.WriteResponse{
 			Puts: []*proto.PutResponse{{Status: proto.Status_OK, Version: &proto.Version{VersionId: 1}}},

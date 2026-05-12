@@ -244,7 +244,7 @@ func TestResolveLeaderValidatesAuthorityBeforeLeaderLookup(t *testing.T) {
 		log: slog.Default(),
 		shardsDirector: &testShardsDirector{
 			getLeader: func(int64) (lead.LeaderController, error) {
-				return nil, constant.WithLeaderHint(grpcstatus.Convert(constant.ErrNodeIsNotLeader), 1, "leader:6648")
+				return nil, constant.IntoGrpcStatus(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, "leader:6648")).Err()
 			},
 		},
 		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
