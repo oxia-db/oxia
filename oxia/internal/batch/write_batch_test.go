@@ -136,7 +136,7 @@ func TestWriteBatchComplete(t *testing.T) {
 			errFailure,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
+		execute := func(ctx context.Context, request *proto.WriteRequest, _ constant.ErrorMetadata) (*proto.WriteResponse, error) {
 			assert.Equal(t, &proto.WriteRequest{
 				Shard: &shardId,
 				Puts: []*proto.PutRequest{{
@@ -225,7 +225,7 @@ func TestWriteBatchComplete(t *testing.T) {
 func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	executeCount := 0
 
-	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
+	execute := func(_ context.Context, _ *proto.WriteRequest, _ constant.ErrorMetadata) (*proto.WriteResponse, error) {
 		executeCount++
 		return nil, constant.ErrShardNotFound
 	}
@@ -269,10 +269,10 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 func TestWriteBatchNoRerouteOnOtherError(t *testing.T) {
 	callCount := 0
-	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
+	execute := func(_ context.Context, _ *proto.WriteRequest, _ constant.ErrorMetadata) (*proto.WriteResponse, error) {
 		callCount++
 		if callCount == 1 {
-			return nil, constant.ErrNodeIsNotLeader
+			return nil, constant.ErrInvalidStatus
 		}
 		return &proto.WriteResponse{
 			Puts: []*proto.PutResponse{{Status: proto.Status_OK, Version: &proto.Version{VersionId: 1}}},
@@ -298,7 +298,7 @@ func TestWriteBatchNoRerouteOnOtherError(t *testing.T) {
 		Value: []byte("v1"),
 		Callback: func(resp *proto.PutResponse, err error) {
 			assert.Nil(t, resp)
-			assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
+			assert.ErrorIs(t, err, constant.ErrInvalidStatus)
 			wg.Done()
 		},
 	})

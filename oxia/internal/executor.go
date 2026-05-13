@@ -17,12 +17,13 @@ package internal
 import (
 	"context"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
 type Executor interface {
-	ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error)
-	ExecuteRead(ctx context.Context, request *proto.ReadRequest) (proto.OxiaClient_ReadClient, error)
-	ExecuteList(ctx context.Context, request *proto.ListRequest) (proto.OxiaClient_ListClient, error)
-	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest) (proto.OxiaClient_RangeScanClient, error)
+	ExecuteWrite(ctx context.Context, request *proto.WriteRequest, hint constant.ErrorMetadata) (*proto.WriteResponse, error)
+	ExecuteRead(ctx context.Context, request *proto.ReadRequest, hint constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error)
+	ExecuteList(ctx context.Context, request *proto.ListRequest, hint constant.ErrorMetadata) (proto.OxiaClient_ListClient, error)
+	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, hint constant.ErrorMetadata) (proto.OxiaClient_RangeScanClient, error)
 }

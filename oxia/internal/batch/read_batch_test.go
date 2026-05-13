@@ -94,7 +94,7 @@ func TestReadBatchComplete(t *testing.T) {
 			nil,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.ReadRequest) (proto.OxiaClient_ReadClient, error) {
+		execute := func(ctx context.Context, request *proto.ReadRequest, _ constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error) {
 			assert.Equal(t, &proto.ReadRequest{
 				Shard: &shardId,
 				Gets: []*proto.GetRequest{{
@@ -140,7 +140,7 @@ func TestReadBatchComplete(t *testing.T) {
 func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
 	executeCount := 0
 
-	execute := func(_ context.Context, _ *proto.ReadRequest) (proto.OxiaClient_ReadClient, error) {
+	execute := func(_ context.Context, _ *proto.ReadRequest, _ constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error) {
 		executeCount++
 		return nil, constant.ErrShardNotFound
 	}
