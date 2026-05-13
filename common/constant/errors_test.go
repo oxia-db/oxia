@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestWithLeaderHint(t *testing.T) {
@@ -79,6 +80,13 @@ func TestIntoGrpcStatusNil(t *testing.T) {
 
 	assert.Equal(t, codes.OK, st.Code())
 	assert.Empty(t, st.Message())
+}
+
+func TestIntoGrpcStatusReturnsGrpcStatusError(t *testing.T) {
+	st := IntoGrpcStatus(status.Error(codes.InvalidArgument, "invalid"))
+
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Equal(t, "invalid", st.Message())
 }
 
 func TestIsRetryable(t *testing.T) {
