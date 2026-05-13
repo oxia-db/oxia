@@ -69,64 +69,80 @@ func (r *rpcProvider) Close() error {
 func (r *rpcProvider) PushShardAssignments(ctx context.Context, node *proto.DataServerIdentity) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
-	return client.PushShardAssignments(ctx)
+	stream, err := client.PushShardAssignments(ctx)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return stream, oxiaErr
 }
 
 func (r *rpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 
-	return client.NewTerm(ctx, req)
+	response, err := client.NewTerm(ctx, req)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
 }
 
 func (r *rpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 
-	return client.BecomeLeader(ctx, req)
+	response, err := client.BecomeLeader(ctx, req)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
 }
 
 func (r *rpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 
-	return client.AddFollower(ctx, req)
+	response, err := client.AddFollower(ctx, req)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
 }
 
 func (r *rpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 
-	return client.GetStatus(ctx, req)
+	response, err := client.GetStatus(ctx, req)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
 }
 
 func (r *rpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdentity, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
@@ -136,7 +152,8 @@ func (r *rpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdent
 		InstanceId: req.InstanceId,
 	})
 	if grpcstatus.Code(err) != codes.Unimplemented {
-		return res, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return res, oxiaErr
 	}
 
 	// Deprecated GetInfo fallback for older dataservers that do not implement
@@ -144,7 +161,8 @@ func (r *rpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdent
 	// GetInfo RPC.
 	info, legacyErr := client.GetInfo(ctx, &proto.GetInfoRequest{}) //nolint:staticcheck // Deprecated rolling-upgrade fallback for older dataservers.
 	if legacyErr != nil {
-		return nil, legacyErr
+		oxiaErr, _ := constant.FromGrpcError(legacyErr)
+		return nil, oxiaErr
 	}
 	return &proto.HandshakeResponse{
 		Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
@@ -155,25 +173,31 @@ func (r *rpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdent
 func (r *rpcProvider) DeleteShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 
-	return client.DeleteShard(ctx, req)
+	response, err := client.DeleteShard(ctx, req)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
 }
 
 func (r *rpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServerIdentity, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
 	client, err := r.pool.GetCoordinationRpc(node.Internal)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 
-	return client.RemoveObserver(ctx, req)
+	response, err := client.RemoveObserver(ctx, req)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
 }
 
 func (r *rpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {

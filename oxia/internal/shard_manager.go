@@ -29,7 +29,6 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -48,7 +47,7 @@ type shardManagerImpl struct {
 	updatedWg concurrent.WaitGroup
 
 	shardStrategy  ShardStrategy
-	clientPool     rpc.ClientPool
+	rpcProvider    RpcProvider
 	serviceAddress string
 	namespace      string
 	shards         map[int64]Shard
@@ -58,12 +57,12 @@ type shardManagerImpl struct {
 	requestTimeout time.Duration
 }
 
-func NewShardManager(shardStrategy ShardStrategy, clientPool rpc.ClientPool,
+func NewShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider,
 	serviceAddress string, namespace string, requestTimeout time.Duration) (ShardManager, error) {
 	sm := &shardManagerImpl{
 		namespace:      namespace,
 		shardStrategy:  shardStrategy,
-		clientPool:     clientPool,
+		rpcProvider:    rpcProvider,
 		serviceAddress: serviceAddress,
 		shards:         make(map[int64]Shard),
 		requestTimeout: requestTimeout,
@@ -164,7 +163,7 @@ func (s *shardManagerImpl) receiveWithRecovery() {
 				return nil
 			}
 
-			if !isErrorRetryable(err) {
+			if errors.Is(err, constant.ErrNamespaceNotFound) || status.Code(err) == codes.Unauthenticated {
 				return backoff.Permanent(err)
 			}
 			return err
@@ -190,14 +189,9 @@ func (s *shardManagerImpl) receiveWithRecovery() {
 }
 
 func (s *shardManagerImpl) receive(backOff backoff.BackOff) error {
-	client, err := s.clientPool.GetClientRpc(s.serviceAddress)
-	if err != nil {
-		return err
-	}
-
 	request := proto.ShardAssignmentsRequest{Namespace: s.namespace}
 
-	stream, err := client.GetShardAssignments(s.ctx, &request)
+	stream, err := s.rpcProvider.GetShardAssignments(s.ctx, s.serviceAddress, &request)
 	if err != nil {
 		return err
 	}
@@ -248,13 +242,4 @@ func (s *shardManagerImpl) update(updates []Shard) {
 
 func overlap(a HashRange, b HashRange) bool {
 	return a.MinInclusive <= b.MaxInclusive && a.MaxInclusive >= b.MinInclusive
-}
-
-func isErrorRetryable(err error) bool {
-	switch status.Code(err) {
-	case status.Code(constant.ErrNamespaceNotFound), codes.Unauthenticated:
-		return false
-	default:
-		return true
-	}
 }

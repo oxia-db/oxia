@@ -16,6 +16,7 @@ package constant
 
 import (
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,7 +29,6 @@ func TestWithLeaderHint(t *testing.T) {
 	shard, leader, ok := metadata.GetLeaderHint()
 
 	assert.ErrorIs(t, oxiaErr, ErrNodeIsNotLeader)
-	assert.True(t, metadata.HasLeaderHint())
 	assert.True(t, ok)
 	assert.Equal(t, int64(1), shard)
 	assert.Equal(t, "leader:6648", leader)
@@ -82,6 +82,7 @@ func TestIntoGrpcStatusNil(t *testing.T) {
 }
 
 func TestIsRetryable(t *testing.T) {
+	assert.True(t, IsRetryable(io.EOF))
 	assert.True(t, IsRetryable(ErrAborted))
 	assert.True(t, IsRetryable(ErrResourceUnavailable))
 	assert.True(t, IsRetryable(ErrNodeIsNotMember))

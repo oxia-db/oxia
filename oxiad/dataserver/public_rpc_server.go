@@ -99,7 +99,7 @@ func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
 	}
 
 	if !s.assignmentDispatcher.Initialized() {
-		return constant.ErrNotInitialized
+		return constant.IntoGrpcStatus(constant.ErrNotInitialized).Err()
 	}
 
 	actualAuthority, err := oxiadcommonrpc.GetAuthority(ctx)
@@ -420,7 +420,7 @@ func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSe
 			"Failed to create session",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 	return res, nil
 }
@@ -442,7 +442,7 @@ func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeart
 			"Failed to listen to heartbeats",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 	return &proto.KeepAliveResponse{}, nil
 }
@@ -459,10 +459,10 @@ func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSess
 	}
 	res, err := lc.CloseSession(req)
 	if err != nil {
-		if status.Code(err) != status.Code(constant.ErrSessionNotFound) {
+		if !errors.Is(err, constant.ErrSessionNotFound) {
 			s.log.Warn("Failed to close session", slog.Any("error", err))
 		}
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 	return res, nil
 }

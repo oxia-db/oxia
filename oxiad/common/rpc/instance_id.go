@@ -43,7 +43,7 @@ func NewGrpcInsIDVerifyInterceptors(manifest *manifestpkg.Manifest) *Interceptor
 
 		expected := manifest.GetInstanceID()
 		if expected == "" {
-			return constant.ErrNotInitialized
+			return constant.IntoGrpcStatus(constant.ErrNotInitialized).Err()
 		}
 
 		instanceID, err := getIncomingInstanceID(ctx)

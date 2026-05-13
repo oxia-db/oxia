@@ -16,6 +16,7 @@ package constant
 
 import (
 	"errors"
+	"io"
 	"strconv"
 
 	errdetails "google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -31,11 +32,6 @@ const (
 )
 
 type ErrorMetadata map[string]string
-
-func (m ErrorMetadata) HasLeaderHint() bool {
-	_, _, ok := m.GetLeaderHint()
-	return ok
-}
 
 func (m ErrorMetadata) GetLeaderHint() (int64, string, bool) {
 	leader := m[ErrorMetadataLeader]
@@ -186,7 +182,8 @@ func FromGrpcError(err error) (error, ErrorMetadata) {
 }
 
 func IsRetryable(err error) bool {
-	return errors.Is(err, ErrAborted) ||
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, ErrAborted) ||
 		errors.Is(err, ErrNodeIsNotMember) ||
 		errors.Is(err, ErrNodeIsNotLeader) ||
 		errors.Is(err, ErrNotInitialized) ||

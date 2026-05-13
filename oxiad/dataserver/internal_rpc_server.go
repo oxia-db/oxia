@@ -481,14 +481,15 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 	// If we don't have a follower, fallback to checking the leader controller
 	leader, err := s.shardsDirector.GetLeader(req.Shard)
 	if err != nil {
-		if status.Code(err) == status.Code(constant.ErrNodeIsNotLeader) {
+		if errors.Is(err, constant.ErrNodeIsNotLeader) {
 			// Node is neither follower nor leader for this shard
-			return nil, constant.ErrNodeIsNotMember
+			return nil, dserror.IntoGRPCError(dserror.ErrNodeIsNotMember)
 		}
 		return nil, err
 	}
 
-	return leader.GetStatus(req)
+	res, err := leader.GetStatus(req)
+	return res, dserror.IntoGRPCError(err)
 }
 
 func (s *internalRpcServer) DeleteShard(_ context.Context, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
