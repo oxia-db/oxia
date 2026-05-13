@@ -540,7 +540,7 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 	close(ch)
 }
 
-func (c *clientImpl) doRangeScan(ctx context.Context, request *proto.RangeScanRequest, hint *proto.LeaderHint, ch chan<- GetResult) error {
+func (c *clientImpl) doRangeScan(ctx context.Context, request *proto.RangeScanRequest, hint *proto.LeaderHint, ch chan<- GetResult) error { //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
 	client, err := c.executor.ExecuteRangeScan(ctx, request, hint)
 	if err != nil {
 		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.Aborted {
@@ -668,13 +668,13 @@ func (c *clientImpl) getShardForKey(key string, options baseOptionsIf) int64 {
 	return c.shardManager.Get(key)
 }
 
-func leaderHintFromError(err error) *proto.LeaderHint {
+func leaderHintFromError(err error) *proto.LeaderHint { //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
 	_, metadata := constant.FromGrpcError(err)
 	shard, leader, ok := metadata.GetLeaderHint()
 	if !ok {
 		return nil
 	}
-	return &proto.LeaderHint{
+	return &proto.LeaderHint{ //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
 		Shard:         shard,
 		LeaderAddress: leader,
 	}
