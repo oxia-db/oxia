@@ -136,7 +136,7 @@ func TestWriteBatchComplete(t *testing.T) {
 			errFailure,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.WriteRequest, _ constant.ErrorMetadata) (*proto.WriteResponse, error) {
+		execute := func(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
 			assert.Equal(t, &proto.WriteRequest{
 				Shard: &shardId,
 				Puts: []*proto.PutRequest{{
@@ -225,7 +225,7 @@ func TestWriteBatchComplete(t *testing.T) {
 func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	executeCount := 0
 
-	execute := func(_ context.Context, _ *proto.WriteRequest, _ constant.ErrorMetadata) (*proto.WriteResponse, error) {
+	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
 		executeCount++
 		return nil, constant.ErrShardNotFound
 	}
@@ -269,7 +269,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 func TestWriteBatchNoRerouteOnOtherError(t *testing.T) {
 	callCount := 0
-	execute := func(_ context.Context, _ *proto.WriteRequest, _ constant.ErrorMetadata) (*proto.WriteResponse, error) {
+	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
 		callCount++
 		if callCount == 1 {
 			return nil, constant.ErrInvalidStatus

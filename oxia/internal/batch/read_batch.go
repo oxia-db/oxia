@@ -17,7 +17,6 @@ package batch
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"time"
 
@@ -25,14 +24,13 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
 
 type readBatchFactory struct {
 	namespace      string
-	execute        func(context.Context, *proto.ReadRequest, constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error)
+	execute        func(context.Context, *proto.ReadRequest) (*proto.ReadResponse, error)
 	reroute        func([]model.GetCall)
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
@@ -55,7 +53,7 @@ func (b readBatchFactory) newBatch(shardId *int64) batch.Batch {
 type readBatch struct {
 	namespace      string
 	shardId        *int64
-	execute        func(context.Context, *proto.ReadRequest, constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error)
+	execute        func(context.Context, *proto.ReadRequest) (*proto.ReadResponse, error)
 	reroute        func([]model.GetCall)
 	gets           []model.GetCall
 	start          time.Time
@@ -88,26 +86,7 @@ func (b *readBatch) Complete() {
 	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
 	defer cancel()
 
-	response, err := internal.ExecuteWithRetry(ctx, func(hint constant.ErrorMetadata) (*proto.ReadResponse, error) {
-		stream, err := b.execute(ctx, request, hint)
-		response := &proto.ReadResponse{}
-		if err != nil {
-			return nil, err
-		}
-		for {
-			var recv *proto.ReadResponse
-			recv, err = stream.Recv()
-			if errors.Is(err, io.EOF) {
-				err = nil
-				break
-			}
-			if err != nil {
-				break
-			}
-			response.Gets = append(response.Gets, recv.Gets...)
-		}
-		return response, err
-	})
+	response, err := b.execute(ctx, request)
 	if errors.Is(err, constant.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing read batch operations",
 			slog.Int64("shard", *b.shardId),

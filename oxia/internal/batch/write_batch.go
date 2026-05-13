@@ -24,7 +24,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -33,7 +32,7 @@ var ErrRequestTooLarge = errors.New("put request is too large")
 
 type writeBatchFactory struct {
 	namespace      string
-	execute        func(context.Context, *proto.WriteRequest, constant.ErrorMetadata) (*proto.WriteResponse, error)
+	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
@@ -60,7 +59,7 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 type writeBatch struct {
 	namespace      string
 	shardId        *int64
-	execute        func(context.Context, *proto.WriteRequest, constant.ErrorMetadata) (*proto.WriteResponse, error)
+	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
@@ -105,9 +104,7 @@ func (b *writeBatch) Complete() {
 	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
 	defer cancel()
 
-	response, err := internal.ExecuteWithRetry(ctx, func(hint constant.ErrorMetadata) (*proto.WriteResponse, error) {
-		return b.execute(ctx, request, hint)
-	})
+	response, err := b.execute(ctx, request)
 	if errors.Is(err, constant.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),

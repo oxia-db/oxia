@@ -18,7 +18,6 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"io"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -29,7 +28,6 @@ import (
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
 
 	"github.com/oxia-db/oxia/common/compare"
-	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/batch"
@@ -414,35 +412,11 @@ func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, 
 	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
 	defer cancel()
 
-	if err := c.doList(retryCtx, request, ch); err != nil {
+	if err := c.executor.ExecuteList(retryCtx, request, func(response *proto.ListResponse) {
+		ch <- ListResult{Keys: response.Keys}
+	}); err != nil {
 		ch <- ListResult{Err: err}
 	}
-}
-
-func (c *clientImpl) doList(ctx context.Context, request *proto.ListRequest, ch chan<- ListResult) error {
-	verified := false
-	_, err := internal.ExecuteWithRetry(ctx, func(hint constant.ErrorMetadata) (struct{}, error) {
-		client, err := c.executor.ExecuteList(ctx, request, hint)
-		if err != nil {
-			return struct{}{}, err
-		}
-
-		for {
-			response, err := client.Recv()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					return struct{}{}, nil
-				}
-				return struct{}{}, err
-			}
-
-			verified = true
-			ch <- ListResult{Keys: response.Keys}
-		}
-	}, func(err error) bool {
-		return !verified && constant.IsRetryable(err)
-	})
-	return err
 }
 
 func (c *clientImpl) List(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, options ...ListOption) <-chan ListResult {
@@ -492,39 +466,15 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
 	defer cancel()
 
-	if err := c.doRangeScan(retryCtx, request, ch); err != nil {
+	if err := c.executor.ExecuteRangeScan(retryCtx, request, func(response *proto.RangeScanResponse) {
+		for _, record := range response.Records {
+			ch <- toGetResult(record, "", nil)
+		}
+	}); err != nil {
 		ch <- GetResult{Err: err}
 	}
 
 	close(ch)
-}
-
-func (c *clientImpl) doRangeScan(ctx context.Context, request *proto.RangeScanRequest, ch chan<- GetResult) error {
-	verified := false
-	_, err := internal.ExecuteWithRetry(ctx, func(hint constant.ErrorMetadata) (struct{}, error) {
-		client, err := c.executor.ExecuteRangeScan(ctx, request, hint)
-		if err != nil {
-			return struct{}{}, err
-		}
-
-		for {
-			response, err := client.Recv()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					return struct{}{}, nil
-				}
-				return struct{}{}, err
-			}
-
-			verified = true
-			for _, record := range response.Records {
-				ch <- toGetResult(record, "", nil)
-			}
-		}
-	}, func(err error) bool {
-		return !verified && constant.IsRetryable(err)
-	})
-	return err
 }
 
 func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, options ...RangeScanOption) <-chan GetResult {

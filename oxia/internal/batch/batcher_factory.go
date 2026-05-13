@@ -18,8 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/proto"
 	batch2 "github.com/oxia-db/oxia/oxia/batch"
 	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
@@ -61,9 +59,7 @@ func NewBatcherFactory(
 
 func (b *BatcherFactory) NewWriteBatcher(ctx context.Context, shardId *int64, maxWriteBatchSize int) batch2.Batcher {
 	return b.newBatcher(ctx, shardId, "write", writeBatchFactory{
-		execute: func(ctx context.Context, request *proto.WriteRequest, hint constant.ErrorMetadata) (*proto.WriteResponse, error) {
-			return b.Executor.ExecuteWrite(ctx, request, hint)
-		},
+		execute:        b.Executor.ExecuteWrite,
 		reroute:        b.WriteRerouter,
 		metrics:        b.Metrics,
 		requestTimeout: b.RequestTimeout,
@@ -73,9 +69,7 @@ func (b *BatcherFactory) NewWriteBatcher(ctx context.Context, shardId *int64, ma
 
 func (b *BatcherFactory) NewReadBatcher(ctx context.Context, shardId *int64) batch2.Batcher {
 	return b.newBatcher(ctx, shardId, "read", readBatchFactory{
-		execute: func(ctx context.Context, request *proto.ReadRequest, hint constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error) {
-			return b.Executor.ExecuteRead(ctx, request, hint)
-		},
+		execute:        b.Executor.ExecuteRead,
 		reroute:        b.ReadRerouter,
 		metrics:        b.Metrics,
 		requestTimeout: b.RequestTimeout,

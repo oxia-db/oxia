@@ -17,6 +17,7 @@ package internal
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -99,93 +100,149 @@ func (p *rpcProvider) getTargetByShard(shardId *int64, hint constant.ErrorMetada
 	return shardManager.Leader(*shardId), nil
 }
 
-func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequest, hint constant.ErrorMetadata) (*proto.WriteResponse, error) {
-	shardId := request.Shard
-	if _, err := p.getTargetByShard(shardId, hint); err != nil {
-		return nil, err
-	}
-	p.writeStreamsMutex.RLock()
-
-	sw, ok := p.writeStreams[*shardId]
-	if ok && !sw.failed.Load() && !hasLeaderHintForShard(hint, *shardId) {
-		p.writeStreamsMutex.RUnlock()
-		return sw.Send(ctx, request)
-	}
-
-	p.writeStreamsMutex.RUnlock()
-
-	streamCtx := metadata.AppendToOutgoingContext(p.ctx, constant.MetadataNamespace, p.namespace)
-	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataShardId, fmt.Sprintf("%d", *shardId))
-	target, err := p.getTargetByShard(shardId, hint)
-	if err != nil {
-		return nil, err
-	}
-	stream, err := p.getWriteStream(streamCtx, target)
-	if err != nil {
-		return nil, err
-	}
-
-	sw = newStreamWrapper(*shardId, stream) //nolint:contextcheck // The wrapper uses the stream context owned by the RPC.
-
-	p.writeStreamsMutex.Lock()
-	defer p.writeStreamsMutex.Unlock()
-
-	if old, ok := p.writeStreams[*shardId]; ok {
-		old.failed.Store(true)
-		if err := old.stream.CloseSend(); err != nil {
-			slog.Warn("failed to close old write stream",
-				slog.Int64("shard", *shardId),
-				slog.Any("error", err),
-			)
+func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
+	return executeWithRetry(ctx, func(hint constant.ErrorMetadata) (*proto.WriteResponse, error) {
+		shardId := request.Shard
+		if _, err := p.getTargetByShard(shardId, hint); err != nil {
+			return nil, err
 		}
-	}
-	p.writeStreams[*shardId] = sw
-	return sw.Send(ctx, request)
+		p.writeStreamsMutex.RLock()
+
+		sw, ok := p.writeStreams[*shardId]
+		hintShard, _, hasLeaderHint := hint.GetLeaderHint()
+		if ok && !sw.failed.Load() && (!hasLeaderHint || hintShard != *shardId) {
+			p.writeStreamsMutex.RUnlock()
+			return sw.Send(ctx, request)
+		}
+
+		p.writeStreamsMutex.RUnlock()
+
+		streamCtx := metadata.AppendToOutgoingContext(p.ctx, constant.MetadataNamespace, p.namespace)
+		streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataShardId, fmt.Sprintf("%d", *shardId))
+		target, err := p.getTargetByShard(shardId, hint)
+		if err != nil {
+			return nil, err
+		}
+		stream, err := p.getWriteStream(streamCtx, target)
+		if err != nil {
+			return nil, err
+		}
+
+		sw = newStreamWrapper(*shardId, stream) //nolint:contextcheck // The wrapper uses the stream context owned by the RPC.
+
+		p.writeStreamsMutex.Lock()
+		defer p.writeStreamsMutex.Unlock()
+
+		if old, ok := p.writeStreams[*shardId]; ok {
+			old.failed.Store(true)
+			if err := old.stream.CloseSend(); err != nil {
+				slog.Warn("failed to close old write stream",
+					slog.Int64("shard", *shardId),
+					slog.Any("error", err),
+				)
+			}
+		}
+		p.writeStreams[*shardId] = sw
+		return sw.Send(ctx, request)
+	})
 }
 
-func hasLeaderHintForShard(hint constant.ErrorMetadata, shardId int64) bool {
-	shard, _, ok := hint.GetLeaderHint()
-	return ok && shard == shardId
+func (p *rpcProvider) ExecuteRead(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error) {
+	return executeWithRetry(ctx, func(hint constant.ErrorMetadata) (*proto.ReadResponse, error) {
+		target, err := p.getTargetByShard(request.Shard, hint)
+		if err != nil {
+			return nil, err
+		}
+		client, err := p.getClientByTarget(target)
+		if err != nil {
+			return nil, err
+		}
+		stream, err := client.Read(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		response := &proto.ReadResponse{}
+		for {
+			recv, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				return response, nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			response.Gets = append(response.Gets, recv.Gets...)
+		}
+	})
 }
 
-func (p *rpcProvider) ExecuteRead(ctx context.Context, request *proto.ReadRequest, hint constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error) {
-	target, err := p.getTargetByShard(request.Shard, hint)
-	if err != nil {
-		return nil, err
-	}
-	client, err := p.getClientByTarget(target)
-	if err != nil {
-		return nil, err
-	}
-	return client.Read(ctx, request)
+func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListRequest, listResponseConsumer func(*proto.ListResponse)) error {
+	verified := false
+	_, err := executeWithRetry(ctx, func(hint constant.ErrorMetadata) (struct{}, error) {
+		target, err := p.getTargetByShard(request.Shard, hint)
+		if err != nil {
+			return struct{}{}, err
+		}
+		client, err := p.getClientByTarget(target)
+		if err != nil {
+			return struct{}{}, err
+		}
+		stream, err := client.List(ctx, request)
+		if err != nil {
+			oxiaErr, _ := constant.FromGrpcError(err)
+			return struct{}{}, oxiaErr
+		}
+		for {
+			response, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				return struct{}{}, nil
+			}
+			if err != nil {
+				return struct{}{}, err
+			}
+			listResponseConsumer(response)
+			verified = true
+		}
+	}, func(err error) bool {
+		return !verified && constant.IsRetryable(err)
+	})
+	return err
 }
 
-func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListRequest, hint constant.ErrorMetadata) (proto.OxiaClient_ListClient, error) {
-	target, err := p.getTargetByShard(request.Shard, hint)
-	if err != nil {
-		return nil, err
-	}
-	client, err := p.getClientByTarget(target)
-	if err != nil {
-		return nil, err
-	}
-	return client.List(ctx, request)
-}
-
-func (p *rpcProvider) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, hint constant.ErrorMetadata) (proto.OxiaClient_RangeScanClient, error) {
-	target, err := p.getTargetByShard(request.Shard, hint)
-	if err != nil {
-		return nil, err
-	}
-	client, err := p.getClientByTarget(target)
-	if err != nil {
-		return nil, err
-	}
-	return client.RangeScan(ctx, request)
+func (p *rpcProvider) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, rangeScanResponseConsumer func(*proto.RangeScanResponse)) error {
+	verified := false
+	_, err := executeWithRetry(ctx, func(hint constant.ErrorMetadata) (struct{}, error) {
+		target, err := p.getTargetByShard(request.Shard, hint)
+		if err != nil {
+			return struct{}{}, err
+		}
+		client, err := p.getClientByTarget(target)
+		if err != nil {
+			return struct{}{}, err
+		}
+		stream, err := client.RangeScan(ctx, request)
+		if err != nil {
+			oxiaErr, _ := constant.FromGrpcError(err)
+			return struct{}{}, oxiaErr
+		}
+		for {
+			response, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				return struct{}{}, nil
+			}
+			if err != nil {
+				return struct{}{}, err
+			}
+			rangeScanResponseConsumer(response)
+			verified = true
+		}
+	}, func(err error) bool {
+		return !verified && constant.IsRetryable(err)
+	})
+	return err
 }
 
 func (p *rpcProvider) GetShardAssignments(ctx context.Context, target string, request *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
-	return ExecuteWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetShardAssignmentsClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -209,7 +266,7 @@ func (p *rpcProvider) getWriteStream(ctx context.Context, target string) (proto.
 }
 
 func (p *rpcProvider) GetSequenceUpdates(ctx context.Context, target string, request *proto.GetSequenceUpdatesRequest) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
-	return ExecuteWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -225,7 +282,7 @@ func (p *rpcProvider) GetSequenceUpdates(ctx context.Context, target string, req
 }
 
 func (p *rpcProvider) GetNotifications(ctx context.Context, target string, request *proto.NotificationsRequest) (proto.OxiaClient_GetNotificationsClient, error) {
-	return ExecuteWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetNotificationsClient, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetNotificationsClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -241,7 +298,7 @@ func (p *rpcProvider) GetNotifications(ctx context.Context, target string, reque
 }
 
 func (p *rpcProvider) CreateSession(ctx context.Context, target string, request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	return ExecuteWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CreateSessionResponse, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CreateSessionResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -252,7 +309,7 @@ func (p *rpcProvider) CreateSession(ctx context.Context, target string, request 
 }
 
 func (p *rpcProvider) KeepAlive(ctx context.Context, target string, request *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
-	return ExecuteWithRetry(ctx, func(constant.ErrorMetadata) (*proto.KeepAliveResponse, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.KeepAliveResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -263,7 +320,7 @@ func (p *rpcProvider) KeepAlive(ctx context.Context, target string, request *pro
 }
 
 func (p *rpcProvider) CloseSession(ctx context.Context, target string, request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
-	return ExecuteWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CloseSessionResponse, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CloseSessionResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -273,7 +330,7 @@ func (p *rpcProvider) CloseSession(ctx context.Context, target string, request *
 	})
 }
 
-func ExecuteWithRetry[T any](ctx context.Context, operation func(constant.ErrorMetadata) (T, error), isRetryable ...func(error) bool) (T, error) {
+func executeWithRetry[T any](ctx context.Context, operation func(constant.ErrorMetadata) (T, error), isRetryable ...func(error) bool) (T, error) {
 	var result T
 	var hint constant.ErrorMetadata
 	retryable := constant.IsRetryable

@@ -16,7 +16,6 @@ package batch
 
 import (
 	"context"
-	"io"
 	"reflect"
 	"sync"
 	"testing"
@@ -24,7 +23,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/metric/noop"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
@@ -94,7 +92,7 @@ func TestReadBatchComplete(t *testing.T) {
 			nil,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.ReadRequest, _ constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error) {
+		execute := func(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error) {
 			assert.Equal(t, &proto.ReadRequest{
 				Shard: &shardId,
 				Gets: []*proto.GetRequest{{
@@ -102,7 +100,7 @@ func TestReadBatchComplete(t *testing.T) {
 					IncludeValue: true,
 				}},
 			}, request)
-			return readClient([]*proto.ReadResponse{item.response}), item.err
+			return item.response, item.err
 		}
 
 		factory := &readBatchFactory{
@@ -140,7 +138,7 @@ func TestReadBatchComplete(t *testing.T) {
 func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
 	executeCount := 0
 
-	execute := func(_ context.Context, _ *proto.ReadRequest, _ constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error) {
+	execute := func(_ context.Context, _ *proto.ReadRequest) (*proto.ReadResponse, error) {
 		executeCount++
 		return nil, constant.ErrShardNotFound
 	}
@@ -167,51 +165,4 @@ func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
 	assert.Equal(t, "key-1", reroutedGets[0].Key)
 	assert.Equal(t, "key-2", reroutedGets[1].Key)
 	assert.Equal(t, 1, executeCount)
-}
-
-type readResult struct {
-	response *proto.ReadResponse
-	err      error
-}
-
-type testOxiaClientReadClient struct {
-	ch <-chan readResult
-}
-
-func readClient(responses []*proto.ReadResponse) proto.OxiaClient_ReadClient {
-	ch := make(chan readResult, len(responses)+1)
-	for _, response := range responses {
-		ch <- readResult{response: response}
-	}
-	ch <- readResult{err: io.EOF}
-	return &testOxiaClientReadClient{ch: ch}
-}
-
-func (t *testOxiaClientReadClient) Recv() (*proto.ReadResponse, error) {
-	r := <-t.ch
-	return r.response, r.err
-}
-
-func (t *testOxiaClientReadClient) Header() (metadata.MD, error) {
-	panic("not implemented")
-}
-
-func (t *testOxiaClientReadClient) Trailer() metadata.MD {
-	panic("not implemented")
-}
-
-func (t *testOxiaClientReadClient) CloseSend() error {
-	panic("not implemented")
-}
-
-func (t *testOxiaClientReadClient) Context() context.Context {
-	panic("not implemented")
-}
-
-func (t *testOxiaClientReadClient) SendMsg(m any) error {
-	panic("not implemented")
-}
-
-func (t *testOxiaClientReadClient) RecvMsg(m any) error {
-	panic("not implemented")
 }
