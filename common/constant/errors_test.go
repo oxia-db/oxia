@@ -105,6 +105,13 @@ func TestIntoGrpcStatusAddsErrorInfoToGrpcStatusError(t *testing.T) {
 	assert.Equal(t, "leader:6648", leader)
 }
 
+func TestIntoGrpcStatusReturnsGrpcStatusError(t *testing.T) {
+	st := IntoGrpcStatus(status.Error(codes.InvalidArgument, "invalid"))
+
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Equal(t, "invalid", st.Message())
+}
+
 func TestIsRetryable(t *testing.T) {
 	assert.True(t, IsRetryable(io.EOF))
 	assert.True(t, IsRetryable(ErrAborted))
