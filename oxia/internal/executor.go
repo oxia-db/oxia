@@ -28,11 +28,11 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-type Executor interface { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
-	ExecuteWrite(ctx context.Context, request *proto.WriteRequest, leaderHint *proto.LeaderHint) (*proto.WriteResponse, error)
-	ExecuteRead(ctx context.Context, request *proto.ReadRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)
-	ExecuteList(ctx context.Context, request *proto.ListRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ListClient, error)
-	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_RangeScanClient, error)
+type Executor interface {
+	ExecuteWrite(ctx context.Context, request *proto.WriteRequest, leaderHint *proto.LeaderHint) (*proto.WriteResponse, error)                     //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
+	ExecuteRead(ctx context.Context, request *proto.ReadRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)                //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
+	ExecuteList(ctx context.Context, request *proto.ListRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ListClient, error)                //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
+	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_RangeScanClient, error) //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 }
 
 type executorImpl struct {
