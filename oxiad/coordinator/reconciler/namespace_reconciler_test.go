@@ -185,6 +185,14 @@ func (*mockNamespaceMetadata) DeleteNamespace(string) (*proto.Namespace, error) 
 	return &proto.Namespace{}, nil
 }
 
+func (m *mockNamespaceMetadata) ListNamespace() map[string]commonobject.Borrowed[*proto.Namespace] {
+	namespaces := make(map[string]commonobject.Borrowed[*proto.Namespace], len(m.configNS))
+	for name, namespace := range m.configNS {
+		namespaces[name] = commonobject.Borrow(namespace)
+	}
+	return namespaces
+}
+
 func (*mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
 	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
 }
