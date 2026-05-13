@@ -419,7 +419,7 @@ func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, 
 	defer cancel()
 
 	backOff := time2.NewBackOff(retryCtx)
-	var hint *proto.LeaderHint
+	var hint *proto.LeaderHint //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
 
 	err := backoff.RetryNotify(func() error {
 		return c.doList(retryCtx, request, hint, ch)
@@ -440,7 +440,7 @@ func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, 
 	}
 }
 
-func (c *clientImpl) doList(ctx context.Context, request *proto.ListRequest, hint *proto.LeaderHint, ch chan<- ListResult) error {
+func (c *clientImpl) doList(ctx context.Context, request *proto.ListRequest, hint *proto.LeaderHint, ch chan<- ListResult) error { //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
 	client, err := c.executor.ExecuteList(ctx, request, hint)
 	if err != nil {
 		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.Aborted {
@@ -517,7 +517,7 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 	defer cancel()
 
 	backOff := time2.NewBackOff(retryCtx)
-	var hint *proto.LeaderHint
+	var hint *proto.LeaderHint //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
 
 	err := backoff.RetryNotify(func() error {
 		return c.doRangeScan(retryCtx, request, hint, ch)
