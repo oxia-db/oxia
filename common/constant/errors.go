@@ -93,9 +93,6 @@ func IntoGrpcStatus(err error, opts ...GrpcStatusOption) *status.Status {
 	if err == nil {
 		return status.New(codes.OK, "")
 	}
-	if st, ok := status.FromError(err); ok {
-		return st
-	}
 
 	metadata := make(ErrorMetadata)
 	for _, opt := range opts {
@@ -106,8 +103,12 @@ func IntoGrpcStatus(err error, opts ...GrpcStatusOption) *status.Status {
 	if len(metadata) == 0 {
 		metadata = nil
 	}
+	message := err.Error()
+	if st, ok := status.FromError(err); ok {
+		message = st.Message()
+	}
 	statusWithErrorInfo := func(code codes.Code, reason string) *status.Status {
-		st := status.New(code, err.Error())
+		st := status.New(code, message)
 		stWithDetails, detailsErr := st.WithDetails(&errdetails.ErrorInfo{
 			Reason:   reason,
 			Domain:   OxiaErrorDomain,
@@ -117,6 +118,34 @@ func IntoGrpcStatus(err error, opts ...GrpcStatusOption) *status.Status {
 			return st
 		}
 		return stWithDetails
+	}
+	if st, ok := status.FromError(err); ok {
+		switch st.Message() {
+		case ErrAborted.Error():
+			return statusWithErrorInfo(st.Code(), ReasonAborted)
+		case ErrInvalidSessionTimeout.Error():
+			return statusWithErrorInfo(st.Code(), ReasonInvalidSessionTimeout)
+		case ErrSessionNotFound.Error():
+			return statusWithErrorInfo(st.Code(), ReasonSessionNotFound)
+		case ErrNamespaceNotFound.Error():
+			return statusWithErrorInfo(st.Code(), ReasonNamespaceNotFound)
+		case ErrInvalidTerm.Error():
+			return statusWithErrorInfo(st.Code(), ReasonInvalidTerm)
+		case ErrInvalidStatus.Error():
+			return statusWithErrorInfo(st.Code(), ReasonInvalidStatus)
+		case ErrNotificationsNotEnabled.Error():
+			return statusWithErrorInfo(st.Code(), ReasonNotificationsNotEnabled)
+		case ErrNodeIsNotMember.Error():
+			return statusWithErrorInfo(st.Code(), ReasonNodeIsNotMember)
+		case ErrNodeIsNotLeader.Error():
+			return statusWithErrorInfo(st.Code(), ReasonNodeIsNotLeader)
+		case ErrNotInitialized.Error():
+			return statusWithErrorInfo(st.Code(), ReasonNotInitialized)
+		case ErrResourceUnavailable.Error():
+			return statusWithErrorInfo(st.Code(), ReasonResourceUnavailable)
+		default:
+			return st
+		}
 	}
 
 	switch {

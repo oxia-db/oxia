@@ -82,11 +82,24 @@ func TestIntoGrpcStatusNil(t *testing.T) {
 	assert.Empty(t, st.Message())
 }
 
-func TestIntoGrpcStatusReturnsGrpcStatusError(t *testing.T) {
+func TestIntoGrpcStatusReturnsUnknownGrpcStatusError(t *testing.T) {
 	st := IntoGrpcStatus(status.Error(codes.InvalidArgument, "invalid"))
 
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 	assert.Equal(t, "invalid", st.Message())
+}
+
+func TestIntoGrpcStatusAddsErrorInfoToKnownGrpcStatusError(t *testing.T) {
+	st := IntoGrpcStatus(status.Error(codes.Aborted, ErrNodeIsNotLeader.Error()), WithLeaderHint(1, "leader:6648"))
+	oxiaErr, metadata := FromGrpcError(st.Err())
+	shard, leader, ok := metadata.GetLeaderHint()
+
+	assert.Equal(t, codes.Aborted, st.Code())
+	assert.Equal(t, ErrNodeIsNotLeader.Error(), st.Message())
+	assert.ErrorIs(t, oxiaErr, ErrNodeIsNotLeader)
+	assert.True(t, ok)
+	assert.Equal(t, int64(1), shard)
+	assert.Equal(t, "leader:6648", leader)
 }
 
 func TestIsRetryable(t *testing.T) {
