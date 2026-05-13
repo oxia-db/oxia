@@ -34,7 +34,6 @@ type BatcherFactory struct {
 	Executor       internal.Executor
 	RequestTimeout time.Duration
 	Metrics        *metrics.Metrics
-	ShardExists    func(int64) bool
 	WriteRerouter  WriteRerouter
 	ReadRerouter   ReadRerouter
 }
@@ -61,7 +60,6 @@ func NewBatcherFactory(
 func (b *BatcherFactory) NewWriteBatcher(ctx context.Context, shardId *int64, maxWriteBatchSize int) batch2.Batcher {
 	return b.newBatcher(ctx, shardId, "write", writeBatchFactory{
 		execute:        b.Executor.ExecuteWrite,
-		shardExists:    b.ShardExists,
 		reroute:        b.WriteRerouter,
 		metrics:        b.Metrics,
 		requestTimeout: b.RequestTimeout,
@@ -72,7 +70,6 @@ func (b *BatcherFactory) NewWriteBatcher(ctx context.Context, shardId *int64, ma
 func (b *BatcherFactory) NewReadBatcher(ctx context.Context, shardId *int64) batch2.Batcher {
 	return b.newBatcher(ctx, shardId, "read", readBatchFactory{
 		execute:        b.Executor.ExecuteRead,
-		shardExists:    b.ShardExists,
 		reroute:        b.ReadRerouter,
 		metrics:        b.Metrics,
 		requestTimeout: b.RequestTimeout,

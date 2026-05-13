@@ -30,7 +30,6 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
-	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 )
 
@@ -110,7 +109,7 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 	defer timer.Done()
 
 	if req.Term != constant.I64NegativeOne && req.Term != ls.term {
-		return dserror.ErrInvalidTerm
+		return constant.ErrInvalidTerm
 	}
 
 	ls.log.Debug(

@@ -99,7 +99,7 @@ func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
 	}
 
 	if !s.assignmentDispatcher.Initialized() {
-		return constant.ErrNotInitialized
+		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
 	}
 
 	actualAuthority, err := oxiadcommonrpc.GetAuthority(ctx)
@@ -130,10 +130,10 @@ func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest
 			slog.Any("error", err),
 			slog.String("peer", rpc.GetPeer(streamContext)),
 		)
-		return err
+		return constant.IntoGrpcStatusError(err)
 	}
 
-	return err
+	return nil
 }
 
 func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) (*proto.WriteResponse, error) {
@@ -154,7 +154,7 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 			"Failed to perform write operation",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	return wr, err
@@ -239,8 +239,9 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	case err := <-finished:
 		if err != nil {
 			s.log.Warn("Failed to perform write operation", slog.Any("error", err))
+			return constant.IntoGrpcStatusError(err)
 		}
-		return err
+		return nil
 	case <-streamCtx.Done():
 		return streamCtx.Err()
 	// Monitor the leader context to make sure the gRPC server can be gracefully shut down.
@@ -278,8 +279,9 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 					"Failed to perform list operation",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatusError(err)
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -311,8 +313,9 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 					"Failed to perform list operation",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatusError(err)
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -354,8 +357,9 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 					"Failed to perform range-scan operation",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatusError(err)
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -392,8 +396,9 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 					"Failed to handle notifications request",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatusError(err)
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -420,7 +425,7 @@ func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSe
 			"Failed to create session",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return res, nil
 }
@@ -442,7 +447,7 @@ func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeart
 			"Failed to listen to heartbeats",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return &proto.KeepAliveResponse{}, nil
 }
@@ -459,10 +464,10 @@ func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSess
 	}
 	res, err := lc.CloseSession(req)
 	if err != nil {
-		if status.Code(err) != status.Code(constant.ErrSessionNotFound) {
+		if !errors.Is(err, constant.ErrSessionNotFound) {
 			s.log.Warn("Failed to close session", slog.Any("error", err))
 		}
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return res, nil
 }
@@ -481,7 +486,7 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 	ctx := stream.Context()
 	sequenceWaiter, err := lc.GetSequenceUpdates(ctx, req)
 	if err != nil {
-		return err
+		return constant.IntoGrpcStatusError(err)
 	}
 
 	defer func() {
@@ -513,11 +518,11 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 	shardID := *shardId
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
-		if status.Code(err) == status.Code(constant.ErrNodeIsNotLeader) {
-			return nil, constant.WithLeaderHint(status.Convert(err), shardID, s.assignmentDispatcher.GetLeader(shardID))
+		if errors.Is(err, constant.ErrNodeIsNotLeader) {
+			return nil, constant.IntoGrpcStatusError(err, constant.WithLeaderHint(shardID, s.assignmentDispatcher.GetLeader(shardID)))
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return lc, nil
 }

@@ -65,7 +65,8 @@ func (r *replicationRpcProvider) GetReplicateStream(ctx context.Context, followe
 	proto.OxiaLogReplication_ReplicateClient, error) {
 	client, err := r.pool.GetReplicationRpc(follower)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx = metadata.AppendToOutgoingContext(ctx, constant.MetadataNamespace, namespace)
@@ -73,14 +74,19 @@ func (r *replicationRpcProvider) GetReplicateStream(ctx context.Context, followe
 	ctx = metadata.AppendToOutgoingContext(ctx, constant.MetadataTerm, fmt.Sprintf("%d", term))
 
 	stream, err := client.Replicate(ctx)
-	return stream, err
+	oxiaErr, _ := constant.FromGrpcError(err)
+	if oxiaErr != nil {
+		return nil, oxiaErr
+	}
+	return commonrpc.OxiaErrorBidiStreamingClient[proto.Append, proto.Ack]{BidiStreamingClient: stream}, nil
 }
 
 func (r *replicationRpcProvider) SendSnapshot(ctx context.Context, follower string, namespace string, shard int64, term int64) (
 	proto.OxiaLogReplication_SendSnapshotClient, error) {
 	client, err := r.pool.GetReplicationRpc(follower)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx = metadata.AppendToOutgoingContext(ctx, constant.MetadataNamespace, namespace)
@@ -88,19 +94,26 @@ func (r *replicationRpcProvider) SendSnapshot(ctx context.Context, follower stri
 	ctx = metadata.AppendToOutgoingContext(ctx, constant.MetadataTerm, fmt.Sprintf("%d", term))
 
 	stream, err := client.SendSnapshot(ctx)
-	return stream, err
+	oxiaErr, _ := constant.FromGrpcError(err)
+	if oxiaErr != nil {
+		return nil, oxiaErr
+	}
+	return commonrpc.OxiaErrorClientStreamingClient[proto.SnapshotChunk, proto.SnapshotResponse]{ClientStreamingClient: stream}, nil
 }
 
 func (r *replicationRpcProvider) Truncate(follower string, req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
 	client, err := r.pool.GetReplicationRpc(follower)
 	if err != nil {
-		return nil, err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
-	return client.Truncate(ctx, req)
+	response, err := client.Truncate(ctx, req)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
 }
 
 func (r *replicationRpcProvider) Close() error {

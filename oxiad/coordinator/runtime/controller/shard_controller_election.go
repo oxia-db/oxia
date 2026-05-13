@@ -28,7 +28,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/maps"
-	"google.golang.org/grpc/status"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -303,10 +302,9 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []*proto.DataServerIdentit
 					)
 					return ErrFollowerNotCaughtUp
 				}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
-					st := status.Convert(err)
 					switch {
 					case errors.Is(err, ErrFollowerNotCaughtUp):
-					case st.Code() == status.Code(constant.ErrNodeIsNotMember):
+					case errors.Is(err, constant.ErrNodeIsNotMember):
 						e.logger.Info("Follower has not been added by leader yet",
 							slog.Any("server", server),
 							slog.Int64("shard", e.shard),
@@ -386,10 +384,9 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []*proto.Dat
 				},
 				func() {
 					bo := oxiatime.NewBackOffWithInitialInterval(e.ctx, 1*time.Second)
-					invalidTerm := status.Convert(constant.ErrInvalidTerm)
 					_ = backoff.RetryNotify(func() error {
-						var err error
-						if err = e.fenceNewTermAndAddFollower(e.ctx, term, leader, follower); status.Convert(err).Code() == invalidTerm.Code() && status.Convert(err).Message() == invalidTerm.Message() {
+						err := e.fenceNewTermAndAddFollower(e.ctx, term, leader, follower)
+						if errors.Is(err, constant.ErrInvalidTerm) {
 							// If we're receiving invalid term error, it would mean
 							// there's already a new term generated, and we don't have
 							// to keep trying with this old term

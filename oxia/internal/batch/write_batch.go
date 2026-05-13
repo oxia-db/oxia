@@ -17,19 +17,12 @@ package batch
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
-	"github.com/oxia-db/oxia/common/constant"
-
-	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxia/batch"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
@@ -39,8 +32,7 @@ var ErrRequestTooLarge = errors.New("put request is too large")
 
 type writeBatchFactory struct {
 	namespace      string
-	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
-	shardExists    func(int64) bool
+	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
@@ -52,7 +44,6 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 		namespace:      b.namespace,
 		shardId:        shardId,
 		execute:        b.execute,
-		shardExists:    b.shardExists,
 		reroute:        b.reroute,
 		puts:           make([]model.PutCall, 0),
 		deletes:        make([]model.DeleteCall, 0),
@@ -68,8 +59,7 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 type writeBatch struct {
 	namespace      string
 	shardId        *int64
-	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
-	shardExists    func(int64) bool
+	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
@@ -111,9 +101,11 @@ func (b *writeBatch) Complete() {
 	executionStart := time.Now()
 	request := b.toProto()
 
-	response, err := b.doRequestWithRetries(request)
+	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
+	defer cancel()
 
-	if errors.Is(err, errShardNotFound) && b.reroute != nil {
+	response, err := b.execute(ctx, request)
+	if errors.Is(err, constant.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),
 			slog.Int("puts", len(b.puts)),
@@ -131,41 +123,6 @@ func (b *writeBatch) Complete() {
 	} else {
 		b.handle(response)
 	}
-}
-
-func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response *proto.WriteResponse, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
-	defer cancel()
-
-	backOff := time2.NewBackOff(ctx)
-
-	var hint *proto.LeaderHint
-	err = backoff.RetryNotify(func() error {
-		if b.shardExists != nil && !b.shardExists(*b.shardId) {
-			return backoff.Permanent(errShardNotFound)
-		}
-		response, err = b.execute(ctx, request, hint)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, io.EOF) && status.Code(err) != codes.Unavailable && status.Code(err) != codes.Aborted {
-			return backoff.Permanent(err)
-		}
-		return err
-	}, backOff, func(err error, duration time.Duration) {
-		slog.Warn(
-			"Failed to perform request, retrying later",
-			slog.Any("error", err),
-			slog.String("namespace", b.namespace),
-			slog.Int64("shard", *b.shardId),
-			slog.Duration("retry-after", duration),
-		)
-		if leaderHint := constant.GetLeaderHint(err); leaderHint != nil {
-			hint = leaderHint
-		}
-	})
-
-	return response, err
 }
 
 func (b *writeBatch) Fail(err error) {

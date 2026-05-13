@@ -630,6 +630,33 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	// Perform split
 	cluster.splitAndWait(t)
 
+	require.Eventually(t, func() bool {
+		_, _, _, err := ephemeralClient.Get(ctx, "regular-0000")
+		return err == nil
+	}, 30*time.Second, 500*time.Millisecond)
+
+	// Verify all ephemeral keys survived the split and retained their
+	// ephemeral property before the inherited pre-split session can expire
+	// on the child shards.
+	for key, expectedValue := range ephemeralKeys {
+		_, value, version, err := ephemeralClient.Get(ctx, key)
+		if !assert.NoError(t, err, "ephemeral key %s should still exist after split", key) {
+			continue
+		}
+		assert.Equal(t, []byte(expectedValue), value, "value mismatch for %s", key)
+		assert.True(t, version.Ephemeral, "key %s should still be ephemeral after split", key)
+	}
+	slog.Info("Ephemeral keys verified after split")
+
+	// Verify all regular keys survived the split
+	for i := 0; i < numRegular; i++ {
+		key := fmt.Sprintf("regular-%04d", i)
+		_, _, version, err := ephemeralClient.Get(ctx, key)
+		assert.NoError(t, err, "regular key %s should still exist", key)
+		assert.False(t, version.Ephemeral, "regular key %s should not be ephemeral", key)
+	}
+	slog.Info("Regular keys verified after split")
+
 	// Reconnect the ephemeral client to pick up new shard assignments
 	// We must NOT close the old client first (that would delete ephemeral
 	// records), so we create a new one and close the old one only after.
@@ -654,27 +681,6 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	// session cleanup, but that's expected after a split.
 	_ = ephemeralClient.Close()
 	ephemeralClient = newEphemeralClient
-
-	// Verify all regular keys survived the split
-	for i := 0; i < numRegular; i++ {
-		key := fmt.Sprintf("regular-%04d", i)
-		_, _, version, err := ephemeralClient.Get(ctx, key)
-		assert.NoError(t, err, "regular key %s should still exist", key)
-		assert.False(t, version.Ephemeral, "regular key %s should not be ephemeral", key)
-	}
-	slog.Info("Regular keys verified after split")
-
-	// Verify all ephemeral keys survived the split and retained their
-	// ephemeral property
-	for key, expectedValue := range ephemeralKeys {
-		_, value, version, err := ephemeralClient.Get(ctx, key)
-		if !assert.NoError(t, err, "ephemeral key %s should still exist after split", key) {
-			continue
-		}
-		assert.Equal(t, []byte(expectedValue), value, "value mismatch for %s", key)
-		assert.True(t, version.Ephemeral, "key %s should still be ephemeral after split", key)
-	}
-	slog.Info("Ephemeral keys verified after split")
 
 	// Write new ephemeral records to child shards
 	for i := 0; i < 5; i++ {

@@ -49,6 +49,7 @@ func init() {
 type testAssignmentDispatcher struct {
 	initialized      bool
 	validAuthorities map[string]bool
+	registerErr      error
 }
 
 func (*testAssignmentDispatcher) Close() error { return nil }
@@ -58,8 +59,8 @@ func (t *testAssignmentDispatcher) Initialized() bool {
 func (*testAssignmentDispatcher) PushShardAssignments(proto.OxiaCoordination_PushShardAssignmentsServer) error {
 	panic("unexpected call")
 }
-func (*testAssignmentDispatcher) RegisterForUpdates(*proto.ShardAssignmentsRequest, assignment.Client) error {
-	panic("unexpected call")
+func (t *testAssignmentDispatcher) RegisterForUpdates(*proto.ShardAssignmentsRequest, assignment.Client) error {
+	return t.registerErr
 }
 func (*testAssignmentDispatcher) GetLeader(int64) string { return "" }
 func (t *testAssignmentDispatcher) HasAuthority(authority string) bool {
@@ -239,12 +240,36 @@ func TestGetShardAssignmentsValidatesAuthority(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
 }
 
+func TestGetShardAssignmentsConvertsRegisterError(t *testing.T) {
+	server := &publicRpcServer{
+		log: slog.Default(),
+		assignmentDispatcher: &testAssignmentDispatcher{
+			initialized: true,
+			validAuthorities: map[string]bool{
+				"expected-host:6648": true,
+			},
+			registerErr: constant.ErrNamespaceNotFound,
+		},
+	}
+
+	err := server.GetShardAssignments(&proto.ShardAssignmentsRequest{}, &testShardAssignmentsServer{
+		ctx: metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+			":authority": "expected-host:6648",
+		})),
+	})
+
+	oxiaErr, _ := constant.FromGrpcError(err)
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
+	assert.ErrorIs(t, oxiaErr, constant.ErrNamespaceNotFound)
+}
+
 func TestResolveLeaderValidatesAuthorityBeforeLeaderLookup(t *testing.T) {
 	server := &publicRpcServer{
 		log: slog.Default(),
 		shardsDirector: &testShardsDirector{
 			getLeader: func(int64) (lead.LeaderController, error) {
-				return nil, constant.WithLeaderHint(grpcstatus.Convert(constant.ErrNodeIsNotLeader), 1, "leader:6648")
+				return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, "leader:6648"))
 			},
 		},
 		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
