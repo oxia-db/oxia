@@ -93,8 +93,6 @@ func (m *mockNamespaceMetadata) GetStatus() commonobject.Borrowed[*proto.Cluster
 	return commonobject.Borrow(m.status)
 }
 
-func (m *mockNamespaceMetadata) UpdateStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
-
 func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) int64 {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	base := cloned.ShardIdGenerator
@@ -121,6 +119,15 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 
 	m.status = cloned
 	return true
+}
+
+func (m *mockNamespaceMetadata) UpdateNamespaceStatus(name string, status *proto.NamespaceStatus) {
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
+	if _, exists := cloned.Namespaces[name]; !exists {
+		return
+	}
+	cloned.Namespaces[name] = gproto.Clone(status).(*proto.NamespaceStatus)
+	m.status = cloned
 }
 
 func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
@@ -154,7 +161,15 @@ func (m *mockNamespaceMetadata) DeleteNamespaceStatus(name string) commonobject.
 	return commonobject.Borrow(namespaceStatus)
 }
 
-func (*mockNamespaceMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) {}
+func (m *mockNamespaceMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
+	ns, exists := cloned.GetNamespaces()[namespace]
+	if !exists {
+		return
+	}
+	ns.Shards[shard] = shardMetadata
+	m.status = cloned
+}
 
 func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) {}
 

@@ -173,10 +173,19 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 		ShardIdGenerator: 3,
 	}
 
-	metadata.UpdateStatus(clusterStatus)
+	require.Equal(t, int64(0), metadata.ReserveShardIDs(3))
+	metadata.CreateNamespaceStatus(constant.DefaultNamespace, clusterStatus.Namespaces[constant.DefaultNamespace])
 	listener := newMockSplitEventListener()
 
 	return rpcMock, metadata, listener
+}
+
+func updateTestStatusShards(t *testing.T, metadata coordmetadata.Metadata, status *proto.ClusterStatus, shardIDs ...int64) {
+	t.Helper()
+	ns := status.Namespaces[constant.DefaultNamespace]
+	for _, shardID := range shardIDs {
+		metadata.UpdateShardStatus(constant.DefaultNamespace, shardID, ns.Shards[shardID])
+	}
 }
 
 // queueBootstrapResponses queues all responses needed for the bootstrap phase.
@@ -320,7 +329,7 @@ func TestSplitController_ResumeFromCatchUp(t *testing.T) {
 	rightMeta.Leader = rs1
 	rightMeta.Term = 1
 	ns.Shards[2] = rightMeta
-	statusRes.UpdateStatus(cloned)
+	updateTestStatusShards(t, statusRes, cloned, 1, 2)
 
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
@@ -443,7 +452,7 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	updateTestStatusShards(t, statusRes, cloned, 0, 1, 2)
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -508,7 +517,7 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5 // Was 5 during Bootstrap
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	updateTestStatusShards(t, statusRes, cloned, 0, 1, 2)
 
 	// The controller should detect term change and reset to Bootstrap.
 	// Queue Bootstrap responses -- note: parent leader is now ps2 (after election)
@@ -713,7 +722,7 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	updateTestStatusShards(t, statusRes, cloned, 0, 1, 2)
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -779,7 +788,7 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	parentMeta.Split.ParentTermAtBootstrap = 5
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	updateTestStatusShards(t, statusRes, cloned, 0, 1, 2)
 
 	// Queue RemoveObserver responses (abort will call these)
 	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
@@ -856,7 +865,7 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	}
 	ns.Shards[0] = parentMeta
 
-	statusRes.UpdateStatus(cloned)
+	updateTestStatusShards(t, statusRes, cloned, 0, 1, 2)
 
 	// CatchUp detects left child leader changed (ls1 -> ls2).
 	// It RemoveObserver(old leader) on parent, then falls back to Bootstrap.

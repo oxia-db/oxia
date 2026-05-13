@@ -39,17 +39,13 @@ type Metadata interface {
 	io.Closer
 
 	GetStatus() commonobject.Borrowed[*commonproto.ClusterStatus]
-	UpdateStatus(newStatus *commonproto.ClusterStatus)
 	ReserveShardIDs(count uint32) int64
 
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
 	ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
+	UpdateNamespaceStatus(name string, status *commonproto.NamespaceStatus)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
-	CreateNamespace(namespace *commonproto.Namespace) error
-	PatchNamespace(namespace *commonproto.Namespace) (*commonproto.Namespace, error)
-	DeleteNamespace(name string) (*commonproto.Namespace, error)
-	GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool)
 
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
 	DeleteShardStatus(namespace string, shard int64)
@@ -57,6 +53,11 @@ type Metadata interface {
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
 	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
+
+	CreateNamespace(namespace *commonproto.Namespace) error
+	PatchNamespace(namespace *commonproto.Namespace) (*commonproto.Namespace, error)
+	DeleteNamespace(name string) (*commonproto.Namespace, error)
+	GetNamespace(namespace string) (commonobject.Borrowed[*commonproto.Namespace], bool)
 
 	CreateDataServer(dataServer *commonproto.DataServer) error
 	PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error)
@@ -169,20 +170,6 @@ func (m *coordinatorMetadata) GetStatus() commonobject.Borrowed[*commonproto.Clu
 	return commonobject.Borrow(m.statusProvider.Watch().Load().Value)
 }
 
-func (m *coordinatorMetadata) UpdateStatus(newStatus *commonproto.ClusterStatus) {
-	_ = backoff.RetryNotify(func() error {
-		return m.computeStatus(func(_ *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
-			return newStatus, true
-		})
-	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to update status",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
-}
-
 func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
 	var base int64
 	_ = backoff.RetryNotify(func() error {
@@ -241,6 +228,29 @@ func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject
 		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false
 	}
 	return commonobject.Borrow(namespaceStatus), true
+}
+
+func (m *coordinatorMetadata) UpdateNamespaceStatus(name string, namespaceStatus *commonproto.NamespaceStatus) {
+	namespaceExists := true
+	_ = backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			if _, exists := clusterStatus.Namespaces[name]; !exists {
+				namespaceExists = false
+				return clusterStatus, false
+			}
+			clusterStatus.Namespaces[name] = namespaceStatus
+			return clusterStatus, true
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to update namespace status",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if !namespaceExists {
+		m.logger.Warn("failed to update namespace status: namespace does not exist", slog.String("namespace", name))
+	}
 }
 
 func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus] {

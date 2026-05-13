@@ -83,20 +83,16 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		},
 	}
 	metadata := newTestMetadata(t, clusterConfig)
-	metadata.UpdateStatus(&proto.ClusterStatus{
-		Namespaces: map[string]*proto.NamespaceStatus{
-			"default": {
-				ReplicationFactor: 1,
-				Shards: map[int64]*proto.ShardMetadata{
-					0: {
-						Status:   proto.ShardStatusUnknown,
-						Leader:   leader,
-						Ensemble: []*proto.DataServerIdentity{leader},
-						Int32HashRange: &proto.HashRange{
-							Min: 0,
-							Max: 100,
-						},
-					},
+	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{
+			0: {
+				Status:   proto.ShardStatusUnknown,
+				Leader:   leader,
+				Ensemble: []*proto.DataServerIdentity{leader},
+				Int32HashRange: &proto.HashRange{
+					Min: 0,
+					Max: 100,
 				},
 			},
 		},
@@ -141,21 +137,17 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		}},
 	}
 	metadata := newTestMetadata(t, clusterConfig)
-	metadata.UpdateStatus(&proto.ClusterStatus{
-		Namespaces: map[string]*proto.NamespaceStatus{
-			"default": {
-				ReplicationFactor: 1,
-				Shards: map[int64]*proto.ShardMetadata{
-					0: {
-						Status:       proto.ShardStatusUnknown,
-						Leader:       removed,
-						Ensemble:     []*proto.DataServerIdentity{removed},
-						RemovedNodes: []*proto.DataServerIdentity{removed},
-						Int32HashRange: &proto.HashRange{
-							Min: 0,
-							Max: 100,
-						},
-					},
+	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{
+			0: {
+				Status:       proto.ShardStatusUnknown,
+				Leader:       removed,
+				Ensemble:     []*proto.DataServerIdentity{removed},
+				RemovedNodes: []*proto.DataServerIdentity{removed},
+				Int32HashRange: &proto.HashRange{
+					Min: 0,
+					Max: 100,
 				},
 			},
 		},
