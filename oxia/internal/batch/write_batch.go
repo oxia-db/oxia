@@ -20,13 +20,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
-
-	"github.com/oxia-db/oxia/common/constant"
-	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxia/batch"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -36,7 +33,6 @@ var ErrRequestTooLarge = errors.New("put request is too large")
 type writeBatchFactory struct {
 	namespace      string
 	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
-	shardExists    func(int64) bool
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
@@ -48,7 +44,6 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 		namespace:      b.namespace,
 		shardId:        shardId,
 		execute:        b.execute,
-		shardExists:    b.shardExists,
 		reroute:        b.reroute,
 		puts:           make([]model.PutCall, 0),
 		deletes:        make([]model.DeleteCall, 0),
@@ -65,7 +60,6 @@ type writeBatch struct {
 	namespace      string
 	shardId        *int64
 	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
-	shardExists    func(int64) bool
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
@@ -110,33 +104,8 @@ func (b *writeBatch) Complete() {
 	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
 	defer cancel()
 
-	backOff := time2.NewBackOff(ctx)
-
-	var response *proto.WriteResponse
-	err := backoff.RetryNotify(func() error {
-		if b.shardExists != nil && !b.shardExists(*b.shardId) {
-			return backoff.Permanent(errShardNotFound)
-		}
-		var err error
-		response, err = b.execute(ctx, request)
-		if err == nil {
-			return nil
-		}
-		if !constant.IsRetryable(err) {
-			return backoff.Permanent(err)
-		}
-		return err
-	}, backOff, func(err error, duration time.Duration) {
-		slog.Warn(
-			"Failed to perform request, retrying later",
-			slog.Any("error", err),
-			slog.String("namespace", b.namespace),
-			slog.Int64("shard", *b.shardId),
-			slog.Duration("retry-after", duration),
-		)
-	})
-
-	if errors.Is(err, errShardNotFound) && b.reroute != nil {
+	response, err := b.execute(ctx, request)
+	if errors.Is(err, internal.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),
 			slog.Int("puts", len(b.puts)),

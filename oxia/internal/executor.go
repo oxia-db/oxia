@@ -16,9 +16,12 @@ package internal
 
 import (
 	"context"
+	"errors"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
+
+var ErrShardNotFound = errors.New("shard not found in shard manager")
 
 type Executor interface {
 	ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error)

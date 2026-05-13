@@ -27,7 +27,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/rpc"
-	time2 "github.com/oxia-db/oxia/common/time"
+	commontime "github.com/oxia-db/oxia/common/time"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -45,28 +45,26 @@ type RpcProvider interface {
 }
 
 type rpcProvider struct {
-	clientPool        rpc.ClientPool
-	serviceAddress    string
-	leader            func(int64) string
-	writeStreamsMutex sync.RWMutex
-	writeStreams      map[int64]*streamWrapper
-	leaderHints       map[int64]string
+	clientPool           rpc.ClientPool
+	serviceAddress       string
+	shardManagerSupplier func() ShardManager
+	writeStreamsMutex    sync.RWMutex
+	writeStreams         map[int64]*streamWrapper
 
 	ctx       context.Context
 	namespace string
 }
 
 func NewRpcProvider(ctx context.Context, namespace string, tlsConf *tls.Config, authentication auth.Authentication,
-	serviceAddress string, leader func(int64) string, dialOptions ...grpc.DialOption,
+	serviceAddress string, shardManagerSupplier func() ShardManager, dialOptions ...grpc.DialOption,
 ) RpcProvider {
 	return &rpcProvider{
-		ctx:            ctx,
-		namespace:      namespace,
-		clientPool:     rpc.NewClientPool(tlsConf, authentication, dialOptions...),
-		serviceAddress: serviceAddress,
-		leader:         leader,
-		writeStreams:   make(map[int64]*streamWrapper),
-		leaderHints:    make(map[int64]string),
+		ctx:                  ctx,
+		namespace:            namespace,
+		clientPool:           rpc.NewClientPool(tlsConf, authentication, dialOptions...),
+		serviceAddress:       serviceAddress,
+		shardManagerSupplier: shardManagerSupplier,
+		writeStreams:         make(map[int64]*streamWrapper),
 	}
 }
 
@@ -83,37 +81,28 @@ func (p *rpcProvider) getClientByTarget(target string) (proto.OxiaClientClient, 
 	return client, nil
 }
 
-func (p *rpcProvider) getTargetByShard(shardId *int64, hint *proto.LeaderHint) string {
-	if shardId != nil && hint.GetLeaderAddress() != "" && hint.GetShard() == *shardId {
-		return hint.GetLeaderAddress()
-	}
+func (p *rpcProvider) getTargetByShard(shardId *int64, hint constant.ErrorMetadata) (string, error) {
 	if shardId == nil {
-		return p.serviceAddress
+		return p.serviceAddress, nil
 	}
 
-	p.writeStreamsMutex.Lock()
-	if leader, ok := p.leaderHints[*shardId]; ok {
-		delete(p.leaderHints, *shardId)
-		p.writeStreamsMutex.Unlock()
-		return leader
+	shardManager := p.shardManagerSupplier()
+	if shardManager == nil || !shardManager.Exists(*shardId) {
+		return "", ErrShardNotFound
 	}
-	p.writeStreamsMutex.Unlock()
 
-	return p.leader(*shardId)
-}
-
-func (p *rpcProvider) recordLeaderHint(metadata constant.ErrorMetadata) {
-	shard, leader, ok := metadata.GetLeaderHint()
-	if !ok {
-		return
+	if shard, leader, ok := hint.GetLeaderHint(); ok && shard == *shardId {
+		return leader, nil
 	}
-	p.writeStreamsMutex.Lock()
-	defer p.writeStreamsMutex.Unlock()
-	p.leaderHints[shard] = leader
+
+	return shardManager.Leader(*shardId), nil
 }
 
 func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
 	shardId := request.Shard
+	if _, err := p.getTargetByShard(shardId, nil); err != nil {
+		return nil, err
+	}
 	p.writeStreamsMutex.RLock()
 
 	sw, ok := p.writeStreams[*shardId]
@@ -126,8 +115,12 @@ func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequ
 
 	streamCtx := metadata.AppendToOutgoingContext(p.ctx, constant.MetadataNamespace, p.namespace)
 	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataShardId, fmt.Sprintf("%d", *shardId))
-	stream, err := executeWithRetry(ctx, func(hint *proto.LeaderHint) (proto.OxiaClient_WriteStreamClient, error) {
-		return p.getWriteStream(streamCtx, p.getTargetByShard(shardId, hint))
+	stream, err := executeWithRetry(ctx, func(hint constant.ErrorMetadata) (proto.OxiaClient_WriteStreamClient, error) {
+		target, err := p.getTargetByShard(shardId, hint)
+		if err != nil {
+			return nil, err
+		}
+		return p.getWriteStream(streamCtx, target)
 	})
 	if err != nil {
 		return nil, err
@@ -152,62 +145,78 @@ func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequ
 }
 
 func (p *rpcProvider) ExecuteRead(ctx context.Context, request *proto.ReadRequest) (proto.OxiaClient_ReadClient, error) {
-	return executeWithRetry(ctx, func(hint *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
-		client, err := p.getClientByTarget(p.getTargetByShard(request.Shard, hint))
+	return executeWithRetry(ctx, func(hint constant.ErrorMetadata) (proto.OxiaClient_ReadClient, error) {
+		target, err := p.getTargetByShard(request.Shard, hint)
+		if err != nil {
+			return nil, err
+		}
+		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
 		}
 		stream, err := client.Read(ctx, request)
 		if err != nil {
-			oxiaErr, _ := constant.FromGrpcError(err)
-			return nil, oxiaErr
+			return nil, err
 		}
-		return &oxiaErrorServerStreamingClient[proto.ReadResponse]{ServerStreamingClient: stream, provider: p}, nil
+		return &rpc.OxiaErrorServerStreamingClient[proto.ReadResponse]{
+			ServerStreamingClient: stream,
+		}, nil
 	})
 }
 
 func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListRequest) (proto.OxiaClient_ListClient, error) {
-	return executeWithRetry(ctx, func(hint *proto.LeaderHint) (proto.OxiaClient_ListClient, error) {
-		client, err := p.getClientByTarget(p.getTargetByShard(request.Shard, hint))
+	return executeWithRetry(ctx, func(hint constant.ErrorMetadata) (proto.OxiaClient_ListClient, error) {
+		target, err := p.getTargetByShard(request.Shard, hint)
+		if err != nil {
+			return nil, err
+		}
+		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
 		}
 		stream, err := client.List(ctx, request)
 		if err != nil {
-			oxiaErr, _ := constant.FromGrpcError(err)
-			return nil, oxiaErr
+			return nil, err
 		}
-		return &oxiaErrorServerStreamingClient[proto.ListResponse]{ServerStreamingClient: stream, provider: p}, nil
+		return &rpc.OxiaErrorServerStreamingClient[proto.ListResponse]{
+			ServerStreamingClient: stream,
+		}, nil
 	})
 }
 
 func (p *rpcProvider) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest) (proto.OxiaClient_RangeScanClient, error) {
-	return executeWithRetry(ctx, func(hint *proto.LeaderHint) (proto.OxiaClient_RangeScanClient, error) {
-		client, err := p.getClientByTarget(p.getTargetByShard(request.Shard, hint))
+	return executeWithRetry(ctx, func(hint constant.ErrorMetadata) (proto.OxiaClient_RangeScanClient, error) {
+		target, err := p.getTargetByShard(request.Shard, hint)
+		if err != nil {
+			return nil, err
+		}
+		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
 		}
 		stream, err := client.RangeScan(ctx, request)
 		if err != nil {
-			oxiaErr, _ := constant.FromGrpcError(err)
-			return nil, oxiaErr
+			return nil, err
 		}
-		return &oxiaErrorServerStreamingClient[proto.RangeScanResponse]{ServerStreamingClient: stream, provider: p}, nil
+		return &rpc.OxiaErrorServerStreamingClient[proto.RangeScanResponse]{
+			ServerStreamingClient: stream,
+		}, nil
 	})
 }
 
 func (p *rpcProvider) GetShardAssignments(ctx context.Context, target string, request *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
-	return executeWithRetry(ctx, func(*proto.LeaderHint) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetShardAssignmentsClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
 		}
 		stream, err := client.GetShardAssignments(ctx, request)
 		if err != nil {
-			oxiaErr, _ := constant.FromGrpcError(err)
-			return nil, oxiaErr
+			return nil, err
 		}
-		return &oxiaErrorServerStreamingClient[proto.ShardAssignments]{ServerStreamingClient: stream, provider: p}, nil
+		return &rpc.OxiaErrorServerStreamingClient[proto.ShardAssignments]{
+			ServerStreamingClient: stream,
+		}, nil
 	})
 }
 
@@ -218,129 +227,96 @@ func (p *rpcProvider) getWriteStream(ctx context.Context, target string) (proto.
 	}
 	stream, err := client.WriteStream(ctx)
 	if err != nil {
-		oxiaErr, _ := constant.FromGrpcError(err)
-		return nil, oxiaErr
+		return nil, err
 	}
-	return &oxiaErrorBidiStreamingClient[proto.WriteRequest, proto.WriteResponse]{BidiStreamingClient: stream, provider: p}, nil
+	return &rpc.OxiaErrorBidiStreamingClient[proto.WriteRequest, proto.WriteResponse]{
+		BidiStreamingClient: stream,
+	}, nil
 }
 
 func (p *rpcProvider) GetSequenceUpdates(ctx context.Context, target string, request *proto.GetSequenceUpdatesRequest) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
-	return executeWithRetry(ctx, func(*proto.LeaderHint) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
 		}
 		stream, err := client.GetSequenceUpdates(ctx, request)
 		if err != nil {
-			oxiaErr, _ := constant.FromGrpcError(err)
-			return nil, oxiaErr
+			return nil, err
 		}
-		return &oxiaErrorServerStreamingClient[proto.GetSequenceUpdatesResponse]{ServerStreamingClient: stream, provider: p}, nil
+		return &rpc.OxiaErrorServerStreamingClient[proto.GetSequenceUpdatesResponse]{
+			ServerStreamingClient: stream,
+		}, nil
 	})
 }
 
 func (p *rpcProvider) GetNotifications(ctx context.Context, target string, request *proto.NotificationsRequest) (proto.OxiaClient_GetNotificationsClient, error) {
-	return executeWithRetry(ctx, func(*proto.LeaderHint) (proto.OxiaClient_GetNotificationsClient, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetNotificationsClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
 		}
 		stream, err := client.GetNotifications(ctx, request)
 		if err != nil {
-			oxiaErr, _ := constant.FromGrpcError(err)
-			return nil, oxiaErr
+			return nil, err
 		}
-		return &oxiaErrorServerStreamingClient[proto.NotificationBatch]{ServerStreamingClient: stream, provider: p}, nil
+		return &rpc.OxiaErrorServerStreamingClient[proto.NotificationBatch]{
+			ServerStreamingClient: stream,
+		}, nil
 	})
 }
 
 func (p *rpcProvider) CreateSession(ctx context.Context, target string, request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	return executeWithRetry(ctx, func(*proto.LeaderHint) (*proto.CreateSessionResponse, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CreateSessionResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
 		}
 		response, err := client.CreateSession(ctx, request)
-		oxiaErr, _ := constant.FromGrpcError(err)
-		return response, oxiaErr
+		return response, err
 	})
 }
 
 func (p *rpcProvider) KeepAlive(ctx context.Context, target string, request *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
-	return executeWithRetry(ctx, func(*proto.LeaderHint) (*proto.KeepAliveResponse, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.KeepAliveResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
 		}
 		response, err := client.KeepAlive(ctx, request)
-		oxiaErr, _ := constant.FromGrpcError(err)
-		return response, oxiaErr
+		return response, err
 	})
 }
 
 func (p *rpcProvider) CloseSession(ctx context.Context, target string, request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
-	return executeWithRetry(ctx, func(*proto.LeaderHint) (*proto.CloseSessionResponse, error) {
+	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CloseSessionResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
 		}
 		response, err := client.CloseSession(ctx, request)
-		oxiaErr, _ := constant.FromGrpcError(err)
-		return response, oxiaErr
+		return response, err
 	})
 }
 
-type oxiaErrorServerStreamingClient[T any] struct {
-	grpc.ServerStreamingClient[T]
-	provider *rpcProvider
-}
-
-func (c *oxiaErrorServerStreamingClient[T]) Recv() (*T, error) {
-	response, err := c.ServerStreamingClient.Recv()
-	oxiaErr, metadata := constant.FromGrpcError(err)
-	c.provider.recordLeaderHint(metadata)
-	return response, oxiaErr
-}
-
-type oxiaErrorBidiStreamingClient[Req any, Res any] struct {
-	grpc.BidiStreamingClient[Req, Res]
-	provider *rpcProvider
-}
-
-func (c *oxiaErrorBidiStreamingClient[Req, Res]) Send(request *Req) error {
-	oxiaErr, metadata := constant.FromGrpcError(c.BidiStreamingClient.Send(request))
-	c.provider.recordLeaderHint(metadata)
-	return oxiaErr
-}
-
-func (c *oxiaErrorBidiStreamingClient[Req, Res]) Recv() (*Res, error) {
-	response, err := c.BidiStreamingClient.Recv()
-	oxiaErr, metadata := constant.FromGrpcError(err)
-	c.provider.recordLeaderHint(metadata)
-	return response, oxiaErr
-}
-
-func executeWithRetry[T any](ctx context.Context, operation func(*proto.LeaderHint) (T, error)) (T, error) {
+func executeWithRetry[T any](ctx context.Context, operation func(constant.ErrorMetadata) (T, error)) (T, error) {
 	var result T
-	var hint *proto.LeaderHint
+	var hint constant.ErrorMetadata
 	err := backoff.Retry(func() error {
 		var err error
 		result, err = operation(hint)
 		if err == nil {
 			return nil
 		}
-		var metadata constant.ErrorMetadata
-		err, metadata = constant.FromGrpcError(err)
-		if shard, leader, ok := metadata.GetLeaderHint(); ok {
-			hint = &proto.LeaderHint{
-				Shard:         shard,
-				LeaderAddress: leader,
-			}
+		var errorMetadata constant.ErrorMetadata
+		err, errorMetadata = constant.FromGrpcError(err)
+		if _, _, ok := errorMetadata.GetLeaderHint(); ok {
+			hint = errorMetadata
 		}
 		if !constant.IsRetryable(err) {
 			return backoff.Permanent(err)
 		}
 		return err
-	}, time2.NewBackOff(ctx))
+	}, commontime.NewBackOff(ctx))
 	return result, err
 }

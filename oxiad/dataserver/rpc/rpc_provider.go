@@ -20,7 +20,6 @@ import (
 	"io"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -79,7 +78,7 @@ func (r *replicationRpcProvider) GetReplicateStream(ctx context.Context, followe
 	if oxiaErr != nil {
 		return nil, oxiaErr
 	}
-	return oxiaErrorBidiStreamingClient[proto.Append, proto.Ack]{BidiStreamingClient: stream}, nil
+	return commonrpc.OxiaErrorBidiStreamingClient[proto.Append, proto.Ack]{BidiStreamingClient: stream}, nil
 }
 
 func (r *replicationRpcProvider) SendSnapshot(ctx context.Context, follower string, namespace string, shard int64, term int64) (
@@ -99,7 +98,7 @@ func (r *replicationRpcProvider) SendSnapshot(ctx context.Context, follower stri
 	if oxiaErr != nil {
 		return nil, oxiaErr
 	}
-	return oxiaErrorClientStreamingClient[proto.SnapshotChunk, proto.SnapshotResponse]{ClientStreamingClient: stream}, nil
+	return commonrpc.OxiaErrorClientStreamingClient[proto.SnapshotChunk, proto.SnapshotResponse]{ClientStreamingClient: stream}, nil
 }
 
 func (r *replicationRpcProvider) Truncate(follower string, req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
@@ -119,34 +118,4 @@ func (r *replicationRpcProvider) Truncate(follower string, req *proto.TruncateRe
 
 func (r *replicationRpcProvider) Close() error {
 	return r.pool.Close()
-}
-
-type oxiaErrorBidiStreamingClient[Req any, Res any] struct {
-	grpc.BidiStreamingClient[Req, Res]
-}
-
-func (c oxiaErrorBidiStreamingClient[Req, Res]) Send(request *Req) error {
-	oxiaErr, _ := constant.FromGrpcError(c.BidiStreamingClient.Send(request))
-	return oxiaErr
-}
-
-func (c oxiaErrorBidiStreamingClient[Req, Res]) Recv() (*Res, error) {
-	response, err := c.BidiStreamingClient.Recv()
-	oxiaErr, _ := constant.FromGrpcError(err)
-	return response, oxiaErr
-}
-
-type oxiaErrorClientStreamingClient[Req any, Res any] struct {
-	grpc.ClientStreamingClient[Req, Res]
-}
-
-func (c oxiaErrorClientStreamingClient[Req, Res]) Send(request *Req) error {
-	oxiaErr, _ := constant.FromGrpcError(c.ClientStreamingClient.Send(request))
-	return oxiaErr
-}
-
-func (c oxiaErrorClientStreamingClient[Req, Res]) CloseAndRecv() (*Res, error) {
-	response, err := c.ClientStreamingClient.CloseAndRecv()
-	oxiaErr, _ := constant.FromGrpcError(err)
-	return response, oxiaErr
 }

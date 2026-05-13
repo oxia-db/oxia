@@ -79,8 +79,8 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 	}
 
 	var shardManager internal.ShardManager
-	rpcProvider := internal.NewRpcProvider(ctx, options.namespace, options.tls, options.authentication, options.serviceAddress, func(shard int64) string {
-		return shardManager.Leader(shard)
+	rpcProvider := internal.NewRpcProvider(ctx, options.namespace, options.tls, options.authentication, options.serviceAddress, func() internal.ShardManager {
+		return shardManager
 	}, grpcDialOptions...)
 	if options.failureInjection.Contains(DizzyShardManager) {
 		shardManager, err = internal.NewDizzyShardManager(internal.NewShardStrategy(), rpcProvider, serviceAddress,
@@ -104,7 +104,6 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		options.maxRequestsPerBatch,
 		metrics.NewMetrics(options.meterProvider),
 		options.requestTimeout)
-	batcherFactory.ShardExists = shardManager.Exists
 	c.writeBatchManager = batch.NewManager(ctx, func(ctx context.Context, shard *int64) commonbatch.Batcher {
 		return batcherFactory.NewWriteBatcher(ctx, shard, options.maxBatchSize)
 	})
