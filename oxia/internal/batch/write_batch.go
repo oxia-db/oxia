@@ -17,10 +17,13 @@ package batch
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 
@@ -110,10 +113,7 @@ func (b *writeBatch) Complete() {
 
 	response, err := b.doRequestWithRetries(request)
 
-	if errors.Is(err, ErrShardNotFound) && b.reroute != nil {
-		// The target shard was deleted (e.g. after a split). Re-submit
-		// each operation through the normal pipeline so keys get re-hashed
-		// and routed to the correct child shards.
+	if errors.Is(err, errShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),
 			slog.Int("puts", len(b.puts)),
@@ -141,14 +141,14 @@ func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response
 
 	var hint *proto.LeaderHint
 	err = backoff.RetryNotify(func() error {
-		// Check if the shard still exists before each retry. If it was
-		// deleted (e.g. after a split), stop retrying so the batch can
-		// be re-routed to the correct child shards.
 		if b.shardExists != nil && !b.shardExists(*b.shardId) {
-			return backoff.Permanent(ErrShardNotFound)
+			return backoff.Permanent(errShardNotFound)
 		}
 		response, err = b.execute(ctx, request, hint)
-		if !IsRetriable(err) {
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, io.EOF) && status.Code(err) != codes.Unavailable && status.Code(err) != codes.Aborted {
 			return backoff.Permanent(err)
 		}
 		return err
@@ -160,7 +160,7 @@ func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response
 			slog.Int64("shard", *b.shardId),
 			slog.Duration("retry-after", duration),
 		)
-		if leaderHint := constant.FindLeaderHint(err); leaderHint != nil {
+		if leaderHint := constant.GetLeaderHint(err); leaderHint != nil {
 			hint = leaderHint
 		}
 	})

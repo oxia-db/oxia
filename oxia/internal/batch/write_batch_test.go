@@ -224,18 +224,13 @@ func TestWriteBatchComplete(t *testing.T) {
 }
 
 func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
-	// Simulate a shard that gets deleted after the first execute attempt
-	// (e.g. after a shard split). The batch should detect the deletion
-	// and invoke the reroute callback instead of retrying forever.
 	shardDeleted := false
 	executeCount := 0
 
 	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
 		executeCount++
-		// After first call, mark shard as deleted. Return a retriable
-		// error so the retry loop runs again and hits the shard check.
 		shardDeleted = true
-		return nil, status.Error(constant.CodeNodeIsNotLeader, "node is not leader for shard 1")
+		return nil, constant.WithLeaderHint(status.Convert(constant.ErrNodeIsNotLeader), 1, "")
 	}
 
 	var reroutedPuts []model.PutCall
@@ -244,7 +239,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 	factory := &writeBatchFactory{
 		execute: execute,
-		shardExists: func(id int64) bool {
+		shardExists: func(int64) bool {
 			return !shardDeleted
 		},
 		reroute: func(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
@@ -269,26 +264,21 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 	batch.Complete()
 
-	// Verify the reroute callback received all operations
 	assert.Equal(t, 2, len(reroutedPuts))
 	assert.Equal(t, "key-1", reroutedPuts[0].Key)
 	assert.Equal(t, "key-2", reroutedPuts[1].Key)
 	assert.Equal(t, 1, len(reroutedDeletes))
 	assert.Equal(t, "key-3", reroutedDeletes[0].Key)
 	assert.Equal(t, 1, len(reroutedDeleteRanges))
-
-	// Execute should only be called once (then shard check triggers reroute)
 	assert.Equal(t, 1, executeCount)
 }
 
 func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
-	// When the shard still exists, retries should proceed normally
-	// (no reroute). We simulate a transient error followed by success.
 	callCount := 0
 	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
 		callCount++
 		if callCount == 1 {
-			return nil, status.Error(constant.CodeNodeIsNotLeader, "transient error")
+			return nil, constant.ErrNodeIsNotLeader
 		}
 		return &proto.WriteResponse{
 			Puts: []*proto.PutResponse{{Status: proto.Status_OK, Version: &proto.Version{VersionId: 1}}},
@@ -299,7 +289,7 @@ func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
 	factory := &writeBatchFactory{
 		execute: execute,
 		shardExists: func(int64) bool {
-			return true // shard always exists
+			return true
 		},
 		reroute: func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall) {
 			rerouted = true
@@ -325,8 +315,8 @@ func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
 	batch.Complete()
 	wg.Wait()
 
-	assert.False(t, rerouted, "reroute should not be called when shard exists")
-	assert.Equal(t, 2, callCount, "should retry and succeed on second attempt")
+	assert.False(t, rerouted)
+	assert.Equal(t, 2, callCount)
 }
 
 func TestWriteBatchCanAdd(t *testing.T) {

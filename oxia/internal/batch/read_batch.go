@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 
@@ -92,7 +94,7 @@ func (b *readBatch) Complete() {
 	request := b.toProto()
 	response, err := b.doRequestWithRetries(request)
 
-	if errors.Is(err, ErrShardNotFound) && b.reroute != nil {
+	if errors.Is(err, errShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing read batch operations",
 			slog.Int64("shard", *b.shardId),
 			slog.Int("gets", len(b.gets)),
@@ -118,10 +120,13 @@ func (b *readBatch) doRequestWithRetries(request *proto.ReadRequest) (response *
 
 	err = backoff.RetryNotify(func() error {
 		if b.shardExists != nil && !b.shardExists(*b.shardId) {
-			return backoff.Permanent(ErrShardNotFound)
+			return backoff.Permanent(errShardNotFound)
 		}
 		response, err = b.doRequest(ctx, request, hint)
-		if !IsRetriable(err) {
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, io.EOF) && status.Code(err) != codes.Unavailable && status.Code(err) != codes.Aborted {
 			return backoff.Permanent(err)
 		}
 		return err
@@ -133,7 +138,7 @@ func (b *readBatch) doRequestWithRetries(request *proto.ReadRequest) (response *
 			slog.Int64("shard", *b.shardId),
 			slog.Duration("retry-after", duration),
 		)
-		if leaderHint := constant.FindLeaderHint(err); leaderHint != nil {
+		if leaderHint := constant.GetLeaderHint(err); leaderHint != nil {
 			hint = leaderHint
 		}
 	})

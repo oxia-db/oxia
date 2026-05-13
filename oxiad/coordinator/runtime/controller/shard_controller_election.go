@@ -303,9 +303,10 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []*proto.DataServerIdentit
 					)
 					return ErrFollowerNotCaughtUp
 				}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
+					st := status.Convert(err)
 					switch {
 					case errors.Is(err, ErrFollowerNotCaughtUp):
-					case status.Code(err) == constant.CodeNodeIsNotMember:
+					case st.Code() == status.Code(constant.ErrNodeIsNotMember):
 						e.logger.Info("Follower has not been added by leader yet",
 							slog.Any("server", server),
 							slog.Int64("shard", e.shard),
@@ -385,9 +386,10 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []*proto.Dat
 				},
 				func() {
 					bo := oxiatime.NewBackOffWithInitialInterval(e.ctx, 1*time.Second)
+					invalidTerm := status.Convert(constant.ErrInvalidTerm)
 					_ = backoff.RetryNotify(func() error {
 						var err error
-						if err = e.fenceNewTermAndAddFollower(e.ctx, term, leader, follower); status.Code(err) == constant.CodeInvalidTerm {
+						if err = e.fenceNewTermAndAddFollower(e.ctx, term, leader, follower); status.Convert(err).Code() == invalidTerm.Code() && status.Convert(err).Message() == invalidTerm.Message() {
 							// If we're receiving invalid term error, it would mean
 							// there's already a new term generated, and we don't have
 							// to keep trying with this old term

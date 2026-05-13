@@ -197,7 +197,7 @@ func (cs *clientSession) createSession() error {
 			backOff := time2.NewBackOff(cs.sessions.ctx)
 			err := backoff.RetryNotify(func() error {
 				err := cs.keepAlive()
-				if status.Code(err) == constant.CodeSessionNotFound {
+				if status.Code(err) == status.Code(constant.ErrSessionNotFound) {
 					cs.log.Error(
 						"Session is no longer valid",
 						slog.Any("error", err),
@@ -250,6 +250,9 @@ func (cs *clientSession) Close() error {
 		Shard:     cs.shardId,
 		SessionId: cs.sessionId,
 	}); err != nil {
+		if status.Code(err) == status.Code(constant.ErrSessionNotFound) {
+			return nil
+		}
 		return err
 	}
 	return nil

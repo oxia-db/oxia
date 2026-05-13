@@ -145,14 +145,14 @@ func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
 	execute := func(_ context.Context, _ *proto.ReadRequest, _ *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
 		executeCount++
 		shardDeleted = true
-		return nil, status.Error(constant.CodeNodeIsNotLeader, "node is not leader for shard 1")
+		return nil, constant.WithLeaderHint(status.Convert(constant.ErrNodeIsNotLeader), 1, "")
 	}
 
 	var reroutedGets []model.GetCall
 
 	factory := &readBatchFactory{
 		execute: execute,
-		shardExists: func(id int64) bool {
+		shardExists: func(int64) bool {
 			return !shardDeleted
 		},
 		reroute: func(gets []model.GetCall) {

@@ -252,7 +252,7 @@ func overlap(a HashRange, b HashRange) bool {
 
 func isErrorRetryable(err error) bool {
 	switch status.Code(err) {
-	case constant.CodeNamespaceNotFound, codes.Unauthenticated:
+	case status.Code(constant.ErrNamespaceNotFound), codes.Unauthenticated:
 		return false
 	default:
 		return true

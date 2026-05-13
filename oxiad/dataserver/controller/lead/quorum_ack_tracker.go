@@ -216,7 +216,7 @@ func (q *quorumAckTracker) WaitForCommitOffsetAsync(_ context.Context, offset in
 
 	if q.closed {
 		q.Unlock()
-		cb.OnCompleteError(constant.ErrAlreadyClosed)
+		cb.OnCompleteError(constant.ErrResourceUnavailable)
 		return
 	}
 
@@ -250,7 +250,7 @@ func (q *quorumAckTracker) Close() error {
 	q.Unlock()
 	// unblock waiting request
 	for _, r := range q.waitingRequests {
-		r.callback.OnCompleteError(constant.ErrAlreadyClosed)
+		r.callback.OnCompleteError(constant.ErrResourceUnavailable)
 	}
 	return nil
 }

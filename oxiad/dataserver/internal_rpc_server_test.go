@@ -133,7 +133,7 @@ func TestInternalGetInfoRejectedWhileUninitialized(t *testing.T) {
 	client := proto.NewOxiaCoordinationClient(cnx)
 	_, err := client.GetInfo(context.Background(), &proto.GetInfoRequest{}) //nolint:staticcheck // Deprecated endpoint coverage.
 	require.Error(t, err)
-	assert.Equal(t, constant.CodeNotInitialized, grpcstatus.Code(err))
+	assert.Equal(t, codes.Unavailable, grpcstatus.Code(err))
 }
 
 func TestInternalHandshakeBindsInstanceID(t *testing.T) {
@@ -158,7 +158,7 @@ func TestInternalProtectedRpcRejectedWhileUninitialized(t *testing.T) {
 
 	_, err = stream.CloseAndRecv()
 	require.Error(t, err)
-	assert.Equal(t, constant.CodeNotInitialized, grpcstatus.Code(err))
+	assert.Equal(t, codes.Unavailable, grpcstatus.Code(err))
 }
 
 func TestInternalReplicateRejectsWrongInstanceID(t *testing.T) {

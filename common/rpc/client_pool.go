@@ -104,7 +104,7 @@ func (cp *clientPool) GetClientRpc(target string) (proto.OxiaClientClient, error
 		return nil, err
 	}
 
-	return &loggingClientRpc{target, proto.NewOxiaClientClient(cnx)}, nil
+	return &loggingClientRpc{client: proto.NewOxiaClientClient(cnx)}, nil
 }
 
 func (cp *clientPool) GetCoordinationRpc(target string) (proto.OxiaCoordinationClient, error) {

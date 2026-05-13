@@ -15,61 +15,47 @@
 package constant
 
 import (
-	"fmt"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-const (
-	CodeNotInitialized          codes.Code = 100
-	CodeInvalidTerm             codes.Code = 101
-	CodeInvalidStatus           codes.Code = 102
-	CodeCancelled               codes.Code = 103
-	CodeAlreadyClosed           codes.Code = 104
-	CodeLeaderAlreadyConnected  codes.Code = 105
-	CodeNodeIsNotLeader         codes.Code = 106
-	CodeNodeIsNotFollower       codes.Code = 107
-	CodeSessionNotFound         codes.Code = 108
-	CodeInvalidSessionTimeout   codes.Code = 109
-	CodeNamespaceNotFound       codes.Code = 110
-	CodeNotificationsNotEnabled codes.Code = 111
-	CodeNodeIsNotMember         codes.Code = 112
-)
-
 var (
-	ErrNotInitialized          = status.Error(CodeNotInitialized, "oxia: server not initialized yet")
-	ErrCancelled               = status.Error(CodeCancelled, "oxia: operation was cancelled")
-	ErrInvalidTerm             = status.Error(CodeInvalidTerm, "oxia: invalid term")
-	ErrInvalidStatus           = status.Error(CodeInvalidStatus, "oxia: invalid status")
-	ErrLeaderAlreadyConnected  = status.Error(CodeLeaderAlreadyConnected, "oxia: leader is already connected")
-	ErrAlreadyClosed           = status.Error(CodeAlreadyClosed, "oxia: resource is already closed")
-	ErrSessionNotFound         = status.Error(CodeSessionNotFound, "oxia: session not found")
-	ErrInvalidSessionTimeout   = status.Error(CodeInvalidSessionTimeout, "oxia: invalid session timeout")
-	ErrNamespaceNotFound       = status.Error(CodeNamespaceNotFound, "oxia: namespace not found")
-	ErrNotificationsNotEnabled = status.Error(CodeNotificationsNotEnabled, "oxia: notifications not enabled on namespace")
-	ErrNodeIsNotMember         = status.Error(CodeNodeIsNotMember, "oxia: node is not a member")
+	ErrCancelled = status.Error(codes.Canceled, "oxia: operation was cancelled")
+
+	ErrInvalidSessionTimeout = status.Error(codes.InvalidArgument, "oxia: invalid session timeout")
+
+	ErrSessionNotFound   = status.Error(codes.NotFound, "oxia: session not found")
+	ErrNamespaceNotFound = status.Error(codes.NotFound, "oxia: namespace not found")
+
+	ErrInvalidTerm             = status.Error(codes.FailedPrecondition, "oxia: invalid term")
+	ErrInvalidStatus           = status.Error(codes.FailedPrecondition, "oxia: invalid status")
+	ErrNotificationsNotEnabled = status.Error(codes.FailedPrecondition, "oxia: notifications not enabled on namespace")
+
+	ErrNodeIsNotMember = status.Error(codes.Aborted, "oxia: node is not a member")
+	ErrNodeIsNotLeader = status.Error(codes.Aborted, "oxia: node is not leader")
+
+	ErrNotInitialized      = status.Error(codes.Unavailable, "oxia: server not initialized yet")
+	ErrResourceUnavailable = status.Error(codes.Unavailable, "oxia: resource unavailable")
 )
 
-func NewNodeIsNotLeaderWithHint(shard int64, leader string) error {
-	st := status.New(CodeNodeIsNotLeader, fmt.Sprintf("node is not leader for shard %d", shard))
-	if leader != "" {
-		redirect := &proto.LeaderHint{
-			Shard:         shard,
-			LeaderAddress: leader,
-		}
-		stWithDetails, err := st.WithDetails(redirect)
-		if err != nil {
-			return st.Err()
-		}
-		return stWithDetails.Err()
+func WithLeaderHint(st *status.Status, shard int64, leader string) error {
+	if leader == "" {
+		return st.Err()
 	}
-	return st.Err()
+	redirect := &proto.LeaderHint{
+		Shard:         shard,
+		LeaderAddress: leader,
+	}
+	stWithDetails, detailsErr := st.WithDetails(redirect)
+	if detailsErr != nil {
+		return st.Err()
+	}
+	return stWithDetails.Err()
 }
 
-func FindLeaderHint(err error) *proto.LeaderHint {
+func GetLeaderHint(err error) *proto.LeaderHint {
 	st := status.Convert(err)
 	if st == nil {
 		return nil
