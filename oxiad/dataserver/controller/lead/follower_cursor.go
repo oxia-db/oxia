@@ -291,8 +291,7 @@ func (fc *followerCursor) run() {
 			// If the follower reported that it's not a member (e.g. after a
 			// data clean-up and restart), reset the ack offset so that
 			// shouldSendSnapshot() will send a full snapshot on the next retry.
-			st := status.Convert(err)
-			if st.Code() == status.Code(constant.ErrNodeIsNotMember) {
+			if errors.Is(err, constant.ErrNodeIsNotMember) {
 				fc.log.Warn("Follower reported not-member status, resetting ack offset to trigger snapshot")
 				fc.ackOffset.Store(wal.InvalidOffset)
 				fc.lastPushed.Store(wal.InvalidOffset)

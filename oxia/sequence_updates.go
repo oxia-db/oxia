@@ -23,7 +23,6 @@ import (
 	"github.com/cenkalti/backoff/v4"
 
 	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -35,7 +34,7 @@ type sequenceUpdates struct {
 	partitionKey string
 	ch           chan string
 	shardManager internal.ShardManager
-	clientPool   rpc.ClientPool
+	rpcProvider  internal.RpcProvider
 
 	ctx     context.Context
 	backoff backoff.BackOff
@@ -43,13 +42,13 @@ type sequenceUpdates struct {
 }
 
 func newSequenceUpdates(ctx context.Context, prefixKey string, partitionKey string,
-	clientPool rpc.ClientPool, shardManager internal.ShardManager) <-chan string {
+	rpcProvider internal.RpcProvider, shardManager internal.ShardManager) <-chan string {
 	su := &sequenceUpdates{
 		prefixKey:    prefixKey,
 		partitionKey: partitionKey,
 		ch:           make(chan string),
 		shardManager: shardManager,
-		clientPool:   clientPool,
+		rpcProvider:  rpcProvider,
 		ctx:          ctx,
 		backoff:      time2.NewBackOffWithInitialInterval(ctx, 1*time.Second),
 		log: slog.With(
@@ -90,12 +89,7 @@ func (su *sequenceUpdates) getSequenceUpdates() error {
 	shard := su.shardManager.Get(su.partitionKey)
 	leader := su.shardManager.Leader(shard)
 
-	client, err := su.clientPool.GetClientRpc(leader)
-	if err != nil {
-		return err
-	}
-
-	updates, err := client.GetSequenceUpdates(su.ctx, &proto.GetSequenceUpdatesRequest{
+	updates, err := su.rpcProvider.GetSequenceUpdates(su.ctx, leader, &proto.GetSequenceUpdatesRequest{
 		Key: su.prefixKey,
 	})
 	if err != nil {

@@ -24,23 +24,21 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"go.uber.org/multierr"
-	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal"
 )
 
-func newSessions(ctx context.Context, shardManager internal.ShardManager, pool rpc.ClientPool, options clientOptions) *sessions {
+func newSessions(ctx context.Context, shardManager internal.ShardManager, rpcProvider internal.RpcProvider, options clientOptions) *sessions {
 	s := &sessions{
 		clientIdentity:  options.identity,
 		ctx:             ctx,
 		shardManager:    shardManager,
-		pool:            pool,
+		rpcProvider:     rpcProvider,
 		sessionsByShard: map[int64]*clientSession{},
 		clientOpts:      options,
 		log: slog.With(
@@ -56,7 +54,7 @@ type sessions struct {
 	clientIdentity  string
 	ctx             context.Context
 	shardManager    internal.ShardManager
-	pool            rpc.ClientPool
+	rpcProvider     internal.RpcProvider
 	sessionsByShard map[int64]*clientSession
 	log             *slog.Logger
 	clientOpts      clientOptions
@@ -161,13 +159,9 @@ func (cs *clientSession) createSessionWithRetries() {
 }
 
 func (cs *clientSession) createSession() error {
-	client, err := cs.getRpc()
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(cs.ctx, cs.sessions.clientOpts.requestTimeout)
 	defer cancel()
-	createSessionResponse, err := client.CreateSession(ctx, &proto.CreateSessionRequest{
+	createSessionResponse, err := cs.sessions.rpcProvider.CreateSession(ctx, cs.leader(), &proto.CreateSessionRequest{
 		Shard:            cs.shardId,
 		ClientIdentity:   cs.sessions.clientIdentity,
 		SessionTimeoutMs: uint32(cs.sessions.clientOpts.sessionTimeout.Milliseconds()),
@@ -197,7 +191,7 @@ func (cs *clientSession) createSession() error {
 			backOff := time2.NewBackOff(cs.sessions.ctx)
 			err := backoff.RetryNotify(func() error {
 				err := cs.keepAlive()
-				if status.Code(err) == status.Code(constant.ErrSessionNotFound) {
+				if errors.Is(err, constant.ErrSessionNotFound) {
 					cs.log.Error(
 						"Session is no longer valid",
 						slog.Any("error", err),
@@ -231,26 +225,21 @@ func (cs *clientSession) createSession() error {
 	return nil
 }
 
-func (cs *clientSession) getRpc() (proto.OxiaClientClient, error) {
-	leader := cs.sessions.shardManager.Leader(cs.shardId)
-	return cs.sessions.pool.GetClientRpc(leader)
+func (cs *clientSession) leader() string {
+	return cs.sessions.shardManager.Leader(cs.shardId)
 }
 
 func (cs *clientSession) Close() error {
 	cs.cancel()
 
-	client, err := cs.getRpc()
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(cs.sessions.ctx, cs.sessions.clientOpts.requestTimeout)
 	defer cancel()
 
-	if _, err = client.CloseSession(ctx, &proto.CloseSessionRequest{
+	if _, err := cs.sessions.rpcProvider.CloseSession(ctx, cs.leader(), &proto.CloseSessionRequest{
 		Shard:     cs.shardId,
 		SessionId: cs.sessionId,
 	}); err != nil {
-		if status.Code(err) == status.Code(constant.ErrSessionNotFound) {
+		if errors.Is(err, constant.ErrSessionNotFound) {
 			return nil
 		}
 		return err
@@ -275,15 +264,10 @@ func (cs *clientSession) keepAlive() error {
 	ticker := time.NewTicker(tickTime)
 	defer ticker.Stop()
 
-	client, err := cs.getRpc()
-	if err != nil {
-		return err
-	}
-
 	for {
 		select {
 		case <-ticker.C:
-			_, err = client.KeepAlive(ctx, &proto.SessionHeartbeat{Shard: shardId, SessionId: sessionId})
+			_, err := cs.sessions.rpcProvider.KeepAlive(ctx, cs.sessions.shardManager.Leader(shardId), &proto.SessionHeartbeat{Shard: shardId, SessionId: sessionId})
 			if err != nil {
 				return err
 			}

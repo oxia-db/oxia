@@ -16,6 +16,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	batch2 "github.com/oxia-db/oxia/oxia/batch"
@@ -23,6 +24,8 @@ import (
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
+
+var errShardNotFound = errors.New("shard not found in shard manager")
 
 type WriteRerouter func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//lint:file-ignore SA1019 Deprecated LeaderHint remains until the cleanup PR removes it.
 package batch
 
 import (
@@ -137,7 +136,7 @@ func TestWriteBatchComplete(t *testing.T) {
 			errFailure,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
+		execute := func(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
 			assert.Equal(t, &proto.WriteRequest{
 				Shard: &shardId,
 				Puts: []*proto.PutRequest{{
@@ -227,10 +226,10 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	shardDeleted := false
 	executeCount := 0
 
-	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
+	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
 		executeCount++
 		shardDeleted = true
-		return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, ""))
+		return nil, constant.ErrNodeIsNotLeader
 	}
 
 	var reroutedPuts []model.PutCall
@@ -275,10 +274,10 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
 	callCount := 0
-	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
+	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
 		callCount++
 		if callCount == 1 {
-			return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader)
+			return nil, constant.ErrNodeIsNotLeader
 		}
 		return &proto.WriteResponse{
 			Puts: []*proto.PutResponse{{Status: proto.Status_OK, Version: &proto.Version{VersionId: 1}}},

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//lint:file-ignore SA1019 Deprecated LeaderHint remains until the cleanup PR removes it.
 package oxia
 
 import (
@@ -20,21 +19,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"sync"
-	"time"
 
-	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/concurrent"
-	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
-	time2 "github.com/oxia-db/oxia/common/time"
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
 
 	"github.com/oxia-db/oxia/common/compare"
@@ -55,9 +46,9 @@ type clientImpl struct {
 	sessions          *sessions
 	notifications     []*notifications
 
-	clientPool rpc.ClientPool
-	ctx        context.Context
-	cancel     context.CancelFunc
+	rpcProvider internal.RpcProvider
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // NewAsyncClient creates a new Oxia client with the async interface
@@ -80,43 +71,47 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 	if options.resolver != nil {
 		grpcDialOptions = append(grpcDialOptions, grpc.WithResolvers(&grpcResolverBuilder{sr: options.resolver}))
 	}
-	clientPool := rpc.NewClientPool(options.tls, options.authentication, grpcDialOptions...)
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &clientImpl{
+		options: options,
+		ctx:     ctx,
+		cancel:  cancel,
+	}
 
 	var shardManager internal.ShardManager
+	rpcProvider := internal.NewRpcProvider(ctx, options.namespace, options.tls, options.authentication, options.serviceAddress, func(shard int64) string {
+		return shardManager.Leader(shard)
+	}, grpcDialOptions...)
 	if options.failureInjection.Contains(DizzyShardManager) {
-		shardManager, err = internal.NewDizzyShardManager(internal.NewShardStrategy(), clientPool, serviceAddress,
+		shardManager, err = internal.NewDizzyShardManager(internal.NewShardStrategy(), rpcProvider, serviceAddress,
 			options.namespace, options.requestTimeout)
 	} else {
-		shardManager, err = internal.NewShardManager(internal.NewShardStrategy(), clientPool, serviceAddress,
+		shardManager, err = internal.NewShardManager(internal.NewShardStrategy(), rpcProvider, serviceAddress,
 			options.namespace, options.requestTimeout)
 	}
 	if err != nil {
+		cancel()
+		_ = rpcProvider.Close()
 		return nil, err
 	}
+	c.rpcProvider = rpcProvider
+	c.shardManager = shardManager
 
-	ctx, cancel := context.WithCancel(context.Background())
-	executor := internal.NewExecutor(ctx, options.namespace, clientPool, shardManager, options.serviceAddress)
 	batcherFactory := batch.NewBatcherFactory(
-		executor,
+		rpcProvider,
 		options.namespace,
 		options.batchLinger,
 		options.maxRequestsPerBatch,
 		metrics.NewMetrics(options.meterProvider),
 		options.requestTimeout)
 	batcherFactory.ShardExists = shardManager.Exists
-	c := &clientImpl{
-		options:      options,
-		clientPool:   clientPool,
-		shardManager: shardManager,
-		writeBatchManager: batch.NewManager(ctx, func(ctx context.Context, shard *int64) commonbatch.Batcher {
-			return batcherFactory.NewWriteBatcher(ctx, shard, options.maxBatchSize)
-		}),
-		readBatchManager: batch.NewManager(ctx, batcherFactory.NewReadBatcher),
-		executor:         executor,
-	}
+	c.writeBatchManager = batch.NewManager(ctx, func(ctx context.Context, shard *int64) commonbatch.Batcher {
+		return batcherFactory.NewWriteBatcher(ctx, shard, options.maxBatchSize)
+	})
+	c.readBatchManager = batch.NewManager(ctx, batcherFactory.NewReadBatcher)
+	c.executor = rpcProvider
 
-	c.ctx, c.cancel = ctx, cancel
-	c.sessions = newSessions(c.ctx, c.shardManager, c.clientPool, c.options)
+	c.sessions = newSessions(c.ctx, c.shardManager, c.rpcProvider, c.options)
 
 	batcherFactory.WriteRerouter = c.rerouteWrites
 	batcherFactory.ReadRerouter = c.rerouteReads
@@ -152,7 +147,7 @@ func (c *clientImpl) Close() error {
 		c.sessions.Close(),
 		c.writeBatchManager.Close(),
 		c.readBatchManager.Close(),
-		c.clientPool.Close(),
+		c.rpcProvider.Close(),
 	)
 	c.cancel()
 
@@ -419,54 +414,27 @@ func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, 
 	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
 	defer cancel()
 
-	backOff := time2.NewBackOff(retryCtx)
-	var hint *proto.LeaderHint //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
-
-	err := backoff.RetryNotify(func() error {
-		return c.doList(retryCtx, request, hint, ch)
-	}, backOff, func(err error, duration time.Duration) {
-		slog.Warn(
-			"Failed to perform list request, retrying later",
-			slog.Any("error", err),
-			slog.String("namespace", c.options.namespace),
-			slog.Int64("shard", shardId),
-			slog.Duration("retry-after", duration),
-		)
-		if leaderHint := leaderHintFromError(err); leaderHint != nil {
-			hint = leaderHint
-		}
-	})
-	if err != nil {
+	if err := c.doList(retryCtx, request, ch); err != nil {
 		ch <- ListResult{Err: err}
 	}
 }
 
-func (c *clientImpl) doList(ctx context.Context, request *proto.ListRequest, hint *proto.LeaderHint, ch chan<- ListResult) error { //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
-	client, err := c.executor.ExecuteList(ctx, request, hint)
+func (c *clientImpl) doList(ctx context.Context, request *proto.ListRequest, ch chan<- ListResult) error {
+	client, err := c.executor.ExecuteList(ctx, request)
 	if err != nil {
-		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.Aborted {
-			return err
-		}
-		return backoff.Permanent(err)
+		return err
 	}
 
-	dataSent := false
 	for {
 		response, err := client.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
-			// Only retry if no data has been sent to the channel yet,
-			// to avoid sending duplicate keys.
-			if !dataSent && (status.Code(err) == codes.Unavailable || status.Code(err) == codes.Aborted) {
-				return err
-			}
-			return backoff.Permanent(err)
+			return err
 		}
 
 		ch <- ListResult{Keys: response.Keys}
-		dataSent = true
 	}
 }
 
@@ -517,58 +485,31 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
 	defer cancel()
 
-	backOff := time2.NewBackOff(retryCtx)
-	var hint *proto.LeaderHint //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
-
-	err := backoff.RetryNotify(func() error {
-		return c.doRangeScan(retryCtx, request, hint, ch)
-	}, backOff, func(err error, duration time.Duration) {
-		slog.Warn(
-			"Failed to perform range-scan request, retrying later",
-			slog.Any("error", err),
-			slog.String("namespace", c.options.namespace),
-			slog.Int64("shard", shardId),
-			slog.Duration("retry-after", duration),
-		)
-		if leaderHint := leaderHintFromError(err); leaderHint != nil {
-			hint = leaderHint
-		}
-	})
-	if err != nil {
+	if err := c.doRangeScan(retryCtx, request, ch); err != nil {
 		ch <- GetResult{Err: err}
 	}
 
 	close(ch)
 }
 
-func (c *clientImpl) doRangeScan(ctx context.Context, request *proto.RangeScanRequest, hint *proto.LeaderHint, ch chan<- GetResult) error { //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
-	client, err := c.executor.ExecuteRangeScan(ctx, request, hint)
+func (c *clientImpl) doRangeScan(ctx context.Context, request *proto.RangeScanRequest, ch chan<- GetResult) error {
+	client, err := c.executor.ExecuteRangeScan(ctx, request)
 	if err != nil {
-		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.Aborted {
-			return err
-		}
-		return backoff.Permanent(err)
+		return err
 	}
 
-	dataSent := false
 	for {
 		response, err := client.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
-			// Only retry if no data has been sent to the channel yet,
-			// to avoid sending duplicate records.
-			if !dataSent && (status.Code(err) == codes.Unavailable || status.Code(err) == codes.Aborted) {
-				return err
-			}
-			return backoff.Permanent(err)
+			return err
 		}
 
 		for _, record := range response.Records {
 			ch <- toGetResult(record, "", nil)
 		}
-		dataSent = true
 	}
 }
 
@@ -608,7 +549,7 @@ func (c *clientImpl) GetSequenceUpdates(ctx context.Context, prefixKey string, o
 		return nil, errors.Wrap(ErrInvalidOptions, "partitionKey is required")
 	}
 
-	return newSequenceUpdates(ctx, prefixKey, *opts.partitionKey, c.clientPool, c.shardManager), nil
+	return newSequenceUpdates(ctx, prefixKey, *opts.partitionKey, c.rpcProvider, c.shardManager), nil
 }
 
 // We do range scan on all the shards, and we need to always pick the lowest key
@@ -669,20 +610,8 @@ func (c *clientImpl) getShardForKey(key string, options baseOptionsIf) int64 {
 	return c.shardManager.Get(key)
 }
 
-func leaderHintFromError(err error) *proto.LeaderHint { //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
-	_, metadata := constant.FromGrpcError(err)
-	shard, leader, ok := metadata.GetLeaderHint()
-	if !ok {
-		return nil
-	}
-	return &proto.LeaderHint{ //nolint:staticcheck // Deprecated proto is kept until the cleanup PR removes LeaderHint.
-		Shard:         shard,
-		LeaderAddress: leader,
-	}
-}
-
 func (c *clientImpl) GetNotifications() (Notifications, error) {
-	nm, err := newNotifications(c.ctx, c.options, c.clientPool, c.shardManager)
+	nm, err := newNotifications(c.ctx, c.options, c.rpcProvider, c.shardManager)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create notification stream")
 	}

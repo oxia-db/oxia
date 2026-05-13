@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,5 +31,6 @@ func TestIntoGRPCError(t *testing.T) {
 	assert.Equal(t, codes.Unavailable, status.Code(IntoGRPCError(ErrResourceConflict)))
 	err := IntoGRPCError(fmt.Errorf("wrapped: %w", ErrResourceNotAvailable))
 	assert.Equal(t, codes.Unavailable, status.Code(err))
-	assert.Equal(t, "wrapped: resource not available", status.Convert(err).Message())
+	oxiaErr, _ := constant.FromGrpcError(err)
+	assert.ErrorIs(t, oxiaErr, constant.ErrResourceUnavailable)
 }
