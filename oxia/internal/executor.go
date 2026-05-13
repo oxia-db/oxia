@@ -28,7 +28,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-type Executor interface {
+type Executor interface { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	ExecuteWrite(ctx context.Context, request *proto.WriteRequest, leaderHint *proto.LeaderHint) (*proto.WriteResponse, error)
 	ExecuteRead(ctx context.Context, request *proto.ReadRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)
 	ExecuteList(ctx context.Context, request *proto.ListRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ListClient, error)
