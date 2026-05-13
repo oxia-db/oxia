@@ -61,7 +61,7 @@ func NewExecutor(ctx context.Context, namespace string, pool rpc.ClientPool, man
 	return e
 }
 
-func (e *executorImpl) ExecuteWrite(ctx context.Context, request *proto.WriteRequest, leaderHint *proto.LeaderHint) (*proto.WriteResponse, error) {
+func (e *executorImpl) ExecuteWrite(ctx context.Context, request *proto.WriteRequest, leaderHint *proto.LeaderHint) (*proto.WriteResponse, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	sw, err := e.writeStream(request.Shard, leaderHint) //nolint:contextcheck
 	if err != nil {
 		return nil, err
@@ -70,7 +70,7 @@ func (e *executorImpl) ExecuteWrite(ctx context.Context, request *proto.WriteReq
 	return sw.Send(ctx, request)
 }
 
-func (e *executorImpl) ExecuteRead(ctx context.Context, request *proto.ReadRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
+func (e *executorImpl) ExecuteRead(ctx context.Context, request *proto.ReadRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	client, err := e.rpc(request.Shard, leaderHint)
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func (e *executorImpl) ExecuteRead(ctx context.Context, request *proto.ReadReque
 	return client.Read(ctx, request)
 }
 
-func (e *executorImpl) ExecuteList(ctx context.Context, request *proto.ListRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ListClient, error) {
+func (e *executorImpl) ExecuteList(ctx context.Context, request *proto.ListRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_ListClient, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	client, err := e.rpc(request.Shard, leaderHint)
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func (e *executorImpl) ExecuteList(ctx context.Context, request *proto.ListReque
 	return client.List(ctx, request)
 }
 
-func (e *executorImpl) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_RangeScanClient, error) {
+func (e *executorImpl) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, leaderHint *proto.LeaderHint) (proto.OxiaClient_RangeScanClient, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	client, err := e.rpc(request.Shard, leaderHint)
 	if err != nil {
 		return nil, err
@@ -97,7 +97,7 @@ func (e *executorImpl) ExecuteRangeScan(ctx context.Context, request *proto.Rang
 	return client.RangeScan(ctx, request)
 }
 
-func (e *executorImpl) rpc(shardId *int64, hint *proto.LeaderHint) (proto.OxiaClientClient, error) {
+func (e *executorImpl) rpc(shardId *int64, hint *proto.LeaderHint) (proto.OxiaClientClient, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	var target string
 	if hint.GetLeaderAddress() != "" {
 		target = hint.GetLeaderAddress()
@@ -116,7 +116,7 @@ func (e *executorImpl) rpc(shardId *int64, hint *proto.LeaderHint) (proto.OxiaCl
 	return client, nil
 }
 
-func (e *executorImpl) writeStream(shardId *int64, leaderHint *proto.LeaderHint) (*streamWrapper, error) {
+func (e *executorImpl) writeStream(shardId *int64, leaderHint *proto.LeaderHint) (*streamWrapper, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	e.RLock()
 
 	sw, ok := e.writeStreams[*shardId]
