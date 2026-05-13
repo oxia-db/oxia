@@ -57,6 +57,7 @@ const (
 	ReasonNodeIsNotLeader         string = "NODE_IS_NOT_LEADER"
 	ReasonNotInitialized          string = "NOT_INITIALIZED"
 	ReasonResourceUnavailable     string = "RESOURCE_UNAVAILABLE"
+	ReasonUnknown                        = "UNKNOWN"
 )
 
 var (
@@ -99,51 +100,49 @@ func IntoGrpcStatusError(err error, opts ...GrpcStatusOption) error {
 	if len(metadata) == 0 {
 		metadata = nil
 	}
-	message := err.Error()
-
-	statusWithErrorInfo := func(code codes.Code, reason string) error {
-		st := status.New(code, message)
-		stWithDetails, detailsErr := st.WithDetails(&errdetails.ErrorInfo{
-			Reason:   reason,
-			Domain:   OxiaErrorDomain,
-			Metadata: metadata,
-		})
-		if detailsErr != nil {
-			return st.Err()
-		}
-		return stWithDetails.Err()
-	}
 
 	if st, ok := status.FromError(err); ok {
-		return statusWithErrorInfo(st.Code(), st.Message())
+		return withErrorInfoDetails(st, ReasonUnknown, metadata)
 	}
 
 	switch {
 	case errors.Is(err, ErrAborted):
-		return statusWithErrorInfo(codes.Aborted, ReasonAborted)
+		return withErrorInfoDetails(status.New(codes.Aborted, err.Error()), ReasonAborted, metadata)
 	case errors.Is(err, ErrInvalidSessionTimeout):
-		return statusWithErrorInfo(codes.InvalidArgument, ReasonInvalidSessionTimeout)
+		return withErrorInfoDetails(status.New(codes.InvalidArgument, err.Error()), ReasonInvalidSessionTimeout, metadata)
 	case errors.Is(err, ErrSessionNotFound):
-		return statusWithErrorInfo(codes.NotFound, ReasonSessionNotFound)
+		return withErrorInfoDetails(status.New(codes.NotFound, err.Error()), ReasonSessionNotFound, metadata)
 	case errors.Is(err, ErrNamespaceNotFound):
-		return statusWithErrorInfo(codes.NotFound, ReasonNamespaceNotFound)
+		return withErrorInfoDetails(status.New(codes.NotFound, err.Error()), ReasonNamespaceNotFound, metadata)
 	case errors.Is(err, ErrInvalidTerm):
-		return statusWithErrorInfo(codes.FailedPrecondition, ReasonInvalidTerm)
+		return withErrorInfoDetails(status.New(codes.FailedPrecondition, err.Error()), ReasonInvalidTerm, metadata)
 	case errors.Is(err, ErrInvalidStatus):
-		return statusWithErrorInfo(codes.FailedPrecondition, ReasonInvalidStatus)
+		return withErrorInfoDetails(status.New(codes.FailedPrecondition, err.Error()), ReasonInvalidStatus, metadata)
 	case errors.Is(err, ErrNotificationsNotEnabled):
-		return statusWithErrorInfo(codes.FailedPrecondition, ReasonNotificationsNotEnabled)
+		return withErrorInfoDetails(status.New(codes.FailedPrecondition, err.Error()), ReasonNotificationsNotEnabled, metadata)
 	case errors.Is(err, ErrNodeIsNotMember):
-		return statusWithErrorInfo(codes.Aborted, ReasonNodeIsNotMember)
+		return withErrorInfoDetails(status.New(codes.Aborted, err.Error()), ReasonNodeIsNotMember, metadata)
 	case errors.Is(err, ErrNodeIsNotLeader):
-		return statusWithErrorInfo(codes.Aborted, ReasonNodeIsNotLeader)
+		return withErrorInfoDetails(status.New(codes.Aborted, err.Error()), ReasonNodeIsNotLeader, metadata)
 	case errors.Is(err, ErrNotInitialized):
-		return statusWithErrorInfo(codes.Unavailable, ReasonNotInitialized)
+		return withErrorInfoDetails(status.New(codes.Unavailable, err.Error()), ReasonNotInitialized, metadata)
 	case errors.Is(err, ErrResourceUnavailable):
-		return statusWithErrorInfo(codes.Unavailable, ReasonResourceUnavailable)
+		return withErrorInfoDetails(status.New(codes.Unavailable, err.Error()), ReasonResourceUnavailable, metadata)
 	default:
 		return status.Error(codes.Unknown, err.Error())
 	}
+}
+
+func withErrorInfoDetails(st *status.Status, reason string, metadata ErrorMetadata) error {
+	stWithDetails, detailsErr := st.WithDetails(&errdetails.ErrorInfo{
+		Reason:   reason,
+		Domain:   OxiaErrorDomain,
+		Metadata: metadata,
+	})
+	if detailsErr != nil {
+		return st.Err()
+	}
+	return stWithDetails.Err()
 }
 
 func FromGrpcError(err error) (error, ErrorMetadata) {

@@ -87,7 +87,7 @@ func TestIntoGrpcStatusReturnsUnknownGrpcStatusError(t *testing.T) {
 	st := status.Convert(grpcErr)
 
 	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Equal(t, err.Error(), st.Message())
+	assert.Equal(t, "invalid", st.Message())
 }
 
 func TestIntoGrpcStatusAddsErrorInfoToGrpcStatusError(t *testing.T) {
@@ -98,7 +98,7 @@ func TestIntoGrpcStatusAddsErrorInfoToGrpcStatusError(t *testing.T) {
 	shard, leader, ok := metadata.GetLeaderHint()
 
 	assert.Equal(t, codes.Aborted, st.Code())
-	assert.Equal(t, err.Error(), st.Message())
+	assert.Equal(t, ErrNodeIsNotLeader.Error(), st.Message())
 	assert.EqualError(t, oxiaErr, grpcErr.Error())
 	assert.True(t, ok)
 	assert.Equal(t, int64(1), shard)
