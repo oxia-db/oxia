@@ -44,12 +44,14 @@ func TestIntoGrpcStatusError(t *testing.T) {
 		{ErrInvalidSessionTimeout, codes.InvalidArgument},
 		{ErrSessionNotFound, codes.NotFound},
 		{ErrNamespaceNotFound, codes.NotFound},
+		{ErrShardNotFound, codes.NotFound},
 		{ErrInvalidTerm, codes.FailedPrecondition},
 		{ErrInvalidStatus, codes.FailedPrecondition},
 		{ErrNotificationsNotEnabled, codes.FailedPrecondition},
 		{ErrNodeIsNotMember, codes.Aborted},
 		{ErrNodeIsNotLeader, codes.Aborted},
 		{ErrNotInitialized, codes.Unavailable},
+		{ErrResourceConflict, codes.FailedPrecondition},
 		{ErrResourceUnavailable, codes.Unavailable},
 	}
 
@@ -103,13 +105,6 @@ func TestIntoGrpcStatusAddsErrorInfoToGrpcStatusError(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, int64(1), shard)
 	assert.Equal(t, "leader:6648", leader)
-}
-
-func TestIntoGrpcStatusReturnsGrpcStatusError(t *testing.T) {
-	st := IntoGrpcStatus(status.Error(codes.InvalidArgument, "invalid"))
-
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Equal(t, "invalid", st.Message())
 }
 
 func TestIsRetryable(t *testing.T) {

@@ -50,12 +50,14 @@ const (
 	ReasonInvalidSessionTimeout   string = "INVALID_SESSION_TIMEOUT"
 	ReasonSessionNotFound         string = "SESSION_NOT_FOUND"
 	ReasonNamespaceNotFound       string = "NAMESPACE_NOT_FOUND"
+	ReasonShardNotFound           string = "SHARD_NOT_FOUND"
 	ReasonInvalidTerm             string = "INVALID_TERM"
 	ReasonInvalidStatus           string = "INVALID_STATUS"
 	ReasonNotificationsNotEnabled string = "NOTIFICATIONS_NOT_ENABLED"
 	ReasonNodeIsNotMember         string = "NODE_IS_NOT_MEMBER"
 	ReasonNodeIsNotLeader         string = "NODE_IS_NOT_LEADER"
 	ReasonNotInitialized          string = "NOT_INITIALIZED"
+	ReasonResourceConflict        string = "RESOURCE_CONFLICT"
 	ReasonResourceUnavailable     string = "RESOURCE_UNAVAILABLE"
 	ReasonUnknown                        = "UNKNOWN"
 )
@@ -65,12 +67,14 @@ var (
 	ErrInvalidSessionTimeout   = errors.New("oxia: invalid session timeout")
 	ErrSessionNotFound         = errors.New("oxia: session not found")
 	ErrNamespaceNotFound       = errors.New("oxia: namespace not found")
+	ErrShardNotFound           = errors.New("oxia: shard not found")
 	ErrInvalidTerm             = errors.New("oxia: invalid term")
 	ErrInvalidStatus           = errors.New("oxia: invalid status")
 	ErrNotificationsNotEnabled = errors.New("oxia: notifications not enabled on namespace")
 	ErrNodeIsNotMember         = errors.New("oxia: node is not a member")
 	ErrNodeIsNotLeader         = errors.New("oxia: node is not leader")
 	ErrNotInitialized          = errors.New("oxia: server not initialized yet")
+	ErrResourceConflict        = errors.New("oxia: resource conflict")
 	ErrResourceUnavailable     = errors.New("oxia: resource unavailable")
 )
 
@@ -89,9 +93,6 @@ func WithLeaderHint(shard int64, leader string) GrpcStatusOption {
 func IntoGrpcStatusError(err error, opts ...GrpcStatusOption) error { //nolint:revive // Keep the explicit error-to-status mapping readable.
 	if err == nil {
 		return nil
-	}
-	if st, ok := status.FromError(err); ok {
-		return st
 	}
 
 	metadata := make(ErrorMetadata)
@@ -117,6 +118,8 @@ func IntoGrpcStatusError(err error, opts ...GrpcStatusOption) error { //nolint:r
 		return withErrorInfoDetails(status.New(codes.NotFound, err.Error()), ReasonSessionNotFound, metadata)
 	case errors.Is(err, ErrNamespaceNotFound):
 		return withErrorInfoDetails(status.New(codes.NotFound, err.Error()), ReasonNamespaceNotFound, metadata)
+	case errors.Is(err, ErrShardNotFound):
+		return withErrorInfoDetails(status.New(codes.NotFound, err.Error()), ReasonShardNotFound, metadata)
 	case errors.Is(err, ErrInvalidTerm):
 		return withErrorInfoDetails(status.New(codes.FailedPrecondition, err.Error()), ReasonInvalidTerm, metadata)
 	case errors.Is(err, ErrInvalidStatus):
@@ -129,6 +132,8 @@ func IntoGrpcStatusError(err error, opts ...GrpcStatusOption) error { //nolint:r
 		return withErrorInfoDetails(status.New(codes.Aborted, err.Error()), ReasonNodeIsNotLeader, metadata)
 	case errors.Is(err, ErrNotInitialized):
 		return withErrorInfoDetails(status.New(codes.Unavailable, err.Error()), ReasonNotInitialized, metadata)
+	case errors.Is(err, ErrResourceConflict):
+		return withErrorInfoDetails(status.New(codes.FailedPrecondition, err.Error()), ReasonResourceConflict, metadata)
 	case errors.Is(err, ErrResourceUnavailable):
 		return withErrorInfoDetails(status.New(codes.Unavailable, err.Error()), ReasonResourceUnavailable, metadata)
 	default:
@@ -168,6 +173,8 @@ func FromGrpcError(err error) (error, ErrorMetadata) { //nolint:revive,staticche
 			return ErrSessionNotFound, info.Metadata
 		case ReasonNamespaceNotFound:
 			return ErrNamespaceNotFound, info.Metadata
+		case ReasonShardNotFound:
+			return ErrShardNotFound, info.Metadata
 		case ReasonInvalidTerm:
 			return ErrInvalidTerm, info.Metadata
 		case ReasonInvalidStatus:
@@ -180,6 +187,8 @@ func FromGrpcError(err error) (error, ErrorMetadata) { //nolint:revive,staticche
 			return ErrNodeIsNotLeader, info.Metadata
 		case ReasonNotInitialized:
 			return ErrNotInitialized, info.Metadata
+		case ReasonResourceConflict:
+			return ErrResourceConflict, info.Metadata
 		case ReasonResourceUnavailable:
 			return ErrResourceUnavailable, info.Metadata
 		default:
