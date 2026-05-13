@@ -99,7 +99,7 @@ func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
 	}
 
 	if !s.assignmentDispatcher.Initialized() {
-		return constant.IntoGrpcStatus(constant.ErrNotInitialized).Err()
+		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
 	}
 
 	actualAuthority, err := oxiadcommonrpc.GetAuthority(ctx)
@@ -154,7 +154,7 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 			"Failed to perform write operation",
 			slog.Any("error", err),
 		)
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	return wr, err
@@ -239,7 +239,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	case err := <-finished:
 		if err != nil {
 			s.log.Warn("Failed to perform write operation", slog.Any("error", err))
-			return constant.IntoGrpcStatus(err).Err()
+			return constant.IntoGrpcStatusError(err)
 		}
 		return nil
 	case <-streamCtx.Done():
@@ -279,7 +279,7 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 					"Failed to perform list operation",
 					slog.Any("error", err),
 				)
-				return constant.IntoGrpcStatus(err).Err()
+				return constant.IntoGrpcStatusError(err)
 			}
 			return nil
 		case <-ctx.Done():
@@ -313,7 +313,7 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 					"Failed to perform list operation",
 					slog.Any("error", err),
 				)
-				return constant.IntoGrpcStatus(err).Err()
+				return constant.IntoGrpcStatusError(err)
 			}
 			return nil
 		case <-ctx.Done():
@@ -357,7 +357,7 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 					"Failed to perform range-scan operation",
 					slog.Any("error", err),
 				)
-				return constant.IntoGrpcStatus(err).Err()
+				return constant.IntoGrpcStatusError(err)
 			}
 			return nil
 		case <-ctx.Done():
@@ -396,7 +396,7 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 					"Failed to handle notifications request",
 					slog.Any("error", err),
 				)
-				return constant.IntoGrpcStatus(err).Err()
+				return constant.IntoGrpcStatusError(err)
 			}
 			return nil
 		case <-ctx.Done():
@@ -425,7 +425,7 @@ func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSe
 			"Failed to create session",
 			slog.Any("error", err),
 		)
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return res, nil
 }
@@ -447,7 +447,7 @@ func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeart
 			"Failed to listen to heartbeats",
 			slog.Any("error", err),
 		)
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return &proto.KeepAliveResponse{}, nil
 }
@@ -467,7 +467,7 @@ func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSess
 		if !errors.Is(err, constant.ErrSessionNotFound) {
 			s.log.Warn("Failed to close session", slog.Any("error", err))
 		}
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return res, nil
 }
@@ -486,7 +486,7 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 	ctx := stream.Context()
 	sequenceWaiter, err := lc.GetSequenceUpdates(ctx, req)
 	if err != nil {
-		return constant.IntoGrpcStatus(err).Err()
+		return constant.IntoGrpcStatusError(err)
 	}
 
 	defer func() {
@@ -519,10 +519,10 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
 		if errors.Is(err, constant.ErrNodeIsNotLeader) {
-			return nil, constant.IntoGrpcStatus(err, constant.WithLeaderHint(shardID, s.assignmentDispatcher.GetLeader(shardID))).Err()
+			return nil, constant.IntoGrpcStatusError(err, constant.WithLeaderHint(shardID, s.assignmentDispatcher.GetLeader(shardID)))
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return lc, nil
 }

@@ -167,7 +167,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 				"NewTerm failed: could not get follower controller",
 				slog.Any("error", err),
 			)
-			return nil, constant.IntoGrpcStatus(err).Err()
+			return nil, constant.IntoGrpcStatusError(err)
 		}
 		log.Debug(
 			"Node is not follower, getting leader",
@@ -187,7 +187,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 				slog.Any("error", err2),
 			)
 		}
-		return res, constant.IntoGrpcStatus(err2).Err()
+		return res, constant.IntoGrpcStatusError(err2)
 	}
 
 	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard, req.Options)
@@ -196,7 +196,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 			"NewTerm failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	res, err2 := leader.NewTerm(req)
 	if err2 != nil {
@@ -212,7 +212,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 			slog.Int64("leaderTerm", leader.Term()),
 		)
 	}
-	return res, constant.IntoGrpcStatus(err2).Err()
+	return res, constant.IntoGrpcStatusError(err2)
 }
 
 func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
@@ -229,7 +229,7 @@ func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLea
 			"BecomeLeader failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	res, err := leader.BecomeLeader(c, req)
@@ -239,7 +239,7 @@ func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLea
 			slog.Any("error", err),
 		)
 	}
-	return res, constant.IntoGrpcStatus(err).Err()
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
@@ -256,7 +256,7 @@ func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowe
 			"AddFollower failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	res, err := leader.AddFollower(req)
@@ -266,7 +266,7 @@ func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowe
 			slog.Any("error", err),
 		)
 	}
-	return res, constant.IntoGrpcStatus(err).Err()
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
@@ -283,7 +283,7 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 			"RemoveObserver failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	res, err := leader.RemoveObserver(req)
@@ -293,7 +293,7 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 			slog.Any("error", err),
 		)
 	}
-	return res, constant.IntoGrpcStatus(err).Err()
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 // GetInfo is a deprecated legacy endpoint kept for rolling-upgrade
@@ -326,7 +326,7 @@ func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateReque
 			"Truncate failed: could not get follower controller",
 			slog.Any("error", err),
 		)
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	res, err := follower.Truncate(req)
@@ -336,7 +336,7 @@ func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateReque
 			slog.Any("error", err),
 		)
 	}
-	return res, constant.IntoGrpcStatus(err).Err()
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServer) error {
@@ -376,7 +376,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 			"Replicate failed: could not get follower controller",
 			slog.Any("error", err),
 		)
-		return constant.IntoGrpcStatus(err).Err()
+		return constant.IntoGrpcStatusError(err)
 	}
 
 	// Activate split filtering if hash range metadata is present
@@ -395,7 +395,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 			slog.Any("error", err),
 		)
 	}
-	return constant.IntoGrpcStatus(err).Err()
+	return constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapshotServer) error {
@@ -439,7 +439,7 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.Int64("term", term),
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
-		return constant.IntoGrpcStatus(err).Err()
+		return constant.IntoGrpcStatusError(err)
 	}
 
 	// Activate split filtering if hash range metadata is present.
@@ -463,18 +463,18 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
 	}
-	return constant.IntoGrpcStatus(err).Err()
+	return constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	follower, err := s.shardsDirector.GetFollower(req.Shard)
 	if err == nil {
 		res, err := follower.GetStatus(req)
-		return res, constant.IntoGrpcStatus(err).Err()
+		return res, constant.IntoGrpcStatusError(err)
 	}
 
 	if status.Code(err) != codes.NotFound {
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	// If we don't have a follower, fallback to checking the leader controller
@@ -482,18 +482,18 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 	if err != nil {
 		if errors.Is(err, constant.ErrNodeIsNotLeader) {
 			// Node is neither follower nor leader for this shard
-			return nil, constant.IntoGrpcStatus(constant.ErrNodeIsNotMember).Err()
+			return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotMember)
 		}
-		return nil, constant.IntoGrpcStatus(err).Err()
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	res, err := leader.GetStatus(req)
-	return res, constant.IntoGrpcStatus(err).Err()
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) DeleteShard(_ context.Context, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	res, err := s.shardsDirector.DeleteShard(req)
-	return res, constant.IntoGrpcStatus(err).Err()
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func readHeader(md metadata.MD, key string) (value string, err error) {
