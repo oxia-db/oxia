@@ -18,7 +18,7 @@ import (
 	"errors"
 	"strconv"
 
-	errdetails "google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -90,7 +90,7 @@ func WithLeaderHint(shard int64, leader string) GrpcStatusOption {
 	}
 }
 
-func IntoGrpcStatusError(err error, opts ...GrpcStatusOption) error {
+func IntoGrpcStatusError(err error, opts ...GrpcStatusOption) error { //nolint:revive // Keep the explicit error-to-status mapping readable.
 	if err == nil {
 		return nil
 	}
@@ -149,7 +149,7 @@ func withErrorInfoDetails(st *status.Status, reason string, metadata ErrorMetada
 	return stWithDetails.Err()
 }
 
-func FromGrpcError(err error) (error, ErrorMetadata) {
+func FromGrpcError(err error) (error, ErrorMetadata) { //nolint:revive,staticcheck // Keep translated error first for provider call sites.
 	st := status.Convert(err)
 	if st == nil {
 		return err, nil

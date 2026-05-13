@@ -144,7 +144,7 @@ func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
 	execute := func(_ context.Context, _ *proto.ReadRequest, _ *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
 		executeCount++
 		shardDeleted = true
-		return nil, constant.IntoGrpcStatus(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, "")).Err()
+		return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, ""))
 	}
 
 	var reroutedGets []model.GetCall

@@ -229,7 +229,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
 		executeCount++
 		shardDeleted = true
-		return nil, constant.IntoGrpcStatus(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, "")).Err()
+		return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, ""))
 	}
 
 	var reroutedPuts []model.PutCall
@@ -277,7 +277,7 @@ func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
 	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
 		callCount++
 		if callCount == 1 {
-			return nil, constant.IntoGrpcStatus(constant.ErrNodeIsNotLeader).Err()
+			return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader)
 		}
 		return &proto.WriteResponse{
 			Puts: []*proto.PutResponse{{Status: proto.Status_OK, Version: &proto.Version{VersionId: 1}}},
