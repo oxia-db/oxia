@@ -27,7 +27,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -228,7 +227,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
 		executeCount++
-		return nil, internal.ErrShardNotFound
+		return nil, constant.ErrShardNotFound
 	}
 
 	var reroutedPuts []model.PutCall

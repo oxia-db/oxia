@@ -456,7 +456,7 @@ func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.A
 	}
 
 	if lc.status != proto.ServingStatus_LEADER {
-		return nil, errors.Wrap(constant.ErrInvalidStatus, "Node is not leader")
+		return nil, errors.Wrap(constant.ErrNodeIsNotLeader, "Node is not leader")
 	}
 
 	if req.Observer {
@@ -694,7 +694,7 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 	// Coordinator should never send us a follower with an invalid term.
 	// Checking for sanity here.
 	if followerHeadEntryId.Term > lc.leaderElectionHeadEntryId.Term {
-		return nil, constant.ErrInvalidStatus
+		return nil, constant.ErrInvalidTerm
 	}
 
 	lastEntryInFollowerTerm, err := getHighestEntryOfTerm(lc.wal, followerHeadEntryId.Term)
@@ -1292,7 +1292,7 @@ func (lc *leaderController) Checksum() crc.Checksum {
 
 func checkStatusIsLeader(actual proto.ServingStatus) error {
 	if actual != proto.ServingStatus_LEADER {
-		return constant.ErrInvalidStatus
+		return constant.ErrNodeIsNotLeader
 	}
 	return nil
 }

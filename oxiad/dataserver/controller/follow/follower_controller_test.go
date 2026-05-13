@@ -906,7 +906,7 @@ func TestFollower_DisconnectLeader(t *testing.T) {
 	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
 
 	// It's not possible to add a new leader stream
-	assert.ErrorIs(t, fc.AppendEntries(stream), constant.ErrResourceUnavailable)
+	assert.ErrorIs(t, fc.AppendEntries(stream), constant.ErrResourceConflict)
 
 	// When we fence again, the leader should have been cutoff
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
@@ -1038,7 +1038,7 @@ func TestFollowerController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res)
-	assert.Equal(t, constant.ErrResourceUnavailable, err)
+	assert.Equal(t, constant.ErrResourceConflict, err)
 
 	res2, err := fc.Truncate(&proto.TruncateRequest{
 		Shard: shard,
@@ -1050,7 +1050,7 @@ func TestFollowerController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res2)
-	assert.Equal(t, constant.ErrResourceUnavailable, err)
+	assert.Equal(t, constant.ErrResourceConflict, err)
 
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())

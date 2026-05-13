@@ -44,12 +44,14 @@ func TestIntoGrpcStatusError(t *testing.T) {
 		{ErrInvalidSessionTimeout, codes.InvalidArgument},
 		{ErrSessionNotFound, codes.NotFound},
 		{ErrNamespaceNotFound, codes.NotFound},
+		{ErrShardNotFound, codes.NotFound},
 		{ErrInvalidTerm, codes.FailedPrecondition},
 		{ErrInvalidStatus, codes.FailedPrecondition},
 		{ErrNotificationsNotEnabled, codes.FailedPrecondition},
 		{ErrNodeIsNotMember, codes.Aborted},
 		{ErrNodeIsNotLeader, codes.Aborted},
 		{ErrNotInitialized, codes.Unavailable},
+		{ErrResourceConflict, codes.FailedPrecondition},
 		{ErrResourceUnavailable, codes.Unavailable},
 	}
 

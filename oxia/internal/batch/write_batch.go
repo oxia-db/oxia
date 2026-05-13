@@ -22,8 +22,8 @@ import (
 
 	"github.com/oxia-db/oxia/oxia/batch"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -105,7 +105,7 @@ func (b *writeBatch) Complete() {
 	defer cancel()
 
 	response, err := b.execute(ctx, request)
-	if errors.Is(err, internal.ErrShardNotFound) && b.reroute != nil {
+	if errors.Is(err, constant.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),
 			slog.Int("puts", len(b.puts)),

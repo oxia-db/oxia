@@ -385,8 +385,7 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []*proto.Dat
 				func() {
 					bo := oxiatime.NewBackOffWithInitialInterval(e.ctx, 1*time.Second)
 					_ = backoff.RetryNotify(func() error {
-						var err error
-						err = e.fenceNewTermAndAddFollower(e.ctx, term, leader, follower)
+						err := e.fenceNewTermAndAddFollower(e.ctx, term, leader, follower)
 						if errors.Is(err, constant.ErrInvalidTerm) {
 							// If we're receiving invalid term error, it would mean
 							// there's already a new term generated, and we don't have

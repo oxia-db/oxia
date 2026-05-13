@@ -15,8 +15,9 @@
 package rpc
 
 import (
-	"github.com/oxia-db/oxia/common/constant"
 	"google.golang.org/grpc"
+
+	"github.com/oxia-db/oxia/common/constant"
 )
 
 type OxiaErrorServerStreamingClient[T any] struct {

@@ -23,13 +23,14 @@ import (
 	"sync"
 
 	"github.com/cenkalti/backoff/v4"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+
 	"github.com/oxia-db/oxia/common/auth"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/rpc"
 	commontime "github.com/oxia-db/oxia/common/time"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 )
 
 type RpcProvider interface {
@@ -88,7 +89,7 @@ func (p *rpcProvider) getTargetByShard(shardId *int64, hint constant.ErrorMetada
 
 	shardManager := p.shardManagerSupplier()
 	if shardManager == nil || !shardManager.Exists(*shardId) {
-		return "", ErrShardNotFound
+		return "", constant.ErrShardNotFound
 	}
 
 	if shard, leader, ok := hint.GetLeaderHint(); ok && shard == *shardId {
@@ -126,7 +127,7 @@ func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequ
 		return nil, err
 	}
 
-	sw = newStreamWrapper(*shardId, stream)
+	sw = newStreamWrapper(*shardId, stream) //nolint:contextcheck // The wrapper uses the stream context owned by the RPC.
 
 	p.writeStreamsMutex.Lock()
 	defer p.writeStreamsMutex.Unlock()
