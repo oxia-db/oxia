@@ -168,7 +168,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 				"NewTerm failed: could not get follower controller",
 				slog.Any("error", err),
 			)
-			return nil, err
+			return nil, constant.IntoGrpcStatus(err).Err()
 		}
 		log.Debug(
 			"Node is not follower, getting leader",
@@ -197,7 +197,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 			"NewTerm failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 	res, err2 := leader.NewTerm(req)
 	if err2 != nil {
@@ -230,7 +230,7 @@ func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLea
 			"BecomeLeader failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 
 	res, err := leader.BecomeLeader(c, req)
@@ -257,7 +257,7 @@ func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowe
 			"AddFollower failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 
 	res, err := leader.AddFollower(req)
@@ -284,7 +284,7 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 			"RemoveObserver failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 
 	res, err := leader.RemoveObserver(req)
@@ -327,7 +327,7 @@ func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateReque
 			"Truncate failed: could not get follower controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 
 	res, err := follower.Truncate(req)
@@ -377,7 +377,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 			"Replicate failed: could not get follower controller",
 			slog.Any("error", err),
 		)
-		return err
+		return constant.IntoGrpcStatus(err).Err()
 	}
 
 	// Activate split filtering if hash range metadata is present
@@ -440,7 +440,7 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.Int64("term", term),
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
-		return err
+		return constant.IntoGrpcStatus(err).Err()
 	}
 
 	// Activate split filtering if hash range metadata is present.
@@ -475,7 +475,7 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 	}
 
 	if status.Code(err) != codes.NotFound {
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 
 	// If we don't have a follower, fallback to checking the leader controller
@@ -485,7 +485,7 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 			// Node is neither follower nor leader for this shard
 			return nil, constant.ErrNodeIsNotMember
 		}
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 
 	return leader.GetStatus(req)

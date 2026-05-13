@@ -154,7 +154,7 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 			"Failed to perform write operation",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 
 	return wr, err
@@ -239,8 +239,9 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	case err := <-finished:
 		if err != nil {
 			s.log.Warn("Failed to perform write operation", slog.Any("error", err))
+			return constant.IntoGrpcStatus(err).Err()
 		}
-		return err
+		return nil
 	case <-streamCtx.Done():
 		return streamCtx.Err()
 	// Monitor the leader context to make sure the gRPC server can be gracefully shut down.
@@ -278,8 +279,9 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 					"Failed to perform list operation",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatus(err).Err()
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -311,8 +313,9 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 					"Failed to perform list operation",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatus(err).Err()
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -354,8 +357,9 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 					"Failed to perform range-scan operation",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatus(err).Err()
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -392,8 +396,9 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 					"Failed to handle notifications request",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatus(err).Err()
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -481,7 +486,7 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 	ctx := stream.Context()
 	sequenceWaiter, err := lc.GetSequenceUpdates(ctx, req)
 	if err != nil {
-		return err
+		return constant.IntoGrpcStatus(err).Err()
 	}
 
 	defer func() {
@@ -517,7 +522,7 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 			return nil, constant.IntoGrpcStatus(err, constant.WithLeaderHint(shardID, s.assignmentDispatcher.GetLeader(shardID))).Err()
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
-		return nil, err
+		return nil, constant.IntoGrpcStatus(err).Err()
 	}
 	return lc, nil
 }

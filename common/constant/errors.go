@@ -93,6 +93,9 @@ func IntoGrpcStatus(err error, opts ...GrpcStatusOption) *status.Status {
 	if err == nil {
 		return status.New(codes.OK, "")
 	}
+	if st, ok := status.FromError(err); ok {
+		return st
+	}
 
 	metadata := make(ErrorMetadata)
 	for _, opt := range opts {
