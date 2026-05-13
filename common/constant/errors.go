@@ -89,9 +89,9 @@ func WithLeaderHint(shard int64, leader string) GrpcStatusOption {
 	}
 }
 
-func IntoGrpcStatus(err error, opts ...GrpcStatusOption) *status.Status {
+func IntoGrpcStatusError(err error, opts ...GrpcStatusOption) error {
 	if err == nil {
-		return status.New(codes.OK, "")
+		return nil
 	}
 
 	metadata := make(ErrorMetadata)
@@ -104,10 +104,8 @@ func IntoGrpcStatus(err error, opts ...GrpcStatusOption) *status.Status {
 		metadata = nil
 	}
 	message := err.Error()
-	if st, ok := status.FromError(err); ok {
-		message = st.Message()
-	}
-	statusWithErrorInfo := func(code codes.Code, reason string) *status.Status {
+
+	statusWithErrorInfo := func(code codes.Code, reason string) error {
 		st := status.New(code, message)
 		stWithDetails, detailsErr := st.WithDetails(&errdetails.ErrorInfo{
 			Reason:   reason,
@@ -115,37 +113,13 @@ func IntoGrpcStatus(err error, opts ...GrpcStatusOption) *status.Status {
 			Metadata: metadata,
 		})
 		if detailsErr != nil {
-			return st
+			return st.Err()
 		}
-		return stWithDetails
+		return stWithDetails.Err()
 	}
+
 	if st, ok := status.FromError(err); ok {
-		switch st.Message() {
-		case ErrAborted.Error():
-			return statusWithErrorInfo(st.Code(), ReasonAborted)
-		case ErrInvalidSessionTimeout.Error():
-			return statusWithErrorInfo(st.Code(), ReasonInvalidSessionTimeout)
-		case ErrSessionNotFound.Error():
-			return statusWithErrorInfo(st.Code(), ReasonSessionNotFound)
-		case ErrNamespaceNotFound.Error():
-			return statusWithErrorInfo(st.Code(), ReasonNamespaceNotFound)
-		case ErrInvalidTerm.Error():
-			return statusWithErrorInfo(st.Code(), ReasonInvalidTerm)
-		case ErrInvalidStatus.Error():
-			return statusWithErrorInfo(st.Code(), ReasonInvalidStatus)
-		case ErrNotificationsNotEnabled.Error():
-			return statusWithErrorInfo(st.Code(), ReasonNotificationsNotEnabled)
-		case ErrNodeIsNotMember.Error():
-			return statusWithErrorInfo(st.Code(), ReasonNodeIsNotMember)
-		case ErrNodeIsNotLeader.Error():
-			return statusWithErrorInfo(st.Code(), ReasonNodeIsNotLeader)
-		case ErrNotInitialized.Error():
-			return statusWithErrorInfo(st.Code(), ReasonNotInitialized)
-		case ErrResourceUnavailable.Error():
-			return statusWithErrorInfo(st.Code(), ReasonResourceUnavailable)
-		default:
-			return st
-		}
+		return statusWithErrorInfo(st.Code(), st.Message())
 	}
 
 	switch {
@@ -172,7 +146,7 @@ func IntoGrpcStatus(err error, opts ...GrpcStatusOption) *status.Status {
 	case errors.Is(err, ErrResourceUnavailable):
 		return statusWithErrorInfo(codes.Unavailable, ReasonResourceUnavailable)
 	default:
-		return status.New(codes.Unknown, err.Error())
+		return status.Error(codes.Unknown, err.Error())
 	}
 }
 

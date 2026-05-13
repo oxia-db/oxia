@@ -24,7 +24,7 @@ import (
 )
 
 func TestWithLeaderHint(t *testing.T) {
-	err := IntoGrpcStatus(ErrNodeIsNotLeader, WithLeaderHint(1, "leader:6648")).Err()
+	err := IntoGrpcStatusError(ErrNodeIsNotLeader, WithLeaderHint(1, "leader:6648"))
 	oxiaErr, metadata := FromGrpcError(err)
 	shard, leader, ok := metadata.GetLeaderHint()
 
@@ -35,7 +35,7 @@ func TestWithLeaderHint(t *testing.T) {
 	assert.Equal(t, "leader:6648", leader)
 }
 
-func TestIntoGrpcStatus(t *testing.T) {
+func TestIntoGrpcStatusError(t *testing.T) {
 	tests := []struct {
 		err  error
 		code codes.Code
@@ -54,11 +54,12 @@ func TestIntoGrpcStatus(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		st := IntoGrpcStatus(tt.err)
+		err := IntoGrpcStatusError(tt.err)
+		st := status.Convert(err)
 
 		assert.Equal(t, tt.code, st.Code())
 		assert.Equal(t, tt.err.Error(), st.Message())
-		oxiaErr, metadata := FromGrpcError(st.Err())
+		oxiaErr, metadata := FromGrpcError(err)
 		assert.ErrorIs(t, oxiaErr, tt.err)
 		assert.Empty(t, metadata)
 	}
@@ -66,37 +67,39 @@ func TestIntoGrpcStatus(t *testing.T) {
 
 func TestIntoGrpcStatusUnknown(t *testing.T) {
 	err := errors.New("other")
-	st := IntoGrpcStatus(err)
+	grpcErr := IntoGrpcStatusError(err)
+	st := status.Convert(grpcErr)
 
 	assert.Equal(t, codes.Unknown, st.Code())
 	assert.Equal(t, err.Error(), st.Message())
-	oxiaErr, metadata := FromGrpcError(st.Err())
-	assert.EqualError(t, oxiaErr, st.Err().Error())
+	oxiaErr, metadata := FromGrpcError(grpcErr)
+	assert.EqualError(t, oxiaErr, grpcErr.Error())
 	assert.Empty(t, metadata)
 }
 
 func TestIntoGrpcStatusNil(t *testing.T) {
-	st := IntoGrpcStatus(nil)
-
-	assert.Equal(t, codes.OK, st.Code())
-	assert.Empty(t, st.Message())
+	assert.NoError(t, IntoGrpcStatusError(nil))
 }
 
 func TestIntoGrpcStatusReturnsUnknownGrpcStatusError(t *testing.T) {
-	st := IntoGrpcStatus(status.Error(codes.InvalidArgument, "invalid"))
+	err := status.Error(codes.InvalidArgument, "invalid")
+	grpcErr := IntoGrpcStatusError(err)
+	st := status.Convert(grpcErr)
 
 	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Equal(t, "invalid", st.Message())
+	assert.Equal(t, err.Error(), st.Message())
 }
 
-func TestIntoGrpcStatusAddsErrorInfoToKnownGrpcStatusError(t *testing.T) {
-	st := IntoGrpcStatus(status.Error(codes.Aborted, ErrNodeIsNotLeader.Error()), WithLeaderHint(1, "leader:6648"))
-	oxiaErr, metadata := FromGrpcError(st.Err())
+func TestIntoGrpcStatusAddsErrorInfoToGrpcStatusError(t *testing.T) {
+	err := status.Error(codes.Aborted, ErrNodeIsNotLeader.Error())
+	grpcErr := IntoGrpcStatusError(err, WithLeaderHint(1, "leader:6648"))
+	st := status.Convert(grpcErr)
+	oxiaErr, metadata := FromGrpcError(grpcErr)
 	shard, leader, ok := metadata.GetLeaderHint()
 
 	assert.Equal(t, codes.Aborted, st.Code())
-	assert.Equal(t, ErrNodeIsNotLeader.Error(), st.Message())
-	assert.ErrorIs(t, oxiaErr, ErrNodeIsNotLeader)
+	assert.Equal(t, err.Error(), st.Message())
+	assert.EqualError(t, oxiaErr, grpcErr.Error())
 	assert.True(t, ok)
 	assert.Equal(t, int64(1), shard)
 	assert.Equal(t, "leader:6648", leader)
@@ -112,5 +115,5 @@ func TestIsRetryable(t *testing.T) {
 	assert.False(t, IsRetryable(ErrInvalidTerm))
 	assert.False(t, IsRetryable(ErrSessionNotFound))
 	assert.False(t, IsRetryable(errors.New("other")))
-	assert.False(t, IsRetryable(IntoGrpcStatus(ErrResourceUnavailable).Err()))
+	assert.False(t, IsRetryable(IntoGrpcStatusError(ErrResourceUnavailable)))
 }
