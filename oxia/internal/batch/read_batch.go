@@ -36,7 +36,7 @@ import (
 
 type readBatchFactory struct {
 	namespace      string
-	execute        func(context.Context, *proto.ReadRequest, *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)
+	execute        func(context.Context, *proto.ReadRequest, *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	shardExists    func(int64) bool
 	reroute        func([]model.GetCall)
 	metrics        *metrics.Metrics
@@ -61,7 +61,7 @@ func (b readBatchFactory) newBatch(shardId *int64) batch.Batch {
 type readBatch struct {
 	namespace      string
 	shardId        *int64
-	execute        func(context.Context, *proto.ReadRequest, *proto.LeaderHint) (proto.OxiaClient_ReadClient, error)
+	execute        func(context.Context, *proto.ReadRequest, *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	shardExists    func(int64) bool
 	reroute        func([]model.GetCall)
 	gets           []model.GetCall
@@ -115,7 +115,7 @@ func (b *readBatch) doRequestWithRetries(request *proto.ReadRequest) (response *
 	defer cancel()
 
 	backOff := time2.NewBackOff(ctx)
-	var hint *proto.LeaderHint
+	var hint *proto.LeaderHint //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 
 	err = backoff.RetryNotify(func() error {
 		if b.shardExists != nil && !b.shardExists(*b.shardId) {
@@ -145,7 +145,7 @@ func (b *readBatch) doRequestWithRetries(request *proto.ReadRequest) (response *
 	return response, err
 }
 
-func (b *readBatch) doRequest(ctx context.Context, request *proto.ReadRequest, hint *proto.LeaderHint) (*proto.ReadResponse, error) {
+func (b *readBatch) doRequest(ctx context.Context, request *proto.ReadRequest, hint *proto.LeaderHint) (*proto.ReadResponse, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	stream, err := b.execute(ctx, request, hint)
 	if err != nil {
 		return nil, err

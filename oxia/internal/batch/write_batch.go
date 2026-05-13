@@ -38,7 +38,7 @@ var ErrRequestTooLarge = errors.New("put request is too large")
 
 type writeBatchFactory struct {
 	namespace      string
-	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
+	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error) //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	shardExists    func(int64) bool
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	metrics        *metrics.Metrics
@@ -67,7 +67,7 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 type writeBatch struct {
 	namespace      string
 	shardId        *int64
-	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
+	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error) //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	shardExists    func(int64) bool
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	puts           []model.PutCall
@@ -138,7 +138,7 @@ func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response
 
 	backOff := time2.NewBackOff(ctx)
 
-	var hint *proto.LeaderHint
+	var hint *proto.LeaderHint //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	err = backoff.RetryNotify(func() error {
 		if b.shardExists != nil && !b.shardExists(*b.shardId) {
 			return backoff.Permanent(errShardNotFound)

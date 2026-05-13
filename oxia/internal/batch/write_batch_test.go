@@ -137,7 +137,7 @@ func TestWriteBatchComplete(t *testing.T) {
 			errFailure,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
+		execute := func(ctx context.Context, request *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 			assert.Equal(t, &proto.WriteRequest{
 				Shard: &shardId,
 				Puts: []*proto.PutRequest{{
@@ -227,7 +227,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	shardDeleted := false
 	executeCount := 0
 
-	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
+	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 		executeCount++
 		shardDeleted = true
 		return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, ""))
@@ -275,7 +275,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
 	callCount := 0
-	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) {
+	execute := func(_ context.Context, _ *proto.WriteRequest, _ *proto.LeaderHint) (*proto.WriteResponse, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 		callCount++
 		if callCount == 1 {
 			return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader)

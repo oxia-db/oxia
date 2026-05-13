@@ -24,13 +24,13 @@ import (
 
 var errShardNotFound = errors.New("shard not found in shard manager")
 
-func leaderHintFromError(err error) *proto.LeaderHint {
+func leaderHintFromError(err error) *proto.LeaderHint { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 	_, metadata := constant.FromGrpcError(err)
 	shard, leader, ok := metadata.GetLeaderHint()
 	if !ok {
 		return nil
 	}
-	return &proto.LeaderHint{
+	return &proto.LeaderHint{ //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 		Shard:         shard,
 		LeaderAddress: leader,
 	}

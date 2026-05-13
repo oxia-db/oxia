@@ -95,7 +95,7 @@ func TestReadBatchComplete(t *testing.T) {
 			nil,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.ReadRequest, _ *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
+		execute := func(ctx context.Context, request *proto.ReadRequest, _ *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 			assert.Equal(t, &proto.ReadRequest{
 				Shard: &shardId,
 				Gets: []*proto.GetRequest{{
@@ -142,7 +142,7 @@ func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
 	shardDeleted := false
 	executeCount := 0
 
-	execute := func(_ context.Context, _ *proto.ReadRequest, _ *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) {
+	execute := func(_ context.Context, _ *proto.ReadRequest, _ *proto.LeaderHint) (proto.OxiaClient_ReadClient, error) { //nolint:staticcheck // Deprecated LeaderHint remains until the cleanup PR removes it.
 		executeCount++
 		shardDeleted = true
 		return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, ""))
