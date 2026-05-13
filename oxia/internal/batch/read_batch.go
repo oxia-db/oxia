@@ -23,8 +23,8 @@ import (
 
 	"github.com/oxia-db/oxia/oxia/batch"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -87,8 +87,23 @@ func (b *readBatch) Complete() {
 	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
 	defer cancel()
 
-	response, err := b.doRequest(ctx, request)
-	if errors.Is(err, internal.ErrShardNotFound) && b.reroute != nil {
+	stream, err := b.execute(ctx, request)
+	response := &proto.ReadResponse{}
+	if err == nil {
+		for {
+			var recv *proto.ReadResponse
+			recv, err = stream.Recv()
+			if errors.Is(err, io.EOF) {
+				err = nil
+				break
+			}
+			if err != nil {
+				break
+			}
+			response.Gets = append(response.Gets, recv.Gets...)
+		}
+	}
+	if errors.Is(err, constant.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing read batch operations",
 			slog.Int64("shard", *b.shardId),
 			slog.Int("gets", len(b.gets)),
@@ -102,26 +117,6 @@ func (b *readBatch) Complete() {
 		b.Fail(err)
 	} else {
 		b.handle(response)
-	}
-}
-
-func (b *readBatch) doRequest(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error) {
-	stream, err := b.execute(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-
-	response := &proto.ReadResponse{}
-
-	for {
-		recv, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return response, nil
-		}
-		if err != nil {
-			return response, err
-		}
-		response.Gets = append(response.Gets, recv.Gets...)
 	}
 }
 

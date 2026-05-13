@@ -78,7 +78,7 @@ func TestLeaderController_NotInitialized(t *testing.T) {
 	})
 
 	assert.Nil(t, res)
-	assert.ErrorIs(t, err, constant.ErrInvalidStatus)
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
 	responses := make(chan *oentity.TWithError[*proto.GetResponse], 1000)
 	lc.Read(context.Background(), &proto.ReadRequest{
@@ -87,7 +87,7 @@ func TestLeaderController_NotInitialized(t *testing.T) {
 	}, concurrent.ReadFromStreamCallback(responses))
 
 	_, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
-	assert.ErrorIs(t, err, constant.ErrInvalidStatus)
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -238,7 +238,7 @@ func TestLeaderController_BecomeLeader_RF1(t *testing.T) {
 	})
 
 	assert.Nil(t, res3)
-	assert.ErrorIs(t, err, constant.ErrInvalidStatus)
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
 	responses = make(chan *oentity.TWithError[*proto.GetResponse], 1000)
 	lc.Read(context.Background(), &proto.ReadRequest{
@@ -247,7 +247,7 @@ func TestLeaderController_BecomeLeader_RF1(t *testing.T) {
 	}, concurrent.ReadFromStreamCallback(responses))
 
 	_, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
-	assert.ErrorIs(t, err, constant.ErrInvalidStatus)
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -346,7 +346,7 @@ func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	})
 
 	assert.Nil(t, res3)
-	assert.ErrorIs(t, err, constant.ErrInvalidStatus)
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
 	responses = make(chan *oentity.TWithError[*proto.GetResponse], 1000)
 	lc.Read(context.Background(), &proto.ReadRequest{
@@ -355,7 +355,7 @@ func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	}, concurrent.ReadFromStreamCallback(responses))
 
 	_, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
-	assert.ErrorIs(t, err, constant.ErrInvalidStatus)
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
 	close(provider.AckResps)
 	assert.NoError(t, lc.Close())
@@ -1159,7 +1159,7 @@ func TestLeaderController_NotificationsWhenNotReady(t *testing.T) {
 
 	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
 	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
-	assert.ErrorIs(t, adaptor.Error(), constant.ErrInvalidStatus)
+	assert.ErrorIs(t, adaptor.Error(), constant.ErrNodeIsNotLeader)
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())

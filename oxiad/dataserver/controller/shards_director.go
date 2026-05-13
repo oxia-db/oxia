@@ -15,13 +15,12 @@
 package controller
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
 
 	"go.uber.org/multierr"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -37,6 +36,8 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
 )
+
+var ErrNodeIsNotFollower = errors.New("oxia: node is not follower")
 
 type ShardsDirector interface {
 	io.Closer
@@ -127,7 +128,7 @@ func (s *shardsDirector) GetFollower(shardId int64) (follow.FollowerController, 
 		"This node is not hosting shard",
 		slog.Int64("shard", shardId),
 	)
-	return nil, status.Errorf(codes.NotFound, "oxia: node is not follower for shard %d", shardId)
+	return nil, ErrNodeIsNotFollower
 }
 
 func (s *shardsDirector) GetOrCreateLeader(namespace string, shardId int64, newTermOptions *proto.NewTermOptions) (lead.LeaderController, error) {

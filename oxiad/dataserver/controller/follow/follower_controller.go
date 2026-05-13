@@ -279,7 +279,7 @@ func (fc *followerController) CommitOffset() int64 {
 
 func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error {
 	if fc.closed.Load() {
-		return constant.ErrResourceUnavailable
+		return constant.ErrResourceConflict
 	}
 	var synchronizer *LogSynchronizer
 	var err error
@@ -288,7 +288,7 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 		defer fc.rwMutex.Unlock()
 
 		if fc.closed.Load() { // double-check
-			return nil, constant.ErrResourceUnavailable
+			return nil, constant.ErrResourceConflict
 		}
 
 		if s := proto.ServingStatus(fc.status.Load()); s != proto.ServingStatus_FENCED && s != proto.ServingStatus_FOLLOWER {
@@ -298,7 +298,7 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 			return nil, constant.ErrInvalidStatus
 		}
 		if fc.logSynchronizer.IsValid() {
-			return nil, constant.ErrResourceUnavailable
+			return nil, constant.ErrResourceConflict
 		}
 		fc.logSynchronizer = NewLogSynchronizer(LogSynchronizerParams{
 			Log:                    fc.log,
@@ -321,7 +321,7 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 }
 func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	if fc.closed.Load() {
-		return nil, constant.ErrResourceUnavailable
+		return nil, constant.ErrResourceConflict
 	}
 	var err error
 	newTerm := req.GetTerm()
@@ -334,7 +334,7 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	defer fc.rwMutex.Unlock()
 
 	if fc.closed.Load() { // double-check
-		return nil, constant.ErrResourceUnavailable
+		return nil, constant.ErrResourceConflict
 	}
 
 	if newTerm < fc.term.Load() { // double-check after lock
@@ -366,17 +366,17 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 
 func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
 	if fc.closed.Load() {
-		return nil, constant.ErrResourceUnavailable
+		return nil, constant.ErrResourceConflict
 	}
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
 
 	if fc.closed.Load() { // double-check
-		return nil, constant.ErrResourceUnavailable
+		return nil, constant.ErrResourceConflict
 	}
 
 	if fc.logSynchronizer.IsValid() {
-		return nil, constant.ErrResourceUnavailable
+		return nil, constant.ErrResourceConflict
 	}
 
 	if proto.ServingStatus(fc.status.Load()) != proto.ServingStatus_FENCED {
@@ -512,7 +512,7 @@ func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange) {
 
 func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error { //nolint:revive // cyclomatic complexity justified by sequential error handling
 	if fc.closed.Load() {
-		return constant.ErrResourceUnavailable
+		return constant.ErrResourceConflict
 	}
 	fc.log.Info("Installing snapshot...", slog.Int64("term", fc.term.Load()))
 	var err error
@@ -527,11 +527,11 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	defer fc.rwMutex.Unlock()
 
 	if fc.closed.Load() { // double check
-		return constant.ErrResourceUnavailable
+		return constant.ErrResourceConflict
 	}
 
 	if fc.logSynchronizer.IsValid() {
-		err = constant.ErrResourceUnavailable
+		err = constant.ErrResourceConflict
 		return err
 	}
 
@@ -665,7 +665,7 @@ func (fc *followerController) loadSnapshotChunks(loader kvstore.SnapshotLoader, 
 
 func (fc *followerController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	if fc.closed.Load() {
-		return nil, constant.ErrResourceUnavailable
+		return nil, constant.ErrResourceConflict
 	}
 
 	return &proto.GetStatusResponse{
@@ -678,7 +678,7 @@ func (fc *followerController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetSt
 
 func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	if fc.closed.Load() {
-		return nil, constant.ErrResourceUnavailable
+		return nil, constant.ErrResourceConflict
 	}
 	if request.Term < fc.term.Load() {
 		return nil, constant.ErrInvalidTerm
