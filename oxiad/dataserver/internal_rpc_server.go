@@ -34,7 +34,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
-	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
@@ -188,7 +187,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 				slog.Any("error", err2),
 			)
 		}
-		return res, dserror.IntoGRPCError(err2)
+		return res, constant.IntoGrpcStatus(err2).Err()
 	}
 
 	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard, req.Options)
@@ -213,7 +212,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 			slog.Int64("leaderTerm", leader.Term()),
 		)
 	}
-	return res, err2
+	return res, constant.IntoGrpcStatus(err2).Err()
 }
 
 func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
@@ -240,7 +239,7 @@ func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLea
 			slog.Any("error", err),
 		)
 	}
-	return res, err
+	return res, constant.IntoGrpcStatus(err).Err()
 }
 
 func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
@@ -267,7 +266,7 @@ func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowe
 			slog.Any("error", err),
 		)
 	}
-	return res, err
+	return res, constant.IntoGrpcStatus(err).Err()
 }
 
 func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
@@ -294,7 +293,7 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 			slog.Any("error", err),
 		)
 	}
-	return res, err
+	return res, constant.IntoGrpcStatus(err).Err()
 }
 
 // GetInfo is a deprecated legacy endpoint kept for rolling-upgrade
@@ -337,7 +336,7 @@ func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateReque
 			slog.Any("error", err),
 		)
 	}
-	return res, dserror.IntoGRPCError(err)
+	return res, constant.IntoGrpcStatus(err).Err()
 }
 
 func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServer) error {
@@ -396,7 +395,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 			slog.Any("error", err),
 		)
 	}
-	return dserror.IntoGRPCError(err)
+	return constant.IntoGrpcStatus(err).Err()
 }
 
 func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapshotServer) error {
@@ -464,14 +463,14 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
 	}
-	return dserror.IntoGRPCError(err)
+	return constant.IntoGrpcStatus(err).Err()
 }
 
 func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	follower, err := s.shardsDirector.GetFollower(req.Shard)
 	if err == nil {
 		res, err := follower.GetStatus(req)
-		return res, dserror.IntoGRPCError(err)
+		return res, constant.IntoGrpcStatus(err).Err()
 	}
 
 	if status.Code(err) != codes.NotFound {
@@ -483,18 +482,18 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 	if err != nil {
 		if errors.Is(err, constant.ErrNodeIsNotLeader) {
 			// Node is neither follower nor leader for this shard
-			return nil, dserror.IntoGRPCError(dserror.ErrNodeIsNotMember)
+			return nil, constant.IntoGrpcStatus(constant.ErrNodeIsNotMember).Err()
 		}
 		return nil, err
 	}
 
 	res, err := leader.GetStatus(req)
-	return res, dserror.IntoGRPCError(err)
+	return res, constant.IntoGrpcStatus(err).Err()
 }
 
 func (s *internalRpcServer) DeleteShard(_ context.Context, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	res, err := s.shardsDirector.DeleteShard(req)
-	return res, dserror.IntoGRPCError(err)
+	return res, constant.IntoGrpcStatus(err).Err()
 }
 
 func readHeader(md metadata.MD, key string) (value string, err error) {

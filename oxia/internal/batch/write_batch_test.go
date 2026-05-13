@@ -27,6 +27,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -223,13 +224,11 @@ func TestWriteBatchComplete(t *testing.T) {
 }
 
 func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
-	shardDeleted := false
 	executeCount := 0
 
 	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
 		executeCount++
-		shardDeleted = true
-		return nil, constant.ErrNodeIsNotLeader
+		return nil, internal.ErrShardNotFound
 	}
 
 	var reroutedPuts []model.PutCall
@@ -238,9 +237,6 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 	factory := &writeBatchFactory{
 		execute: execute,
-		shardExists: func(int64) bool {
-			return !shardDeleted
-		},
 		reroute: func(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
 			reroutedPuts = puts
 			reroutedDeletes = deletes
@@ -272,7 +268,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	assert.Equal(t, 1, executeCount)
 }
 
-func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
+func TestWriteBatchNoRerouteOnOtherError(t *testing.T) {
 	callCount := 0
 	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
 		callCount++
@@ -287,9 +283,6 @@ func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
 	rerouted := false
 	factory := &writeBatchFactory{
 		execute: execute,
-		shardExists: func(int64) bool {
-			return true
-		},
 		reroute: func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall) {
 			rerouted = true
 		},
@@ -305,8 +298,8 @@ func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
 		Key:   "key-1",
 		Value: []byte("v1"),
 		Callback: func(resp *proto.PutResponse, err error) {
-			assert.NoError(t, err)
-			assert.Equal(t, proto.Status_OK, resp.Status)
+			assert.Nil(t, resp)
+			assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 			wg.Done()
 		},
 	})
@@ -315,7 +308,7 @@ func TestWriteBatchNoRerouteWhenShardExists(t *testing.T) {
 	wg.Wait()
 
 	assert.False(t, rerouted)
-	assert.Equal(t, 2, callCount)
+	assert.Equal(t, 1, callCount)
 }
 
 func TestWriteBatchCanAdd(t *testing.T) {

@@ -26,8 +26,8 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -138,22 +138,17 @@ func TestReadBatchComplete(t *testing.T) {
 }
 
 func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
-	shardDeleted := false
 	executeCount := 0
 
 	execute := func(_ context.Context, _ *proto.ReadRequest) (proto.OxiaClient_ReadClient, error) {
 		executeCount++
-		shardDeleted = true
-		return nil, constant.ErrNodeIsNotLeader
+		return nil, internal.ErrShardNotFound
 	}
 
 	var reroutedGets []model.GetCall
 
 	factory := &readBatchFactory{
 		execute: execute,
-		shardExists: func(int64) bool {
-			return !shardDeleted
-		},
 		reroute: func(gets []model.GetCall) {
 			reroutedGets = gets
 		},
