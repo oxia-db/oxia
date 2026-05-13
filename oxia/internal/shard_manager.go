@@ -199,18 +199,20 @@ func (s *shardManagerImpl) receive(backOff backoff.BackOff) error {
 
 	stream, err := client.GetShardAssignments(s.ctx, &request)
 	if err != nil {
-		return err
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return oxiaErr
 	}
 
 	for {
 		response, err := stream.Recv()
 		if err != nil {
-			return err
+			oxiaErr, _ := constant.FromGrpcError(err)
+			return oxiaErr
 		}
 
 		assignments, ok := response.Namespaces[s.namespace]
 		if !ok {
-			return errors.New("namespace not found in shards assignments")
+			return constant.ErrNamespaceNotFound
 		}
 
 		shards := make([]Shard, len(assignments.Assignments))
@@ -251,8 +253,13 @@ func overlap(a HashRange, b HashRange) bool {
 }
 
 func isErrorRetryable(err error) bool {
+	oxiaErr, _ := constant.FromGrpcError(err)
+	if errors.Is(oxiaErr, constant.ErrNamespaceNotFound) {
+		return false
+	}
+
 	switch status.Code(err) {
-	case status.Code(constant.ErrNamespaceNotFound), codes.Unauthenticated:
+	case codes.Unauthenticated:
 		return false
 	default:
 		return true

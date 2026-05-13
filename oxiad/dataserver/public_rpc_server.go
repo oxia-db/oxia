@@ -130,7 +130,7 @@ func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest
 			slog.Any("error", err),
 			slog.String("peer", rpc.GetPeer(streamContext)),
 		)
-		return err
+		return constant.IntoGrpcStatusError(err)
 	}
 
 	return err

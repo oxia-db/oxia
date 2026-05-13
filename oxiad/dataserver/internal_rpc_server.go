@@ -34,6 +34,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
+	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
@@ -187,7 +188,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 				slog.Any("error", err2),
 			)
 		}
-		return res, constant.IntoGrpcStatusError(err2)
+		return res, constant.IntoGrpcStatusError(dserror.IntoGRPCError(err2))
 	}
 
 	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard, req.Options)
@@ -212,7 +213,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 			slog.Int64("leaderTerm", leader.Term()),
 		)
 	}
-	return res, constant.IntoGrpcStatusError(err2)
+	return res, constant.IntoGrpcStatusError(dserror.IntoGRPCError(err2))
 }
 
 func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
@@ -239,7 +240,7 @@ func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLea
 			slog.Any("error", err),
 		)
 	}
-	return res, constant.IntoGrpcStatusError(err)
+	return res, constant.IntoGrpcStatusError(dserror.IntoGRPCError(err))
 }
 
 func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {

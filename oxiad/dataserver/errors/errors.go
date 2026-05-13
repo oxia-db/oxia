@@ -41,13 +41,13 @@ func IntoGRPCError(err error) error {
 	}
 	switch {
 	case stderrors.Is(err, ErrInvalidTerm):
-		return constant.ErrInvalidTerm
+		return constant.IntoGrpcStatusError(constant.ErrInvalidTerm)
 	case stderrors.Is(err, ErrNodeIsNotMember):
-		return constant.ErrNodeIsNotMember
+		return constant.IntoGrpcStatusError(constant.ErrNodeIsNotMember)
 	case stderrors.Is(err, ErrInvalidStatus):
-		return constant.ErrInvalidStatus
+		return constant.IntoGrpcStatusError(constant.ErrInvalidStatus)
 	case stderrors.Is(err, ErrResourceConflict):
-		return constant.ErrResourceUnavailable
+		return constant.IntoGrpcStatusError(constant.ErrResourceUnavailable)
 	case stderrors.Is(err, ErrResourceNotAvailable):
 		return status.Error(codes.Unavailable, err.Error())
 	default:
