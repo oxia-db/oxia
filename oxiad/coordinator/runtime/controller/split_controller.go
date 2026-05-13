@@ -220,23 +220,26 @@ func (sc *SplitController) currentPhase() (proto.SplitPhase, bool) {
 // updatePhase atomically updates the split phase on both parent and children.
 func (sc *SplitController) updatePhase(newPhase proto.SplitPhase) {
 	status := sc.metadata.GetStatus().UnsafeBorrow()
-	cloned := gproto.Clone(status).(*proto.ClusterStatus) //nolint:revive
-
-	ns := cloned.Namespaces[sc.namespace]
-
-	// Update parent
-	if parentMeta, exists := ns.Shards[sc.parentShardId]; exists && parentMeta.Split != nil {
-		parentMeta.Split.Phase = newPhase
+	currentNS, exists := status.Namespaces[sc.namespace]
+	if !exists {
+		sc.logger.Warn("namespace status not found while updating split phase",
+			slog.String("namespace", sc.namespace),
+			slog.String("phase", newPhase.String()))
+		return
 	}
-
-	// Update children
-	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		if childMeta, exists := ns.Shards[childId]; exists && childMeta.Split != nil {
-			childMeta.Split.Phase = newPhase
+	ns := gproto.Clone(currentNS).(*proto.NamespaceStatus) //nolint:revive
+	changed := false
+	for _, shardId := range []int64{sc.parentShardId, sc.leftChildId, sc.rightChildId} {
+		meta, exists := ns.Shards[shardId]
+		if !exists || meta.Split == nil {
+			continue
 		}
+		meta.Split.Phase = newPhase
+		changed = true
 	}
-
-	sc.metadata.UpdateStatus(cloned)
+	if changed {
+		sc.metadata.UpdateNamespaceStatus(sc.namespace, ns)
+	}
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects
@@ -694,12 +697,23 @@ func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *proto.Sh
 
 func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.ShardMetadata)) {
 	status := sc.metadata.GetStatus().UnsafeBorrow()
-	cloned := gproto.Clone(status).(*proto.ClusterStatus) //nolint:revive
-	ns := cloned.Namespaces[sc.namespace]
-	if meta, exists := ns.Shards[shardId]; exists {
-		fn(meta)
-		sc.metadata.UpdateStatus(cloned)
+	ns, exists := status.Namespaces[sc.namespace]
+	if !exists {
+		sc.logger.Warn("namespace status not found while updating shard metadata",
+			slog.String("namespace", sc.namespace),
+			slog.Int64("shard", shardId))
+		return
 	}
+	meta, exists := ns.Shards[shardId]
+	if !exists {
+		sc.logger.Warn("shard metadata not found while updating shard metadata",
+			slog.String("namespace", sc.namespace),
+			slog.Int64("shard", shardId))
+		return
+	}
+	cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
+	fn(cloned)
+	sc.metadata.UpdateShardStatus(sc.namespace, shardId, cloned)
 }
 
 // fenceEnsemble sends NewTerm to all ensemble members and returns the

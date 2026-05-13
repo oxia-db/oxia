@@ -58,13 +58,13 @@ func (m *mockMetadata) GetStatus() commonobject.Borrowed[*proto.ClusterStatus] {
 	return commonobject.Borrow(m.status)
 }
 
-func (m *mockMetadata) UpdateStatus(newStatus *proto.ClusterStatus) { m.status = newStatus }
-
 func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }
 
 func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool {
 	return false
 }
+
+func (*mockMetadata) UpdateNamespaceStatus(string, *proto.NamespaceStatus) {}
 
 func (m *mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
 	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
@@ -86,7 +86,13 @@ func (*mockMetadata) DeleteNamespaceStatus(string) commonobject.Borrowed[*proto.
 	return commonobject.Borrowed[*proto.NamespaceStatus]{}
 }
 
-func (*mockMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) {}
+func (m *mockMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
+	ns, exists := m.status.GetNamespaces()[namespace]
+	if !exists {
+		return
+	}
+	ns.Shards[shard] = shardMetadata
+}
 
 func (*mockMetadata) DeleteShardStatus(string, int64) {}
 

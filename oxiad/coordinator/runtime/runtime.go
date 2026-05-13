@@ -573,10 +573,9 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 
 	// Allocate child shard IDs
+	leftChildId := c.metadata.ReserveShardIDs(2)
+	rightChildId := leftChildId + 1
 	cloned := pb.Clone(status).(*proto.ClusterStatus) //nolint:revive
-	leftChildId := cloned.ShardIdGenerator
-	rightChildId := cloned.ShardIdGenerator + 1
-	cloned.ShardIdGenerator += 2
 
 	// Select ensembles for children.
 	// After selecting the left child's ensemble, insert it into the cloned
@@ -645,7 +644,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 
 	// Persist
-	c.metadata.UpdateStatus(cloned)
+	c.metadata.UpdateNamespaceStatus(namespace, nsCloned)
 
 	c.logger.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
