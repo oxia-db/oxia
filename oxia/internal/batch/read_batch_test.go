@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//lint:file-ignore SA1019 Deprecated LeaderHint remains until the cleanup PR removes it.
 package batch
 
 import (
