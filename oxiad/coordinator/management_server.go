@@ -87,31 +87,20 @@ func (management *managementServer) ListDataServers(_ context.Context, _ *proto.
 	if err != nil {
 		return nil, err
 	}
-	cnf := runtime.Metadata().GetConfig().UnsafeBorrow()
+	config := runtime.Metadata().GetConfig().UnsafeBorrow()
+	statuses := runtime.ListDataServerStatus()
 
-	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
-	for _, server := range cnf.GetServers() {
-		id := server.GetNameOrDefault()
-		identity := server
-		if server.GetName() == "" {
-			name := id
-			identity = &proto.DataServerIdentity{
-				Name:     &name,
-				Public:   server.GetPublic(),
-				Internal: server.GetInternal(),
-			}
+	views := make([]*proto.DataServerView, 0, len(config.GetServers()))
+	for _, server := range config.GetServers() {
+		name := server.GetNameOrDefault()
+		dataServer, found := config.GetDataServer(name)
+		if !found {
+			continue
 		}
-		metadata := &proto.DataServerMetadata{}
-		if value, found := cnf.GetServerMetadata()[id]; found {
-			metadata = value
-		}
-		dataServers = append(dataServers, &proto.DataServer{
-			Identity: identity,
-			Metadata: metadata,
-		})
+		views = append(views, dataServerView(dataServer, statuses[name]))
 	}
 
-	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
+	return &proto.ListDataServersResponse{DataServers: views}, nil
 }
 
 func (management *managementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
@@ -128,9 +117,20 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
 
+	status, _ := runtime.GetDataServerStatus(req.DataServer)
 	return &proto.GetDataServerResponse{
-		DataServer: borrowedDataServer.UnsafeBorrow(),
+		DataServer: dataServerView(borrowedDataServer.UnsafeBorrow(), status),
 	}, nil
+}
+
+func dataServerView(dataServer *proto.DataServer, status *proto.DataServerStatus) *proto.DataServerView {
+	if status == nil {
+		status = &proto.DataServerStatus{}
+	}
+	return &proto.DataServerView{
+		DataServer: dataServer,
+		Status:     status,
+	}
 }
 
 func (management *managementServer) CreateDataServer(_ context.Context, req *proto.CreateDataServerRequest) (*proto.CreateDataServerResponse, error) {
