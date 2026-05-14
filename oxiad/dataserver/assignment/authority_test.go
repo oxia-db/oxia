@@ -100,3 +100,8 @@ func TestValidateAuthorityAddress(t *testing.T) {
 		})
 	}
 }
+
+func TestStripAuthorityScheme(t *testing.T) {
+	assert.Equal(t, "example.com:6648", rpc2.StripAuthorityScheme("tls://example.com:6648"))
+	assert.Equal(t, "example.com:6648", rpc2.StripAuthorityScheme("example.com:6648"))
+}

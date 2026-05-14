@@ -36,6 +36,14 @@ func GetAuthority(ctx context.Context) (string, error) {
 	return "", errors.New("authority not identified")
 }
 
+func StripAuthorityScheme(authority string) string {
+	_, addr, found := strings.Cut(authority, "://")
+	if found {
+		return addr
+	}
+	return authority
+}
+
 func ValidateAuthorityAddress(addr string) error {
 	if strings.Contains(addr, "://") {
 		return errors.Errorf("authority address %q must not contain a scheme", addr)
