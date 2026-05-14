@@ -34,36 +34,31 @@ var _ proto.OxiaAdminServer = (*managementServer)(nil)
 type managementServer struct {
 	proto.UnimplementedOxiaAdminServer
 
-	metadata      coordmetadata.Metadata
-	shardSplitter controller.ShardSplitter
+	metadata                 coordmetadata.Metadata
+	shardSplitter            controller.ShardSplitter
+	dataServerStatusProvider dataServerStatusProvider
+}
+
+type dataServerStatusProvider interface {
+	ListDataServerStatus() map[string]*proto.DataServerStatus
+	GetDataServerStatus(name string) (*proto.DataServerStatus, bool)
 }
 
 func (management *managementServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
-	cnf := management.metadata.GetConfig().UnsafeBorrow()
+	config := management.metadata.GetConfig().UnsafeBorrow()
+	statuses := management.listDataServerStatus()
 
-	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
-	for _, server := range cnf.GetServers() {
-		id := server.GetNameOrDefault()
-		identity := server
-		if server.GetName() == "" {
-			name := id
-			identity = &proto.DataServerIdentity{
-				Name:     &name,
-				Public:   server.GetPublic(),
-				Internal: server.GetInternal(),
-			}
+	views := make([]*proto.DataServerView, 0, len(config.GetServers()))
+	for _, server := range config.GetServers() {
+		name := server.GetNameOrDefault()
+		dataServer, found := config.GetDataServer(name)
+		if !found {
+			continue
 		}
-		metadata := &proto.DataServerMetadata{}
-		if value, found := cnf.GetServerMetadata()[id]; found {
-			metadata = value
-		}
-		dataServers = append(dataServers, &proto.DataServer{
-			Identity: identity,
-			Metadata: metadata,
-		})
+		views = append(views, dataServerView(dataServer, statuses[name]))
 	}
 
-	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
+	return &proto.ListDataServersResponse{DataServers: views}, nil
 }
 
 func (management *managementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
@@ -77,8 +72,36 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 	}
 
 	return &proto.GetDataServerResponse{
-		DataServer: borrowedDataServer.UnsafeBorrow(),
+		DataServer: dataServerView(borrowedDataServer.UnsafeBorrow(), management.getDataServerStatus(req.DataServer)),
 	}, nil
+}
+
+func dataServerView(dataServer *proto.DataServer, status *proto.DataServerStatus) *proto.DataServerView {
+	if status == nil {
+		status = &proto.DataServerStatus{}
+	}
+	return &proto.DataServerView{
+		DataServer: dataServer,
+		Status:     status,
+	}
+}
+
+func (management *managementServer) listDataServerStatus() map[string]*proto.DataServerStatus {
+	if management.dataServerStatusProvider == nil {
+		return map[string]*proto.DataServerStatus{}
+	}
+	return management.dataServerStatusProvider.ListDataServerStatus()
+}
+
+func (management *managementServer) getDataServerStatus(name string) *proto.DataServerStatus {
+	if management.dataServerStatusProvider == nil {
+		return nil
+	}
+	status, found := management.dataServerStatusProvider.GetDataServerStatus(name)
+	if !found {
+		return nil
+	}
+	return status
 }
 
 func (management *managementServer) CreateDataServer(_ context.Context, req *proto.CreateDataServerRequest) (*proto.CreateDataServerResponse, error) {
@@ -321,8 +344,13 @@ func newManagementServer(
 	metadata coordmetadata.Metadata,
 	shardSplitter controller.ShardSplitter,
 ) *managementServer {
+	var statusProvider dataServerStatusProvider
+	if provider, ok := shardSplitter.(dataServerStatusProvider); ok {
+		statusProvider = provider
+	}
 	return &managementServer{
-		metadata:      metadata,
-		shardSplitter: shardSplitter,
+		metadata:                 metadata,
+		shardSplitter:            shardSplitter,
+		dataServerStatusProvider: statusProvider,
 	}
 }

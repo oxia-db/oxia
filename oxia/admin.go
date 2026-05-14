@@ -23,8 +23,8 @@ import (
 type AdminClient interface {
 	io.Closer
 
-	ListDataServers() ([]*proto.DataServer, error)
-	GetDataServer(dataServer string) (*proto.DataServer, error)
+	ListDataServers() ([]*proto.DataServerView, error)
+	GetDataServer(dataServer string) (*proto.DataServerView, error)
 	CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error)
 	PatchDataServer(dataServer *proto.DataServer) (*proto.DataServer, error)
 	DeleteDataServer(dataServer string) (*proto.DataServer, error)

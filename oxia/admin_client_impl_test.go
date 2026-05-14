@@ -200,12 +200,14 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
 				listDataServersResponse: &proto.ListDataServersResponse{
-					DataServers: []*proto.DataServer{
+					DataServers: []*proto.DataServerView{
 						{
-							Identity: &proto.DataServerIdentity{
-								Name:     &serverName,
-								Public:   "public-1",
-								Internal: "internal-1",
+							DataServer: &proto.DataServer{
+								Identity: &proto.DataServerIdentity{
+									Name:     &serverName,
+									Public:   "public-1",
+									Internal: "internal-1",
+								},
 							},
 						},
 					},
@@ -217,11 +219,12 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 	dataServers, err := admin.ListDataServers()
 	require.NoError(t, err)
 	require.Len(t, dataServers, 1)
-	require.NotNil(t, dataServers[0].Identity)
-	require.NotNil(t, dataServers[0].Identity.Name)
-	assert.Equal(t, serverName, *dataServers[0].Identity.Name)
-	assert.Equal(t, "public-1", dataServers[0].Identity.GetPublic())
-	assert.Equal(t, "internal-1", dataServers[0].Identity.GetInternal())
+	dataServer := dataServers[0].GetDataServer()
+	require.NotNil(t, dataServer.GetIdentity())
+	require.NotNil(t, dataServer.GetIdentity().Name)
+	assert.Equal(t, serverName, dataServer.GetIdentity().GetName())
+	assert.Equal(t, "public-1", dataServer.GetIdentity().GetPublic())
+	assert.Equal(t, "internal-1", dataServer.GetIdentity().GetInternal())
 }
 
 func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
@@ -231,14 +234,16 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
 				getDataServerResponse: &proto.GetDataServerResponse{
-					DataServer: &proto.DataServer{
-						Identity: &proto.DataServerIdentity{
-							Name:     &serverName,
-							Public:   "public-1",
-							Internal: "internal-1",
-						},
-						Metadata: &proto.DataServerMetadata{
-							Labels: map[string]string{"rack": "rack-1"},
+					DataServer: &proto.DataServerView{
+						DataServer: &proto.DataServer{
+							Identity: &proto.DataServerIdentity{
+								Name:     &serverName,
+								Public:   "public-1",
+								Internal: "internal-1",
+							},
+							Metadata: &proto.DataServerMetadata{
+								Labels: map[string]string{"rack": "rack-1"},
+							},
 						},
 					},
 				},
@@ -249,12 +254,12 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 	dataServer, err := admin.GetDataServer(serverName)
 	require.NoError(t, err)
 	require.NotNil(t, dataServer)
-	require.NotNil(t, dataServer.Identity)
-	require.NotNil(t, dataServer.Identity.Name)
-	assert.Equal(t, serverName, *dataServer.Identity.Name)
-	assert.Equal(t, "public-1", dataServer.Identity.GetPublic())
-	assert.Equal(t, "internal-1", dataServer.Identity.GetInternal())
-	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
+	require.NotNil(t, dataServer.GetDataServer().GetIdentity())
+	require.NotNil(t, dataServer.GetDataServer().GetIdentity().Name)
+	assert.Equal(t, serverName, dataServer.GetDataServer().GetIdentity().GetName())
+	assert.Equal(t, "public-1", dataServer.GetDataServer().GetIdentity().GetPublic())
+	assert.Equal(t, "internal-1", dataServer.GetDataServer().GetIdentity().GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.GetDataServer().GetMetadata().GetLabels())
 }
 
 func TestAdminClientCreateDataServerReturnsResponse(t *testing.T) {
