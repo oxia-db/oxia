@@ -239,12 +239,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		slog.Int64("shard", shardId),
 	)
 	pbOptions := &pebble.Options{
-		Cache:        factory.cache,
-		MemTableSize: 32 * 1024 * 1024,
-		Levels:       levelOptions,
-		FS:           vfs.Default,
-		DisableWAL:   !factory.options.UseWAL,
-		Logger:       &pebbleLogger{log},
+		Cache:      factory.cache,
+		Levels:     levelOptions,
+		FS:         vfs.Default,
+		DisableWAL: !factory.options.UseWAL,
+		Logger:     &pebbleLogger{log},
 
 		FormatMajorVersion: pebble.FormatVirtualSSTables,
 	}
