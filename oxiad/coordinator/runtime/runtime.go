@@ -26,7 +26,7 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
-	commonrpc "github.com/oxia-db/oxia/common/rpc"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
@@ -476,8 +476,8 @@ func (c *runtime) computeNewAssignments() {
 func mergedAuthorities(status *proto.ClusterStatus, servers []*proto.DataServerIdentity, extraAuthorities []string) []string {
 	authorities := linkedhashset.New[string]()
 	addServerAuthorities := func(public string, internal string) {
-		authorities.Add(commonrpc.StripAuthorityScheme(public))
-		authorities.Add(commonrpc.StripAuthorityScheme(internal))
+		authorities.Add(oxiadcommonrpc.StripAuthorityScheme(public))
+		authorities.Add(oxiadcommonrpc.StripAuthorityScheme(internal))
 	}
 	for _, server := range servers {
 		addServerAuthorities(server.GetPublic(), server.GetInternal())
@@ -493,7 +493,7 @@ func mergedAuthorities(status *proto.ClusterStatus, servers []*proto.DataServerI
 		}
 	}
 	for _, authority := range extraAuthorities {
-		authorities.Add(commonrpc.StripAuthorityScheme(authority))
+		authorities.Add(oxiadcommonrpc.StripAuthorityScheme(authority))
 	}
 	return authorities.Values()
 }
