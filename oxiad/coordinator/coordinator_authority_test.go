@@ -29,8 +29,8 @@ import (
 
 func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	leader := model.Server{
-		Public:   "leader-public:6648",
-		Internal: "leader-internal:6649",
+		Public:   "tls://leader-public:6648",
+		Internal: "tls://leader-internal:6649",
 	}
 
 	statusResource := resource.NewStatusResource(metadata.NewMetadataProviderMemory())
@@ -61,7 +61,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		}},
 		Servers: []model.Server{leader},
 		AllowExtraAuthorities: []string{
-			"bootstrap:6648",
+			"tls://bootstrap:6648",
 			leader.Public,
 		},
 	}
@@ -81,6 +81,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	nsAssignments, ok := c.assignments.Namespaces["default"]
 	require.True(t, ok)
 	require.Len(t, nsAssignments.Assignments, 1)
+	assert.Equal(t, "tls://leader-public:6648", nsAssignments.Assignments[0].Leader)
 	assert.Equal(t,
 		[]string{"leader-public:6648", "leader-internal:6649", "bootstrap:6648"},
 		c.assignments.AllowedAuthorities,
@@ -93,8 +94,8 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		Internal: "active-internal:6649",
 	}
 	removed := model.Server{
-		Public:   "removed-public:6648",
-		Internal: "removed-internal:6649",
+		Public:   "tls://removed-public:6648",
+		Internal: "tls://removed-internal:6649",
 	}
 
 	statusResource := resource.NewStatusResource(metadata.NewMetadataProviderMemory())

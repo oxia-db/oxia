@@ -41,6 +41,7 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 )
 
 type Coordinator interface {
@@ -437,8 +438,8 @@ func (c *coordinator) computeNewAssignments() {
 func mergedAuthorities(status *model.ClusterStatus, servers []model.Server, extraAuthorities []string) []string {
 	authorities := linkedhashset.New[string]()
 	addServerAuthorities := func(server model.Server) {
-		authorities.Add(server.Public)
-		authorities.Add(server.Internal)
+		authorities.Add(oxiadcommonrpc.StripAuthorityScheme(server.Public))
+		authorities.Add(oxiadcommonrpc.StripAuthorityScheme(server.Internal))
 	}
 	for _, server := range servers {
 		addServerAuthorities(server)
@@ -454,7 +455,7 @@ func mergedAuthorities(status *model.ClusterStatus, servers []model.Server, extr
 		}
 	}
 	for _, authority := range extraAuthorities {
-		authorities.Add(authority)
+		authorities.Add(oxiadcommonrpc.StripAuthorityScheme(authority))
 	}
 	return authorities.Values()
 }
