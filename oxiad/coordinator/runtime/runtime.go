@@ -152,7 +152,7 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
 	baseShardID := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
-	status := cloneNamespaceStatuses(c.metadata.ListNamespaceStatus())
+	status := c.metadata.ListNamespaceStatus()
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
 		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
