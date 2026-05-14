@@ -652,9 +652,6 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 
 	// Persist
 	c.metadata.UpdateNamespaceStatus(namespace, nsCloned)
-	if parentController, exists := c.shardControllers[parentShardId]; exists {
-		parentController.Metadata().Store(parentMetaCloned)
-	}
 
 	c.logger.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),
