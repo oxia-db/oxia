@@ -166,10 +166,14 @@ func (management *managementServer) DeleteDataServer(_ context.Context, req *pro
 }
 
 func (management *managementServer) ListNamespaces(context.Context, *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
-	cnf := management.metadata.GetConfig().UnsafeBorrow()
+	namespaces := management.metadata.ListNamespace()
+	responseNamespaces := make([]*proto.Namespace, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		responseNamespaces = append(responseNamespaces, namespace.UnsafeBorrow())
+	}
 
 	return &proto.ListNamespacesResponse{
-		Namespaces: cnf.GetNamespaces(),
+		Namespaces: responseNamespaces,
 	}, nil
 }
 

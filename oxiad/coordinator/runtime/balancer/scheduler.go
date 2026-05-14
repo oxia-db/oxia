@@ -340,12 +340,12 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 }
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
-	configNamespaces := r.metadata.GetConfig().UnsafeBorrow().GetNamespaces()
+	configNamespaces := r.metadata.ListNamespace()
 	if len(configNamespaces) != len(r.metadata.ListNamespaceStatus()) {
 		return false
 	}
-	for _, namespace := range configNamespaces {
-		if _, exists := r.metadata.GetNamespaceStatus(namespace.GetName()); !exists {
+	for namespace := range configNamespaces {
+		if _, exists := r.metadata.GetNamespaceStatus(namespace); !exists {
 			return false
 		}
 	}
