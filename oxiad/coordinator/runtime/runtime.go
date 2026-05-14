@@ -220,6 +220,9 @@ func (c *runtime) RecomputeAssignments() {
 }
 
 func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
+	c.RLock()
+	defer c.RUnlock()
+
 	features := make(map[string][]proto.Feature)
 	for _, dataServer := range dataServers {
 		dataServerID := dataServer.GetNameOrDefault()
