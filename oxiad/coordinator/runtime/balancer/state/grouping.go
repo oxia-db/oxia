@@ -21,6 +21,7 @@ import (
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/model"
 )
@@ -30,12 +31,16 @@ type NamespaceAndShard struct {
 	ShardID   int64
 }
 
-func NodeShardLeaders(candidates *linkedhashset.Set[string], status *commonproto.ClusterStatus) (totalShards int, electedShards int, result map[string]*arraylist.List[NamespaceAndShard]) {
+func NodeShardLeaders(candidates *linkedhashset.Set[string], namespaces map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]) (totalShards int, electedShards int, result map[string]*arraylist.List[NamespaceAndShard]) {
 	result = make(map[string]*arraylist.List[NamespaceAndShard])
 	totalShards = 0
 	electedShards = 0
-	for na, ns := range status.Namespaces {
+	for namespace, borrowedNamespaceStatus := range namespaces {
+		ns := borrowedNamespaceStatus.UnsafeBorrow()
 		for shardID, shardStatus := range ns.Shards {
+			if !isBalancingCandidate(shardStatus) {
+				continue
+			}
 			totalShards++
 			if leader := shardStatus.Leader; leader != nil {
 				electedShards++
@@ -45,7 +50,7 @@ func NodeShardLeaders(candidates *linkedhashset.Set[string], status *commonproto
 					result[leaderNodeID] = arraylist.New[NamespaceAndShard]()
 				}
 				result[leaderNodeID].Add(NamespaceAndShard{
-					Namespace: na,
+					Namespace: namespace,
 					ShardID:   shardID,
 				})
 			}
@@ -66,28 +71,30 @@ func NodeShardLeaders(candidates *linkedhashset.Set[string], status *commonproto
 	return totalShards, electedShards, result
 }
 
-func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *commonproto.ClusterStatus) (map[string][]model.ShardInfo, map[string]*commonproto.DataServerIdentity) {
+func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], namespaces map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]) (map[string][]model.ShardInfo, map[string]*commonproto.DataServerIdentity) {
 	groupingShardByNode := make(map[string][]model.ShardInfo)
 	historyNodes := make(map[string]*commonproto.DataServerIdentity)
-	if status != nil {
-		for namespace, namespaceStatus := range status.Namespaces {
-			for shard, shardStatus := range namespaceStatus.Shards {
-				for idx, node := range shardStatus.Ensemble {
-					nodeID := node.GetNameOrDefault()
-					var groupedShard []model.ShardInfo
-					var exist bool
-					if groupedShard, exist = groupingShardByNode[nodeID]; !exist {
-						tmp := make([]model.ShardInfo, 0)
-						groupedShard = tmp
-					}
-					groupedShard = append(groupedShard, model.ShardInfo{
-						Namespace: namespace,
-						ShardID:   shard,
-						Ensemble:  shardStatus.Ensemble,
-					})
-					groupingShardByNode[nodeID] = groupedShard
-					historyNodes[nodeID] = shardStatus.Ensemble[idx]
+	for namespace, borrowedNamespaceStatus := range namespaces {
+		namespaceStatus := borrowedNamespaceStatus.UnsafeBorrow()
+		for shard, shardStatus := range namespaceStatus.Shards {
+			if !isBalancingCandidate(shardStatus) {
+				continue
+			}
+			for idx, node := range shardStatus.Ensemble {
+				nodeID := node.GetNameOrDefault()
+				var groupedShard []model.ShardInfo
+				var exist bool
+				if groupedShard, exist = groupingShardByNode[nodeID]; !exist {
+					tmp := make([]model.ShardInfo, 0)
+					groupedShard = tmp
 				}
+				groupedShard = append(groupedShard, model.ShardInfo{
+					Namespace: namespace,
+					ShardID:   shard,
+					Ensemble:  shardStatus.Ensemble,
+				})
+				groupingShardByNode[nodeID] = groupedShard
+				historyNodes[nodeID] = shardStatus.Ensemble[idx]
 			}
 		}
 	}
@@ -99,6 +106,10 @@ func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], status *c
 		}
 	}
 	return groupingShardByNode, historyNodes
+}
+
+func isBalancingCandidate(shardStatus *commonproto.ShardMetadata) bool {
+	return shardStatus.GetStatusOrDefault() == commonproto.ShardStatusSteadyState && shardStatus.Split == nil
 }
 
 func GroupingCandidatesWithLabelValue(candidates *linkedhashset.Set[string], candidatesMetadata map[string]*commonproto.DataServerMetadata) map[string]map[string]*linkedhashset.Set[string] {

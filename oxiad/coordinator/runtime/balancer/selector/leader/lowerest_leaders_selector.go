@@ -33,12 +33,11 @@ func (*leader) Select(context *Context) (*commonproto.DataServerIdentity, error)
 		return nil, selector.ErrNoCandidates
 	}
 
-	status := context.Status
 	candidates := linkedhashset.New[string]()
 	for _, candidate := range context.Candidates {
 		candidates.Add(candidate.GetNameOrDefault())
 	}
-	_, _, leaders := state.NodeShardLeaders(candidates, status)
+	_, _, leaders := state.NodeShardLeaders(candidates, context.Namespaces)
 
 	minLeaders := -1
 	var minLeadersNode *commonproto.DataServerIdentity

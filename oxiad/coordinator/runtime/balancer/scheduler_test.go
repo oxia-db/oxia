@@ -54,9 +54,7 @@ var _ coordmetadata.Metadata = (*mockMetadata)(nil)
 
 func (*mockMetadata) Close() error { return nil }
 
-func (m *mockMetadata) GetStatus() commonobject.Borrowed[*proto.ClusterStatus] {
-	return commonobject.Borrow(m.status)
-}
+func (m *mockMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
 
 func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }
 
@@ -80,6 +78,18 @@ func (m *mockMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrow
 		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
 	}
 	return commonobject.Borrow(status), true
+}
+
+func (m *mockMetadata) GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool) {
+	namespaceStatus, exists := m.status.GetNamespaces()[namespace]
+	if !exists {
+		return commonobject.Borrowed[*proto.ShardMetadata]{}, false
+	}
+	shardStatus, exists := namespaceStatus.GetShards()[shard]
+	if !exists {
+		return commonobject.Borrowed[*proto.ShardMetadata]{}, false
+	}
+	return commonobject.Borrow(shardStatus), true
 }
 
 func (*mockMetadata) DeleteNamespaceStatus(string) commonobject.Borrowed[*proto.NamespaceStatus] {
@@ -453,7 +463,6 @@ func TestSwapShardPassesNamespaceAndShardToSelector(t *testing.T) {
 		loadRatios,
 		candidates,
 		candidatesMetadata,
-		status,
 	)
 	assert.ErrorIs(t, err, selector.ErrUnsatisfiedAntiAffinity)
 

@@ -27,6 +27,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func TestCoordinatorInitiateLeaderElection(t *testing.T) {
@@ -65,6 +66,6 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	metadataView := coordinatorInstance.Metadata()
 	metadataView.UpdateShardStatus("default", 1, shardMetadata)
 
-	status := metadataView.GetStatus().UnsafeBorrow()
+	status := mock.StatusSnapshot(t, metadataView)
 	assert.True(t, gproto.Equal(status.Namespaces["default"].Shards[1], shardMetadata))
 }

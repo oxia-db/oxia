@@ -226,7 +226,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[*proto.DataServerId
 	candidates := chooseCandidates(candidatesStatus)
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Status:     e.metadataStore.GetStatus().UnsafeBorrow(),
+		Namespaces: e.metadataStore.ListNamespaceStatus(),
 	})
 	if err != nil {
 		return nil, nil, err

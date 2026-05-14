@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
 )
@@ -28,7 +29,7 @@ func TestSelect_NoCandidates(t *testing.T) {
 
 	_, err := s.Select(&Context{
 		Candidates: []*proto.DataServerIdentity{},
-		Status:     proto.NewClusterStatus(),
+		Namespaces: map[string]commonobject.Borrowed[*proto.NamespaceStatus]{},
 	})
 	assert.ErrorIs(t, err, selector.ErrNoCandidates)
 }
@@ -38,7 +39,7 @@ func TestSelect_NilCandidates(t *testing.T) {
 
 	_, err := s.Select(&Context{
 		Candidates: nil,
-		Status:     proto.NewClusterStatus(),
+		Namespaces: map[string]commonobject.Borrowed[*proto.NamespaceStatus]{},
 	})
 	assert.ErrorIs(t, err, selector.ErrNoCandidates)
 }
@@ -50,7 +51,7 @@ func TestSelect_SingleCandidate(t *testing.T) {
 		Candidates: []*proto.DataServerIdentity{
 			{Internal: "127.0.0.1:6601", Public: "127.0.0.1:6611"},
 		},
-		Status: proto.NewClusterStatus(),
+		Namespaces: map[string]commonobject.Borrowed[*proto.NamespaceStatus]{},
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, "127.0.0.1:6601", server.Internal)

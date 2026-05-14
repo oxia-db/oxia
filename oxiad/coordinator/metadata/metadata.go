@@ -38,7 +38,7 @@ import (
 type Metadata interface {
 	io.Closer
 
-	GetStatus() commonobject.Borrowed[*commonproto.ClusterStatus]
+	GetInstanceID() string
 	ReserveShardIDs(count uint32) int64
 
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
@@ -47,6 +47,7 @@ type Metadata interface {
 	UpdateNamespaceStatus(name string, status *commonproto.NamespaceStatus)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 
+	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool)
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
 	DeleteShardStatus(namespace string, shard int64)
 
@@ -167,8 +168,8 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 	}
 }
 
-func (m *coordinatorMetadata) GetStatus() commonobject.Borrowed[*commonproto.ClusterStatus] {
-	return commonobject.Borrow(m.statusProvider.Watch().Load().Value)
+func (m *coordinatorMetadata) GetInstanceID() string {
+	return m.statusProvider.Watch().Load().Value.GetInstanceId()
 }
 
 func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
@@ -281,6 +282,18 @@ func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Bo
 		)
 	})
 	return commonobject.Borrow(namespaceStatus)
+}
+
+func (m *coordinatorMetadata) GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool) {
+	namespaceStatus, exists := m.GetNamespaceStatus(namespace)
+	if !exists {
+		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false
+	}
+	shardStatus, exists := namespaceStatus.UnsafeBorrow().GetShards()[shard]
+	if !exists {
+		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false
+	}
+	return commonobject.Borrow(shardStatus), true
 }
 
 func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {

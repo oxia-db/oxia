@@ -59,12 +59,12 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow().Namespaces["default"].Shards[0]
+		shard := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces["default"].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow()
+	status := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
@@ -121,12 +121,12 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow().Namespaces["default"].Shards[0]
+		shard := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces["default"].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow()
+	status := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
@@ -183,12 +183,12 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow().Namespaces["default"].Shards[0]
+		shard := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces["default"].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow()
+	status := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
@@ -235,12 +235,12 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow().Namespaces["default"].Shards[0]
+		shard := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces["default"].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow()
+	status := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
@@ -297,12 +297,12 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow().Namespaces["default"].Shards[0]
+		shard := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces["default"].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 10*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow()
+	status := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public
@@ -353,12 +353,12 @@ func TestLeaderHintWithClient(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	assert.Eventually(t, func() bool {
-		shard := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow().Namespaces["default"].Shards[0]
+		shard := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces["default"].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
 	target := sa1.Public
-	status := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow()
+	status := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
 	shard := status.Namespaces["default"].Shards[0]
 	if shard.Leader.GetNameOrDefault() == sa1.GetNameOrDefault() {
 		target = sa2.Public

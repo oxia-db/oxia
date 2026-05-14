@@ -14,9 +14,12 @@
 
 package leader
 
-import commonproto "github.com/oxia-db/oxia/common/proto"
+import (
+	commonobject "github.com/oxia-db/oxia/common/object"
+	commonproto "github.com/oxia-db/oxia/common/proto"
+)
 
 type Context struct {
 	Candidates []*commonproto.DataServerIdentity
-	Status     *commonproto.ClusterStatus
+	Namespaces map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
 }
