@@ -95,7 +95,7 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for the checksum feature to be enabled on all replicas
-	resource := coordinatorInstance.Metadata().GetStatus().UnsafeBorrow()
+	resource := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
 	shardMetadata := resource.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
 	for _, dataServer := range shardMetadata.Ensemble {

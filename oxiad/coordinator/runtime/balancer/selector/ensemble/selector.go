@@ -33,7 +33,6 @@ func (ensemble *ensemble) Select(context *Context) ([]string, error) {
 	sServerContext := &single.Context{
 		Candidates:         context.Candidates,
 		CandidatesMetadata: context.CandidatesMetadata,
-		Status:             context.Status,
 		Namespace:          context.Namespace,
 		Shard:              context.Shard,
 		AntiAffinities:     context.AntiAffinities,

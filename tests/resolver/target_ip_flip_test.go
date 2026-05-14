@@ -86,7 +86,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 	cluster.coordinator = newCoordinatorInstance(t, metadataProvider, configProvider, coordinatorrpc.NewRpcProviderFactory(nil))
 
 	require.Eventually(t, func() bool {
-		shard := cluster.coordinator.Metadata().GetStatus().UnsafeBorrow().Namespaces[constant.DefaultNamespace].Shards[0]
+		shard := mock.StatusSnapshot(t, cluster.coordinator.Metadata()).Namespaces[constant.DefaultNamespace].Shards[0]
 		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState && shard.Leader != nil
 	}, 20*time.Second, 100*time.Millisecond)
 
@@ -112,7 +112,8 @@ func (c *testCluster) stopAllServers(t *testing.T) {
 }
 
 func (c *testCluster) leader() *proto.DataServerIdentity {
-	return c.coordinator.Metadata().GetStatus().UnsafeBorrow().Namespaces[constant.DefaultNamespace].Shards[0].Leader
+	shard, _ := c.coordinator.Metadata().GetShardStatus(constant.DefaultNamespace, 0)
+	return shard.UnsafeBorrow().Leader
 }
 
 func (c *testCluster) bootstrapTargetExcluding(excluded *proto.DataServerIdentity) *proto.DataServerIdentity {

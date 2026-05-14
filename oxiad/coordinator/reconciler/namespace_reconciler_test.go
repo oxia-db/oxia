@@ -89,9 +89,7 @@ type mockNamespaceMetadata struct {
 
 func (*mockNamespaceMetadata) Close() error { return nil }
 
-func (m *mockNamespaceMetadata) GetStatus() commonobject.Borrowed[*proto.ClusterStatus] {
-	return commonobject.Borrow(m.status)
-}
+func (m *mockNamespaceMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
 
 func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) int64 {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
@@ -144,6 +142,18 @@ func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (commonobje
 		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
 	}
 	return commonobject.Borrow(status), true
+}
+
+func (m *mockNamespaceMetadata) GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool) {
+	namespaceStatus, exists := m.status.GetNamespaces()[namespace]
+	if !exists {
+		return commonobject.Borrowed[*proto.ShardMetadata]{}, false
+	}
+	shardStatus, exists := namespaceStatus.GetShards()[shard]
+	if !exists {
+		return commonobject.Borrowed[*proto.ShardMetadata]{}, false
+	}
+	return commonobject.Borrow(shardStatus), true
 }
 
 func (m *mockNamespaceMetadata) DeleteNamespaceStatus(name string) commonobject.Borrowed[*proto.NamespaceStatus] {
@@ -270,16 +280,15 @@ func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
 func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
 	baseShardID := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
-	currentStatus := m.metadata.GetStatus().UnsafeBorrow()
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
 		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
 	}
 	status := &proto.ClusterStatus{
-		Namespaces: make(map[string]*proto.NamespaceStatus, len(currentStatus.GetNamespaces())+1),
+		Namespaces: map[string]*proto.NamespaceStatus{},
 	}
-	for name, existingNamespaceStatus := range currentStatus.GetNamespaces() {
-		status.Namespaces[name] = existingNamespaceStatus
+	for name, existingNamespaceStatus := range m.metadata.ListNamespaceStatus() {
+		status.Namespaces[name] = existingNamespaceStatus.UnsafeBorrow()
 	}
 	status.Namespaces[name] = namespaceStatus
 

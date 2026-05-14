@@ -89,6 +89,21 @@ func NewMetadataFromProviders(
 	return metadataFactory, metadata
 }
 
+func StatusSnapshot(t *testing.T, metadata coordmetadata.Metadata) *proto.ClusterStatus {
+	t.Helper()
+
+	status := &proto.ClusterStatus{
+		InstanceId: metadata.GetInstanceID(),
+		Namespaces: map[string]*proto.NamespaceStatus{},
+	}
+	for namespace, namespaceStatus := range metadata.ListNamespaceStatus() {
+		cloned, ok := gproto.Clone(namespaceStatus.UnsafeBorrow()).(*proto.NamespaceStatus)
+		require.True(t, ok)
+		status.Namespaces[namespace] = cloned
+	}
+	return status
+}
+
 func mirrorProviderToFile[T interface {
 	gproto.Message
 	*proto.ClusterStatus | *proto.ClusterConfiguration

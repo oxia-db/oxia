@@ -258,15 +258,11 @@ func (s *shardController) waitForSplitComplete() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			status := s.metadataStore.GetStatus().UnsafeBorrow()
-			ns, exists := status.Namespaces[s.namespace]
+			borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 			if !exists {
 				continue
 			}
-			meta, exists := ns.Shards[s.shard]
-			if !exists {
-				continue
-			}
+			meta := borrowedMeta.UnsafeBorrow()
 			if meta.Split == nil {
 				s.logger.Info("Split complete, child shard entering normal operation",
 					slog.Any("leader", meta.Leader),

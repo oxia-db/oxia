@@ -28,7 +28,6 @@ type Context struct {
 	Candidates         *linkedhashset.Set[string]
 	CandidatesMetadata map[string]*commonproto.DataServerMetadata
 	AntiAffinities     []*commonproto.AntiAffinity
-	Status             *commonproto.ClusterStatus
 	Namespace          string
 	Shard              int64
 

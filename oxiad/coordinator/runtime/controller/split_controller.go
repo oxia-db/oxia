@@ -111,21 +111,16 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 	sc.ctx, sc.ctxCancel = context.WithTimeout(context.Background(), splitTimeout)
 
 	// Load the current split metadata from cluster status
-	status := sc.metadata.GetStatus().UnsafeBorrow()
-	ns, exists := status.Namespaces[sc.namespace]
-	if !exists {
-		sc.logger.Error("Namespace not found in cluster status")
-		return sc
-	}
-	parentMeta, exists := ns.Shards[sc.parentShardId]
-	if !exists || parentMeta.Split == nil {
+	parentMeta, exists := sc.metadata.GetShardStatus(sc.namespace, sc.parentShardId)
+	if !exists || parentMeta.UnsafeBorrow().Split == nil {
 		sc.logger.Error("Parent shard or split metadata not found")
 		return sc
 	}
 
-	sc.leftChildId = parentMeta.Split.ChildShardIds[0]
-	sc.rightChildId = parentMeta.Split.ChildShardIds[1]
-	sc.splitPoint = parentMeta.Split.SplitPoint
+	split := parentMeta.UnsafeBorrow().Split
+	sc.leftChildId = split.ChildShardIds[0]
+	sc.rightChildId = split.ChildShardIds[1]
+	sc.splitPoint = split.SplitPoint
 
 	sc.wg.Go(func() {
 		process.DoWithLabels(
@@ -205,29 +200,23 @@ func (sc *SplitController) driveStateMachine() error {
 }
 
 func (sc *SplitController) currentPhase() (proto.SplitPhase, bool) {
-	status := sc.metadata.GetStatus().UnsafeBorrow()
-	ns, exists := status.Namespaces[sc.namespace]
-	if !exists {
+	parentMeta, exists := sc.metadata.GetShardStatus(sc.namespace, sc.parentShardId)
+	if !exists || parentMeta.UnsafeBorrow().Split == nil {
 		return proto.SplitPhaseBootstrap, false
 	}
-	parentMeta, exists := ns.Shards[sc.parentShardId]
-	if !exists || parentMeta.Split == nil {
-		return proto.SplitPhaseBootstrap, false
-	}
-	return parentMeta.Split.GetPhaseOrDefault(), true
+	return parentMeta.UnsafeBorrow().Split.GetPhaseOrDefault(), true
 }
 
 // updatePhase atomically updates the split phase on both parent and children.
 func (sc *SplitController) updatePhase(newPhase proto.SplitPhase) {
-	status := sc.metadata.GetStatus().UnsafeBorrow()
-	currentNS, exists := status.Namespaces[sc.namespace]
+	currentNS, exists := sc.metadata.GetNamespaceStatus(sc.namespace)
 	if !exists {
 		sc.logger.Warn("namespace status not found while updating split phase",
 			slog.String("namespace", sc.namespace),
 			slog.String("phase", newPhase.String()))
 		return
 	}
-	ns := gproto.Clone(currentNS).(*proto.NamespaceStatus) //nolint:revive
+	ns := gproto.Clone(currentNS.UnsafeBorrow()).(*proto.NamespaceStatus) //nolint:revive
 	changed := false
 	for _, shardId := range []int64{sc.parentShardId, sc.leftChildId, sc.rightChildId} {
 		meta, exists := ns.Shards[shardId]
@@ -675,16 +664,11 @@ func (sc *SplitController) loadParentMeta() *proto.ShardMetadata {
 }
 
 func (sc *SplitController) loadShardMeta(shardId int64) *proto.ShardMetadata {
-	status := sc.metadata.GetStatus().UnsafeBorrow()
-	ns, exists := status.Namespaces[sc.namespace]
+	meta, exists := sc.metadata.GetShardStatus(sc.namespace, shardId)
 	if !exists {
 		return nil
 	}
-	meta, exists := ns.Shards[shardId]
-	if !exists {
-		return nil
-	}
-	return gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
+	return gproto.Clone(meta.UnsafeBorrow()).(*proto.ShardMetadata) //nolint:revive
 }
 
 func (sc *SplitController) updateParentMeta(fn func(meta *proto.ShardMetadata)) {
@@ -696,15 +680,14 @@ func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *proto.Sh
 }
 
 func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.ShardMetadata)) {
-	status := sc.metadata.GetStatus().UnsafeBorrow()
-	ns, exists := status.Namespaces[sc.namespace]
+	ns, exists := sc.metadata.GetNamespaceStatus(sc.namespace)
 	if !exists {
 		sc.logger.Warn("namespace status not found while updating shard metadata",
 			slog.String("namespace", sc.namespace),
 			slog.Int64("shard", shardId))
 		return
 	}
-	meta, exists := ns.Shards[shardId]
+	meta, exists := ns.UnsafeBorrow().Shards[shardId]
 	if !exists {
 		sc.logger.Warn("shard metadata not found while updating shard metadata",
 			slog.String("namespace", sc.namespace),
