@@ -26,7 +26,7 @@ import (
 	"github.com/oxia-db/oxia/common/validation"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
 var _ proto.OxiaAdminServer = (*managementServer)(nil)
@@ -34,14 +34,8 @@ var _ proto.OxiaAdminServer = (*managementServer)(nil)
 type managementServer struct {
 	proto.UnimplementedOxiaAdminServer
 
-	metadata                 coordmetadata.Metadata
-	shardSplitter            controller.ShardSplitter
-	dataServerStatusProvider dataServerStatusProvider
-}
-
-type dataServerStatusProvider interface {
-	ListDataServerStatus() map[string]*proto.DataServerStatus
-	GetDataServerStatus(name string) (*proto.DataServerStatus, bool)
+	metadata coordmetadata.Metadata
+	runtime  coordruntime.Runtime
 }
 
 func (management *managementServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
@@ -87,17 +81,17 @@ func dataServerView(dataServer *proto.DataServer, status *proto.DataServerStatus
 }
 
 func (management *managementServer) listDataServerStatus() map[string]*proto.DataServerStatus {
-	if management.dataServerStatusProvider == nil {
+	if management.runtime == nil {
 		return map[string]*proto.DataServerStatus{}
 	}
-	return management.dataServerStatusProvider.ListDataServerStatus()
+	return management.runtime.ListDataServerStatus()
 }
 
 func (management *managementServer) getDataServerStatus(name string) *proto.DataServerStatus {
-	if management.dataServerStatusProvider == nil {
+	if management.runtime == nil {
 		return nil
 	}
-	status, found := management.dataServerStatusProvider.GetDataServerStatus(name)
+	status, found := management.runtime.GetDataServerStatus(name)
 	if !found {
 		return nil
 	}
@@ -319,7 +313,7 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 }
 
 func (management *managementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
-	if management.shardSplitter == nil {
+	if management.runtime == nil {
 		return nil, errors.New("split shard not supported")
 	}
 
@@ -329,7 +323,7 @@ func (management *managementServer) SplitShard(_ context.Context, req *proto.Spl
 		slog.Any("split-point", req.SplitPoint),
 	)
 
-	left, right, err := management.shardSplitter.InitiateSplit(req.Namespace, req.Shard, req.SplitPoint)
+	left, right, err := management.runtime.InitiateSplit(req.Namespace, req.Shard, req.SplitPoint)
 	if err != nil {
 		return nil, err
 	}
@@ -342,15 +336,10 @@ func (management *managementServer) SplitShard(_ context.Context, req *proto.Spl
 
 func newManagementServer(
 	metadata coordmetadata.Metadata,
-	shardSplitter controller.ShardSplitter,
+	runtime coordruntime.Runtime,
 ) *managementServer {
-	var statusProvider dataServerStatusProvider
-	if provider, ok := shardSplitter.(dataServerStatusProvider); ok {
-		statusProvider = provider
-	}
 	return &managementServer{
-		metadata:                 metadata,
-		shardSplitter:            shardSplitter,
-		dataServerStatusProvider: statusProvider,
+		metadata: metadata,
+		runtime:  runtime,
 	}
 }
