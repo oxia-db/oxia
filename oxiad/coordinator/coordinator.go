@@ -523,6 +523,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	// Update cloned status with left child placement before selecting right child
 	cloned.Namespaces[namespace].Shards[leftChildId] = model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
+		Term:     -1,
 		Ensemble: leftEnsemble,
 		Int32HashRange: model.Int32HashRange{
 			Min: parentMeta.Int32HashRange.Min,
@@ -550,7 +551,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	// Create left child shard
 	nsCloned.Shards[leftChildId] = model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
-		Term:     0,
+		Term:     -1,
 		Ensemble: leftEnsemble,
 		Int32HashRange: model.Int32HashRange{
 			Min: parentMeta.Int32HashRange.Min,
@@ -566,7 +567,7 @@ func (c *coordinator) InitiateSplit(namespace string, parentShardId int64, split
 	// Create right child shard
 	nsCloned.Shards[rightChildId] = model.ShardMetadata{
 		Status:   model.ShardStatusSteadyState,
-		Term:     0,
+		Term:     -1,
 		Ensemble: rightEnsemble,
 		Int32HashRange: model.Int32HashRange{
 			Min: sp + 1,
