@@ -130,9 +130,9 @@ func (c *runtime) GetDataServerStatus(name string) (*proto.DataServerStatus, boo
 	return status, found
 }
 
-func (c *runtime) dataServerShardCounts() (map[string]uint32, map[string]uint32) {
-	shardCounts := make(map[string]uint32)
-	leaderShardCounts := make(map[string]uint32)
+func (c *runtime) dataServerShardCounts() (shardCounts map[string]uint32, leaderShardCounts map[string]uint32) {
+	shardCounts = make(map[string]uint32)
+	leaderShardCounts = make(map[string]uint32)
 	for _, borrowedNamespace := range c.metadata.ListNamespaceStatus() {
 		namespace := borrowedNamespace.UnsafeBorrow()
 		for _, shard := range namespace.GetShards() {
