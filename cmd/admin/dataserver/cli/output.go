@@ -103,7 +103,7 @@ func writeDataServerConfigTable(out io.Writer, dataServers []*proto.DataServer) 
 
 func writeDataServerTable(out io.Writer, dataServers []*proto.DataServerView) error {
 	tw := commons.NewTableWriter(out)
-	if _, err := fmt.Fprintln(tw, "NAME\tPUBLIC\tINTERNAL\tSTATE\tSHARDS\tLEADERS\tFEATURES\tLABELS"); err != nil {
+	if _, err := fmt.Fprintln(tw, "NAME\tPUBLIC\tINTERNAL\tSTATE\tFEATURES\tLABELS"); err != nil {
 		return err
 	}
 	for _, view := range dataServers {
@@ -112,14 +112,12 @@ func writeDataServerTable(out io.Writer, dataServers []*proto.DataServerView) er
 		}
 		dataServer := view.GetDataServer()
 		identity := dataServer.GetIdentity()
-		status := view.GetStatus()
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+		status := view.GetDataServerStatus()
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			dataServer.GetNameOrDefault(),
 			identity.GetPublic(),
 			identity.GetInternal(),
 			status.GetState().String(),
-			status.GetShardCount(),
-			status.GetLeaderShardCount(),
 			formatFeatures(status.GetSupportedFeatures()),
 			commons.FormatLabels(dataServer.GetMetadata().GetLabels()),
 		); err != nil {

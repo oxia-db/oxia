@@ -89,8 +89,6 @@ func (m *DataServerStatus) CloneVT() *DataServerStatus {
 	}
 	r := new(DataServerStatus)
 	r.State = m.State
-	r.ShardCount = m.ShardCount
-	r.LeaderShardCount = m.LeaderShardCount
 	if rhs := m.SupportedFeatures; rhs != nil {
 		tmpContainer := make([]Feature, len(rhs))
 		copy(tmpContainer, rhs)
@@ -456,12 +454,6 @@ func (this *DataServerStatus) EqualVT(that *DataServerStatus) bool {
 		if vx != vy {
 			return false
 		}
-	}
-	if this.ShardCount != that.ShardCount {
-		return false
-	}
-	if this.LeaderShardCount != that.LeaderShardCount {
-		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -1081,16 +1073,6 @@ func (m *DataServerStatus) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
-	}
-	if m.LeaderShardCount != 0 {
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.LeaderShardCount))
-		i--
-		dAtA[i] = 0x20
-	}
-	if m.ShardCount != 0 {
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.ShardCount))
-		i--
-		dAtA[i] = 0x18
 	}
 	if len(m.SupportedFeatures) > 0 {
 		var pksize2 int
@@ -1845,12 +1827,6 @@ func (m *DataServerStatus) SizeVT() (n int) {
 			l += protohelpers.SizeOfVarint(uint64(e))
 		}
 		n += 1 + protohelpers.SizeOfVarint(uint64(l)) + l
-	}
-	if m.ShardCount != 0 {
-		n += 1 + protohelpers.SizeOfVarint(uint64(m.ShardCount))
-	}
-	if m.LeaderShardCount != 0 {
-		n += 1 + protohelpers.SizeOfVarint(uint64(m.LeaderShardCount))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -2694,44 +2670,6 @@ func (m *DataServerStatus) UnmarshalVT(dAtA []byte) error {
 				}
 			} else {
 				return fmt.Errorf("proto: wrong wireType = %d for field SupportedFeatures", wireType)
-			}
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ShardCount", wireType)
-			}
-			m.ShardCount = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ShardCount |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field LeaderShardCount", wireType)
-			}
-			m.LeaderShardCount = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.LeaderShardCount |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
 			}
 		default:
 			iNdEx = preIndex
@@ -5248,44 +5186,6 @@ func (m *DataServerStatus) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 			} else {
 				return fmt.Errorf("proto: wrong wireType = %d for field SupportedFeatures", wireType)
-			}
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ShardCount", wireType)
-			}
-			m.ShardCount = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ShardCount |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field LeaderShardCount", wireType)
-			}
-			m.LeaderShardCount = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.LeaderShardCount |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
 			}
 		default:
 			iNdEx = preIndex

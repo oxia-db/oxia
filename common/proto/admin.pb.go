@@ -207,11 +207,11 @@ func (x *GetDataServerResponse) GetDataServer() *DataServerView {
 }
 
 type DataServerView struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DataServer    *DataServer            `protobuf:"bytes,1,opt,name=data_server,json=dataServer,proto3" json:"data_server,omitempty"`
-	Status        *DataServerStatus      `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	DataServer       *DataServer            `protobuf:"bytes,1,opt,name=data_server,json=dataServer,proto3" json:"data_server,omitempty"`
+	DataServerStatus *DataServerStatus      `protobuf:"bytes,2,opt,name=data_server_status,json=dataServerStatus,proto3" json:"data_server_status,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *DataServerView) Reset() {
@@ -251,9 +251,9 @@ func (x *DataServerView) GetDataServer() *DataServer {
 	return nil
 }
 
-func (x *DataServerView) GetStatus() *DataServerStatus {
+func (x *DataServerView) GetDataServerStatus() *DataServerStatus {
 	if x != nil {
-		return x.Status
+		return x.DataServerStatus
 	}
 	return nil
 }
@@ -1080,11 +1080,11 @@ const file_admin_proto_rawDesc = "" +
 	"dataServer\"Z\n" +
 	"\x15GetDataServerResponse\x12A\n" +
 	"\vdata_server\x18\x01 \x01(\v2 .io.oxia.proto.v1.DataServerViewR\n" +
-	"dataServer\"\x8b\x01\n" +
+	"dataServer\"\xa1\x01\n" +
 	"\x0eDataServerView\x12=\n" +
 	"\vdata_server\x18\x01 \x01(\v2\x1c.io.oxia.proto.v1.DataServerR\n" +
-	"dataServer\x12:\n" +
-	"\x06status\x18\x02 \x01(\v2\".io.oxia.proto.v1.DataServerStatusR\x06status\"X\n" +
+	"dataServer\x12P\n" +
+	"\x12data_server_status\x18\x02 \x01(\v2\".io.oxia.proto.v1.DataServerStatusR\x10dataServerStatus\"X\n" +
 	"\x17CreateDataServerRequest\x12=\n" +
 	"\vdata_server\x18\x01 \x01(\v2\x1c.io.oxia.proto.v1.DataServerR\n" +
 	"dataServer\"Y\n" +
@@ -1192,7 +1192,7 @@ var file_admin_proto_depIdxs = []int32{
 	4,  // 0: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServerView
 	4,  // 1: io.oxia.proto.v1.GetDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServerView
 	23, // 2: io.oxia.proto.v1.DataServerView.data_server:type_name -> io.oxia.proto.v1.DataServer
-	24, // 3: io.oxia.proto.v1.DataServerView.status:type_name -> io.oxia.proto.v1.DataServerStatus
+	24, // 3: io.oxia.proto.v1.DataServerView.data_server_status:type_name -> io.oxia.proto.v1.DataServerStatus
 	23, // 4: io.oxia.proto.v1.CreateDataServerRequest.data_server:type_name -> io.oxia.proto.v1.DataServer
 	23, // 5: io.oxia.proto.v1.CreateDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServer
 	23, // 6: io.oxia.proto.v1.PatchDataServerRequest.data_server:type_name -> io.oxia.proto.v1.DataServer

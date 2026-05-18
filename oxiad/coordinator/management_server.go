@@ -81,8 +81,8 @@ func dataServerView(dataServer *proto.DataServer, status *proto.DataServerStatus
 		status = &proto.DataServerStatus{}
 	}
 	return &proto.DataServerView{
-		DataServer: dataServer,
-		Status:     status,
+		DataServer:       dataServer,
+		DataServerStatus: status,
 	}
 }
 

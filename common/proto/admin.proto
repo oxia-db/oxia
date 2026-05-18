@@ -63,7 +63,7 @@ message GetDataServerResponse {
 
 message DataServerView {
   DataServer data_server = 1;
-  DataServerStatus status = 2;
+  DataServerStatus data_server_status = 2;
 }
 
 message CreateDataServerRequest {

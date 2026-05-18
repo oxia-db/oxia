@@ -45,8 +45,6 @@ enum DataServerState {
 message DataServerStatus {
   DataServerState state = 1;
   repeated replication.Feature supported_features = 2;
-  uint32 shard_count = 3;
-  uint32 leader_shard_count = 4;
 }
 
 message AntiAffinity {

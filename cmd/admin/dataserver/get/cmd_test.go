@@ -44,7 +44,7 @@ func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 func dataServerView(dataServer *proto.DataServer) *proto.DataServerView {
 	return &proto.DataServerView{
 		DataServer: dataServer,
-		Status: &proto.DataServerStatus{
+		DataServerStatus: &proto.DataServerStatus{
 			State: proto.DataServerState_DATA_SERVER_STATE_RUNNING,
 		},
 	}
@@ -85,7 +85,7 @@ func Test_cmd_getDataServer(t *testing.T) {
 	assert.Equal(t, "public1", dataServer.GetDataServer().GetIdentity().GetPublic())
 	assert.Equal(t, "internal1", dataServer.GetDataServer().GetIdentity().GetInternal())
 	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.GetDataServer().GetMetadata().GetLabels())
-	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, dataServer.GetStatus().GetState())
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, dataServer.GetDataServerStatus().GetState())
 }
 
 func Test_cmd_getDataServersIdentities(t *testing.T) {
