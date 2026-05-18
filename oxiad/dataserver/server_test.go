@@ -69,10 +69,10 @@ func TestNewServerClosableWithHealthWatch(t *testing.T) {
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
 
-	client, closer, err := clientPool.GetHealthRpc(fmt.Sprintf("127.0.0.1:%v", server.InternalPort()))
+	client, err := clientPool.GetHealthRpc(fmt.Sprintf("127.0.0.1:%v", server.InternalPort()))
 	assert.NoError(t, err)
-	defer closer.Close()
 	watchStream, err := client.Watch(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: ""})
 	assert.NoError(t, err)
 

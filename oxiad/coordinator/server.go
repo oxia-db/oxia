@@ -205,6 +205,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	)
 	adminGrpcServer, err := rpc2.Default.StartGrpcServer("admin", adminSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, admin)
+		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, adminSvTLS, &adminSv.Auth)
 	if err != nil {
 		return nil, err

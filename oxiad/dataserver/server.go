@@ -134,7 +134,7 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 		return nil, err
 	}
 	s.publicRpcServer, err = newPublicRpcServer(provider, publicServer.BindAddress, s.shardsDirector,
-		s.shardAssignmentDispatcher, disableAuthorityValidation, publicServerTLS, &publicServer.Auth)
+		s.shardAssignmentDispatcher, disableAuthorityValidation, s.healthServer, publicServerTLS, &publicServer.Auth)
 	if err != nil {
 		return nil, err
 	}

@@ -16,7 +16,6 @@ package rpc
 
 import (
 	"context"
-	"io"
 	"time"
 
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -40,9 +39,7 @@ type Provider interface {
 	RemoveObserver(ctx context.Context, node model.Server, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error)
 	GetInfo(ctx context.Context, node model.Server, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error)
 
-	GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, io.Closer, error)
-
-	ClearPooledConnections(node model.Server)
+	GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, error)
 }
 
 type rpcProvider struct {
@@ -146,10 +143,6 @@ func (r *rpcProvider) RemoveObserver(ctx context.Context, node model.Server, req
 	return client.RemoveObserver(ctx, req)
 }
 
-func (r *rpcProvider) GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, io.Closer, error) {
+func (r *rpcProvider) GetHealthClient(node model.Server) (grpc_health_v1.HealthClient, error) {
 	return r.pool.GetHealthRpc(node.Internal)
-}
-
-func (r *rpcProvider) ClearPooledConnections(node model.Server) {
-	r.pool.Clear(node.Internal)
 }
