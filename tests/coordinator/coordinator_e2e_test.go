@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
@@ -607,7 +608,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              "my-ns-1",
-			ReplicationFactor: 1,
+			ReplicationFactor: 3,
 			InitialShardCount: 1,
 		}},
 		Servers: []model.Server{sa1, sa2, sa3, sa4},
@@ -657,14 +658,14 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		for _, ns := range statusResource.Load().Namespaces {
 			for _, shard := range ns.Shards {
-				return shard.Term >= 0 && shard.Status == model.ShardStatusSteadyState
+				return shard.Term > 0 && shard.Status == model.ShardStatusSteadyState
 			}
 		}
 		return true
 	}, 10*time.Second, 10*time.Millisecond)
 
-	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithNamespace("my-ns-1"))
-	assert.NoError(t, err)
+	client, err := oxia.NewSyncClient(clusterConfig.Servers[0].Public, oxia.WithNamespace("my-ns-1"))
+	require.NoError(t, err)
 
 	_, _, err = client.Put(context.Background(), "test", []byte("value"))
 	assert.NoError(t, err)
