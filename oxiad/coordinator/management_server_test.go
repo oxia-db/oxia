@@ -92,6 +92,10 @@ func (*testRuntime) DeleteDataServer(string) {}
 
 func (*testRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] { return nil }
 
+func (*testRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus { return nil }
+
+func (*testRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) { return nil, false }
+
 func (*testRuntime) CreateNamespace(string, *proto.Namespace) bool { return false }
 
 func (*testRuntime) DeleteNamespace(string) {}

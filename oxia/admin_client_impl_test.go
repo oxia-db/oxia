@@ -268,12 +268,14 @@ func TestAdminClientListDataServersRedirectsToCoordinatorLeader(t *testing.T) {
 			},
 			"coordinator-1:6651": &mockAdminRpcClient{
 				listDataServersResponse: &proto.ListDataServersResponse{
-					DataServers: []*proto.DataServer{
+					DataServers: []*proto.DataServerView{
 						{
-							Identity: &proto.DataServerIdentity{
-								Name:     &serverName,
-								Public:   "public-1",
-								Internal: "internal-1",
+							DataServer: &proto.DataServer{
+								Identity: &proto.DataServerIdentity{
+									Name:     &serverName,
+									Public:   "public-1",
+									Internal: "internal-1",
+								},
 							},
 						},
 					},
@@ -289,7 +291,7 @@ func TestAdminClientListDataServersRedirectsToCoordinatorLeader(t *testing.T) {
 	dataServers, err := admin.ListDataServers(context.Background())
 	require.NoError(t, err)
 	require.Len(t, dataServers, 1)
-	assert.Equal(t, serverName, dataServers[0].GetNameOrDefault())
+	assert.Equal(t, serverName, dataServers[0].GetDataServer().GetNameOrDefault())
 	assert.Equal(t, []string{"coordinator-0:6651", "coordinator-1:6651"}, pool.targets)
 }
 
