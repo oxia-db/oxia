@@ -99,7 +99,7 @@ func (m *DataServerView) CloneVT() *DataServerView {
 	}
 	r := new(DataServerView)
 	r.DataServer = m.DataServer.CloneVT()
-	r.Status = m.Status.CloneVT()
+	r.DataServerStatus = m.DataServerStatus.CloneVT()
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -524,7 +524,7 @@ func (this *DataServerView) EqualVT(that *DataServerView) bool {
 	if !this.DataServer.EqualVT(that.DataServer) {
 		return false
 	}
-	if !this.Status.EqualVT(that.Status) {
+	if !this.DataServerStatus.EqualVT(that.DataServerStatus) {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1090,8 +1090,8 @@ func (m *DataServerView) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if m.Status != nil {
-		size, err := m.Status.MarshalToSizedBufferVT(dAtA[:i])
+	if m.DataServerStatus != nil {
+		size, err := m.DataServerStatus.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -1941,8 +1941,8 @@ func (m *DataServerView) SizeVT() (n int) {
 		l = m.DataServer.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
-	if m.Status != nil {
-		l = m.Status.SizeVT()
+	if m.DataServerStatus != nil {
+		l = m.DataServerStatus.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
@@ -2580,7 +2580,7 @@ func (m *DataServerView) UnmarshalVT(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Status", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field DataServerStatus", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -2607,10 +2607,10 @@ func (m *DataServerView) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.Status == nil {
-				m.Status = &DataServerStatus{}
+			if m.DataServerStatus == nil {
+				m.DataServerStatus = &DataServerStatus{}
 			}
-			if err := m.Status.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.DataServerStatus.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -4566,7 +4566,7 @@ func (m *DataServerView) UnmarshalVTUnsafe(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Status", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field DataServerStatus", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -4593,10 +4593,10 @@ func (m *DataServerView) UnmarshalVTUnsafe(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.Status == nil {
-				m.Status = &DataServerStatus{}
+			if m.DataServerStatus == nil {
+				m.DataServerStatus = &DataServerStatus{}
 			}
-			if err := m.Status.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+			if err := m.DataServerStatus.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

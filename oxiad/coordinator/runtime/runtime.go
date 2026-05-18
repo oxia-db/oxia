@@ -106,13 +106,10 @@ func (c *runtime) ListDataServerStatus() map[string]*proto.DataServerStatus {
 	defer c.RUnlock()
 
 	statuses := make(map[string]*proto.DataServerStatus, len(c.dataServerControllers)+len(c.drainingNodes))
-	shardCounts, leaderShardCounts := c.dataServerShardCounts()
 	addStatus := func(name string, dataServerController controller.DataServerController) {
 		statuses[name] = &proto.DataServerStatus{
 			State:             dataServerController.Status().ToProto(),
 			SupportedFeatures: dataServerController.SupportedFeatures(),
-			ShardCount:        shardCounts[name],
-			LeaderShardCount:  leaderShardCounts[name],
 		}
 	}
 	for name, dataServerController := range c.dataServerControllers {
@@ -128,23 +125,6 @@ func (c *runtime) GetDataServerStatus(name string) (*proto.DataServerStatus, boo
 	statuses := c.ListDataServerStatus()
 	status, found := statuses[name]
 	return status, found
-}
-
-func (c *runtime) dataServerShardCounts() (shardCounts map[string]uint32, leaderShardCounts map[string]uint32) {
-	shardCounts = make(map[string]uint32)
-	leaderShardCounts = make(map[string]uint32)
-	for _, borrowedNamespace := range c.metadata.ListNamespaceStatus() {
-		namespace := borrowedNamespace.UnsafeBorrow()
-		for _, shard := range namespace.GetShards() {
-			if leader := shard.GetLeader(); leader != nil {
-				leaderShardCounts[leader.GetNameOrDefault()]++
-			}
-			for _, dataServer := range shard.GetEnsemble() {
-				shardCounts[dataServer.GetNameOrDefault()]++
-			}
-		}
-	}
-	return shardCounts, leaderShardCounts
 }
 
 func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bool {

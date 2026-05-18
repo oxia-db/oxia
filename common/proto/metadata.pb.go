@@ -400,8 +400,6 @@ type DataServerStatus struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	State             DataServerState        `protobuf:"varint,1,opt,name=state,proto3,enum=io.oxia.proto.v1.DataServerState" json:"state,omitempty"`
 	SupportedFeatures []Feature              `protobuf:"varint,2,rep,packed,name=supported_features,json=supportedFeatures,proto3,enum=replication.Feature" json:"supported_features,omitempty"`
-	ShardCount        uint32                 `protobuf:"varint,3,opt,name=shard_count,json=shardCount,proto3" json:"shard_count,omitempty"`
-	LeaderShardCount  uint32                 `protobuf:"varint,4,opt,name=leader_shard_count,json=leaderShardCount,proto3" json:"leader_shard_count,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -448,20 +446,6 @@ func (x *DataServerStatus) GetSupportedFeatures() []Feature {
 		return x.SupportedFeatures
 	}
 	return nil
-}
-
-func (x *DataServerStatus) GetShardCount() uint32 {
-	if x != nil {
-		return x.ShardCount
-	}
-	return 0
-}
-
-func (x *DataServerStatus) GetLeaderShardCount() uint32 {
-	if x != nil {
-		return x.LeaderShardCount
-	}
-	return 0
 }
 
 type AntiAffinity struct {
@@ -1213,13 +1197,10 @@ const file_metadata_proto_rawDesc = "" +
 	"\n" +
 	"DataServer\x12@\n" +
 	"\bidentity\x18\x01 \x01(\v2$.io.oxia.proto.v1.DataServerIdentityR\bidentity\x12@\n" +
-	"\bmetadata\x18\x02 \x01(\v2$.io.oxia.proto.v1.DataServerMetadataR\bmetadata\"\xdf\x01\n" +
+	"\bmetadata\x18\x02 \x01(\v2$.io.oxia.proto.v1.DataServerMetadataR\bmetadata\"\x90\x01\n" +
 	"\x10DataServerStatus\x127\n" +
 	"\x05state\x18\x01 \x01(\x0e2!.io.oxia.proto.v1.DataServerStateR\x05state\x12C\n" +
-	"\x12supported_features\x18\x02 \x03(\x0e2\x14.replication.FeatureR\x11supportedFeatures\x12\x1f\n" +
-	"\vshard_count\x18\x03 \x01(\rR\n" +
-	"shardCount\x12,\n" +
-	"\x12leader_shard_count\x18\x04 \x01(\rR\x10leaderShardCount\":\n" +
+	"\x12supported_features\x18\x02 \x03(\x0e2\x14.replication.FeatureR\x11supportedFeatures\":\n" +
 	"\fAntiAffinity\x12\x16\n" +
 	"\x06labels\x18\x01 \x03(\tR\x06labels\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\"\xbc\x02\n" +
