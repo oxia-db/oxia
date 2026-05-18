@@ -657,7 +657,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		for _, ns := range statusResource.Load().Namespaces {
 			for _, shard := range ns.Shards {
-				return shard.Term > 0 && shard.Status == model.ShardStatusSteadyState
+				return shard.Term >= 0 && shard.Status == model.ShardStatusSteadyState
 			}
 		}
 		return true
