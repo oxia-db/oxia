@@ -3112,10 +3112,6 @@ func (m *DataServerStatus) UnmarshalVT(dAtA []byte) error {
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
 				}
-				var elementCount int
-				if elementCount != 0 && len(m.SupportedFeatures) == 0 {
-					m.SupportedFeatures = make([]Feature, 0, elementCount)
-				}
 				for iNdEx < postIndex {
 					var v Feature
 					for shift := uint(0); ; shift += 7 {
@@ -6054,10 +6050,6 @@ func (m *DataServerStatus) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
-				}
-				var elementCount int
-				if elementCount != 0 && len(m.SupportedFeatures) == 0 {
-					m.SupportedFeatures = make([]Feature, 0, elementCount)
 				}
 				for iNdEx < postIndex {
 					var v Feature

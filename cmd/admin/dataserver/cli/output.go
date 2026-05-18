@@ -79,16 +79,6 @@ func WriteDataServerView(out io.Writer, format string, dataServer *proto.DataSer
 	}
 }
 
-func dataServerView(dataServer *proto.DataServer, status *proto.DataServerStatus) *proto.DataServerView {
-	if status == nil {
-		status = &proto.DataServerStatus{}
-	}
-	return &proto.DataServerView{
-		DataServer: dataServer,
-		Status:     status,
-	}
-}
-
 func writeDataServerConfigTable(out io.Writer, dataServers []*proto.DataServer) error {
 	tw := commons.NewTableWriter(out)
 	if _, err := fmt.Fprintln(tw, "NAME\tPUBLIC\tINTERNAL\tLABELS"); err != nil {
