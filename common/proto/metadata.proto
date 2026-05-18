@@ -18,6 +18,8 @@ package io.oxia.proto.v1;
 
 option go_package = "github.com/oxia-db/oxia/common/proto";
 
+import "replication.proto";
+
 message DataServerIdentity {
   optional string name = 1;
   string public = 2;
@@ -31,6 +33,18 @@ message DataServerMetadata {
 message DataServer {
   DataServerIdentity identity = 1;
   DataServerMetadata metadata = 2;
+}
+
+enum DataServerState {
+  DATA_SERVER_STATE_UNSPECIFIED = 0;
+  DATA_SERVER_STATE_RUNNING = 1;
+  DATA_SERVER_STATE_UNAVAILABLE = 2;
+  DATA_SERVER_STATE_DRAINING = 3;
+}
+
+message DataServerStatus {
+  DataServerState state = 1;
+  repeated replication.Feature supported_features = 2;
 }
 
 message AntiAffinity {

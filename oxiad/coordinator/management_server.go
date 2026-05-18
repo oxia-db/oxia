@@ -26,7 +26,7 @@ import (
 	"github.com/oxia-db/oxia/common/validation"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
 var _ proto.OxiaAdminServer = (*managementServer)(nil)
@@ -34,36 +34,32 @@ var _ proto.OxiaAdminServer = (*managementServer)(nil)
 type managementServer struct {
 	proto.UnimplementedOxiaAdminServer
 
-	metadata      coordmetadata.Metadata
-	shardSplitter controller.ShardSplitter
+	metadata coordmetadata.Metadata
+	runtime  coordruntime.Runtime
 }
 
 func (management *managementServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
-	cnf := management.metadata.GetConfig().UnsafeBorrow()
+	config := management.metadata.GetConfig().UnsafeBorrow()
+	statuses := management.runtime.ListDataServerStatus()
 
-	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
-	for _, server := range cnf.GetServers() {
-		id := server.GetNameOrDefault()
-		identity := server
-		if server.GetName() == "" {
-			name := id
-			identity = &proto.DataServerIdentity{
-				Name:     &name,
-				Public:   server.GetPublic(),
-				Internal: server.GetInternal(),
-			}
+	views := make([]*proto.DataServerView, 0, len(config.GetServers()))
+	for _, server := range config.GetServers() {
+		name := server.GetNameOrDefault()
+		dataServer, found := config.GetDataServer(name)
+		if !found {
+			continue
 		}
-		metadata := &proto.DataServerMetadata{}
-		if value, found := cnf.GetServerMetadata()[id]; found {
-			metadata = value
+		status := statuses[name]
+		if status == nil {
+			status = &proto.DataServerStatus{}
 		}
-		dataServers = append(dataServers, &proto.DataServer{
-			Identity: identity,
-			Metadata: metadata,
+		views = append(views, &proto.DataServerView{
+			DataServer:       dataServer,
+			DataServerStatus: status,
 		})
 	}
 
-	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
+	return &proto.ListDataServersResponse{DataServers: views}, nil
 }
 
 func (management *managementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
@@ -76,8 +72,16 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
 
+	status := &proto.DataServerStatus{}
+	if runtimeStatus, found := management.runtime.GetDataServerStatus(req.DataServer); found && runtimeStatus != nil {
+		status = runtimeStatus
+	}
+
 	return &proto.GetDataServerResponse{
-		DataServer: borrowedDataServer.UnsafeBorrow(),
+		DataServer: &proto.DataServerView{
+			DataServer:       borrowedDataServer.UnsafeBorrow(),
+			DataServerStatus: status,
+		},
 	}, nil
 }
 
@@ -296,17 +300,13 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 }
 
 func (management *managementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
-	if management.shardSplitter == nil {
-		return nil, errors.New("split shard not supported")
-	}
-
 	slog.Info("Received SplitShard request",
 		slog.String("namespace", req.Namespace),
 		slog.Int64("shard", req.Shard),
 		slog.Any("split-point", req.SplitPoint),
 	)
 
-	left, right, err := management.shardSplitter.InitiateSplit(req.Namespace, req.Shard, req.SplitPoint)
+	left, right, err := management.runtime.InitiateSplit(req.Namespace, req.Shard, req.SplitPoint)
 	if err != nil {
 		return nil, err
 	}
@@ -319,10 +319,13 @@ func (management *managementServer) SplitShard(_ context.Context, req *proto.Spl
 
 func newManagementServer(
 	metadata coordmetadata.Metadata,
-	shardSplitter controller.ShardSplitter,
+	runtime coordruntime.Runtime,
 ) *managementServer {
+	if runtime == nil {
+		panic("runtime must not be nil")
+	}
 	return &managementServer{
-		metadata:      metadata,
-		shardSplitter: shardSplitter,
+		metadata: metadata,
+		runtime:  runtime,
 	}
 }

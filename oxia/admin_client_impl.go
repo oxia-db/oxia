@@ -35,7 +35,7 @@ type adminClientImpl struct {
 	clientPool rpc.ClientPool
 }
 
-func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
+func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServerView, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -52,7 +52,7 @@ func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
 	return response.DataServers, nil
 }
 
-func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServer, error) {
+func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServerView, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)

@@ -45,17 +45,17 @@ func (m *MockAdminClient) ListNamespaces() ([]*proto.Namespace, error) {
 	return nil, errors.New("no namespaces available")
 }
 
-func (m *MockAdminClient) ListDataServers() ([]*proto.DataServer, error) {
+func (m *MockAdminClient) ListDataServers() ([]*proto.DataServerView, error) {
 	args := m.MethodCalled("ListDataServers")
-	if v, ok := args.Get(0).([]*proto.DataServer); ok {
+	if v, ok := args.Get(0).([]*proto.DataServerView); ok {
 		return v, args.Error(1)
 	}
 	return nil, errors.New("no data servers available")
 }
 
-func (m *MockAdminClient) GetDataServer(dataServer string) (*proto.DataServer, error) {
+func (m *MockAdminClient) GetDataServer(dataServer string) (*proto.DataServerView, error) {
 	args := m.MethodCalled("GetDataServer", dataServer)
-	if v, ok := args.Get(0).(*proto.DataServer); ok {
+	if v, ok := args.Get(0).(*proto.DataServerView); ok {
 		return v, args.Error(1)
 	}
 	return nil, errors.New("data server not found")

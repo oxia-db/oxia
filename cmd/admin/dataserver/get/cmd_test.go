@@ -41,12 +41,21 @@ func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	return strings.TrimSpace(actual.String()), err
 }
 
+func dataServerView(dataServer *proto.DataServer) *proto.DataServerView {
+	return &proto.DataServerView{
+		DataServer: dataServer,
+		DataServerStatus: &proto.DataServerStatus{
+			State: proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+		},
+	}
+}
+
 func Test_cmd_getDataServer(t *testing.T) {
 	serverName := "server-1"
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServer{
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(dataServerView(&proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &serverName,
 			Public:   "public1",
@@ -55,7 +64,7 @@ func Test_cmd_getDataServer(t *testing.T) {
 		Metadata: &proto.DataServerMetadata{
 			Labels: map[string]string{"rack": "rack-1"},
 		},
-	}, nil)
+	}), nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -68,14 +77,15 @@ func Test_cmd_getDataServer(t *testing.T) {
 	out, err := runCmd(cmd, "-o", "json", serverName)
 
 	assert.NoError(t, err)
-	var dataServer proto.DataServer
+	var dataServer proto.DataServerView
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServer))
-	require.NotNil(t, dataServer.Identity)
-	assert.NotNil(t, dataServer.Identity.Name)
-	assert.Equal(t, serverName, *dataServer.Identity.Name)
-	assert.Equal(t, "public1", dataServer.Identity.GetPublic())
-	assert.Equal(t, "internal1", dataServer.Identity.GetInternal())
-	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
+	require.NotNil(t, dataServer.GetDataServer().GetIdentity())
+	assert.NotNil(t, dataServer.GetDataServer().GetIdentity().Name)
+	assert.Equal(t, serverName, dataServer.GetDataServer().GetIdentity().GetName())
+	assert.Equal(t, "public1", dataServer.GetDataServer().GetIdentity().GetPublic())
+	assert.Equal(t, "internal1", dataServer.GetDataServer().GetIdentity().GetInternal())
+	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.GetDataServer().GetMetadata().GetLabels())
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, dataServer.GetDataServerStatus().GetState())
 }
 
 func Test_cmd_getDataServersIdentities(t *testing.T) {
@@ -84,8 +94,8 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServer{
-		{
+	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServerView{
+		dataServerView(&proto.DataServer{
 			Identity: &proto.DataServerIdentity{
 				Name:     &serverName1,
 				Public:   "public1",
@@ -94,8 +104,8 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 			Metadata: &proto.DataServerMetadata{
 				Labels: map[string]string{"rack": "rack-1"},
 			},
-		},
-		{
+		}),
+		dataServerView(&proto.DataServer{
 			Identity: &proto.DataServerIdentity{
 				Name:     &serverName2,
 				Public:   "public2",
@@ -104,7 +114,7 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 			Metadata: &proto.DataServerMetadata{
 				Labels: map[string]string{"rack": "rack-2"},
 			},
-		},
+		}),
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -118,21 +128,21 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 	out, err := runCmd(cmd, "-o", "json")
 
 	assert.NoError(t, err)
-	var dataServers []proto.DataServer
+	var dataServers []proto.DataServerView
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServers))
 	require.Len(t, dataServers, 2)
-	require.NotNil(t, dataServers[0].Identity)
-	require.NotNil(t, dataServers[1].Identity)
-	require.NotNil(t, dataServers[0].Identity.Name)
-	require.NotNil(t, dataServers[1].Identity.Name)
-	assert.Equal(t, serverName1, *dataServers[0].Identity.Name)
-	assert.Equal(t, serverName2, *dataServers[1].Identity.Name)
-	assert.Equal(t, "public1", dataServers[0].Identity.GetPublic())
-	assert.Equal(t, "public2", dataServers[1].Identity.GetPublic())
-	assert.Equal(t, "internal1", dataServers[0].Identity.GetInternal())
-	assert.Equal(t, "internal2", dataServers[1].Identity.GetInternal())
-	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServers[0].Metadata.GetLabels())
-	require.Equal(t, map[string]string{"rack": "rack-2"}, dataServers[1].Metadata.GetLabels())
+	require.NotNil(t, dataServers[0].GetDataServer().GetIdentity())
+	require.NotNil(t, dataServers[1].GetDataServer().GetIdentity())
+	require.NotNil(t, dataServers[0].GetDataServer().GetIdentity().Name)
+	require.NotNil(t, dataServers[1].GetDataServer().GetIdentity().Name)
+	assert.Equal(t, serverName1, dataServers[0].GetDataServer().GetIdentity().GetName())
+	assert.Equal(t, serverName2, dataServers[1].GetDataServer().GetIdentity().GetName())
+	assert.Equal(t, "public1", dataServers[0].GetDataServer().GetIdentity().GetPublic())
+	assert.Equal(t, "public2", dataServers[1].GetDataServer().GetIdentity().GetPublic())
+	assert.Equal(t, "internal1", dataServers[0].GetDataServer().GetIdentity().GetInternal())
+	assert.Equal(t, "internal2", dataServers[1].GetDataServer().GetIdentity().GetInternal())
+	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServers[0].GetDataServer().GetMetadata().GetLabels())
+	require.Equal(t, map[string]string{"rack": "rack-2"}, dataServers[1].GetDataServer().GetMetadata().GetLabels())
 }
 
 func Test_cmd_getDataServer_YAML(t *testing.T) {
@@ -140,7 +150,7 @@ func Test_cmd_getDataServer_YAML(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServer{
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(dataServerView(&proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &serverName,
 			Public:   "public1",
@@ -149,7 +159,7 @@ func Test_cmd_getDataServer_YAML(t *testing.T) {
 		Metadata: &proto.DataServerMetadata{
 			Labels: map[string]string{"rack": "rack-1"},
 		},
-	}, nil)
+	}), nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -164,7 +174,9 @@ func Test_cmd_getDataServer_YAML(t *testing.T) {
 	assert.NoError(t, err)
 	var dataServer map[string]any
 	require.NoError(t, yaml.Unmarshal([]byte(out), &dataServer))
-	identity, ok := dataServer["identity"].(map[string]any)
+	ds, ok := dataServer["dataserver"].(map[string]any)
+	require.True(t, ok)
+	identity, ok := ds["identity"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, serverName, identity["name"])
 	assert.Equal(t, "public1", identity["public"])
@@ -177,21 +189,21 @@ func Test_cmd_getDataServersIdentities_Name(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServer{
-		{
+	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServerView{
+		dataServerView(&proto.DataServer{
 			Identity: &proto.DataServerIdentity{
 				Name:     &serverName1,
 				Public:   "public1",
 				Internal: "internal1",
 			},
-		},
-		{
+		}),
+		dataServerView(&proto.DataServer{
 			Identity: &proto.DataServerIdentity{
 				Name:     &serverName2,
 				Public:   "public2",
 				Internal: "internal2",
 			},
-		},
+		}),
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -231,7 +243,7 @@ func Test_cmd_getDataServer_DefaultTable(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServer{
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(dataServerView(&proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &serverName,
 			Public:   "public1",
@@ -240,7 +252,7 @@ func Test_cmd_getDataServer_DefaultTable(t *testing.T) {
 		Metadata: &proto.DataServerMetadata{
 			Labels: map[string]string{"rack": "rack-1"},
 		},
-	}, nil)
+	}), nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -256,6 +268,7 @@ func Test_cmd_getDataServer_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "NAME")
 	assert.Contains(t, out, "PUBLIC")
 	assert.Contains(t, out, "INTERNAL")
+	assert.Contains(t, out, "STATE")
 	assert.Contains(t, out, "LABELS")
 	assert.Contains(t, out, "server-1")
 	assert.Contains(t, out, "public1")
@@ -269,21 +282,21 @@ func Test_cmd_getDataServersIdentities_DefaultTable(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServer{
-		{
+	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServerView{
+		dataServerView(&proto.DataServer{
 			Identity: &proto.DataServerIdentity{
 				Name:     &serverName1,
 				Public:   "public1",
 				Internal: "internal1",
 			},
-		},
-		{
+		}),
+		dataServerView(&proto.DataServer{
 			Identity: &proto.DataServerIdentity{
 				Name:     &serverName2,
 				Public:   "public2",
 				Internal: "internal2",
 			},
-		},
+		}),
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -300,6 +313,7 @@ func Test_cmd_getDataServersIdentities_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "NAME")
 	assert.Contains(t, out, "PUBLIC")
 	assert.Contains(t, out, "INTERNAL")
+	assert.Contains(t, out, "STATE")
 	assert.Contains(t, out, "server-1")
 	assert.Contains(t, out, "public1")
 	assert.Contains(t, out, "internal1")

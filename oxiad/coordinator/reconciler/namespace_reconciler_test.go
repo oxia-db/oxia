@@ -342,6 +342,14 @@ func (*mockNamespaceRuntime) ListDataServer() map[string]commonobject.Borrowed[*
 	return nil
 }
 
+func (*mockNamespaceRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus {
+	return nil
+}
+
+func (*mockNamespaceRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) {
+	return nil, false
+}
+
 func (*mockNamespaceRuntime) LoadBalancer() balancer.LoadBalancer { return nil }
 
 func (m *mockNamespaceRuntime) Metadata() coordmetadata.Metadata { return m.metadata }
