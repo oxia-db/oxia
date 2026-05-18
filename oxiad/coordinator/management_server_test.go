@@ -16,6 +16,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,9 +29,12 @@ import (
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 )
 
 func dataServer(name *string, public, internal string) *proto.DataServerIdentity {
@@ -72,11 +76,67 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 	return metadata
 }
 
+type mockManagementRuntime struct {
+	metadata coordmetadata.Metadata
+}
+
+func newTestManagementServer(metadata coordmetadata.Metadata, runtime coordruntime.Runtime) *managementServer {
+	if runtime == nil {
+		runtime = &mockManagementRuntime{metadata: metadata}
+	}
+	return newManagementServer(metadata, runtime)
+}
+
+func (*mockManagementRuntime) Close() error { return nil }
+
+func (*mockManagementRuntime) InitiateSplit(string, int64, *uint32) (leftChild, rightChild int64, err error) {
+	return 0, 0, errors.New("split shard not supported")
+}
+
+func (*mockManagementRuntime) LeaderElected(int64, *proto.DataServerIdentity, []*proto.DataServerIdentity) {
+}
+
+func (*mockManagementRuntime) ShardDeleted(int64) {}
+
+func (*mockManagementRuntime) WaitForNextUpdate(context.Context, *proto.ShardAssignments) (*proto.ShardAssignments, error) {
+	return nil, context.Canceled
+}
+
+func (*mockManagementRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
+
+func (*mockManagementRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
+
+func (*mockManagementRuntime) DeleteDataServer(string) {}
+
+func (*mockManagementRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
+	return nil
+}
+
+func (*mockManagementRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus {
+	return map[string]*proto.DataServerStatus{}
+}
+
+func (*mockManagementRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) {
+	return nil, false
+}
+
+func (*mockManagementRuntime) CreateNamespace(string, *proto.Namespace) bool { return false }
+
+func (*mockManagementRuntime) DeleteNamespace(string) {}
+
+func (*mockManagementRuntime) LoadBalancer() balancer.LoadBalancer { return nil }
+
+func (m *mockManagementRuntime) Metadata() coordmetadata.Metadata { return m.metadata }
+
+func (*mockManagementRuntime) RecomputeAssignments() {}
+
+func (*mockManagementRuntime) SyncShardControllerServerAddresses() {}
+
 func TestManagementServerListDataServers(t *testing.T) {
 	serverName1 := "server-1"
 	serverName2 := "server-2"
 
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName1, "public-1", "internal-1"),
@@ -124,7 +184,7 @@ func TestManagementServerListDataServers(t *testing.T) {
 func TestManagementServerGetDataServerByName(t *testing.T) {
 	serverName := "server-2"
 
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-2", "internal-2"),
@@ -152,7 +212,7 @@ func TestManagementServerGetDataServerByName(t *testing.T) {
 func TestManagementServerGetDataServerByIdentifierFallback(t *testing.T) {
 	serverName := "server-2"
 
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-2", "internal-2"),
@@ -184,7 +244,7 @@ func TestManagementServerGetDataServerByIdentifierFallback(t *testing.T) {
 }
 
 func TestManagementServerGetDataServerNotFound(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(nil, "public-1", "internal-1"),
@@ -199,7 +259,7 @@ func TestManagementServerGetDataServerNotFound(t *testing.T) {
 }
 
 func TestManagementServerGetDataServerRejectsEmptyLookup(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -210,7 +270,7 @@ func TestManagementServerGetDataServerRejectsEmptyLookup(t *testing.T) {
 }
 
 func TestManagementServerGetNamespace(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
 				Name:              "ns-1",
@@ -233,7 +293,7 @@ func TestManagementServerGetNamespace(t *testing.T) {
 }
 
 func TestManagementServerListNamespaces(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{
 				{
@@ -262,7 +322,7 @@ func TestManagementServerCreateNamespace(t *testing.T) {
 	serverName1 := "server-1"
 	serverName2 := "server-2"
 	serverName3 := "server-3"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName1, "public-1", "internal-1"),
@@ -298,7 +358,7 @@ func TestManagementServerCreateNamespace(t *testing.T) {
 }
 
 func TestManagementServerCreateNamespaceRejectsInvalidRequest(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -363,7 +423,7 @@ func TestManagementServerCreateNamespaceRejectsInvalidRequest(t *testing.T) {
 
 func TestManagementServerCreateNamespacePreservesKeySorting(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-1", "internal-1"),
@@ -387,7 +447,7 @@ func TestManagementServerCreateNamespacePreservesKeySorting(t *testing.T) {
 
 func TestManagementServerCreateNamespaceAlreadyExists(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
 				Name:              "ns-1",
@@ -415,7 +475,7 @@ func TestManagementServerCreateNamespaceAlreadyExists(t *testing.T) {
 
 func TestManagementServerCreateNamespaceFailedPrecondition(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-1", "internal-1"),
@@ -439,7 +499,7 @@ func TestManagementServerCreateNamespaceFailedPrecondition(t *testing.T) {
 func TestManagementServerPatchNamespace(t *testing.T) {
 	serverName1 := "server-1"
 	serverName2 := "server-2"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
 				Name:              "ns-1",
@@ -482,7 +542,7 @@ func TestManagementServerPatchNamespace(t *testing.T) {
 
 func TestManagementServerPatchNamespaceRejectsAntiAffinities(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
 				Name:              "ns-1",
@@ -524,7 +584,7 @@ func TestManagementServerPatchNamespaceRejectsAntiAffinities(t *testing.T) {
 func TestManagementServerPatchNamespacePreservesUnspecifiedFields(t *testing.T) {
 	serverName := "server-1"
 	notificationsEnabled := true
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
 				Name:                 "ns-1",
@@ -555,7 +615,7 @@ func TestManagementServerPatchNamespacePreservesUnspecifiedFields(t *testing.T) 
 }
 
 func TestManagementServerPatchNamespaceRejectsInvalidRequest(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -598,7 +658,7 @@ func TestManagementServerPatchNamespaceRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestManagementServerPatchNamespaceNotFound(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -615,7 +675,7 @@ func TestManagementServerPatchNamespaceNotFound(t *testing.T) {
 
 func TestManagementServerPatchNamespaceFailedPrecondition(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
 				Name:              "ns-1",
@@ -642,7 +702,7 @@ func TestManagementServerPatchNamespaceFailedPrecondition(t *testing.T) {
 
 func TestManagementServerDeleteNamespace(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{
 				{
@@ -681,7 +741,7 @@ func TestManagementServerDeleteNamespace(t *testing.T) {
 }
 
 func TestManagementServerDeleteNamespaceRejectsInvalidRequest(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -705,7 +765,7 @@ func TestManagementServerDeleteNamespaceRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestManagementServerDeleteNamespaceNotFound(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -716,7 +776,7 @@ func TestManagementServerDeleteNamespaceNotFound(t *testing.T) {
 }
 
 func TestManagementServerGetNamespaceRejectsEmptyLookup(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -727,7 +787,7 @@ func TestManagementServerGetNamespaceRejectsEmptyLookup(t *testing.T) {
 }
 
 func TestManagementServerGetNamespaceNotFound(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -738,7 +798,7 @@ func TestManagementServerGetNamespaceNotFound(t *testing.T) {
 }
 
 func TestManagementServerCreateDataServer(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -772,7 +832,7 @@ func TestManagementServerCreateDataServer(t *testing.T) {
 }
 
 func TestManagementServerCreateDataServerRejectsInvalidRequest(t *testing.T) {
-	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
+	management := newTestManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
 	serverName := "server-1"
 
 	testCases := []struct {
@@ -798,7 +858,7 @@ func TestManagementServerCreateDataServerRejectsInvalidRequest(t *testing.T) {
 
 func TestManagementServerCreateDataServerAlreadyExists(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-1", "internal-1"),
@@ -822,7 +882,7 @@ func TestManagementServerCreateDataServerAlreadyExists(t *testing.T) {
 
 func TestManagementServerPatchDataServer(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-1", "internal-1"),
@@ -863,7 +923,7 @@ func TestManagementServerPatchDataServer(t *testing.T) {
 }
 
 func TestManagementServerPatchDataServerRejectsInvalidRequest(t *testing.T) {
-	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
+	management := newTestManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
 
 	testCases := []struct {
 		name string
@@ -886,7 +946,7 @@ func TestManagementServerPatchDataServerRejectsInvalidRequest(t *testing.T) {
 
 func TestManagementServerPatchDataServerNotFound(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -905,7 +965,7 @@ func TestManagementServerPatchDataServerNotFound(t *testing.T) {
 
 func TestManagementServerDeleteDataServer(t *testing.T) {
 	serverName := "server-1"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Servers: []*proto.DataServerIdentity{
 				dataServer(&serverName, "public-1", "internal-1"),
@@ -933,7 +993,7 @@ func TestManagementServerDeleteDataServer(t *testing.T) {
 }
 
 func TestManagementServerDeleteDataServerRejectsInvalidRequest(t *testing.T) {
-	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
+	management := newTestManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
 
 	testCases := []struct {
 		name string
@@ -953,7 +1013,7 @@ func TestManagementServerDeleteDataServerRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestManagementServerDeleteDataServerNotFound(t *testing.T) {
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),
 		nil,
 	)
@@ -966,7 +1026,7 @@ func TestManagementServerDeleteDataServerNotFound(t *testing.T) {
 func TestManagementServerDeleteDataServerFailedPrecondition(t *testing.T) {
 	serverName1 := "server-1"
 	serverName2 := "server-2"
-	management := newManagementServer(
+	management := newTestManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{
 				Name:              "default",

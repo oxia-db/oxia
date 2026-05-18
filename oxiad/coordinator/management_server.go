@@ -40,7 +40,7 @@ type managementServer struct {
 
 func (management *managementServer) ListDataServers(context.Context, *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
 	config := management.metadata.GetConfig().UnsafeBorrow()
-	statuses := management.listDataServerStatus()
+	statuses := management.runtime.ListDataServerStatus()
 
 	views := make([]*proto.DataServerView, 0, len(config.GetServers()))
 	for _, server := range config.GetServers() {
@@ -49,7 +49,14 @@ func (management *managementServer) ListDataServers(context.Context, *proto.List
 		if !found {
 			continue
 		}
-		views = append(views, dataServerView(dataServer, statuses[name]))
+		status := statuses[name]
+		if status == nil {
+			status = &proto.DataServerStatus{}
+		}
+		views = append(views, &proto.DataServerView{
+			DataServer:       dataServer,
+			DataServerStatus: status,
+		})
 	}
 
 	return &proto.ListDataServersResponse{DataServers: views}, nil
@@ -65,37 +72,17 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
 
+	status := &proto.DataServerStatus{}
+	if runtimeStatus, found := management.runtime.GetDataServerStatus(req.DataServer); found && runtimeStatus != nil {
+		status = runtimeStatus
+	}
+
 	return &proto.GetDataServerResponse{
-		DataServer: dataServerView(borrowedDataServer.UnsafeBorrow(), management.getDataServerStatus(req.DataServer)),
+		DataServer: &proto.DataServerView{
+			DataServer:       borrowedDataServer.UnsafeBorrow(),
+			DataServerStatus: status,
+		},
 	}, nil
-}
-
-func dataServerView(dataServer *proto.DataServer, status *proto.DataServerStatus) *proto.DataServerView {
-	if status == nil {
-		status = &proto.DataServerStatus{}
-	}
-	return &proto.DataServerView{
-		DataServer:       dataServer,
-		DataServerStatus: status,
-	}
-}
-
-func (management *managementServer) listDataServerStatus() map[string]*proto.DataServerStatus {
-	if management.runtime == nil {
-		return map[string]*proto.DataServerStatus{}
-	}
-	return management.runtime.ListDataServerStatus()
-}
-
-func (management *managementServer) getDataServerStatus(name string) *proto.DataServerStatus {
-	if management.runtime == nil {
-		return nil
-	}
-	status, found := management.runtime.GetDataServerStatus(name)
-	if !found {
-		return nil
-	}
-	return status
 }
 
 func (management *managementServer) CreateDataServer(_ context.Context, req *proto.CreateDataServerRequest) (*proto.CreateDataServerResponse, error) {
@@ -313,10 +300,6 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 }
 
 func (management *managementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
-	if management.runtime == nil {
-		return nil, errors.New("split shard not supported")
-	}
-
 	slog.Info("Received SplitShard request",
 		slog.String("namespace", req.Namespace),
 		slog.Int64("shard", req.Shard),
@@ -338,6 +321,9 @@ func newManagementServer(
 	metadata coordmetadata.Metadata,
 	runtime coordruntime.Runtime,
 ) *managementServer {
+	if runtime == nil {
+		panic("runtime must not be nil")
+	}
 	return &managementServer{
 		metadata: metadata,
 		runtime:  runtime,
