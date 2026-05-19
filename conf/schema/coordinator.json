@@ -3,27 +3,6 @@
   "$id": "https://github.com/oxia-db/oxia/oxiad/coordinator/option/options",
   "$ref": "#/$defs/Options",
   "$defs": {
-    "AdminServerOptions": {
-      "properties": {
-        "bindAddress": {
-          "type": "string",
-          "format": "hostname",
-          "description": "Bind address for the admin API server",
-          "examples": [
-            "0.0.0.0:6650"
-          ]
-        },
-        "tls": {
-          "$ref": "#/$defs/TLSOptions",
-          "description": "TLS configuration for securing admin API connections"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "bindAddress"
-      ]
-    },
     "ClusterOptions": {
       "properties": {
         "configPath": {
@@ -58,23 +37,16 @@
         },
         "statusName": {
           "type": "string",
-          "description": "File name for cluster status, or full path when dir is unset",
+          "description": "File name for cluster status",
           "examples": [
             "cluster-status.json"
           ]
         },
         "configName": {
           "type": "string",
-          "description": "File name for cluster configuration, or full path when dir is unset",
+          "description": "File name for cluster configuration",
           "examples": [
             "cluster.yaml"
-          ]
-        },
-        "path": {
-          "type": "string",
-          "description": "Deprecated file system path for cluster status metadata",
-          "examples": [
-            "./metadata/cluster-status.json"
           ]
         }
       },
@@ -90,6 +62,10 @@
           "examples": [
             "0.0.0.0:6649"
           ]
+        },
+        "auth": {
+          "$ref": "#/$defs/Options",
+          "description": "Authentication configuration for internal server-to-server communication"
         },
         "tls": {
           "$ref": "#/$defs/TLSOptions",
@@ -124,13 +100,6 @@
           "examples": [
             "oxia-cluster-config"
           ]
-        },
-        "configMapName": {
-          "type": "string",
-          "description": "Deprecated name of the ConfigMap for cluster status",
-          "examples": [
-            "oxia-cluster-status"
-          ]
         }
       },
       "additionalProperties": false,
@@ -155,6 +124,13 @@
     },
     "MetadataOptions": {
       "properties": {
+        "identity": {
+          "type": "string",
+          "description": "Stable coordinator identity used by metadata leader election",
+          "examples": [
+            "coordinator-0"
+          ]
+        },
         "providerName": {
           "type": "string",
           "description": "Metadata provider type. Valid values: memory/configmap/file/raft",
@@ -195,6 +171,10 @@
           "examples": [
             "0.0.0.0:8080"
           ]
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for the metrics endpoint"
         }
       },
       "additionalProperties": false,
@@ -225,7 +205,7 @@
         },
         "server": {
           "$ref": "#/$defs/ServerOptions",
-          "description": "Server configuration for admin and internal endpoints"
+          "description": "Server configuration for public and internal endpoints"
         },
         "controller": {
           "$ref": "#/$defs/ControllerOptions",
@@ -248,20 +228,77 @@
         "observability"
       ]
     },
+    "PublicServerOptions": {
+      "properties": {
+        "bindAddress": {
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for the public API server",
+          "examples": [
+            "0.0.0.0:6651"
+          ]
+        },
+        "advertiseAddress": {
+          "type": "string",
+          "format": "hostname",
+          "description": "Public address advertised to clients",
+          "examples": [
+            "coordinator-0:6651"
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/Options",
+          "description": "Authentication configuration for the public API"
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing public API connections"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bindAddress"
+      ]
+    },
+    "RaftMember": {
+      "properties": {
+        "raftAddress": {
+          "type": "string",
+          "description": "Raft transport address for this coordinator",
+          "examples": [
+            "coordinator-0:7000"
+          ]
+        },
+        "publicAddress": {
+          "type": "string",
+          "description": "Public client address for this coordinator",
+          "examples": [
+            "coordinator-0:6651"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "raftAddress",
+        "publicAddress"
+      ]
+    },
     "RaftMetadata": {
       "properties": {
-        "bootstrapNodes": {
-          "items": {
-            "type": "string"
+        "members": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RaftMember"
           },
-          "type": "array",
-          "description": "List of bootstrap nodes for Raft cluster initialization"
+          "type": "object",
+          "description": "Static Raft members keyed by coordinator identity"
         },
         "address": {
           "type": "string",
           "description": "Address of this node in the Raft cluster",
           "examples": [
-            "localhost:8080"
+            "localhost:7000"
           ]
         },
         "dataDir": {
@@ -275,16 +312,15 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "bootstrapNodes",
         "address",
         "dataDir"
       ]
     },
     "ServerOptions": {
       "properties": {
-        "admin": {
-          "$ref": "#/$defs/AdminServerOptions",
-          "description": "Admin server configuration for management API endpoints"
+        "public": {
+          "$ref": "#/$defs/PublicServerOptions",
+          "description": "Public server configuration for management API endpoints"
         },
         "internal": {
           "$ref": "#/$defs/InternalServerOptions",
@@ -294,7 +330,7 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "admin",
+        "public",
         "internal"
       ]
     },

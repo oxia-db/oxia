@@ -34,6 +34,7 @@ type Provider[T gproto.Message] interface {
 	Store(snapshot Versioned[T]) (newVersion metadataconstant.Version, err error)
 
 	WaitToBecomeLeader() error
+	GetLeader() string
 
 	Watch() *commonwatch.Watch[Versioned[T]]
 }

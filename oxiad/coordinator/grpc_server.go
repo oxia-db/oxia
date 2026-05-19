@@ -112,28 +112,32 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	if err != nil {
 		return nil, err
 	}
-	runtime, err = coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
-	if err != nil {
-		return nil, err
-	}
-	reconciler = coordreconciler.New(parent, runtime)
 
-	managementSv := options.Server.Admin
+	managementSv := options.Server.Public
 	managementSvTLS, err := managementSv.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
 	management := newManagementServer(
-		runtime.Metadata(),
-		runtime,
+		metadata,
+		&runtime,
 	)
-	managementGrpcServer, err = commonrpc.Default.StartGrpcServer("admin", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
+	managementGrpcServer, err = commonrpc.Default.StartGrpcServer("public", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, management)
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, managementSvTLS, &managementSv.Auth, nil)
 	if err != nil {
 		return nil, err
 	}
+
+	if err = metadataFactory.WaitToBecomeLeader(parent); err != nil {
+		return nil, err
+	}
+	runtime, err = coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
+	if err != nil {
+		return nil, err
+	}
+	reconciler = coordreconciler.New(parent, runtime)
 
 	metricsServer, err = startMetricsServer(options.Observability.Metric) //nolint:contextcheck
 	if err != nil {

@@ -80,6 +80,10 @@ func (mpr *Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
+func (mpr *Provider[T]) GetLeader() string {
+	return mpr.raft.GetLeader()
+}
+
 func (mpr *Provider[T]) Close() error {
 	mpr.ctxCancel()
 	mpr.wg.Wait()

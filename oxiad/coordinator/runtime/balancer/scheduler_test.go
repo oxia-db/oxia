@@ -56,6 +56,8 @@ func (*mockMetadata) Close() error { return nil }
 
 func (m *mockMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
 
+func (*mockMetadata) GetLeader() string { return "" }
+
 func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }
 
 func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool {

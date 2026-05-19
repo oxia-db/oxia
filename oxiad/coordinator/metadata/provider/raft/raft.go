@@ -34,6 +34,7 @@ type Raft struct {
 	sc          *stateContainer
 	node        *hashicorpraft.Raft
 	store       *kvRaftStore
+	members     map[string]Server
 	logger      *slog.Logger
 	interceptor Interceptor
 
@@ -41,24 +42,30 @@ type Raft struct {
 	closeErr  error
 }
 
+type Server struct {
+	Address       string
+	PublicAddress string
+}
+
 const raftDataDirMode = 0o755
 
 func New(
+	nodeID string,
 	raftAddress string,
-	raftBootstrapNodes []string,
+	raftMembers map[string]Server,
 	raftDataDir string,
 	interceptor Interceptor,
 ) (*Raft, error) {
 	metadataRaft := &Raft{
 		logger:      slog.With(slog.String("component", "metadata-provider-raft")),
 		interceptor: interceptor,
+		members:     raftMembers,
 	}
 	metadataRaft.sc = newStateContainer(
 		slog.With(slog.String("component", "metadata-provider-raft-state-container")),
 		metadataRaft.interceptor,
 	)
 
-	nodeID := raftAddress
 	dataDir := filepath.Join(raftDataDir, nodeID)
 	if err := os.MkdirAll(dataDir, raftDataDirMode); err != nil {
 		return nil, errors.Wrap(err, "failed to create data dir")
@@ -101,7 +108,7 @@ func New(
 		return nil, errors.Wrap(err, "failed to check existing state")
 	} else if !hasState {
 		configuration := hashicorpraft.Configuration{
-			Servers: getRaftServers(raftBootstrapNodes),
+			Servers: getRaftServers(raftMembers),
 		}
 		future := metadataRaft.node.BootstrapCluster(configuration)
 		if err := future.Error(); err != nil {
@@ -112,15 +119,20 @@ func New(
 	return metadataRaft, nil
 }
 
-func getRaftServers(bootstrapNodes []string) []hashicorpraft.Server {
-	servers := make([]hashicorpraft.Server, len(bootstrapNodes))
-	for i, addr := range bootstrapNodes {
-		servers[i] = hashicorpraft.Server{
-			ID:      hashicorpraft.ServerID(addr),
-			Address: hashicorpraft.ServerAddress(addr),
-		}
+func getRaftServers(raftMembers map[string]Server) []hashicorpraft.Server {
+	servers := make([]hashicorpraft.Server, 0, len(raftMembers))
+	for id, server := range raftMembers {
+		servers = append(servers, hashicorpraft.Server{
+			ID:      hashicorpraft.ServerID(id),
+			Address: hashicorpraft.ServerAddress(server.Address),
+		})
 	}
 	return servers
+}
+
+func (r *Raft) GetLeader() string {
+	_, leaderID := r.node.LeaderWithID()
+	return r.members[string(leaderID)].PublicAddress
 }
 
 func (r *Raft) Close() error {

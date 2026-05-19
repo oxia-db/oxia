@@ -31,6 +31,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
 func dataServer(name *string, public, internal string) *proto.DataServerIdentity {
@@ -70,6 +71,15 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 		require.NoError(t, metadataFactory.Close())
 	})
 	return metadata
+}
+
+func TestManagementServerReturnsNotLeaderWhenRuntimeNotReady(t *testing.T) {
+	var runtime coordruntime.Runtime
+	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), &runtime)
+
+	_, err := management.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.Aborted, grpcstatus.Code(err))
 }
 
 func TestManagementServerListDataServers(t *testing.T) {

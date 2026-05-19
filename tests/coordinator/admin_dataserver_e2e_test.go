@@ -36,7 +36,7 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	adminAddr := freeAddress(t)
 	options := coordoption.NewDefaultOptions()
 	options.Server.Internal.BindAddress = "127.0.0.1:0"
-	options.Server.Admin.BindAddress = adminAddr
+	options.Server.Public.BindAddress = adminAddr
 	options.Observability.Metric.Enabled = &constant.FlagFalse
 	options.Metadata.ProviderName = metadatacommon.NameFile
 	options.Metadata.File.Dir = metadataDir
