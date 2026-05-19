@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -34,7 +35,7 @@ import (
 
 type Options struct {
 	Cluster       ClusterOptions                    `yaml:"cluster,omitempty" json:"cluster,omitempty" jsonschema:"description=Deprecated cluster configuration settings"`
-	Server        ServerOptions                     `yaml:"server" json:"server" jsonschema:"description=Server configuration for admin and internal endpoints"`
+	Server        ServerOptions                     `yaml:"server" json:"server" jsonschema:"description=Server configuration for public and internal endpoints"`
 	Controller    ControllerOptions                 `yaml:"controller,omitempty" json:"controller,omitempty" jsonschema:"description=Controller configuration for cluster management"`
 	Metadata      MetadataOptions                   `yaml:"metadata" json:"metadata" jsonschema:"description=Metadata provider configuration"`
 	Observability commonoption.ObservabilityOptions `yaml:"observability" json:"observability" jsonschema:"description=Observability configuration for metrics and tracing"`
@@ -71,17 +72,17 @@ func (*ClusterOptions) Validate() error {
 }
 
 type ServerOptions struct {
-	Admin    AdminServerOptions    `yaml:"admin" json:"admin" jsonschema:"description=Admin server configuration for management API endpoints"`
+	Public   PublicServerOptions   `yaml:"public" json:"public" jsonschema:"description=Public server configuration for management API endpoints"`
 	Internal InternalServerOptions `yaml:"internal" json:"internal" jsonschema:"description=Internal server configuration for cluster communication"`
 }
 
 func (so *ServerOptions) WithDefault() {
-	so.Admin.WithDefault()
+	so.Public.WithDefault()
 	so.Internal.WithDefault()
 }
 
 func (so *ServerOptions) Validate() error {
-	return multierr.Combine(so.Admin.Validate(), so.Internal.Validate())
+	return multierr.Combine(so.Public.Validate(), so.Internal.Validate())
 }
 
 type InternalServerOptions struct {
@@ -105,24 +106,26 @@ func (iso *InternalServerOptions) Validate() error {
 	)
 }
 
-type AdminServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the admin API server,example=0.0.0.0:6650,format=hostname"`
-	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the admin API"`
-	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing admin API connections"`
+type PublicServerOptions struct {
+	BindAddress      string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public API server,example=0.0.0.0:6651,format=hostname"`
+	AdvertiseAddress string              `yaml:"advertiseAddress,omitempty" json:"advertiseAddress,omitempty" jsonschema:"description=Public address advertised to clients,example=coordinator-0:6651,format=hostname"`
+	Auth             auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public API"`
+	TLS              security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public API connections"`
 }
 
-func (aso *AdminServerOptions) WithDefault() {
-	if aso.BindAddress == "" {
-		aso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort)
+func (pso *PublicServerOptions) WithDefault() {
+	if pso.BindAddress == "" {
+		pso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort)
 	}
-	aso.Auth.WithDefault()
-	aso.TLS.WithDefault()
+	pso.AdvertiseAddress = os.ExpandEnv(pso.AdvertiseAddress)
+	pso.Auth.WithDefault()
+	pso.TLS.WithDefault()
 }
 
-func (aso *AdminServerOptions) Validate() error {
+func (pso *PublicServerOptions) Validate() error {
 	return multierr.Combine(
-		aso.Auth.Validate(),
-		aso.TLS.Validate(),
+		pso.Auth.Validate(),
+		pso.TLS.Validate(),
 	)
 }
 
@@ -146,10 +149,17 @@ type ProviderOptions struct {
 }
 
 type MetadataOptions struct {
+	Identity        string `yaml:"identity,omitempty" json:"identity,omitempty" jsonschema:"description=Stable coordinator identity used by metadata leader election,example=coordinator-0"`
 	ProviderOptions `yaml:",inline"`
 }
 
-func (*MetadataOptions) WithDefault() {
+func (mo *MetadataOptions) WithDefault() {
+	mo.Identity = os.ExpandEnv(mo.Identity)
+	for id, member := range mo.Raft.Members {
+		member.RaftAddress = os.ExpandEnv(member.RaftAddress)
+		member.PublicAddress = os.ExpandEnv(member.PublicAddress)
+		mo.Raft.Members[id] = member
+	}
 }
 
 func (mo *MetadataOptions) Validate() error {
@@ -394,9 +404,14 @@ func filePath(dir, name, defaultName string) string {
 }
 
 type RaftMetadata struct {
-	BootstrapNodes []string `yaml:"bootstrapNodes" json:"bootstrapNodes" jsonschema:"description=List of bootstrap nodes for Raft cluster initialization"`
-	Address        string   `yaml:"address" json:"address" jsonschema:"description=Address of this node in the Raft cluster,example=localhost:8080"`
-	DataDir        string   `yaml:"dataDir" json:"dataDir" jsonschema:"description=Directory for Raft metadata storage,example=./data/raft"`
+	Members map[string]RaftMember `yaml:"members,omitempty" json:"members,omitempty" jsonschema:"description=Static Raft members keyed by coordinator identity"`
+	Address string                `yaml:"address" json:"address" jsonschema:"description=Address of this node in the Raft cluster,example=localhost:7000"`
+	DataDir string                `yaml:"dataDir" json:"dataDir" jsonschema:"description=Directory for Raft metadata storage,example=./data/raft"`
+}
+
+type RaftMember struct {
+	RaftAddress   string `yaml:"raftAddress" json:"raftAddress" jsonschema:"description=Raft transport address for this coordinator,example=coordinator-0:7000"`
+	PublicAddress string `yaml:"publicAddress" json:"publicAddress" jsonschema:"description=Public client address for this coordinator,example=coordinator-0:6651"`
 }
 
 func NewDefaultOptions() *Options {

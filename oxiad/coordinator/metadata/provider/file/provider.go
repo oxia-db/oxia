@@ -45,6 +45,7 @@ const parentDirectoryMode = 0o755
 type Provider[T gproto.Message] struct {
 	mu           sync.Mutex
 	path         string
+	identity     provider.Identity
 	codec        metadatacodec.Codec[T]
 	fileLock     *fslock.Lock
 	lockAcquired bool
@@ -59,9 +60,14 @@ type Provider[T gproto.Message] struct {
 	logger  *slog.Logger
 }
 
-func NewProvider[T gproto.Message](ctx context.Context, path string, codec metadatacodec.Codec[T], watchEnabled metadatacommon.WatchMode) (provider.Provider[T], error) {
+func NewProvider[T gproto.Message](ctx context.Context, path string, codec metadatacodec.Codec[T], watchEnabled metadatacommon.WatchMode, identity ...provider.Identity) (provider.Provider[T], error) {
+	var providerIdentity provider.Identity
+	if len(identity) > 0 {
+		providerIdentity = identity[0]
+	}
 	p := &Provider[T]{
 		path:         path,
+		identity:     providerIdentity,
 		codec:        codec,
 		fileLock:     fslock.New(path),
 		watchEnabled: watchEnabled,
@@ -108,6 +114,13 @@ func (m *Provider[T]) Close() error {
 	}
 
 	return nil
+}
+
+func (m *Provider[T]) GetLeader() string {
+	if !m.lockAcquired {
+		return ""
+	}
+	return m.identity.PublicAddress
 }
 
 func (m *Provider[T]) WaitToBecomeLeader() error {

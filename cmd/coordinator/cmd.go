@@ -50,7 +50,7 @@ func init() {
 	Cmd.Flags().StringVar(&sconfFile, "sconfig", "", "server config file path")
 
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
-	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Admin.BindAddress, "admin-addr", "a", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Admin service bind address")
+	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Public service bind address")
 
 	observability := &coordinatorOptions.Observability
 	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")
@@ -63,7 +63,6 @@ func init() {
 
 	Cmd.Flags().StringVar(&meta.File.StatusName, "file-clusters-status-path", "data/cluster-status.json", "Cluster status file name or full path when using the 'file' provider; a full path is allowed when no metadata file directory is configured")
 
-	Cmd.Flags().StringSliceVar(&meta.Raft.BootstrapNodes, "raft-bootstrap-nodes", meta.Raft.BootstrapNodes, "Raft bootstrap nodes")
 	Cmd.Flags().StringVar(&meta.Raft.Address, "raft-address", "", "Raft address")
 	Cmd.Flags().StringVar(&meta.Raft.DataDir, "raft-data-dir", "data/raft", "Raft address")
 

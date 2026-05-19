@@ -31,6 +31,7 @@ var _ provider.Provider[*proto.ClusterConfiguration] = (*Provider[*proto.Cluster
 
 type Provider[T gproto.Message] struct {
 	mu           sync.Mutex
+	identity     provider.Identity
 	codec        metadatacodec.Codec[T]
 	value        T
 	version      metadatacommon.Version
@@ -42,8 +43,17 @@ func (*Provider[T]) WaitToBecomeLeader() error {
 	return nil
 }
 
-func NewProvider[T gproto.Message](codec metadatacodec.Codec[T], watchEnabled metadatacommon.WatchMode) provider.Provider[T] {
+func (m *Provider[T]) GetLeader() string {
+	return m.identity.PublicAddress
+}
+
+func NewProvider[T gproto.Message](codec metadatacodec.Codec[T], watchEnabled metadatacommon.WatchMode, identity ...provider.Identity) provider.Provider[T] {
+	var providerIdentity provider.Identity
+	if len(identity) > 0 {
+		providerIdentity = identity[0]
+	}
 	p := &Provider[T]{
+		identity:     providerIdentity,
 		codec:        codec,
 		value:        codec.NewZero(),
 		version:      metadatacommon.NotExists,

@@ -65,10 +65,12 @@ type Provider[T gproto.Message] struct {
 	mu              sync.Mutex
 	kubernetes      kubernetes.Interface
 	namespace, name string
+	identity        provider.Identity
 	codec           metadatacodec.Codec[T]
 	watchEnabled    metadatacommon.WatchMode
 
 	metadataSize      atomic.Int64
+	leader            atomic.Value
 	getLatencyHisto   metric.LatencyHistogram
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
@@ -88,11 +90,17 @@ func NewProvider[T gproto.Message](
 	namespace, name string,
 	codec metadatacodec.Codec[T],
 	watchEnabled metadatacommon.WatchMode,
+	identity ...provider.Identity,
 ) (provider.Provider[T], error) {
+	var providerIdentity provider.Identity
+	if len(identity) > 0 {
+		providerIdentity = identity[0]
+	}
 	m := &Provider[T]{
 		kubernetes:   kc,
 		namespace:    namespace,
 		name:         name,
+		identity:     providerIdentity,
 		codec:        codec,
 		watchEnabled: watchEnabled,
 		logger:       slog.With("component", "metadata-config-map"),
@@ -102,6 +110,7 @@ func NewProvider[T gproto.Message](
 		storeLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_store_latency",
 			"Latency for storing coordinator metadata", nil),
 	}
+	m.leader.Store("")
 
 	m.ctx, m.ctxCancel = context.WithCancel(ctx)
 	initialSnapshot, err := m.loadLatest() //nolint:contextcheck // Constructor seeds the watch from the provider-owned context.
@@ -244,7 +253,10 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 }
 
 func (m *Provider[T]) WaitToBecomeLeader() error {
-	myIdentity, _ := os.Hostname()
+	myIdentity := m.identity.ElectionValue()
+	if myIdentity == "" {
+		myIdentity, _ = os.Hostname()
+	}
 
 	// Create a lease lock
 	lock := &resourcelock.LeaseLock{
@@ -271,12 +283,14 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(_ context.Context) {
 				logger.Info("Started leading - lease acquired")
+				m.leader.Store(myIdentity)
 				wg.Done()
 			},
 			OnStoppedLeading: func() {
 				logger.Warn("Stopped leading - lease lost!")
 			},
 			OnNewLeader: func(newLeader string) {
+				m.leader.Store(newLeader)
 				if newLeader == myIdentity {
 					return
 				}
@@ -302,6 +316,11 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 	})
 
 	return wg.Wait(m.ctx)
+}
+
+func (m *Provider[T]) GetLeader() string {
+	leader, _ := m.leader.Load().(string)
+	return provider.PublicAddressFromElectionValue(leader)
 }
 
 func (m *Provider[T]) Close() error {

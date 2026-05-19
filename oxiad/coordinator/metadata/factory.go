@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
+	"os"
 
 	"go.uber.org/multierr"
 
@@ -37,8 +37,6 @@ import (
 var _ raft.Interceptor = &Factory{}
 
 type Factory struct {
-	mu sync.Mutex
-
 	statusProvider  provider.Provider[*commonproto.ClusterStatus]
 	configProvider  provider.Provider[*commonproto.ClusterConfiguration]
 	raft            *raft.Raft
@@ -61,16 +59,20 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	if err := meta.ApplyLegacyClusterConfigPath(options.Cluster.ConfigPath); err != nil {
 		return nil, err
 	}
+	identity, err := newProviderIdentity(options)
+	if err != nil {
+		return nil, err
+	}
 	factory := &Factory{}
 	switch meta.ProviderName {
 	case metadatacommon.NameMemory:
-		factory.statusProvider = memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
-		factory.configProvider = memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+		factory.statusProvider = memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, identity)
+		factory.configProvider = memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, identity)
 	case metadatacommon.NameFile:
-		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
+		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, identity); err != nil {
 			return nil, err
 		}
-		if factory.configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
+		if factory.configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, identity); err != nil {
 			return nil, err
 		}
 	case metadatacommon.NameConfigMap:
@@ -78,14 +80,27 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 		if err != nil {
 			return nil, err
 		}
-		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
+		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, identity); err != nil {
 			return nil, err
 		}
-		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
+		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, identity); err != nil {
 			return nil, err
 		}
 	case metadatacommon.NameRaft:
-		if factory.raft, err = raft.New(meta.Raft.Address, meta.Raft.BootstrapNodes, meta.Raft.DataDir, factory); err != nil {
+		members := make(map[string]raft.Server, len(meta.Raft.Members)+1)
+		for id, member := range meta.Raft.Members {
+			members[id] = raft.Server{
+				Address:       member.RaftAddress,
+				PublicAddress: member.PublicAddress,
+			}
+		}
+		if _, ok := members[identity.ID]; !ok {
+			members[identity.ID] = raft.Server{
+				Address:       meta.Raft.Address,
+				PublicAddress: identity.PublicAddress,
+			}
+		}
+		if factory.raft, err = raft.New(identity.ID, meta.Raft.Address, members, meta.Raft.DataDir, factory); err != nil {
 			return nil, fmt.Errorf("failed to create raft metadata provider: %w", err)
 		}
 		factory.configProvider = raft.NewProvider(ctx, factory.raft, metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
@@ -105,27 +120,24 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 }
 
 func (f *Factory) CreateMetadata(ctx context.Context) (Metadata, error) {
-	f.mu.Lock()
-	statusProvider := f.statusProvider
-	configProvider := f.configProvider
-	f.mu.Unlock()
+	return newMetadata(ctx, f.statusProvider, f.configProvider), nil
+}
 
+func (f *Factory) WaitToBecomeLeader(ctx context.Context) error {
 	slog.Info("Waiting to become leader", slog.String("component", "coordinator"))
-	if err := statusProvider.WaitToBecomeLeader(); err != nil {
+	if err := f.statusProvider.WaitToBecomeLeader(); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("failed to wait in becoming leader: %w", err)
+		return fmt.Errorf("failed to wait in becoming leader: %w", err)
 	}
+	recoverStatus(ctx, slog.With(slog.String("component", "coordinator-metadata")), f.statusProvider)
 	slog.Info("This coordinator is now leader", slog.String("component", "coordinator"))
-
-	return newMetadata(ctx, statusProvider, configProvider), nil
+	return nil
 }
 
 func (f *Factory) Close() error {
-	f.mu.Lock()
 	statusProvider := f.statusProvider
 	configProvider := f.configProvider
 	metadataRaft := f.raft
-	f.mu.Unlock()
 
 	var statusErr error
 	if statusProvider != nil {
@@ -142,4 +154,19 @@ func (f *Factory) Close() error {
 		raftErr = metadataRaft.Close()
 	}
 	return multierr.Combine(statusErr, configErr, raftErr)
+}
+
+func newProviderIdentity(options *option.Options) (provider.Identity, error) {
+	id := options.Metadata.Identity
+	if id == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			return provider.Identity{}, err
+		}
+		id = hostname
+	}
+	return provider.Identity{
+		ID:            id,
+		PublicAddress: options.Server.Public.AdvertiseAddress,
+	}, nil
 }

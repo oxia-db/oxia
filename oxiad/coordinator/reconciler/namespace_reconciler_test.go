@@ -91,6 +91,8 @@ func (*mockNamespaceMetadata) Close() error { return nil }
 
 func (m *mockNamespaceMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
 
+func (*mockNamespaceMetadata) GetLeader() string { return "" }
+
 func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) int64 {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	base := cloned.ShardIdGenerator

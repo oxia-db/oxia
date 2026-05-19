@@ -39,6 +39,7 @@ type Metadata interface {
 	io.Closer
 
 	GetInstanceID() string
+	GetLeader() string
 	ReserveShardIDs(count uint32) int64
 
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
@@ -96,8 +97,33 @@ func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonpr
 		configProvider: configProvider,
 	}
 
-	m.doStatusRecovery()
 	return m
+}
+
+func recoverStatus(ctx context.Context, logger *slog.Logger, statusProvider provider.Provider[*commonproto.ClusterStatus]) {
+	status := statusProvider.Watch().Load().Value
+	if status.GetInstanceId() != "" {
+		return
+	}
+	_ = backoff.RetryNotify(func() error {
+		current := statusProvider.Watch().Load()
+		if current.Value.GetInstanceId() != "" {
+			return nil
+		}
+		next := metadatacodec.ClusterStatusCodec.Clone(current.Value)
+		next.InstanceId = uuid.NewString()
+		_, err := statusProvider.Store(provider.Versioned[*commonproto.ClusterStatus]{
+			Value:   next,
+			Version: current.Version,
+		})
+		return err
+	}, oxiatime.NewBackOff(ctx), func(err error, duration time.Duration) {
+		logger.Warn(
+			"failed to initialize instance id",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
 }
 
 func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, metadatacommon.Version) (*commonproto.ClusterStatus, bool)) error {
@@ -147,29 +173,12 @@ func (m *coordinatorMetadata) Close() error {
 	return nil
 }
 
-func (m *coordinatorMetadata) doStatusRecovery() {
-	status := m.statusProvider.Watch().Load().Value
-	if status.GetInstanceId() == "" {
-		_ = backoff.RetryNotify(func() error {
-			return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
-				if status.GetInstanceId() != "" {
-					return status, false
-				}
-				status.InstanceId = uuid.NewString()
-				return status, true
-			})
-		}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-			m.logger.Warn(
-				"failed to initialize instance id",
-				slog.Any("error", err),
-				slog.Duration("retry-after", duration),
-			)
-		})
-	}
-}
-
 func (m *coordinatorMetadata) GetInstanceID() string {
 	return m.statusProvider.Watch().Load().Value.GetInstanceId()
+}
+
+func (m *coordinatorMetadata) GetLeader() string {
+	return m.statusProvider.GetLeader()
 }
 
 func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
