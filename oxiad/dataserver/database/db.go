@@ -310,13 +310,14 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 	}
 
 	var featuresToEnable []proto.Feature
-	switch v := cmd.Value.(type) {
+	controlValue := cmd.GetValue()
+	switch v := controlValue.(type) {
 	case *proto.ControlRequest_FeatureEnable:
 		featuresToEnable = v.FeatureEnable.GetFeatures()
 	case *proto.ControlRequest_RecordChecksum:
 		// Recognized no-op. Checksum is already in meta.
 	default:
-		return nil, errors.New("unknown control request feature")
+		return nil, errors.Errorf("unknown control request type %T", controlValue)
 	}
 
 	batch := d.kv.NewWriteBatch()
