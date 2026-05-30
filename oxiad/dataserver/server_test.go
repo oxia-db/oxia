@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/oxia-db/oxia/common/constant"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -80,4 +81,35 @@ func TestNewServerClosableWithHealthWatch(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NoError(t, watchStream.CloseSend())
+}
+
+func TestNewServerAuthorityValidationFeatureFlag(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "disabled by default"},
+		{name: "enabled by config", enabled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			options := option.NewDefaultOptions()
+			options.Server.Public.BindAddress = "localhost:0"
+			options.Server.Internal.BindAddress = "localhost:0"
+			options.Observability.Metric.Enabled = &constant.FlagFalse
+			options.Storage.Database.Dir = t.TempDir()
+			options.Storage.WAL.Dir = t.TempDir()
+			if tt.enabled {
+				authorityValidation := true
+				options.FeatureFlags.AuthorityValidation = &authorityValidation
+			}
+
+			server, err := New(t.Context(), commonoption.NewWatch(options))
+			if !assert.NoError(t, err) {
+				return
+			}
+			defer server.Close()
+
+			assert.Equal(t, tt.enabled, server.authorityValidationEnabled)
+		})
+	}
 }
