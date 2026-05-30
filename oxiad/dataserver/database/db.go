@@ -308,27 +308,31 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 	meta := &Meta{
 		Checksum: new(d.ReadChecksum()),
 	}
+
+	var featuresToEnable []proto.Feature
 	switch v := cmd.Value.(type) {
 	case *proto.ControlRequest_FeatureEnable:
-		for _, feature := range v.FeatureEnable.GetFeatures() {
-			d.enabledFeatures.Store(feature, true)
-		}
+		featuresToEnable = v.FeatureEnable.GetFeatures()
 	case *proto.ControlRequest_RecordChecksum:
-		// skip directly
+		// Recognized no-op. Checksum is already in meta.
 	default:
 		return nil, errors.New("unknown control request feature")
 	}
 
 	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
+
 	if err := d.addASCIILong(commitOffsetKey, commitOffset, batch, timestamp); err != nil {
 		return nil, err
 	}
 	if err := batch.Commit(); err != nil {
 		return nil, err
 	}
-	if err := batch.Close(); err != nil {
-		return nil, err
+
+	for _, feature := range featuresToEnable {
+		d.enabledFeatures.Store(feature, true)
 	}
+
 	return meta, nil
 }
 
