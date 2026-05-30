@@ -79,6 +79,10 @@ type TermOptions struct {
 	KeySorting           proto.KeySortingType
 }
 
+type Meta struct {
+	Checksum *crc.Checksum
+}
+
 type DB interface {
 	io.Closer
 
@@ -90,6 +94,8 @@ type DB interface {
 	ResetChecksum()
 
 	ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error)
+	ProcessControlRequest(controlRequest *proto.ControlRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*Meta, error)
+
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
 	List(request *proto.ListRequest) (kvstore.KeyIterator, error)
 	RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error)
@@ -296,6 +302,34 @@ func (d *db) IsFeatureEnabled(feature proto.Feature) bool {
 
 func (d *db) EnableFeature(feature proto.Feature) {
 	d.enabledFeatures.Store(feature, true)
+}
+
+func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64, timestamp uint64, _ UpdateOperationCallback) (*Meta, error) {
+	meta := &Meta{
+		Checksum: new(d.ReadChecksum()),
+	}
+	switch v := cmd.Value.(type) {
+	case *proto.ControlRequest_FeatureEnable:
+		for _, feature := range v.FeatureEnable.GetFeatures() {
+			d.enabledFeatures.Store(feature, true)
+		}
+	case *proto.ControlRequest_RecordChecksum:
+		// skip directly
+	default:
+		return nil, errors.New("unknown control request feature")
+	}
+
+	batch := d.kv.NewWriteBatch()
+	if err := d.addASCIILong(commitOffsetKey, commitOffset, batch, timestamp); err != nil {
+		return nil, err
+	}
+	if err := batch.Commit(); err != nil {
+		return nil, err
+	}
+	if err := batch.Close(); err != nil {
+		return nil, err
+	}
+	return meta, nil
 }
 
 func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error) {

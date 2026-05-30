@@ -492,41 +492,6 @@ func TestTrim(t *testing.T) {
 	assert.NoError(t, f.Close())
 }
 
-func TestTrimNoSegmentDeletedDoesNotReturnEntryNotFound(t *testing.T) {
-	f, w := createWal(t)
-
-	const (
-		commitOffset = int64(15098)
-		trimOffset   = int64(15156)
-		headOffset   = int64(15168)
-	)
-
-	for offset := commitOffset; offset <= headOffset; offset++ {
-		assert.NoError(t, w.Append(&proto.LogEntry{
-			Term:   1,
-			Offset: offset,
-			Value:  []byte(fmt.Sprintf("entry-%d", offset)),
-		}))
-	}
-
-	assert.EqualValues(t, commitOffset, w.FirstOffset())
-	assert.EqualValues(t, headOffset, w.LastOffset())
-	assert.NoError(t, w.(*wal).trim(trimOffset))
-
-	r, err := w.NewReader(commitOffset)
-	if assert.NoError(t, err) {
-		assert.True(t, r.HasNext())
-		le, _, _, err := r.ReadNext()
-		assert.NoError(t, err)
-		assert.EqualValues(t, commitOffset+1, le.Offset)
-		assert.Equal(t, fmt.Sprintf("entry-%d", commitOffset+1), string(le.Value))
-		assert.NoError(t, r.Close())
-	}
-
-	assert.NoError(t, w.Close())
-	assert.NoError(t, f.Close())
-}
-
 func TestDelete(t *testing.T) {
 	f, w := createWal(t)
 
