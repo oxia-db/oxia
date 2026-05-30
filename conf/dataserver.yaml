@@ -18,6 +18,8 @@ storage:
 scheduler:
   checksum:
     interval: "5m"
+featureFlags:
+  authorityValidation: true
 observability:
   metric:
     enabled: true

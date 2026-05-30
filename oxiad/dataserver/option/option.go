@@ -26,6 +26,10 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 )
 
+func boolRef(value bool) *bool {
+	return &value
+}
+
 type PublicServerOptions struct {
 	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public API server,example=0.0.0.0:6648,format=hostname"`
 	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public API"`
@@ -203,11 +207,33 @@ func (so *SchedulerOptions) Validate() error {
 	return so.Checksum.Validate()
 }
 
+type FeatureFlagsOptions struct {
+	AuthorityValidation *bool `yaml:"authorityValidation,omitempty" json:"authorityValidation,omitempty" jsonschema:"description=Enable public RPC authority validation against shard assignments,default=true"`
+}
+
+func (fo *FeatureFlagsOptions) IsAuthorityValidationEnabled() bool {
+	if fo.AuthorityValidation == nil {
+		return true
+	}
+	return *fo.AuthorityValidation
+}
+
+func (fo *FeatureFlagsOptions) WithDefault() {
+	if fo.AuthorityValidation == nil {
+		fo.AuthorityValidation = boolRef(true)
+	}
+}
+
+func (*FeatureFlagsOptions) Validate() error {
+	return nil
+}
+
 type Options struct {
 	Server        ServerOptions               `yaml:"server" json:"server" jsonschema:"description=Server configuration for public and internal endpoints"`
 	Replication   ReplicationOptions          `yaml:"replication,omitempty" json:"replication,omitempty" jsonschema:"description=Replication configuration for data consistency"`
 	Storage       StorageOptions              `yaml:"storage" json:"storage" jsonschema:"description=Storage configuration for WAL, database, and notifications"`
 	Scheduler     SchedulerOptions            `yaml:"scheduler" json:"scheduler" jsonschema:"description=Scheduler configuration for periodic tasks"`
+	FeatureFlags  FeatureFlagsOptions         `yaml:"featureFlags,omitempty" json:"featureFlags,omitempty" jsonschema:"description=Feature flags for rollout-sensitive dataserver behavior"`
 	Observability option.ObservabilityOptions `yaml:"observability" json:"observability" jsonschema:"description=Observability configuration for metrics and tracing"`
 }
 
@@ -216,6 +242,7 @@ func (op *Options) WithDefault() {
 	op.Replication.WithDefault()
 	op.Storage.WithDefault()
 	op.Scheduler.WithDefault()
+	op.FeatureFlags.WithDefault()
 	op.Observability.WithDefault()
 }
 
@@ -225,6 +252,7 @@ func (op *Options) Validate() error {
 		op.Replication.Validate(),
 		op.Storage.Validate(),
 		op.Scheduler.Validate(),
+		op.FeatureFlags.Validate(),
 		op.Observability.Validate(),
 	)
 }

@@ -203,7 +203,6 @@ func main() {
 			grpcProvider,
 			replicationGrpcProvider,
 			manifest,
-			true,
 		)
 		if err != nil {
 			return

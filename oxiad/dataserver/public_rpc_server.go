@@ -62,18 +62,18 @@ type publicRpcServer struct {
 
 	shardsDirector             controller.ShardsDirector
 	assignmentDispatcher       assignment.ShardAssignmentsDispatcher
-	disableAuthorityValidation bool
+	authorityValidationEnabled bool
 	grpcServer                 oxiadcommonrpc.GrpcServer
 	healthServer               oxiadcommonrpc.HealthServer
 	log                        *slog.Logger
 }
 
 func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
-	disableAuthorityValidation bool, healthServer oxiadcommonrpc.HealthServer, tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
+	authorityValidationEnabled bool, healthServer oxiadcommonrpc.HealthServer, tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
 		shardsDirector:             shardsDirector,
 		assignmentDispatcher:       assignmentDispatcher,
-		disableAuthorityValidation: disableAuthorityValidation,
+		authorityValidationEnabled: authorityValidationEnabled,
 		healthServer:               healthServer,
 		log: slog.With(
 			slog.String("component", "public-rpc-server"),
@@ -94,7 +94,7 @@ func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string
 }
 
 func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
-	if s.disableAuthorityValidation {
+	if !s.authorityValidationEnabled {
 		return nil
 	}
 
