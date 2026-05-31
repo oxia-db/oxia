@@ -26,10 +26,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 )
 
-func boolRef(value bool) *bool {
-	return &value
-}
-
 type PublicServerOptions struct {
 	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public API server,example=0.0.0.0:6648,format=hostname"`
 	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public API"`
@@ -220,7 +216,8 @@ func (fo *FeatureFlagsOptions) IsAuthorityValidationEnabled() bool {
 
 func (fo *FeatureFlagsOptions) WithDefault() {
 	if fo.AuthorityValidation == nil {
-		fo.AuthorityValidation = boolRef(true)
+		fo.AuthorityValidation = new(bool)
+		*fo.AuthorityValidation = true
 	}
 }
 
