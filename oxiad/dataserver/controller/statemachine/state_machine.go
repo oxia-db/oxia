@@ -32,17 +32,13 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 
 	switch logEntryValue.Value.(type) {
 	case *proto.LogEntryValue_ControlRequest:
-		switch v := logEntryValue.GetControlRequest().Value.(type) {
-		case *proto.ControlRequest_FeatureEnable:
-			for _, feature := range v.FeatureEnable.GetFeatures() {
-				db.EnableFeature(feature)
-			}
-		case *proto.ControlRequest_RecordChecksum:
-			checksum := db.ReadChecksum()
-			return ApplyResponse{Checksum: &checksum}, nil
-		default:
-			return ApplyResponse{}, errors.New("unknown control request type")
+		meta, err := db.ProcessControlRequest(logEntryValue.GetControlRequest(), entry.Offset, entry.Timestamp, updateOperationCallback)
+		if err != nil {
+			return ApplyResponse{}, err
 		}
+		return ApplyResponse{
+			Checksum: meta.Checksum,
+		}, nil
 	case *proto.LogEntryValue_Requests:
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
 			if _, err := db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil {
@@ -75,17 +71,13 @@ func ApplyLogEntryWithSplitFilter(
 
 	switch logEntryValue.Value.(type) {
 	case *proto.LogEntryValue_ControlRequest:
-		switch v := logEntryValue.GetControlRequest().Value.(type) {
-		case *proto.ControlRequest_FeatureEnable:
-			for _, feature := range v.FeatureEnable.GetFeatures() {
-				db.EnableFeature(feature)
-			}
-		case *proto.ControlRequest_RecordChecksum:
-			checksum := db.ReadChecksum()
-			return ApplyResponse{Checksum: &checksum}, nil
-		default:
-			// Unknown control request type — ignore
+		meta, err := db.ProcessControlRequest(logEntryValue.GetControlRequest(), entry.Offset, entry.Timestamp, updateOperationCallback)
+		if err != nil {
+			return ApplyResponse{}, err
 		}
+		return ApplyResponse{
+			Checksum: meta.Checksum,
+		}, nil
 	case *proto.LogEntryValue_Requests:
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
 			filtered := database.FilterWriteRequestForSplit(writeRequest, hashRange)
