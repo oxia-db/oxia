@@ -32,6 +32,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	coordinatorrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
+	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
@@ -59,7 +60,9 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 
 	for i := 0; i < serverCount; i++ {
 		name := fmt.Sprintf("%s-s%d", prefix, i+1)
-		server, addr := mock.NewServer(t, name)
+		server, addr := mock.NewServerWithOptions(t, name, func(options *dataserveroption.Options) {
+			options.FeatureFlags.AuthorityValidation = &constant.FlagTrue
+		})
 		cluster.servers[addr.GetIdentifier()] = server
 		cluster.addresses = append(cluster.addresses, addr)
 	}

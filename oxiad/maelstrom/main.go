@@ -201,7 +201,6 @@ func main() {
 			commonoption.NewWatch(dataServerOption),
 			grpcProvider,
 			replicationGrpcProvider,
-			true,
 		)
 		if err != nil {
 			return

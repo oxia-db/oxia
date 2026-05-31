@@ -120,7 +120,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 	s.rpc, err = newPublicRpcServer(rpc2.Default, publicServer.BindAddress, s.shardsDirector,
-		s.shardAssignmentDispatcher, false, s.healthServer, serverTLS, &auth.Disabled)
+		s.shardAssignmentDispatcher, config.DataServerOptions.FeatureFlags.IsAuthorityValidationEnabled(), s.healthServer, serverTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}

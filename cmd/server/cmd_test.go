@@ -61,6 +61,8 @@ storage:
     readCacheSizeMB: 512
   notification:
     retention: "30m"
+featureFlags:
+  authorityValidation: true
 observability:
   metric:
     bindAddress: "0.0.0.0:9090"
@@ -101,6 +103,8 @@ observability:
 
 	assert.Equal(t, 30*time.Minute, opts.Storage.Notification.Retention.ToDuration())
 
+	assert.True(t, opts.FeatureFlags.IsAuthorityValidationEnabled())
+
 	assert.Equal(t, "0.0.0.0:9090", opts.Observability.Metric.BindAddress)
 	assert.Equal(t, "debug", opts.Observability.Log.Level)
 }
@@ -138,6 +142,7 @@ storage:
 	assert.NotEmpty(t, opts.Observability.Metric.BindAddress)             // Default
 	assert.Equal(t, 1*time.Hour, opts.Storage.WAL.Retention.ToDuration()) // Default
 	assert.True(t, *opts.Storage.WAL.Sync)                                // Default
+	assert.False(t, opts.FeatureFlags.IsAuthorityValidationEnabled())     // Default
 }
 
 func TestServer_ConfigurationValidation(t *testing.T) {
@@ -202,6 +207,7 @@ func TestServer_EmptyConfigFile(t *testing.T) {
 	// Verify defaults are still applied
 	assert.NotEmpty(t, opts.Server.Public.BindAddress)
 	assert.NotEmpty(t, opts.Server.Internal.BindAddress)
+	assert.False(t, opts.FeatureFlags.IsAuthorityValidationEnabled())
 }
 
 func TestServer_CommandLineFlags(t *testing.T) {
