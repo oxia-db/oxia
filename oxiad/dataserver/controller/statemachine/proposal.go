@@ -15,7 +15,6 @@
 package statemachine
 
 import (
-	"errors"
 	"time"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -91,19 +90,14 @@ func (c *ControlProposal) ToLogEntry(vtEntry *proto.LogEntryValue) {
 	vtEntry.Value = &proto.LogEntryValue_ControlRequest{ControlRequest: c.request}
 }
 
-func (c *ControlProposal) Apply(db database.DB, _ database.UpdateOperationCallback) (ApplyResponse, error) {
-	switch v := c.request.Value.(type) {
-	case *proto.ControlRequest_FeatureEnable:
-		for _, feature := range v.FeatureEnable.GetFeatures() {
-			db.EnableFeature(feature)
-		}
-	case *proto.ControlRequest_RecordChecksum:
-		checksum := db.ReadChecksum()
-		return ApplyResponse{Checksum: &checksum}, nil
-	default:
-		return ApplyResponse{}, errors.New("unknown control request type")
+func (c *ControlProposal) Apply(db database.DB, cb database.UpdateOperationCallback) (ApplyResponse, error) {
+	meta, err := db.ProcessControlRequest(c.request, c.offset, c.timestamp, cb)
+	if err != nil {
+		return ApplyResponse{}, err
 	}
-	return ApplyResponse{}, nil
+	return ApplyResponse{
+		Checksum: meta.Checksum,
+	}, nil
 }
 
 func NewControlProposal(offset int64, request *proto.ControlRequest) Proposal {
