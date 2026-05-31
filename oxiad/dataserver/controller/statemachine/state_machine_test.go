@@ -25,6 +25,7 @@ import (
 	"github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 )
 
 func newTestDB(t *testing.T) database.DB {
@@ -280,4 +281,82 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, getY.Status)
 	assert.Equal(t, []byte("2"), getY.Value)
+}
+
+func TestApplyLogEntry_ControlRequestPersistsCommitOffsetForWalReplay(t *testing.T) {
+	const shard = int64(19)
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, kvFactory.Close()) })
+
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory,
+		proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+	t.Cleanup(func() { assert.NoError(t, walFactory.Close()) })
+
+	w, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, w.Close()) })
+
+	writeProposal := NewWriteProposal(0, &proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
+	})
+	controlProposal := NewControlProposal(1, &proto.ControlRequest{
+		Value: &proto.ControlRequest_RecordChecksum{
+			RecordChecksum: &proto.RecordChecksumRequest{},
+		},
+	})
+
+	for _, proposal := range []Proposal{writeProposal, controlProposal} {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term:      1,
+			Offset:    proposal.GetOffset(),
+			Value:     marshalProposal(t, proposal),
+			Timestamp: proposal.GetTimestamp(),
+		}))
+	}
+
+	reader, err := w.NewReader(wal.InvalidOffset)
+	assert.NoError(t, err)
+	for reader.HasNext() {
+		entry, _, _, err := reader.ReadNext()
+		assert.NoError(t, err)
+		_, err = ApplyLogEntry(db, entry, database.NoOpCallback)
+		assert.NoError(t, err)
+	}
+	assert.NoError(t, reader.Close())
+	assert.NoError(t, db.Close())
+
+	db, err = database.NewDB(constant.DefaultNamespace, shard, kvFactory,
+		proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	defer db.Close()
+
+	commitOffset, err := db.ReadCommitOffset()
+	assert.NoError(t, err)
+	assert.EqualValues(t, 1, commitOffset)
+
+	assert.NoError(t, w.Clear())
+	nextWriteProposal := NewWriteProposal(2, &proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: "b", Value: []byte("1")}},
+	})
+	assert.NoError(t, w.Append(&proto.LogEntry{
+		Term:      1,
+		Offset:    nextWriteProposal.GetOffset(),
+		Value:     marshalProposal(t, nextWriteProposal),
+		Timestamp: nextWriteProposal.GetTimestamp(),
+	}))
+
+	reader, err = w.NewReader(commitOffset)
+	if assert.NoError(t, err) {
+		if assert.True(t, reader.HasNext()) {
+			entry, _, _, err := reader.ReadNext()
+			assert.NoError(t, err)
+			assert.EqualValues(t, 2, entry.Offset)
+		}
+		assert.NoError(t, reader.Close())
+	}
 }

@@ -79,6 +79,10 @@ type TermOptions struct {
 	KeySorting           proto.KeySortingType
 }
 
+type Meta struct {
+	Checksum *crc.Checksum
+}
+
 type DB interface {
 	io.Closer
 
@@ -90,6 +94,8 @@ type DB interface {
 	ResetChecksum()
 
 	ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error)
+	ProcessControlRequest(controlRequest *proto.ControlRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*Meta, error)
+
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
 	List(request *proto.ListRequest) (kvstore.KeyIterator, error)
 	RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error)
@@ -296,6 +302,39 @@ func (d *db) IsFeatureEnabled(feature proto.Feature) bool {
 
 func (d *db) EnableFeature(feature proto.Feature) {
 	d.enabledFeatures.Store(feature, true)
+}
+
+func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64, timestamp uint64, _ UpdateOperationCallback) (*Meta, error) {
+	meta := &Meta{
+		Checksum: new(d.ReadChecksum()),
+	}
+
+	var featuresToEnable []proto.Feature
+	controlValue := cmd.GetValue()
+	switch v := controlValue.(type) {
+	case *proto.ControlRequest_FeatureEnable:
+		featuresToEnable = v.FeatureEnable.GetFeatures()
+	case *proto.ControlRequest_RecordChecksum:
+		// Recognized no-op. Checksum is already in meta.
+	default:
+		return nil, errors.Errorf("unknown control request type %T", controlValue)
+	}
+
+	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
+
+	if err := d.addASCIILong(commitOffsetKey, commitOffset, batch, timestamp); err != nil {
+		return nil, err
+	}
+	if err := batch.Commit(); err != nil {
+		return nil, err
+	}
+
+	for _, feature := range featuresToEnable {
+		d.enabledFeatures.Store(feature, true)
+	}
+
+	return meta, nil
 }
 
 func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error) {
