@@ -109,7 +109,7 @@ func TestNewServerAuthorityValidationFeatureFlag(t *testing.T) {
 			}
 			defer server.Close()
 
-			assert.Equal(t, tt.enabled, server.publicRpcServer.authorityValidationEnabled)
+			assert.Equal(t, tt.enabled, server.authorityValidationEnabled)
 		})
 	}
 }
