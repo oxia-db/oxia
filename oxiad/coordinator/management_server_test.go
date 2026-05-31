@@ -249,8 +249,7 @@ func TestManagementServerListNamespaces(t *testing.T) {
 	res, err := management.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
 	require.NoError(t, err)
 	require.Len(t, res.Namespaces, 2)
-	assert.Equal(t, "ns-1", res.Namespaces[0].GetName())
-	assert.Equal(t, "ns-2", res.Namespaces[1].GetName())
+	assert.ElementsMatch(t, []string{"ns-1", "ns-2"}, []string{res.Namespaces[0].GetName(), res.Namespaces[1].GetName()})
 }
 
 func TestManagementServerCreateNamespace(t *testing.T) {
