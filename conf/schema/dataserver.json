@@ -46,6 +46,17 @@
         "5s"
       ]
     },
+    "FeatureFlagsOptions": {
+      "properties": {
+        "authorityValidation": {
+          "type": "boolean",
+          "description": "Enable public RPC authority validation against shard assignments",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "InternalServerOptions": {
       "properties": {
         "bindAddress": {
@@ -147,6 +158,10 @@
         "scheduler": {
           "$ref": "#/$defs/SchedulerOptions",
           "description": "Scheduler configuration for periodic tasks"
+        },
+        "featureFlags": {
+          "$ref": "#/$defs/FeatureFlagsOptions",
+          "description": "Feature flags for rollout-sensitive dataserver behavior"
         },
         "observability": {
           "$ref": "#/$defs/ObservabilityOptions",

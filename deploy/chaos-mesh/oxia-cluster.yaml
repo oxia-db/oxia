@@ -2,3 +2,6 @@ image:
   repository: oxia
   tag: latest
   pullPolicy: Never
+
+allowExtraAuthorities:
+  - oxia:6648

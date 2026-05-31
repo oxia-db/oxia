@@ -186,6 +186,7 @@ func main() {
 		}
 
 		dataServerOption := option.NewDefaultOptions()
+		dataServerOption.FeatureFlags.AuthorityValidation = new(bool)
 		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
 		dataServerOption.Storage.WAL.Dir = filepath.Join(dataDir, thisNode, "wal")
@@ -203,7 +204,6 @@ func main() {
 			grpcProvider,
 			replicationGrpcProvider,
 			manifest,
-			true,
 		)
 		if err != nil {
 			return

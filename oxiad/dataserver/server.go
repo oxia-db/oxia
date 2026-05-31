@@ -70,12 +70,12 @@ func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options
 	if err != nil {
 		return nil, err
 	}
-	grpcProvider, err := NewWithGrpcProvider(parent, optionsWatch, commonrpc.Default, provider, manifest, false)
+	grpcProvider, err := NewWithGrpcProvider(parent, optionsWatch, commonrpc.Default, provider, manifest)
 	return grpcProvider, err
 }
 
 func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options], provider commonrpc.GrpcProvider,
-	replicationRpcProvider dataserverrpc.ReplicationRpcProvider, manifest *manifestpkg.Manifest, disableAuthorityValidation bool) (*Server, error) {
+	replicationRpcProvider dataserverrpc.ReplicationRpcProvider, manifest *manifestpkg.Manifest) (*Server, error) {
 	options := optionsWatch.Load()
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
@@ -138,7 +138,7 @@ func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch
 		return nil, err
 	}
 	s.publicRpcServer, err = newPublicRpcServer(provider, publicServer.BindAddress, s.shardsDirector,
-		s.shardAssignmentDispatcher, disableAuthorityValidation, s.healthServer, publicServerTLS, &publicServer.Auth)
+		s.shardAssignmentDispatcher, options.FeatureFlags.IsAuthorityValidationEnabled(), s.healthServer, publicServerTLS, &publicServer.Auth)
 	if err != nil {
 		return nil, err
 	}

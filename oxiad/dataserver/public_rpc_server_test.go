@@ -159,7 +159,8 @@ func TestPublicHealthCheck(t *testing.T) {
 
 func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {
 	server := &publicRpcServer{
-		log: slog.Default(),
+		log:                        slog.Default(),
+		authorityValidationEnabled: true,
 		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
 			"expected-host:6648": true,
 		}},
@@ -176,7 +177,8 @@ func TestValidateAuthorityRejectsWrongAuthority(t *testing.T) {
 
 func TestValidateAuthorityReturnsNotInitializedBeforeAssignmentsReady(t *testing.T) {
 	server := &publicRpcServer{
-		assignmentDispatcher: &testAssignmentDispatcher{},
+		authorityValidationEnabled: true,
+		assignmentDispatcher:       &testAssignmentDispatcher{},
 	}
 
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
@@ -188,10 +190,9 @@ func TestValidateAuthorityReturnsNotInitializedBeforeAssignmentsReady(t *testing
 	assert.Equal(t, codes.Unavailable, grpcstatus.Code(err))
 }
 
-func TestValidateAuthorityCanBeDisabled(t *testing.T) {
+func TestValidateAuthoritySkippedWhenDisabled(t *testing.T) {
 	server := &publicRpcServer{
-		disableAuthorityValidation: true,
-		assignmentDispatcher:       &testAssignmentDispatcher{},
+		assignmentDispatcher: &testAssignmentDispatcher{},
 	}
 
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
@@ -224,7 +225,8 @@ func (t *testShardAssignmentsServer) SendMsgV2(protoadapt.MessageV2) error {
 
 func TestGetShardAssignmentsValidatesAuthority(t *testing.T) {
 	server := &publicRpcServer{
-		log: slog.Default(),
+		log:                        slog.Default(),
+		authorityValidationEnabled: true,
 		assignmentDispatcher: &testAssignmentDispatcher{initialized: true, validAuthorities: map[string]bool{
 			"expected-host:6648": true,
 		}},
@@ -240,9 +242,25 @@ func TestGetShardAssignmentsValidatesAuthority(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
 }
 
+func TestGetShardAssignmentsSkipsAuthorityValidationWhenDisabled(t *testing.T) {
+	server := &publicRpcServer{
+		log:                  slog.Default(),
+		assignmentDispatcher: &testAssignmentDispatcher{},
+	}
+
+	err := server.GetShardAssignments(&proto.ShardAssignmentsRequest{}, &testShardAssignmentsServer{
+		ctx: metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
+			":authority": "wrong-host:6648",
+		})),
+	})
+
+	require.NoError(t, err)
+}
+
 func TestGetShardAssignmentsConvertsRegisterError(t *testing.T) {
 	server := &publicRpcServer{
-		log: slog.Default(),
+		log:                        slog.Default(),
+		authorityValidationEnabled: true,
 		assignmentDispatcher: &testAssignmentDispatcher{
 			initialized: true,
 			validAuthorities: map[string]bool{
@@ -266,7 +284,8 @@ func TestGetShardAssignmentsConvertsRegisterError(t *testing.T) {
 
 func TestResolveLeaderValidatesAuthorityBeforeLeaderLookup(t *testing.T) {
 	server := &publicRpcServer{
-		log: slog.Default(),
+		log:                        slog.Default(),
+		authorityValidationEnabled: true,
 		shardsDirector: &testShardsDirector{
 			getLeader: func(int64) (lead.LeaderController, error) {
 				return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(1, "leader:6648"))
