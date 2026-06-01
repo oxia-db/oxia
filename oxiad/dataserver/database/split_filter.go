@@ -144,7 +144,7 @@ func classifyInternalKey(
 		key == commitLastVersionIdKey,
 		key == termKey,
 		key == termOptionsKey,
-		strings.HasPrefix(key, enabledFeatureKeyPrefix+"/"):
+		strings.HasPrefix(key, featureFlagKeyPrefix+"/"):
 		// Metadata keys: keep in both children
 		return splitActionKeep, nil
 
