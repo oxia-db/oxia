@@ -169,7 +169,7 @@ func TestFilterDBForSplit_MetadataKeys(t *testing.T) {
 	putRawKey(t, kv, commitOffsetKey, []byte("42"))
 	putRawKey(t, kv, commitLastVersionIdKey, []byte("100"))
 	putRawKey(t, kv, commitChecksumKey, []byte("999"))
-	putRawKey(t, kv, enabledFeatureKey(proto.Feature_FEATURE_DB_CHECKSUM), []byte("1"))
+	putRawKey(t, kv, featureFlagKey(proto.Feature_FEATURE_DB_CHECKSUM), []byte("1"))
 	putRawKey(t, kv, termKey, []byte("5"))
 	putRawKey(t, kv, termOptionsKey, []byte(`{"notificationsEnabled":true}`))
 
@@ -178,7 +178,7 @@ func TestFilterDBForSplit_MetadataKeys(t *testing.T) {
 	// Kept
 	assert.True(t, keyExists(t, kv, commitOffsetKey))
 	assert.True(t, keyExists(t, kv, commitLastVersionIdKey))
-	assert.True(t, keyExists(t, kv, enabledFeatureKey(proto.Feature_FEATURE_DB_CHECKSUM)))
+	assert.True(t, keyExists(t, kv, featureFlagKey(proto.Feature_FEATURE_DB_CHECKSUM)))
 	assert.True(t, keyExists(t, kv, termKey))
 	assert.True(t, keyExists(t, kv, termOptionsKey))
 

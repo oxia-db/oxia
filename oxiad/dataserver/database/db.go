@@ -52,12 +52,12 @@ var (
 )
 
 const (
-	commitOffsetKey         = constant.InternalKeyPrefix + "commit-offset"
-	commitLastVersionIdKey  = constant.InternalKeyPrefix + "last-version-id"
-	commitChecksumKey       = constant.InternalKeyPrefix + "checksum"
-	enabledFeatureKeyPrefix = constant.InternalKeyPrefix + "features"
-	termKey                 = constant.InternalKeyPrefix + "term"
-	termOptionsKey          = termKey + "-options"
+	commitOffsetKey        = constant.InternalKeyPrefix + "commit-offset"
+	commitLastVersionIdKey = constant.InternalKeyPrefix + "last-version-id"
+	commitChecksumKey      = constant.InternalKeyPrefix + "checksum"
+	featureFlagKeyPrefix   = constant.InternalKeyPrefix + "features"
+	termKey                = constant.InternalKeyPrefix + "term"
+	termOptionsKey         = termKey + "-options"
 )
 
 type UpdateOperationCallback interface {
@@ -186,7 +186,7 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	}
 	db.committedChecksum.Store(&lastChecksum)
 
-	if err := db.readEnabledFeatures(); err != nil {
+	if err := db.recoverFeatureFlags(); err != nil {
 		return nil, err
 	}
 
@@ -308,8 +308,8 @@ func (d *db) EnableFeature(feature proto.Feature) {
 	d.enabledFeatures.Store(feature, true)
 }
 
-func enabledFeatureKey(feature proto.Feature) string {
-	return fmt.Sprintf("%s/%d", enabledFeatureKeyPrefix, feature)
+func featureFlagKey(feature proto.Feature) string {
+	return fmt.Sprintf("%s/%d", featureFlagKeyPrefix, feature)
 }
 
 func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64, timestamp uint64, _ UpdateOperationCallback) (*Meta, error) {
@@ -335,7 +335,7 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 		return nil, err
 	}
 	for _, feature := range featuresToEnable {
-		if err := d.addASCIILong(enabledFeatureKey(feature), int64(feature), batch, timestamp); err != nil {
+		if err := d.addASCIILong(featureFlagKey(feature), int64(feature), batch, timestamp); err != nil {
 			return nil, err
 		}
 	}
@@ -560,21 +560,22 @@ func (d *db) readLastChecksum() (crc.Checksum, error) {
 	return crc.Checksum(uint32(cs)), nil
 }
 
-func (d *db) readEnabledFeatures() error {
-	it, err := d.kv.KeyRangeScan(enabledFeatureKeyPrefix+"/", "", kvstore.ShowInternalKeys)
+func (d *db) recoverFeatureFlags() error {
+	// Use a prefix break instead of an upper bound because key ordering can be
+	// natural or hierarchical, and the safe upper bound differs between them.
+	it, err := d.kv.KeyRangeScan(featureFlagKeyPrefix+"/", "", kvstore.ShowInternalKeys)
 	if err != nil {
 		return err
 	}
 	defer it.Close()
-
 	for it.Valid() {
 		key := it.Key()
-		if !strings.HasPrefix(key, enabledFeatureKeyPrefix+"/") {
+		if !strings.HasPrefix(key, featureFlagKeyPrefix+"/") {
 			break
 		}
 
 		var feature int32
-		if _, err := fmt.Sscanf(strings.TrimPrefix(key, enabledFeatureKeyPrefix+"/"), "%d", &feature); err != nil {
+		if _, err := fmt.Sscanf(strings.TrimPrefix(key, featureFlagKeyPrefix+"/"), "%d", &feature); err != nil {
 			return err
 		}
 		d.enabledFeatures.Store(proto.Feature(feature), true)
