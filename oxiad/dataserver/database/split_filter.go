@@ -46,7 +46,7 @@ var secondaryIdxRegex = regexp.MustCompile(
 //
 // Key classification:
 //   - User data keys: filter by hash of partition_key (or key if no partition_key)
-//   - __oxia/last-version-id, commit-offset, term, term-options: keep
+//   - __oxia/last-version-id, commit-offset, features, term, term-options: keep
 //   - __oxia/checksum: delete (invalid after filtering)
 //   - __oxia/notifications/{offset}: filter notification map by key hash; delete if empty
 //   - __oxia/session/{id}: keep (session metadata duplicated to both children)
@@ -142,7 +142,8 @@ func classifyInternalKey(
 	case key == commitOffsetKey,
 		key == commitLastVersionIdKey,
 		key == termKey,
-		key == termOptionsKey:
+		key == termOptionsKey,
+		strings.HasPrefix(key, featureFlagKeyPrefix+"/"):
 		// Metadata keys: keep in both children
 		return splitActionKeep, nil
 
