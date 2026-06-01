@@ -81,6 +81,7 @@ type followerCursor struct {
 	closed         atomic.Bool
 	ctx            context.Context
 	cancel         context.CancelFunc
+	latch          sync.WaitGroup
 	log            *slog.Logger
 	splitHashRange *proto.Int32HashRange // non-nil for split observer cursors
 
@@ -148,17 +149,19 @@ func NewFollowerCursor( //nolint:revive
 		return nil, err
 	}
 
-	go process.DoWithLabels(
-		context.Background(),
-		map[string]string{
-			"oxia":      "follower-cursor-send",
-			"namespace": namespace,
-			"shard":     fmt.Sprintf("%d", fc.shardId),
-		},
-		func() {
-			fc.run()
-		},
-	)
+	fc.latch.Go(func() {
+		process.DoWithLabels(
+			context.Background(),
+			map[string]string{
+				"oxia":      "follower-cursor-send",
+				"namespace": namespace,
+				"shard":     fmt.Sprintf("%d", fc.shardId),
+			},
+			func() {
+				fc.run()
+			},
+		)
+	})
 
 	return fc, nil
 }
@@ -224,17 +227,19 @@ func NewObserverFollowerCursor( //nolint:revive
 	// Observer uses a no-op cursor acker — its acks don't affect quorum
 	fc.cursorAcker = NewNoOpCursorAcker()
 
-	go process.DoWithLabels(
-		context.Background(),
-		map[string]string{
-			"oxia":      "observer-cursor-send",
-			"namespace": namespace,
-			"shard":     fmt.Sprintf("%d", fc.shardId),
-		},
-		func() {
-			fc.run()
-		},
-	)
+	fc.latch.Go(func() {
+		process.DoWithLabels(
+			context.Background(),
+			map[string]string{
+				"oxia":      "observer-cursor-send",
+				"namespace": namespace,
+				"shard":     fmt.Sprintf("%d", fc.shardId),
+			},
+			func() {
+				fc.run()
+			},
+		)
+	})
 
 	return fc, nil
 }
@@ -270,6 +275,7 @@ func (fc *followerCursor) shouldSendSnapshot() bool {
 func (fc *followerCursor) Close() error {
 	fc.closed.Store(true)
 	fc.cancel()
+	fc.latch.Wait()
 	return nil
 }
 
