@@ -485,6 +485,26 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDB_RecoverFeatureFlagsRejectsMalformedKeys(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	batch := testDB.(*db).kv.NewWriteBatch()
+	err = testDB.(*db).addASCIILong(featureFlagKeyPrefix+"/1/extra", 1, batch, 0)
+	assert.NoError(t, err)
+	assert.NoError(t, batch.Commit())
+	assert.NoError(t, batch.Close())
+	assert.NoError(t, testDB.Close())
+
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.Nil(t, testDB)
+	assert.ErrorContains(t, err, "invalid feature flag key")
+
+	assert.NoError(t, factory.Close())
+}
+
 func TestDb_UpdateTerm(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
