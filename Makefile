@@ -23,6 +23,8 @@ PLATFORMS := \
 	windows/amd64 \
 	darwin/amd64
 
+GO_TEST_TIMEOUT ?= 30m
+
 .PHONY: distribution
 distribution:
 	@echo "Starting Go multi-platform executable build..."
@@ -63,7 +65,7 @@ maelstrom:
 	go build -tags disable_trap -v -o bin/oxia-maelstrom ./oxiad/maelstrom
 
 test: build
-	go test -cover -race\
+	go test -timeout $(GO_TEST_TIMEOUT) -cover -race\
 	 ./cmd/...     \
 	 ./common/...  \
 	 ./oxia/...    \
