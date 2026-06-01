@@ -113,6 +113,7 @@ type leaderController struct {
 
 	ctx            context.Context
 	cancel         context.CancelFunc
+	waitGroup      sync.WaitGroup
 	wal            wal.Wal
 	db             database.DB
 	termOptions    database.TermOptions
@@ -766,37 +767,39 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 		cb.OnComplete(err)
 		return
 	}
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "read",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
-		},
-		func() {
-			lc.log.Debug("Received read request", slog.Int64("term", lc.term.Load()))
-			var response *proto.GetResponse
-			var err error
+	lc.waitGroup.Go(func() {
+		process.DoWithLabels(
+			ctx,
+			map[string]string{
+				"oxia":  "read",
+				"shard": fmt.Sprintf("%d", lc.shardId),
+				"peer":  rpc.GetPeer(ctx),
+			},
+			func() {
+				lc.log.Debug("Received read request", slog.Int64("term", lc.term.Load()))
+				var response *proto.GetResponse
+				var err error
 
-			for _, get := range request.Gets {
-				if get.SecondaryIndexName != nil {
-					response, err = secondaryIndexGet(get, lc.db)
-				} else {
-					response, err = lc.db.Get(get)
+				for _, get := range request.Gets {
+					if get.SecondaryIndexName != nil {
+						response, err = secondaryIndexGet(get, lc.db)
+					} else {
+						response, err = lc.db.Get(get)
+					}
+					if err != nil {
+						break
+					}
+					if err = cb.OnNext(response); err != nil {
+						break
+					}
+					if err = ctx.Err(); err != nil {
+						break
+					}
 				}
-				if err != nil {
-					break
-				}
-				if err = cb.OnNext(response); err != nil {
-					break
-				}
-				if err = ctx.Err(); err != nil {
-					break
-				}
-			}
-			cb.OnComplete(err)
-		},
-	)
+				cb.OnComplete(err)
+			},
+		)
+	})
 }
 
 func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto.GetSequenceUpdatesRequest) (database.SequenceWaiter, error) {
@@ -823,47 +826,49 @@ func (lc *leaderController) List(ctx context.Context, request *proto.ListRequest
 }
 
 func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "list",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
-		},
-		func() {
-			lc.log.Debug("Received list request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
+	lc.waitGroup.Go(func() {
+		process.DoWithLabels(
+			ctx,
+			map[string]string{
+				"oxia":  "list",
+				"shard": fmt.Sprintf("%d", lc.shardId),
+				"peer":  rpc.GetPeer(ctx),
+			},
+			func() {
+				lc.log.Debug("Received list request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
 
-			var it kvstore.KeyIterator
-			var err error
+				var it kvstore.KeyIterator
+				var err error
 
-			if request.SecondaryIndexName != nil {
-				it, err = newSecondaryIndexListIterator(request, lc.db)
-			} else {
-				it, err = lc.db.List(request)
-			}
-			if err != nil {
-				lc.log.Warn(
-					"Failed to process list request",
-					slog.Any("error", err),
-					slog.Int64("term", lc.term.Load()),
-				)
+				if request.SecondaryIndexName != nil {
+					it, err = newSecondaryIndexListIterator(request, lc.db)
+				} else {
+					it, err = lc.db.List(request)
+				}
+				if err != nil {
+					lc.log.Warn(
+						"Failed to process list request",
+						slog.Any("error", err),
+						slog.Int64("term", lc.term.Load()),
+					)
+					cb.OnComplete(err)
+					return
+				}
+
+				for ; it.Valid(); it.Next() {
+					if err = cb.OnNext(it.Key()); err != nil {
+						break
+					}
+					if err = ctx.Err(); err != nil {
+						break
+					}
+				}
+
+				err = multierr.Combine(err, it.Close())
 				cb.OnComplete(err)
-				return
-			}
-
-			for ; it.Valid(); it.Next() {
-				if err = cb.OnNext(it.Key()); err != nil {
-					break
-				}
-				if err = ctx.Err(); err != nil {
-					break
-				}
-			}
-
-			err = multierr.Combine(err, it.Close())
-			cb.OnComplete(err)
-		},
-	)
+			},
+		)
+	})
 }
 
 func (lc *leaderController) ListBlock(ctx context.Context, request *proto.ListRequest) ([]string, error) {
@@ -881,48 +886,49 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 		cb.OnComplete(err)
 		return
 	}
+	lc.waitGroup.Go(func() {
+		process.DoWithLabels(ctx,
+			map[string]string{
+				"oxia":  "range-scan",
+				"shard": fmt.Sprintf("%d", lc.shardId),
+				"peer":  rpc.GetPeer(ctx),
+			},
+			func() {
+				lc.log.Debug("Received range-scan request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
 
-	go process.DoWithLabels(ctx,
-		map[string]string{
-			"oxia":  "range-scan",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
-		},
-		func() {
-			lc.log.Debug("Received range-scan request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
+				var it database.RangeScanIterator
+				var err error
 
-			var it database.RangeScanIterator
-			var err error
+				if request.SecondaryIndexName != nil {
+					it, err = newSecondaryIndexRangeScanIterator(request, lc.db)
+				} else {
+					it, err = lc.db.RangeScan(request)
+				}
 
-			if request.SecondaryIndexName != nil {
-				it, err = newSecondaryIndexRangeScanIterator(request, lc.db)
-			} else {
-				it, err = lc.db.RangeScan(request)
-			}
+				if err != nil {
+					lc.log.Warn("Failed to process range-scan request", slog.Any("error", err), slog.Int64("term", lc.term.Load()))
+					cb.OnComplete(err)
+					return
+				}
 
-			if err != nil {
-				lc.log.Warn("Failed to process range-scan request", slog.Any("error", err), slog.Int64("term", lc.term.Load()))
+				var gr *proto.GetResponse
+				for ; it.Valid(); it.Next() {
+					if gr, err = it.Value(); err != nil {
+						break
+					}
+					if err = cb.OnNext(gr); err != nil {
+						break
+					}
+					if err = ctx.Err(); err != nil {
+						break
+					}
+				}
+
+				err = multierr.Combine(err, it.Close())
 				cb.OnComplete(err)
-				return
-			}
-
-			var gr *proto.GetResponse
-			for ; it.Valid(); it.Next() {
-				if gr, err = it.Value(); err != nil {
-					break
-				}
-				if err = cb.OnNext(gr); err != nil {
-					break
-				}
-				if err = ctx.Err(); err != nil {
-					break
-				}
-			}
-
-			err = multierr.Combine(err, it.Close())
-			cb.OnComplete(err)
-		},
-	)
+			},
+		)
+	})
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
@@ -1156,6 +1162,8 @@ func (lc *leaderController) close() error {
 
 	lc.status = proto.ServingStatus_NOT_MEMBER
 	lc.cancel()
+
+	lc.waitGroup.Wait()
 
 	var err error
 	for _, follower := range lc.followers {
