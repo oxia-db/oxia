@@ -15,12 +15,17 @@
 package lead
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/metadata"
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -203,6 +208,93 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 	assert.NoError(t, fc.Close())
 }
 
+func TestFollowerCursor_CloseWaitsForInFlightSnapshot(t *testing.T) {
+	var term int64 = 1
+	var shard int64 = 2
+
+	kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	assert.NoError(t, err)
+	wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	wr := &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{{
+			Key:   "key",
+			Value: []byte("value"),
+		}},
+	}
+	e, _ := pb.Marshal(wrapInLogEntryValue(wr))
+	assert.NoError(t, w.Append(&proto.LogEntry{
+		Term:      1,
+		Offset:    0,
+		Value:     e,
+		Timestamp: 0,
+	}))
+	_, err = db.ProcessWrite(wr, 0, 0, database.NoOpCallback)
+	assert.NoError(t, err)
+
+	stream := newBlockingSnapshotStream()
+	provider := &blockingSnapshotProvider{stream: stream}
+	ackTracker := NewQuorumAckTracker(3, 0, 0)
+
+	var fc FollowerCursor
+	t.Cleanup(func() {
+		stream.unblock()
+		if fc != nil {
+			assert.NoError(t, fc.Close())
+		}
+		assert.NoError(t, w.Close())
+		assert.NoError(t, wf.Close())
+		assert.NoError(t, db.Close())
+		assert.NoError(t, kvf.Close())
+	})
+
+	fc, err = NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, provider, ackTracker, w, db, wal.InvalidOffset)
+	assert.NoError(t, err)
+
+	// The blocked Send call is after db.Snapshot() succeeds, so the cursor still
+	// owns Pebble snapshot references. Close must not return before that sender
+	// exits, otherwise the leader can close the DB with outstanding references.
+	select {
+	case <-stream.sendStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for snapshot send to start")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- fc.Close()
+	}()
+
+	select {
+	case <-stream.Context().Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for cursor close to cancel snapshot context")
+	}
+
+	select {
+	case err := <-closeDone:
+		assert.NoError(t, err)
+		t.Fatal("Close returned before the snapshot sender exited")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	stream.unblock()
+
+	select {
+	case err := <-closeDone:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for cursor close")
+	}
+
+	fc = nil
+}
+
 func wrapInLogEntryValue(wr *proto.WriteRequest) *proto.LogEntryValue {
 	return &proto.LogEntryValue{
 		Value: &proto.LogEntryValue_Requests{
@@ -213,4 +305,80 @@ func wrapInLogEntryValue(wr *proto.WriteRequest) *proto.LogEntryValue {
 			},
 		},
 	}
+}
+
+type blockingSnapshotProvider struct {
+	stream *blockingSnapshotStream
+}
+
+func (*blockingSnapshotProvider) GetReplicateStream(context.Context, string, string, int64, int64) (proto.OxiaLogReplication_ReplicateClient, error) {
+	return nil, errors.New("unexpected replicate stream")
+}
+
+func (p *blockingSnapshotProvider) SendSnapshot(ctx context.Context, _ string, _ string, _ int64, _ int64) (proto.OxiaLogReplication_SendSnapshotClient, error) {
+	p.stream.ctx = ctx
+	return p.stream, nil
+}
+
+type blockingSnapshotStream struct {
+	ctx         context.Context
+	sendStarted chan struct{}
+	release     chan struct{}
+	startOnce   sync.Once
+	releaseOnce sync.Once
+}
+
+func newBlockingSnapshotStream() *blockingSnapshotStream {
+	return &blockingSnapshotStream{
+		sendStarted: make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+}
+
+func (s *blockingSnapshotStream) unblock() {
+	s.releaseOnce.Do(func() {
+		close(s.release)
+	})
+}
+
+func (s *blockingSnapshotStream) Send(*proto.SnapshotChunk) error {
+	s.startOnce.Do(func() {
+		close(s.sendStarted)
+	})
+	<-s.release
+	if s.ctx != nil && s.ctx.Err() != nil {
+		return s.ctx.Err()
+	}
+	return context.Canceled
+}
+
+func (*blockingSnapshotStream) CloseAndRecv() (*proto.SnapshotResponse, error) {
+	return nil, context.Canceled
+}
+
+func (*blockingSnapshotStream) Header() (metadata.MD, error) {
+	return metadata.MD{}, nil
+}
+
+func (*blockingSnapshotStream) Trailer() metadata.MD {
+	return nil
+}
+
+func (*blockingSnapshotStream) CloseSend() error {
+	return nil
+}
+
+func (s *blockingSnapshotStream) Context() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
+}
+
+func (*blockingSnapshotStream) SendMsg(any) error {
+	return nil
+}
+
+func (*blockingSnapshotStream) RecvMsg(any) error {
+	return io.EOF
 }

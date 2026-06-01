@@ -17,6 +17,7 @@ package rpc
 import (
 	"context"
 	"io"
+	"sync"
 
 	"google.golang.org/grpc/metadata"
 
@@ -89,34 +90,35 @@ type TruncateResps struct {
 	Error    error
 }
 type MockRpcClient struct {
-	MockBase
 	SendSnapshotStream *MockSendSnapshotClientStream
 	AppendReqs         chan *proto.Append
 	AckResps           chan *proto.Ack
 	TruncateReqs       chan *proto.TruncateRequest
 	TruncateResps      chan TruncateResps
+	streamsMutex       sync.Mutex
+	streams            []*MockReplicateStream
 }
 
-func (*MockRpcClient) Close() error {
+func (m *MockRpcClient) Close() error {
+	m.streamsMutex.Lock()
+	defer m.streamsMutex.Unlock()
+
+	for _, stream := range m.streams {
+		if err := stream.CloseSend(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func (m *MockRpcClient) Send(request *proto.Append) error {
-	m.AppendReqs <- request
-	return nil
-}
+func (m *MockRpcClient) GetReplicateStream(ctx context.Context, _ string, _ string, _ int64, _ int64) (proto.OxiaLogReplication_ReplicateClient, error) {
+	stream := NewMockReplicateStream(ctx, m.AppendReqs, m.AckResps)
 
-func (m *MockRpcClient) Recv() (*proto.Ack, error) {
-	res := <-m.AckResps
-	return res, nil
-}
+	m.streamsMutex.Lock()
+	m.streams = append(m.streams, stream)
+	m.streamsMutex.Unlock()
 
-func (*MockRpcClient) CloseSend() error {
-	return nil
-}
-
-func (m *MockRpcClient) GetReplicateStream(context.Context, string, string, int64, int64) (proto.OxiaLogReplication_ReplicateClient, error) {
-	return m, nil
+	return stream, nil
 }
 
 func (m *MockRpcClient) SendSnapshot(context.Context, string, string, int64, int64) (proto.OxiaLogReplication_SendSnapshotClient, error) {
@@ -130,6 +132,50 @@ func (m *MockRpcClient) Truncate(_ string, req *proto.TruncateRequest) (*proto.T
 
 	x := <-m.TruncateResps
 	return x.Response, x.Error
+}
+
+type MockReplicateStream struct {
+	MockBase
+	send   chan *proto.Append
+	recv   chan *proto.Ack
+	cancel context.CancelFunc
+}
+
+func NewMockReplicateStream(ctx context.Context, send chan *proto.Append, recv chan *proto.Ack) *MockReplicateStream {
+	stream := &MockReplicateStream{
+		send: send,
+		recv: recv,
+	}
+	stream.ctx, stream.cancel = context.WithCancel(ctx)
+	return stream
+}
+
+func (m *MockReplicateStream) Send(request *proto.Append) error {
+	select {
+	case <-m.ctx.Done():
+		return m.ctx.Err()
+	case m.send <- request:
+		return nil
+	}
+}
+
+func (m *MockReplicateStream) Recv() (*proto.Ack, error) {
+	select {
+	case <-m.ctx.Done():
+		return nil, m.ctx.Err()
+	case res, ok := <-m.recv:
+		if !ok {
+			return nil, io.EOF
+		}
+		return res, nil
+	}
+}
+
+func (m *MockReplicateStream) CloseSend() error {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	return nil
 }
 
 func NewMockShardAssignmentClientStream() *MockShardAssignmentClientStream {
