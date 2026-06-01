@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -309,7 +310,7 @@ func (d *db) EnableFeature(feature proto.Feature) {
 }
 
 func featureFlagKey(feature proto.Feature) string {
-	return fmt.Sprintf("%s/%d", featureFlagKeyPrefix, feature)
+	return fmt.Sprintf("%s/%010d", featureFlagKeyPrefix, feature)
 }
 
 func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64, timestamp uint64, _ UpdateOperationCallback) (*Meta, error) {
@@ -574,11 +575,19 @@ func (d *db) recoverFeatureFlags() error {
 			break
 		}
 
-		var feature int32
-		if _, err := fmt.Sscanf(strings.TrimPrefix(key, featureFlagKeyPrefix+"/"), "%d", &feature); err != nil {
-			return err
+		featureValue, err := strconv.ParseInt(strings.TrimPrefix(key, featureFlagKeyPrefix+"/"), 10, 32)
+		if err != nil {
+			return errors.Wrapf(err, "invalid feature flag key %q", key)
 		}
-		d.enabledFeatures.Store(proto.Feature(feature), true)
+		if featureValue < 0 {
+			return errors.Errorf("invalid feature flag key %q", key)
+		}
+
+		feature := proto.Feature(featureValue)
+		if key != featureFlagKey(feature) {
+			return errors.Errorf("invalid feature flag key %q", key)
+		}
+		d.enabledFeatures.Store(feature, true)
 
 		it.Next()
 	}
