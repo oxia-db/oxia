@@ -29,11 +29,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GO_LICENSE_VERSION: "latest"
+  GOLANGCI_LINT_VERSION: "v2.6.2"
+
 jobs:
   # Build and test to ensure release is stable
   build-test:
     name: Build & Test
-    runs-on: ubuntu-latest
+    runs-on: cncf-ubuntu-8-32-x86
     permissions:
       contents: read
     steps:
@@ -46,6 +50,15 @@ jobs:
           cache: true
           cache-dependency-path: "go.work.sum"
 
+      - name: Add Go bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: ${{ runner.os }}-go-tools-${{ env.GO_LICENSE_VERSION }}-${{ env.GOLANGCI_LINT_VERSION }}
+
       - name: Install protoc
         run: |
           PROTOC_VERSION=34.1
@@ -53,10 +66,10 @@ jobs:
           sudo unzip -o protoc.zip -d /usr/local bin/protoc 'include/*'
           rm protoc.zip
 
-      - name: Installing Go dependencies
+      - name: Install Go tools
         run: |
-          go install github.com/palantir/go-license@latest
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.2
+          command -v go-license >/dev/null || go install github.com/palantir/go-license@${GO_LICENSE_VERSION}
+          command -v golangci-lint >/dev/null || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}
 
       - run: make license-check
       - name: Build
@@ -69,7 +82,7 @@ jobs:
   # Build cross-platform binaries
   build-binaries:
     name: Build Binaries
-    runs-on: ubuntu-latest
+    runs-on: cncf-ubuntu-8-32-x86
     needs: build-test
     permissions:
       contents: write
@@ -119,7 +132,7 @@ jobs:
   # Build and publish Docker image
   publish-docker:
     name: Publish Docker Image
-    runs-on: ubuntu-latest
+    runs-on: cncf-ubuntu-8-32-x86
     needs: build-test
     permissions:
       contents: read
@@ -167,7 +180,7 @@ jobs:
   # Create GitHub release with binaries and notes
   create-release:
     name: Create Release
-    runs-on: ubuntu-latest
+    runs-on: cncf-ubuntu-4-16-x86
     needs: [build-binaries, publish-docker]
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -210,7 +223,7 @@ jobs:
   # Clean up RC tags and releases when an official release is published
   cleanup-rc-tags:
     name: Cleanup RC Tags
-    runs-on: ubuntu-latest
+    runs-on: cncf-ubuntu-4-16-x86
     needs: create-release
     if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, 'rc') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'alpha')
     permissions:
