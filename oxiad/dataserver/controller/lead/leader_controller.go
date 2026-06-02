@@ -1092,6 +1092,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			Notifications: nil,
 		}); err != nil {
 			cb.OnComplete(err)
+			return
 		}
 		offsetExclusive = commitOffset
 	}
