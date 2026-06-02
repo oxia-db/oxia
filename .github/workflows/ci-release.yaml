@@ -186,6 +186,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@v7
         with:
@@ -207,10 +212,34 @@ jobs:
             cd ..
           done
 
-      - name: Create Release
+      - name: Prepare release notes
+        id: release-notes
+        run: |
+          NOTES_FILE="release-notes/${GITHUB_REF_NAME}.md"
+          if [[ -f "$NOTES_FILE" ]]; then
+            echo "notes_file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_file=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Release with notes
+        if: steps.release-notes.outputs.notes_file != ''
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: ${{ steps.release-notes.outputs.notes_file }}
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+          files: |
+            release-assets/*
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release without notes
+        if: steps.release-notes.outputs.notes_file == ''
+        uses: softprops/action-gh-release@v2
+        with:
           prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
           files: |
             release-assets/*

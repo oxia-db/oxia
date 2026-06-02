@@ -75,3 +75,21 @@ Requires: `protoc-gen-go`, `protoc-gen-go-grpc`, `protoc-gen-go-vtproto`
 - **gRPC + vtprotobuf**: Optimized RPC communication
 - **Cobra/Viper**: CLI framework and configuration
 - **OpenTelemetry**: Metrics and tracing
+
+## Release Notes
+
+Release notes are manually written. Do not rely on GitHub-generated release notes.
+
+When preparing release notes ahead of time, copy `release-notes/TEMPLATE.md` to
+`release-notes/<tag>.md` and fill it before creating the tag. The release workflow
+uses this file as the GitHub release body when it exists. If the file is missing,
+the workflow still creates the release so maintainers can add notes afterward.
+
+Formatting rules:
+- Do not include a redundant release-title line; GitHub already shows the tag.
+- Use bold section labels like `**Compatibility**`, not Markdown headings.
+- Do not include author names or generated `by @user in <url>` entries.
+- Always consider compatibility, requirements, public API changes, metrics changes,
+  and operational changes.
+- Keep change bullets concise and include PR numbers, for example
+  `dataserver: make authority validation configurable (#1136)`.
