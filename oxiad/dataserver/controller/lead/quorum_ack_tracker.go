@@ -247,9 +247,11 @@ func (q *quorumAckTracker) Close() error {
 	q.Lock()
 	q.closed = true
 	q.waitForHeadOffset.Broadcast()
+	waitingRequests := q.waitingRequests
+	q.waitingRequests = make([]waitingRequest, 0)
 	q.Unlock()
 	// unblock waiting request
-	for _, r := range q.waitingRequests {
+	for _, r := range waitingRequests {
 		r.callback.OnCompleteError(constant.ErrAlreadyClosed)
 	}
 	return nil
@@ -298,6 +300,9 @@ func (c *cursorAcker) Ack(offset int64) {
 	c.quorumTracker.Lock()
 	defer c.quorumTracker.Unlock()
 
+	if c.quorumTracker.closed {
+		return
+	}
 	c.ack(offset)
 }
 
