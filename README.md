@@ -35,6 +35,12 @@ Please 🌟 star the project if you like it.
 
 Feel free to open an [issue](https://github.com/oxia-db/oxia/issues/new) or start a [discussion](https://github.com/oxia-db/oxia/discussions/new/choose). You can also follow the development [guide]() to contribute and build on it.
 
+<p align="center">
+  <a href="https://star-history.com/#oxia-db/oxia&Date">
+    <img src="https://api.star-history.com/svg?repos=oxia-db/oxia&type=Date" alt="Star History Chart" width="600"/>
+  </a>
+</p>
+
 ### License
 
 Copyright 2023-2026 The Oxia Authors
