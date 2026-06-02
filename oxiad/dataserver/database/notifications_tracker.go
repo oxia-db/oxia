@@ -163,7 +163,7 @@ func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startO
 		nt.log.Debug(
 			"Waiting for notification to be available",
 			slog.Int64("start-offset", startOffset),
-			slog.Int64("last-committed-offset", nt.lastOffset.Load()),
+			slog.Int64("last-notification-offset", nt.lastOffset.Load()),
 		)
 
 		if err := nt.cond.Wait(ctx); err != nil {
