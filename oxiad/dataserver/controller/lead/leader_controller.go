@@ -763,8 +763,8 @@ func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {
 func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
-	lc.RUnlock()
 	if err != nil {
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
@@ -801,6 +801,7 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 			},
 		)
 	})
+	lc.RUnlock()
 }
 
 func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto.GetSequenceUpdatesRequest) (database.SequenceWaiter, error) {
@@ -818,12 +819,15 @@ func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto
 func (lc *leaderController) List(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
-	lc.RUnlock()
 	if err != nil {
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
-	lc.waitGroup.Go(func() { lc.list(ctx, request, cb) })
+	lc.waitGroup.Go(func() {
+		lc.list(ctx, request, cb)
+	})
+	lc.RUnlock()
 }
 
 func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
@@ -880,8 +884,8 @@ func (lc *leaderController) ListBlock(ctx context.Context, request *proto.ListRe
 func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeScanRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
-	lc.RUnlock()
 	if err != nil {
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
@@ -929,6 +933,7 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 			},
 		)
 	})
+	lc.RUnlock()
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
@@ -1076,13 +1081,13 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 		return
 	}
 	qat := lc.quorumAckTracker
-	lc.Unlock()
 
 	var offsetExclusive int64
 	if req.StartOffsetExclusive != nil {
 		offsetExclusive = *req.StartOffsetExclusive
 	} else {
 		if qat == nil {
+			lc.Unlock()
 			cb.OnComplete(constant.ErrInvalidStatus)
 			return
 		}
@@ -1102,6 +1107,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			Timestamp:     0,
 			Notifications: nil,
 		}); err != nil {
+			lc.Unlock()
 			cb.OnComplete(err)
 			return
 		}
@@ -1153,6 +1159,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			},
 		)
 	})
+	lc.Unlock()
 }
 
 func (lc *leaderController) Close() error {
@@ -1200,11 +1207,6 @@ func (lc *leaderController) close() error {
 	if lc.db != nil {
 		err = multierr.Append(err, lc.db.Close())
 		lc.db = nil
-	}
-
-	if lc.quorumAckTracker != nil {
-		err = multierr.Append(err, lc.quorumAckTracker.Close())
-		lc.quorumAckTracker = nil
 	}
 
 	return err

@@ -398,7 +398,7 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-leaderCtx.Done():
-			return constant.IntoGrpcStatusError(constant.ErrAlreadyClosed)
+			return constant.ErrAlreadyClosed
 		}
 	}
 }
