@@ -762,9 +762,9 @@ func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {
 
 func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
 	lc.RLock()
-	defer lc.RUnlock()
 	err := checkStatusIsLeader(lc.status)
 	if err != nil {
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
@@ -801,6 +801,7 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 			},
 		)
 	})
+	lc.RUnlock()
 }
 
 func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto.GetSequenceUpdatesRequest) (database.SequenceWaiter, error) {
@@ -817,13 +818,16 @@ func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto
 
 func (lc *leaderController) List(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
 	lc.RLock()
-	defer lc.RUnlock()
 	err := checkStatusIsLeader(lc.status)
 	if err != nil {
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
-	lc.waitGroup.Go(func() { lc.list(ctx, request, cb) })
+	lc.waitGroup.Go(func() {
+		lc.list(ctx, request, cb)
+	})
+	lc.RUnlock()
 }
 
 func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
@@ -879,9 +883,9 @@ func (lc *leaderController) ListBlock(ctx context.Context, request *proto.ListRe
 
 func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeScanRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
 	lc.RLock()
-	defer lc.RUnlock()
 	err := checkStatusIsLeader(lc.status)
 	if err != nil {
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
@@ -929,6 +933,7 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 			},
 		)
 	})
+	lc.RUnlock()
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
@@ -1065,12 +1070,13 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 //nolint:revive
 func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.NotificationsRequest, cb concurrent.StreamCallback[*proto.NotificationBatch]) {
 	lc.Lock()
-	defer lc.Unlock()
 	if err := checkStatusIsLeader(lc.status); err != nil {
+		lc.Unlock()
 		cb.OnComplete(err)
 		return
 	}
 	if !lc.termOptions.NotificationsEnabled {
+		lc.Unlock()
 		cb.OnComplete(constant.ErrNotificationsNotEnabled)
 		return
 	}
@@ -1081,6 +1087,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 		offsetExclusive = *req.StartOffsetExclusive
 	} else {
 		if qat == nil {
+			lc.Unlock()
 			cb.OnComplete(constant.ErrInvalidStatus)
 			return
 		}
@@ -1100,6 +1107,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			Timestamp:     0,
 			Notifications: nil,
 		}); err != nil {
+			lc.Unlock()
 			cb.OnComplete(err)
 			return
 		}
@@ -1151,6 +1159,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			},
 		)
 	})
+	lc.Unlock()
 }
 
 func (lc *leaderController) Close() error {
