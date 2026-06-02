@@ -26,12 +26,14 @@ concurrency:
 
 env:
   MAELSTROM_VERSION: "0.2.3"
+  GO_LICENSE_VERSION: "latest"
+  GOLANGCI_LINT_VERSION: "v2.6.2"
 
 jobs:
 
   build:
     name: Build & Test
-    runs-on: ubuntu-latest
+    runs-on: cncf-ubuntu-8-32-x86
     permissions:
       contents: read
     steps:
@@ -44,6 +46,15 @@ jobs:
           cache: 'true'
           cache-dependency-path: "go.work.sum"
 
+      - name: Add Go bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: ${{ runner.os }}-go-tools-${{ env.GO_LICENSE_VERSION }}-${{ env.GOLANGCI_LINT_VERSION }}
+
       - name: Install protoc
         run: |
           PROTOC_VERSION=34.1
@@ -51,10 +62,10 @@ jobs:
           sudo unzip -o protoc.zip -d /usr/local bin/protoc 'include/*'
           rm protoc.zip
 
-      - name: Installing Go dependencies
+      - name: Install Go tools
         run: |
-          go install github.com/palantir/go-license@latest
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.2
+          command -v go-license >/dev/null || go install github.com/palantir/go-license@${GO_LICENSE_VERSION}
+          command -v golangci-lint >/dev/null || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}
 
       - run: make license-check
 
@@ -78,7 +89,7 @@ jobs:
 
   chaos-mesh:
     name: Run chaos-mesh
-    runs-on: ubuntu-latest
+    runs-on: cncf-ubuntu-8-32-x86
     permissions:
       contents: read # for actions/checkout to fetch code
       security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
@@ -151,7 +162,7 @@ jobs:
 
   maelstrom:
     name: Maelstrom
-    runs-on: ubuntu-latest
+    runs-on: cncf-ubuntu-8-32-x86
     permissions:
       contents: read
       actions: write
