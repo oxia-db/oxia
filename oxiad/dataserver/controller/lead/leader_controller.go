@@ -1172,6 +1172,7 @@ func (lc *leaderController) close() error {
 	if lc.quorumAckTracker != nil {
 		err = multierr.Append(err, lc.quorumAckTracker.Close())
 	}
+	lc.quorumAckTracker = nil
 
 	lc.waitGroup.Wait()
 	for _, follower := range lc.followers {
@@ -1195,7 +1196,6 @@ func (lc *leaderController) close() error {
 		err = multierr.Append(err, lc.wal.Close())
 		lc.wal = nil
 	}
-	lc.quorumAckTracker = nil
 
 	if lc.db != nil {
 		err = multierr.Append(err, lc.db.Close())
