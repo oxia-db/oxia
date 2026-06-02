@@ -1134,14 +1134,15 @@ func TestLeaderController_NotificationsCloseLeader(t *testing.T) {
 
 	assert.False(t, adaptor.IsCompleted())
 
-	// Closing the leader should close the `GetNotification()` handler
+	cancel()
+
+	// Closing the leader should wait for the `GetNotification()` handler
 	assert.NoError(t, lc.Close())
 
 	time.Sleep(1 * time.Second)
 
 	assert.True(t, adaptor.IsCompleted())
 
-	cancel()
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }

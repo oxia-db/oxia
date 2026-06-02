@@ -384,6 +384,7 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 		channel.PushNoBlock(finish, err)
 	}))
 
+	leaderCtx := lc.Context()
 	for {
 		select {
 		case err := <-finish:
@@ -396,6 +397,8 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-leaderCtx.Done():
+			return constant.ErrAlreadyClosed
 		}
 	}
 }

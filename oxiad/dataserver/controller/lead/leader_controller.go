@@ -113,6 +113,8 @@ type leaderController struct {
 
 	ctx            context.Context
 	cancel         context.CancelFunc
+	waitGroup      sync.WaitGroup
+	closed         bool
 	wal            wal.Wal
 	db             database.DB
 	termOptions    database.TermOptions
@@ -262,7 +264,7 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	lc.Lock()
 	defer lc.Unlock()
 
-	if lc.isClosed() {
+	if lc.closed {
 		return nil, constant.ErrAlreadyClosed
 	}
 
@@ -344,7 +346,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	lc.Lock()
 	defer lc.Unlock()
 
-	if lc.isClosed() {
+	if lc.closed {
 		return nil, constant.ErrAlreadyClosed
 	}
 
@@ -761,42 +763,45 @@ func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {
 func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
-	lc.RUnlock()
 	if err != nil {
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "read",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
-		},
-		func() {
-			lc.log.Debug("Received read request", slog.Int64("term", lc.term.Load()))
-			var response *proto.GetResponse
-			var err error
+	lc.waitGroup.Go(func() {
+		process.DoWithLabels(
+			ctx,
+			map[string]string{
+				"oxia":  "read",
+				"shard": fmt.Sprintf("%d", lc.shardId),
+				"peer":  rpc.GetPeer(ctx),
+			},
+			func() {
+				lc.log.Debug("Received read request", slog.Int64("term", lc.term.Load()))
+				var response *proto.GetResponse
+				var err error
 
-			for _, get := range request.Gets {
-				if get.SecondaryIndexName != nil {
-					response, err = secondaryIndexGet(get, lc.db)
-				} else {
-					response, err = lc.db.Get(get)
+				for _, get := range request.Gets {
+					if get.SecondaryIndexName != nil {
+						response, err = secondaryIndexGet(get, lc.db)
+					} else {
+						response, err = lc.db.Get(get)
+					}
+					if err != nil {
+						break
+					}
+					if err = cb.OnNext(response); err != nil {
+						break
+					}
+					if err = ctx.Err(); err != nil {
+						break
+					}
 				}
-				if err != nil {
-					break
-				}
-				if err = cb.OnNext(response); err != nil {
-					break
-				}
-				if err = ctx.Err(); err != nil {
-					break
-				}
-			}
-			cb.OnComplete(err)
-		},
-	)
+				cb.OnComplete(err)
+			},
+		)
+	})
+	lc.RUnlock()
 }
 
 func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto.GetSequenceUpdatesRequest) (database.SequenceWaiter, error) {
@@ -814,16 +819,19 @@ func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto
 func (lc *leaderController) List(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
-	lc.RUnlock()
 	if err != nil {
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
-	lc.list(ctx, request, cb)
+	lc.waitGroup.Go(func() {
+		lc.list(ctx, request, cb)
+	})
+	lc.RUnlock()
 }
 
 func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
-	go process.DoWithLabels(
+	process.DoWithLabels(
 		ctx,
 		map[string]string{
 			"oxia":  "list",
@@ -869,60 +877,63 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 func (lc *leaderController) ListBlock(ctx context.Context, request *proto.ListRequest) ([]string, error) {
 	// todo: support leader status check without lock
 	ch := make(chan *entity.TWithError[string])
-	go lc.list(ctx, request, concurrent.ReadFromStreamCallback(ch))
+	lc.waitGroup.Go(func() { lc.list(ctx, request, concurrent.ReadFromStreamCallback(ch)) })
 	return channel.ReadAll(ctx, ch)
 }
 
 func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeScanRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
-	lc.RUnlock()
 	if err != nil {
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
 
-	go process.DoWithLabels(ctx,
-		map[string]string{
-			"oxia":  "range-scan",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
-		},
-		func() {
-			lc.log.Debug("Received range-scan request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
+	lc.waitGroup.Go(func() {
+		process.DoWithLabels(ctx,
+			map[string]string{
+				"oxia":  "range-scan",
+				"shard": fmt.Sprintf("%d", lc.shardId),
+				"peer":  rpc.GetPeer(ctx),
+			},
+			func() {
+				lc.log.Debug("Received range-scan request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
 
-			var it database.RangeScanIterator
-			var err error
+				var it database.RangeScanIterator
+				var err error
 
-			if request.SecondaryIndexName != nil {
-				it, err = newSecondaryIndexRangeScanIterator(request, lc.db)
-			} else {
-				it, err = lc.db.RangeScan(request)
-			}
+				if request.SecondaryIndexName != nil {
+					it, err = newSecondaryIndexRangeScanIterator(request, lc.db)
+				} else {
+					it, err = lc.db.RangeScan(request)
+				}
 
-			if err != nil {
-				lc.log.Warn("Failed to process range-scan request", slog.Any("error", err), slog.Int64("term", lc.term.Load()))
+				if err != nil {
+					lc.log.Warn("Failed to process range-scan request", slog.Any("error", err), slog.Int64("term", lc.term.Load()))
+					cb.OnComplete(err)
+					return
+				}
+
+				var gr *proto.GetResponse
+				for ; it.Valid(); it.Next() {
+					if gr, err = it.Value(); err != nil {
+						break
+					}
+					if err = cb.OnNext(gr); err != nil {
+						break
+					}
+					if err = ctx.Err(); err != nil {
+						break
+					}
+				}
+
+				err = multierr.Combine(err, it.Close())
 				cb.OnComplete(err)
-				return
-			}
-
-			var gr *proto.GetResponse
-			for ; it.Valid(); it.Next() {
-				if gr, err = it.Value(); err != nil {
-					break
-				}
-				if err = cb.OnNext(gr); err != nil {
-					break
-				}
-				if err = ctx.Err(); err != nil {
-					break
-				}
-			}
-
-			err = multierr.Combine(err, it.Close())
-			cb.OnComplete(err)
-		},
-	)
+			},
+		)
+	})
+	lc.RUnlock()
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
@@ -1022,9 +1033,11 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 		return
 	}
 
+	lc.waitGroup.Add(1) // inflight proposal
 	deferDbWrite := func(entryCrc uint32, err error) {
 		if err != nil {
 			timer.DoneCtx(ctx)
+			lc.waitGroup.Done()
 			cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
 			return
 		}
@@ -1034,6 +1047,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 				defer timer.DoneCtx(ctx)
 				response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
 				if err != nil {
+					lc.waitGroup.Done()
 					cb.OnCompleteError(err)
 					return
 				}
@@ -1041,9 +1055,11 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 					lc.checksumGauge.Record(int64(*response.Checksum))
 					lc.walChecksumGauge.Record(int64(entryCrc))
 				}
+				lc.waitGroup.Done()
 				cb.OnComplete(response)
 			}, func(err error) {
 				timer.DoneCtx(ctx)
+				lc.waitGroup.Done()
 				cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
 			}))
 	}
@@ -1065,13 +1081,13 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 		return
 	}
 	qat := lc.quorumAckTracker
-	lc.Unlock()
 
 	var offsetExclusive int64
 	if req.StartOffsetExclusive != nil {
 		offsetExclusive = *req.StartOffsetExclusive
 	} else {
 		if qat == nil {
+			lc.Unlock()
 			cb.OnComplete(constant.ErrInvalidStatus)
 			return
 		}
@@ -1091,59 +1107,59 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			Timestamp:     0,
 			Notifications: nil,
 		}); err != nil {
+			lc.Unlock()
 			cb.OnComplete(err)
 			return
 		}
 		offsetExclusive = commitOffset
 	}
 
-	go process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "dispatch-notifications",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  rpc.GetPeer(ctx),
-		},
-		func() {
-			lc.log.Debug("Dispatch notifications", slog.Int64("term", lc.term.Load()), slog.Any("start-offset-include", offsetExclusive))
-			offset := offsetExclusive
-			for {
-				select {
-				case <-lc.ctx.Done():
-					cb.OnComplete(constant.ErrAlreadyClosed)
-					return
-				case <-ctx.Done():
-					cb.OnComplete(nil)
-					return
-				default:
-					notifications, err := lc.db.ReadNextNotifications(ctx, offset+1)
-					if err != nil {
-						cb.OnComplete(err)
+	lc.waitGroup.Go(func() {
+		process.DoWithLabels(
+			ctx,
+			map[string]string{
+				"oxia":  "dispatch-notifications",
+				"shard": fmt.Sprintf("%d", lc.shardId),
+				"peer":  rpc.GetPeer(ctx),
+			},
+			func() {
+				lc.log.Debug("Dispatch notifications", slog.Int64("term", lc.term.Load()), slog.Any("start-offset-include", offsetExclusive))
+				offset := offsetExclusive
+				for {
+					select {
+					case <-lc.ctx.Done():
+						cb.OnComplete(constant.ErrAlreadyClosed)
 						return
-					}
-					lc.log.Debug(
-						"Got a new list of notification batches",
-						slog.Int64("term", lc.term.Load()),
-						slog.Int("list-size", len(notifications)),
-					)
-					if len(notifications) > 0 {
-						for idx := range notifications {
-							notification := notifications[idx]
-							if err := cb.OnNext(notification); err != nil {
-								cb.OnComplete(err)
-								return
+					case <-ctx.Done():
+						cb.OnComplete(nil)
+						return
+					default:
+						notifications, err := lc.db.ReadNextNotifications(ctx, offset+1)
+						if err != nil {
+							cb.OnComplete(err)
+							return
+						}
+						lc.log.Debug(
+							"Got a new list of notification batches",
+							slog.Int64("term", lc.term.Load()),
+							slog.Int("list-size", len(notifications)),
+						)
+						if len(notifications) > 0 {
+							for idx := range notifications {
+								notification := notifications[idx]
+								if err := cb.OnNext(notification); err != nil {
+									cb.OnComplete(err)
+									return
+								}
+								offset = notification.Offset
 							}
-							offset = notification.Offset
 						}
 					}
 				}
-			}
-		},
-	)
-}
-
-func (lc *leaderController) isClosed() bool {
-	return lc.ctx.Err() != nil
+			},
+		)
+	})
+	lc.Unlock()
 }
 
 func (lc *leaderController) Close() error {
@@ -1156,9 +1172,16 @@ func (lc *leaderController) close() error {
 	lc.log.Info("Closing leader controller", slog.Int64("term", lc.term.Load()))
 
 	lc.status = proto.ServingStatus_NOT_MEMBER
+	lc.closed = true
 	lc.cancel()
 
 	var err error
+	if lc.quorumAckTracker != nil {
+		err = multierr.Append(err, lc.quorumAckTracker.Close())
+	}
+	lc.quorumAckTracker = nil
+
+	lc.waitGroup.Wait()
 	for _, follower := range lc.followers {
 		err = multierr.Append(err, follower.Close())
 	}
@@ -1184,11 +1207,6 @@ func (lc *leaderController) close() error {
 	if lc.db != nil {
 		err = multierr.Append(err, lc.db.Close())
 		lc.db = nil
-	}
-
-	if lc.quorumAckTracker != nil {
-		err = multierr.Append(err, lc.quorumAckTracker.Close())
-		lc.quorumAckTracker = nil
 	}
 
 	return err
@@ -1243,6 +1261,9 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 func (lc *leaderController) DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	lc.Lock()
 	defer lc.Unlock()
+	if lc.closed {
+		return nil, constant.ErrAlreadyClosed
+	}
 
 	currentTerm := lc.term.Load()
 	if request.Term < currentTerm {
