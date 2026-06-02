@@ -166,11 +166,6 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 			"The total number of range-scan operations", "count", labels),
 	}
 
-	commitOffset, err := db.ReadCommitOffset()
-	if err != nil {
-		return nil, err
-	}
-
 	lastVersionId, err := db.readLastVersionId()
 	if err != nil {
 		return nil, err
@@ -191,7 +186,12 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		return nil, err
 	}
 
-	db.notificationsTracker = newNotificationsTracker(namespace, shardId, commitOffset, kv, notificationRetentionTime, clock)
+	lastNotificationOffset, err := db.readLastNotificationOffset()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read last notification offset")
+	}
+
+	db.notificationsTracker = newNotificationsTracker(namespace, shardId, lastNotificationOffset, kv, notificationRetentionTime, clock)
 	return db, nil
 }
 
@@ -592,6 +592,25 @@ func (d *db) recoverFeatureFlags() error {
 		it.Next()
 	}
 	return nil
+}
+
+func (d *db) readLastNotificationOffset() (int64, error) {
+	key, _, closer, err := d.kv.Get(lastNotificationKey, kvstore.ComparisonFloor, kvstore.ShowInternalKeys)
+	if errors.Is(err, kvstore.ErrKeyNotFound) {
+		d.log.Debug("No notification offset found")
+		return constant.I64NegativeOne, nil
+	}
+	if err != nil {
+		return constant.I64NegativeOne, err
+	}
+	defer closer.Close()
+
+	if !strings.HasPrefix(key, notificationsPrefix+"/") {
+		d.log.Debug("No notification offset found", slog.String("floor-key", key))
+		return constant.I64NegativeOne, nil
+	}
+
+	return parseNotificationKey(key)
 }
 
 func (d *db) readASCIILongOrDefault(key string, defaultValue int64) (int64, error) {
