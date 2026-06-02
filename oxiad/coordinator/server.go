@@ -19,7 +19,9 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
@@ -30,6 +32,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/oxia-db/oxia/common/process"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
@@ -132,7 +135,14 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 	clusterConfigChangeNotifications := make(chan any)
 
 	clusterConfigProvider := func() (model.ClusterConfig, error) {
-		return loadClusterConfig(&options.Cluster, v)
+		clusterConfig, err := backoff.RetryNotifyWithData[model.ClusterConfig](func() (model.ClusterConfig, error) {
+			return loadClusterConfig(&options.Cluster, v)
+		}, oxiatime.NewBackOff(parent), func(err error, duration time.Duration) {
+			slog.Warn("Failed to load cluster configuration, retrying",
+				slog.Any("error", err),
+				slog.Duration("retry-after", duration))
+		})
+		return clusterConfig, err
 	}
 
 	if err := watchClusterConfigProvider(&options.Cluster, v, clusterConfigChangeNotifications); err != nil {
