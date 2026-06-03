@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=./schema/coordinator.json
 
 server:
-  admin:
+  public:
     bindAddress: "0.0.0.0:6651"
   internal:
     bindAddress: "0.0.0.0:6649"
