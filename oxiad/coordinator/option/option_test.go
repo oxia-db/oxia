@@ -34,6 +34,27 @@ metadata:
 	require.Equal(t, "metadata/cluster.yaml", opts.Metadata.File.ConfigPath())
 }
 
+func TestMetadataOptionsIdentity(t *testing.T) {
+	opts := readOptions(t, `
+metadata:
+  identity: coordinator-0
+  providerName: memory
+`)
+
+	require.NoError(t, opts.Validate())
+	require.Equal(t, "coordinator-0", opts.Metadata.Identity)
+}
+
+func TestMetadataOptionsDefaultIdentity(t *testing.T) {
+	opts := readOptions(t, `
+metadata:
+  providerName: memory
+`)
+
+	require.NoError(t, opts.Validate())
+	require.NotEmpty(t, opts.Metadata.Identity)
+}
+
 func TestMetadataOptionsFileDefaultsStatusPathWithoutDir(t *testing.T) {
 	opts := readOptions(t, `
 metadata:

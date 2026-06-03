@@ -134,6 +134,13 @@
     },
     "MetadataOptions": {
       "properties": {
+        "identity": {
+          "type": "string",
+          "description": "Stable coordinator identity used by metadata leader election",
+          "examples": [
+            "coordinator-0"
+          ]
+        },
         "providerName": {
           "type": "string",
           "description": "Metadata provider type. Valid values: memory/configmap/file/raft",

@@ -78,10 +78,10 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 		if err != nil {
 			return nil, err
 		}
-		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
+		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Identity); err != nil {
 			return nil, err
 		}
-		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
+		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, meta.Identity); err != nil {
 			return nil, err
 		}
 	case metadatacommon.NameRaft:
