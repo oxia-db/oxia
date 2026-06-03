@@ -34,7 +34,7 @@ import (
 
 type Options struct {
 	Cluster       ClusterOptions                    `yaml:"cluster,omitempty" json:"cluster,omitempty" jsonschema:"description=Deprecated cluster configuration settings"`
-	Server        ServerOptions                     `yaml:"server" json:"server" jsonschema:"description=Server configuration for admin and internal endpoints"`
+	Server        ServerOptions                     `yaml:"server" json:"server" jsonschema:"description=Server configuration for public and internal endpoints"`
 	Controller    ControllerOptions                 `yaml:"controller,omitempty" json:"controller,omitempty" jsonschema:"description=Controller configuration for cluster management"`
 	Metadata      MetadataOptions                   `yaml:"metadata" json:"metadata" jsonschema:"description=Metadata provider configuration"`
 	Observability commonoption.ObservabilityOptions `yaml:"observability" json:"observability" jsonschema:"description=Observability configuration for metrics and tracing"`
@@ -71,17 +71,17 @@ func (*ClusterOptions) Validate() error {
 }
 
 type ServerOptions struct {
-	Admin    AdminServerOptions    `yaml:"admin" json:"admin" jsonschema:"description=Admin server configuration for management API endpoints"`
+	Public   PublicServerOptions   `yaml:"public" json:"public" jsonschema:"description=Public server configuration for management API endpoints"`
 	Internal InternalServerOptions `yaml:"internal" json:"internal" jsonschema:"description=Internal server configuration for cluster communication"`
 }
 
 func (so *ServerOptions) WithDefault() {
-	so.Admin.WithDefault()
+	so.Public.WithDefault()
 	so.Internal.WithDefault()
 }
 
 func (so *ServerOptions) Validate() error {
-	return multierr.Combine(so.Admin.Validate(), so.Internal.Validate())
+	return multierr.Combine(so.Public.Validate(), so.Internal.Validate())
 }
 
 type InternalServerOptions struct {
@@ -105,24 +105,24 @@ func (iso *InternalServerOptions) Validate() error {
 	)
 }
 
-type AdminServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the admin API server,example=0.0.0.0:6650,format=hostname"`
-	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the admin API"`
-	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing admin API connections"`
+type PublicServerOptions struct {
+	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public management API server,example=0.0.0.0:6651,format=hostname"`
+	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public management API"`
+	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public management API connections"`
 }
 
-func (aso *AdminServerOptions) WithDefault() {
-	if aso.BindAddress == "" {
-		aso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort)
+func (pso *PublicServerOptions) WithDefault() {
+	if pso.BindAddress == "" {
+		pso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort)
 	}
-	aso.Auth.WithDefault()
-	aso.TLS.WithDefault()
+	pso.Auth.WithDefault()
+	pso.TLS.WithDefault()
 }
 
-func (aso *AdminServerOptions) Validate() error {
+func (pso *PublicServerOptions) Validate() error {
 	return multierr.Combine(
-		aso.Auth.Validate(),
-		aso.TLS.Validate(),
+		pso.Auth.Validate(),
+		pso.TLS.Validate(),
 	)
 }
 

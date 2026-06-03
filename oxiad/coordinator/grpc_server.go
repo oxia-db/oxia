@@ -118,7 +118,7 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	}
 	reconciler = coordreconciler.New(parent, runtime)
 
-	managementSv := options.Server.Admin
+	managementSv := options.Server.Public
 	managementSvTLS, err := managementSv.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
@@ -127,7 +127,7 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 		runtime.Metadata(),
 		runtime,
 	)
-	managementGrpcServer, err = commonrpc.Default.StartGrpcServer("admin", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
+	managementGrpcServer, err = commonrpc.Default.StartGrpcServer("public", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, management)
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, managementSvTLS, &managementSv.Auth, nil)

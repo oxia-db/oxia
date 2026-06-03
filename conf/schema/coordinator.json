@@ -3,27 +3,6 @@
   "$id": "https://github.com/oxia-db/oxia/oxiad/coordinator/option/options",
   "$ref": "#/$defs/Options",
   "$defs": {
-    "AdminServerOptions": {
-      "properties": {
-        "bindAddress": {
-          "type": "string",
-          "format": "hostname",
-          "description": "Bind address for the admin API server",
-          "examples": [
-            "0.0.0.0:6650"
-          ]
-        },
-        "tls": {
-          "$ref": "#/$defs/TLSOptions",
-          "description": "TLS configuration for securing admin API connections"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "bindAddress"
-      ]
-    },
     "ClusterOptions": {
       "properties": {
         "configPath": {
@@ -225,7 +204,7 @@
         },
         "server": {
           "$ref": "#/$defs/ServerOptions",
-          "description": "Server configuration for admin and internal endpoints"
+          "description": "Server configuration for public and internal endpoints"
         },
         "controller": {
           "$ref": "#/$defs/ControllerOptions",
@@ -246,6 +225,27 @@
         "server",
         "metadata",
         "observability"
+      ]
+    },
+    "PublicServerOptions": {
+      "properties": {
+        "bindAddress": {
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for the public management API server",
+          "examples": [
+            "0.0.0.0:6651"
+          ]
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing public management API connections"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bindAddress"
       ]
     },
     "RaftMetadata": {
@@ -282,9 +282,9 @@
     },
     "ServerOptions": {
       "properties": {
-        "admin": {
-          "$ref": "#/$defs/AdminServerOptions",
-          "description": "Admin server configuration for management API endpoints"
+        "public": {
+          "$ref": "#/$defs/PublicServerOptions",
+          "description": "Public server configuration for management API endpoints"
         },
         "internal": {
           "$ref": "#/$defs/InternalServerOptions",
@@ -294,7 +294,7 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "admin",
+        "public",
         "internal"
       ]
     },
