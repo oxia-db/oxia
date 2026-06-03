@@ -107,17 +107,32 @@ func (iso *InternalServerOptions) Validate() error {
 }
 
 type PublicServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public management API server,example=0.0.0.0:6651,format=hostname"`
-	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public management API"`
-	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public management API connections"`
+	BindAddress       string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public management API server,example=0.0.0.0:6651,format=hostname"`
+	AdvertisedAddress string              `yaml:"advertisedAddress,omitempty" json:"advertisedAddress,omitempty" jsonschema:"description=Advertised public management API address used by other coordinators for redirects,example=coordinator-0.example.com:6651,format=hostname"`
+	Auth              auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public management API"`
+	TLS               security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public management API connections"`
 }
 
 func (pso *PublicServerOptions) WithDefault() {
+	defaultBindAddress := fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort)
 	if pso.BindAddress == "" {
-		pso.BindAddress = fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort)
+		pso.BindAddress = defaultBindAddress
+	}
+	if pso.AdvertisedAddress == "" {
+		pso.AdvertisedAddress = pso.BindAddress
 	}
 	pso.Auth.WithDefault()
 	pso.TLS.WithDefault()
+}
+
+func (pso *PublicServerOptions) UnmarshalYAML(value *yaml.Node) error {
+	type publicServerOptions PublicServerOptions
+	var opts publicServerOptions
+	if err := value.Decode(&opts); err != nil {
+		return err
+	}
+	*pso = PublicServerOptions(opts)
+	return nil
 }
 
 func (pso *PublicServerOptions) Validate() error {

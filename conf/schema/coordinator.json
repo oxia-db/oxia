@@ -244,6 +244,14 @@
             "0.0.0.0:6651"
           ]
         },
+        "advertisedAddress": {
+          "type": "string",
+          "format": "hostname",
+          "description": "Advertised public management API address used by other coordinators for redirects",
+          "examples": [
+            "coordinator-0.example.com:6651"
+          ]
+        },
         "tls": {
           "$ref": "#/$defs/TLSOptions",
           "description": "TLS configuration for securing public management API connections"

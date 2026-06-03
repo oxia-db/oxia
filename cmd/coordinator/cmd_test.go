@@ -37,6 +37,7 @@ cluster:
 server:
   public:
     bindAddress: "0.0.0.0:6643"
+    advertisedAddress: "coordinator.example.com:6651"
   internal:
     bindAddress: "0.0.0.0:6645"
     tls:
@@ -80,6 +81,7 @@ observability:
 	assert.Equal(t, "/path/to/cluster-config.json", opts.Cluster.ConfigPath)
 
 	assert.Equal(t, "0.0.0.0:6643", opts.Server.Public.BindAddress)
+	assert.Equal(t, "coordinator.example.com:6651", opts.Server.Public.AdvertisedAddress)
 	assert.Equal(t, "0.0.0.0:6645", opts.Server.Internal.BindAddress)
 	assert.Equal(t, "/path/to/internal-cert.pem", opts.Server.Internal.TLS.CertFile)
 	assert.Equal(t, "/path/to/internal-key.pem", opts.Server.Internal.TLS.KeyFile)
@@ -124,7 +126,8 @@ metadata:
 
 	// Verify that partial config overrides defaults but other values use defaults
 	assert.Equal(t, "0.0.0.0:7000", opts.Server.Public.BindAddress) // From config
-	assert.Equal(t, "memory", opts.Metadata.ProviderName)           // From config
+	assert.Equal(t, "0.0.0.0:7000", opts.Server.Public.AdvertisedAddress)
+	assert.Equal(t, "memory", opts.Metadata.ProviderName) // From config
 
 	// Verify defaults are applied to unset values
 	assert.NotEmpty(t, opts.Server.Internal.BindAddress)      // Default

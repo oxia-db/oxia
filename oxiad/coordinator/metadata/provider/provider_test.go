@@ -66,7 +66,10 @@ var (
 		"configmap": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "n", metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "coordinator-test")
+			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "n", metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, &proto.CoordinatorInfo{
+				Identity:      "coordinator-test",
+				PublicAddress: "coordinator-test:6651",
+			})
 			assert.NoError(t, err)
 			return p
 		},
@@ -140,7 +143,10 @@ func TestProviderConfigResource(t *testing.T) {
 		"configmap": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "config", metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled, "coordinator-test")
+			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "config", metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled, &proto.CoordinatorInfo{
+				Identity:      "coordinator-test",
+				PublicAddress: "coordinator-test:6651",
+			})
 			assert.NoError(t, err)
 			return p
 		},

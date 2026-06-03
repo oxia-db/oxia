@@ -55,6 +55,35 @@ metadata:
 	require.NotEmpty(t, opts.Metadata.Identity)
 }
 
+func TestPublicServerOptionsDefaultAdvertisedAddress(t *testing.T) {
+	opts := readOptions(t, `
+server:
+  public:
+    bindAddress: 0.0.0.0:7000
+metadata:
+  providerName: memory
+`)
+
+	require.NoError(t, opts.Validate())
+	require.Equal(t, "0.0.0.0:7000", opts.Server.Public.AdvertisedAddress)
+}
+
+func TestPublicServerOptionsExplicitAdvertisedAddress(t *testing.T) {
+	opts := NewDefaultOptions()
+	require.NoError(t, yaml.Unmarshal([]byte(`
+server:
+  public:
+    bindAddress: 0.0.0.0:7000
+    advertisedAddress: 0.0.0.0:6651
+metadata:
+  providerName: memory
+`), opts))
+	opts.WithDefault()
+
+	require.NoError(t, opts.Validate())
+	require.Equal(t, "0.0.0.0:6651", opts.Server.Public.AdvertisedAddress)
+}
+
 func TestMetadataOptionsFileDefaultsStatusPathWithoutDir(t *testing.T) {
 	opts := readOptions(t, `
 metadata:
