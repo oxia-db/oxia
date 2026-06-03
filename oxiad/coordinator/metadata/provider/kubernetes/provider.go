@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -67,6 +66,7 @@ type Provider[T gproto.Message] struct {
 	namespace, name string
 	codec           metadatacodec.Codec[T]
 	watchEnabled    metadatacommon.WatchMode
+	identity        string
 
 	metadataSize      atomic.Int64
 	getLatencyHisto   metric.LatencyHistogram
@@ -88,6 +88,7 @@ func NewProvider[T gproto.Message](
 	namespace, name string,
 	codec metadatacodec.Codec[T],
 	watchEnabled metadatacommon.WatchMode,
+	identity string,
 ) (provider.Provider[T], error) {
 	m := &Provider[T]{
 		kubernetes:   kc,
@@ -95,6 +96,7 @@ func NewProvider[T gproto.Message](
 		name:         name,
 		codec:        codec,
 		watchEnabled: watchEnabled,
+		identity:     identity,
 		logger:       slog.With("component", "metadata-config-map"),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
@@ -244,7 +246,7 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 }
 
 func (m *Provider[T]) WaitToBecomeLeader() error {
-	myIdentity, _ := os.Hostname()
+	myIdentity := m.identity
 
 	// Create a lease lock
 	lock := &resourcelock.LeaseLock{

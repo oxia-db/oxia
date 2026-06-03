@@ -128,6 +128,7 @@ metadata:
 
 	// Verify defaults are applied to unset values
 	assert.NotEmpty(t, opts.Server.Internal.BindAddress)      // Default
+	assert.NotEmpty(t, opts.Metadata.Identity)                // Default
 	assert.NotEmpty(t, opts.Observability.Metric.BindAddress) // Default
 }
 
@@ -207,7 +208,7 @@ func TestCoordinator_ConfigurationValidation(t *testing.T) {
 	// Test that validation works correctly
 	opts := option.NewDefaultOptions()
 
-	// Need to set a valid provider since WithDefault() is empty for MetadataOptions
+	// Need to set a valid provider since MetadataOptions does not default the provider type.
 	opts.Metadata.ProviderName = "file"
 
 	// Should pass validation with defaults
@@ -268,7 +269,7 @@ func TestCoordinator_EmptyConfigFile(t *testing.T) {
 
 	opts := option.NewDefaultOptions()
 
-	// Since MetadataOptions.WithDefault() is empty, we need to set a valid provider
+	// Need to set a valid provider since MetadataOptions does not default the provider type.
 	// This simulates what would happen in the actual CLI where flags set defaults
 	opts.Metadata.ProviderName = "file"
 
@@ -279,6 +280,7 @@ func TestCoordinator_EmptyConfigFile(t *testing.T) {
 	// Verify defaults are still applied
 	assert.NotEmpty(t, opts.Server.Public.BindAddress)
 	assert.NotEmpty(t, opts.Server.Internal.BindAddress)
+	assert.NotEmpty(t, opts.Metadata.Identity)
 	assert.Equal(t, "file", opts.Metadata.ProviderName)
 }
 

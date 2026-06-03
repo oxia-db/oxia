@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -146,10 +147,16 @@ type ProviderOptions struct {
 }
 
 type MetadataOptions struct {
+	Identity        string `yaml:"identity,omitempty" json:"identity,omitempty" jsonschema:"description=Stable coordinator identity used by metadata leader election,example=coordinator-0"`
 	ProviderOptions `yaml:",inline"`
 }
 
-func (*MetadataOptions) WithDefault() {
+func (mo *MetadataOptions) WithDefault() {
+	if mo.Identity == "" {
+		if hostname, err := os.Hostname(); err == nil {
+			mo.Identity = hostname
+		}
+	}
 }
 
 func (mo *MetadataOptions) Validate() error {
