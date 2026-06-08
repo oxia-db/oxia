@@ -16,6 +16,7 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -41,6 +42,8 @@ import (
 
 var _ Provider = &metadataProviderConfigMap{}
 
+var errLeaderLost = errors.New("metadata leadership lost")
+
 const (
 	leaseDuration = 15 * time.Second
 	renewDeadline = 10 * time.Second
@@ -57,9 +60,8 @@ type metadataProviderConfigMap struct {
 	storeLatencyHisto metric.LatencyHistogram
 	metadataSizeGauge metric.Gauge
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	closeCh chan any
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	log *slog.Logger
 }
@@ -204,14 +206,13 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 		panic(err)
 	}
 
-	m.closeCh = make(chan any)
-
 	go process.DoWithLabels(m.ctx, map[string]string{
 		"component":     "metadata-provider",
 		"sub-component": "k8s-leader-elector",
 	}, func() {
 		leaderElector.Run(m.ctx)
-		close(m.closeCh)
+		log.Error("Leader elector stopped", slog.Any("error", errLeaderLost))
+		panic(errLeaderLost)
 	})
 
 	return wg.Wait(m.ctx)
@@ -222,9 +223,6 @@ func (m *metadataProviderConfigMap) Close() error {
 	defer m.Unlock()
 
 	m.cancel()
-	if m.closeCh != nil {
-		<-m.closeCh
-	}
 	m.log.Info("Closed metadata provider")
 	return nil
 }
