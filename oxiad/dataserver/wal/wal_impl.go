@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import (
 	"github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/process"
 	time2 "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/common/validation"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
@@ -101,6 +102,10 @@ func walPath(logDir string, namespace string, shard int64) string {
 
 func newWal(namespace string, shard int64, options *FactoryOptions, commitOffsetProvider CommitOffsetProvider,
 	clock time2.Clock, trimmerCheckInterval time.Duration) (Wal, error) {
+	if err := validation.ValidateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
 	if options.SegmentSize == 0 {
 		options.SegmentSize = DefaultFactoryOptions.SegmentSize
 	}
@@ -286,7 +291,7 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 	defer timer.Done()
 
 	if t.isClosed() {
-		return constant.ErrAlreadyClosed
+		return constant.ErrResourceUnavailable
 	}
 
 	if err := t.checkNextOffset(entry.Offset); err != nil {

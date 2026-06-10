@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -216,7 +216,7 @@ func (q *quorumAckTracker) WaitForCommitOffsetAsync(_ context.Context, offset in
 
 	if q.closed {
 		q.Unlock()
-		cb.OnCompleteError(constant.ErrAlreadyClosed)
+		cb.OnCompleteError(constant.ErrResourceUnavailable)
 		return
 	}
 
@@ -247,10 +247,12 @@ func (q *quorumAckTracker) Close() error {
 	q.Lock()
 	q.closed = true
 	q.waitForHeadOffset.Broadcast()
+	waitingRequests := q.waitingRequests
+	q.waitingRequests = make([]waitingRequest, 0)
 	q.Unlock()
 	// unblock waiting request
-	for _, r := range q.waitingRequests {
-		r.callback.OnCompleteError(constant.ErrAlreadyClosed)
+	for _, r := range waitingRequests {
+		r.callback.OnCompleteError(constant.ErrResourceUnavailable)
 	}
 	return nil
 }
@@ -298,6 +300,9 @@ func (c *cursorAcker) Ack(offset int64) {
 	c.quorumTracker.Lock()
 	defer c.quorumTracker.Unlock()
 
+	if c.quorumTracker.closed {
+		return
+	}
 	c.ack(offset)
 }
 

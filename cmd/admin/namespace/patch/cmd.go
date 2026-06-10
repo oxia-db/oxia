@@ -1,0 +1,91 @@
+// Copyright 2023-2026 The Oxia Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package patch
+
+import (
+	"errors"
+
+	"github.com/spf13/cobra"
+
+	"github.com/oxia-db/oxia/cmd/admin/commons"
+	namespacecli "github.com/oxia-db/oxia/cmd/admin/namespace/cli"
+	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/validation"
+	"github.com/oxia-db/oxia/oxia"
+)
+
+var fields namespacecli.NamespaceFields
+
+var Cmd = &cobra.Command{
+	Use:          "patch <namespace>",
+	Short:        "Patch a namespace",
+	Long:         `Patch a namespace`,
+	Args:         cobra.ExactArgs(1),
+	RunE:         exec,
+	SilenceUsage: true,
+}
+
+func init() {
+	fields.AddPatchFlags(Cmd)
+}
+
+func exec(cmd *cobra.Command, args []string) error {
+	outputFormat, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
+	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
+		return err
+	}
+
+	name := args[0]
+	if err := validation.ValidateNamespace(name); err != nil {
+		return err
+	}
+
+	replicationFactorChanged := cmd.Flags().Changed(namespacecli.ReplicationFactorFlagName)
+	notificationsChanged := cmd.Flags().Changed(namespacecli.NotificationsFlagName)
+	if !replicationFactorChanged && !notificationsChanged {
+		return errors.New("must specify at least one field to patch")
+	}
+	if replicationFactorChanged && fields.ReplicationFactor == 0 {
+		return errors.New("namespace replication factor must be greater than 0")
+	}
+
+	namespace := &proto.Namespace{
+		Name: name,
+	}
+	if replicationFactorChanged {
+		namespace.ReplicationFactor = fields.ReplicationFactor
+	}
+	if notificationsChanged {
+		namespace.NotificationsEnabled = &fields.Notifications
+	}
+
+	client, err := commons.AdminConfig.NewAdminClient()
+	if err != nil {
+		return err
+	}
+	defer func(client oxia.AdminClient) {
+		_ = client.Close()
+	}(client)
+
+	patched, err := client.PatchNamespace(namespace)
+	if err != nil {
+		return err
+	}
+
+	return namespacecli.WriteNamespace(cmd.OutOrStdout(), outputFormat, patched)
+}

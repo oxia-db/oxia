@@ -1,16 +1,14 @@
 # yaml-language-server: $schema=./schema/coordinator.json
 
-cluster:
-  configPath: "./configs/cluster.yaml"
 server:
-  admin:
+  public:
     bindAddress: "0.0.0.0:6651"
   internal:
     bindAddress: "0.0.0.0:6649"
 metadata:
   providerName: "file"
   file:
-    path: "data/cluster-status.json"
+    dir: "metadata"
 observability:
   metric:
     enabled: true

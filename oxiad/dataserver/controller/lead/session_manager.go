@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -195,8 +195,8 @@ func (sm *sessionManager) getSession(sessionId int64) (*session, error) {
 
 func (sm *sessionManager) KeepAlive(sessionId int64) error {
 	sm.RLock()
+	defer sm.RUnlock()
 	s, err := sm.getSession(sessionId)
-	sm.RUnlock()
 	if err != nil {
 		return err
 	}

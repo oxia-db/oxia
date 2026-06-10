@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -114,8 +114,9 @@ func ConfigureLogger() {
 
 	slogLogger := slog.New(
 		slogzerolog.Option{
-			Level:  &logLevelVar,
-			Logger: &zerologLogger,
+			Level:       &logLevelVar,
+			Logger:      &zerologLogger,
+			NoTimestamp: true,
 		}.NewZerologHandler(),
 	)
 	slog.SetDefault(slogLogger)

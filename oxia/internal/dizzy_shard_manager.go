@@ -16,8 +16,6 @@ package internal
 
 import (
 	"time"
-
-	"github.com/oxia-db/oxia/common/rpc"
 )
 
 var _ ShardManager = &DizzyShardManager{}
@@ -31,9 +29,9 @@ func (d *DizzyShardManager) Leader(int64) string {
 	return d.lookupAddress
 }
 
-func NewDizzyShardManager(shardStrategy ShardStrategy, clientPool rpc.ClientPool,
+func NewDizzyShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider,
 	serviceAddress string, namespace string, requestTimeout time.Duration) (ShardManager, error) {
-	manager, err := NewShardManager(shardStrategy, clientPool, serviceAddress, namespace, requestTimeout)
+	manager, err := NewShardManager(shardStrategy, rpcProvider, serviceAddress, namespace, requestTimeout)
 	if err != nil {
 		return nil, err
 	}

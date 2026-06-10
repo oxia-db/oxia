@@ -3,42 +3,18 @@
   "$id": "https://github.com/oxia-db/oxia/oxiad/coordinator/option/options",
   "$ref": "#/$defs/Options",
   "$defs": {
-    "AdminServerOptions": {
-      "properties": {
-        "bindAddress": {
-          "type": "string",
-          "format": "hostname",
-          "description": "Bind address for the admin API server",
-          "examples": [
-            "0.0.0.0:6650"
-          ]
-        },
-        "tls": {
-          "$ref": "#/$defs/TLSOptions",
-          "description": "TLS configuration for securing admin API connections"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "bindAddress"
-      ]
-    },
     "ClusterOptions": {
       "properties": {
         "configPath": {
           "type": "string",
-          "description": "Path to the cluster configuration file",
+          "description": "Deprecated path to the cluster configuration file",
           "examples": [
             "./configs/cluster.yaml"
           ]
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "configPath"
-      ]
+      "type": "object"
     },
     "ControllerOptions": {
       "properties": {
@@ -52,19 +28,37 @@
     },
     "FileMetadata": {
       "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Directory for file-based metadata storage",
+          "examples": [
+            "./metadata"
+          ]
+        },
+        "statusName": {
+          "type": "string",
+          "description": "File name for cluster status, or full path when dir is unset",
+          "examples": [
+            "cluster-status.json"
+          ]
+        },
+        "configName": {
+          "type": "string",
+          "description": "File name for cluster configuration, or full path when dir is unset",
+          "examples": [
+            "cluster.yaml"
+          ]
+        },
         "path": {
           "type": "string",
-          "description": "File system path for metadata storage",
+          "description": "Deprecated file system path for cluster status metadata",
           "examples": [
-            "./metadata/cluster.json"
+            "./metadata/cluster-status.json"
           ]
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "path"
-      ]
+      "type": "object"
     },
     "InternalServerOptions": {
       "properties": {
@@ -96,19 +90,32 @@
             "default"
           ]
         },
+        "statusName": {
+          "type": "string",
+          "description": "Name of the ConfigMap for cluster status",
+          "examples": [
+            "oxia-cluster-status"
+          ]
+        },
+        "configName": {
+          "type": "string",
+          "description": "Name of the ConfigMap for cluster configuration",
+          "examples": [
+            "oxia-cluster-config"
+          ]
+        },
         "configMapName": {
           "type": "string",
-          "description": "Name of the ConfigMap for metadata storage",
+          "description": "Deprecated name of the ConfigMap for cluster status",
           "examples": [
-            "oxia-cluster-metadata"
+            "oxia-cluster-status"
           ]
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "namespace",
-        "configMapName"
+        "namespace"
       ]
     },
     "LogOptions": {
@@ -127,9 +134,16 @@
     },
     "MetadataOptions": {
       "properties": {
+        "identity": {
+          "type": "string",
+          "description": "Stable coordinator identity used by metadata leader election",
+          "examples": [
+            "coordinator-0"
+          ]
+        },
         "providerName": {
           "type": "string",
-          "description": "Metadata provider type (memory, configmap, file, or raft)",
+          "description": "Metadata provider type. Valid values: memory/configmap/file/raft",
           "examples": [
             "configmap"
           ]
@@ -193,11 +207,11 @@
       "properties": {
         "cluster": {
           "$ref": "#/$defs/ClusterOptions",
-          "description": "Cluster configuration settings"
+          "description": "Deprecated cluster configuration settings"
         },
         "server": {
           "$ref": "#/$defs/ServerOptions",
-          "description": "Server configuration for admin and internal endpoints"
+          "description": "Server configuration for public and internal endpoints"
         },
         "controller": {
           "$ref": "#/$defs/ControllerOptions",
@@ -215,10 +229,30 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "cluster",
         "server",
         "metadata",
         "observability"
+      ]
+    },
+    "PublicServerOptions": {
+      "properties": {
+        "bindAddress": {
+          "type": "string",
+          "format": "hostname",
+          "description": "Bind address for the public management API server",
+          "examples": [
+            "0.0.0.0:6651"
+          ]
+        },
+        "tls": {
+          "$ref": "#/$defs/TLSOptions",
+          "description": "TLS configuration for securing public management API connections"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "bindAddress"
       ]
     },
     "RaftMetadata": {
@@ -255,9 +289,9 @@
     },
     "ServerOptions": {
       "properties": {
-        "admin": {
-          "$ref": "#/$defs/AdminServerOptions",
-          "description": "Admin server configuration for management API endpoints"
+        "public": {
+          "$ref": "#/$defs/PublicServerOptions",
+          "description": "Public server configuration for management API endpoints"
         },
         "internal": {
           "$ref": "#/$defs/InternalServerOptions",
@@ -267,7 +301,7 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "admin",
+        "public",
         "internal"
       ]
     },

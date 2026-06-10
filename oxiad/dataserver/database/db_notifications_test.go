@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -208,6 +208,78 @@ func TestDB_NotificationsCancelWait(t *testing.T) {
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
+}
+
+func TestDB_NotificationsWaitAfterControlOnlyTailReopen(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *proto.ControlRequest
+	}{
+		{
+			name: "record checksum",
+			request: &proto.ControlRequest{
+				Value: &proto.ControlRequest_RecordChecksum{
+					RecordChecksum: &proto.RecordChecksumRequest{},
+				},
+			},
+		},
+		{
+			name: "feature enable",
+			request: &proto.ControlRequest{
+				Value: &proto.ControlRequest_FeatureEnable{
+					FeatureEnable: &proto.FeatureEnableRequest{
+						Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+			assert.NoError(t, err)
+
+			_, err = db.ProcessWrite(&proto.WriteRequest{
+				Puts: []*proto.PutRequest{{
+					Key:   "a",
+					Value: []byte("0"),
+				}},
+			}, 0, now(), NoOpCallback)
+			assert.NoError(t, err)
+
+			_, err = db.ProcessControlRequest(tt.request, 1, now(), NoOpCallback)
+			assert.NoError(t, err)
+			assert.NoError(t, db.Close())
+
+			db, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+			assert.NoError(t, err)
+			defer db.Close()
+			defer factory.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			notifications, err := db.ReadNextNotifications(ctx, 1)
+			cancel()
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.Nil(t, notifications)
+
+			_, err = db.ProcessWrite(&proto.WriteRequest{
+				Puts: []*proto.PutRequest{{
+					Key:   "b",
+					Value: []byte("1"),
+				}},
+			}, 2, now(), NoOpCallback)
+			assert.NoError(t, err)
+
+			notifications, err = db.ReadNextNotifications(context.Background(), 1)
+			assert.NoError(t, err)
+			if assert.Len(t, notifications, 1) {
+				assert.EqualValues(t, 2, notifications[0].Offset)
+			}
+		})
+	}
 }
 
 func TestDB_NotificationsDisabled(t *testing.T) {

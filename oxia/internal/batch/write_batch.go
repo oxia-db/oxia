@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,13 +20,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
-
-	"github.com/oxia-db/oxia/common/constant"
-
-	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxia/batch"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
@@ -36,8 +32,7 @@ var ErrRequestTooLarge = errors.New("put request is too large")
 
 type writeBatchFactory struct {
 	namespace      string
-	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
-	shardExists    func(int64) bool
+	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
@@ -49,7 +44,6 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 		namespace:      b.namespace,
 		shardId:        shardId,
 		execute:        b.execute,
-		shardExists:    b.shardExists,
 		reroute:        b.reroute,
 		puts:           make([]model.PutCall, 0),
 		deletes:        make([]model.DeleteCall, 0),
@@ -65,8 +59,7 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 type writeBatch struct {
 	namespace      string
 	shardId        *int64
-	execute        func(context.Context, *proto.WriteRequest, *proto.LeaderHint) (*proto.WriteResponse, error)
-	shardExists    func(int64) bool
+	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
 	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
@@ -108,12 +101,11 @@ func (b *writeBatch) Complete() {
 	executionStart := time.Now()
 	request := b.toProto()
 
-	response, err := b.doRequestWithRetries(request)
+	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
+	defer cancel()
 
-	if errors.Is(err, ErrShardNotFound) && b.reroute != nil {
-		// The target shard was deleted (e.g. after a split). Re-submit
-		// each operation through the normal pipeline so keys get re-hashed
-		// and routed to the correct child shards.
+	response, err := b.execute(ctx, request)
+	if errors.Is(err, constant.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),
 			slog.Int("puts", len(b.puts)),
@@ -131,41 +123,6 @@ func (b *writeBatch) Complete() {
 	} else {
 		b.handle(response)
 	}
-}
-
-func (b *writeBatch) doRequestWithRetries(request *proto.WriteRequest) (response *proto.WriteResponse, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
-	defer cancel()
-
-	backOff := time2.NewBackOff(ctx)
-
-	var hint *proto.LeaderHint
-	err = backoff.RetryNotify(func() error {
-		// Check if the shard still exists before each retry. If it was
-		// deleted (e.g. after a split), stop retrying so the batch can
-		// be re-routed to the correct child shards.
-		if b.shardExists != nil && !b.shardExists(*b.shardId) {
-			return backoff.Permanent(ErrShardNotFound)
-		}
-		response, err = b.execute(ctx, request, hint)
-		if !IsRetriable(err) {
-			return backoff.Permanent(err)
-		}
-		return err
-	}, backOff, func(err error, duration time.Duration) {
-		slog.Warn(
-			"Failed to perform request, retrying later",
-			slog.Any("error", err),
-			slog.String("namespace", b.namespace),
-			slog.Int64("shard", *b.shardId),
-			slog.Duration("retry-after", duration),
-		)
-		if leaderHint := constant.FindLeaderHint(err); leaderHint != nil {
-			hint = leaderHint
-		}
-	})
-
-	return response, err
 }
 
 func (b *writeBatch) Fail(err error) {

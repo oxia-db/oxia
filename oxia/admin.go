@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,33 +14,28 @@
 
 package oxia
 
-import "io"
+import (
+	"io"
+
+	"github.com/oxia-db/oxia/common/proto"
+)
 
 type AdminClient interface {
 	io.Closer
 
-	ListNamespaces() *ListNamespacesResult
+	ListDataServers() ([]*proto.DataServer, error)
+	GetDataServer(dataServer string) (*proto.DataServer, error)
+	CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error)
+	PatchDataServer(dataServer *proto.DataServer) (*proto.DataServer, error)
+	DeleteDataServer(dataServer string) (*proto.DataServer, error)
 
-	ListNodes() *ListNodesResult
+	CreateNamespace(namespace *proto.Namespace) (*proto.Namespace, error)
+	PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error)
+	DeleteNamespace(namespace string) (*proto.Namespace, error)
+	ListNamespaces() ([]*proto.Namespace, error)
+	GetNamespace(namespace string) (*proto.Namespace, error)
 
 	SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
-}
-
-type ListNamespacesResult struct {
-	Namespaces []string
-	Error      error
-}
-
-type Node struct {
-	Name            *string
-	PublicAddress   string
-	InternalAddress string
-	Metadata        map[string]string
-}
-
-type ListNodesResult struct {
-	Nodes []*Node
-	Error error
 }
 
 type SplitShardResult struct {

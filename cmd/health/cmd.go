@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -65,14 +65,14 @@ func init() {
 
 func exec(*cobra.Command, []string) error {
 	clientPool := rpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
 
 	serverAddress := fmt.Sprintf("%s:%d", config.Host, config.Port)
 
-	client, closer, err := clientPool.GetHealthRpc(serverAddress)
+	client, err := clientPool.GetHealthRpc(serverAddress)
 	if err != nil {
 		return err
 	}
-	defer closer.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 	defer cancel()

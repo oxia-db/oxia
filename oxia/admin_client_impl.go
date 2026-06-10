@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,69 +27,196 @@ import (
 
 var _ AdminClient = (*adminClientImpl)(nil)
 
+const errUnableToConnectToAdminServer = "unable to connect to admin server"
+
 type adminClientImpl struct {
 	adminAddr string
 
 	clientPool rpc.ClientPool
 }
 
-func (admin *adminClientImpl) ListNodes() *ListNodesResult {
+func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
-		return &ListNodesResult{
-			Error: err,
-		}
+		return nil, mapAdminError(err)
 	}
 
 	if client == nil {
-		return &ListNodesResult{
-			Error: errors.New("unable to connect to admin server"),
-		}
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.ListNodes(context.Background(), &proto.ListNodesRequest{})
+	response, err := client.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
 	if err != nil {
-		return &ListNodesResult{Error: err}
+		return nil, mapAdminError(err)
+	}
+	return response.DataServers, nil
+}
+
+func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServer, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
 	}
 
-	nodes := make([]*Node, len(response.Nodes))
-	for i, node := range response.Nodes {
-		nodes[i] = &Node{
-			Name:            node.Name,
-			PublicAddress:   node.PublicAddress,
-			InternalAddress: node.InternalAddress,
-			Metadata:        node.Metadata,
-		}
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
-	return &ListNodesResult{Nodes: nodes}
+
+	response, err := client.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: dataServer})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServer, nil
+}
+
+func (admin *adminClientImpl) CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{DataServer: dataServer})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServer, nil
+}
+
+func (admin *adminClientImpl) PatchDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.PatchDataServer(context.Background(), &proto.PatchDataServerRequest{
+		DataServer: dataServer,
+	})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServer, nil
+}
+
+func (admin *adminClientImpl) DeleteDataServer(dataServer string) (*proto.DataServer, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.DeleteDataServer(context.Background(), &proto.DeleteDataServerRequest{
+		DataServer: dataServer,
+	})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.DataServer, nil
 }
 
 func (admin *adminClientImpl) Close() error {
 	return admin.clientPool.Close()
 }
 
-func (admin *adminClientImpl) ListNamespaces() *ListNamespacesResult {
+func (admin *adminClientImpl) CreateNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
-		return &ListNamespacesResult{
-			Error: err,
-		}
-	}
-	if client == nil {
-		return &ListNamespacesResult{
-			Error: errors.New("no coordinator admin client available"),
-		}
+		return nil, mapAdminError(err)
 	}
 
-	namespaces, err := client.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
+		Namespace: namespace,
+	})
 	if err != nil {
-		return &ListNamespacesResult{
-			Error: err,
-		}
+		return nil, mapAdminError(err)
 	}
-	return &ListNamespacesResult{
-		Namespaces: namespaces.Namespaces,
+	return response.Namespace, nil
+}
+
+func (admin *adminClientImpl) PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
 	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
+		Namespace: namespace,
+	})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.Namespace, nil
+}
+
+func (admin *adminClientImpl) DeleteNamespace(namespace string) (*proto.Namespace, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.DeleteNamespace(context.Background(), &proto.DeleteNamespaceRequest{
+		Namespace: namespace,
+	})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.Namespace, nil
+}
+
+func (admin *adminClientImpl) ListNamespaces() ([]*proto.Namespace, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.Namespaces, nil
+}
+
+func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, error) {
+	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+
+	if client == nil {
+		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
+	}
+
+	response, err := client.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: namespace})
+	if err != nil {
+		return nil, mapAdminError(err)
+	}
+	return response.Namespace, nil
 }
 
 func (admin *adminClientImpl) SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult {

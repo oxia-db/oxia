@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,21 +17,33 @@ package mock
 import (
 	"testing"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	commonproto "github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
-	"github.com/oxia-db/oxia/common/rpc"
+	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
+	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
-func NewCoordinator(t *testing.T, config *model.ClusterConfig, clusterConfigNotificationCh chan any) coordinator.Coordinator {
+func NewCoordinator(t *testing.T, configProvider provider.Provider[*commonproto.ClusterConfiguration]) coordruntime.Runtime {
 	t.Helper()
-	metadataProvider := metadata.NewMetadataProviderMemory()
-	clientPool := rpc.NewClientPool(nil, nil)
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return *config, nil }, clusterConfigNotificationCh, rpc2.NewRpcProvider(clientPool))
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataFactory, metadata := NewMetadataFromProviders(t, metadataProvider, configProvider)
+	t.Cleanup(func() {
+		assert.NoError(t, metadata.Close())
+		assert.NoError(t, metadataFactory.Close())
+	})
+	coordinatorInstance, err := coordruntime.New(metadata, rpc2.NewRpcProviderFactory(nil))
 	assert.NoError(t, err)
+	reconciler := coordreconciler.New(t.Context(), coordinatorInstance)
+	t.Cleanup(func() {
+		assert.NoError(t, reconciler.Close())
+	})
 	return coordinatorInstance
 }

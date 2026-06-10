@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,19 +15,19 @@
 package controller
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
 
 	"go.uber.org/multierr"
-	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
+	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
@@ -36,6 +36,8 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
 )
+
+var ErrNodeIsNotFollower = errors.New("oxia: node is not follower")
 
 type ShardsDirector interface {
 	io.Closer
@@ -55,7 +57,7 @@ type shardsDirector struct {
 	sync.RWMutex
 	kvFactory              kvstore.Factory
 	walFactory             wal.Factory
-	replicationRpcProvider rpc.ReplicationRpcProvider
+	replicationRpcProvider dataserverrpc.ReplicationRpcProvider
 	storageOptions         *option.StorageOptions
 	log                    *slog.Logger
 
@@ -68,7 +70,7 @@ type shardsDirector struct {
 	followersCounter metric.UpDownCounter
 }
 
-func NewShardsDirector(storageOptions *option.StorageOptions, walFactory wal.Factory, kvFactory kvstore.Factory, provider rpc.ReplicationRpcProvider) ShardsDirector {
+func NewShardsDirector(storageOptions *option.StorageOptions, walFactory wal.Factory, kvFactory kvstore.Factory, provider dataserverrpc.ReplicationRpcProvider) ShardsDirector {
 	sd := &shardsDirector{
 		storageOptions:         storageOptions,
 		walFactory:             walFactory,
@@ -94,7 +96,7 @@ func (s *shardsDirector) GetLeader(shardId int64) (lead.LeaderController, error)
 	defer s.RUnlock()
 
 	if s.closed {
-		return nil, constant.ErrAlreadyClosed
+		return nil, constant.ErrResourceUnavailable
 	}
 
 	if leader, ok := s.leaders[shardId]; ok {
@@ -106,7 +108,7 @@ func (s *shardsDirector) GetLeader(shardId int64) (lead.LeaderController, error)
 		"This node is not hosting shard",
 		slog.Int64("shard", shardId),
 	)
-	return nil, status.Errorf(constant.CodeNodeIsNotLeader, "node is not leader for shard %d", shardId)
+	return nil, constant.ErrNodeIsNotLeader
 }
 
 func (s *shardsDirector) GetFollower(shardId int64) (follow.FollowerController, error) {
@@ -114,7 +116,7 @@ func (s *shardsDirector) GetFollower(shardId int64) (follow.FollowerController, 
 	defer s.RUnlock()
 
 	if s.closed {
-		return nil, constant.ErrAlreadyClosed
+		return nil, constant.ErrResourceUnavailable
 	}
 
 	if follower, ok := s.followers[shardId]; ok {
@@ -126,7 +128,7 @@ func (s *shardsDirector) GetFollower(shardId int64) (follow.FollowerController, 
 		"This node is not hosting shard",
 		slog.Int64("shard", shardId),
 	)
-	return nil, status.Errorf(constant.CodeNodeIsNotFollower, "node is not follower for shard %d", shardId)
+	return nil, ErrNodeIsNotFollower
 }
 
 func (s *shardsDirector) GetOrCreateLeader(namespace string, shardId int64, newTermOptions *proto.NewTermOptions) (lead.LeaderController, error) {
@@ -134,7 +136,7 @@ func (s *shardsDirector) GetOrCreateLeader(namespace string, shardId int64, newT
 	defer s.Unlock()
 
 	if s.closed {
-		return nil, constant.ErrAlreadyClosed
+		return nil, constant.ErrResourceUnavailable
 	}
 
 	if leader, ok := s.leaders[shardId]; ok {
@@ -170,7 +172,7 @@ func (s *shardsDirector) GetOrCreateFollower(namespace string, shardId int64, te
 	defer s.Unlock()
 
 	if s.closed {
-		return nil, constant.ErrAlreadyClosed
+		return nil, constant.ErrResourceUnavailable
 	}
 
 	if follower, ok := s.followers[shardId]; ok {

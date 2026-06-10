@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ func TestCoordinator_ConfigurationLoading(t *testing.T) {
 cluster:
   configPath: "/path/to/cluster-config.json"
 server:
-  admin:
+  public:
     bindAddress: "0.0.0.0:6643"
   internal:
     bindAddress: "0.0.0.0:6645"
@@ -79,7 +79,7 @@ observability:
 	// Verify that config was loaded correctly
 	assert.Equal(t, "/path/to/cluster-config.json", opts.Cluster.ConfigPath)
 
-	assert.Equal(t, "0.0.0.0:6643", opts.Server.Admin.BindAddress)
+	assert.Equal(t, "0.0.0.0:6643", opts.Server.Public.BindAddress)
 	assert.Equal(t, "0.0.0.0:6645", opts.Server.Internal.BindAddress)
 	assert.Equal(t, "/path/to/internal-cert.pem", opts.Server.Internal.TLS.CertFile)
 	assert.Equal(t, "/path/to/internal-key.pem", opts.Server.Internal.TLS.KeyFile)
@@ -88,9 +88,9 @@ observability:
 	assert.Equal(t, "/path/to/controller-key.pem", opts.Controller.TLS.KeyFile)
 
 	assert.Equal(t, "file", opts.Metadata.ProviderName)
-	assert.Equal(t, "/data/cluster-status.json", opts.Metadata.File.Path)
+	assert.Equal(t, "/data/cluster-status.json", opts.Metadata.File.StatusName)
 	assert.Equal(t, "oxia-system", opts.Metadata.Kubernetes.Namespace)
-	assert.Equal(t, "oxia-cluster-status", opts.Metadata.Kubernetes.ConfigMapName)
+	assert.Equal(t, "oxia-cluster-status", opts.Metadata.Kubernetes.StatusName)
 	assert.Equal(t, []string{"node1:6645", "node2:6645"}, opts.Metadata.Raft.BootstrapNodes)
 	assert.Equal(t, "node1:6645", opts.Metadata.Raft.Address)
 	assert.Equal(t, "/data/raft", opts.Metadata.Raft.DataDir)
@@ -106,7 +106,7 @@ func TestCoordinator_ConfigurationWithDefaults(t *testing.T) {
 
 	configContent := `
 server:
-  admin:
+  public:
     bindAddress: "0.0.0.0:7000"
 metadata:
   providerName: "memory"
@@ -123,11 +123,12 @@ metadata:
 	require.NoError(t, err)
 
 	// Verify that partial config overrides defaults but other values use defaults
-	assert.Equal(t, "0.0.0.0:7000", opts.Server.Admin.BindAddress) // From config
-	assert.Equal(t, "memory", opts.Metadata.ProviderName)          // From config
+	assert.Equal(t, "0.0.0.0:7000", opts.Server.Public.BindAddress) // From config
+	assert.Equal(t, "memory", opts.Metadata.ProviderName)           // From config
 
 	// Verify defaults are applied to unset values
 	assert.NotEmpty(t, opts.Server.Internal.BindAddress)      // Default
+	assert.NotEmpty(t, opts.Metadata.Identity)                // Default
 	assert.NotEmpty(t, opts.Observability.Metric.BindAddress) // Default
 }
 
@@ -207,7 +208,7 @@ func TestCoordinator_ConfigurationValidation(t *testing.T) {
 	// Test that validation works correctly
 	opts := option.NewDefaultOptions()
 
-	// Need to set a valid provider since WithDefault() is empty for MetadataOptions
+	// Need to set a valid provider since MetadataOptions does not default the provider type.
 	opts.Metadata.ProviderName = "file"
 
 	// Should pass validation with defaults
@@ -268,7 +269,7 @@ func TestCoordinator_EmptyConfigFile(t *testing.T) {
 
 	opts := option.NewDefaultOptions()
 
-	// Since MetadataOptions.WithDefault() is empty, we need to set a valid provider
+	// Need to set a valid provider since MetadataOptions does not default the provider type.
 	// This simulates what would happen in the actual CLI where flags set defaults
 	opts.Metadata.ProviderName = "file"
 
@@ -277,8 +278,9 @@ func TestCoordinator_EmptyConfigFile(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify defaults are still applied
-	assert.NotEmpty(t, opts.Server.Admin.BindAddress)
+	assert.NotEmpty(t, opts.Server.Public.BindAddress)
 	assert.NotEmpty(t, opts.Server.Internal.BindAddress)
+	assert.NotEmpty(t, opts.Metadata.Identity)
 	assert.Equal(t, "file", opts.Metadata.ProviderName)
 }
 
@@ -358,7 +360,7 @@ func TestCoordinator_CommandLineFlags(t *testing.T) {
 cluster:
   configPath: "/default/cluster.json"
 server:
-  admin:
+  public:
     bindAddress: "0.0.0.0:6643"
   internal:
     bindAddress: "0.0.0.0:6645"
@@ -379,20 +381,20 @@ metadata:
 
 	// Verify config file values were loaded
 	assert.Equal(t, "/default/cluster.json", coordinatorOptions.Cluster.ConfigPath)
-	assert.Equal(t, "0.0.0.0:6643", coordinatorOptions.Server.Admin.BindAddress)
+	assert.Equal(t, "0.0.0.0:6643", coordinatorOptions.Server.Public.BindAddress)
 	assert.Equal(t, "0.0.0.0:6645", coordinatorOptions.Server.Internal.BindAddress)
 	assert.Equal(t, "0.0.0.0:9090", coordinatorOptions.Observability.Metric.BindAddress)
 
 	// Now test that CLI flags can override these
 	// Note: In the actual cmd, flags are set during init(), but we can simulate this
 	// by directly setting the flag values on the options struct
-	coordinatorOptions.Server.Admin.BindAddress = "0.0.0.0:7000"
+	coordinatorOptions.Server.Public.BindAddress = "0.0.0.0:7000"
 	coordinatorOptions.Server.Internal.BindAddress = "0.0.0.0:7001"
 	coordinatorOptions.Observability.Metric.BindAddress = "0.0.0.0:8080"
 	coordinatorOptions.Metadata.ProviderName = "memory"
 
 	// Verify the options were updated
-	assert.Equal(t, "0.0.0.0:7000", coordinatorOptions.Server.Admin.BindAddress)
+	assert.Equal(t, "0.0.0.0:7000", coordinatorOptions.Server.Public.BindAddress)
 	assert.Equal(t, "0.0.0.0:7001", coordinatorOptions.Server.Internal.BindAddress)
 	assert.Equal(t, "0.0.0.0:8080", coordinatorOptions.Observability.Metric.BindAddress)
 	assert.Equal(t, "memory", coordinatorOptions.Metadata.ProviderName)

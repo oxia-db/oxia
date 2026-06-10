@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,11 +18,9 @@ import (
 	"fmt"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	"github.com/oxia-db/oxia/cmd/admin/listnodes"
-	"github.com/oxia-db/oxia/cmd/admin/splitshard"
-
-	"github.com/oxia-db/oxia/cmd/admin/listnamespaces"
-
+	"github.com/oxia-db/oxia/cmd/admin/dataserver"
+	"github.com/oxia-db/oxia/cmd/admin/namespace"
+	"github.com/oxia-db/oxia/cmd/admin/shard"
 	oxiacommon "github.com/oxia-db/oxia/common/constant"
 
 	"github.com/spf13/cobra"
@@ -39,8 +37,11 @@ var (
 func init() {
 	defaultAdminClientAddress := fmt.Sprintf("localhost:%d", oxiacommon.DefaultAdminPort)
 	Cmd.PersistentFlags().StringVar(&commons.AdminConfig.AdminAddress, "admin-address", defaultAdminClientAddress, "Admin client address")
+	Cmd.PersistentFlags().StringVar(&commons.AdminConfig.Auth.Token, "auth-token", "", "Bearer token for authenticated requests")
+	Cmd.PersistentFlags().StringVar(&commons.AdminConfig.Auth.TokenFile, "auth-token-file", "", "Path to bearer token file for authenticated requests")
+	Cmd.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
 
-	Cmd.AddCommand(listnamespaces.Cmd)
-	Cmd.AddCommand(listnodes.Cmd)
-	Cmd.AddCommand(splitshard.Cmd)
+	Cmd.AddCommand(dataserver.Cmd)
+	Cmd.AddCommand(namespace.Cmd)
+	Cmd.AddCommand(shard.Cmd)
 }

@@ -10,7 +10,7 @@ a robust, scalable metadata store and coordination system designed for large-sca
 
 <p align="center">
   <a href="https://github.com/oxia-db/oxia/releases"><img src="https://img.shields.io/github/v/release/oxia-db/oxia" alt="Latest Release"></a>
-  <a href="https://github.com/oxia-db/oxia/actions/workflows/pr_build_and_test.yaml/badge.svg"><img src="https://github.com/oxia-db/oxia/actions/workflows/pr_build_and_test.yaml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/oxia-db/oxia/actions/workflows/ci-build-test.yaml/badge.svg"><img src="https://github.com/oxia-db/oxia/actions/workflows/ci-build-test.yaml/badge.svg" alt="CI"></a>
   <a href="https://github.com/oxia-db/oxia/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-white.svg" alt="License"></a>
   <a href="https://github.com/oxia-db/oxia/discussions/new/choose"><img src="https://img.shields.io/badge/Github-Discussion-blue.svg?logo=refinedgithub" alt="Github Discussion"></a>
 </p>
@@ -35,8 +35,14 @@ Please 🌟 star the project if you like it.
 
 Feel free to open an [issue](https://github.com/oxia-db/oxia/issues/new) or start a [discussion](https://github.com/oxia-db/oxia/discussions/new/choose). You can also follow the development [guide]() to contribute and build on it.
 
+<p align="center">
+  <a href="https://star-history.com/#oxia-db/oxia&Date">
+    <img src="https://api.star-history.com/svg?repos=oxia-db/oxia&type=Date" alt="Star History Chart" width="600"/>
+  </a>
+</p>
+
 ### License
 
-Copyright 2023-2025 The Oxia Authors
+Copyright 2023-2026 The Oxia Authors
 
 Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0

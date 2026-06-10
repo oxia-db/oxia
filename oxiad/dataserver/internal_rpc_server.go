@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ package dataserver
 import (
 	"context"
 	"crypto/tls"
-	stderrors "errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -30,20 +29,18 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	dcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
-	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
+	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
-
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/rpc"
 )
 
 type internalRpcServer struct {
@@ -52,16 +49,23 @@ type internalRpcServer struct {
 
 	shardsDirector       controller.ShardsDirector
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
-	grpcServer           rpc2.GrpcServer
-	healthServer         rpc2.HealthServer
+	manifest             *manifestpkg.Manifest
+	grpcServer           dcommonrpc.GrpcServer
+	healthServer         dcommonrpc.HealthServer
 	log                  *slog.Logger
 }
 
-func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
-	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer rpc2.HealthServer, tlsConf *tls.Config) (*internalRpcServer, error) {
+func newInternalRpcServer(grpcProvider dcommonrpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector,
+	assignmentDispatcher assignment.ShardAssignmentsDispatcher, healthServer dcommonrpc.HealthServer,
+	tlsConf *tls.Config, authOptions *auth.Options, manifest *manifestpkg.Manifest) (*internalRpcServer, error) {
+	if authOptions == nil {
+		authOptions = &auth.Disabled
+	}
+
 	server := &internalRpcServer{
 		shardsDirector:       shardsDirector,
 		assignmentDispatcher: assignmentDispatcher,
+		manifest:             manifest,
 		healthServer:         healthServer,
 		log: slog.With(
 			slog.String("component", "internal-rpc-server"),
@@ -73,7 +77,9 @@ func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, sh
 		proto.RegisterOxiaCoordinationServer(registrar, server)
 		proto.RegisterOxiaLogReplicationServer(registrar, server)
 		grpc_health_v1.RegisterHealthServer(registrar, server.healthServer)
-	}, tlsConf, &auth.Disabled)
+	}, tlsConf, authOptions, dcommonrpc.NewGrpcInsIDVerifyInterceptors(
+		server.manifest,
+	))
 	if err != nil {
 		return nil, err
 	}
@@ -83,33 +89,6 @@ func newInternalRpcServer(grpcProvider rpc2.GrpcProvider, bindAddress string, sh
 
 func (s *internalRpcServer) Close() error {
 	return s.grpcServer.Close()
-}
-
-// toGRPCError converts domain errors from the dataserver layer into gRPC
-// status errors so that remote callers (e.g. the coordinator) can match on
-// the expected gRPC error codes. If the error is already a gRPC status error,
-// it is returned as-is. Unknown domain errors are mapped to codes.Unknown.
-func toGRPCError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if _, ok := status.FromError(err); ok {
-		return err
-	}
-	switch {
-	case stderrors.Is(err, dserror.ErrInvalidTerm):
-		return status.Error(constant.CodeInvalidTerm, err.Error())
-	case stderrors.Is(err, dserror.ErrNodeIsNotMember):
-		return status.Error(constant.CodeNodeIsNotMember, err.Error())
-	case stderrors.Is(err, dserror.ErrInvalidStatus):
-		return status.Error(constant.CodeInvalidStatus, err.Error())
-	case stderrors.Is(err, dserror.ErrResourceConflict):
-		return status.Error(constant.CodeAlreadyClosed, err.Error())
-	case stderrors.Is(err, dserror.ErrResourceNotAvailable):
-		return status.Error(codes.Unavailable, err.Error())
-	default:
-		return status.Error(codes.Unknown, err.Error())
-	}
 }
 
 func (s *internalRpcServer) PushShardAssignments(srv proto.OxiaCoordination_PushShardAssignmentsServer) error {
@@ -130,6 +109,48 @@ func (s *internalRpcServer) PushShardAssignments(srv proto.OxiaCoordination_Push
 	return err
 }
 
+func (s *internalRpcServer) Handshake(c context.Context, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+	log := s.log.With(
+		slog.Any("request", req),
+		slog.String("peer", rpc.GetPeer(c)),
+	)
+
+	log.Info("Received Handshake request")
+
+	if req.InstanceId == "" {
+		return nil, status.Error(codes.InvalidArgument, "instance id must not be empty")
+	}
+
+	currentInstanceID := s.manifest.GetInstanceID()
+	switch currentInstanceID {
+	case "":
+		if err := s.manifest.SetInstanceID(req.InstanceId); err != nil {
+			if errors.Is(err, manifestpkg.ErrInstanceIDMismatch) {
+				return &proto.HandshakeResponse{
+					Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH,
+					FeaturesSupported: feature.SupportedFeatures(),
+				}, nil
+			}
+			log.Warn("Failed to bind instance id", slog.Any("error", err))
+			return nil, err
+		}
+		return &proto.HandshakeResponse{
+			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_BOUND,
+			FeaturesSupported: feature.SupportedFeatures(),
+		}, nil
+	case req.InstanceId:
+		return &proto.HandshakeResponse{
+			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
+			FeaturesSupported: feature.SupportedFeatures(),
+		}, nil
+	default:
+		return &proto.HandshakeResponse{
+			Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH,
+			FeaturesSupported: feature.SupportedFeatures(),
+		}, nil
+	}
+}
+
 func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	log := s.log.With(
 		slog.Any("req", req),
@@ -141,12 +162,12 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 	// NewTerm applies to both followers and leaders
 	// First check if we have already a follower controller running
 	if follower, err := s.shardsDirector.GetFollower(req.Shard); err != nil { //nolint:revive
-		if status.Code(err) != constant.CodeNodeIsNotFollower {
+		if !errors.Is(err, controller.ErrNodeIsNotFollower) {
 			log.Warn(
 				"NewTerm failed: could not get follower controller",
 				slog.Any("error", err),
 			)
-			return nil, err
+			return nil, constant.IntoGrpcStatusError(err)
 		}
 		log.Debug(
 			"Node is not follower, getting leader",
@@ -166,7 +187,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 				slog.Any("error", err2),
 			)
 		}
-		return res, toGRPCError(err2)
+		return res, constant.IntoGrpcStatusError(err2)
 	}
 
 	leader, err := s.shardsDirector.GetOrCreateLeader(req.Namespace, req.Shard, req.Options)
@@ -175,7 +196,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 			"NewTerm failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	res, err2 := leader.NewTerm(req)
 	if err2 != nil {
@@ -191,7 +212,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 			slog.Int64("leaderTerm", leader.Term()),
 		)
 	}
-	return res, err2
+	return res, constant.IntoGrpcStatusError(err2)
 }
 
 func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
@@ -208,7 +229,7 @@ func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLea
 			"BecomeLeader failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	res, err := leader.BecomeLeader(c, req)
@@ -218,7 +239,7 @@ func (s *internalRpcServer) BecomeLeader(c context.Context, req *proto.BecomeLea
 			slog.Any("error", err),
 		)
 	}
-	return res, err
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
@@ -235,7 +256,7 @@ func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowe
 			"AddFollower failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	res, err := leader.AddFollower(req)
@@ -245,7 +266,7 @@ func (s *internalRpcServer) AddFollower(c context.Context, req *proto.AddFollowe
 			slog.Any("error", err),
 		)
 	}
-	return res, err
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
@@ -262,7 +283,7 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 			"RemoveObserver failed: could not get leader controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	res, err := leader.RemoveObserver(req)
@@ -272,9 +293,13 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 			slog.Any("error", err),
 		)
 	}
-	return res, err
+	return res, constant.IntoGrpcStatusError(err)
 }
 
+// GetInfo is a deprecated legacy endpoint kept for rolling-upgrade
+// compatibility. New coordinators should use Handshake, and this endpoint
+// still follows the normal instance-id validation flow until removal in the
+// next major version.
 func (s *internalRpcServer) GetInfo(c context.Context, req *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
 	log := s.log.With(
 		slog.Any("request", req),
@@ -301,7 +326,7 @@ func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateReque
 			"Truncate failed: could not get follower controller",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	res, err := follower.Truncate(req)
@@ -311,7 +336,7 @@ func (s *internalRpcServer) Truncate(c context.Context, req *proto.TruncateReque
 			slog.Any("error", err),
 		)
 	}
-	return res, toGRPCError(err)
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServer) error {
@@ -351,7 +376,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 			"Replicate failed: could not get follower controller",
 			slog.Any("error", err),
 		)
-		return err
+		return constant.IntoGrpcStatusError(err)
 	}
 
 	// Activate split filtering if hash range metadata is present
@@ -370,7 +395,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 			slog.Any("error", err),
 		)
 	}
-	return toGRPCError(err)
+	return constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapshotServer) error {
@@ -414,7 +439,7 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.Int64("term", term),
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
-		return err
+		return constant.IntoGrpcStatusError(err)
 	}
 
 	// Activate split filtering if hash range metadata is present.
@@ -438,32 +463,37 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 			slog.String("peer", rpc.GetPeer(srv.Context())),
 		)
 	}
-	return toGRPCError(err)
+	return constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	follower, err := s.shardsDirector.GetFollower(req.Shard)
 	if err == nil {
 		res, err := follower.GetStatus(req)
-		return res, toGRPCError(err)
+		return res, constant.IntoGrpcStatusError(err)
 	}
 
-	if status.Code(err) != constant.CodeNodeIsNotFollower {
-		return nil, err
+	if !errors.Is(err, controller.ErrNodeIsNotFollower) {
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	// If we don't have a follower, fallback to checking the leader controller
 	leader, err := s.shardsDirector.GetLeader(req.Shard)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, constant.ErrNodeIsNotLeader) {
+			// Node is neither follower nor leader for this shard
+			return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotMember)
+		}
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
-	return leader.GetStatus(req)
+	res, err := leader.GetStatus(req)
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func (s *internalRpcServer) DeleteShard(_ context.Context, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	res, err := s.shardsDirector.DeleteShard(req)
-	return res, toGRPCError(err)
+	return res, constant.IntoGrpcStatusError(err)
 }
 
 func readHeader(md metadata.MD, key string) (value string, err error) {
@@ -504,7 +534,7 @@ func readTerm(md metadata.MD) (v int64, err error) {
 // readSplitHashRange reads optional split hash range from gRPC metadata.
 // Returns the hash range and true if present, nil and false if absent,
 // or an error if the metadata is present but malformed.
-func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool, error) {
+func readSplitHashRange(md metadata.MD) (*proto.HashRange, bool, error) {
 	minArr := md.Get(constant.MetadataSplitHashRangeMin)
 	maxArr := md.Get(constant.MetadataSplitHashRangeMax)
 	if len(minArr) == 0 || len(maxArr) == 0 {
@@ -519,7 +549,7 @@ func readSplitHashRange(md metadata.MD) (*model.Int32HashRange, bool, error) {
 		return nil, false, fmt.Errorf("invalid split hash range max %q: %w", maxArr[0], err)
 	}
 
-	return &model.Int32HashRange{
+	return &proto.HashRange{
 		Min: minVal,
 		Max: maxVal,
 	}, true, nil

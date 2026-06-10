@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,14 +17,17 @@ package coordinator
 import (
 	"testing"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+
 	"github.com/stretchr/testify/assert"
+	gproto "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	"github.com/oxia-db/oxia/common/proto"
+	metadata2 "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-
-	"github.com/oxia-db/oxia/common/rpc"
+	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func TestCoordinatorInitiateLeaderElection(t *testing.T) {
@@ -35,33 +38,34 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := metadata2.NewMetadataProviderMemory()
-	clusterConfig := model.ClusterConfig{
-		Namespaces: []model.NamespaceConfig{{
-			Name:              "default",
-			ReplicationFactor: 1,
-			InitialShardCount: 2,
-		}},
-		Servers: []model.Server{sa1, sa2, sa3},
-	}
-	clientPool := rpc.NewClientPool(nil, nil)
+	metadataProvider := metadata2.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	clusterConfig := newClusterConfig([]*proto.Namespace{{
+		Name:              "default",
+		ReplicationFactor: 1,
+		InitialShardCount: 2,
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	coordinatorInstance, _, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	configProvider := metadata2.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
 	assert.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
-	metadata := model.ShardMetadata{
-		Status:                  model.ShardStatusSteadyState,
+	shardMetadata := &proto.ShardMetadata{
+		Status:                  proto.ShardStatusSteadyState,
 		Term:                    999,
 		Leader:                  nil,
-		Ensemble:                []model.Server{},
-		RemovedNodes:            []model.Server{},
-		PendingDeleteShardNodes: make([]model.Server, 0),
-		Int32HashRange:          model.Int32HashRange{Min: 2000, Max: 100000},
+		Ensemble:                []*proto.DataServerIdentity{},
+		RemovedNodes:            []*proto.DataServerIdentity{},
+		PendingDeleteShardNodes: make([]*proto.DataServerIdentity, 0),
+		Int32HashRange:          &proto.HashRange{Min: 2000, Max: 100000},
 	}
-	statusResource := coordinatorInstance.StatusResource()
-	statusResource.UpdateShardMetadata("default", 1, metadata)
+	metadataView := coordinatorInstance.Metadata()
+	metadataView.UpdateShardStatus("default", 1, shardMetadata)
 
-	status := statusResource.Load()
-	assert.EqualValues(t, status.Namespaces["default"].Shards[1], metadata)
+	status := mock.StatusSnapshot(t, metadataView)
+	assert.True(t, gproto.Equal(status.Namespaces["default"].Shards[1], shardMetadata))
 }

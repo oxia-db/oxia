@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -55,6 +56,7 @@ const (
 	commitOffsetKey        = constant.InternalKeyPrefix + "commit-offset"
 	commitLastVersionIdKey = constant.InternalKeyPrefix + "last-version-id"
 	commitChecksumKey      = constant.InternalKeyPrefix + "checksum"
+	featureFlagKeyPrefix   = constant.InternalKeyPrefix + "features"
 	termKey                = constant.InternalKeyPrefix + "term"
 	termOptionsKey         = termKey + "-options"
 )
@@ -79,6 +81,10 @@ type TermOptions struct {
 	KeySorting           proto.KeySortingType
 }
 
+type Meta struct {
+	Checksum *crc.Checksum
+}
+
 type DB interface {
 	io.Closer
 
@@ -90,6 +96,8 @@ type DB interface {
 	ResetChecksum()
 
 	ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error)
+	ProcessControlRequest(controlRequest *proto.ControlRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*Meta, error)
+
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
 	List(request *proto.ListRequest) (kvstore.KeyIterator, error)
 	RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error)
@@ -158,11 +166,6 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 			"The total number of range-scan operations", "count", labels),
 	}
 
-	commitOffset, err := db.ReadCommitOffset()
-	if err != nil {
-		return nil, err
-	}
-
 	lastVersionId, err := db.readLastVersionId()
 	if err != nil {
 		return nil, err
@@ -179,7 +182,16 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	}
 	db.committedChecksum.Store(&lastChecksum)
 
-	db.notificationsTracker = newNotificationsTracker(namespace, shardId, commitOffset, kv, notificationRetentionTime, clock)
+	if err := db.recoverFeatureFlags(); err != nil {
+		return nil, err
+	}
+
+	lastNotificationOffset, err := db.readLastNotificationOffset()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read last notification offset")
+	}
+
+	db.notificationsTracker = newNotificationsTracker(namespace, shardId, lastNotificationOffset, kv, notificationRetentionTime, clock)
 	return db, nil
 }
 
@@ -225,7 +237,6 @@ func (d *db) ReadChecksum() crc.Checksum {
 func (d *db) ResetChecksum() {
 	var zero crc.Checksum
 	d.committedChecksum.Store(&zero)
-	d.enabledFeatures.Delete(proto.Feature_FEATURE_DB_CHECKSUM)
 }
 
 func (d *db) Close() error {
@@ -296,6 +307,48 @@ func (d *db) IsFeatureEnabled(feature proto.Feature) bool {
 
 func (d *db) EnableFeature(feature proto.Feature) {
 	d.enabledFeatures.Store(feature, true)
+}
+
+func featureFlagKey(feature proto.Feature) string {
+	return fmt.Sprintf("%s/%010d", featureFlagKeyPrefix, feature)
+}
+
+func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64, timestamp uint64, _ UpdateOperationCallback) (*Meta, error) {
+	meta := &Meta{
+		Checksum: new(d.ReadChecksum()),
+	}
+
+	var featuresToEnable []proto.Feature
+	controlValue := cmd.GetValue()
+	switch v := controlValue.(type) {
+	case *proto.ControlRequest_FeatureEnable:
+		featuresToEnable = v.FeatureEnable.GetFeatures()
+	case *proto.ControlRequest_RecordChecksum:
+		// Recognized no-op. Checksum is already in meta.
+	default:
+		return nil, errors.Errorf("unknown control request type %T", controlValue)
+	}
+
+	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
+
+	if err := d.addASCIILong(commitOffsetKey, commitOffset, batch, timestamp); err != nil {
+		return nil, err
+	}
+	for _, feature := range featuresToEnable {
+		if err := d.addASCIILong(featureFlagKey(feature), int64(feature), batch, timestamp); err != nil {
+			return nil, err
+		}
+	}
+	if err := batch.Commit(); err != nil {
+		return nil, err
+	}
+
+	for _, feature := range featuresToEnable {
+		d.enabledFeatures.Store(feature, true)
+	}
+
+	return meta, nil
 }
 
 func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error) {
@@ -506,6 +559,58 @@ func (d *db) readLastChecksum() (crc.Checksum, error) {
 		return 0, err
 	}
 	return crc.Checksum(uint32(cs)), nil
+}
+
+func (d *db) recoverFeatureFlags() error {
+	// Use a prefix break instead of an upper bound because key ordering can be
+	// natural or hierarchical, and the safe upper bound differs between them.
+	it, err := d.kv.KeyRangeScan(featureFlagKeyPrefix+"/", "", kvstore.ShowInternalKeys)
+	if err != nil {
+		return err
+	}
+	defer it.Close()
+	for it.Valid() {
+		key := it.Key()
+		if !strings.HasPrefix(key, featureFlagKeyPrefix+"/") {
+			break
+		}
+
+		featureValue, err := strconv.ParseInt(strings.TrimPrefix(key, featureFlagKeyPrefix+"/"), 10, 32)
+		if err != nil {
+			return errors.Wrapf(err, "invalid feature flag key %q", key)
+		}
+		if featureValue < 0 {
+			return errors.Errorf("invalid feature flag key %q", key)
+		}
+
+		feature := proto.Feature(featureValue)
+		if key != featureFlagKey(feature) {
+			return errors.Errorf("invalid feature flag key %q", key)
+		}
+		d.enabledFeatures.Store(feature, true)
+
+		it.Next()
+	}
+	return nil
+}
+
+func (d *db) readLastNotificationOffset() (int64, error) {
+	key, _, closer, err := d.kv.Get(lastNotificationKey, kvstore.ComparisonFloor, kvstore.ShowInternalKeys)
+	if errors.Is(err, kvstore.ErrKeyNotFound) {
+		d.log.Debug("No notification offset found")
+		return constant.I64NegativeOne, nil
+	}
+	if err != nil {
+		return constant.I64NegativeOne, err
+	}
+	defer closer.Close()
+
+	if !strings.HasPrefix(key, notificationsPrefix+"/") {
+		d.log.Debug("No notification offset found", slog.String("floor-key", key))
+		return constant.I64NegativeOne, nil
+	}
+
+	return parseNotificationKey(key)
 }
 
 func (d *db) readASCIILongOrDefault(key string, defaultValue int64) (int64, error) {

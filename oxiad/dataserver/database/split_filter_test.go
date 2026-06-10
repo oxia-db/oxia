@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/hash"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -98,10 +97,10 @@ func readNotificationBatch(t *testing.T, kv kvstore.KV, offset int64) *proto.Not
 
 // leftRange covers [0, midpoint]
 // rightRange covers [midpoint+1, max].
-func splitRanges() (left, right model.Int32HashRange) {
+func splitRanges() (left, right *proto.HashRange) {
 	mid := uint32(math.MaxUint32 / 2)
-	return model.Int32HashRange{Min: 0, Max: mid},
-		model.Int32HashRange{Min: mid + 1, Max: math.MaxUint32}
+	return &proto.HashRange{Min: 0, Max: mid},
+		&proto.HashRange{Min: mid + 1, Max: math.MaxUint32}
 }
 
 func TestFilterDBForSplit_UserKeys(t *testing.T) {
@@ -170,6 +169,7 @@ func TestFilterDBForSplit_MetadataKeys(t *testing.T) {
 	putRawKey(t, kv, commitOffsetKey, []byte("42"))
 	putRawKey(t, kv, commitLastVersionIdKey, []byte("100"))
 	putRawKey(t, kv, commitChecksumKey, []byte("999"))
+	putRawKey(t, kv, featureFlagKey(proto.Feature_FEATURE_DB_CHECKSUM), []byte("1"))
 	putRawKey(t, kv, termKey, []byte("5"))
 	putRawKey(t, kv, termOptionsKey, []byte(`{"notificationsEnabled":true}`))
 
@@ -178,6 +178,7 @@ func TestFilterDBForSplit_MetadataKeys(t *testing.T) {
 	// Kept
 	assert.True(t, keyExists(t, kv, commitOffsetKey))
 	assert.True(t, keyExists(t, kv, commitLastVersionIdKey))
+	assert.True(t, keyExists(t, kv, featureFlagKey(proto.Feature_FEATURE_DB_CHECKSUM)))
 	assert.True(t, keyExists(t, kv, termKey))
 	assert.True(t, keyExists(t, kv, termOptionsKey))
 

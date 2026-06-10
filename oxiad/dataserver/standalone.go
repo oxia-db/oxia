@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 
 	"go.uber.org/multierr"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
@@ -32,14 +32,13 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
+	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
-
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -48,7 +47,7 @@ type StandaloneConfig struct {
 
 	NumShards            uint32
 	NotificationsEnabled bool
-	KeySorting           model.KeySorting
+	KeySorting           proto.KeySortingType
 }
 
 type Standalone struct {
@@ -58,6 +57,7 @@ type Standalone struct {
 	walFactory                wal.Factory
 	shardsDirector            controller.ShardsDirector
 	shardAssignmentDispatcher assignment.ShardAssignmentsDispatcher
+	healthServer              rpc2.HealthServer
 
 	metrics *metric.PrometheusMetrics
 }
@@ -108,25 +108,31 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 
+	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards)
+	s.healthServer = rpc2.NewClosableHealthServer(context.Background())
+	s.healthServer.SetServingStatus(rpc2.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
+
 	publicServer := config.DataServerOptions.Server.Public
 	serverTLS, err := publicServer.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
 	s.rpc, err = newPublicRpcServer(rpc2.Default, publicServer.BindAddress, s.shardsDirector,
-		nil, serverTLS, &auth.Disabled)
+		s.shardAssignmentDispatcher, config.DataServerOptions.FeatureFlags.IsAuthorityValidationEnabled(), s.healthServer, serverTLS, &auth.Disabled)
 	if err != nil {
 		return nil, err
 	}
-	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards)
-	s.rpc.assignmentDispatcher = s.shardAssignmentDispatcher
 
 	metricOptions := config.DataServerOptions.Observability.Metric
 	if metricOptions.IsEnabled() {
-		s.metrics, err = metric.Start(metricOptions.BindAddress)
-	}
-	if err != nil {
-		return nil, err
+		metricTLS, err := metricOptions.TLS.TryIntoServerTLSConf()
+		if err != nil {
+			return nil, err
+		}
+		s.metrics, err = metric.Start(metricOptions.BindAddress, metricTLS)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return s, nil
@@ -137,7 +143,7 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 
 	newTermOptions := &proto.NewTermOptions{
 		EnableNotifications: s.config.NotificationsEnabled,
-		KeySorting:          s.config.KeySorting.ToProto(),
+		KeySorting:          s.config.KeySorting,
 	}
 
 	for i := int64(0); i < int64(numShards); i++ {
@@ -181,6 +187,7 @@ func (s *Standalone) Close() error {
 
 	return multierr.Combine(
 		err,
+		s.healthServer.Close(),
 		s.shardsDirector.Close(),
 		s.shardAssignmentDispatcher.Close(),
 		s.rpc.Close(),
@@ -207,6 +214,6 @@ func (noOpReplicationRpcProvider) Truncate(string, *proto.TruncateRequest) (*pro
 	panic("not implemented")
 }
 
-func newNoOpReplicationRpcProvider() rpc.ReplicationRpcProvider {
+func newNoOpReplicationRpcProvider() dataserverrpc.ReplicationRpcProvider {
 	return &noOpReplicationRpcProvider{}
 }

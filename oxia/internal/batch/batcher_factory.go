@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,11 +24,8 @@ import (
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
 
-// WriteRerouter is called when a write batch detects its target shard was
-// deleted (e.g. after a split). It re-submits operations to the correct shards.
 type WriteRerouter func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
 
-// ReadRerouter is called when a read batch detects its target shard was deleted.
 type ReadRerouter func([]model.GetCall)
 
 type BatcherFactory struct {
@@ -37,7 +34,6 @@ type BatcherFactory struct {
 	Executor       internal.Executor
 	RequestTimeout time.Duration
 	Metrics        *metrics.Metrics
-	ShardExists    func(int64) bool
 	WriteRerouter  WriteRerouter
 	ReadRerouter   ReadRerouter
 }
@@ -64,7 +60,6 @@ func NewBatcherFactory(
 func (b *BatcherFactory) NewWriteBatcher(ctx context.Context, shardId *int64, maxWriteBatchSize int) batch2.Batcher {
 	return b.newBatcher(ctx, shardId, "write", writeBatchFactory{
 		execute:        b.Executor.ExecuteWrite,
-		shardExists:    b.ShardExists,
 		reroute:        b.WriteRerouter,
 		metrics:        b.Metrics,
 		requestTimeout: b.RequestTimeout,
@@ -75,7 +70,6 @@ func (b *BatcherFactory) NewWriteBatcher(ctx context.Context, shardId *int64, ma
 func (b *BatcherFactory) NewReadBatcher(ctx context.Context, shardId *int64) batch2.Batcher {
 	return b.newBatcher(ctx, shardId, "read", readBatchFactory{
 		execute:        b.Executor.ExecuteRead,
-		shardExists:    b.ShardExists,
 		reroute:        b.ReadRerouter,
 		metrics:        b.Metrics,
 		requestTimeout: b.RequestTimeout,

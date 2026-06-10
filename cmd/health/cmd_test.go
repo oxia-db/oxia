@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ func TestHealthCmd(t *testing.T) {
 	_health := health.NewServer()
 	server, err := rpc.Default.StartGrpcServer("health", "localhost:0", func(registrar grpc.ServiceRegistrar) {
 		grpc_health_v1.RegisterHealthServer(registrar, _health)
-	}, nil, &auth.Options{})
+	}, nil, &auth.Options{}, nil)
 	assert.NoError(t, err)
 	defer func() {
 		_ = server.Close()

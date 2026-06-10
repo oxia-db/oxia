@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,12 +25,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
 
-	dserror "github.com/oxia-db/oxia/oxiad/dataserver/errors"
-
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -348,7 +345,7 @@ func TestFollower_NewTerm(t *testing.T) {
 	// We cannot fence with earlier term
 	fr, err := fc.NewTerm(&proto.NewTermRequest{Term: 0})
 	assert.Nil(t, fr)
-	assert.Equal(t, dserror.ErrInvalidTerm, err)
+	assert.Equal(t, constant.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 1, fc.Term())
 
@@ -448,7 +445,7 @@ func TestFollower_TruncateAfterRestart(t *testing.T) {
 		},
 	})
 
-	assert.Equal(t, dserror.ErrInvalidStatus, err)
+	assert.Equal(t, constant.ErrInvalidStatus, err)
 	assert.Nil(t, tr)
 	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, fc.Status())
 
@@ -596,7 +593,7 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	// Follower will reject the entry because it's from an earlier term
 	err = fc.AppendEntries(stream)
 	assert.Error(t, err)
-	assert.Equal(t, dserror.ErrInvalidTerm, err)
+	assert.Equal(t, constant.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 	stream.Cancel()
@@ -626,7 +623,7 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	stream.AddRequest(createAddRequest(t, 6, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
 	err = fc.AppendEntries(stream)
 	stream.Cancel()
-	assert.Equal(t, dserror.ErrInvalidTerm, err)
+	assert.Equal(t, constant.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 
@@ -662,7 +659,7 @@ func TestFollower_RejectTruncateInvalidTerm(t *testing.T) {
 		},
 	})
 	assert.Nil(t, truncateResp)
-	assert.Equal(t, dserror.ErrInvalidTerm, err)
+	assert.Equal(t, constant.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 
@@ -675,7 +672,7 @@ func TestFollower_RejectTruncateInvalidTerm(t *testing.T) {
 		},
 	})
 	assert.Nil(t, truncateResp)
-	assert.Equal(t, dserror.ErrInvalidTerm, err)
+	assert.Equal(t, constant.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
 }
@@ -909,7 +906,7 @@ func TestFollower_DisconnectLeader(t *testing.T) {
 	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
 
 	// It's not possible to add a new leader stream
-	assert.ErrorIs(t, fc.AppendEntries(stream), dserror.ErrResourceConflict)
+	assert.ErrorIs(t, fc.AppendEntries(stream), constant.ErrResourceConflict)
 
 	// When we fence again, the leader should have been cutoff
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
@@ -1017,7 +1014,7 @@ func TestFollowerController_DeleteShard_WrongTerm(t *testing.T) {
 		Term:      1,
 	})
 
-	assert.ErrorIs(t, err, dserror.ErrInvalidTerm)
+	assert.ErrorIs(t, err, constant.ErrInvalidTerm)
 }
 
 func TestFollowerController_Closed(t *testing.T) {
@@ -1041,7 +1038,7 @@ func TestFollowerController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res)
-	assert.Equal(t, dserror.ErrResourceConflict, err)
+	assert.Equal(t, constant.ErrResourceConflict, err)
 
 	res2, err := fc.Truncate(&proto.TruncateRequest{
 		Shard: shard,
@@ -1053,7 +1050,7 @@ func TestFollowerController_Closed(t *testing.T) {
 	})
 
 	assert.Nil(t, res2)
-	assert.Equal(t, dserror.ErrResourceConflict, err)
+	assert.Equal(t, constant.ErrResourceConflict, err)
 
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
@@ -1167,7 +1164,7 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	close(snapshotStream.Chunks)
 
 	// The snapshot sending should fail because the term is invalid
-	assert.ErrorIs(t, dserror.ErrInvalidTerm, wg.Wait(context.Background()))
+	assert.ErrorIs(t, constant.ErrInvalidTerm, wg.Wait(context.Background()))
 
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 5, Options: &proto.NewTermOptions{
 		EnableNotifications: true,
@@ -1210,7 +1207,7 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 
 	// Set the split hash range to the lower half of the hash space.
 	// Keys a, b, c, e are in range; d, f are out of range.
-	fc.SetSplitHashRange(&model.Int32HashRange{
+	fc.SetSplitHashRange(&proto.HashRange{
 		Min: 0,
 		Max: 0x7FFFFFFF, // 2147483647
 	})

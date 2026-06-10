@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,8 +32,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
+	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
@@ -65,7 +65,7 @@ type followerCursor struct {
 
 	term                    int64
 	follower                string
-	replicateStreamProvider rpc.ReplicateStreamProvider
+	replicateStreamProvider dataserverrpc.ReplicateStreamProvider
 	stream                  proto.OxiaLogReplication_ReplicateClient
 
 	ackTracker  QuorumAckTracker
@@ -81,6 +81,7 @@ type followerCursor struct {
 	closed         atomic.Bool
 	ctx            context.Context
 	cancel         context.CancelFunc
+	latch          sync.WaitGroup
 	log            *slog.Logger
 	splitHashRange *proto.Int32HashRange // non-nil for split observer cursors
 
@@ -96,7 +97,7 @@ func NewFollowerCursor( //nolint:revive
 	term int64,
 	namespace string,
 	shardId int64,
-	replicateStreamProvider rpc.ReplicateStreamProvider,
+	replicateStreamProvider dataserverrpc.ReplicateStreamProvider,
 	ackTracker QuorumAckTracker,
 	walObject wal.Wal,
 	db database.DB,
@@ -148,17 +149,19 @@ func NewFollowerCursor( //nolint:revive
 		return nil, err
 	}
 
-	go process.DoWithLabels(
-		context.Background(),
-		map[string]string{
-			"oxia":      "follower-cursor-send",
-			"namespace": namespace,
-			"shard":     fmt.Sprintf("%d", fc.shardId),
-		},
-		func() {
-			fc.run()
-		},
-	)
+	fc.latch.Go(func() {
+		process.DoWithLabels(
+			context.Background(),
+			map[string]string{
+				"oxia":      "follower-cursor-send",
+				"namespace": namespace,
+				"shard":     fmt.Sprintf("%d", fc.shardId),
+			},
+			func() {
+				fc.run()
+			},
+		)
+	})
 
 	return fc, nil
 }
@@ -171,7 +174,7 @@ func NewObserverFollowerCursor( //nolint:revive
 	term int64,
 	namespace string,
 	shardId int64,
-	replicateStreamProvider rpc.ReplicateStreamProvider,
+	replicateStreamProvider dataserverrpc.ReplicateStreamProvider,
 	ackTracker QuorumAckTracker,
 	walObject wal.Wal,
 	db database.DB,
@@ -224,17 +227,19 @@ func NewObserverFollowerCursor( //nolint:revive
 	// Observer uses a no-op cursor acker — its acks don't affect quorum
 	fc.cursorAcker = NewNoOpCursorAcker()
 
-	go process.DoWithLabels(
-		context.Background(),
-		map[string]string{
-			"oxia":      "observer-cursor-send",
-			"namespace": namespace,
-			"shard":     fmt.Sprintf("%d", fc.shardId),
-		},
-		func() {
-			fc.run()
-		},
-	)
+	fc.latch.Go(func() {
+		process.DoWithLabels(
+			context.Background(),
+			map[string]string{
+				"oxia":      "observer-cursor-send",
+				"namespace": namespace,
+				"shard":     fmt.Sprintf("%d", fc.shardId),
+			},
+			func() {
+				fc.run()
+			},
+		)
+	})
 
 	return fc, nil
 }
@@ -270,6 +275,7 @@ func (fc *followerCursor) shouldSendSnapshot() bool {
 func (fc *followerCursor) Close() error {
 	fc.closed.Store(true)
 	fc.cancel()
+	fc.latch.Wait()
 	return nil
 }
 
@@ -291,7 +297,7 @@ func (fc *followerCursor) run() {
 			// If the follower reported that it's not a member (e.g. after a
 			// data clean-up and restart), reset the ack offset so that
 			// shouldSendSnapshot() will send a full snapshot on the next retry.
-			if status.Code(err) == constant.CodeNodeIsNotMember {
+			if errors.Is(err, constant.ErrNodeIsNotMember) {
 				fc.log.Warn("Follower reported not-member status, resetting ack offset to trigger snapshot")
 				fc.ackOffset.Store(wal.InvalidOffset)
 				fc.lastPushed.Store(wal.InvalidOffset)

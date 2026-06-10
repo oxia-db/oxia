@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,18 +22,25 @@ import (
 	"os"
 	"path/filepath"
 
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonproto "github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
+	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
+	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
+	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
+	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
+	"github.com/oxia-db/oxia/common/commonio"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 )
@@ -149,54 +156,55 @@ func main() {
 	replicationGrpcProvider := newMaelstromReplicationRpcProvider()
 	dispatcher := newDispatcher(grpcProvider, replicationGrpcProvider)
 
-	var servers []model.Server
+	var servers []*commonproto.DataServerIdentity
 	for _, node := range allNodes {
 		if node != thisNode {
-			servers = append(servers, model.Server{
+			servers = append(servers, &commonproto.DataServerIdentity{
 				Public:   node,
 				Internal: node,
 			})
 		}
 	}
 
-	dataDir, err := os.MkdirTemp("", "oxia-maelstrom")
-	if err != nil {
-		slog.Error(
-			"failed to create data dir",
-			slog.Any("error", err),
-		)
-		os.Exit(1)
-	}
-
 	if thisNode == "n1" {
-		// First node is going to be the "coordinator"
-		clusterConfig := model.ClusterConfig{
-			Namespaces: []model.NamespaceConfig{{
-				Name:              constant.DefaultNamespace,
-				ReplicationFactor: 3,
-				InitialShardCount: 1,
-			}},
-			Servers: servers,
-		}
-
-		_, _, err := coordinator.NewCoordinator(
-			metadata.NewMetadataProviderFile(filepath.Join(dataDir, "cluster-status.json")),
-			func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil,
-			newRpcProvider(dispatcher))
-		if err != nil {
+		if err := runCoordinator(dispatcher, servers); err != nil {
 			slog.Error(
-				"failed to create coordinator",
+				"failed to start coordinator",
 				slog.Any("error", err),
 			)
 			os.Exit(1)
 		}
 	} else {
 		// Any other node will be a storage node
+		dataDir, err := os.MkdirTemp("", "oxia-maelstrom")
+		if err != nil {
+			slog.Error(
+				"failed to create data dir",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+
 		dataServerOption := option.NewDefaultOptions()
+		dataServerOption.FeatureFlags.AuthorityValidation = new(bool)
 		dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 		dataServerOption.Storage.Database.Dir = filepath.Join(dataDir, thisNode, "db")
 		dataServerOption.Storage.WAL.Dir = filepath.Join(dataDir, thisNode, "wal")
-		_, err := dataserver.NewWithGrpcProvider(context.Background(), commonoption.NewWatch(dataServerOption), grpcProvider, replicationGrpcProvider)
+		manifest, err := manifestpkg.NewManifest(dataServerOption.Storage.Database.Dir)
+		if err != nil {
+			slog.Error(
+				"failed to create dataserver manifest",
+				slog.Any("error", err),
+			)
+			os.Exit(1)
+		}
+		_, err = dataserver.NewWithGrpcProvider(
+			context.Background(),
+			commonwatch.New(dataServerOption),
+			grpcProvider,
+			replicationGrpcProvider,
+			manifest,
+		)
 		if err != nil {
 			return
 		}
@@ -208,4 +216,66 @@ func main() {
 
 		dispatcher.ReceivedMessage(rt, req, protoMsg)
 	}
+}
+
+func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIdentity) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	clusterConfig := &commonproto.ClusterConfiguration{
+		Namespaces: []*commonproto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 3,
+			InitialShardCount: 1,
+		}},
+		Servers: servers,
+	}
+
+	metadataFactory, err := coordmetadata.New(ctx, &coordoption.Options{
+		Metadata: coordoption.MetadataOptions{
+			ProviderOptions: coordoption.ProviderOptions{
+				ProviderName: metadatacommon.NameMemory,
+			},
+		},
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create coordinator metadata factory")
+	}
+
+	metadata, err := metadataFactory.CreateMetadata(ctx)
+	if err != nil {
+		_ = commonio.CloseIfNotNil(metadataFactory)
+		return errors.Wrap(err, "failed to create coordinator metadata")
+	}
+	for _, server := range clusterConfig.GetServers() {
+		if err := metadata.CreateDataServer(&commonproto.DataServer{Identity: server}); err != nil {
+			_ = commonio.CloseIfNotNil(metadata)
+			_ = commonio.CloseIfNotNil(metadataFactory)
+			return errors.Wrap(err, "failed to seed coordinator data servers")
+		}
+	}
+	for _, namespace := range clusterConfig.GetNamespaces() {
+		if err := metadata.CreateNamespace(namespace); err != nil {
+			_ = commonio.CloseIfNotNil(metadata)
+			_ = commonio.CloseIfNotNil(metadataFactory)
+			return errors.Wrap(err, "failed to seed coordinator namespaces")
+		}
+	}
+
+	coordinatorRuntime, err := coordruntime.New(
+		metadata,
+		func(instanceID string) rpc.Provider {
+			return newRpcProvider(dispatcher)
+		},
+	)
+	if err != nil {
+		_ = commonio.CloseIfNotNil(metadata)
+		_ = commonio.CloseIfNotNil(metadataFactory)
+		return errors.Wrap(err, "failed to create coordinator")
+	}
+
+	reconciler := coordreconciler.New(ctx, coordinatorRuntime)
+	_ = reconciler
+
+	return nil
 }

@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,11 +24,12 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 
-	rpc2 "github.com/oxia-db/oxia/oxiad/common/rpc"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
@@ -66,17 +67,21 @@ const (
 type publicRpcServer struct {
 	proto.UnimplementedOxiaClientServer
 
-	shardsDirector       controller.ShardsDirector
-	assignmentDispatcher assignment.ShardAssignmentsDispatcher
-	grpcServer           rpc2.GrpcServer
-	log                  *slog.Logger
+	shardsDirector             controller.ShardsDirector
+	assignmentDispatcher       assignment.ShardAssignmentsDispatcher
+	authorityValidationEnabled bool
+	grpcServer                 oxiadcommonrpc.GrpcServer
+	healthServer               oxiadcommonrpc.HealthServer
+	log                        *slog.Logger
 }
 
-func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
-	tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
+func newPublicRpcServer(provider oxiadcommonrpc.GrpcProvider, bindAddress string, shardsDirector controller.ShardsDirector, assignmentDispatcher assignment.ShardAssignmentsDispatcher,
+	authorityValidationEnabled bool, healthServer oxiadcommonrpc.HealthServer, tlsConf *tls.Config, options *auth.Options) (*publicRpcServer, error) {
 	server := &publicRpcServer{
-		shardsDirector:       shardsDirector,
-		assignmentDispatcher: assignmentDispatcher,
+		shardsDirector:             shardsDirector,
+		assignmentDispatcher:       assignmentDispatcher,
+		authorityValidationEnabled: authorityValidationEnabled,
+		healthServer:               healthServer,
 		log: slog.With(
 			slog.String("component", "public-rpc-server"),
 		),
@@ -86,7 +91,8 @@ func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDi
 	server.grpcServer, err = provider.StartGrpcServer("public", bindAddress, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaClientServer(registrar, server)
 		compat.RegisterOxiaClientServer(registrar, &compatPublicRpcServer{impl: server})
-	}, tlsConf, options)
+		grpc_health_v1.RegisterHealthServer(registrar, server.healthServer)
+	}, tlsConf, options, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -94,22 +100,47 @@ func newPublicRpcServer(provider rpc2.GrpcProvider, bindAddress string, shardsDi
 	return server, nil
 }
 
+func (s *publicRpcServer) validateAuthority(ctx context.Context) error {
+	if !s.authorityValidationEnabled {
+		return nil
+	}
+
+	if !s.assignmentDispatcher.Initialized() {
+		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
+	}
+
+	actualAuthority, err := oxiadcommonrpc.GetAuthority(ctx)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "oxia: invalid authority: %v", err)
+	}
+
+	if !s.assignmentDispatcher.HasAuthority(actualAuthority) {
+		return status.Errorf(codes.PermissionDenied, "oxia: unexpected authority %q", actualAuthority)
+	}
+
+	return nil
+}
+
 func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest, srv proto.OxiaClient_GetShardAssignmentsServer) error {
+	streamContext := srv.Context()
 	s.log.Debug(
 		"Shard assignments requests",
-		slog.String("peer", rpc.GetPeer(srv.Context())),
+		slog.String("peer", rpc.GetPeer(streamContext)),
 	)
+	if err := s.validateAuthority(streamContext); err != nil {
+		return err
+	}
 	err := s.assignmentDispatcher.RegisterForUpdates(req, srv)
 	if err != nil {
 		s.log.Warn(
 			"Failed to add client for shards assignments notifications",
 			slog.Any("error", err),
-			slog.String("peer", rpc.GetPeer(srv.Context())),
+			slog.String("peer", rpc.GetPeer(streamContext)),
 		)
-		return err
+		return constant.IntoGrpcStatusError(err)
 	}
 
-	return err
+	return nil
 }
 
 func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) (*proto.WriteResponse, error) {
@@ -119,7 +150,7 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 		slog.Any("req", write),
 	)
 
-	lc, err := s.getLeader(write.Shard)
+	lc, err := s.resolveLeader(ctx, write.Shard)
 	if err != nil {
 		return nil, err
 	}
@@ -130,15 +161,19 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 			"Failed to perform write operation",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 
 	return wr, err
 }
 
-func procesWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer,
+func processWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer,
 	lc lead.LeaderController, pendingWrites chan<- struct{}, responses chan<- *proto.WriteResponse) {
 	for {
+		if streamCtx.Err() != nil {
+			return
+		}
+
 		req, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -214,7 +249,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	log.Debug("Write request")
 
 	var lc lead.LeaderController
-	lc, err = s.getLeader(&shardId)
+	lc, err = s.resolveLeader(stream.Context(), &shardId)
 	if err != nil {
 		return err
 	}
@@ -230,7 +265,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 			"shard":     fmt.Sprintf("%d", lc.ShardID()),
 		},
 		func() {
-			procesWriteStream(streamCtx, finished, stream, lc, pendingWrites, responses)
+			processWriteStream(streamCtx, finished, stream, lc, pendingWrites, responses)
 		},
 	)
 	go process.DoWithLabels(
@@ -250,8 +285,9 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	case err := <-finished:
 		if err != nil {
 			s.log.Warn("Failed to perform write operation", slog.Any("error", err))
+			return constant.IntoGrpcStatusError(err)
 		}
-		return err
+		return nil
 	case <-streamCtx.Done():
 		return streamCtx.Err()
 	// Monitor the leader context to make sure the gRPC server can be gracefully shut down.
@@ -267,7 +303,7 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 		slog.Any("req", request),
 	)
 
-	lc, err := s.getLeader(request.Shard)
+	lc, err := s.resolveLeader(stream.Context(), request.Shard)
 	if err != nil {
 		return err
 	}
@@ -289,8 +325,9 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 					"Failed to perform list operation",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatusError(err)
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -303,7 +340,7 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 		slog.String("peer", rpc.GetPeer(stream.Context())),
 		slog.Any("req", request),
 	)
-	lc, err := s.getLeader(request.Shard)
+	lc, err := s.resolveLeader(stream.Context(), request.Shard)
 	if err != nil {
 		return err
 	}
@@ -322,8 +359,9 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 					"Failed to perform list operation",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatusError(err)
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -340,7 +378,7 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 
 	var lc lead.LeaderController
 	var err error
-	if lc, err = s.getLeader(request.Shard); err != nil {
+	if lc, err = s.resolveLeader(stream.Context(), request.Shard); err != nil {
 		return err
 	}
 
@@ -365,8 +403,9 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 					"Failed to perform range-scan operation",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatusError(err)
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -382,7 +421,7 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 
 	var lc lead.LeaderController
 	var err error
-	if lc, err = s.getLeader(&req.Shard); err != nil {
+	if lc, err = s.resolveLeader(stream.Context(), &req.Shard); err != nil {
 		return err
 	}
 
@@ -395,6 +434,7 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 		channel.PushNoBlock(finish, err)
 	}))
 
+	leaderCtx := lc.Context()
 	for {
 		select {
 		case err := <-finish:
@@ -403,10 +443,13 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 					"Failed to handle notifications request",
 					slog.Any("error", err),
 				)
+				return constant.IntoGrpcStatusError(err)
 			}
-			return err
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-leaderCtx.Done():
+			return constant.IntoGrpcStatusError(constant.ErrResourceUnavailable)
 		}
 	}
 }
@@ -421,7 +464,7 @@ func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSe
 		slog.String("peer", rpc.GetPeer(ctx)),
 		slog.Any("req", req),
 	)
-	lc, err := s.getLeader(&req.Shard)
+	lc, err := s.resolveLeader(ctx, &req.Shard)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +474,7 @@ func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSe
 			"Failed to create session",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return res, nil
 }
@@ -443,7 +486,7 @@ func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeart
 		slog.Int64("session", req.SessionId),
 		slog.String("peer", rpc.GetPeer(ctx)),
 	)
-	lc, err := s.getLeader(&req.Shard)
+	lc, err := s.resolveLeader(ctx, &req.Shard)
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +496,7 @@ func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeart
 			"Failed to listen to heartbeats",
 			slog.Any("error", err),
 		)
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return &proto.KeepAliveResponse{}, nil
 }
@@ -464,16 +507,16 @@ func (s *publicRpcServer) CloseSession(ctx context.Context, req *proto.CloseSess
 		slog.String("peer", rpc.GetPeer(ctx)),
 		slog.Any("req", req),
 	)
-	lc, err := s.getLeader(&req.Shard)
+	lc, err := s.resolveLeader(ctx, &req.Shard)
 	if err != nil {
 		return nil, err
 	}
 	res, err := lc.CloseSession(req)
 	if err != nil {
-		if status.Code(err) != constant.CodeSessionNotFound {
+		if !errors.Is(err, constant.ErrSessionNotFound) {
 			s.log.Warn("Failed to close session", slog.Any("error", err))
 		}
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return res, nil
 }
@@ -484,7 +527,7 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 		slog.String("peer", rpc.GetPeer(stream.Context())),
 		slog.Any("req", req),
 	)
-	lc, err := s.getLeader(&req.Shard)
+	lc, err := s.resolveLeader(stream.Context(), &req.Shard)
 	if err != nil {
 		return err
 	}
@@ -492,7 +535,7 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 	ctx := stream.Context()
 	sequenceWaiter, err := lc.GetSequenceUpdates(ctx, req)
 	if err != nil {
-		return err
+		return constant.IntoGrpcStatusError(err)
 	}
 
 	defer func() {
@@ -514,18 +557,21 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 	}
 }
 
-func (s *publicRpcServer) getLeader(shardId *int64) (lead.LeaderController, error) {
+func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (lead.LeaderController, error) {
 	if shardId == nil {
 		return nil, status.Error(codes.InvalidArgument, "shard id is required")
+	}
+	if err := s.validateAuthority(ctx); err != nil {
+		return nil, err
 	}
 	shardID := *shardId
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
-		if status.Code(err) == constant.CodeNodeIsNotLeader {
-			return nil, constant.NewNodeIsNotLeaderWithHint(shardID, s.assignmentDispatcher.GetLeader(shardID))
+		if errors.Is(err, constant.ErrNodeIsNotLeader) {
+			return nil, constant.IntoGrpcStatusError(err, constant.WithLeaderHint(shardID, s.assignmentDispatcher.GetLeader(shardID)))
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
-		return nil, err
+		return nil, constant.IntoGrpcStatusError(err)
 	}
 	return lc, nil
 }

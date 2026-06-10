@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	"github.com/oxia-db/oxia/common/constant"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -38,7 +39,7 @@ func TestNewServer(t *testing.T) {
 	options.Storage.Database.Dir = t.TempDir()
 	options.Storage.WAL.Dir = t.TempDir()
 
-	server, err := New(t.Context(), commonoption.NewWatch(options))
+	server, err := New(t.Context(), commonwatch.New(options))
 	assert.NoError(t, err)
 
 	url := fmt.Sprintf("http://localhost:%d/metrics", server.metrics.Port())
@@ -65,14 +66,14 @@ func TestNewServerClosableWithHealthWatch(t *testing.T) {
 	options.Storage.Database.Dir = t.TempDir()
 	options.Storage.WAL.Dir = t.TempDir()
 
-	server, err := New(t.Context(), commonoption.NewWatch(options))
+	server, err := New(t.Context(), commonwatch.New(options))
 	assert.NoError(t, err)
 
 	clientPool := rpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
 
-	client, closer, err := clientPool.GetHealthRpc(fmt.Sprintf("127.0.0.1:%v", server.InternalPort()))
+	client, err := clientPool.GetHealthRpc(fmt.Sprintf("127.0.0.1:%v", server.InternalPort()))
 	assert.NoError(t, err)
-	defer closer.Close()
 	watchStream, err := client.Watch(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: ""})
 	assert.NoError(t, err)
 
@@ -80,4 +81,35 @@ func TestNewServerClosableWithHealthWatch(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NoError(t, watchStream.CloseSend())
+}
+
+func TestNewServerAuthorityValidationFeatureFlag(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "enabled by default", enabled: true},
+		{name: "disabled by config"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			options := option.NewDefaultOptions()
+			options.Server.Public.BindAddress = "localhost:0"
+			options.Server.Internal.BindAddress = "localhost:0"
+			options.Observability.Metric.Enabled = &constant.FlagFalse
+			options.Storage.Database.Dir = t.TempDir()
+			options.Storage.WAL.Dir = t.TempDir()
+			if !tt.enabled {
+				authorityValidation := false
+				options.FeatureFlags.AuthorityValidation = &authorityValidation
+			}
+
+			server, err := New(t.Context(), commonwatch.New(options))
+			if !assert.NoError(t, err) {
+				return
+			}
+			defer server.Close()
+
+			assert.Equal(t, tt.enabled, server.authorityValidationEnabled)
+		})
+	}
 }

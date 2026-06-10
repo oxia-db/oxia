@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -310,7 +310,7 @@ func TestQuorumAckTracker_ClearPending(t *testing.T) {
 	select {
 	case resErr := <-asyncRes:
 		// Ensure that we received the expected result (in this case, error should be nil)
-		assert.ErrorIs(t, resErr, constant.ErrAlreadyClosed)
+		assert.ErrorIs(t, resErr, constant.ErrResourceUnavailable)
 	case <-time.After(2 * time.Second): // Adding a timeout for safety
 		t.Fatal("Timed out waiting for async result")
 	}

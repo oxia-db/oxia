@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package common
 import (
 	"time"
 
+	"github.com/oxia-db/oxia/cmd/common/clientauth"
 	"github.com/oxia-db/oxia/oxia"
 )
 
@@ -30,15 +31,25 @@ type ClientConfig struct {
 	ServiceAddr    string
 	Namespace      string
 	RequestTimeout time.Duration
+	Auth           clientauth.Config
 }
 
-func (ClientConfig) NewClient() (oxia.SyncClient, error) {
+func (config ClientConfig) NewClient() (oxia.SyncClient, error) {
 	if MockedClient != nil {
 		return MockedClient, nil
 	}
 
-	return oxia.NewSyncClient(Config.ServiceAddr,
-		oxia.WithRequestTimeout(Config.RequestTimeout),
-		oxia.WithNamespace(Config.Namespace),
-	)
+	options := []oxia.ClientOption{
+		oxia.WithRequestTimeout(config.RequestTimeout),
+		oxia.WithNamespace(config.Namespace),
+	}
+	if config.Auth.Enabled() {
+		authentication, err := config.Auth.GetAuthentication()
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, oxia.WithAuthentication(authentication))
+	}
+
+	return oxia.NewSyncClient(config.ServiceAddr, options...)
 }

@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -449,6 +449,59 @@ func TestDB_ReadCommitOffset(t *testing.T) {
 	assert.Equal(t, offset, commitOffset)
 
 	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_EnabledFeaturePersistence(t *testing.T) {
+	const commitOffset = int64(7)
+
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	assert.False(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+
+	_, err = db.ProcessControlRequest(&proto.ControlRequest{
+		Value: &proto.ControlRequest_FeatureEnable{
+			FeatureEnable: &proto.FeatureEnableRequest{
+				Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+			},
+		},
+	}, commitOffset, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.True(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+	assert.NoError(t, db.Close())
+
+	db, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	assert.True(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+
+	restoredCommitOffset, err := db.ReadCommitOffset()
+	assert.NoError(t, err)
+	assert.Equal(t, commitOffset, restoredCommitOffset)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_RecoverFeatureFlagsRejectsMalformedKeys(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	batch := testDB.(*db).kv.NewWriteBatch()
+	err = testDB.(*db).addASCIILong(featureFlagKeyPrefix+"/1/extra", 1, batch, 0)
+	assert.NoError(t, err)
+	assert.NoError(t, batch.Commit())
+	assert.NoError(t, batch.Close())
+	assert.NoError(t, testDB.Close())
+
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.Nil(t, testDB)
+	assert.ErrorContains(t, err, "invalid feature flag key")
+
 	assert.NoError(t, factory.Close())
 }
 
@@ -1191,6 +1244,22 @@ func TestDB_ChecksumPersistence(t *testing.T) {
 	restoredChecksum := testDB.(*db).committedChecksum.Load().Value()
 	assert.NotNil(t, restoredChecksum)
 	assert.Equal(t, checksum1, restoredChecksum)
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_ResetChecksumKeepsFeatureEnabled(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	testDB.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+
+	testDB.ResetChecksum()
+
+	assert.Equal(t, crc.Checksum(0), testDB.ReadChecksum())
+	assert.True(t, testDB.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 
 	assert.NoError(t, testDB.Close())
 	assert.NoError(t, factory.Close())

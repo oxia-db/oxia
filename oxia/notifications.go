@@ -1,4 +1,4 @@
-// Copyright 2023-2025 The Oxia Authors
+// Copyright 2023-2026 The Oxia Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/process"
-	"github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -37,7 +36,7 @@ type notifications struct {
 	multiplexCh  chan *Notification
 	closeCh      chan any
 	shardManager internal.ShardManager
-	clientPool   rpc.ClientPool
+	rpcProvider  internal.RpcProvider
 
 	initWaitGroup concurrent.WaitGroup
 	ctx           context.Context
@@ -47,12 +46,12 @@ type notifications struct {
 	cancelMultiplexChanClosed context.CancelFunc
 }
 
-func newNotifications(ctx context.Context, options clientOptions, clientPool rpc.ClientPool, shardManager internal.ShardManager) (*notifications, error) {
+func newNotifications(ctx context.Context, options clientOptions, rpcProvider internal.RpcProvider, shardManager internal.ShardManager) (*notifications, error) {
 	nm := &notifications{
 		multiplexCh:  make(chan *Notification, 100),
 		closeCh:      make(chan any),
 		shardManager: shardManager,
-		clientPool:   clientPool,
+		rpcProvider:  rpcProvider,
 	}
 
 	nm.ctx, nm.cancel = context.WithCancel(ctx)
@@ -235,17 +234,12 @@ func (snm *shardNotificationsManager) multiplexNotifications(notifications proto
 func (snm *shardNotificationsManager) getNotifications() error {
 	leader := snm.nm.shardManager.Leader(snm.shard)
 
-	client, err := snm.nm.clientPool.GetClientRpc(leader)
-	if err != nil {
-		return err
-	}
-
 	var startOffsetExclusive *int64
 	if snm.lastOffsetReceived >= 0 {
 		startOffsetExclusive = &snm.lastOffsetReceived
 	}
 
-	notifications, err := client.GetNotifications(snm.ctx, &proto.NotificationsRequest{
+	notifications, err := snm.nm.rpcProvider.GetNotifications(snm.ctx, leader, &proto.NotificationsRequest{
 		Shard:                snm.shard,
 		StartOffsetExclusive: startOffsetExclusive,
 	})
