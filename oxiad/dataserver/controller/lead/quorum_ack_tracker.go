@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -196,8 +197,8 @@ func (q *quorumAckTracker) runCallbacks() {
 }
 
 // dequeueReadyWaiters must be called while holding the tracker mutex.
-// The waiting requests are registered in offset order, so the committed
-// ones are always a prefix of the slice.
+// The waiting requests are kept sorted by minOffset (see insertWaitingRequest),
+// so the committed ones are always a prefix of the slice.
 func (q *quorumAckTracker) dequeueReadyWaiters() []waitingRequest {
 	commitOffset := q.commitOffset.Load()
 	n := 0
@@ -281,7 +282,7 @@ func (q *quorumAckTracker) WaitForCommitOffsetAsync(_ context.Context, offset in
 		return
 	}
 
-	q.waitingRequests = append(q.waitingRequests, waitingRequest{offset, cb})
+	q.insertWaitingRequest(waitingRequest{offset, cb})
 	if q.requiredAcks == 0 || q.commitOffset.Load() >= offset {
 		// Already satisfied: the callback is still invoked from the callbacks
 		// goroutine, never inline, so that the caller (e.g. the WAL sync
@@ -289,6 +290,20 @@ func (q *quorumAckTracker) WaitForCommitOffsetAsync(_ context.Context, offset in
 		channel.PushNoBlock(q.commitSignal, struct{}{})
 	}
 	q.Unlock()
+}
+
+// insertWaitingRequest keeps the waiting requests sorted by minOffset, so that
+// the committed ones always form a prefix of the slice. The requests are
+// normally registered in offset order, making this an append in practice; the
+// requests for the same offset preserve their registration order.
+// It must be called while holding the tracker mutex.
+func (q *quorumAckTracker) insertWaitingRequest(r waitingRequest) {
+	i := sort.Search(len(q.waitingRequests), func(i int) bool {
+		return q.waitingRequests[i].minOffset > r.minOffset
+	})
+	q.waitingRequests = append(q.waitingRequests, waitingRequest{})
+	copy(q.waitingRequests[i+1:], q.waitingRequests[i:])
+	q.waitingRequests[i] = r
 }
 
 func (q *quorumAckTracker) notifyCommitOffsetAdvanced(commitOffset int64) {

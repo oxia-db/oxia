@@ -390,6 +390,51 @@ func TestQuorumAckTracker_CallbacksOffTheAckPath(t *testing.T) {
 	}
 }
 
+// A wait registered out of offset order (for an offset that is already
+// committed, while an earlier-registered waiter is still pending on a later
+// offset) must complete promptly instead of queueing behind the pending one.
+func TestQuorumAckTracker_OutOfOrderWait(t *testing.T) {
+	at := NewQuorumAckTracker(3, 1, wal.InvalidOffset)
+	defer at.Close()
+
+	for offset := int64(2); offset <= 5; offset++ {
+		at.AdvanceHeadOffset(offset)
+	}
+
+	pending := make(chan error, 1)
+	at.WaitForCommitOffsetAsync(context.Background(), 5, concurrent.NewOnce(
+		func(any) { pending <- nil }, func(err error) { pending <- err }))
+
+	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+	c1.Ack(2)
+	assert.EqualValues(t, 2, at.CommitOffset())
+
+	// Offset 2 is committed: waiting on it must complete even though the
+	// waiter for offset 5 was registered first and is still pending
+	satisfied := make(chan error, 1)
+	at.WaitForCommitOffsetAsync(context.Background(), 2, concurrent.NewOnce(
+		func(any) { satisfied <- nil }, func(err error) { satisfied <- err }))
+
+	select {
+	case err := <-satisfied:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("already-satisfied wait queued behind a pending one")
+	}
+	assert.Len(t, pending, 0)
+
+	for offset := int64(3); offset <= 5; offset++ {
+		c1.Ack(offset)
+	}
+	select {
+	case err := <-pending:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("pending wait did not complete")
+	}
+}
+
 // Close must not return while a waiting-request callback is still in flight,
 // so that the database is never closed under an in-progress apply.
 func TestQuorumAckTracker_CloseWaitsForInFlightCallback(t *testing.T) {
