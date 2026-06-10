@@ -31,6 +31,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/protoadapt"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
@@ -138,6 +139,121 @@ func TestWriteClientClose(t *testing.T) {
 	t.Logf("resp %v err %v", resp, err)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+type mockWriteStream struct {
+	proto.OxiaClient_WriteStreamServer
+	requests chan *proto.WriteRequest
+	sent     chan *proto.WriteResponse
+	sendGate chan struct{}
+}
+
+func (m *mockWriteStream) Recv() (*proto.WriteRequest, error) {
+	req, ok := <-m.requests
+	if !ok {
+		return nil, io.EOF
+	}
+	return req, nil
+}
+
+func (m *mockWriteStream) Send(response *proto.WriteResponse) error {
+	// Simulates gRPC flow control: blocks until the "client" starts reading
+	<-m.sendGate
+	m.sent <- response
+	return nil
+}
+
+type mockWriteLeaderController struct {
+	lead.LeaderController
+	writes chan concurrent.Callback[*proto.WriteResponse]
+}
+
+func (m *mockWriteLeaderController) Write(_ context.Context, _ *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
+	m.writes <- cb
+}
+
+func receiveWithTimeout[T any](t *testing.T, ch <-chan T, msg string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(10 * time.Second):
+		t.Fatal(msg)
+		panic("unreachable")
+	}
+}
+
+// The write completion callbacks can be invoked under the quorum-ack-tracker lock:
+// they must never block on the client stream, otherwise one slow client stalls the
+// whole shard. Instead, the stream stops accepting new writes once
+// maxWriteStreamPendingWrites responses are outstanding.
+func TestWriteStreamSlowClientDoesNotBlockWriteCallbacks(t *testing.T) {
+	const extraWrites = 100
+	total := maxWriteStreamPendingWrites + extraWrites
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stream := &mockWriteStream{
+		requests: make(chan *proto.WriteRequest, total),
+		sent:     make(chan *proto.WriteResponse, total),
+		sendGate: make(chan struct{}),
+	}
+	lc := &mockWriteLeaderController{
+		writes: make(chan concurrent.Callback[*proto.WriteResponse], total),
+	}
+
+	finished := make(chan error, 1)
+	pendingWrites := make(chan struct{}, maxWriteStreamPendingWrites)
+	responses := make(chan *proto.WriteResponse, maxWriteStreamPendingWrites)
+	go processWriteStream(ctx, finished, stream, lc, pendingWrites, responses)
+	go sendWriteStreamResponses(ctx, finished, stream, pendingWrites, responses)
+
+	for i := 0; i < total; i++ {
+		stream.requests <- &proto.WriteRequest{}
+	}
+	close(stream.requests)
+
+	// The client is not reading responses (stream.Send is stuck): completing the
+	// writes that reached the leader must still not block.
+	completedResponses := make([]*proto.WriteResponse, 0, total)
+	for i := 0; i < maxWriteStreamPendingWrites; i++ {
+		cb := receiveWithTimeout(t, lc.writes, "leader did not receive the expected write")
+		response := &proto.WriteResponse{}
+		callbackDone := make(chan struct{})
+		go func() {
+			cb.OnComplete(response)
+			close(callbackDone)
+		}()
+		select {
+		case <-callbackDone:
+		case <-time.After(10 * time.Second):
+			t.Fatal("write callback blocked on a slow client")
+		}
+		completedResponses = append(completedResponses, response)
+	}
+
+	// Backpressure: no further writes are submitted while the client is stalled
+	select {
+	case <-lc.writes:
+		t.Fatal("write submitted beyond the pending-writes cap while the client is stalled")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Unblock the client: the remaining writes get submitted and every response
+	// is delivered, in completion order
+	close(stream.sendGate)
+	for i := 0; i < extraWrites; i++ {
+		cb := receiveWithTimeout(t, lc.writes, "leader did not receive the expected write")
+		response := &proto.WriteResponse{}
+		cb.OnComplete(response)
+		completedResponses = append(completedResponses, response)
+	}
+
+	for i := 0; i < total; i++ {
+		sent := receiveWithTimeout(t, stream.sent, "response was not sent to the client")
+		assert.Same(t, completedResponses[i], sent)
+	}
 }
 
 func TestPublicHealthCheck(t *testing.T) {
