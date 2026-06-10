@@ -54,6 +54,13 @@ const (
 	maxTotalListKeySize    = 2 << (10 * 2) // 2Mi
 	maxTotalReadCount      = 0
 	maxTotalReadValueSize  = 2 << (10 * 2) // 2Mi
+
+	// maxWriteStreamPendingWrites caps the in-flight writes of a single WriteStream:
+	// a slot is acquired before a write is submitted to the leader and released only
+	// after its response has been sent to the client. Un-sent responses can therefore
+	// never exceed the in-flight writes, so the responses channel (same capacity) can
+	// always be pushed to without blocking.
+	maxWriteStreamPendingWrites = 1024
 )
 
 type publicRpcServer struct {
@@ -129,7 +136,8 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 	return wr, err
 }
 
-func procesWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer, lc lead.LeaderController) {
+func procesWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer,
+	lc lead.LeaderController, pendingWrites chan<- struct{}, responses chan<- *proto.WriteResponse) {
 	for {
 		req, err := stream.Recv()
 		if err != nil {
@@ -145,14 +153,39 @@ func procesWriteStream(streamCtx context.Context, finished chan<- error, stream 
 			return
 		}
 
+		select {
+		case pendingWrites <- struct{}{}:
+		case <-streamCtx.Done():
+			channel.PushNoBlock(finished, streamCtx.Err())
+			return
+		}
+
 		lc.Write(streamCtx, req, concurrent.NewOnce(
 			func(t *proto.WriteResponse) {
-				if err := stream.Send(t); err != nil {
-					channel.PushNoBlock(finished, err)
-				}
+				// The write callback can be invoked under the quorum-ack-tracker lock:
+				// hand the response off to the sender goroutine instead of calling
+				// stream.Send here, where a slow client would stall the whole shard.
+				// The push cannot block (see maxWriteStreamPendingWrites).
+				responses <- t
 			}, func(err error) {
 				channel.PushNoBlock(finished, err)
 			}))
+	}
+}
+
+func sendWriteStreamResponses(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer,
+	pendingWrites <-chan struct{}, responses <-chan *proto.WriteResponse) {
+	for {
+		select {
+		case response := <-responses:
+			if err := stream.Send(response); err != nil {
+				channel.PushNoBlock(finished, err)
+				return
+			}
+			<-pendingWrites
+		case <-streamCtx.Done():
+			return
+		}
 	}
 }
 
@@ -187,6 +220,8 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	}
 
 	finished := make(chan error, 1)
+	pendingWrites := make(chan struct{}, maxWriteStreamPendingWrites)
+	responses := make(chan *proto.WriteResponse, maxWriteStreamPendingWrites)
 	go process.DoWithLabels(
 		streamCtx,
 		map[string]string{
@@ -195,7 +230,18 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 			"shard":     fmt.Sprintf("%d", lc.ShardID()),
 		},
 		func() {
-			procesWriteStream(streamCtx, finished, stream, lc)
+			procesWriteStream(streamCtx, finished, stream, lc, pendingWrites, responses)
+		},
+	)
+	go process.DoWithLabels(
+		streamCtx,
+		map[string]string{
+			"oxia":      "write-stream-send",
+			"namespace": lc.Namespace(),
+			"shard":     fmt.Sprintf("%d", lc.ShardID()),
+		},
+		func() {
+			sendWriteStreamResponses(streamCtx, finished, stream, pendingWrites, responses)
 		},
 	)
 
