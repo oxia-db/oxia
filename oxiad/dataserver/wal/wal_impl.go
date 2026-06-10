@@ -374,6 +374,11 @@ func (t *wal) rolloverSegment() error {
 	lastCrc := t.currentSegment.LastCrc()
 	t.readOnlySegments.AddedNewSegment(t.currentSegment.BaseOffset())
 
+	// The new segment file is created without fsync-ing it: the rollover runs
+	// in the append path, while holding the WAL write lock (and, on the
+	// leader, the controller lock), where the fsync would stall the whole
+	// shard. The sync goroutine fsyncs the file before the first entries of
+	// the segment are acknowledged (see runSync).
 	if t.currentSegment, err = newReadWriteSegment(t.walPath, t.lastAppendedOffset.Load()+1, t.segmentSize,
 		lastCrc, t.commitOffsetProvider); err != nil {
 		return err
@@ -421,7 +426,10 @@ func (t *wal) runSync() {
 		var err error
 		if t.lastSyncedOffset.Load() != lastAppendedOffset {
 			timer := t.syncLatency.Timer()
-			if err = segment.Flush(); err != nil {
+			if err = segment.SyncFileIfNeeded(); err == nil {
+				err = segment.Flush()
+			}
+			if err != nil {
 				t.writeErrors.Inc()
 			} else {
 				timer.Done()

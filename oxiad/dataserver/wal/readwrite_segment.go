@@ -37,6 +37,14 @@ type ReadWriteSegment interface {
 	HasSpace(l int) bool
 
 	Flush() error
+
+	// SyncFileIfNeeded fsyncs the segment file after its creation: the fsync
+	// is deferred out of the creation path, since segments get created during
+	// rollovers, in the append path, while holding the WAL write lock. It
+	// must be called before the first entries of the segment are
+	// acknowledged, so that the file metadata (size, directory entry) is
+	// durable by then.
+	SyncFileIfNeeded() error
 }
 
 type readWriteSegment struct {
@@ -58,7 +66,8 @@ type readWriteSegment struct {
 	currentFileOffset uint32
 	writingIdx        []byte
 
-	segmentSize uint32
+	segmentSize     uint32
+	pendingFileSync bool
 }
 
 func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, lastCrc uint32,
@@ -89,6 +98,7 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 		if err = initFileWithZeroes(ms.txnFile, segmentSize); err != nil {
 			return nil, err
 		}
+		ms.pendingFileSync = true
 	}
 
 	if ms.txnMappedFile, err = mmap.MapRegion(ms.txnFile, int(segmentSize), mmap.RDWR, 0, 0); err != nil {
@@ -189,6 +199,24 @@ func (ms *readWriteSegment) Flush() error {
 	return ms.txnMappedFile.Flush()
 }
 
+// SyncFileIfNeeded is only invoked by the WAL sync goroutine, before Flush.
+func (ms *readWriteSegment) SyncFileIfNeeded() error {
+	if !ms.pendingFileSync {
+		return nil
+	}
+
+	ms.flushLock.RLock()
+	defer ms.flushLock.RUnlock()
+	if ms.txnMappedFile == nil {
+		return nil
+	}
+	if err := ms.txnFile.Sync(); err != nil {
+		return err
+	}
+	ms.pendingFileSync = false
+	return nil
+}
+
 func (*readWriteSegment) OpenTimestamp() time.Time {
 	return time.Now()
 }
@@ -241,6 +269,9 @@ func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 	return ms.Flush()
 }
 
+// initFileWithZeroes extends the file to its full segment size, without
+// fsync-ing it: the file metadata is made durable by SyncFileIfNeeded before
+// the first entries of the segment get acknowledged.
 func initFileWithZeroes(f *os.File, size uint32) error {
 	if _, err := f.Seek(int64(size), 0); err != nil {
 		return err
@@ -250,5 +281,5 @@ func initFileWithZeroes(f *os.File, size uint32) error {
 		return err
 	}
 
-	return f.Sync()
+	return nil
 }
