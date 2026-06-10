@@ -350,12 +350,17 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 
 func (t *wal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) {
 	t.Lock()
-	defer t.Unlock()
 	if err := t.appendAsync0(entry, nil); err != nil {
+		t.Unlock()
 		callback(0, err)
 		return
 	}
 	entryCrc := t.currentSegment.LastCrc()
+	t.Unlock()
+
+	// Enqueue outside the lock: when the sync queue is full, the backpressure
+	// must only block this writer, not the WAL readers (the follower cursors
+	// tailing the log).
 	t.doSync(func(err error) {
 		callback(entryCrc, err)
 	})
@@ -408,10 +413,10 @@ func (t *wal) runSync() {
 		// Clear all the other requests in the channel
 		callbacks = t.drainSyncRequestsChannel(callbacks)
 
-		t.Lock()
+		t.RLock()
 		segment := t.currentSegment
 		lastAppendedOffset := t.lastAppendedOffset.Load()
-		t.Unlock()
+		t.RUnlock()
 
 		var err error
 		if t.lastSyncedOffset.Load() != lastAppendedOffset {

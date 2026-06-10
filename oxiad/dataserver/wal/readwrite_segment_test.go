@@ -310,3 +310,87 @@ func TestSegmentAppendShouldNotPanic(t *testing.T) {
 	err = rw.Append(51, fmt.Appendf(nil, "entry-%d", 51))
 	assert.ErrorIs(t, err, ErrSegmentFull)
 }
+
+// Appends, reads and flushes run concurrently by design: the flusher (WAL sync
+// goroutine) must not block appends or tailing reads for the duration of the
+// msync, and the data must stay consistent throughout.
+func TestReadWriteSegment_ConcurrentAppendReadFlush(t *testing.T) {
+	path := t.TempDir()
+
+	rw, err := newReadWriteSegment(path, 0, 10*1024*1024, 0, nil)
+	assert.NoError(t, err)
+
+	const entries = 5_000
+	done := make(chan struct{})
+	flusherDone := make(chan struct{})
+	readerDone := make(chan struct{})
+
+	go func() {
+		defer close(flusherDone)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				assert.NoError(t, rw.Flush())
+			}
+		}
+	}()
+
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				last := rw.LastOffset()
+				if last < 0 {
+					continue
+				}
+				payload, _, _, err := rw.Read(last)
+				assert.NoError(t, err)
+				assert.Equal(t, fmt.Sprintf("entry-%d", last), string(payload))
+			}
+		}
+	}()
+
+	for i := 0; i < entries; i++ {
+		assert.NoError(t, rw.Append(int64(i), []byte(fmt.Sprintf("entry-%d", i))))
+	}
+
+	close(done)
+	<-flusherDone
+	<-readerDone
+
+	for i := 0; i < entries; i++ {
+		payload, _, _, err := rw.Read(int64(i))
+		assert.NoError(t, err)
+		assert.Equal(t, fmt.Sprintf("entry-%d", i), string(payload))
+	}
+
+	assert.NoError(t, rw.Close())
+}
+
+// Closing the segment must wait for an in-flight msync: the mapping cannot be
+// unmapped under it.
+func TestReadWriteSegment_CloseWithConcurrentFlush(t *testing.T) {
+	path := t.TempDir()
+
+	rw, err := newReadWriteSegment(path, 0, 128*1024, 0, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, rw.Append(0, []byte("entry-0")))
+
+	flusherDone := make(chan struct{})
+	go func() {
+		defer close(flusherDone)
+		for i := 0; i < 1_000; i++ {
+			// After Close, Flush must keep returning nil instead of msyncing
+			// an unmapped region
+			assert.NoError(t, rw.Flush())
+		}
+	}()
+
+	assert.NoError(t, rw.Close())
+	<-flusherDone
+}
