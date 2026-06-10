@@ -42,6 +42,12 @@ type ReadWriteSegment interface {
 type readWriteSegment struct {
 	sync.RWMutex
 
+	// flushLock guards the mapping lifecycle: Flush runs the msync under its
+	// read side, without holding the main mutex, so that appends and reads can
+	// proceed while the disk sync is in flight. Only Close (unmap) needs to
+	// exclude an in-flight msync, through the write side.
+	flushLock sync.RWMutex
+
 	c *segmentConfig
 
 	lastOffset    int64
@@ -127,8 +133,8 @@ func (ms *readWriteSegment) LastOffset() int64 {
 }
 
 func (ms *readWriteSegment) Read(offset int64) (payload []byte, previousCrc uint32, payloadCrc uint32, err error) {
-	ms.Lock()
-	defer ms.Unlock()
+	ms.RLock()
+	defer ms.RUnlock()
 	if offset < ms.c.baseOffset || offset > ms.lastOffset {
 		return nil, 0, 0, codec.ErrOffsetOutOfBounds
 	}
@@ -170,9 +176,13 @@ func (ms *readWriteSegment) Append(offset int64, data []byte) error {
 	return nil
 }
 
+// Flush msyncs the mapped file without holding the segment mutex: appends and
+// reads are not blocked for the duration of the disk sync. Records written
+// concurrently with the msync may reach the disk torn, but they have not been
+// acknowledged yet and are discarded by the CRC validation in RecoverIndex.
 func (ms *readWriteSegment) Flush() error {
-	ms.RLock()
-	defer ms.RUnlock()
+	ms.flushLock.RLock()
+	defer ms.flushLock.RUnlock()
 	if ms.txnMappedFile == nil {
 		return nil
 	}
@@ -186,6 +196,8 @@ func (*readWriteSegment) OpenTimestamp() time.Time {
 func (ms *readWriteSegment) Close() error {
 	ms.Lock()
 	defer ms.Unlock()
+	ms.flushLock.Lock()
+	defer ms.flushLock.Unlock()
 
 	err := multierr.Combine(
 		ms.txnMappedFile.Unmap(),
