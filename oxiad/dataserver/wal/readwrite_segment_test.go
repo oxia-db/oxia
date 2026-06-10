@@ -17,6 +17,7 @@ package wal
 import (
 	"encoding/binary"
 	"fmt"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -333,6 +334,9 @@ func TestReadWriteSegment_ConcurrentAppendReadFlush(t *testing.T) {
 				return
 			default:
 				assert.NoError(t, rw.Flush())
+				// Yield between iterations: keeps the loop from pegging a core
+				// while still maximizing the append/read/flush interleaving
+				runtime.Gosched()
 			}
 		}
 	}()
@@ -345,12 +349,12 @@ func TestReadWriteSegment_ConcurrentAppendReadFlush(t *testing.T) {
 				return
 			default:
 				last := rw.LastOffset()
-				if last < 0 {
-					continue
+				if last >= 0 {
+					payload, _, _, err := rw.Read(last)
+					assert.NoError(t, err)
+					assert.Equal(t, fmt.Sprintf("entry-%d", last), string(payload))
 				}
-				payload, _, _, err := rw.Read(last)
-				assert.NoError(t, err)
-				assert.Equal(t, fmt.Sprintf("entry-%d", last), string(payload))
+				runtime.Gosched()
 			}
 		}
 	}()
