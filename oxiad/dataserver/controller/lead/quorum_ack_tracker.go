@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 )
@@ -110,6 +111,14 @@ type quorumAckTracker struct {
 	tracker            map[int64]*BitSet
 	cursorIdxGenerator int
 	closed             bool
+
+	// The callbacks of the waiting requests perform the database apply and the
+	// client response on the write path: they must never run under the tracker
+	// mutex or on the cursor ack goroutines, where they would stall the whole
+	// shard pipeline. They are invoked, in offset order, by a dedicated
+	// goroutine that is woken up through commitSignal.
+	commitSignal  chan struct{}
+	callbacksDone chan struct{}
 }
 
 type CursorAcker interface {
@@ -146,7 +155,59 @@ func NewQuorumAckTracker(replicationFactor uint32, headOffset int64, commitOffse
 	}
 
 	q.waitForHeadOffset = concurrent.NewConditionContext(q)
+	q.commitSignal = make(chan struct{}, 1)
+	q.callbacksDone = make(chan struct{})
+	go q.runCallbacks()
 	return q
+}
+
+// runCallbacks is the only place where the waiting requests get completed,
+// keeping the callbacks out of the tracker mutex and in offset order.
+func (q *quorumAckTracker) runCallbacks() {
+	defer close(q.callbacksDone)
+
+	for {
+		<-q.commitSignal
+
+		for {
+			q.Lock()
+			if q.closed {
+				pending := q.waitingRequests
+				q.waitingRequests = nil
+				q.Unlock()
+
+				for _, r := range pending {
+					r.callback.OnCompleteError(constant.ErrResourceUnavailable)
+				}
+				return
+			}
+
+			ready := q.dequeueReadyWaiters()
+			q.Unlock()
+
+			if len(ready) == 0 {
+				break
+			}
+			for _, r := range ready {
+				r.callback.OnComplete(nil)
+			}
+		}
+	}
+}
+
+// dequeueReadyWaiters must be called while holding the tracker mutex.
+// The waiting requests are registered in offset order, so the committed
+// ones are always a prefix of the slice.
+func (q *quorumAckTracker) dequeueReadyWaiters() []waitingRequest {
+	commitOffset := q.commitOffset.Load()
+	n := 0
+	for n < len(q.waitingRequests) &&
+		(q.requiredAcks == 0 || q.waitingRequests[n].minOffset <= commitOffset) {
+		n++
+	}
+	ready := q.waitingRequests[:n]
+	q.waitingRequests = q.waitingRequests[n:]
+	return ready
 }
 
 func (q *quorumAckTracker) AdvanceHeadOffset(headOffset int64) {
@@ -220,40 +281,37 @@ func (q *quorumAckTracker) WaitForCommitOffsetAsync(_ context.Context, offset in
 		return
 	}
 
-	if q.requiredAcks == 0 || q.commitOffset.Load() >= offset {
-		q.Unlock()
-		cb.OnComplete(nil)
-		return
-	}
-
 	q.waitingRequests = append(q.waitingRequests, waitingRequest{offset, cb})
+	if q.requiredAcks == 0 || q.commitOffset.Load() >= offset {
+		// Already satisfied: the callback is still invoked from the callbacks
+		// goroutine, never inline, so that the caller (e.g. the WAL sync
+		// goroutine) does not block behind the database apply.
+		channel.PushNoBlock(q.commitSignal, struct{}{})
+	}
 	q.Unlock()
 }
 
 func (q *quorumAckTracker) notifyCommitOffsetAdvanced(commitOffset int64) {
 	q.commitOffset.Store(commitOffset)
 
-	for _, r := range q.waitingRequests {
-		if r.minOffset > commitOffset {
-			return
-		}
-
-		q.waitingRequests = q.waitingRequests[1:]
-		r.callback.OnComplete(nil)
+	if len(q.waitingRequests) > 0 {
+		channel.PushNoBlock(q.commitSignal, struct{}{})
 	}
 }
 
 func (q *quorumAckTracker) Close() error {
 	q.Lock()
+	alreadyClosed := q.closed
 	q.closed = true
 	q.waitForHeadOffset.Broadcast()
-	waitingRequests := q.waitingRequests
-	q.waitingRequests = make([]waitingRequest, 0)
 	q.Unlock()
-	// unblock waiting request
-	for _, r := range waitingRequests {
-		r.callback.OnCompleteError(constant.ErrResourceUnavailable)
+
+	if !alreadyClosed {
+		channel.PushNoBlock(q.commitSignal, struct{}{})
 	}
+	// Wait for the callbacks goroutine to fail the pending requests and drain:
+	// once Close returns, no callback is running or will ever run.
+	<-q.callbacksDone
 	return nil
 }
 
