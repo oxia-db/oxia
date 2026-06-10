@@ -368,6 +368,13 @@ func (t *wal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32
 
 func (t *wal) rolloverSegment() error {
 	var err error
+	// If no sync round has fsynced the segment file yet (the segment filled up
+	// before any sync round completed), fsync it now: its entries can still be
+	// acknowledged by a later sync round, and the file metadata must be
+	// durable by then.
+	if err = t.currentSegment.SyncFileIfNeeded(); err != nil {
+		return err
+	}
 	if err = t.currentSegment.Close(); err != nil {
 		return err
 	}

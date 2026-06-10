@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/edsrzf/mmap-go"
@@ -67,7 +68,7 @@ type readWriteSegment struct {
 	writingIdx        []byte
 
 	segmentSize     uint32
-	pendingFileSync bool
+	pendingFileSync atomic.Bool
 }
 
 func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, lastCrc uint32,
@@ -96,13 +97,15 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 
 	if !c.segmentExists {
 		if err = initFileWithZeroes(ms.txnFile, segmentSize); err != nil {
-			return nil, err
+			return nil, multierr.Append(err, ms.txnFile.Close())
 		}
-		ms.pendingFileSync = true
+		ms.pendingFileSync.Store(true)
 	}
 
 	if ms.txnMappedFile, err = mmap.MapRegion(ms.txnFile, int(segmentSize), mmap.RDWR, 0, 0); err != nil {
-		return nil, errors.Wrapf(err, "failed to map segment file %s", ms.c.txnPath)
+		return nil, multierr.Append(
+			errors.Wrapf(err, "failed to map segment file %s", ms.c.txnPath),
+			ms.txnFile.Close())
 	}
 
 	var commitOffset *int64
@@ -115,7 +118,10 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 	initialLastCrc := ms.lastCrc
 	if ms.writingIdx, ms.lastCrc, ms.currentFileOffset, ms.lastOffset, err = ms.c.codec.RecoverIndex(ms.txnMappedFile,
 		ms.currentFileOffset, ms.c.baseOffset, commitOffset); err != nil {
-		return nil, errors.Wrapf(err, "failed to rebuild index for segment file %s", ms.c.txnPath)
+		return nil, multierr.Combine(
+			errors.Wrapf(err, "failed to rebuild index for segment file %s", ms.c.txnPath),
+			ms.txnMappedFile.Unmap(),
+			ms.txnFile.Close())
 	}
 	// If the segment is empty, preserve the caller's CRC seed so that it can
 	// be used as the previous CRC for the first entry appended to this segment.
@@ -199,9 +205,11 @@ func (ms *readWriteSegment) Flush() error {
 	return ms.txnMappedFile.Flush()
 }
 
-// SyncFileIfNeeded is only invoked by the WAL sync goroutine, before Flush.
+// SyncFileIfNeeded is invoked by the WAL sync goroutine before Flush and, as a
+// fallback for segments that fill up before any sync round has run, by the
+// rollover before closing the segment.
 func (ms *readWriteSegment) SyncFileIfNeeded() error {
-	if !ms.pendingFileSync {
+	if !ms.pendingFileSync.Load() {
 		return nil
 	}
 
@@ -213,7 +221,7 @@ func (ms *readWriteSegment) SyncFileIfNeeded() error {
 	if err := ms.txnFile.Sync(); err != nil {
 		return err
 	}
-	ms.pendingFileSync = false
+	ms.pendingFileSync.Store(false)
 	return nil
 }
 

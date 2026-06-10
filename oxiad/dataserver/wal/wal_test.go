@@ -652,6 +652,49 @@ func TestAppendAsyncWithPreviousCrc(t *testing.T) {
 	assert.NoError(t, f2.Close())
 }
 
+// With sync disabled there are no sync rounds: every rollover exercises the
+// fallback fsync of a still-pending segment file, and the data must stay
+// intact across rollovers and a reopen.
+func TestWal_RolloverWithoutSyncRounds(t *testing.T) {
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  t.TempDir(),
+		Retention:   1 * time.Hour,
+		SegmentSize: 128 * 1024,
+		SyncData:    false,
+	})
+	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	var entries []string
+	payload := strings.Repeat("x", 1024)
+	for i := 0; i < 1_000; i++ {
+		value := fmt.Sprintf("%s-%d", payload, i)
+		entries = append(entries, value)
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term:   1,
+			Offset: int64(i),
+			Value:  []byte(value),
+		}))
+	}
+
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries)
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 999, w.LastOffset())
+
+	r, err = w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries)
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
 // Segments created by rollovers defer the file fsync to the sync goroutine:
 // entries must stay intact across multiple rollovers, synced acknowledgments
 // and a wal reopen.
