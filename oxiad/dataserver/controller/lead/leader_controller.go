@@ -122,6 +122,10 @@ type leaderController struct {
 	sessionManager SessionManager
 	log            *slog.Logger
 
+	// Reusable serialization buffer: only accessed by propose, while holding
+	// the leader write lock
+	marshalBuf []byte
+
 	writeLatencyHisto       metric.LatencyHistogram
 	headOffsetGauge         metric.Gauge
 	commitOffsetGauge       metric.Gauge
@@ -1026,12 +1030,15 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 
 	proposal.ToLogEntry(entryValue)
 
-	value, err := entryValue.MarshalVT()
+	// Serialize into the reusable buffer instead of allocating per proposal:
+	// value is consumed by the WAL append below, before the lock is released
+	marshalBuf, value, err := proto.MarshalToBuffer(lc.marshalBuf, entryValue)
 	if err != nil {
 		lc.Unlock()
 		cb.OnCompleteError(err)
 		return
 	}
+	lc.marshalBuf = marshalBuf
 
 	lc.waitGroup.Add(1) // inflight proposal
 	deferDbWrite := func(entryCrc uint32, err error) {
