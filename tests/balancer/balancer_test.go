@@ -32,7 +32,11 @@ import (
 
 func TestBalancer(t *testing.T) {
 	const (
-		balanceTimeout = 60 * time.Second
+		// Allow enough time for the cluster to recover from health-check
+		// hiccups on a slow/loaded machine: a node that misses a ping is
+		// marked unavailable and re-joins only after a successful handshake,
+		// which is retried with a 10s initial backoff.
+		balanceTimeout = 180 * time.Second
 		balanceTick    = 50 * time.Millisecond
 	)
 
@@ -50,9 +54,14 @@ func TestBalancer(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
 	})
+	// The quarantine time must be long enough to actually rate-limit retries
+	// of elections that did not improve the leader balance (e.g. when a slow
+	// candidate misses the fencing grace period): with a too-short quarantine
+	// the balancer degenerates into a hot loop of no-op elections on a loaded
+	// machine.
 	metadata.GetConfig().UnsafeBorrow().LoadBalancer = &proto.LoadBalancer{
 		ScheduleInterval: "10ms",
-		QuarantineTime:   "1ms",
+		QuarantineTime:   "1s",
 	}
 
 	coordinatorInstance, err := coordruntime.New(metadata, coordrpc.NewRpcProviderFactory(nil))

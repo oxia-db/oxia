@@ -287,6 +287,114 @@ func TestIsBalancedRequiresBalancedLeaders(t *testing.T) {
 	assert.True(t, b.IsBalanced())
 }
 
+func TestIsBalancedIgnoresUnavailableNodes(t *testing.T) {
+	sv1 := dataServer("sv-1")
+	sv2 := dataServer("sv-2")
+	sv3 := dataServer("sv-3")
+
+	ensemble := []*proto.DataServerIdentity{sv1, sv2, sv3}
+	status := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
+			"ns": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					0: {Status: proto.ShardStatusSteadyState, Leader: sv1, Ensemble: ensemble},
+					1: {Status: proto.ShardStatusSteadyState, Leader: sv1, Ensemble: ensemble},
+					2: {Status: proto.ShardStatusSteadyState, Leader: sv2, Ensemble: ensemble},
+				},
+			},
+		},
+	}
+
+	nodes := linkedhashset.New("sv-1", "sv-2", "sv-3")
+	metadata := &mockMetadata{
+		status:   status,
+		nodes:    nodes,
+		metadata: map[string]*proto.DataServerMetadata{},
+		nsConfigs: map[string]*proto.Namespace{
+			"ns": {Name: "ns", ReplicationFactor: 3},
+		},
+		nodeMap: map[string]*proto.DataServerIdentity{
+			"sv-1": sv1,
+			"sv-2": sv2,
+			"sv-3": sv3,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Leaders are (2, 1, 0): not balanced while sv-3 is available
+	b := newTestBalancer(ctx, cancel, metadata, &alwaysErrorSelector{})
+	assert.False(t, b.IsBalanced())
+
+	// With sv-3 not running, the rebalancer cannot move any leader onto it:
+	// the remaining nodes are balanced
+	b.nodeAvailableJudger = func(nodeID string) bool { return nodeID != "sv-3" }
+	assert.True(t, b.IsBalanced())
+}
+
+func TestIsBalancedAtLeaderMoveFixedPoint(t *testing.T) {
+	sv1 := dataServer("sv-1")
+	sv2 := dataServer("sv-2")
+	sv3 := dataServer("sv-3")
+	sv4 := dataServer("sv-4")
+	sv5 := dataServer("sv-5")
+
+	// Every node holds 6 replicas and the leader counts are (2, 1, 2, 3, 2):
+	// the spread between the most loaded node (sv-4) and the least loaded one
+	// (sv-2) is 2, but no single leader move can reduce it, since sv-2 does
+	// not belong to the ensemble of any shard led by sv-4. The balancer has
+	// no move left to make, so it must report the cluster as balanced.
+	status := &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
+			"ns": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					0: {Status: proto.ShardStatusSteadyState, Leader: sv4, Ensemble: []*proto.DataServerIdentity{sv1, sv5, sv4}},
+					1: {Status: proto.ShardStatusSteadyState, Leader: sv5, Ensemble: []*proto.DataServerIdentity{sv3, sv1, sv5}},
+					2: {Status: proto.ShardStatusSteadyState, Leader: sv2, Ensemble: []*proto.DataServerIdentity{sv3, sv2, sv4}},
+					3: {Status: proto.ShardStatusSteadyState, Leader: sv3, Ensemble: []*proto.DataServerIdentity{sv2, sv3, sv4}},
+					4: {Status: proto.ShardStatusSteadyState, Leader: sv1, Ensemble: []*proto.DataServerIdentity{sv2, sv1, sv5}},
+					5: {Status: proto.ShardStatusSteadyState, Leader: sv4, Ensemble: []*proto.DataServerIdentity{sv3, sv1, sv4}},
+					6: {Status: proto.ShardStatusSteadyState, Leader: sv3, Ensemble: []*proto.DataServerIdentity{sv5, sv2, sv3}},
+					7: {Status: proto.ShardStatusSteadyState, Leader: sv5, Ensemble: []*proto.DataServerIdentity{sv2, sv5, sv4}},
+					8: {Status: proto.ShardStatusSteadyState, Leader: sv4, Ensemble: []*proto.DataServerIdentity{sv1, sv4, sv5}},
+					9: {Status: proto.ShardStatusSteadyState, Leader: sv1, Ensemble: []*proto.DataServerIdentity{sv2, sv1, sv3}},
+				},
+			},
+		},
+	}
+
+	nodes := linkedhashset.New("sv-1", "sv-2", "sv-3", "sv-4", "sv-5")
+	metadata := &mockMetadata{
+		status:   status,
+		nodes:    nodes,
+		metadata: map[string]*proto.DataServerMetadata{},
+		nsConfigs: map[string]*proto.Namespace{
+			"ns": {Name: "ns", ReplicationFactor: 3},
+		},
+		nodeMap: map[string]*proto.DataServerIdentity{
+			"sv-1": sv1,
+			"sv-2": sv2,
+			"sv-3": sv3,
+			"sv-4": sv4,
+			"sv-5": sv5,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	b := newTestBalancer(ctx, cancel, metadata, &alwaysErrorSelector{})
+	assert.True(t, b.IsBalanced())
+
+	// Moving shard 9's leadership to sv-3 leaves sv-1 with a single leader:
+	// now sv-4 can donate shard 0 to sv-1, so the cluster is not balanced
+	status.Namespaces["ns"].Shards[9].Leader = sv3
+	assert.False(t, b.IsBalanced())
+}
+
 func TestIsBalancedRequiresNamespaceStatus(t *testing.T) {
 	sv1 := dataServer("sv-1")
 	sv2 := dataServer("sv-2")

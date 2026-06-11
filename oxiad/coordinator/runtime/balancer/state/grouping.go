@@ -108,8 +108,14 @@ func GroupingShardsNodeByStatus(candidates *linkedhashset.Set[string], namespace
 	return groupingShardByNode, historyNodes
 }
 
+// A shard participates in load/leader balancing unless it is being deleted or
+// is part of an in-progress split. Shards in Unknown or Election status must
+// be counted: their ensemble placement is already decided, and ignoring them
+// would let the balancer (and the initial ensemble selection) act on a partial
+// view of the cluster, proposing moves that re-introduce imbalance once the
+// hidden shards become visible again.
 func isBalancingCandidate(shardStatus *commonproto.ShardMetadata) bool {
-	return shardStatus.GetStatusOrDefault() == commonproto.ShardStatusSteadyState && shardStatus.Split == nil
+	return shardStatus.GetStatusOrDefault() != commonproto.ShardStatusDeleting && shardStatus.Split == nil
 }
 
 func GroupingCandidatesWithLabelValue(candidates *linkedhashset.Set[string], candidatesMetadata map[string]*commonproto.DataServerMetadata) map[string]map[string]*linkedhashset.Set[string] {
