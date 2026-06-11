@@ -361,10 +361,8 @@ func (c *clientImpl) doMultiShardGet(key string, options *getOptions, ch chan Ge
 		return
 	}
 
-	m := sync.Mutex{}
 	shards := c.shardManager.GetAll()
-	counter := len(shards)
-	selected := keyNotFound
+	callback := multiShardGetCallback(key, options.comparisonType, len(shards), ch)
 
 	for _, shardId := range shards {
 		c.readBatchManager.Get(shardId).Add(model.GetCall{
@@ -372,30 +370,44 @@ func (c *clientImpl) doMultiShardGet(key string, options *getOptions, ch chan Ge
 			ComparisonType:     options.comparisonType,
 			IncludeValue:       options.includeValue,
 			SecondaryIndexName: options.secondaryIndexName,
-			Callback: func(response *proto.GetResponse, err error) {
-				m.Lock()
-				defer m.Unlock()
-
-				if counter == 0 {
-					// Response already sent, nothing to do
-					return
-				}
-
-				if err != nil {
-					ch <- toGetResult(nil, key, err)
-					close(ch)
-					counter = 0
-				}
-
-				selected = selectResponse(options.comparisonType, selected, response)
-
-				counter--
-				if counter == 0 {
-					ch <- toGetResult(selected, key, nil)
-					close(ch)
-				}
-			},
+			Callback:           callback,
 		})
+	}
+}
+
+// multiShardGetCallback aggregates the per-shard responses of a multi-shard
+// get: the first error wins and terminates the result channel, discarding the
+// remaining responses; otherwise the best response for the comparison type is
+// selected once every shard has responded.
+func multiShardGetCallback(key string, comparisonType proto.KeyComparisonType, numShards int,
+	ch chan GetResult) func(*proto.GetResponse, error) {
+	m := sync.Mutex{}
+	counter := numShards
+	selected := keyNotFound
+
+	return func(response *proto.GetResponse, err error) {
+		m.Lock()
+		defer m.Unlock()
+
+		if counter == 0 {
+			// Response already sent, nothing to do
+			return
+		}
+
+		if err != nil {
+			ch <- toGetResult(nil, key, err)
+			close(ch)
+			counter = 0
+			return
+		}
+
+		selected = selectResponse(comparisonType, selected, response)
+
+		counter--
+		if counter == 0 {
+			ch <- toGetResult(selected, key, nil)
+			close(ch)
+		}
 	}
 }
 
