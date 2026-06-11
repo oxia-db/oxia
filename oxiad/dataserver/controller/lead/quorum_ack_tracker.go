@@ -129,6 +129,9 @@ type CursorAcker interface {
 type cursorAcker struct {
 	quorumTracker *quorumAckTracker
 	cursorIdx     int
+
+	// The highest offset acked by this cursor; guarded by the tracker mutex
+	lastAckedOffset int64
 }
 
 type waitingRequest struct {
@@ -343,8 +346,9 @@ func (q *quorumAckTracker) NewCursorAcker(ackOffset int64) (CursorAcker, error) 
 	}
 
 	qa := &cursorAcker{
-		quorumTracker: q,
-		cursorIdx:     q.cursorIdxGenerator,
+		quorumTracker:   q,
+		cursorIdx:       q.cursorIdxGenerator,
+		lastAckedOffset: ackOffset,
 	}
 
 	// If the new cursor is already past the current quorum commit offset, we have
@@ -369,14 +373,27 @@ func (*noOpCursorAcker) Ack(_ int64) {
 	// no-op: observer acks don't affect quorum commit offset
 }
 
+// Ack acknowledges all the entries up to the given offset: acks are
+// cumulative, so a follower can confirm a whole sync round with a single
+// message, and the implied range gets accounted under one lock acquisition.
+// An offset at or below the previously acked one is a no-op.
 func (c *cursorAcker) Ack(offset int64) {
-	c.quorumTracker.Lock()
-	defer c.quorumTracker.Unlock()
+	q := c.quorumTracker
+	q.Lock()
+	defer q.Unlock()
 
-	if c.quorumTracker.closed {
+	if q.closed {
 		return
 	}
-	c.ack(offset)
+
+	// Entries at or below the commit offset have already reached the quorum
+	start := max(c.lastAckedOffset, q.commitOffset.Load()) + 1
+	for o := start; o <= offset; o++ {
+		c.ack(o)
+	}
+	if offset > c.lastAckedOffset {
+		c.lastAckedOffset = offset
+	}
 }
 
 func (c *cursorAcker) ack(offset int64) {

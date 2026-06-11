@@ -244,24 +244,20 @@ func (sc *SplitController) runBootstrap() error {
 	if parentMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 		return errors.New("parent shard is not in steady state")
 	}
+	parentLeader := parentMeta.Leader
+	parentTerm := parentMeta.Term
 
 	// Step 1: Fence and elect each child leader (if not already done).
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		if err := sc.fenceAndElectChild(childId); err != nil {
+		if err := sc.fenceAndElectChild(childId, parentTerm); err != nil {
 			return err
 		}
 	}
 
-	// Step 2: Add each child leader as an observer on the parent leader.
-	// Re-read parent metadata in case the parent leader changed while
-	// fencing children.
-	parentMeta = sc.loadParentMeta()
-	if parentMeta == nil || parentMeta.Leader == nil {
-		return errors.New("parent shard has no leader")
-	}
-	parentLeader := parentMeta.Leader
-	parentTerm := parentMeta.Term
-
+	// Step 2: Add each child leader as an observer on the parent leader,
+	// using the same parent term the children were fenced with. If the
+	// parent had a new election in the meantime, AddFollower fails with
+	// an invalid-term error and Bootstrap is retried from scratch.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
 		if err := sc.addChildObserver(childId, parentLeader, parentTerm); err != nil {
 			return err
@@ -288,14 +284,19 @@ func (sc *SplitController) runBootstrap() error {
 }
 
 // fenceAndElectChild fences a child shard's ensemble and elects a leader.
-// Skipped if the child already has a leader (from a previous Bootstrap run).
-func (sc *SplitController) fenceAndElectChild(childId int64) error {
+// The child is fenced at the parent's current term: the observer cursor that
+// streams parent data to the child runs at the parent's term, and the data
+// server converts the child leader into an observer-follower only when the
+// cursor's term matches the child's term (see shardsDirector.GetOrCreateFollower).
+// Skipped if the child already has a leader at that term (from a previous
+// Bootstrap run).
+func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) error {
 	childMeta := sc.loadShardMeta(childId)
 	if childMeta == nil {
 		return errors.Errorf("child shard %d not found", childId)
 	}
 
-	if childMeta.Leader != nil {
+	if childMeta.Leader != nil && childMeta.Term == parentTerm {
 		sc.logger.Info("Child already has leader, skipping fence/elect",
 			slog.Int64("child-shard", childId),
 			slog.Any("leader", childMeta.Leader),
@@ -303,7 +304,7 @@ func (sc *SplitController) fenceAndElectChild(childId int64) error {
 		return nil
 	}
 
-	childTerm := childMeta.Term + 1
+	childTerm := parentTerm
 	headEntries, err := sc.fenceEnsemble(childId, childTerm, childMeta.Ensemble)
 	if err != nil {
 		return errors.Wrapf(err, "failed to fence child shard %d", childId)
