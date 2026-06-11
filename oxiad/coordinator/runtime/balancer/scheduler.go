@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 
@@ -363,8 +362,8 @@ func (r *nodeBasedBalancer) IsBalanced() bool {
 	return r.leaderBalanced(candidates, status)
 }
 
-func (*nodeBasedBalancer) leaderBalanced(candidates *linkedhashset.Set[string], status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]) bool {
-	totalShards, electedShards, nodeLeaders := state.NodeShardLeaders(candidates, status)
+func (r *nodeBasedBalancer) leaderBalanced(candidates *linkedhashset.Set[string], status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]) bool {
+	totalShards, electedShards, _ := state.NodeShardLeaders(candidates, status)
 	if totalShards == 0 {
 		return true
 	}
@@ -372,17 +371,65 @@ func (*nodeBasedBalancer) leaderBalanced(candidates *linkedhashset.Set[string], 
 		return false
 	}
 
-	maxLeaders, minLeaders := -1, -1
-	for _, leaders := range nodeLeaders {
-		leaderCount := leaders.Size()
-		if maxLeaders == -1 || leaderCount > maxLeaders {
-			maxLeaders = leaderCount
-		}
-		if minLeaders == -1 || leaderCount < minLeaders {
-			minLeaders = leaderCount
+	// The leaders are balanced when the rebalancer has no move left to make.
+	// This must use the same move search as rebalanceLeader: a stricter
+	// criterion (e.g. a global max-min spread) can be unreachable when the
+	// less-loaded nodes do not belong to the ensembles of the shards led by
+	// the most-loaded ones, and the balancer would never report the cluster
+	// as balanced while having no valid move left.
+	_, found := r.bestLeaderMove(candidates, status, false)
+	return !found
+}
+
+// bestLeaderMove looks for the shard whose leadership, if moved to the least
+// loaded node of its ensemble, yields the biggest improvement of the leader
+// balance. A move is only an improvement when the gap between the current
+// leader's count and the target's count is at least 2 (each move then strictly
+// reduces the overall imbalance, so repeated moves always terminate). Only
+// available nodes are considered, both as donors and as targets. When
+// skipQuarantined is set, shards currently quarantined are not eligible.
+func (r *nodeBasedBalancer) bestLeaderMove(candidates *linkedhashset.Set[string],
+	status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus],
+	skipQuarantined bool) (move state.NamespaceAndShard, found bool) {
+	_, _, nodeLeaders := state.NodeShardLeaders(candidates, status)
+
+	counts := make(map[string]int, len(nodeLeaders))
+	for nodeID, nsAndShards := range nodeLeaders {
+		if r.nodeAvailableJudger(nodeID) {
+			counts[nodeID] = nsAndShards.Size()
 		}
 	}
-	return maxLeaders-minLeaders <= 1
+
+	bestGap := 1 // a move is an improvement only when the gap is >= 2
+	for nodeID, nsAndShards := range nodeLeaders {
+		donorLeaders, available := counts[nodeID]
+		if !available {
+			// Leaders on a non-running node are re-elected by the data server
+			// failure handling, not by the balancer
+			continue
+		}
+		for iter := nsAndShards.Iterator(); iter.Next(); {
+			nsAndShard := iter.Value()
+			if skipQuarantined {
+				if _, exist := r.shardQuarantineShardMap.Load(nsAndShard.ShardID); exist {
+					continue
+				}
+			}
+			shardStatus := status[nsAndShard.Namespace].UnsafeBorrow().Shards[nsAndShard.ShardID]
+			for _, candidate := range shardStatus.Ensemble {
+				candidateLeaders, available := counts[candidate.GetNameOrDefault()]
+				if !available {
+					continue
+				}
+				if donorLeaders-candidateLeaders > bestGap {
+					bestGap = donorLeaders - candidateLeaders
+					move = nsAndShard
+					found = true
+				}
+			}
+		}
+	}
+	return move, found
 }
 
 func (r *nodeBasedBalancer) Trigger() {
@@ -461,93 +508,30 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		}()
 	}
 
-	maxLeadersNodeID, maxLeaders, minLeaders := r.rankLeaders(nodeLeaders)
-
-	nsAndShards, ok := nodeLeaders[maxLeadersNodeID]
-	if !ok {
-		// No leaders to check
+	move, found := r.bestLeaderMove(candidates, status, true)
+	if !found {
 		return
 	}
-
-	for iter := nsAndShards.Iterator(); iter.Next(); {
-		nsAndShard := iter.Value()
-		if maxLeaders-minLeaders <= 1 {
-			break
-		}
-		if _, exist := r.shardQuarantineShardMap.Load(nsAndShard.ShardID); exist {
-			continue
-		}
-		namespace := nsAndShard.Namespace
-		shard := nsAndShard.ShardID
-		shardStatus := status[namespace].UnsafeBorrow().Shards[shard]
-
-		minCandidateLeaders := -1
-		for _, candidate := range shardStatus.Ensemble {
-			candidateID := candidate.GetNameOrDefault()
-			if !r.nodeAvailableJudger(candidateID) {
-				continue
-			}
-			shards := nodeLeaders[candidateID]
-			leaders := shards.Size()
-			if minCandidateLeaders == -1 || leaders < minCandidateLeaders {
-				minCandidateLeaders = leaders
-			}
-		}
-		if minCandidateLeaders == maxLeaders || minCandidateLeaders+1 == maxLeaders {
-			r.logger.Info("quarantine the shard due to no valid candidates", slog.Int64("shard", shard), slog.Any("leader", maxLeadersNodeID))
-			r.shardQuarantineShardMap.Store(shard, time.Now())
-			continue
-		}
-
-		latch := &sync.WaitGroup{}
-		latch.Add(1)
-		ac := &action.ElectionAction{
-			Shard:  shard,
-			Waiter: latch,
-		}
-		r.actionCh <- ac
-		latch.Wait()
-		leader := ac.NewLeader
-		r.logger.Info("triggered new election", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
-		if leader == maxLeadersNodeID { // no changes
-			r.logger.Info("quarantine the shard due to no leader changed", slog.Int64("shard", shard), slog.Any("old-leader", maxLeadersNodeID), slog.Any("new-leader", leader))
-			r.shardQuarantineShardMap.Store(shard, time.Now())
-		}
-		break
+	shard := move.ShardID
+	oldLeader := ""
+	if shardStatus := status[move.Namespace].UnsafeBorrow().Shards[shard]; shardStatus.Leader != nil {
+		oldLeader = shardStatus.Leader.GetNameOrDefault()
 	}
-}
 
-func (r *nodeBasedBalancer) rankLeaders(nodeLeaders map[string]*arraylist.List[state.NamespaceAndShard]) (maxLeadersNodeID string, maxLeaders int, minLeaders int) {
-	maxLeadersNodeID = ""
-	maxLeaders = -1
-	minLeaders = -1
-	for nodeID, nsAndShards := range nodeLeaders {
-		if nsAndShards.Size() > 0 {
-			existNonQuarantineShard := nsAndShards.Any(func(_ int, value state.NamespaceAndShard) bool {
-				_, exist := r.shardQuarantineShardMap.Load(value.ShardID)
-				return !exist
-			})
-			if !existNonQuarantineShard { // Filter out quarantined nodes
-				continue
-			}
-		}
-		leaderNum := nsAndShards.Size()
-		if maxLeaders == -1 {
-			maxLeaders = leaderNum
-			minLeaders = leaderNum
-			maxLeadersNodeID = nodeID
-			continue
-		}
-		if leaderNum > maxLeaders {
-			maxLeaders = leaderNum
-			maxLeadersNodeID = nodeID
-			continue
-		}
-		if leaderNum < minLeaders {
-			minLeaders = leaderNum
-		}
+	latch := &sync.WaitGroup{}
+	latch.Add(1)
+	ac := &action.ElectionAction{
+		Shard:  shard,
+		Waiter: latch,
 	}
-	return maxLeadersNodeID, maxLeaders, minLeaders
+	r.actionCh <- ac
+	latch.Wait()
+	leader := ac.NewLeader
+	r.logger.Info("triggered new election", slog.Int64("shard", shard), slog.Any("old-leader", oldLeader), slog.Any("new-leader", leader))
+	if leader == oldLeader { // no changes
+		r.logger.Info("quarantine the shard due to no leader changed", slog.Int64("shard", shard), slog.Any("old-leader", oldLeader), slog.Any("new-leader", leader))
+		r.shardQuarantineShardMap.Store(shard, time.Now())
+	}
 }
 
 func (r *nodeBasedBalancer) Start() {

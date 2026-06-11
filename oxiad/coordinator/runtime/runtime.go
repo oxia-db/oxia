@@ -829,7 +829,12 @@ func New(
 		NodeAvailableJudger: func(nodeID string) bool {
 			c.RLock()
 			defer c.RUnlock()
-			nc := c.dataServerControllers[nodeID]
+			nc, ok := c.dataServerControllers[nodeID]
+			if !ok {
+				// The controller might not have been created yet for a
+				// data server that was just registered
+				return false
+			}
 			return nc.Status() == controller.Running
 		},
 	})

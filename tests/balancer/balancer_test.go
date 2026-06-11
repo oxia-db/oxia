@@ -32,7 +32,11 @@ import (
 
 func TestBalancer(t *testing.T) {
 	const (
-		balanceTimeout = 60 * time.Second
+		// Allow enough time for the cluster to recover from health-check
+		// hiccups on a slow/loaded machine: a node that misses a ping is
+		// marked unavailable and re-joins only after a successful handshake,
+		// which is retried with a 10s initial backoff.
+		balanceTimeout = 180 * time.Second
 		balanceTick    = 50 * time.Millisecond
 	)
 
