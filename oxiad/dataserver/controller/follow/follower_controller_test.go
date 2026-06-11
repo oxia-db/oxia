@@ -942,12 +942,15 @@ func TestFollower_DupEntries(t *testing.T) {
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
-	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
 
-	// Wait for responses
+	// Wait for the entry to be synced and acked, so that the duplicate below
+	// is at or below the synced offset and gets re-acknowledged immediately.
+	// (A duplicate that is not yet synced is only acked after its sync round:
+	// see TestLogSynchronizer_DuplicateAckOnlySynced.)
 	r1 := stream.GetResponse()
 	assert.EqualValues(t, 0, r1.Offset)
 
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
 	r2 := stream.GetResponse()
 	assert.EqualValues(t, 0, r2.Offset)
 
@@ -1410,4 +1413,53 @@ func wrapInLogEntryValue(wr *proto.WriteRequest) *proto.LogEntryValue {
 			},
 		},
 	}
+}
+
+// When the leader advertises cumulative-ack support, the follower coalesces
+// the acks of a sync round into a single message: ack offsets are strictly
+// increasing and the last one confirms the final entry.
+func TestFollower_CumulativeAcks(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	assert.NoError(t, err)
+	_, err = fc.Truncate(&proto.TruncateRequest{
+		Term:        1,
+		HeadEntryId: &proto.EntryId{Term: 1, Offset: 0},
+	})
+	assert.NoError(t, err)
+
+	stream := rpc.NewMockServerReplicateStream()
+	wg := concurrent.NewWaitGroup(1)
+	go func() {
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
+		wg.Done()
+	}()
+
+	const entries = 10
+	for i := 0; i < entries; i++ {
+		req := createAddRequest(t, 1, int64(i), map[string]string{"k": fmt.Sprintf("%d", i)}, wal.InvalidOffset)
+		req.CumulativeAcksSupported = true
+		stream.AddRequest(req)
+	}
+
+	last := int64(-1)
+	acks := 0
+	for last < entries-1 {
+		response := stream.GetResponse()
+		assert.Greater(t, response.Offset, last)
+		last = response.Offset
+		acks++
+	}
+	assert.EqualValues(t, entries-1, last)
+	assert.LessOrEqual(t, acks, entries)
+
+	assert.NoError(t, fc.Close())
 }

@@ -457,6 +457,9 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			Entry:            le,
 			CommitOffset:     fc.ackTracker.CommitOffset(),
 			PreviousEntryCrc: &previousCrc,
+			// This leader accounts acks cumulatively: the follower can
+			// coalesce the acks of a whole sync round into one message
+			CumulativeAcksSupported: true,
 		}); err != nil {
 			if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 				return nil

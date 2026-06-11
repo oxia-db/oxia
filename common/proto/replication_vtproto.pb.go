@@ -371,6 +371,7 @@ func (m *Append) CloneVT() *Append {
 	r.Term = m.Term
 	r.Entry = m.Entry.CloneVT()
 	r.CommitOffset = m.CommitOffset
+	r.CumulativeAcksSupported = m.CumulativeAcksSupported
 	if rhs := m.PreviousEntryCrc; rhs != nil {
 		tmpVal := *rhs
 		r.PreviousEntryCrc = &tmpVal
@@ -975,6 +976,9 @@ func (this *Append) EqualVT(that *Append) bool {
 		return false
 	}
 	if p, q := this.PreviousEntryCrc, that.PreviousEntryCrc; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
+	}
+	if this.CumulativeAcksSupported != that.CumulativeAcksSupported {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -2080,6 +2084,16 @@ func (m *Append) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.CumulativeAcksSupported {
+		i--
+		if m.CumulativeAcksSupported {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x28
+	}
 	if m.PreviousEntryCrc != nil {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.PreviousEntryCrc))
 		i--
@@ -2801,6 +2815,9 @@ func (m *Append) SizeVT() (n int) {
 	}
 	if m.PreviousEntryCrc != nil {
 		n += 1 + protohelpers.SizeOfVarint(uint64(*m.PreviousEntryCrc))
+	}
+	if m.CumulativeAcksSupported {
+		n += 2
 	}
 	n += len(m.unknownFields)
 	return n
@@ -5180,6 +5197,26 @@ func (m *Append) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.PreviousEntryCrc = &v
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CumulativeAcksSupported", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.CumulativeAcksSupported = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -8206,6 +8243,26 @@ func (m *Append) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 			}
 			m.PreviousEntryCrc = &v
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CumulativeAcksSupported", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.CumulativeAcksSupported = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
