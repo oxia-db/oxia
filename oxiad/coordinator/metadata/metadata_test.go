@@ -40,7 +40,7 @@ func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	metadata, err := factory.CreateMetadata(t.Context())
+	metadata, _, err := factory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())
@@ -71,7 +71,7 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	metadata, err := factory.CreateMetadata(t.Context())
+	metadata, _, err := factory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())

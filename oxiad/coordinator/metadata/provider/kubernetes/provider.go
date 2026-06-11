@@ -245,7 +245,7 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 	return version, nil
 }
 
-func (m *Provider[T]) WaitToBecomeLeader() error {
+func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	myIdentity := m.identity
 
 	// Create a lease lock
@@ -262,6 +262,7 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 
 	logger := m.logger.With(slog.String("identity", myIdentity))
 	wg := concurrent.NewWaitGroup(1)
+	lost := make(chan struct{})
 
 	// Configure leader election
 	leaderElectionConfig := leaderelection.LeaderElectionConfig{
@@ -276,7 +277,14 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 				wg.Done()
 			},
 			OnStoppedLeading: func() {
-				logger.Warn("Stopped leading - lease lost!")
+				// The elector also stops when the provider shuts down: only
+				// signal the loss when the lease actually got lost
+				select {
+				case <-m.ctx.Done():
+				default:
+					logger.Warn("Stopped leading - lease lost!")
+					close(lost)
+				}
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -303,7 +311,7 @@ func (m *Provider[T]) WaitToBecomeLeader() error {
 		})
 	})
 
-	return wg.Wait(m.ctx)
+	return lost, wg.Wait(m.ctx)
 }
 
 func (m *Provider[T]) Close() error {

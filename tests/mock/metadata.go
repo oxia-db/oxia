@@ -84,7 +84,7 @@ func NewMetadataFromProviders(
 	})
 	require.NoError(t, err)
 
-	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	metadata, _, err := metadataFactory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	return metadataFactory, metadata
 }

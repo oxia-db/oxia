@@ -38,6 +38,11 @@ type Raft struct {
 	logger      *slog.Logger
 	interceptor Interceptor
 
+	// Raft blocks writing leadership transitions to notifyCh: it must always
+	// have a consumer (waitToBecomeLeader, then the loss drainer)
+	notifyCh   chan bool
+	shutdownCh chan struct{}
+
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -53,6 +58,8 @@ func New(
 	metadataRaft := &Raft{
 		logger:      slog.With(slog.String("component", "metadata-provider-raft")),
 		interceptor: interceptor,
+		notifyCh:    make(chan bool, 1),
+		shutdownCh:  make(chan struct{}),
 	}
 	metadataRaft.sc = newStateContainer(
 		slog.With(slog.String("component", "metadata-provider-raft-state-container")),
@@ -69,6 +76,7 @@ func New(
 	config.HeartbeatTimeout = 5 * time.Second
 	config.ElectionTimeout = 10 * time.Second
 	config.LocalID = hashicorpraft.ServerID(nodeID)
+	config.NotifyCh = metadataRaft.notifyCh
 	config.LogLevel = "INFO"
 	levelVar := &slog.LevelVar{}
 	levelVar.Set(slog.LevelInfo)
@@ -134,9 +142,68 @@ func getRaftServers(bootstrapNodes []string) []hashicorpraft.Server {
 
 func (r *Raft) Close() error {
 	r.closeOnce.Do(func() {
+		// Release first: the node's shutdown can emit a last leadership
+		// notification, which still needs a consumer
 		r.closeErr = r.release()
+		close(r.shutdownCh)
 	})
 	return r.closeErr
+}
+
+const leadershipBarrierTimeout = 30 * time.Second
+
+// waitToBecomeLeader blocks until this node becomes the raft leader, then
+// waits for the FSM to catch up with all the committed entries (barrier), so
+// that the first reads after a takeover are not stale. The returned channel
+// is closed if the leadership is subsequently lost.
+func (r *Raft) waitToBecomeLeader() (<-chan struct{}, error) {
+	return waitForLeadership(r.notifyCh, r.shutdownCh, func() error {
+		return r.node.Barrier(leadershipBarrierTimeout).Error()
+	}, r.logger)
+}
+
+func waitForLeadership(notifyCh <-chan bool, shutdownCh <-chan struct{}, barrier func() error,
+	logger *slog.Logger) (<-chan struct{}, error) {
+	for {
+		select {
+		case isLeader := <-notifyCh:
+			if !isLeader {
+				// The channel notifies every transition, losses included:
+				// keep waiting until this node actually wins
+				continue
+			}
+			if err := barrier(); err != nil {
+				// The leadership may already be gone: wait for the next term
+				logger.Warn("Failed to wait for the FSM to catch up after becoming leader",
+					slog.Any("error", err))
+				continue
+			}
+			lost := make(chan struct{})
+			go drainLeadershipNotifications(notifyCh, shutdownCh, lost)
+			return lost, nil
+
+		case <-shutdownCh:
+			return nil, errors.New("raft provider closed while waiting for leadership")
+		}
+	}
+}
+
+// drainLeadershipNotifications closes lost on the first leadership loss and
+// keeps consuming the notifications afterwards: raft blocks writing to the
+// notification channel, so it must never be left without a consumer.
+func drainLeadershipNotifications(notifyCh <-chan bool, shutdownCh <-chan struct{}, lost chan struct{}) {
+	closed := false
+	for {
+		select {
+		case isLeader := <-notifyCh:
+			if !isLeader && !closed {
+				close(lost)
+				closed = true
+			}
+		case <-shutdownCh:
+			return
+		}
+	}
 }
 
 // release shuts down whichever components have been created, in dependency

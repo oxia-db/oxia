@@ -75,9 +75,8 @@ func (mpr *Provider[T]) OnApplied(key string, data []byte, version int64) {
 	})
 }
 
-func (mpr *Provider[T]) WaitToBecomeLeader() error {
-	<-mpr.raft.node.LeaderCh()
-	return nil
+func (mpr *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
+	return mpr.raft.waitToBecomeLeader()
 }
 
 func (mpr *Provider[T]) Close() error {

@@ -74,7 +74,8 @@ var (
 			r, err := raft.New(addr, []string{addr}, filepath.Join(t.TempDir(), "raft"), nil)
 			assert.NoError(t, err)
 			p := raft.NewProvider(t.Context(), r, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
-			assert.NoError(t, p.WaitToBecomeLeader())
+			_, err = p.WaitToBecomeLeader()
+			assert.NoError(t, err)
 			return p
 		},
 	}
@@ -148,7 +149,8 @@ func TestProviderConfigResource(t *testing.T) {
 			assert.NoError(t, err)
 			statusProvider := raft.NewProvider(t.Context(), r, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			configProvider := raft.NewProvider(t.Context(), r, metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled)
-			assert.NoError(t, statusProvider.WaitToBecomeLeader())
+			_, err = statusProvider.WaitToBecomeLeader()
+			assert.NoError(t, err)
 			return configProvider
 		},
 	}

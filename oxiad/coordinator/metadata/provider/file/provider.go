@@ -110,13 +110,14 @@ func (m *Provider[T]) Close() error {
 	return nil
 }
 
-func (m *Provider[T]) WaitToBecomeLeader() error {
+func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	if err := m.fileLock.Lock(); err != nil {
-		return errors.Wrapf(err, "failed to acquire lock on %s", m.path)
+		return nil, errors.Wrapf(err, "failed to acquire lock on %s", m.path)
 	}
 	m.lockAcquired = true
 
-	return nil
+	// The file lock is held until the provider closes: no loss to signal
+	return nil, nil //nolint:nilnil
 }
 
 func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
