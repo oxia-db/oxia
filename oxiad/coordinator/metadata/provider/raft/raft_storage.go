@@ -46,7 +46,7 @@ func newKVRaftStore(path string) (store *kvRaftStore, err error) {
 	}
 
 	if store.kv, err = store.factory.NewKV("raft", 0, proto.KeySortingType_NATURAL); err != nil {
-		return nil, err
+		return nil, multierr.Combine(err, store.factory.Close())
 	}
 
 	return store, nil
@@ -125,11 +125,11 @@ func (s *kvRaftStore) StoreLogs(logs []*raft.Log) error {
 
 		value, err := json.Marshal(log)
 		if err != nil {
-			return err
+			return multierr.Combine(err, wb.Close())
 		}
 
 		if err := wb.Put(key, value); err != nil {
-			return err
+			return multierr.Combine(err, wb.Close())
 		}
 	}
 
@@ -141,7 +141,13 @@ func (s *kvRaftStore) StoreLogs(logs []*raft.Log) error {
 
 func (s *kvRaftStore) DeleteRange(minInclusive, maxInclusive uint64) error {
 	minKeyInclusive := fmt.Sprintf(logKeyFormat, minInclusive)
-	maxKeyExclusive := fmt.Sprintf(logKeyFormat, maxInclusive+1)
+	var maxKeyExclusive string
+	if maxInclusive == math.MaxUint64 {
+		// maxInclusive+1 would overflow to 0, inverting the range into a no-op
+		maxKeyExclusive = logKeyMax + "\x00"
+	} else {
+		maxKeyExclusive = fmt.Sprintf(logKeyFormat, maxInclusive+1)
+	}
 	wb := s.kv.NewWriteBatch()
 
 	return multierr.Combine(
