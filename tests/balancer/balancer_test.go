@@ -50,9 +50,14 @@ func TestBalancer(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())
 	})
+	// The quarantine time must be long enough to actually rate-limit retries
+	// of elections that did not improve the leader balance (e.g. when a slow
+	// candidate misses the fencing grace period): with a too-short quarantine
+	// the balancer degenerates into a hot loop of no-op elections on a loaded
+	// machine.
 	metadata.GetConfig().UnsafeBorrow().LoadBalancer = &proto.LoadBalancer{
 		ScheduleInterval: "10ms",
-		QuarantineTime:   "1ms",
+		QuarantineTime:   "1s",
 	}
 
 	coordinatorInstance, err := coordruntime.New(metadata, coordrpc.NewRpcProviderFactory(nil))
