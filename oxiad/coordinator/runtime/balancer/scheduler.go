@@ -377,7 +377,7 @@ func (r *nodeBasedBalancer) leaderBalanced(candidates *linkedhashset.Set[string]
 	// less-loaded nodes do not belong to the ensembles of the shards led by
 	// the most-loaded ones, and the balancer would never report the cluster
 	// as balanced while having no valid move left.
-	_, found := r.bestLeaderMove(candidates, status, false)
+	_, found := r.bestLeaderMove(candidates, status, nil)
 	return !found
 }
 
@@ -386,11 +386,11 @@ func (r *nodeBasedBalancer) leaderBalanced(candidates *linkedhashset.Set[string]
 // balance. A move is only an improvement when the gap between the current
 // leader's count and the target's count is at least 2 (each move then strictly
 // reduces the overall imbalance, so repeated moves always terminate). Only
-// available nodes are considered, both as donors and as targets. When
-// skipQuarantined is set, shards currently quarantined are not eligible.
+// available nodes are considered, both as donors and as targets. Shards in
+// quarantinedShards (may be nil) are not eligible.
 func (r *nodeBasedBalancer) bestLeaderMove(candidates *linkedhashset.Set[string],
 	status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus],
-	skipQuarantined bool) (move state.NamespaceAndShard, found bool) {
+	quarantinedShards *linkedhashset.Set[int64]) (move state.NamespaceAndShard, found bool) {
 	_, _, nodeLeaders := state.NodeShardLeaders(candidates, status)
 
 	counts := make(map[string]int, len(nodeLeaders))
@@ -410,26 +410,36 @@ func (r *nodeBasedBalancer) bestLeaderMove(candidates *linkedhashset.Set[string]
 		}
 		for iter := nsAndShards.Iterator(); iter.Next(); {
 			nsAndShard := iter.Value()
-			if skipQuarantined {
-				if _, exist := r.shardQuarantineShardMap.Load(nsAndShard.ShardID); exist {
-					continue
-				}
+			if quarantinedShards != nil && quarantinedShards.Contains(nsAndShard.ShardID) {
+				continue
 			}
-			shardStatus := status[nsAndShard.Namespace].UnsafeBorrow().Shards[nsAndShard.ShardID]
-			for _, candidate := range shardStatus.Ensemble {
-				candidateLeaders, available := counts[candidate.GetNameOrDefault()]
-				if !available {
-					continue
-				}
-				if donorLeaders-candidateLeaders > bestGap {
-					bestGap = donorLeaders - candidateLeaders
-					move = nsAndShard
-					found = true
-				}
+			minLeaders := minEnsembleLeaders(status, nsAndShard, counts)
+			if minLeaders >= 0 && donorLeaders-minLeaders > bestGap {
+				bestGap = donorLeaders - minLeaders
+				move = nsAndShard
+				found = true
 			}
 		}
 	}
 	return move, found
+}
+
+// minEnsembleLeaders returns the smallest leader count among the available
+// ensemble members of the given shard, or -1 when no member is available.
+func minEnsembleLeaders(status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus],
+	nsAndShard state.NamespaceAndShard, counts map[string]int) int {
+	shardStatus := status[nsAndShard.Namespace].UnsafeBorrow().Shards[nsAndShard.ShardID]
+	minLeaders := -1
+	for _, candidate := range shardStatus.Ensemble {
+		leaders, available := counts[candidate.GetNameOrDefault()]
+		if !available {
+			continue
+		}
+		if minLeaders == -1 || leaders < minLeaders {
+			minLeaders = leaders
+		}
+	}
+	return minLeaders
 }
 
 func (r *nodeBasedBalancer) Trigger() {
@@ -508,7 +518,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 		}()
 	}
 
-	move, found := r.bestLeaderMove(candidates, status, true)
+	move, found := r.bestLeaderMove(candidates, status, r.quarantineShards())
 	if !found {
 		return
 	}
