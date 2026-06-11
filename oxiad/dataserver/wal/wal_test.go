@@ -886,3 +886,48 @@ func TestWal_ReadOnlySegmentMissingIndex(t *testing.T) {
 	assert.NoError(t, w.Close())
 	assert.NoError(t, f.Close())
 }
+
+// Truncating to an offset below all the retained segments clears the wal:
+// the clear used to re-acquire the wal lock already held by TruncateLog,
+// deadlocking the wal permanently (this test would time out).
+func TestWal_TruncateBelowAllSegments(t *testing.T) {
+	f, w := createWal(t)
+
+	// Leave the wal with segments whose base offsets are all above the
+	// truncation target: start from a non-initial offset, as a follower
+	// does after its wal got cleared, and roll over at least once
+	assert.NoError(t, w.Clear())
+	payload := strings.Repeat("x", 1024)
+	for i := 100; i < 300; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: int64(i), Value: []byte(fmt.Sprintf("%s-%d", payload, i))}))
+	}
+
+	headOffset, err := w.TruncateLog(50)
+	assert.NoError(t, err)
+	assert.Equal(t, InvalidOffset, headOffset)
+	assert.Equal(t, InvalidOffset, w.FirstOffset())
+	assert.Equal(t, InvalidOffset, w.LastOffset())
+
+	// The cleared wal must be usable, appendable from right after the
+	// truncation point
+	for i := 51; i < 55; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 2, Offset: int64(i), Value: []byte(fmt.Sprintf("entry-%d", i))}))
+	}
+	assert.EqualValues(t, 51, w.FirstOffset())
+	assert.EqualValues(t, 54, w.LastOffset())
+
+	r, err := w.NewReader(50)
+	assert.NoError(t, err)
+	for i := 51; i < 55; i++ {
+		assert.True(t, r.HasNext())
+		e, _, _, err := r.ReadNext()
+		assert.NoError(t, err)
+		assert.EqualValues(t, i, e.Offset)
+	}
+	assert.False(t, r.HasNext())
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
