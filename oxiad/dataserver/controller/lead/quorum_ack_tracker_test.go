@@ -486,3 +486,55 @@ func TestQuorumAckTracker_CloseWaitsForInFlightCallback(t *testing.T) {
 	}
 	assert.Len(t, completed, 1)
 }
+
+// Acks are cumulative: a single ack confirms every entry up to its offset,
+// so a follower can acknowledge a whole sync round with one message.
+func TestQuorumAckTracker_CumulativeAck(t *testing.T) {
+	at := NewQuorumAckTracker(3, 1, wal.InvalidOffset)
+
+	for offset := int64(2); offset <= 5; offset++ {
+		at.AdvanceHeadOffset(offset)
+	}
+	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+
+	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+
+	// One ack confirms all the entries up to its offset
+	c1.Ack(3)
+	assert.EqualValues(t, 3, at.CommitOffset())
+
+	// Stale and duplicate acks are no-ops
+	c1.Ack(2)
+	c1.Ack(3)
+	assert.EqualValues(t, 3, at.CommitOffset())
+
+	c1.Ack(5)
+	assert.EqualValues(t, 5, at.CommitOffset())
+}
+
+// With RF=5 the cumulative acks of distinct cursors combine per offset:
+// the commit offset only advances to what a quorum has confirmed.
+func TestQuorumAckTracker_CumulativeAckQuorum(t *testing.T) {
+	at := NewQuorumAckTracker(5, 1, wal.InvalidOffset)
+
+	for offset := int64(2); offset <= 5; offset++ {
+		at.AdvanceHeadOffset(offset)
+	}
+
+	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+	c2, err := at.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+
+	// requiredAcks = 2: one cursor alone does not commit anything
+	c1.Ack(5)
+	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+
+	// The second cursor only confirms up to 3: that becomes the commit offset
+	c2.Ack(3)
+	assert.EqualValues(t, 3, at.CommitOffset())
+
+	c2.Ack(5)
+	assert.EqualValues(t, 5, at.CommitOffset())
+}

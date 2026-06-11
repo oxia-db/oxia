@@ -60,6 +60,14 @@ type LogSynchronizer struct {
 	advertisedCommitOffset *atomic.Int64
 	lastAppendedOffset     *atomic.Int64
 
+	// Whether the leader advertised cumulative-ack support on the last
+	// received Append. Atomic because the appender goroutine stores it while
+	// the syncer goroutine reads it, and the two share no lock. The value
+	// never changes within a stream in practice (one stream, one leader):
+	// the per-message store is simply the stateless way to track it, and it
+	// is idempotent and contention-free.
+	cumulativeAcks atomic.Bool
+
 	writeLatencyHisto metric.LatencyHistogram
 }
 
@@ -112,6 +120,8 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 		return constant.ErrInvalidTerm
 	}
 
+	ls.cumulativeAcks.Store(req.CumulativeAcksSupported)
+
 	ls.log.Debug(
 		"Add entry",
 		slog.Int64("commit-offset", req.CommitOffset),
@@ -128,7 +138,16 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 			slog.Int64("commit-offset", req.CommitOffset),
 			slog.Int64("offset", req.Entry.Offset),
 		)
-		return stream.Send(&proto.Ack{Offset: req.Entry.Offset})
+
+		// Only acknowledge what is already synced: the leader accounts the
+		// ack, cumulatively, as durable. A duplicate that is appended but
+		// not synced yet must not be acked here: wake the syncer instead,
+		// which acknowledges it after the fsync.
+		if req.Entry.Offset <= ls.wal.LastOffset() {
+			return stream.Send(&proto.Ack{Offset: req.Entry.Offset})
+		}
+		channel.PushNoBlock(syncCond, struct{}{})
+		return nil
 	}
 
 	// Append the entry asynchronously, passing the previous CRC from the leader.
@@ -156,15 +175,33 @@ func (ls *LogSynchronizer) bgSyncer(stream proto.OxiaLogReplication_ReplicateSer
 				return err
 			}
 			newHeadOffset := ls.wal.LastOffset()
-			// Ack all the entries that were synced in the last round
-			for offset := oldHeadOffset + 1; offset <= newHeadOffset; offset++ {
-				if err := stream.Send(&proto.Ack{Offset: offset}); err != nil {
-					return err
-				}
+			if err := ls.sendAcks(stream, oldHeadOffset, newHeadOffset); err != nil {
+				return err
 			}
 			channel.PushNoBlock(stateApplierCond, struct{}{})
 		}
 	}
+}
+
+// sendAcks acknowledges the entries synced in the last round.
+func (ls *LogSynchronizer) sendAcks(stream proto.OxiaLogReplication_ReplicateServer, oldHeadOffset int64,
+	newHeadOffset int64) error {
+	if ls.cumulativeAcks.Load() {
+		// A single cumulative ack covers the whole sync round
+		if newHeadOffset > oldHeadOffset {
+			return stream.Send(&proto.Ack{Offset: newHeadOffset})
+		}
+		return nil
+	}
+
+	// The leader did not advertise cumulative-ack support (older version):
+	// ack every entry synced in the last round
+	for offset := oldHeadOffset + 1; offset <= newHeadOffset; offset++ {
+		if err := stream.Send(&proto.Ack{Offset: offset}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func NewLogSynchronizer(params LogSynchronizerParams) *LogSynchronizer {
