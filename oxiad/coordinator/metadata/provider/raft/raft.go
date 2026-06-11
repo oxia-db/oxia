@@ -38,8 +38,11 @@ type Raft struct {
 	logger      *slog.Logger
 	interceptor Interceptor
 
-	// Raft blocks writing leadership transitions to notifyCh: it must always
-	// have a consumer (waitToBecomeLeader, then the loss drainer)
+	// Raft blocks writing leadership transitions to notifyCh until consumed
+	// (or until its own shutdown, when the send degrades to best-effort):
+	// without a consumer (waitToBecomeLeader, then the loss drainer), the
+	// raft main loop stalls on the next transition. Shutdown itself is
+	// always safe, even with no consumer running.
 	notifyCh   chan bool
 	shutdownCh chan struct{}
 
