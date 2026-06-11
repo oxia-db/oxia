@@ -30,6 +30,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/leader"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 
@@ -187,9 +188,25 @@ func NewShardController(
 func (s *shardController) Election(electionAction *action.ElectionAction) string {
 	clonedAction := electionAction.Clone()
 	clonedAction.Waiter.Add(1)
-	s.electionOp <- clonedAction
-	clonedAction.Waiter.Wait()
-	return clonedAction.NewLeader
+	select {
+	case s.electionOp <- clonedAction:
+	case <-s.ctx.Done():
+		return ""
+	}
+	done := make(chan struct{})
+	go func() {
+		clonedAction.Waiter.Wait()
+		close(done)
+	}()
+	// The shard controller might be closed while the election operation is
+	// still queued: don't keep the caller blocked on an operation that will
+	// never be processed
+	select {
+	case <-done:
+		return clonedAction.NewLeader
+	case <-s.ctx.Done():
+		return ""
+	}
 }
 
 func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
@@ -226,6 +243,7 @@ func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
 	for {
 		select {
 		case <-s.ctx.Done():
+			s.drainPendingOps()
 			return
 
 		case <-s.deleteOp:
@@ -239,6 +257,21 @@ func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
 		case electionAction := <-s.electionOp:
 			newLeader := s.onElectLeader(nil)
 			electionAction.Done(newLeader.GetNameOrDefault())
+		}
+	}
+}
+
+// drainPendingOps completes the queued operations that have a blocked waiter,
+// so that their callers don't hang on a controller that is shutting down.
+func (s *shardController) drainPendingOps() {
+	for {
+		select {
+		case electionAction := <-s.electionOp:
+			electionAction.Done("")
+		case op := <-s.changeEnsembleOp:
+			op.Error(constant.ErrResourceUnavailable)
+		default:
+			return
 		}
 	}
 }
