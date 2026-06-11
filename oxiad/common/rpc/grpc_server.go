@@ -17,6 +17,7 @@ package rpc
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -142,7 +143,9 @@ func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.Ser
 			"bind": listener.Addr().String(),
 		},
 		func() {
-			if err := c.server.Serve(listener); err != nil {
+			// Serve returns ErrServerStopped when Close() completed before this
+			// goroutine was scheduled: a benign race, not a startup failure.
+			if err := c.server.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 				c.log.Error(
 					"Failed to start serving",
 					slog.Any("error", err),
