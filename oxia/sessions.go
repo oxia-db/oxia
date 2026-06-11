@@ -68,14 +68,20 @@ func (s *sessions) executeWithSessionId(shardId int64, callback func(int64, erro
 		session = s.startSession(shardId)
 		s.sessionsByShard[shardId] = session
 	}
-	session.executeWithId(callback)
+	if !session.executeWithId(callback) {
+		// The session failed to start: forget it, so that the next operation
+		// attempts a fresh one
+		delete(s.sessionsByShard, shardId)
+	}
 }
 
 func (s *sessions) startSession(shardId int64) *clientSession {
 	cs := &clientSession{
 		shardId:  shardId,
 		sessions: s,
-		started:  make(chan error),
+		// Buffered: the failure notification must not block the creator
+		// goroutine until an operation happens to come by
+		started: make(chan error, 1),
 		log: slog.With(
 			slog.String("component", "session"),
 			slog.Int64("shard", shardId),
@@ -116,26 +122,26 @@ type clientSession struct {
 	cancel    context.CancelFunc
 }
 
-func (cs *clientSession) executeWithId(callback func(int64, error)) {
+// executeWithId invokes the callback with the session id, once the session
+// has been established. It returns false when the session failed to start:
+// the caller — which already holds the sessions lock — discards it, so that
+// re-acquiring that lock here (a self-deadlock) is never needed.
+func (cs *clientSession) executeWithId(callback func(int64, error)) bool {
 	select {
 	case err := <-cs.started:
 		if err != nil {
 			callback(-1, err)
-			cs.sessions.Lock()
-			defer cs.sessions.Unlock()
-			cs.Lock()
-			defer cs.Unlock()
-			delete(cs.sessions.sessionsByShard, cs.shardId)
-		} else {
-			cs.Lock()
-			callback(cs.sessionId, nil)
-			cs.Unlock()
+			return false
 		}
+		cs.Lock()
+		callback(cs.sessionId, nil)
+		cs.Unlock()
 	case <-cs.ctx.Done():
 		if cs.ctx.Err() != nil && !errors.Is(cs.ctx.Err(), context.Canceled) {
 			callback(-1, cs.ctx.Err())
 		}
 	}
+	return true
 }
 
 func (cs *clientSession) createSessionWithRetries() {
