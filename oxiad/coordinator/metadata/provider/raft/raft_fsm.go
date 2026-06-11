@@ -126,7 +126,10 @@ func (sc *stateContainer) Persist(sink raft.SnapshotSink) error {
 		// compacted, losing the state on the next restart
 		return multierr.Combine(err, sink.Cancel())
 	}
-	return sink.Close()
+	if err := sink.Close(); err != nil {
+		return multierr.Combine(err, sink.Cancel())
+	}
+	return nil
 }
 
 func (*stateContainer) Release() {}
