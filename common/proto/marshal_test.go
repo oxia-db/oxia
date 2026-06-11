@@ -59,4 +59,15 @@ func TestMarshalToBuffer(t *testing.T) {
 		_, _, _ = MarshalToBuffer(buf, smaller)
 	})
 	assert.Zero(t, allocs)
+
+	// Mirrors the generated MarshalVT semantics: nil messages yield no data
+	// and no error, for both a nil interface and a typed nil message
+	buf, data, err = MarshalToBuffer(buf, nil)
+	require.NoError(t, err)
+	assert.Empty(t, data)
+	assert.Equal(t, grownCap, cap(buf))
+
+	_, data, err = MarshalToBuffer(buf, (*LogEntry)(nil))
+	require.NoError(t, err)
+	assert.Empty(t, data)
 }

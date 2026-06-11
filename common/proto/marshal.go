@@ -23,7 +23,12 @@ type sizedMarshaler interface {
 // needed, and returns the (possibly grown) buffer together with the slice
 // holding the serialized bytes. It avoids the per-message allocation of
 // MarshalVT on hot paths where the caller can reuse the buffer across calls.
+// As with the generated MarshalVT, a nil message yields no data and no error.
 func MarshalToBuffer(buf []byte, m sizedMarshaler) (newBuf []byte, data []byte, err error) {
+	if m == nil {
+		return buf, nil, nil
+	}
+
 	size := m.SizeVT()
 	if cap(buf) < size {
 		buf = make([]byte, size)
