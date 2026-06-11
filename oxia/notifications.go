@@ -25,6 +25,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 
 	"github.com/oxia-db/oxia/common/concurrent"
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	time2 "github.com/oxia-db/oxia/common/time"
 
@@ -87,6 +88,8 @@ func newNotifications(ctx context.Context, options clientOptions, rpcProvider in
 	defer cancel()
 
 	if err := nm.initWaitGroup.Wait(timeoutCtx); err != nil {
+		// Stop the per-shard managers that may still be retrying
+		nm.cancel()
 		return nil, err
 	}
 
@@ -160,7 +163,11 @@ func (snm *shardNotificationsManager) getNotificationsWithRetries() { //nolint:r
 				)
 			}
 
-			if !snm.initialized {
+			// Retryable errors (eg. the server has not yet received its shard
+			// assignments) are handled by the backoff policy: the overall
+			// initialization is still bounded by the request timeout in
+			// newNotifications.
+			if !snm.initialized && !constant.IsRetryable(err) {
 				snm.initialized = true
 				snm.nm.initWaitGroup.Fail(err)
 				snm.nm.cancel()
