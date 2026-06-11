@@ -61,7 +61,11 @@ type LogSynchronizer struct {
 	lastAppendedOffset     *atomic.Int64
 
 	// Whether the leader advertised cumulative-ack support on the last
-	// received Append: written by the appender goroutine, read by the syncer
+	// received Append. Atomic because the appender goroutine stores it while
+	// the syncer goroutine reads it, and the two share no lock. The value
+	// never changes within a stream in practice (one stream, one leader):
+	// the per-message store is simply the stateless way to track it, and it
+	// is idempotent and contention-free.
 	cumulativeAcks atomic.Bool
 
 	writeLatencyHisto metric.LatencyHistogram
