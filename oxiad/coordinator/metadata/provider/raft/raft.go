@@ -34,6 +34,7 @@ type Raft struct {
 	sc          *stateContainer
 	node        *hashicorpraft.Raft
 	store       *kvRaftStore
+	transport   *hashicorpraft.NetworkTransport
 	logger      *slog.Logger
 	interceptor Interceptor
 
@@ -48,7 +49,7 @@ func New(
 	raftBootstrapNodes []string,
 	raftDataDir string,
 	interceptor Interceptor,
-) (*Raft, error) {
+) (_ *Raft, err error) {
 	metadataRaft := &Raft{
 		logger:      slog.With(slog.String("component", "metadata-provider-raft")),
 		interceptor: interceptor,
@@ -77,10 +78,18 @@ func New(
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to resolve raft address")
 	}
-	transport, err := hashicorpraft.NewTCPTransport(raftAddress, addr, 3, 10*time.Second, os.Stderr)
+	metadataRaft.transport, err = hashicorpraft.NewTCPTransport(raftAddress, addr, 3, 10*time.Second, os.Stderr)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create raft transport")
 	}
+
+	// Release whatever has been created so far when a later step fails:
+	// the transport holds a TCP listener and the store an open database
+	defer func() {
+		if err != nil {
+			_ = metadataRaft.release()
+		}
+	}()
 
 	metadataRaft.store, err = newKVRaftStore(filepath.Join(dataDir, "store"))
 	if err != nil {
@@ -92,7 +101,7 @@ func New(
 		return nil, errors.Wrap(err, "failed to create snapshot store")
 	}
 
-	metadataRaft.node, err = hashicorpraft.NewRaft(config, metadataRaft.sc, metadataRaft.store, metadataRaft.store, snapshotStore, transport)
+	metadataRaft.node, err = hashicorpraft.NewRaft(config, metadataRaft.sc, metadataRaft.store, metadataRaft.store, snapshotStore, metadataRaft.transport)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create raft node")
 	}
@@ -125,12 +134,25 @@ func getRaftServers(bootstrapNodes []string) []hashicorpraft.Server {
 
 func (r *Raft) Close() error {
 	r.closeOnce.Do(func() {
-		r.closeErr = multierr.Combine(
-			r.node.Shutdown().Error(),
-			r.store.Close(),
-		)
+		r.closeErr = r.release()
 	})
 	return r.closeErr
+}
+
+// release shuts down whichever components have been created, in dependency
+// order: the node first, then the store and the transport it was using.
+func (r *Raft) release() error {
+	var err error
+	if r.node != nil {
+		err = multierr.Append(err, r.node.Shutdown().Error())
+	}
+	if r.store != nil {
+		err = multierr.Append(err, r.store.Close())
+	}
+	if r.transport != nil {
+		err = multierr.Append(err, r.transport.Close())
+	}
+	return err
 }
 
 var _ io.Closer = (*Raft)(nil)
