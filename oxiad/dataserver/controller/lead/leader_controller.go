@@ -1030,8 +1030,12 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 
 	proposal.ToLogEntry(entryValue)
 
-	// Serialize into the reusable buffer instead of allocating per proposal:
-	// value is consumed by the WAL append below, before the lock is released
+	// Serialize into the reusable buffer instead of allocating per proposal.
+	// This is safe: value is consumed synchronously by AppendAndSync below,
+	// on this goroutine (serialized into the wal before it returns, per the
+	// Wal interface contract), and the next proposal can only overwrite the
+	// buffer once this one releases the lock. The completion callbacks never
+	// reference value: the database apply uses the proposal object.
 	marshalBuf, value, err := proto.MarshalToBuffer(lc.marshalBuf, entryValue)
 	if err != nil {
 		lc.Unlock()
