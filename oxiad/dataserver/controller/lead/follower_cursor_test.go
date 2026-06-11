@@ -262,9 +262,13 @@ func TestFollowerCursor_StreamToEmptyFollowerWhenWalComplete(t *testing.T) {
 	// brought up to date by tailing the log, not with a snapshot, so that its
 	// own WAL gets populated and it stays eligible for leader election
 	for i := int64(0); i < n; i++ {
-		req := <-stream.AppendReqs
-		assert.EqualValues(t, 1, req.Term)
-		assert.EqualValues(t, i, req.Entry.Offset)
+		select {
+		case req := <-stream.AppendReqs:
+			assert.EqualValues(t, 1, req.Term)
+			assert.EqualValues(t, i, req.Entry.Offset)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("did not receive the append for offset %d", i)
+		}
 	}
 	assert.Empty(t, stream.SendSnapshotStream.Requests)
 
