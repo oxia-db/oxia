@@ -433,7 +433,9 @@ func (t *wal) rolloverSegment() error {
 
 // flushAndCloseRolledSegment is invoked by the sync goroutine for the segments
 // handed over by rolloverSegment, before acknowledging their offsets. The
-// flushes are no-ops when a cold path already closed the segment concurrently.
+// flushes are safe no-ops when a cold path already closed the segment
+// concurrently: Close nils the mapping while holding the flush lock, and both
+// calls check it under that same lock.
 func (t *wal) flushAndCloseRolledSegment(s ReadWriteSegment) error {
 	if err := s.SyncFileIfNeeded(); err != nil {
 		return err
@@ -442,11 +444,11 @@ func (t *wal) flushAndCloseRolledSegment(s ReadWriteSegment) error {
 		return err
 	}
 
-	// Removing the segment from the pending list is the ownership gate: when
-	// a cold path (close, clear, truncate) drained it concurrently, there is
-	// nothing left to do here. New readers stop finding the segment once it
-	// is removed, and a reader already using it holds the wal read lock,
-	// which this removal waits for.
+	// Atomically move the segment from the pending list to the read-only
+	// group, so that there is no instant where readers find it in neither.
+	// The removal is also the ownership gate: when a cold path (close, clear,
+	// truncate) drained the segment concurrently, there is nothing left to
+	// do here.
 	t.Lock()
 	owned := false
 	for i, ps := range t.pendingCloseSegments {
@@ -456,16 +458,18 @@ func (t *wal) flushAndCloseRolledSegment(s ReadWriteSegment) error {
 			break
 		}
 	}
+	if owned {
+		t.readOnlySegments.AddedNewSegment(s.BaseOffset())
+	}
 	t.Unlock()
 	if !owned {
 		return nil
 	}
 
-	if err := s.Close(); err != nil {
-		return err
-	}
-	t.readOnlySegments.AddedNewSegment(s.BaseOffset())
-	return nil
+	// The read-only group can open the segment even before this Close has
+	// written the index file: a missing index gets rebuilt from the txn file
+	// (see newReadOnlySegment)
+	return s.Close()
 }
 
 // drainPendingCloseSegments makes durable and closes the rolled-over segments
@@ -687,19 +691,18 @@ func (t *wal) TruncateLog(lastSafeOffset int64) (int64, error) { //nolint:revive
 			case lastSafeOffset >= segment.Get().BaseOffset():
 				// The truncation will happen in the middle of this segment,
 				// and this will also become the new current segment
+				baseOffset := segment.Get().BaseOffset()
+				lastCrc := segment.Get().LastCrc()
+				// Close the reference exactly once: the counter decrements
+				// unconditionally, so the error paths must not close it again
 				if err = segment.Close(); err != nil {
 					return InvalidOffset, err
 				}
-				if t.currentSegment, err = newReadWriteSegment(t.walPath, segment.Get().BaseOffset(),
-					t.segmentSize, segment.Get().LastCrc(), t.commitOffsetProvider); err != nil {
-					err = multierr.Append(err, segment.Close())
+				if t.currentSegment, err = newReadWriteSegment(t.walPath, baseOffset,
+					t.segmentSize, lastCrc, t.commitOffsetProvider); err != nil {
 					return InvalidOffset, err
 				}
 				if err := t.currentSegment.Truncate(lastSafeOffset); err != nil {
-					err = multierr.Append(err, segment.Close())
-					return InvalidOffset, err
-				}
-				if err = segment.Close(); err != nil {
 					return InvalidOffset, err
 				}
 				// Proceed to updating the last appended/synced offsets below:

@@ -17,6 +17,8 @@ package wal
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -835,6 +837,51 @@ func TestWal_TruncateWithPendingCloseSegments(t *testing.T) {
 		assert.EqualValues(t, i, e.Offset)
 	}
 	assert.False(t, r.HasNext())
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// A missing segment index file — the state left behind when the process
+// crashes between a rollover and the sync round that closes the rolled-over
+// segment — gets rebuilt from the txn file on open.
+func TestWal_ReadOnlySegmentMissingIndex(t *testing.T) {
+	dir := t.TempDir()
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  dir,
+		Retention:   1 * time.Hour,
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})
+	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	payload := strings.Repeat("x", 1024)
+	var entries []string
+	for i := 0; i < 300; i++ {
+		value := fmt.Sprintf("%s-%d", payload, i)
+		entries = append(entries, value)
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: int64(i), Value: []byte(value)}))
+	}
+	assert.NoError(t, w.Close())
+
+	// Simulate the crash window: drop every segment index file
+	idxFiles, err := filepath.Glob(filepath.Join(walPath(dir, constant.DefaultNamespace, shard), "*.idx*"))
+	assert.NoError(t, err)
+	assert.NotEmpty(t, idxFiles)
+	for _, idx := range idxFiles {
+		assert.NoError(t, os.Remove(idx))
+	}
+
+	// Reopen: the indexes are rebuilt from the txn files
+	w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 299, w.LastOffset())
+
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries)
 	assert.NoError(t, r.Close())
 	assert.NoError(t, w.Close())
 	assert.NoError(t, f.Close())
