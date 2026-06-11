@@ -95,35 +95,36 @@ func fromVersion(v metadatacommon.Version) int64 {
 }
 
 func (mpr *Provider[T]) loadLatest() provider.Versioned[T] {
-	mpr.raft.mu.Lock()
-	defer mpr.raft.mu.Unlock()
-
-	document := mpr.raft.sc.document(mpr.codec.GetKey())
+	state, currentVersion := mpr.raft.sc.documentState(mpr.codec.GetKey())
 
 	mpr.raft.logger.Debug("Get metadata",
 		slog.String("key", mpr.codec.GetKey()),
-		slog.Any("metadata", document.State),
-		slog.Any("current-version", document.CurrentVersion))
-	if len(document.State) == 0 {
+		slog.Any("metadata", state),
+		slog.Any("current-version", currentVersion))
+	if len(state) == 0 {
 		return provider.Versioned[T]{
 			Value:   mpr.codec.NewZero(),
-			Version: toVersion(document.CurrentVersion),
+			Version: toVersion(currentVersion),
 		}
 	}
-	value, err := mpr.codec.UnmarshalJSON(document.State)
+	value, err := mpr.codec.UnmarshalJSON(state)
 	if err != nil {
+		// Committed metadata that cannot be decoded: failing to start is
+		// safer than serving (or overwriting) a state we cannot read
 		panic(err)
 	}
 	return provider.Versioned[T]{
 		Value:   value,
-		Version: toVersion(document.CurrentVersion),
+		Version: toVersion(currentVersion),
 	}
 }
 
+// Store replicates the new state through raft. Concurrent stores are safe
+// without any provider-side lock: the FSM applies entries serially and the
+// expected-version check makes the update optimistic (ErrBadVersion on
+// conflict). Neither VerifyLeader (a quorum round-trip) nor Apply (a full
+// replication round) must ever run under a lock.
 func (mpr *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadatacommon.Version, err error) {
-	mpr.raft.mu.Lock()
-	defer mpr.raft.mu.Unlock()
-
 	if err = mpr.raft.node.VerifyLeader().Error(); err != nil {
 		return metadatacommon.NotExists, err
 	}
@@ -133,11 +134,14 @@ func (mpr *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metada
 		return metadatacommon.NotExists, err
 	}
 
-	mpr.raft.logger.Debug("Store into raft",
-		slog.String("key", mpr.codec.GetKey()),
-		slog.Any("metadata", data),
-		slog.Any("expected-version", snapshot.Version),
-		slog.Any("current-version", mpr.raft.sc.document(mpr.codec.GetKey()).CurrentVersion))
+	if mpr.logger.Enabled(mpr.ctx, slog.LevelDebug) {
+		_, currentVersion := mpr.raft.sc.documentState(mpr.codec.GetKey())
+		mpr.raft.logger.Debug("Store into raft",
+			slog.String("key", mpr.codec.GetKey()),
+			slog.Any("metadata", data),
+			slog.Any("expected-version", snapshot.Version),
+			slog.Any("current-version", currentVersion))
+	}
 
 	cmd := raftOpCmd{
 		Key:             mpr.codec.GetKey(),
