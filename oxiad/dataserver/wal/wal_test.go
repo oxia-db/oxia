@@ -17,6 +17,8 @@ package wal
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -727,6 +729,157 @@ func TestWal_RolloverWithDeferredFileSync(t *testing.T) {
 	assert.EqualValues(t, 999, w.LastOffset())
 
 	r, err = w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries)
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// Rolled-over segments are made durable and closed by the sync goroutine:
+// until then their entries stay readable through the wal, and a sync round
+// drains them into the read-only group before acknowledging.
+func TestWal_RolloverKeepsPendingSegmentsReadable(t *testing.T) {
+	f, w := createWal(t)
+	walImpl := w.(*wal)
+
+	payload := strings.Repeat("x", 1024)
+	var entries []string
+
+	// Synced entries filling most of the first segment (128 KiB)
+	for i := 0; i < 100; i++ {
+		value := fmt.Sprintf("%s-%d", payload, i)
+		entries = append(entries, value)
+		assert.NoError(t, w.Append(&proto.LogEntry{Term: 1, Offset: int64(i), Value: []byte(value)}))
+	}
+
+	// Async appends crossing the segment boundary: no sync round runs, so the
+	// rolled-over segment stays pending
+	for i := 100; i < 150; i++ {
+		value := fmt.Sprintf("%s-%d", payload, i)
+		entries = append(entries, value)
+		assert.NoError(t, w.AppendAsync(&proto.LogEntry{Term: 1, Offset: int64(i), Value: []byte(value)}))
+	}
+
+	walImpl.RLock()
+	pendingSegments := len(walImpl.pendingCloseSegments)
+	walImpl.RUnlock()
+	assert.Greater(t, pendingSegments, 0)
+
+	// The synced entries living in the pending segment are still readable
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries[:100])
+	assert.NoError(t, r.Close())
+
+	// A sync round drains the pending segments before acknowledging
+	assert.NoError(t, w.Sync(context.Background()))
+	walImpl.RLock()
+	pendingSegments = len(walImpl.pendingCloseSegments)
+	walImpl.RUnlock()
+	assert.Equal(t, 0, pendingSegments)
+
+	r, err = w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries)
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+
+	// Reopen: recovery across the drained segments
+	w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 149, w.LastOffset())
+	r, err = w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries)
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// Truncation drains the pending-close segments first, so that it operates on
+// the complete set of segments.
+func TestWal_TruncateWithPendingCloseSegments(t *testing.T) {
+	f, w := createWal(t)
+	walImpl := w.(*wal)
+
+	payload := strings.Repeat("x", 1024)
+	for i := 0; i < 100; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: int64(i), Value: []byte(fmt.Sprintf("%s-%d", payload, i))}))
+	}
+	for i := 100; i < 150; i++ {
+		assert.NoError(t, w.AppendAsync(&proto.LogEntry{
+			Term: 1, Offset: int64(i), Value: []byte(fmt.Sprintf("%s-%d", payload, i))}))
+	}
+
+	walImpl.RLock()
+	pendingSegments := len(walImpl.pendingCloseSegments)
+	walImpl.RUnlock()
+	assert.Greater(t, pendingSegments, 0)
+
+	headOffset, err := w.TruncateLog(80)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 80, headOffset)
+	assert.EqualValues(t, 80, w.LastOffset())
+
+	walImpl.RLock()
+	pendingSegments = len(walImpl.pendingCloseSegments)
+	walImpl.RUnlock()
+	assert.Equal(t, 0, pendingSegments)
+
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	for i := 0; i <= 80; i++ {
+		assert.True(t, r.HasNext())
+		e, _, _, err := r.ReadNext()
+		assert.NoError(t, err)
+		assert.EqualValues(t, i, e.Offset)
+	}
+	assert.False(t, r.HasNext())
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// A missing segment index file — the state left behind when the process
+// crashes between a rollover and the sync round that closes the rolled-over
+// segment — gets rebuilt from the txn file on open.
+func TestWal_ReadOnlySegmentMissingIndex(t *testing.T) {
+	dir := t.TempDir()
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  dir,
+		Retention:   1 * time.Hour,
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})
+	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	payload := strings.Repeat("x", 1024)
+	var entries []string
+	for i := 0; i < 300; i++ {
+		value := fmt.Sprintf("%s-%d", payload, i)
+		entries = append(entries, value)
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: int64(i), Value: []byte(value)}))
+	}
+	assert.NoError(t, w.Close())
+
+	// Simulate the crash window: drop every segment index file
+	idxFiles, err := filepath.Glob(filepath.Join(walPath(dir, constant.DefaultNamespace, shard), "*.idx*"))
+	assert.NoError(t, err)
+	assert.NotEmpty(t, idxFiles)
+	for _, idx := range idxFiles {
+		assert.NoError(t, os.Remove(idx))
+	}
+
+	// Reopen: the indexes are rebuilt from the txn files
+	w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 299, w.LastOffset())
+
+	r, err := w.NewReader(InvalidOffset)
 	assert.NoError(t, err)
 	assertReaderReads(t, r, entries)
 	assert.NoError(t, r.Close())
