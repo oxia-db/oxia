@@ -49,7 +49,7 @@ func TestBalancer(t *testing.T) {
 		require.NoError(t, metadataFactory.Close())
 	})
 
-	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	metadata, _, err := metadataFactory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, metadata.Close())

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/hashicorp/raft"
 	"go.uber.org/multierr"
@@ -32,6 +33,9 @@ type raftOpCmd struct {
 }
 
 type stateContainer struct {
+	// Guards Documents: Apply and Restore mutate it on the raft FSM
+	// goroutine, while the providers read it through documentState
+	mu          sync.RWMutex
 	Documents   map[string]*documentContainer `json:"-"`
 	logger      *slog.Logger
 	interceptor Interceptor
@@ -59,12 +63,16 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 		opCmd.Key = metadatacodec.ClusterStatusCodec.GetKey()
 	}
 
+	sc.mu.Lock()
 	document := sc.document(opCmd.Key)
 	if opCmd.ExpectedVersion != document.CurrentVersion {
+		currentVersion := document.CurrentVersion
+		sc.mu.Unlock()
+
 		sc.logger.Warn("Failed to apply raft state",
 			slog.String("key", opCmd.Key),
 			slog.Int64("expected-version", opCmd.ExpectedVersion),
-			slog.Int64("current-version", document.CurrentVersion),
+			slog.Int64("current-version", currentVersion),
 			slog.Any("proposed-state", opCmd.NewState))
 
 		return &applyResult{changeApplied: false}
@@ -72,18 +80,24 @@ func (sc *stateContainer) Apply(logEntry *raft.Log) any {
 
 	document.State = cloneBytes(opCmd.NewState)
 	document.CurrentVersion++
+	state, newVersion := document.State, document.CurrentVersion
+	sc.mu.Unlock()
+
 	if sc.interceptor != nil {
-		sc.interceptor.OnApplied(opCmd.Key, document.State, document.CurrentVersion)
+		sc.interceptor.OnApplied(opCmd.Key, state, newVersion)
 	}
 
 	sc.logger.Info("Applied raft log entry",
 		slog.String("key", opCmd.Key),
-		slog.Int64("new-version", document.CurrentVersion))
-	return &applyResult{changeApplied: true, newVersion: document.CurrentVersion}
+		slog.Int64("new-version", newVersion))
+	return &applyResult{changeApplied: true, newVersion: newVersion}
 }
 
 // Snapshot returns a snapshot of the FSM.
 func (sc *stateContainer) Snapshot() (raft.FSMSnapshot, error) {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+
 	return &stateContainer{
 		Documents: cloneDocuments(sc.Documents),
 	}, nil
@@ -99,6 +113,9 @@ func (sc *stateContainer) Restore(rc io.ReadCloser) error {
 
 	sc.logger.Info("Restored metadata state from snapshot",
 		slog.Int("documents", len(persisted.Documents)))
+
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 
 	if len(persisted.Documents) > 0 {
 		sc.Documents = cloneDocuments(persisted.Documents)
@@ -156,6 +173,8 @@ func marshalStateContainer(sc *stateContainer) ([]byte, error) {
 	})
 }
 
+// document returns the container for a key, creating it when absent.
+// It must be called while holding mu.
 func (sc *stateContainer) document(key string) *documentContainer {
 	document, ok := sc.Documents[key]
 	if !ok {
@@ -163,6 +182,20 @@ func (sc *stateContainer) document(key string) *documentContainer {
 		sc.Documents[key] = document
 	}
 	return document
+}
+
+// documentState returns the current state and version of a document, without
+// creating it when absent: an absent document reports version -1. The state
+// slice is replaced wholesale on every apply, never mutated in place, so it
+// is safe to hand out.
+func (sc *stateContainer) documentState(key string) ([]byte, int64) {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+
+	if document, ok := sc.Documents[key]; ok {
+		return document.State, document.CurrentVersion
+	}
+	return nil, -1
 }
 
 func cloneDocuments(documents map[string]*documentContainer) map[string]*documentContainer {

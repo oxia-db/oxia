@@ -104,20 +104,24 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	return factory, nil
 }
 
-func (f *Factory) CreateMetadata(ctx context.Context) (Metadata, error) {
+// CreateMetadata blocks until this coordinator becomes the leader. The
+// returned channel gets closed if the leadership is subsequently lost; it is
+// nil when the leadership cannot be lost.
+func (f *Factory) CreateMetadata(ctx context.Context) (Metadata, <-chan struct{}, error) {
 	f.mu.Lock()
 	statusProvider := f.statusProvider
 	configProvider := f.configProvider
 	f.mu.Unlock()
 
 	slog.Info("Waiting to become leader", slog.String("component", "coordinator"))
-	if err := statusProvider.WaitToBecomeLeader(); err != nil {
+	leadershipLost, err := statusProvider.WaitToBecomeLeader()
+	if err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("failed to wait in becoming leader: %w", err)
+		return nil, nil, fmt.Errorf("failed to wait in becoming leader: %w", err)
 	}
 	slog.Info("This coordinator is now leader", slog.String("component", "coordinator"))
 
-	return newMetadata(ctx, statusProvider, configProvider), nil
+	return newMetadata(ctx, statusProvider, configProvider), leadershipLost, nil
 }
 
 func (f *Factory) Close() error {

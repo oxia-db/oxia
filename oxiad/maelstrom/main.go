@@ -242,7 +242,7 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 		return errors.Wrap(err, "failed to create coordinator metadata factory")
 	}
 
-	metadata, err := metadataFactory.CreateMetadata(ctx)
+	metadata, _, err := metadataFactory.CreateMetadata(ctx)
 	if err != nil {
 		_ = commonio.CloseIfNotNil(metadataFactory)
 		return errors.Wrap(err, "failed to create coordinator metadata")

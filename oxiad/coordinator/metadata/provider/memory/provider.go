@@ -38,8 +38,9 @@ type Provider[T gproto.Message] struct {
 	watch        *commonwatch.Watch[provider.Versioned[T]]
 }
 
-func (*Provider[T]) WaitToBecomeLeader() error {
-	return nil
+func (*Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
+	// In-memory provider: single process, the leadership cannot be lost
+	return nil, nil //nolint:nilnil
 }
 
 func NewProvider[T gproto.Message](codec metadatacodec.Codec[T], watchEnabled metadatacommon.WatchMode) provider.Provider[T] {

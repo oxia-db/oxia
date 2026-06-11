@@ -19,9 +19,12 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -74,7 +77,8 @@ var (
 			r, err := raft.New(addr, []string{addr}, filepath.Join(t.TempDir(), "raft"), nil)
 			assert.NoError(t, err)
 			p := raft.NewProvider(t.Context(), r, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
-			assert.NoError(t, p.WaitToBecomeLeader())
+			_, err = p.WaitToBecomeLeader()
+			assert.NoError(t, err)
 			return p
 		},
 	}
@@ -148,7 +152,8 @@ func TestProviderConfigResource(t *testing.T) {
 			assert.NoError(t, err)
 			statusProvider := raft.NewProvider(t.Context(), r, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
 			configProvider := raft.NewProvider(t.Context(), r, metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled)
-			assert.NoError(t, statusProvider.WaitToBecomeLeader())
+			_, err = statusProvider.WaitToBecomeLeader()
+			assert.NoError(t, err)
 			return configProvider
 		},
 	}
@@ -243,4 +248,58 @@ func incrementVersion(metaObj metav1.Object) {
 	}
 
 	metaObj.SetResourceVersion(strconv.FormatUint(i+1, 10))
+}
+
+// Concurrent optimistic stores: every writer retries on version conflicts,
+// and every update succeeds exactly once. Exercises the provider state
+// synchronization under the race detector.
+func TestProviderConcurrentStores(t *testing.T) {
+	for name, newProvider := range providers {
+		t.Run(name, func(t *testing.T) {
+			p := newProvider(t)
+			defer func() { assert.NoError(t, p.Close()) }()
+
+			const writers = 4
+			const updatesPerWriter = 10
+
+			initial := p.Watch().Subscribe().Load()
+
+			var stored atomic.Int32
+			var wg sync.WaitGroup
+			// Failures are reported back to the test goroutine: require must
+			// not be called from the writers
+			writerErrs := make(chan error, writers)
+			for i := 0; i < writers; i++ {
+				wg.Go(func() {
+					receiver := p.Watch().Subscribe()
+					for u := 0; u < updatesPerWriter; {
+						snapshot := receiver.Load()
+						_, err := p.Store(provider.Versioned[*proto.ClusterStatus]{
+							Value:   snapshot.Value,
+							Version: snapshot.Version,
+						})
+						if errors.Is(err, metadatacommon.ErrBadVersion) {
+							// Lost the race: reload and retry
+							continue
+						}
+						if err != nil {
+							writerErrs <- err
+							return
+						}
+						stored.Add(1)
+						u++
+					}
+				})
+			}
+			wg.Wait()
+			close(writerErrs)
+			for err := range writerErrs {
+				require.NoError(t, err)
+			}
+
+			assert.EqualValues(t, writers*updatesPerWriter, stored.Load())
+			final := p.Watch().Subscribe().Load()
+			assert.NotEqual(t, initial.Version, final.Version)
+		})
+	}
 }

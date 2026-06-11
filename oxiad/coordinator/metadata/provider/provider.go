@@ -33,7 +33,11 @@ type Provider[T gproto.Message] interface {
 
 	Store(snapshot Versioned[T]) (newVersion metadataconstant.Version, err error)
 
-	WaitToBecomeLeader() error
+	// WaitToBecomeLeader blocks until this coordinator holds the leadership.
+	// The returned channel gets closed if the leadership is subsequently
+	// lost: the caller must stop coordinating when that happens. A nil
+	// channel means the leadership cannot be lost.
+	WaitToBecomeLeader() (lost <-chan struct{}, err error)
 
 	Watch() *commonwatch.Watch[Versioned[T]]
 }

@@ -17,6 +17,7 @@ package coordinator
 import (
 	"context"
 	"log/slog"
+	"os"
 	"sync"
 
 	"go.uber.org/multierr"
@@ -108,7 +109,8 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	if err != nil {
 		return nil, err
 	}
-	metadata, err = metadataFactory.CreateMetadata(parent)
+	var leadershipLost <-chan struct{}
+	metadata, leadershipLost, err = metadataFactory.CreateMetadata(parent)
 	if err != nil {
 		return nil, err
 	}
@@ -160,8 +162,30 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 			"component": "configuration-watcher",
 		}, server.backgroundHandleConfChange)
 	})
+	if leadershipLost != nil {
+		server.wg.Go(func() {
+			process.DoWithLabels(ctx, map[string]string{
+				"component": "leadership-watcher",
+			}, func() {
+				select {
+				case <-leadershipLost:
+					server.logger.Error("Coordination leadership lost: terminating to avoid a split brain")
+					onLeadershipLost()
+				case <-ctx.Done():
+				}
+			})
+		})
+	}
 
 	return &server, nil
+}
+
+// onLeadershipLost terminates the process: a coordinator that lost the
+// leadership must stop coordinating immediately, before it can run elections
+// or move ensembles alongside the new leader, and a restart rejoins the
+// election from a clean state. Overridable in tests.
+var onLeadershipLost = func() {
+	os.Exit(1)
 }
 
 func startMetricsServer(metrics commonoption.MetricOptions) (*metric.PrometheusMetrics, error) {

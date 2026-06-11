@@ -112,7 +112,7 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 		},
 	})
 	require.NoError(t, err)
-	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	metadata, _, err := metadataFactory.CreateMetadata(t.Context())
 	assert.NoError(t, err)
 	t.Cleanup(func() {
 		assert.NoError(t, metadata.Close())
