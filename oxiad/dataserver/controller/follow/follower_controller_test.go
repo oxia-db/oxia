@@ -942,12 +942,15 @@ func TestFollower_DupEntries(t *testing.T) {
 	}()
 
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
-	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
 
-	// Wait for responses
+	// Wait for the entry to be synced and acked, so that the duplicate below
+	// is at or below the synced offset and gets re-acknowledged immediately.
+	// (A duplicate that is not yet synced is only acked after its sync round:
+	// see TestLogSynchronizer_DuplicateAckOnlySynced.)
 	r1 := stream.GetResponse()
 	assert.EqualValues(t, 0, r1.Offset)
 
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0", "b": "1"}, wal.InvalidOffset))
 	r2 := stream.GetResponse()
 	assert.EqualValues(t, 0, r2.Offset)
 

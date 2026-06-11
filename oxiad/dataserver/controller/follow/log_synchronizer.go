@@ -134,7 +134,16 @@ func (ls *LogSynchronizer) append0(stream proto.OxiaLogReplication_ReplicateServ
 			slog.Int64("commit-offset", req.CommitOffset),
 			slog.Int64("offset", req.Entry.Offset),
 		)
-		return stream.Send(&proto.Ack{Offset: req.Entry.Offset})
+
+		// Only acknowledge what is already synced: the leader accounts the
+		// ack, cumulatively, as durable. A duplicate that is appended but
+		// not synced yet must not be acked here: wake the syncer instead,
+		// which acknowledges it after the fsync.
+		if req.Entry.Offset <= ls.wal.LastOffset() {
+			return stream.Send(&proto.Ack{Offset: req.Entry.Offset})
+		}
+		channel.PushNoBlock(syncCond, struct{}{})
+		return nil
 	}
 
 	// Append the entry asynchronously, passing the previous CRC from the leader.
