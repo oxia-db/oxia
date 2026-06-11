@@ -304,8 +304,10 @@ func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Nam
 
 func (c *runtime) Close() error {
 	c.ctxCancel()
-	c.wg.Wait()
 
+	// The shard controllers must be closed before waiting for the action
+	// worker: the worker blocks on in-flight election actions, which only
+	// complete once the shard controllers' retry loops get canceled
 	var err error
 	for _, sc := range c.splitControllers {
 		sc.Close()
@@ -313,6 +315,8 @@ func (c *runtime) Close() error {
 	for _, sc := range c.shardControllers {
 		err = multierr.Append(err, sc.Close())
 	}
+
+	c.wg.Wait()
 
 	for _, nc := range c.dataServerControllers {
 		err = multierr.Append(err, nc.Close())
@@ -825,7 +829,12 @@ func New(
 		NodeAvailableJudger: func(nodeID string) bool {
 			c.RLock()
 			defer c.RUnlock()
-			nc := c.dataServerControllers[nodeID]
+			nc, ok := c.dataServerControllers[nodeID]
+			if !ok {
+				// The controller might not have been created yet for a
+				// data server that was just registered
+				return false
+			}
 			return nc.Status() == controller.Running
 		},
 	})
