@@ -85,7 +85,9 @@ func TestLogSynchronizer_DuplicateAckOnlySynced(t *testing.T) {
 	}()
 
 	// A duplicate at or below the synced offset is re-acked without
-	// requiring anything new to become durable
+	// requiring anything new to become durable. The ack is cumulative, at
+	// the durable head, so that the leader can skip everything the
+	// follower already has.
 	stream.AddRequest(&proto.Append{
 		Term:                    1,
 		Entry:                   &proto.LogEntry{Term: 1, Offset: 1},
@@ -93,7 +95,7 @@ func TestLogSynchronizer_DuplicateAckOnlySynced(t *testing.T) {
 		CumulativeAcksSupported: true,
 	})
 	response := stream.GetResponse()
-	assert.EqualValues(t, 1, response.Offset)
+	assert.EqualValues(t, 2, response.Offset)
 	assert.EqualValues(t, 2, w.synced.Load())
 
 	// Entries 3..4 are appended but not synced yet

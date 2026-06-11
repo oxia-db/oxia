@@ -216,19 +216,14 @@ func (ls *LogSynchronizer) sendAcks(stream proto.OxiaLogReplication_ReplicateSer
 	reAcks := ls.takeReAcks()
 
 	if ls.cumulativeAcks.Load() {
-		// A single cumulative ack covers the re-acked duplicates and the
-		// whole sync round
-		ackOffset := wal.InvalidOffset
-		for _, offset := range reAcks {
-			ackOffset = max(ackOffset, offset)
-		}
-		if newHeadOffset > oldHeadOffset {
-			ackOffset = max(ackOffset, newHeadOffset)
-		}
-		if ackOffset == wal.InvalidOffset {
+		// A single cumulative ack at the durable head covers both the
+		// re-acked duplicates and the entries synced in the last round.
+		// Always ack the head, not the duplicated offsets: it lets a
+		// reconnecting leader skip everything the follower already has.
+		if len(reAcks) == 0 && newHeadOffset <= oldHeadOffset {
 			return nil
 		}
-		return stream.Send(&proto.Ack{Offset: ackOffset})
+		return stream.Send(&proto.Ack{Offset: newHeadOffset})
 	}
 
 	// The leader did not advertise cumulative-ack support (older version):
