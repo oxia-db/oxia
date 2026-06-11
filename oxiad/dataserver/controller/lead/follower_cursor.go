@@ -83,6 +83,7 @@ type followerCursor struct {
 	cancel         context.CancelFunc
 	latch          sync.WaitGroup
 	log            *slog.Logger
+	observer       bool                  // true for split observer cursors
 	splitHashRange *proto.Int32HashRange // non-nil for split observer cursors
 
 	snapshotsTransferTime     metric.LatencyHistogram
@@ -196,6 +197,7 @@ func NewObserverFollowerCursor( //nolint:revive
 		db:                      db,
 		namespace:               namespace,
 		shardId:                 shardId,
+		observer:                true,
 		splitHashRange:          splitHashRange,
 
 		log: slog.With(
@@ -252,6 +254,16 @@ func (fc *followerCursor) shouldSendSnapshot() bool {
 	walFirstOffset := fc.wal.FirstOffset()
 
 	if ackOffset == wal.InvalidOffset && fc.ackTracker.CommitOffset() >= 0 {
+		if walFirstOffset == 0 && !fc.observer {
+			// The WAL still contains the full history: bring the follower up to
+			// date by tailing the log instead of sending a snapshot. This keeps
+			// the follower's WAL populated, so it remains a viable candidate in
+			// future leader elections (a snapshot leaves the WAL empty and the
+			// follower would keep fencing with an invalid head entry until the
+			// next write). Split observers are excluded: a child shard must be
+			// seeded with the hash-range-filtered snapshot.
+			return false
+		}
 		fc.log.Info(
 			"Sending snapshot to empty follower",
 			slog.Int64("follower-ack-offset", ackOffset),
