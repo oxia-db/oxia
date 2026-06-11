@@ -58,3 +58,53 @@ func TestStateContainerApplySupportsV0163StatusLog(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, status.GetInstanceId(), decoded.GetInstanceId())
 }
+
+// Persist must retain the snapshot on success: a Cancel on the success path
+// discards it, while the raft log still gets compacted anyway, losing the
+// state on the next restart.
+func TestStateContainerPersistRetainsSnapshot(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sc := newStateContainer(logger, nil)
+
+	status := &commonproto.ClusterStatus{InstanceId: "snapshot-test"}
+	statusBytes, err := metadatacodec.ClusterStatusCodec.MarshalJSON(status)
+	require.NoError(t, err)
+
+	cmd, err := json.Marshal(raftOpCmd{
+		Key:             metadatacodec.ClusterStatusCodec.GetKey(),
+		NewState:        statusBytes,
+		ExpectedVersion: -1,
+	})
+	require.NoError(t, err)
+	res := sc.Apply(&hashicorpraft.Log{Data: cmd})
+	require.True(t, res.(*applyResult).changeApplied)
+
+	snapshot, err := sc.Snapshot()
+	require.NoError(t, err)
+
+	store, err := hashicorpraft.NewFileSnapshotStoreWithLogger(t.TempDir(), 2, nil)
+	require.NoError(t, err)
+	_, trans := hashicorpraft.NewInmemTransport("")
+	sink, err := store.Create(hashicorpraft.SnapshotVersionMax, 1, 1, hashicorpraft.Configuration{}, 0, trans)
+	require.NoError(t, err)
+
+	require.NoError(t, snapshot.Persist(sink))
+
+	// The snapshot must be retained, not canceled
+	snapshots, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, snapshots, 1)
+
+	// And a fresh container must restore the state from it
+	_, rc, err := store.Open(snapshots[0].ID)
+	require.NoError(t, err)
+
+	restored := newStateContainer(logger, nil)
+	require.NoError(t, restored.Restore(rc))
+
+	doc := restored.document(metadatacodec.ClusterStatusCodec.GetKey())
+	require.EqualValues(t, 0, doc.CurrentVersion)
+	restoredStatus, err := metadatacodec.ClusterStatusCodec.UnmarshalJSON(doc.State)
+	require.NoError(t, err)
+	require.Equal(t, "snapshot-test", restoredStatus.InstanceId)
+}
