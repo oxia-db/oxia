@@ -235,6 +235,12 @@ func (ms *readWriteSegment) Close() error {
 	ms.flushLock.Lock()
 	defer ms.flushLock.Unlock()
 
+	if ms.txnMappedFile == nil {
+		// Already closed: TruncateLog clears the wal after having deleted
+		// (and thus closed) the current segment
+		return nil
+	}
+
 	err := multierr.Combine(
 		ms.txnMappedFile.Unmap(),
 		ms.txnFile.Close(),

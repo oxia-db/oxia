@@ -599,6 +599,10 @@ func (t *wal) Clear() error {
 	t.Lock()
 	defer t.Unlock()
 
+	return t.clearWithoutLock()
+}
+
+func (t *wal) clearWithoutLock() error {
 	err := multierr.Combine(
 		t.drainPendingCloseSegments(),
 		t.currentSegment.Close(),
@@ -684,7 +688,7 @@ func (t *wal) TruncateLog(lastSafeOffset int64) (int64, error) { //nolint:revive
 				return InvalidOffset, err
 			case segment == nil:
 				// There are no segments left
-				if err := t.Clear(); err != nil {
+				if err := t.clearWithoutLock(); err != nil {
 					return InvalidOffset, err
 				}
 				return t.LastOffset(), nil
