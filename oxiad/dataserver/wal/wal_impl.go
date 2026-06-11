@@ -68,7 +68,13 @@ type wal struct {
 	segmentSize uint32
 	syncData    bool
 
-	currentSegment       ReadWriteSegment
+	currentSegment ReadWriteSegment
+
+	// Rolled-over segments waiting for the sync goroutine to make them
+	// durable and close them (see rolloverSegment); guarded by the wal
+	// mutex. They stay readable through readAtIndex until closed.
+	pendingCloseSegments []ReadWriteSegment
+
 	readOnlySegments     ReadOnlySegmentsGroup
 	commitOffsetProvider CommitOffsetProvider
 
@@ -185,6 +191,10 @@ func (t *wal) readAtIndex(index int64) (entry *proto.LogEntry, previousCrc uint3
 	var segment ReadOnlySegment
 	if index >= t.currentSegment.BaseOffset() {
 		segment = t.currentSegment
+	} else if pending := t.pendingCloseSegmentFor(index); pending != nil {
+		// A rolled-over segment not closed by the sync goroutine yet: it is
+		// still mapped, read it directly
+		segment = pending
 	} else {
 		rc, err = t.readOnlySegments.Get(index)
 		if err != nil {
@@ -210,6 +220,18 @@ func (t *wal) readAtIndex(index int64) (entry *proto.LogEntry, previousCrc uint3
 	}
 	t.readBytes.Add(len(val))
 	return entry, previousCrc, entryCrc, err
+}
+
+// pendingCloseSegmentFor returns the rolled-over segment containing the given
+// index, when it has not been handed to the read-only group yet.
+// Must be called while holding the wal lock.
+func (t *wal) pendingCloseSegmentFor(index int64) ReadWriteSegment {
+	for i := len(t.pendingCloseSegments) - 1; i >= 0; i-- {
+		if s := t.pendingCloseSegments[i]; index >= s.BaseOffset() {
+			return s
+		}
+	}
+	return nil
 }
 
 func (t *wal) LastOffset() int64 {
@@ -254,6 +276,7 @@ func (t *wal) closeWithoutLock() error {
 		t.activeEntries.Unregister()
 
 		return multierr.Combine(
+			t.drainPendingCloseSegments(),
 			t.currentSegment.Close(),
 			t.readOnlySegments.Close(),
 		)
@@ -374,18 +397,8 @@ func (t *wal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32
 
 func (t *wal) rolloverSegment() error {
 	var err error
-	// If no sync round has fsynced the segment file yet (the segment filled up
-	// before any sync round completed), fsync it now: its entries can still be
-	// acknowledged by a later sync round, and the file metadata must be
-	// durable by then.
-	if err = t.currentSegment.SyncFileIfNeeded(); err != nil {
-		return err
-	}
-	if err = t.currentSegment.Close(); err != nil {
-		return err
-	}
-	lastCrc := t.currentSegment.LastCrc()
-	t.readOnlySegments.AddedNewSegment(t.currentSegment.BaseOffset())
+	rolled := t.currentSegment
+	lastCrc := rolled.LastCrc()
 
 	// The new segment file is created without fsync-ing it: the rollover runs
 	// in the append path, while holding the WAL write lock (and, on the
@@ -397,7 +410,81 @@ func (t *wal) rolloverSegment() error {
 		return err
 	}
 
+	if !t.syncData {
+		// With sync disabled there are no sync rounds to hand the rolled-over
+		// segment to: close it inline
+		if err = rolled.SyncFileIfNeeded(); err != nil {
+			return err
+		}
+		if err = rolled.Close(); err != nil {
+			return err
+		}
+		t.readOnlySegments.AddedNewSegment(rolled.BaseOffset())
+		return nil
+	}
+
+	// Hand the rolled-over segment to the sync goroutine: its unsynced tail
+	// must be made durable before those offsets get acknowledged, and closing
+	// it (index-file write, munmap) does not belong in the append path
+	// either. The segment stays readable through readAtIndex until closed.
+	t.pendingCloseSegments = append(t.pendingCloseSegments, rolled)
 	return nil
+}
+
+// flushAndCloseRolledSegment is invoked by the sync goroutine for the segments
+// handed over by rolloverSegment, before acknowledging their offsets. The
+// flushes are no-ops when a cold path already closed the segment concurrently.
+func (t *wal) flushAndCloseRolledSegment(s ReadWriteSegment) error {
+	if err := s.SyncFileIfNeeded(); err != nil {
+		return err
+	}
+	if err := s.Flush(); err != nil {
+		return err
+	}
+
+	// Removing the segment from the pending list is the ownership gate: when
+	// a cold path (close, clear, truncate) drained it concurrently, there is
+	// nothing left to do here. New readers stop finding the segment once it
+	// is removed, and a reader already using it holds the wal read lock,
+	// which this removal waits for.
+	t.Lock()
+	owned := false
+	for i, ps := range t.pendingCloseSegments {
+		if ps == s {
+			t.pendingCloseSegments = append(t.pendingCloseSegments[:i], t.pendingCloseSegments[i+1:]...)
+			owned = true
+			break
+		}
+	}
+	t.Unlock()
+	if !owned {
+		return nil
+	}
+
+	if err := s.Close(); err != nil {
+		return err
+	}
+	t.readOnlySegments.AddedNewSegment(s.BaseOffset())
+	return nil
+}
+
+// drainPendingCloseSegments makes durable and closes the rolled-over segments
+// still waiting for the sync goroutine; used by the cold paths (close, clear,
+// truncate). Must be called while holding the wal lock.
+func (t *wal) drainPendingCloseSegments() error {
+	var err error
+	for _, s := range t.pendingCloseSegments {
+		serr := multierr.Combine(
+			s.SyncFileIfNeeded(),
+			s.Flush(),
+			s.Close())
+		if serr == nil {
+			t.readOnlySegments.AddedNewSegment(s.BaseOffset())
+		}
+		err = multierr.Append(err, serr)
+	}
+	t.pendingCloseSegments = nil
+	return err
 }
 
 func (t *wal) drainSyncRequestsChannel(callbacks []func(error)) []func(error) {
@@ -434,13 +521,23 @@ func (t *wal) runSync() {
 		t.RLock()
 		segment := t.currentSegment
 		lastAppendedOffset := t.lastAppendedOffset.Load()
+		pending := slices.Clone(t.pendingCloseSegments)
 		t.RUnlock()
 
 		var err error
-		if t.lastSyncedOffset.Load() != lastAppendedOffset {
+		if len(pending) > 0 || t.lastSyncedOffset.Load() != lastAppendedOffset {
 			timer := t.syncLatency.Timer()
-			if err = segment.SyncFileIfNeeded(); err == nil {
-				err = segment.Flush()
+			// The rolled-over segments must be durable and closed before the
+			// acknowledgment below, which covers their tail offsets
+			for _, s := range pending {
+				if err = t.flushAndCloseRolledSegment(s); err != nil {
+					break
+				}
+			}
+			if err == nil {
+				if err = segment.SyncFileIfNeeded(); err == nil {
+					err = segment.Flush()
+				}
 			}
 			if err != nil {
 				t.writeErrors.Inc()
@@ -499,6 +596,7 @@ func (t *wal) Clear() error {
 	defer t.Unlock()
 
 	err := multierr.Combine(
+		t.drainPendingCloseSegments(),
 		t.currentSegment.Close(),
 		t.readOnlySegments.Close(),
 		os.RemoveAll(t.walPath),
@@ -551,6 +649,12 @@ func (t *wal) TruncateLog(lastSafeOffset int64) (int64, error) { //nolint:revive
 	t.Lock()
 	defer t.Unlock()
 
+	// Bring any rolled-over segment still pending close into the read-only
+	// group, so that the truncation below sees the complete set of segments
+	if err := t.drainPendingCloseSegments(); err != nil {
+		return InvalidOffset, err
+	}
+
 	lastIndex := t.lastAppendedOffset.Load()
 	if lastIndex == InvalidOffset {
 		// The WAL is empty
@@ -568,6 +672,7 @@ func (t *wal) TruncateLog(lastSafeOffset int64) (int64, error) { //nolint:revive
 		}
 
 		// Delete any intermediate segment and truncate to the right position
+	truncateLoop:
 		for {
 			segment, err := t.readOnlySegments.PollHighestSegment()
 			switch {
@@ -594,9 +699,13 @@ func (t *wal) TruncateLog(lastSafeOffset int64) (int64, error) { //nolint:revive
 					err = multierr.Append(err, segment.Close())
 					return InvalidOffset, err
 				}
-
-				err = segment.Close()
-				return lastSafeOffset, err
+				if err = segment.Close(); err != nil {
+					return InvalidOffset, err
+				}
+				// Proceed to updating the last appended/synced offsets below:
+				// returning from here would leave them stale, breaking the
+				// next append's offset check and the readers' upper bound
+				break truncateLoop
 			default:
 				// The entire segment can be discarded
 				if err := segment.Get().Delete(); err != nil {
