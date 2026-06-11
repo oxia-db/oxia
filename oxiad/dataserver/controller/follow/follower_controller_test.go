@@ -17,6 +17,8 @@ package follow
 import (
 	"context"
 	"fmt"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -417,6 +419,139 @@ func TestFollower_DuplicateNewTermInFollowerState(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		return fc.CommitOffset() == 1
 	}, 10*time.Second, 10*time.Millisecond)
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// After a leader reconnection, the entries are resent from the last ack
+// position known to the leader. The follower might already have them and
+// must still ack them, otherwise the leader would not make progress.
+func TestFollower_DuplicateEntryAckAfterReconnect(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	assert.NoError(t, err)
+
+	stream := rpc.NewMockServerReplicateStream()
+	wg := concurrent.NewWaitGroup(1)
+	go func() {
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		wg.Done()
+	}()
+
+	for i := int64(0); i < 10; i++ {
+		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{"a": "0"}, wal.InvalidOffset))
+		assert.EqualValues(t, i, stream.GetResponse().Offset)
+	}
+
+	// Simulate a leader reconnection: the acks were lost, so all the entries
+	// are resent, followed by new entries
+	stream.Cancel()
+	assert.NoError(t, wg.Wait(context.Background()))
+
+	stream = rpc.NewMockServerReplicateStream()
+	wg = concurrent.NewWaitGroup(1)
+	go func() {
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		wg.Done()
+	}()
+
+	for i := int64(0); i < 10; i++ {
+		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{"a": "0"}, wal.InvalidOffset))
+	}
+	for i := int64(0); i < 10; i++ {
+		assert.EqualValues(t, i, stream.GetResponse().Offset)
+	}
+
+	stream.AddRequest(createAddRequest(t, 1, 10, map[string]string{"a": "1"}, wal.InvalidOffset))
+	assert.EqualValues(t, 10, stream.GetResponse().Offset)
+
+	stream.Cancel()
+	assert.NoError(t, wg.Wait(context.Background()))
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// syncerOnlySendStream fails the test if an ack is sent from any goroutine
+// other than the syncer: gRPC streams do not support concurrent Send() calls,
+// so the syncer must be the only goroutine sending on the stream.
+type syncerOnlySendStream struct {
+	*rpc.MockServerReplicateStream
+	t *testing.T
+}
+
+func (s *syncerOnlySendStream) Send(ack *proto.Ack) error {
+	buf := make([]byte, 16*1024)
+	stack := string(buf[:runtime.Stack(buf, false)])
+	if !strings.Contains(stack, "bgSyncer") {
+		s.t.Errorf("ack for offset %d was not sent from the syncer goroutine:\n%s", ack.Offset, stack)
+	}
+	return s.MockServerReplicateStream.Send(ack)
+}
+
+func TestFollower_DuplicateEntryAckConcurrentAppends(t *testing.T) {
+	const numEntries = int64(100)
+
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	assert.NoError(t, err)
+
+	stream := rpc.NewMockServerReplicateStream()
+	wg := concurrent.NewWaitGroup(1)
+	go func() {
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		wg.Done()
+	}()
+
+	for i := int64(0); i < numEntries; i++ {
+		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{"a": "0"}, wal.InvalidOffset))
+	}
+	for i := int64(0); i < numEntries; i++ {
+		assert.EqualValues(t, i, stream.GetResponse().Offset)
+	}
+
+	// Simulate a leader reconnection
+	stream.Cancel()
+	assert.NoError(t, wg.Wait(context.Background()))
+
+	stream2 := &syncerOnlySendStream{MockServerReplicateStream: rpc.NewMockServerReplicateStream(), t: t}
+	wg = concurrent.NewWaitGroup(1)
+	go func() {
+		assert.ErrorIs(t, fc.AppendEntries(stream2), context.Canceled)
+		wg.Done()
+	}()
+
+	// Resend all the entries (duplicates) immediately followed by new ones,
+	// while concurrently consuming the acks
+	go func() {
+		for i := int64(0); i < 2*numEntries; i++ {
+			stream2.AddRequest(createAddRequest(t, 1, i, map[string]string{"a": "0"}, wal.InvalidOffset))
+		}
+	}()
+
+	// Every entry is acked exactly once and in order: first the duplicates,
+	// then the newly appended entries
+	for i := int64(0); i < 2*numEntries; i++ {
+		assert.EqualValues(t, i, stream2.GetResponse().Offset)
+	}
+
+	stream2.Cancel()
+	assert.NoError(t, wg.Wait(context.Background()))
 
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())

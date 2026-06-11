@@ -52,17 +52,18 @@ func (s *stubWal) Sync(context.Context) error {
 
 // A duplicated Append must only be acknowledged up to the synced offset: the
 // leader accounts acks (cumulatively) as durable. Unsynced duplicates are
-// acknowledged by the syncer, after the fsync.
+// acknowledged after the fsync. All the acks are sent by the syncer
+// goroutine: gRPC streams do not support concurrent Send() calls.
 func TestLogSynchronizer_DuplicateAckOnlySynced(t *testing.T) {
 	w := &stubWal{}
-	w.appended.Store(4)
+	w.appended.Store(2)
 	w.synced.Store(2)
 
 	lastAppendedOffset := &atomic.Int64{}
-	lastAppendedOffset.Store(4)
+	lastAppendedOffset.Store(2)
 	advertisedCommitOffset := &atomic.Int64{}
 
-	stream := rpc.NewMockServerReplicateStream()
+	stream := &syncerOnlySendStream{MockServerReplicateStream: rpc.NewMockServerReplicateStream(), t: t}
 	ls := NewLogSynchronizer(LogSynchronizerParams{
 		Log:                    slog.Default(),
 		Namespace:              "test",
@@ -83,7 +84,10 @@ func TestLogSynchronizer_DuplicateAckOnlySynced(t *testing.T) {
 		assert.NoError(t, ls.Close())
 	}()
 
-	// A duplicate at or below the synced offset is acked immediately
+	// A duplicate at or below the synced offset is re-acked without
+	// requiring anything new to become durable. The ack is cumulative, at
+	// the durable head, so that the leader can skip everything the
+	// follower already has.
 	stream.AddRequest(&proto.Append{
 		Term:                    1,
 		Entry:                   &proto.LogEntry{Term: 1, Offset: 1},
@@ -91,11 +95,15 @@ func TestLogSynchronizer_DuplicateAckOnlySynced(t *testing.T) {
 		CumulativeAcksSupported: true,
 	})
 	response := stream.GetResponse()
-	assert.EqualValues(t, 1, response.Offset)
-	assert.EqualValues(t, 0, w.syncCalls.Load())
+	assert.EqualValues(t, 2, response.Offset)
+	assert.EqualValues(t, 2, w.synced.Load())
+
+	// Entries 3..4 are appended but not synced yet
+	w.appended.Store(4)
+	lastAppendedOffset.Store(4)
 
 	// A duplicate above the synced offset must not be acked before the
-	// fsync: the ack comes from the syncer, after a sync round
+	// fsync: the ack only comes after a sync round
 	stream.AddRequest(&proto.Append{
 		Term:                    1,
 		Entry:                   &proto.LogEntry{Term: 1, Offset: 4},
