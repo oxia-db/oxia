@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/edsrzf/mmap-go"
@@ -37,6 +38,14 @@ type ReadWriteSegment interface {
 	HasSpace(l int) bool
 
 	Flush() error
+
+	// SyncFileIfNeeded fsyncs the segment file after its creation: the fsync
+	// is deferred out of the creation path, since segments get created during
+	// rollovers, in the append path, while holding the WAL write lock. It
+	// must be called before the first entries of the segment are
+	// acknowledged, so that the file metadata (size, directory entry) is
+	// durable by then.
+	SyncFileIfNeeded() error
 }
 
 type readWriteSegment struct {
@@ -58,7 +67,8 @@ type readWriteSegment struct {
 	currentFileOffset uint32
 	writingIdx        []byte
 
-	segmentSize uint32
+	segmentSize     uint32
+	pendingFileSync atomic.Bool
 }
 
 func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, lastCrc uint32,
@@ -87,12 +97,15 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 
 	if !c.segmentExists {
 		if err = initFileWithZeroes(ms.txnFile, segmentSize); err != nil {
-			return nil, err
+			return nil, multierr.Append(err, ms.txnFile.Close())
 		}
+		ms.pendingFileSync.Store(true)
 	}
 
 	if ms.txnMappedFile, err = mmap.MapRegion(ms.txnFile, int(segmentSize), mmap.RDWR, 0, 0); err != nil {
-		return nil, errors.Wrapf(err, "failed to map segment file %s", ms.c.txnPath)
+		return nil, multierr.Append(
+			errors.Wrapf(err, "failed to map segment file %s", ms.c.txnPath),
+			ms.txnFile.Close())
 	}
 
 	var commitOffset *int64
@@ -105,7 +118,10 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 	initialLastCrc := ms.lastCrc
 	if ms.writingIdx, ms.lastCrc, ms.currentFileOffset, ms.lastOffset, err = ms.c.codec.RecoverIndex(ms.txnMappedFile,
 		ms.currentFileOffset, ms.c.baseOffset, commitOffset); err != nil {
-		return nil, errors.Wrapf(err, "failed to rebuild index for segment file %s", ms.c.txnPath)
+		return nil, multierr.Combine(
+			errors.Wrapf(err, "failed to rebuild index for segment file %s", ms.c.txnPath),
+			ms.txnMappedFile.Unmap(),
+			ms.txnFile.Close())
 	}
 	// If the segment is empty, preserve the caller's CRC seed so that it can
 	// be used as the previous CRC for the first entry appended to this segment.
@@ -189,6 +205,26 @@ func (ms *readWriteSegment) Flush() error {
 	return ms.txnMappedFile.Flush()
 }
 
+// SyncFileIfNeeded is invoked by the WAL sync goroutine before Flush and, as a
+// fallback for segments that fill up before any sync round has run, by the
+// rollover before closing the segment.
+func (ms *readWriteSegment) SyncFileIfNeeded() error {
+	if !ms.pendingFileSync.Load() {
+		return nil
+	}
+
+	ms.flushLock.RLock()
+	defer ms.flushLock.RUnlock()
+	if ms.txnMappedFile == nil {
+		return nil
+	}
+	if err := ms.txnFile.Sync(); err != nil {
+		return err
+	}
+	ms.pendingFileSync.Store(false)
+	return nil
+}
+
 func (*readWriteSegment) OpenTimestamp() time.Time {
 	return time.Now()
 }
@@ -241,6 +277,9 @@ func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 	return ms.Flush()
 }
 
+// initFileWithZeroes extends the file to its full segment size, without
+// fsync-ing it: the file metadata is made durable by SyncFileIfNeeded before
+// the first entries of the segment get acknowledged.
 func initFileWithZeroes(f *os.File, size uint32) error {
 	if _, err := f.Seek(int64(size), 0); err != nil {
 		return err
@@ -250,5 +289,5 @@ func initFileWithZeroes(f *os.File, size uint32) error {
 		return err
 	}
 
-	return f.Sync()
+	return nil
 }
