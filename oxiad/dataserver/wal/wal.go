@@ -67,6 +67,12 @@ type Reader interface {
 
 type Wal interface {
 	io.Closer
+
+	// The entry passed to the Append* methods is fully consumed (serialized
+	// into the segment) before the call returns: the wal does not retain any
+	// reference to the entry or its Value, so the caller is free to reuse the
+	// backing buffers afterwards.
+
 	// Append writes an entry to the end of the log.
 	// The wal is synced when Append returns
 	Append(entry *proto.LogEntry) error

@@ -26,7 +26,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/slices"
-	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 
@@ -82,6 +81,10 @@ type wal struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	syncRequests chan func(error)
+
+	// Reusable serialization buffer: only accessed by appendAsync0, while
+	// holding the WAL write lock
+	marshalBuf []byte
 
 	trimmer Trimmer
 
@@ -299,11 +302,14 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 		return err
 	}
 
-	val, err := pb.Marshal(entry)
+	// Serialize into the reusable buffer instead of allocating per entry:
+	// val is copied into the segment before the lock is released
+	marshalBuf, val, err := proto.MarshalToBuffer(t.marshalBuf, entry)
 	if err != nil {
 		t.writeErrors.Inc()
 		return err
 	}
+	t.marshalBuf = marshalBuf
 
 	if t.lastAppendedOffset.Load() == InvalidOffset && entry.Offset != 0 && t.currentSegment.BaseOffset() == 0 {
 		// The wal was cleared and we're starting from a non-initial position
