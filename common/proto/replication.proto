@@ -186,8 +186,16 @@ message Append {
   LogEntry entry = 2;
   int64 commit_offset = 3;
   optional uint32 previous_entry_crc = 4;
+
+  // The leader treats acks as cumulative (an ack confirms every entry up to
+  // its offset): the follower can then acknowledge a whole sync round with a
+  // single Ack message instead of one per entry. Followers must keep sending
+  // one ack per entry when the leader does not advertise the support.
+  bool cumulative_acks_supported = 5;
 }
 
+// Acknowledges the entries up to `offset` (when the leader advertises
+// cumulative_acks_supported; a single entry otherwise).
 message Ack {
   int64 offset = 1;
 }
