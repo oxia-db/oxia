@@ -266,6 +266,9 @@ func TestProviderConcurrentStores(t *testing.T) {
 
 			var stored atomic.Int32
 			var wg sync.WaitGroup
+			// Failures are reported back to the test goroutine: require must
+			// not be called from the writers
+			writerErrs := make(chan error, writers)
 			for i := 0; i < writers; i++ {
 				wg.Go(func() {
 					receiver := p.Watch().Subscribe()
@@ -279,13 +282,20 @@ func TestProviderConcurrentStores(t *testing.T) {
 							// Lost the race: reload and retry
 							continue
 						}
-						require.NoError(t, err)
+						if err != nil {
+							writerErrs <- err
+							return
+						}
 						stored.Add(1)
 						u++
 					}
 				})
 			}
 			wg.Wait()
+			close(writerErrs)
+			for err := range writerErrs {
+				require.NoError(t, err)
+			}
 
 			assert.EqualValues(t, writers*updatesPerWriter, stored.Load())
 			final := p.Watch().Subscribe().Load()

@@ -134,7 +134,7 @@ func (mpr *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metada
 		return metadatacommon.NotExists, err
 	}
 
-	if mpr.logger.Enabled(mpr.ctx, slog.LevelDebug) {
+	if mpr.raft.logger.Enabled(mpr.ctx, slog.LevelDebug) {
 		_, currentVersion := mpr.raft.sc.documentState(mpr.codec.GetKey())
 		mpr.raft.logger.Debug("Store into raft",
 			slog.String("key", mpr.codec.GetKey()),
