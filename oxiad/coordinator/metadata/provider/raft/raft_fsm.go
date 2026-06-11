@@ -93,12 +93,12 @@ func (sc *stateContainer) Snapshot() (raft.FSMSnapshot, error) {
 func (sc *stateContainer) Restore(rc io.ReadCloser) error {
 	dec := json.NewDecoder(rc)
 	persisted := &persistedStateContainer{}
-	sc.logger.Info("Restored metadata state from snapshot",
-		slog.Any("cluster-status", sc))
-
 	if err := dec.Decode(persisted); err != nil {
 		return multierr.Combine(err, rc.Close())
 	}
+
+	sc.logger.Info("Restored metadata state from snapshot",
+		slog.Int("documents", len(persisted.Documents)))
 
 	if len(persisted.Documents) > 0 {
 		sc.Documents = cloneDocuments(persisted.Documents)
@@ -120,8 +120,13 @@ func (sc *stateContainer) Persist(sink raft.SnapshotSink) error {
 		return multierr.Combine(err, sink.Cancel())
 	}
 
-	_, err = sink.Write(payload)
-	return multierr.Combine(err, sink.Cancel(), sink.Close())
+	if _, err = sink.Write(payload); err != nil {
+		// Cancel discards the snapshot: it must only be called on failure,
+		// or no snapshot is ever retained while the raft log still gets
+		// compacted, losing the state on the next restart
+		return multierr.Combine(err, sink.Cancel())
+	}
+	return sink.Close()
 }
 
 func (*stateContainer) Release() {}
