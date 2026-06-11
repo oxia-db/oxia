@@ -19,12 +19,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/metric"
+	"github.com/oxia-db/oxia/oxiad/common/collection"
 	"github.com/oxia-db/oxia/oxiad/common/crc"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -726,5 +729,51 @@ func TestIsSessionKey(t *testing.T) {
 				t.Errorf("IsSessionKey(%q) got = %v, want %v", tc.key, got, tc.want)
 			}
 		})
+	}
+}
+
+// Closing the manager must not hold the manager lock while waiting for the
+// session goroutines: the expiry path of a session goroutine acquires the
+// manager lock, and a session in the middle of expiring would deadlock the
+// close.
+func TestSessionManager_CloseWithInFlightExpiry(t *testing.T) {
+	sm := &sessionManager{
+		sessions: collection.NewVisibleMap[SessionId, *session](),
+		activeSessions: metric.NewGauge("oxia_test_close_expiry_sessions", "test", "count",
+			map[string]any{}, func() int64 { return 0 }),
+	}
+	sm.ctx, sm.cancel = context.WithCancel(context.Background())
+
+	s := &session{
+		id:  1,
+		sm:  sm,
+		log: slog.Default(),
+	}
+	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
+
+	// Mimics the tail of the session expiry path (waitForHeartbeats), which
+	// acquires the manager lock from the session goroutine. The session
+	// context is canceled by close(): with the close happening under the
+	// manager lock, this deterministically deadlocks.
+	s.latch.Add(1)
+	go func() {
+		defer s.latch.Done()
+		<-s.ctx.Done()
+		sm.Lock()
+		sm.sessions.Remove(s.id)
+		sm.Unlock()
+	}()
+	sm.sessions.Put(s.id, s)
+
+	closeDone := make(chan struct{})
+	go func() {
+		assert.NoError(t, sm.Close())
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("session manager close deadlocked with an in-flight session expiry")
 	}
 }

@@ -300,10 +300,18 @@ func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, 
 
 func (sm *sessionManager) Close() error {
 	sm.Lock()
-	defer sm.Unlock()
 	sm.cancel()
-	for _, s := range sm.sessions.Values() {
+	sessions := sm.sessions.Values()
+	for _, s := range sessions {
 		sm.sessions.Remove(s.id)
+	}
+	sm.Unlock()
+
+	// Close the sessions outside the manager lock: closing a session waits
+	// for its goroutine, and the expiry path of that goroutine acquires the
+	// manager lock — closing under the lock can deadlock with an in-flight
+	// expiry (same ordering as CloseSession above).
+	for _, s := range sessions {
 		s.Close()
 	}
 
