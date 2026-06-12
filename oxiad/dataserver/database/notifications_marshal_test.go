@@ -25,8 +25,8 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func notificationsFromMap(batch proto.NotificationBatch, byKey map[string]*proto.Notification) *Notifications {
-	n := &Notifications{batch: batch}
+func notificationsFromMap(shard, offset int64, timestamp uint64, byKey map[string]*proto.Notification) *Notifications {
+	n := newNotifications(shard, offset, timestamp)
 	for k, v := range byKey {
 		n.add(k, v)
 	}
@@ -62,13 +62,13 @@ func TestNotificationBatchGoldenBytes(t *testing.T) {
 	}
 
 	cases := []*Notifications{
-		notificationsFromMap(proto.NotificationBatch{}, nil),
-		notificationsFromMap(proto.NotificationBatch{Shard: 5, Offset: 42, Timestamp: 1234567890}, nil),
-		notificationsFromMap(proto.NotificationBatch{Shard: 1, Offset: 9, Timestamp: 99},
+		notificationsFromMap(0, 0, 0, nil),
+		notificationsFromMap(5, 42, 1234567890, nil),
+		notificationsFromMap(1, 9, 99,
 			map[string]*proto.Notification{
 				"key-b": {Type: proto.NotificationType_KEY_CREATED, VersionId: &versionId},
 			}),
-		notificationsFromMap(proto.NotificationBatch{Shard: 3, Offset: 11, Timestamp: 100},
+		notificationsFromMap(3, 11, 100,
 			map[string]*proto.Notification{
 				"z":     {Type: proto.NotificationType_KEY_DELETED},
 				"a":     {Type: proto.NotificationType_KEY_MODIFIED, VersionId: &versionId},
@@ -79,7 +79,7 @@ func TestNotificationBatchGoldenBytes(t *testing.T) {
 
 	// Many keys, inserted in reverse order: the probability that an unsorted
 	// iteration accidentally matches the golden bytes is negligible
-	many := notificationsFromMap(proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1}, nil)
+	many := notificationsFromMap(2, 1, 1, nil)
 	for i := 0; i < 30; i++ {
 		v := int64(i)
 		many.add(fmt.Sprintf("key-%04d", 9999-i),
@@ -139,7 +139,7 @@ func TestNotificationsSealDeduplicates(t *testing.T) {
 
 func BenchmarkNotificationBatchMarshal(b *testing.B) {
 	versionId := int64(7)
-	notifications := notificationsFromMap(proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1234567890}, nil)
+	notifications := notificationsFromMap(2, 1, 1234567890, nil)
 	for i := 0; i < 10; i++ {
 		notifications.add(fmt.Sprintf("/app/users/%04d/profile", i),
 			&proto.Notification{Type: proto.NotificationType_KEY_MODIFIED, VersionId: &versionId})
