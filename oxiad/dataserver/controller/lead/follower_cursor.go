@@ -447,10 +447,12 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			return err
 		}
 
-		fc.log.Debug(
-			"Sending entries to follower",
-			slog.Int64("offset", le.Offset),
-		)
+		if fc.log.Enabled(fc.ctx, slog.LevelDebug) {
+			fc.log.Debug(
+				"Sending entries to follower",
+				slog.Int64("offset", le.Offset),
+			)
+		}
 
 		if err = fc.stream.Send(&proto.Append{
 			Term:             fc.term,
@@ -550,10 +552,12 @@ func (fc *followerCursor) receiveAcks(cancel context.CancelFunc, stream proto.Ox
 			return nil
 		}
 
-		fc.log.Debug(
-			"Received ack",
-			slog.Int64("offset", res.Offset),
-		)
+		if fc.log.Enabled(fc.ctx, slog.LevelDebug) {
+			fc.log.Debug(
+				"Received ack",
+				slog.Int64("offset", res.Offset),
+			)
+		}
 		fc.cursorAcker.Ack(res.Offset)
 
 		fc.ackOffset.Store(res.Offset)

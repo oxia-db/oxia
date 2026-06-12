@@ -25,7 +25,7 @@ import (
 )
 
 func drainChannel(ch <-chan bool) {
-	for range ch { //nolint:revive
+	for range ch {
 	}
 }
 
