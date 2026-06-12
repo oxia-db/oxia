@@ -781,7 +781,9 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 				"peer":  commonrpc.GetPeer(ctx),
 			},
 			func() {
-				lc.log.Debug("Received read request", slog.Int64("term", lc.term.Load()))
+				if lc.log.Enabled(ctx, slog.LevelDebug) {
+					lc.log.Debug("Received read request", slog.Int64("term", lc.term.Load()))
+				}
 				var response *proto.GetResponse
 				var err error
 
@@ -843,7 +845,9 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 			"peer":  commonrpc.GetPeer(ctx),
 		},
 		func() {
-			lc.log.Debug("Received list request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
+			if lc.log.Enabled(ctx, slog.LevelDebug) {
+				lc.log.Debug("Received list request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
+			}
 
 			var it kvstore.KeyIterator
 			var err error
@@ -902,7 +906,9 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 				"peer":  commonrpc.GetPeer(ctx),
 			},
 			func() {
-				lc.log.Debug("Received range-scan request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
+				if lc.log.Enabled(ctx, slog.LevelDebug) {
+					lc.log.Debug("Received range-scan request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
+				}
 
 				var it database.RangeScanIterator
 				var err error
@@ -919,25 +925,29 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 					return
 				}
 
-				var gr *proto.GetResponse
-				for ; it.Valid(); it.Next() {
-					if gr, err = it.Value(); err != nil {
-						break
-					}
-					if err = cb.OnNext(gr); err != nil {
-						break
-					}
-					if err = ctx.Err(); err != nil {
-						break
-					}
-				}
-
+				err = rangeScanIterate(ctx, it, cb)
 				err = multierr.Combine(err, it.Close())
 				cb.OnComplete(err)
 			},
 		)
 	})
 	lc.RUnlock()
+}
+
+func rangeScanIterate(ctx context.Context, it database.RangeScanIterator, cb concurrent.StreamCallback[*proto.GetResponse]) error {
+	for ; it.Valid(); it.Next() {
+		gr, err := it.Value()
+		if err != nil {
+			return err
+		}
+		if err := cb.OnNext(gr); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {

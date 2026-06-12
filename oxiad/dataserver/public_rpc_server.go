@@ -144,11 +144,13 @@ func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest
 }
 
 func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) (*proto.WriteResponse, error) {
-	s.log.Debug(
-		"Write request",
-		slog.String("peer", rpc.GetPeer(ctx)),
-		slog.Any("req", write),
-	)
+	if s.log.Enabled(ctx, slog.LevelDebug) {
+		s.log.Debug(
+			"Write request",
+			slog.String("peer", rpc.GetPeer(ctx)),
+			slog.Any("req", write),
+		)
+	}
 
 	lc, err := s.resolveLeader(ctx, write.Shard)
 	if err != nil {
@@ -297,21 +299,22 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 }
 
 func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClient_ReadServer) error {
-	s.log.Debug(
-		"Read request",
-		slog.String("peer", rpc.GetPeer(stream.Context())),
-		slog.Any("req", request),
-	)
+	ctx := stream.Context()
+	if s.log.Enabled(ctx, slog.LevelDebug) {
+		s.log.Debug(
+			"Read request",
+			slog.String("peer", rpc.GetPeer(ctx)),
+			slog.Any("req", request),
+		)
+	}
 
-	lc, err := s.resolveLeader(stream.Context(), request.Shard)
+	lc, err := s.resolveLeader(ctx, request.Shard)
 	if err != nil {
 		return err
 	}
 
-	ctx := stream.Context()
-
 	finish := make(chan error, 1)
-	lc.Read(stream.Context(), request, concurrent.NewBatchStreamOnce[*proto.GetResponse](maxTotalReadCount, maxTotalReadValueSize,
+	lc.Read(ctx, request, concurrent.NewBatchStreamOnce[*proto.GetResponse](maxTotalReadCount, maxTotalReadValueSize,
 		func(result *proto.GetResponse) int { return protowire.SizeBytes(len(result.Value)) },
 		func(container []*proto.GetResponse) error { return stream.Send(&proto.ReadResponse{Gets: container}) },
 		func(err error) { finish <- err },
@@ -335,16 +338,18 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
-	s.log.Debug(
-		"List request",
-		slog.String("peer", rpc.GetPeer(stream.Context())),
-		slog.Any("req", request),
-	)
-	lc, err := s.resolveLeader(stream.Context(), request.Shard)
+	ctx := stream.Context()
+	if s.log.Enabled(ctx, slog.LevelDebug) {
+		s.log.Debug(
+			"List request",
+			slog.String("peer", rpc.GetPeer(ctx)),
+			slog.Any("req", request),
+		)
+	}
+	lc, err := s.resolveLeader(ctx, request.Shard)
 	if err != nil {
 		return err
 	}
-	ctx := stream.Context()
 	finish := make(chan error, 1)
 	lc.List(ctx, request, concurrent.NewBatchStreamOnce[string](maxTotalListKeyCount, maxTotalListKeySize,
 		func(key string) int { return protowire.SizeBytes(len(key)) },
@@ -369,16 +374,18 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream proto.OxiaClient_RangeScanServer) error {
-	s.log.Debug(
-		"RangeScan request",
-		slog.String("peer", rpc.GetPeer(stream.Context())),
-		slog.Any("req", request),
-	)
 	ctx := stream.Context()
+	if s.log.Enabled(ctx, slog.LevelDebug) {
+		s.log.Debug(
+			"RangeScan request",
+			slog.String("peer", rpc.GetPeer(ctx)),
+			slog.Any("req", request),
+		)
+	}
 
 	var lc lead.LeaderController
 	var err error
-	if lc, err = s.resolveLeader(stream.Context(), request.Shard); err != nil {
+	if lc, err = s.resolveLeader(ctx, request.Shard); err != nil {
 		return err
 	}
 
@@ -480,12 +487,14 @@ func (s *publicRpcServer) CreateSession(ctx context.Context, req *proto.CreateSe
 }
 
 func (s *publicRpcServer) KeepAlive(ctx context.Context, req *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
-	s.log.Debug(
-		"Session keep alive",
-		slog.Int64("shard", req.Shard),
-		slog.Int64("session", req.SessionId),
-		slog.String("peer", rpc.GetPeer(ctx)),
-	)
+	if s.log.Enabled(ctx, slog.LevelDebug) {
+		s.log.Debug(
+			"Session keep alive",
+			slog.Int64("shard", req.Shard),
+			slog.Int64("session", req.SessionId),
+			slog.String("peer", rpc.GetPeer(ctx)),
+		)
+	}
 	lc, err := s.resolveLeader(ctx, &req.Shard)
 	if err != nil {
 		return nil, err

@@ -130,22 +130,29 @@ func (ls *LogSynchronizer) append0(syncCond chan struct{}, onAppend func(), req 
 
 	ls.cumulativeAcks.Store(req.CumulativeAcksSupported)
 
-	ls.log.Debug(
-		"Add entry",
-		slog.Int64("commit-offset", req.CommitOffset),
-		slog.Int64("offset", req.Entry.Offset),
-	)
+	// This runs once per replicated entry: skip the attribute boxing entirely
+	// when debug logging is off, and check the level once for both call sites.
+	debugEnabled := ls.log.Enabled(context.Background(), slog.LevelDebug)
+	if debugEnabled {
+		ls.log.Debug(
+			"Add entry",
+			slog.Int64("commit-offset", req.CommitOffset),
+			slog.Int64("offset", req.Entry.Offset),
+		)
+	}
 
 	onAppend()
 
 	lastAppendedOffset := ls.lastAppendedOffset.Load()
 	if req.Entry.Offset <= lastAppendedOffset {
 		// This was a duplicated request. We already have this entry
-		ls.log.Debug(
-			"Ignoring duplicated entry",
-			slog.Int64("commit-offset", req.CommitOffset),
-			slog.Int64("offset", req.Entry.Offset),
-		)
+		if debugEnabled {
+			ls.log.Debug(
+				"Ignoring duplicated entry",
+				slog.Int64("commit-offset", req.CommitOffset),
+				slog.Int64("offset", req.Entry.Offset),
+			)
+		}
 
 		// Only request a re-ack for what is already synced: the leader
 		// accounts the ack, cumulatively, as durable. A duplicate that is
