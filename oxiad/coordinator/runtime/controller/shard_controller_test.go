@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"log/slog"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -856,4 +857,118 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 
 	sc.Close()
+}
+
+// Each UpdateShardStatus persists the full cluster status, so re-writing it
+// for every shard on every periodic tick costs O(shards^2) bytes per interval
+// on the metadata backend. The periodic task must persist only when the
+// status resource diverges from the controller's local view. Every real
+// persist replaces the cached status object graph, so pointer identity
+// through GetShardStatus observes whether a write happened.
+func TestShardController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
+	var shard int64 = 5
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled), &proto.ClusterConfiguration{})
+
+	shardMeta := &proto.ShardMetadata{
+		Status: proto.ShardStatusSteadyState,
+		Term:   1,
+		Leader: &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"},
+	}
+	assert.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
+	}))
+
+	// Built by hand instead of through NewShardController so the run loop's
+	// own periodic timer cannot race the direct handlePeriodicTasks calls
+	s := &shardController{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadata:      NewMetadata(shardMeta),
+		metadataStore: metadata,
+		logger:        slog.Default(),
+	}
+
+	borrowedBefore, exists := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.True(t, exists)
+
+	// Steady state: the status resource matches the local view — no persist
+	s.handlePeriodicTasks()
+	borrowedAfter, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
+
+	// Local divergence (what an election leaves behind): must persist
+	shardMeta.Term = 2
+	s.metadata.Store(shardMeta)
+	s.handlePeriodicTasks()
+	borrowedChanged, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.NotSame(t, borrowedAfter.UnsafeBorrow(), borrowedChanged.UnsafeBorrow())
+	assert.EqualValues(t, 2, borrowedChanged.UnsafeBorrow().Term)
+
+	// Converged again: back to skipping
+	s.handlePeriodicTasks()
+	borrowedFinal, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.Same(t, borrowedChanged.UnsafeBorrow(), borrowedFinal.UnsafeBorrow())
+}
+
+// While handlePeriodicTasks is blocked in the DeleteShard RPCs, the split
+// controller can store a term bump into this controller's metadata
+// (runtime.SplitComplete syncing the parent after Cutover). Clearing the
+// pending-delete nodes must merge with that update, not write the whole
+// pre-RPC snapshot back over it.
+func TestShardController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *testing.T) {
+	var shard int64 = 5
+	rpc := newMockRpcProvider()
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled), &proto.ClusterConfiguration{})
+
+	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	removed := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	shardMeta := &proto.ShardMetadata{
+		Status:                  proto.ShardStatusSteadyState,
+		Term:                    1,
+		Leader:                  leader,
+		PendingDeleteShardNodes: []*proto.DataServerIdentity{removed},
+	}
+	assert.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
+	}))
+
+	// Built by hand so the run loop's own timer cannot race the direct call
+	s := &shardController{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadata:      NewMetadata(shardMeta),
+		metadataStore: metadata,
+		rpc:           rpc,
+		logger:        slog.Default(),
+	}
+	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
+	defer s.ctxCancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.handlePeriodicTasks()
+		close(done)
+	}()
+
+	// The periodic task is now blocked inside the DeleteShard RPC
+	rpc.GetNode(removed).expectDeleteShardRequest(t, shard, 1)
+
+	// A concurrent term bump lands while the RPC is in flight
+	s.metadata.Compute(func(m *proto.ShardMetadata) { m.Term = 7 })
+
+	rpc.GetNode(removed).DeleteShardResponse(nil)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("handlePeriodicTasks did not complete")
+	}
+
+	// The bump survives the pending-delete bookkeeping, and the merged view
+	// is what gets persisted to the status resource
+	assert.EqualValues(t, 7, s.metadata.Term())
+	assert.Empty(t, s.metadata.Load().PendingDeleteShardNodes)
+	borrowed, exists := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.True(t, exists)
+	assert.EqualValues(t, 7, borrowed.UnsafeBorrow().Term)
+	assert.Empty(t, borrowed.UnsafeBorrow().PendingDeleteShardNodes)
 }

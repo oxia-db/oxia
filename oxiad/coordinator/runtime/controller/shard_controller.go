@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -238,7 +239,11 @@ func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
 
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
 
-	periodicTasksTimer := time.NewTicker(s.periodicTasksInterval)
+	// All the shard controllers start together at coordinator startup: spread
+	// the first periodic tick over the interval so the periodic tasks don't
+	// fire as a herd.
+	periodicTasksTimer := time.NewTimer(rand.N(s.periodicTasksInterval)) //nolint:gosec
+	defer periodicTasksTimer.Stop()
 
 	for {
 		select {
@@ -254,6 +259,7 @@ func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
 			s.onChangeEnsemble(op)
 		case <-periodicTasksTimer.C:
 			s.handlePeriodicTasks()
+			periodicTasksTimer.Reset(s.periodicTasksInterval)
 		case electionAction := <-s.electionOp:
 			newLeader := s.onElectLeader(nil)
 			electionAction.Done(newLeader.GetNameOrDefault())
@@ -533,11 +539,26 @@ func (s *shardController) handlePeriodicTasks() {
 			s.logger.Warn("Failed to handle pending delete shard", "error", err)
 			return
 		}
+		// Clear the pending-delete nodes in the canonical view. Compute (not
+		// Store of the snapshot): the DeleteShard RPCs above leave a long
+		// window since Load(), and the split controller can store a term bump
+		// into this controller's metadata concurrently (SplitComplete) —
+		// writing the whole snapshot back would revert it.
+		mutShardMeta = s.metadata.Compute(func(m *proto.ShardMetadata) {
+			m.PendingDeleteShardNodes = nil
+		})
 	}
 
-	// Update the shard status
+	// Re-assert the shard status only when the status resource diverges from
+	// the local view: each UpdateShardStatus persists the full cluster status,
+	// so unconditionally writing it for every shard on every tick costs
+	// O(shards^2) bytes per interval on the metadata backend.
+	if borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard); exists &&
+		borrowedMeta.UnsafeBorrow().EqualVT(mutShardMeta) {
+		return
+	}
+
 	s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
-	s.metadata.Store(mutShardMeta)
 }
 
 func (s *shardController) handlePendingDeleteShard(mutShardMeta *proto.ShardMetadata) error {
@@ -556,6 +577,5 @@ func (s *shardController) handlePendingDeleteShard(mutShardMeta *proto.ShardMeta
 		s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
 	}
 
-	mutShardMeta.PendingDeleteShardNodes = nil
 	return nil
 }
