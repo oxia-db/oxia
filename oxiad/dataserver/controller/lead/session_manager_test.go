@@ -24,10 +24,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/metric"
-	"github.com/oxia-db/oxia/oxiad/common/collection"
 	"github.com/oxia-db/oxia/oxiad/common/crc"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
@@ -738,9 +739,9 @@ func TestIsSessionKey(t *testing.T) {
 // close.
 func TestSessionManager_CloseWithInFlightExpiry(t *testing.T) {
 	sm := &sessionManager{
-		sessions: collection.NewVisibleMap[SessionId, *session](),
-		activeSessions: metric.NewGauge("oxia_test_close_expiry_sessions", "test", "count",
-			map[string]any{}, func() int64 { return 0 }),
+		sessions: make(map[SessionId]*session),
+		activeSessions: metric.NewUpDownCounter("oxia_test_close_expiry_sessions", "test", "count",
+			map[string]any{}),
 	}
 	sm.ctx, sm.cancel = context.WithCancel(context.Background())
 
@@ -760,10 +761,11 @@ func TestSessionManager_CloseWithInFlightExpiry(t *testing.T) {
 		defer s.latch.Done()
 		<-s.ctx.Done()
 		sm.Lock()
-		sm.sessions.Remove(s.id)
+		sm.removeSession(s.id)
 		sm.Unlock()
 	}()
-	sm.sessions.Put(s.id, s)
+	sm.sessions[s.id] = s
+	sm.activeSessions.Inc()
 
 	closeDone := make(chan struct{})
 	go func() {
@@ -776,4 +778,68 @@ func TestSessionManager_CloseWithInFlightExpiry(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("session manager close deadlocked with an in-flight session expiry")
 	}
+}
+
+// The active-sessions metric is a synchronous up-down counter, maintained at
+// the map insert/remove sites, instead of an observable gauge: gauge callbacks
+// run under the metrics SDK's collection lock, which is how the #597 deadlock
+// happened. The counter must move exactly once per insert and remove —
+// CloseSession and session expiry can race on the same id, and the losing
+// remove must not decrement it a second time.
+func TestSessionManager_ActiveSessionsMetric(t *testing.T) {
+	// Swap in an SDK meter so the counter value can be read back.
+	previous := metric.GetMeter()
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	metric.SetMeter(provider.Meter("test"))
+	defer metric.SetMeter(previous)
+
+	const counterName = "oxia_test_active_sessions"
+	readCounter := func() int64 {
+		var rm metricdata.ResourceMetrics
+		assert.NoError(t, reader.Collect(context.Background(), &rm))
+		for _, scope := range rm.ScopeMetrics {
+			for _, m := range scope.Metrics {
+				if m.Name != counterName {
+					continue
+				}
+				sum, ok := m.Data.(metricdata.Sum[int64])
+				if !ok || len(sum.DataPoints) != 1 {
+					t.Fatalf("unexpected data for %s: %#v", counterName, m.Data)
+				}
+				return sum.DataPoints[0].Value
+			}
+		}
+		t.Fatalf("counter %s not found", counterName)
+		return 0
+	}
+
+	sm := &sessionManager{
+		sessions:        make(map[SessionId]*session),
+		activeSessions:  metric.NewUpDownCounter(counterName, "test", "count", map[string]any{}),
+		expiredSessions: metric.NewCounter("oxia_test_expired_sessions", "test", "count", map[string]any{}),
+	}
+	sm.ctx, sm.cancel = context.WithCancel(context.Background())
+
+	meta := &proto.SessionMetadata{TimeoutMs: uint32(10 * time.Minute / time.Millisecond)}
+	sm.Lock()
+	s1 := startSession(1, meta, sm)
+	startSession(2, meta, sm)
+	sm.Unlock()
+	assert.EqualValues(t, 2, readCounter())
+
+	sm.Lock()
+	sm.removeSession(s1.id)
+	sm.Unlock()
+	assert.EqualValues(t, 1, readCounter())
+
+	// Second remove of the same id: the no-op loser of a close/expiry race
+	sm.Lock()
+	sm.removeSession(s1.id)
+	sm.Unlock()
+	assert.EqualValues(t, 1, readCounter())
+
+	s1.Close()
+	assert.NoError(t, sm.Close())
+	assert.EqualValues(t, 0, readCounter())
 }

@@ -63,7 +63,8 @@ func startSession(sessionId SessionId, sessionMetadata *proto.SessionMetadata, s
 			slog.Int64("shard", sm.shardId),
 		),
 	}
-	sm.sessions.Put(sessionId, s)
+	sm.sessions[sessionId] = s
+	sm.activeSessions.Inc()
 	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
 
 	s.latch.Add(1)
@@ -147,7 +148,7 @@ func (s *session) waitForHeartbeats() {
 			}
 
 			s.sm.Lock()
-			s.sm.sessions.Remove(s.id)
+			s.sm.removeSession(s.id)
 			s.sm.expiredSessions.Inc()
 			s.sm.Unlock()
 		}
