@@ -15,89 +15,36 @@
 package database
 
 import (
-	"encoding/binary"
 	"sort"
-
-	"github.com/planetscale/vtprotobuf/protohelpers"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// deterministicNotificationBatch marshals a NotificationBatch with the
-// notifications map emitted in ascending key order. The bytes feed the
-// replicated batch checksum, so they must be identical on every replica —
-// and identical to the protobuf-go Deterministic marshaler this replaces
-// (pinned by TestDeterministicNotificationBatchMatchesStdlib, which also
-// fails if the message definition gains fields this copy does not emit).
-// The generated MarshalToSizedBufferVT iterates the map in Go's random
-// order; this is the same emission with the iteration sorted. unknownFields
-// are not emitted: the message is always locally built, never decoded.
-type deterministicNotificationBatch struct {
-	*proto.NotificationBatch
-}
+// sortedNotificationBatch converts a NotificationBatch into its
+// wire-compatible twin (SortedNotificationBatch) with the map entries sorted
+// by key. A protobuf map field is encoded identically to a repeated entry
+// message, and the generated vtproto marshal emits repeated fields in slice
+// order — so the result marshals to deterministic bytes with generated code
+// only. Determinism is a correctness requirement: the notification value
+// feeds the replicated batch checksum, and every replica — including ones
+// running the previous protobuf-go Deterministic marshaler — must produce
+// identical bytes (pinned by TestSortedNotificationBatchMatchesStdlib).
+func sortedNotificationBatch(nb *proto.NotificationBatch) *proto.SortedNotificationBatch {
+	keys := make([]string, 0, len(nb.Notifications))
+	for k := range nb.Notifications {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 
-// Protobuf wire tags (field number << 3 | wire type) emitted below, matching
-// the generated NotificationBatch marshal code.
-const (
-	wireTagShard            = 0x8  // field 1, varint
-	wireTagOffset           = 0x10 // field 2, varint
-	wireTagTimestamp        = 0x19 // field 3, fixed64
-	wireTagNotificationsMap = 0x22 // field 4, length-delimited map entry
-	wireTagMapKey           = 0xa  // map-entry field 1, length-delimited
-	wireTagMapValue         = 0x12 // map-entry field 2, length-delimited
-)
+	entries := make([]*proto.NotificationBatchEntry, len(keys))
+	for i, k := range keys {
+		entries[i] = &proto.NotificationBatchEntry{Key: &k, Value: nb.Notifications[k]}
+	}
 
-func (d deterministicNotificationBatch) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
-	m := d.NotificationBatch
-	if m == nil {
-		return 0, nil
+	return &proto.SortedNotificationBatch{
+		Shard:         nb.Shard,
+		Offset:        nb.Offset,
+		Timestamp:     nb.Timestamp,
+		Notifications: entries,
 	}
-	i := len(dAtA)
-	if len(m.Notifications) > 0 {
-		keys := make([]string, 0, len(m.Notifications))
-		for k := range m.Notifications {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		// Backward fill: descending iteration yields ascending key order on
-		// the wire
-		for idx := len(keys) - 1; idx >= 0; idx-- {
-			k := keys[idx]
-			v := m.Notifications[k]
-			baseI := i
-			size, err := v.MarshalToSizedBufferVT(dAtA[:i])
-			if err != nil {
-				return 0, err
-			}
-			i -= size
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
-			i--
-			dAtA[i] = wireTagMapValue
-			i -= len(k)
-			copy(dAtA[i:], k)
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(k)))
-			i--
-			dAtA[i] = wireTagMapKey
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(baseI-i))
-			i--
-			dAtA[i] = wireTagNotificationsMap
-		}
-	}
-	if m.Timestamp != 0 {
-		i -= 8
-		binary.LittleEndian.PutUint64(dAtA[i:], m.Timestamp)
-		i--
-		dAtA[i] = wireTagTimestamp
-	}
-	if m.Offset != 0 {
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Offset))
-		i--
-		dAtA[i] = wireTagOffset
-	}
-	if m.Shard != 0 {
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Shard))
-		i--
-		dAtA[i] = wireTagShard
-	}
-	return len(dAtA) - i, nil
 }

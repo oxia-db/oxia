@@ -409,11 +409,11 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 
 func (*db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
 	// The serialization order of the Notifications map must be deterministic:
-	// the value feeds the replicated batch checksum. The sorted vtproto
-	// marshal produces the same bytes as the reflection-based Deterministic
+	// the value feeds the replicated batch checksum. The sorted twin message
+	// marshals to the same bytes as the reflection-based Deterministic
 	// marshaler it replaces, directly into the batch arena.
 	return batch.PutMarshalable(notificationKey(notifications.batch.Offset),
-		deterministicNotificationBatch{&notifications.batch})
+		sortedNotificationBatch(&notifications.batch))
 }
 
 func (d *db) addASCIILong(key string, value int64, batch kvstore.WriteBatch, timestamp uint64) error {

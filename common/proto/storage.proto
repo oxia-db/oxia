@@ -74,3 +74,25 @@ message FeatureEnableRequest {
 }
 
 message RecordChecksumRequest {}
+
+// Wire-compatible twin of io.oxia.proto.v1.NotificationBatch: a protobuf map
+// field is encoded identically to a repeated entry message (key = 1,
+// value = 2), and repeated fields marshal in slice order — so marshaling the
+// entries sorted by key with the generated vtproto code yields deterministic
+// bytes, as required by the replicated batch checksum, without a hand-written
+// marshaler. Must mirror NotificationBatch field-for-field; the byte-equality
+// test in notifications_marshal_test.go fails on any drift.
+message SortedNotificationBatch {
+  int64 shard = 1;
+  int64 offset = 2;
+  fixed64 timestamp = 3;
+
+  repeated NotificationBatchEntry notifications = 4;
+}
+
+message NotificationBatchEntry {
+  // optional: presence-tracked, so the field is emitted even for an empty
+  // key, exactly as a map entry encodes it
+  optional string key = 1;
+  io.oxia.proto.v1.Notification value = 2;
+}

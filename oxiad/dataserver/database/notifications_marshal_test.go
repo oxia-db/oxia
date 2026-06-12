@@ -26,7 +26,7 @@ import (
 
 func marshalDeterministicVT(t *testing.T, nb *proto.NotificationBatch) []byte {
 	t.Helper()
-	d := deterministicNotificationBatch{nb}
+	d := sortedNotificationBatch(nb)
 	buf := make([]byte, d.SizeVT())
 	n, err := d.MarshalToSizedBufferVT(buf)
 	assert.NoError(t, err)
@@ -34,13 +34,12 @@ func marshalDeterministicVT(t *testing.T, nb *proto.NotificationBatch) []byte {
 	return buf
 }
 
-// The notification value feeds the replicated batch checksum: the sorted
-// vtproto marshal must produce exactly the bytes of the protobuf-go
-// Deterministic marshaler it replaced, or replicas on different versions
-// would disagree on the checksum. This also acts as a canary if
-// NotificationBatch ever gains fields that the hand-copied emission in
-// deterministicNotificationBatch does not handle.
-func TestDeterministicNotificationBatchMatchesStdlib(t *testing.T) {
+// The notification value feeds the replicated batch checksum: the sorted twin
+// message must marshal to exactly the bytes of the protobuf-go Deterministic
+// marshaler it replaced, or replicas on different versions would disagree on
+// the checksum. This also acts as a canary if NotificationBatch ever gains
+// fields that SortedNotificationBatch does not mirror.
+func TestSortedNotificationBatchMatchesStdlib(t *testing.T) {
 	versionId := int64(7)
 	rangeEnd := "range-end"
 
@@ -118,10 +117,10 @@ func BenchmarkNotificationBatchMarshal(b *testing.B) {
 		}
 	})
 
-	b.Run("vtproto-sorted", func(b *testing.B) {
+	b.Run("vtproto-sorted-twin", func(b *testing.B) {
 		b.ReportAllocs()
-		d := deterministicNotificationBatch{nb}
 		for i := 0; i < b.N; i++ {
+			d := sortedNotificationBatch(nb)
 			buf := make([]byte, d.SizeVT())
 			if _, err := d.MarshalToSizedBufferVT(buf); err != nil {
 				b.Fatal(err)
