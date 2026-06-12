@@ -634,6 +634,28 @@ func (b *PebbleBatch) Put(key string, value []byte) error {
 	return err
 }
 
+func (b *PebbleBatch) PutMarshalable(key string, m ProtoMarshalable) error {
+	encodedKey := b.p.keyEncoder.Encode(key)
+	op := b.b.SetDeferred(len(encodedKey), m.SizeVT())
+	copy(op.Key, encodedKey)
+	n, err := m.MarshalToSizedBufferVT(op.Value)
+	if err != nil {
+		b.p.writeErrors.Inc()
+		return err
+	}
+	if n != len(op.Value) {
+		// The record length is fixed once reserved: a partial fill would
+		// leave garbage bytes in the committed value
+		b.p.writeErrors.Inc()
+		return errors.Errorf("kv: marshaled size %d does not match the reserved record size %d", n, len(op.Value))
+	}
+	if err := op.Finish(); err != nil {
+		b.p.writeErrors.Inc()
+		return err
+	}
+	return nil
+}
+
 func (b *PebbleBatch) Delete(key string) error {
 	err := b.b.Delete(b.p.keyEncoder.Encode(key), b.p.writeOptions)
 	if err != nil {

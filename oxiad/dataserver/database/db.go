@@ -776,12 +776,9 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 
 	defer se.ReturnToVTPool()
 
-	ser, err := se.MarshalVT()
-	if err != nil {
-		return nil, err
-	}
-
-	if err = batch.Put(putReq.Key, ser); err != nil {
+	// Marshal the entry directly into the batch arena: marshal-then-Put would
+	// allocate an intermediate buffer and copy the entry twice
+	if err = batch.PutMarshalable(putReq.Key, se); err != nil {
 		return nil, err
 	}
 
