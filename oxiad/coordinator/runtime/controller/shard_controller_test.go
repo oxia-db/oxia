@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"log/slog"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -856,4 +857,55 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 
 	sc.Close()
+}
+
+// Each UpdateShardStatus persists the full cluster status, so re-writing it
+// for every shard on every periodic tick costs O(shards^2) bytes per interval
+// on the metadata backend. The periodic task must persist only when the
+// status resource diverges from the controller's local view. Every real
+// persist replaces the cached status object graph, so pointer identity
+// through GetShardStatus observes whether a write happened.
+func TestShardController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
+	var shard int64 = 5
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled), &proto.ClusterConfiguration{})
+
+	shardMeta := &proto.ShardMetadata{
+		Status: proto.ShardStatusSteadyState,
+		Term:   1,
+		Leader: &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"},
+	}
+	assert.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
+	}))
+
+	// Built by hand instead of through NewShardController so the run loop's
+	// own periodic timer cannot race the direct handlePeriodicTasks calls
+	s := &shardController{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadata:      NewMetadata(shardMeta),
+		metadataStore: metadata,
+		logger:        slog.Default(),
+	}
+
+	borrowedBefore, exists := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.True(t, exists)
+
+	// Steady state: the status resource matches the local view — no persist
+	s.handlePeriodicTasks()
+	borrowedAfter, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
+
+	// Local divergence (what an election leaves behind): must persist
+	shardMeta.Term = 2
+	s.metadata.Store(shardMeta)
+	s.handlePeriodicTasks()
+	borrowedChanged, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.NotSame(t, borrowedAfter.UnsafeBorrow(), borrowedChanged.UnsafeBorrow())
+	assert.EqualValues(t, 2, borrowedChanged.UnsafeBorrow().Term)
+
+	// Converged again: back to skipping
+	s.handlePeriodicTasks()
+	borrowedFinal, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.Same(t, borrowedChanged.UnsafeBorrow(), borrowedFinal.UnsafeBorrow())
 }
