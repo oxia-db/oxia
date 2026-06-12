@@ -299,23 +299,22 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 }
 
 func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClient_ReadServer) error {
-	if s.log.Enabled(stream.Context(), slog.LevelDebug) {
+	ctx := stream.Context()
+	if s.log.Enabled(ctx, slog.LevelDebug) {
 		s.log.Debug(
 			"Read request",
-			slog.String("peer", rpc.GetPeer(stream.Context())),
+			slog.String("peer", rpc.GetPeer(ctx)),
 			slog.Any("req", request),
 		)
 	}
 
-	lc, err := s.resolveLeader(stream.Context(), request.Shard)
+	lc, err := s.resolveLeader(ctx, request.Shard)
 	if err != nil {
 		return err
 	}
 
-	ctx := stream.Context()
-
 	finish := make(chan error, 1)
-	lc.Read(stream.Context(), request, concurrent.NewBatchStreamOnce[*proto.GetResponse](maxTotalReadCount, maxTotalReadValueSize,
+	lc.Read(ctx, request, concurrent.NewBatchStreamOnce[*proto.GetResponse](maxTotalReadCount, maxTotalReadValueSize,
 		func(result *proto.GetResponse) int { return protowire.SizeBytes(len(result.Value)) },
 		func(container []*proto.GetResponse) error { return stream.Send(&proto.ReadResponse{Gets: container}) },
 		func(err error) { finish <- err },
@@ -339,18 +338,18 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
-	if s.log.Enabled(stream.Context(), slog.LevelDebug) {
+	ctx := stream.Context()
+	if s.log.Enabled(ctx, slog.LevelDebug) {
 		s.log.Debug(
 			"List request",
-			slog.String("peer", rpc.GetPeer(stream.Context())),
+			slog.String("peer", rpc.GetPeer(ctx)),
 			slog.Any("req", request),
 		)
 	}
-	lc, err := s.resolveLeader(stream.Context(), request.Shard)
+	lc, err := s.resolveLeader(ctx, request.Shard)
 	if err != nil {
 		return err
 	}
-	ctx := stream.Context()
 	finish := make(chan error, 1)
 	lc.List(ctx, request, concurrent.NewBatchStreamOnce[string](maxTotalListKeyCount, maxTotalListKeySize,
 		func(key string) int { return protowire.SizeBytes(len(key)) },
@@ -375,18 +374,18 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 }
 
 func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream proto.OxiaClient_RangeScanServer) error {
-	if s.log.Enabled(stream.Context(), slog.LevelDebug) {
+	ctx := stream.Context()
+	if s.log.Enabled(ctx, slog.LevelDebug) {
 		s.log.Debug(
 			"RangeScan request",
-			slog.String("peer", rpc.GetPeer(stream.Context())),
+			slog.String("peer", rpc.GetPeer(ctx)),
 			slog.Any("req", request),
 		)
 	}
-	ctx := stream.Context()
 
 	var lc lead.LeaderController
 	var err error
-	if lc, err = s.resolveLeader(stream.Context(), request.Shard); err != nil {
+	if lc, err = s.resolveLeader(ctx, request.Shard); err != nil {
 		return err
 	}
 
