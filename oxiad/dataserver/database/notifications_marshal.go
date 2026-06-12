@@ -36,6 +36,17 @@ type deterministicNotificationBatch struct {
 	*proto.NotificationBatch
 }
 
+// Protobuf wire tags (field number << 3 | wire type) emitted below, matching
+// the generated NotificationBatch marshal code
+const (
+	wireTagShard            = 0x8  // field 1, varint
+	wireTagOffset           = 0x10 // field 2, varint
+	wireTagTimestamp        = 0x19 // field 3, fixed64
+	wireTagNotificationsMap = 0x22 // field 4, length-delimited map entry
+	wireTagMapKey           = 0xa  // map-entry field 1, length-delimited
+	wireTagMapValue         = 0x12 // map-entry field 2, length-delimited
+)
+
 func (d deterministicNotificationBatch) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	m := d.NotificationBatch
 	if m == nil {
@@ -61,32 +72,32 @@ func (d deterministicNotificationBatch) MarshalToSizedBufferVT(dAtA []byte) (int
 			i -= size
 			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
 			i--
-			dAtA[i] = 0x12
+			dAtA[i] = wireTagMapValue
 			i -= len(k)
 			copy(dAtA[i:], k)
 			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(k)))
 			i--
-			dAtA[i] = 0xa
+			dAtA[i] = wireTagMapKey
 			i = protohelpers.EncodeVarint(dAtA, i, uint64(baseI-i))
 			i--
-			dAtA[i] = 0x22
+			dAtA[i] = wireTagNotificationsMap
 		}
 	}
 	if m.Timestamp != 0 {
 		i -= 8
 		binary.LittleEndian.PutUint64(dAtA[i:], m.Timestamp)
 		i--
-		dAtA[i] = 0x19
+		dAtA[i] = wireTagTimestamp
 	}
 	if m.Offset != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Offset))
 		i--
-		dAtA[i] = 0x10
+		dAtA[i] = wireTagOffset
 	}
 	if m.Shard != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Shard))
 		i--
-		dAtA[i] = 0x8
+		dAtA[i] = wireTagShard
 	}
 	return len(dAtA) - i, nil
 }
