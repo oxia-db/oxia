@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -342,6 +343,44 @@ func TestDB_NotificationsDeleteRange(t *testing.T) {
 	assert.Equal(t, proto.NotificationType_KEY_RANGE_DELETED, n.Type)
 	assert.Equal(t, "c", *n.KeyRangeLast)
 	assert.Nil(t, n.VersionId)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+// A subscriber catching up from an old offset must receive the backlog in
+// bounded chunks, not the entire retention window in one slice: the dispatch
+// loop in the leader controller resumes from the last delivered offset + 1.
+func TestDB_NotificationsReadBatchLimit(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+	assert.NoError(t, err)
+
+	const total = maxNotificationBatchSize + 50
+	for i := 0; i < total; i++ {
+		_, err := db.ProcessWrite(&proto.WriteRequest{
+			Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}},
+		}, int64(i), now(), NoOpCallback)
+		assert.NoError(t, err)
+	}
+
+	// First read is capped at maxNotificationBatchSize batches. require, not
+	// assert: with an uncapped read the resume below would ask for an offset
+	// past the backlog and block until the suite timeout.
+	notifications, err := db.ReadNextNotifications(context.Background(), 0)
+	require.NoError(t, err)
+	require.Equal(t, maxNotificationBatchSize, len(notifications))
+	assert.EqualValues(t, 0, notifications[0].Offset)
+	lastDelivered := notifications[len(notifications)-1].Offset
+	assert.EqualValues(t, maxNotificationBatchSize-1, lastDelivered)
+
+	// Resuming from the last delivered offset + 1 returns the remainder
+	rest, err := db.ReadNextNotifications(context.Background(), lastDelivered+1)
+	assert.NoError(t, err)
+	assert.Equal(t, total-maxNotificationBatchSize, len(rest))
+	assert.EqualValues(t, maxNotificationBatchSize, rest[0].Offset)
+	assert.EqualValues(t, total-1, rest[len(rest)-1].Offset)
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
