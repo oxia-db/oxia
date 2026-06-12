@@ -913,29 +913,25 @@ func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, erro
 	}
 
 	var se *proto.StorageEntry
+	var deserializeErr error
 	if getReq.IncludeValue {
 		// If we need to return the value we cannot pool the objects, because
 		// the Value slice would be returned to pool
 		se = &proto.StorageEntry{}
+		deserializeErr = Deserialize(value, se)
 	} else {
+		// Metadata-only read: skip copying the value that would be dropped
 		se = proto.StorageEntryFromVTPool()
 		defer se.ReturnToVTPool()
+		deserializeErr = DeserializeMetadata(value, se)
 	}
 
-	if err = multierr.Append(
-		Deserialize(value, se),
-		closer.Close(),
-	); err != nil {
+	if err = multierr.Append(deserializeErr, closer.Close()); err != nil {
 		return nil, err
 	}
 
-	resValue := se.Value
-	if !getReq.IncludeValue {
-		resValue = nil
-	}
-
 	res := &proto.GetResponse{
-		Value: resValue,
+		Value: se.Value,
 		Version: &proto.Version{
 			VersionId:          se.VersionId,
 			ModificationsCount: se.ModificationsCount,
@@ -953,7 +949,13 @@ func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, erro
 	return res, nil
 }
 
-func GetStorageEntry(batch kvstore.WriteBatch, key string) (*proto.StorageEntry, error) {
+// GetStorageEntryMetadata reads the storage entry for key, skipping the value
+// payload: the returned entry has Value nil and owns the rest of its fields.
+// All the consumers of an existing entry (version checks, session shadows,
+// secondary-index cleanup) only need the metadata, and copying the old value
+// just to discard it costs a full memcpy per overwrite — and pins
+// max-value-sized buffers in the entry pool.
+func GetStorageEntryMetadata(batch kvstore.WriteBatch, key string) (*proto.StorageEntry, error) {
 	value, closer, err := batch.Get(key)
 	if err != nil {
 		return nil, err
@@ -962,7 +964,7 @@ func GetStorageEntry(batch kvstore.WriteBatch, key string) (*proto.StorageEntry,
 	se := proto.StorageEntryFromVTPool()
 
 	if err = multierr.Append(
-		Deserialize(value, se),
+		DeserializeMetadata(value, se),
 		closer.Close(),
 	); err != nil {
 		se.ReturnToVTPool()
@@ -972,7 +974,7 @@ func GetStorageEntry(batch kvstore.WriteBatch, key string) (*proto.StorageEntry,
 }
 
 func checkExpectedVersionId(batch kvstore.WriteBatch, key string, expectedVersionId *int64) (*proto.StorageEntry, error) {
-	se, err := GetStorageEntry(batch, key)
+	se, err := GetStorageEntryMetadata(batch, key)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			if expectedVersionId == nil || *expectedVersionId == -1 {
@@ -991,6 +993,30 @@ func checkExpectedVersionId(batch kvstore.WriteBatch, key string, expectedVersio
 	}
 
 	return se, nil
+}
+
+// DeserializeMetadata fills se from buf without copying the value payload:
+// the unmarshal aliases buf, then every field that must outlive buf is copied
+// out and Value is dropped.
+func DeserializeMetadata(buf []byte, se *proto.StorageEntry) error {
+	if err := se.UnmarshalVTUnsafe(buf); err != nil {
+		return errors.Wrap(err, "failed to Deserialize storage entry")
+	}
+
+	se.Value = nil
+	if se.ClientIdentity != nil {
+		ci := strings.Clone(*se.ClientIdentity)
+		se.ClientIdentity = &ci
+	}
+	if se.PartitionKey != nil {
+		pk := strings.Clone(*se.PartitionKey)
+		se.PartitionKey = &pk
+	}
+	for _, si := range se.SecondaryIndexes {
+		si.IndexName = strings.Clone(si.IndexName)
+		si.SecondaryKey = strings.Clone(si.SecondaryKey)
+	}
+	return nil
 }
 
 func Deserialize(value []byte, se *proto.StorageEntry) error {

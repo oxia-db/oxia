@@ -94,7 +94,7 @@ func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *databa
 }
 
 func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *database.Notifications, key string) error {
-	se, err := database.GetStorageEntry(batch, key)
+	se, err := database.GetStorageEntryMetadata(batch, key)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			return nil

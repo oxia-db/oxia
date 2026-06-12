@@ -385,7 +385,7 @@ func deleteShadow(batch kvstore.WriteBatch, _ *database.Notifications, key strin
 }
 
 func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBatch, notification *database.Notifications, key string) error {
-	se, err := database.GetStorageEntry(batch, key)
+	se, err := database.GetStorageEntryMetadata(batch, key)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			return nil
