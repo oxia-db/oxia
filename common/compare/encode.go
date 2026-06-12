@@ -135,10 +135,18 @@ func (encoderNatural) Encode(key string) []byte {
 }
 
 func (encoderNatural) Decode(encoded []byte) string {
+	// The buffer must not be modified: it is Pebble's memory, handed out
+	// under an explicit read-only contract ("the caller should not modify
+	// the contents of the returned slice", Iterator.Key). Today it is the
+	// iterator's own position buffer — which Pebble keeps using internally —
+	// and Pebble's lower layers hand out direct block-cache references that
+	// only an implementation detail of the current version copies before
+	// they reach the caller.
 	if bytes.HasPrefix(encoded, encodedInternalKeyPrefixBytes) {
-		// Decode the internal key
-		encoded[0] = '_'
-		encoded[1] = '_'
+		// Decode the internal key into a new string. The concatenation makes
+		// a single allocation: the compiler does not allocate for a
+		// []byte-to-string conversion used directly as a concat operand.
+		return "__" + string(encoded[2:])
 	}
 
 	// Copy is necessary because the []byte memory is managed by Pebble
