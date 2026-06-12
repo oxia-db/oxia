@@ -243,6 +243,7 @@ func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
 	// the first periodic tick over the interval so the periodic tasks don't
 	// fire as a herd.
 	periodicTasksTimer := time.NewTimer(rand.N(s.periodicTasksInterval)) //nolint:gosec
+	defer periodicTasksTimer.Stop()
 
 	for {
 		select {
@@ -538,8 +539,14 @@ func (s *shardController) handlePeriodicTasks() {
 			s.logger.Warn("Failed to handle pending delete shard", "error", err)
 			return
 		}
-		// The local view changed: the pending-delete nodes are now cleared
-		s.metadata.Store(mutShardMeta)
+		// Clear the pending-delete nodes in the canonical view. Compute (not
+		// Store of the snapshot): the DeleteShard RPCs above leave a long
+		// window since Load(), and the split controller can store a term bump
+		// into this controller's metadata concurrently (SplitComplete) —
+		// writing the whole snapshot back would revert it.
+		mutShardMeta = s.metadata.Compute(func(m *proto.ShardMetadata) {
+			m.PendingDeleteShardNodes = nil
+		})
 	}
 
 	// Re-assert the shard status only when the status resource diverges from
@@ -570,6 +577,5 @@ func (s *shardController) handlePendingDeleteShard(mutShardMeta *proto.ShardMeta
 		s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
 	}
 
-	mutShardMeta.PendingDeleteShardNodes = nil
 	return nil
 }

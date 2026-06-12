@@ -909,3 +909,66 @@ func TestShardController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 	borrowedFinal, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
 	assert.Same(t, borrowedChanged.UnsafeBorrow(), borrowedFinal.UnsafeBorrow())
 }
+
+// While handlePeriodicTasks is blocked in the DeleteShard RPCs, the split
+// controller can store a term bump into this controller's metadata
+// (runtime.SplitComplete syncing the parent after Cutover). Clearing the
+// pending-delete nodes must merge with that update, not write the whole
+// pre-RPC snapshot back over it.
+func TestShardController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *testing.T) {
+	var shard int64 = 5
+	rpc := newMockRpcProvider()
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled), &proto.ClusterConfiguration{})
+
+	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	removed := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	shardMeta := &proto.ShardMetadata{
+		Status:                  proto.ShardStatusSteadyState,
+		Term:                    1,
+		Leader:                  leader,
+		PendingDeleteShardNodes: []*proto.DataServerIdentity{removed},
+	}
+	assert.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
+	}))
+
+	// Built by hand so the run loop's own timer cannot race the direct call
+	s := &shardController{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadata:      NewMetadata(shardMeta),
+		metadataStore: metadata,
+		rpc:           rpc,
+		logger:        slog.Default(),
+	}
+	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
+	defer s.ctxCancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.handlePeriodicTasks()
+		close(done)
+	}()
+
+	// The periodic task is now blocked inside the DeleteShard RPC
+	rpc.GetNode(removed).expectDeleteShardRequest(t, shard, 1)
+
+	// A concurrent term bump lands while the RPC is in flight
+	s.metadata.Compute(func(m *proto.ShardMetadata) { m.Term = 7 })
+
+	rpc.GetNode(removed).DeleteShardResponse(nil)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("handlePeriodicTasks did not complete")
+	}
+
+	// The bump survives the pending-delete bookkeeping, and the merged view
+	// is what gets persisted to the status resource
+	assert.EqualValues(t, 7, s.metadata.Term())
+	assert.Empty(t, s.metadata.Load().PendingDeleteShardNodes)
+	borrowed, exists := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.True(t, exists)
+	assert.EqualValues(t, 7, borrowed.UnsafeBorrow().Term)
+	assert.Empty(t, borrowed.UnsafeBorrow().PendingDeleteShardNodes)
+}
