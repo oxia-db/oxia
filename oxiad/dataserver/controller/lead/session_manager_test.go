@@ -93,10 +93,12 @@ func (m mockWriteBatch) Close() error {
 
 func (m mockWriteBatch) PutMarshalable(key string, v kvstore.ProtoMarshalable) error {
 	data := make([]byte, v.SizeVT())
-	if _, err := v.MarshalToSizedBufferVT(data); err != nil {
+	n, err := v.MarshalToSizedBufferVT(data)
+	if err != nil {
 		return err
 	}
-	return m.Put(key, data)
+	// The valid bytes are the suffix of the buffer
+	return m.Put(key, data[len(data)-n:])
 }
 
 func (m mockWriteBatch) Put(key string, value []byte) error {

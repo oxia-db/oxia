@@ -16,6 +16,7 @@ package kvstore
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -64,6 +65,8 @@ func BenchmarkPebbleSetVsSetDeferred(b *testing.B) {
 				if v, closer, err := batch.Get(key); err == nil {
 					_ = v
 					_ = closer.Close()
+				} else if !errors.Is(err, pebble.ErrNotFound) {
+					b.Fatal(err)
 				}
 
 				if deferred {

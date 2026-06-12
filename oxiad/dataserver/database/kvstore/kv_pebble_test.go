@@ -321,6 +321,61 @@ func TestPebbbleGetWithinBatch(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// PutMarshalable writes through pebble SetDeferred instead of Set: the entry
+// must be readable back, byte-identical to a regular marshal, both within the
+// same indexed batch (read-your-writes) and after the commit.
+func TestPebblePutMarshalableWithinBatch(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_HIERARCHICAL)
+	assert.NoError(t, err)
+
+	sessionId := int64(42)
+	entry := &proto.StorageEntry{
+		Value:                 []byte("payload"),
+		VersionId:             7,
+		ModificationsCount:    3,
+		CreationTimestamp:     100,
+		ModificationTimestamp: 200,
+		SessionId:             &sessionId,
+	}
+	expected, err := entry.MarshalVT()
+	assert.NoError(t, err)
+
+	wb := kv.NewWriteBatch()
+	assert.NoError(t, wb.PutMarshalable("a", entry))
+
+	// Read-your-writes within the same indexed batch
+	value, closer, err := wb.Get("a")
+	assert.NoError(t, err)
+	assert.Equal(t, expected, value)
+	assert.NoError(t, closer.Close())
+
+	// Overwrite within the same batch through the same path
+	entry.VersionId = 8
+	expected2, err := entry.MarshalVT()
+	assert.NoError(t, err)
+	assert.NoError(t, wb.PutMarshalable("a", entry))
+
+	value, closer, err = wb.Get("a")
+	assert.NoError(t, err)
+	assert.Equal(t, expected2, value)
+	assert.NoError(t, closer.Close())
+
+	assert.NoError(t, wb.Commit())
+	assert.NoError(t, wb.Close())
+
+	// Visible after commit
+	storedKey, value, closer, err := kv.Get("a", ComparisonEqual, NoInternalKeys)
+	assert.NoError(t, err)
+	assert.Equal(t, "a", storedKey)
+	assert.Equal(t, expected2, value)
+	assert.NoError(t, closer.Close())
+
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestPebbbleDurability(t *testing.T) {
 	options := NewFactoryOptionsForTest(t)
 
