@@ -32,7 +32,6 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/common/collection"
 )
 
 const (
@@ -92,7 +91,7 @@ type sessionManager struct {
 	leaderController *leaderController
 	namespace        string
 	shardId          int64
-	sessions         collection.Map[SessionId, *session]
+	sessions         map[SessionId]*session
 	log              *slog.Logger
 
 	ctx    context.Context
@@ -101,13 +100,13 @@ type sessionManager struct {
 	createdSessions metric.Counter
 	closedSessions  metric.Counter
 	expiredSessions metric.Counter
-	activeSessions  metric.Gauge
+	activeSessions  metric.UpDownCounter
 }
 
 func NewSessionManager(ctx context.Context, namespace string, shardId int64, controller *leaderController) SessionManager {
 	labels := metric.LabelsForShard(namespace, shardId)
 	sm := &sessionManager{
-		sessions:         collection.NewVisibleMap[SessionId, *session](),
+		sessions:         make(map[SessionId]*session),
 		namespace:        namespace,
 		shardId:          shardId,
 		leaderController: controller,
@@ -124,14 +123,11 @@ func NewSessionManager(ctx context.Context, namespace string, shardId int64, con
 			"The total number of sessions closed", "count", labels),
 		expiredSessions: metric.NewCounter("oxia_server_sessions_expired",
 			"The total number of sessions expired", "count", labels),
+		activeSessions: metric.NewUpDownCounter("oxia_server_session_active",
+			"The number of sessions currently active", "count", labels),
 	}
 
 	sm.ctx, sm.cancel = context.WithCancel(ctx)
-
-	sm.activeSessions = metric.NewGauge("oxia_server_session_active",
-		"The number of sessions currently active", "count", labels, func() int64 {
-			return int64(sm.sessions.Size())
-		})
 
 	return sm
 }
@@ -181,8 +177,21 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 	return &proto.CreateSessionResponse{SessionId: int64(s.id)}, nil
 }
 
+// removeSession takes the session out of the map and decrements the
+// active-sessions counter. It must be called while holding the manager's write
+// lock. Removing an id that is no longer present is a no-op: the expiry path
+// and CloseSession can race on the same session, and the loser must not
+// decrement the counter a second time.
+func (sm *sessionManager) removeSession(id SessionId) {
+	if _, found := sm.sessions[id]; !found {
+		return
+	}
+	delete(sm.sessions, id)
+	sm.activeSessions.Dec()
+}
+
 func (sm *sessionManager) getSession(sessionId int64) (*session, error) {
-	s, found := sm.sessions.Get(SessionId(sessionId))
+	s, found := sm.sessions[SessionId(sessionId)]
 	if !found {
 		sm.log.Warn(
 			"Session not found",
@@ -211,7 +220,7 @@ func (sm *sessionManager) CloseSession(request *proto.CloseSessionRequest) (*pro
 		sm.Unlock()
 		return nil, err
 	}
-	sm.sessions.Remove(s.id)
+	sm.removeSession(s.id)
 	sm.Unlock()
 
 	s.log.Info("Session closing")
@@ -301,9 +310,12 @@ func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, 
 func (sm *sessionManager) Close() error {
 	sm.Lock()
 	sm.cancel()
-	sessions := sm.sessions.Values()
+	sessions := make([]*session, 0, len(sm.sessions))
+	for _, s := range sm.sessions {
+		sessions = append(sessions, s)
+	}
 	for _, s := range sessions {
-		sm.sessions.Remove(s.id)
+		sm.removeSession(s.id)
 	}
 	sm.Unlock()
 
@@ -315,7 +327,6 @@ func (sm *sessionManager) Close() error {
 		s.Close()
 	}
 
-	sm.activeSessions.Unregister()
 	return nil
 }
 
