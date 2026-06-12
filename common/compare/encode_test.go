@@ -111,10 +111,11 @@ func TestEncodeInternalKeys(t *testing.T) {
 	}
 }
 
-// The buffer passed to Decode can alias Pebble's shared block cache: it must
-// never be modified, or the cached block gets corrupted for every other
-// reader (the old in-place rewrite changed the internal-key prefix bytes,
-// breaking the sort order within the block).
+// The buffer passed to Decode is Pebble memory, handed out under an explicit
+// read-only contract (Iterator.Key): it must not be modified. In the current
+// pebble version it is the iterator's own position buffer, which pebble keeps
+// using internally — the layers below alias the shared block cache, with the
+// top-level iterator copying every key before it reaches the caller.
 func TestEncoderNaturalDecodeDoesNotMutateInput(t *testing.T) {
 	encoded := []byte("\xff\xffoxia/session/123")
 	original := bytes.Clone(encoded)
