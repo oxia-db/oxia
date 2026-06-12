@@ -496,17 +496,20 @@ func (it *rangeScanIterator) Value() (*proto.GetResponse, error) {
 
 	se := &proto.StorageEntry{}
 
+	// Key() decodes the key on every call: do it once per entry
+	key := it.Key()
+
 	// Notifications are not using the stats headers so they would
 	// fail to deserialize. We just provide the content without the
 	// version object
-	if strings.HasPrefix(it.Key(), notificationsPrefix) {
+	if strings.HasPrefix(key, notificationsPrefix) {
 		se.Value = value
 	} else if err = Deserialize(value, se); err != nil {
 		return nil, err
 	}
 
 	res := &proto.GetResponse{
-		Key:    pb.String(it.Key()),
+		Key:    &key,
 		Value:  se.Value,
 		Status: proto.Status_OK,
 		Version: &proto.Version{

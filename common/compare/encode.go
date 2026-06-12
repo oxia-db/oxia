@@ -89,7 +89,11 @@ func (encoderHierarchical) Decode(encoded []byte) string {
 	}
 
 	buf := bytes.ReplaceAll(encoded[2:], encodedSeparatorSlice, separator)
-	return string(buf)
+	// ReplaceAll always returns a fresh copy here (the separator count is
+	// non-zero on this branch), so the slice can be re-typed as a string
+	// without the second allocation+copy of a string(buf) conversion: it is
+	// not aliased and never mutated after this point.
+	return unsafe.String(unsafe.SliceData(buf), len(buf))
 }
 
 func (encoderHierarchical) IsInternalKey(encodedKey []byte) bool {
