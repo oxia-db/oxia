@@ -194,7 +194,7 @@ func (nt *notificationsTracker) ReadNextNotifications(ctx context.Context, start
 	totalCount := 0
 	totalSize := 0
 
-	for count := 0; count < maxNotificationBatchSize && it.Valid(); it.Next() {
+	for ; len(res) < maxNotificationBatchSize && it.Valid(); it.Next() {
 		value, err := it.Value()
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to read notification batch")
