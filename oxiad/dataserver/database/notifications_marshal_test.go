@@ -15,6 +15,7 @@
 package database
 
 import (
+	"encoding/hex"
 	"fmt"
 	"testing"
 
@@ -24,41 +25,49 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func marshalDeterministicVT(t *testing.T, nb *proto.NotificationBatch) []byte {
+func marshalSealed(t *testing.T, n *Notifications) []byte {
 	t.Helper()
-	d := sortedNotificationBatch(nb)
-	buf := make([]byte, d.SizeVT())
-	n, err := d.MarshalToSizedBufferVT(buf)
+	nb := n.seal()
+	buf := make([]byte, nb.SizeVT())
+	written, err := nb.MarshalToSizedBufferVT(buf)
 	assert.NoError(t, err)
-	assert.Equal(t, len(buf), n)
+	assert.Equal(t, len(buf), written)
 	return buf
 }
 
-// The notification value feeds the replicated batch checksum: the sorted twin
-// message must marshal to exactly the bytes of the protobuf-go Deterministic
-// marshaler it replaced, or replicas on different versions would disagree on
-// the checksum. This also acts as a canary if NotificationBatch ever gains
-// fields that SortedNotificationBatch does not mirror.
-func TestSortedNotificationBatchMatchesStdlib(t *testing.T) {
+// The serialized notification batch feeds the replicated batch checksum, so
+// every replica must produce identical bytes for the same logical content —
+// including replicas still running the previous code, which marshaled a
+// map<string, Notification> field through the protobuf-go Deterministic
+// marshaler. The golden vectors below were captured from that code: a
+// repeated NotificationEntry field is wire-compatible with the former map,
+// and seal() emits the entries in the same ascending key order.
+func TestNotificationBatchGoldenBytes(t *testing.T) {
 	versionId := int64(7)
 	rangeEnd := "range-end"
 
-	cases := []*proto.NotificationBatch{
-		{},
-		{Shard: 5, Offset: 42, Timestamp: 1234567890},
+	golden := []string{
+		"",
+		"0805102a19d202964900000000",
+		"08011009196300000000000000220b0a056b65792d6212021007",
+		"0803100b19640000000000000022040a00120022090a016112040801100722160a056d2f6e2f6f120d08031a0972616e67652d656e6422070a017a12020802",
+	}
+
+	cases := []*Notifications{
+		{byKey: map[string]*proto.Notification{}},
 		{
-			Shard:     1,
-			Offset:    9,
-			Timestamp: 99,
-			Notifications: map[string]*proto.Notification{
+			batch: proto.NotificationBatch{Shard: 5, Offset: 42, Timestamp: 1234567890},
+			byKey: map[string]*proto.Notification{},
+		},
+		{
+			batch: proto.NotificationBatch{Shard: 1, Offset: 9, Timestamp: 99},
+			byKey: map[string]*proto.Notification{
 				"key-b": {Type: proto.NotificationType_KEY_CREATED, VersionId: &versionId},
 			},
 		},
 		{
-			Shard:     3,
-			Offset:    11,
-			Timestamp: 100,
-			Notifications: map[string]*proto.Notification{
+			batch: proto.NotificationBatch{Shard: 3, Offset: 11, Timestamp: 100},
+			byKey: map[string]*proto.Notification{
 				"z":     {Type: proto.NotificationType_KEY_DELETED},
 				"a":     {Type: proto.NotificationType_KEY_MODIFIED, VersionId: &versionId},
 				"m/n/o": {Type: proto.NotificationType_KEY_RANGE_DELETED, KeyRangeLast: &rangeEnd},
@@ -67,62 +76,73 @@ func TestSortedNotificationBatchMatchesStdlib(t *testing.T) {
 		},
 	}
 
-	// Many keys: the probability that an unsorted map iteration accidentally
-	// matches the sorted order is negligible
-	many := &proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1,
-		Notifications: map[string]*proto.Notification{}}
+	// Many keys, inserted in reverse order: the probability that an unsorted
+	// iteration accidentally matches the golden bytes is negligible
+	many := &Notifications{
+		batch: proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1},
+		byKey: map[string]*proto.Notification{},
+	}
 	for i := 0; i < 30; i++ {
 		v := int64(i)
-		many.Notifications[fmt.Sprintf("key-%04d", 9999-i)] =
+		many.byKey[fmt.Sprintf("key-%04d", 9999-i)] =
 			&proto.Notification{Type: proto.NotificationType_KEY_MODIFIED, VersionId: &v}
 	}
 	cases = append(cases, many)
+	golden = append(golden, "0802100119010000000000000022100a086b65792d3939373012040801101d22100a086b65792d3939373112040801101c22100a086b65792d3939373212040801101b22100a086b65792d3939373312040801101a22100a086b65792d3939373412040801101922100a086b65792d3939373512040801101822100a086b65792d3939373612040801101722100a086b65792d3939373712040801101622100a086b65792d3939373812040801101522100a086b65792d3939373912040801101422100a086b65792d3939383012040801101322100a086b65792d3939383112040801101222100a086b65792d3939383212040801101122100a086b65792d3939383312040801101022100a086b65792d3939383412040801100f22100a086b65792d3939383512040801100e22100a086b65792d3939383612040801100d22100a086b65792d3939383712040801100c22100a086b65792d3939383812040801100b22100a086b65792d3939383912040801100a22100a086b65792d3939393012040801100922100a086b65792d3939393112040801100822100a086b65792d3939393212040801100722100a086b65792d3939393312040801100622100a086b65792d3939393412040801100522100a086b65792d3939393512040801100422100a086b65792d3939393612040801100322100a086b65792d3939393712040801100222100a086b65792d3939393812040801100122100a086b65792d39393939120408011000")
 
-	for i, nb := range cases {
+	for i, n := range cases {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			expected, err := pb.MarshalOptions{Deterministic: true}.Marshal(nb)
+			expected, err := hex.DecodeString(golden[i])
 			assert.NoError(t, err)
 
-			actual := marshalDeterministicVT(t, nb)
+			actual := marshalSealed(t, n)
 			assert.Equal(t, expected, actual)
 
-			// Stable across repeated marshals
+			// Stable across repeated seals and marshals
 			for range 20 {
-				assert.Equal(t, actual, marshalDeterministicVT(t, nb))
+				assert.Equal(t, expected, marshalSealed(t, n))
 			}
 
-			// And it round-trips
+			// Round-trips with the entries intact
 			decoded := &proto.NotificationBatch{}
 			assert.NoError(t, decoded.UnmarshalVT(actual))
-			assert.True(t, pb.Equal(nb, decoded))
+			assert.Equal(t, len(n.byKey), len(decoded.Notifications))
+			for _, entry := range decoded.Notifications {
+				expectedNotification, found := n.byKey[entry.GetKey()]
+				assert.True(t, found)
+				assert.True(t, pb.Equal(expectedNotification, entry.Value))
+			}
 		})
 	}
 }
 
 func BenchmarkNotificationBatchMarshal(b *testing.B) {
 	versionId := int64(7)
-	nb := &proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1234567890,
-		Notifications: map[string]*proto.Notification{}}
+	notifications := &Notifications{
+		batch: proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1234567890},
+		byKey: map[string]*proto.Notification{},
+	}
 	for i := 0; i < 10; i++ {
-		nb.Notifications[fmt.Sprintf("/app/users/%04d/profile", i)] =
+		notifications.byKey[fmt.Sprintf("/app/users/%04d/profile", i)] =
 			&proto.Notification{Type: proto.NotificationType_KEY_MODIFIED, VersionId: &versionId}
 	}
 
 	b.Run("reflection-deterministic", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
+			nb := notifications.seal()
 			if _, err := (pb.MarshalOptions{Deterministic: true}).Marshal(nb); err != nil {
 				b.Fatal(err)
 			}
 		}
 	})
 
-	b.Run("vtproto-sorted-twin", func(b *testing.B) {
+	b.Run("vtproto", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			d := sortedNotificationBatch(nb)
-			buf := make([]byte, d.SizeVT())
-			if _, err := d.MarshalToSizedBufferVT(buf); err != nil {
+			nb := notifications.seal()
+			buf := make([]byte, nb.SizeVT())
+			if _, err := nb.MarshalToSizedBufferVT(buf); err != nil {
 				b.Fatal(err)
 			}
 		}

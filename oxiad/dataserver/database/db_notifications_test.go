@@ -35,6 +35,15 @@ func init() {
 	logging.ConfigureLogger()
 }
 
+func findNotification(nb *proto.NotificationBatch, key string) (*proto.Notification, bool) {
+	for _, e := range nb.Notifications {
+		if e.GetKey() == key {
+			return e.Value, true
+		}
+	}
+	return nil, false
+}
+
 func TestDB_Notifications(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
@@ -58,7 +67,7 @@ func TestDB_Notifications(t *testing.T) {
 	assert.EqualValues(t, 0, nb.Offset)
 	assert.EqualValues(t, 1, nb.Shard)
 	assert.Equal(t, 1, len(nb.Notifications))
-	n, found := nb.Notifications["a"]
+	n, found := findNotification(nb, "a")
 	assert.True(t, found)
 	assert.Equal(t, proto.NotificationType_KEY_CREATED, n.Type)
 	assert.EqualValues(t, 0, *n.VersionId)
@@ -88,7 +97,7 @@ func TestDB_Notifications(t *testing.T) {
 	assert.EqualValues(t, 1, nb.Offset)
 	assert.EqualValues(t, 1, nb.Shard)
 	assert.Equal(t, 1, len(nb.Notifications))
-	n, found = nb.Notifications["a"]
+	n, found = findNotification(nb, "a")
 	assert.True(t, found)
 	assert.Equal(t, proto.NotificationType_KEY_MODIFIED, n.Type)
 	assert.EqualValues(t, wr1.Puts[0].Version.VersionId, *n.VersionId)
@@ -98,7 +107,7 @@ func TestDB_Notifications(t *testing.T) {
 	assert.EqualValues(t, 2, nb.Offset)
 	assert.EqualValues(t, 1, nb.Shard)
 	assert.Equal(t, 1, len(nb.Notifications))
-	n, found = nb.Notifications["b"]
+	n, found = findNotification(nb, "b")
 	assert.True(t, found)
 	assert.Equal(t, proto.NotificationType_KEY_CREATED, n.Type)
 	assert.EqualValues(t, wr2.Puts[0].Version.VersionId, *n.VersionId)
@@ -127,15 +136,15 @@ func TestDB_Notifications(t *testing.T) {
 	assert.EqualValues(t, 3, nb.Offset)
 	assert.EqualValues(t, 1, nb.Shard)
 	assert.Equal(t, 3, len(nb.Notifications))
-	n, found = nb.Notifications["c"]
+	n, found = findNotification(nb, "c")
 	assert.True(t, found)
 	assert.Equal(t, proto.NotificationType_KEY_CREATED, n.Type)
 	assert.EqualValues(t, wr3.Puts[0].Version.VersionId, *n.VersionId)
-	n, found = nb.Notifications["d"]
+	n, found = findNotification(nb, "d")
 	assert.True(t, found)
 	assert.Equal(t, proto.NotificationType_KEY_CREATED, n.Type)
 	assert.EqualValues(t, wr3.Puts[1].Version.VersionId, *n.VersionId)
-	n, found = nb.Notifications["a"]
+	n, found = findNotification(nb, "a")
 	assert.True(t, found)
 	assert.Equal(t, proto.NotificationType_KEY_DELETED, n.Type)
 	assert.Nil(t, n.VersionId)
@@ -162,7 +171,7 @@ func TestDB_Notifications(t *testing.T) {
 	assert.EqualValues(t, 4, nb.Offset)
 	assert.EqualValues(t, 1, nb.Shard)
 	assert.Equal(t, 1, len(nb.Notifications))
-	n, found = nb.Notifications["x1"]
+	n, found = findNotification(nb, "x1")
 	assert.True(t, found)
 	assert.Equal(t, proto.NotificationType_KEY_MODIFIED, n.Type)
 	assert.EqualValues(t, wr4.Puts[1].Version.VersionId, *n.VersionId)
@@ -338,7 +347,7 @@ func TestDB_NotificationsDeleteRange(t *testing.T) {
 	assert.EqualValues(t, 1, nb.Offset)
 	assert.EqualValues(t, 1, nb.Shard)
 	assert.Equal(t, 1, len(nb.Notifications))
-	n, found := nb.Notifications["a"]
+	n, found := findNotification(nb, "a")
 	assert.True(t, found)
 	assert.Equal(t, proto.NotificationType_KEY_RANGE_DELETED, n.Type)
 	assert.Equal(t, "c", *n.KeyRangeLast)
