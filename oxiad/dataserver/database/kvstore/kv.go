@@ -31,10 +31,22 @@ var (
 
 )
 
+// ProtoMarshalable is the subset of the vtproto message API that allows
+// marshaling directly into a caller-provided buffer.
+type ProtoMarshalable interface {
+	SizeVT() int
+	MarshalToSizedBufferVT(dAtA []byte) (int, error)
+}
+
 type WriteBatch interface {
 	io.Closer
 
 	Put(key string, value []byte) error
+	// PutMarshalable marshals m directly into the batch's arena, avoiding the
+	// intermediate buffer and second copy of marshal-then-Put. If it returns
+	// an error the batch contents are undefined: discard the batch without
+	// committing.
+	PutMarshalable(key string, m ProtoMarshalable) error
 	Delete(key string) error
 	Get(key string) ([]byte, io.Closer, error)
 	FindLower(key string) (lowerKey string, err error)
