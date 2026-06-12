@@ -110,3 +110,40 @@ func TestEncodeInternalKeys(t *testing.T) {
 		})
 	}
 }
+
+// The buffer passed to Decode can alias Pebble's shared block cache: it must
+// never be modified, or the cached block gets corrupted for every other
+// reader (the old in-place rewrite changed the internal-key prefix bytes,
+// breaking the sort order within the block).
+func TestEncoderNaturalDecodeDoesNotMutateInput(t *testing.T) {
+	encoded := []byte("\xff\xffoxia/session/123")
+	original := bytes.Clone(encoded)
+
+	decoded := encoderNatural{}.Decode(encoded)
+	assert.Equal(t, "__oxia/session/123", decoded)
+	assert.Equal(t, original, encoded)
+
+	// Non-internal keys are returned as-is, also untouched
+	plain := []byte("a/b/c")
+	originalPlain := bytes.Clone(plain)
+	assert.Equal(t, "a/b/c", encoderNatural{}.Decode(plain))
+	assert.Equal(t, originalPlain, plain)
+}
+
+func BenchmarkEncoderNaturalDecode(b *testing.B) {
+	internal := []byte("\xff\xffoxia/session/0000000000123456")
+	plain := []byte("/some/regular/application/key-123456")
+
+	b.Run("internal", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = encoderNatural{}.Decode(internal)
+		}
+	})
+	b.Run("plain", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = encoderNatural{}.Decode(plain)
+		}
+	})
+}
