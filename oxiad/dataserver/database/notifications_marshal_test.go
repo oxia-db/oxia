@@ -25,6 +25,14 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+func notificationsFromMap(batch proto.NotificationBatch, byKey map[string]*proto.Notification) *Notifications {
+	n := &Notifications{batch: batch}
+	for k, v := range byKey {
+		n.add(k, v)
+	}
+	return n
+}
+
 func marshalSealed(t *testing.T, n *Notifications) []byte {
 	t.Helper()
 	nb := n.seal()
@@ -54,38 +62,28 @@ func TestNotificationBatchGoldenBytes(t *testing.T) {
 	}
 
 	cases := []*Notifications{
-		{byKey: map[string]*proto.Notification{}},
-		{
-			batch: proto.NotificationBatch{Shard: 5, Offset: 42, Timestamp: 1234567890},
-			byKey: map[string]*proto.Notification{},
-		},
-		{
-			batch: proto.NotificationBatch{Shard: 1, Offset: 9, Timestamp: 99},
-			byKey: map[string]*proto.Notification{
+		notificationsFromMap(proto.NotificationBatch{}, nil),
+		notificationsFromMap(proto.NotificationBatch{Shard: 5, Offset: 42, Timestamp: 1234567890}, nil),
+		notificationsFromMap(proto.NotificationBatch{Shard: 1, Offset: 9, Timestamp: 99},
+			map[string]*proto.Notification{
 				"key-b": {Type: proto.NotificationType_KEY_CREATED, VersionId: &versionId},
-			},
-		},
-		{
-			batch: proto.NotificationBatch{Shard: 3, Offset: 11, Timestamp: 100},
-			byKey: map[string]*proto.Notification{
+			}),
+		notificationsFromMap(proto.NotificationBatch{Shard: 3, Offset: 11, Timestamp: 100},
+			map[string]*proto.Notification{
 				"z":     {Type: proto.NotificationType_KEY_DELETED},
 				"a":     {Type: proto.NotificationType_KEY_MODIFIED, VersionId: &versionId},
 				"m/n/o": {Type: proto.NotificationType_KEY_RANGE_DELETED, KeyRangeLast: &rangeEnd},
 				"":      {Type: proto.NotificationType_KEY_CREATED},
-			},
-		},
+			}),
 	}
 
 	// Many keys, inserted in reverse order: the probability that an unsorted
 	// iteration accidentally matches the golden bytes is negligible
-	many := &Notifications{
-		batch: proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1},
-		byKey: map[string]*proto.Notification{},
-	}
+	many := notificationsFromMap(proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1}, nil)
 	for i := 0; i < 30; i++ {
 		v := int64(i)
-		many.byKey[fmt.Sprintf("key-%04d", 9999-i)] =
-			&proto.Notification{Type: proto.NotificationType_KEY_MODIFIED, VersionId: &v}
+		many.add(fmt.Sprintf("key-%04d", 9999-i),
+			&proto.Notification{Type: proto.NotificationType_KEY_MODIFIED, VersionId: &v})
 	}
 	cases = append(cases, many)
 	golden = append(golden, "0802100119010000000000000022100a086b65792d3939373012040801101d22100a086b65792d3939373112040801101c22100a086b65792d3939373212040801101b22100a086b65792d3939373312040801101a22100a086b65792d3939373412040801101922100a086b65792d3939373512040801101822100a086b65792d3939373612040801101722100a086b65792d3939373712040801101622100a086b65792d3939373812040801101522100a086b65792d3939373912040801101422100a086b65792d3939383012040801101322100a086b65792d3939383112040801101222100a086b65792d3939383212040801101122100a086b65792d3939383312040801101022100a086b65792d3939383412040801100f22100a086b65792d3939383512040801100e22100a086b65792d3939383612040801100d22100a086b65792d3939383712040801100c22100a086b65792d3939383812040801100b22100a086b65792d3939383912040801100a22100a086b65792d3939393012040801100922100a086b65792d3939393112040801100822100a086b65792d3939393212040801100722100a086b65792d3939393312040801100622100a086b65792d3939393412040801100522100a086b65792d3939393512040801100422100a086b65792d3939393612040801100322100a086b65792d3939393712040801100222100a086b65792d3939393812040801100122100a086b65792d39393939120408011000")
@@ -106,25 +104,45 @@ func TestNotificationBatchGoldenBytes(t *testing.T) {
 			// Round-trips with the entries intact
 			decoded := &proto.NotificationBatch{}
 			assert.NoError(t, decoded.UnmarshalVT(actual))
-			assert.Equal(t, len(n.byKey), len(decoded.Notifications))
-			for _, entry := range decoded.Notifications {
-				expectedNotification, found := n.byKey[entry.GetKey()]
-				assert.True(t, found)
-				assert.True(t, pb.Equal(expectedNotification, entry.Value))
+			sealed := n.seal()
+			assert.Equal(t, len(sealed.Notifications), len(decoded.Notifications))
+			for j, entry := range decoded.Notifications {
+				assert.Equal(t, sealed.Notifications[j].GetKey(), entry.GetKey())
+				assert.True(t, pb.Equal(sealed.Notifications[j].Value, entry.Value))
 			}
 		})
 	}
 }
 
+// Within one write batch the same key can be recorded more than once (e.g. a
+// put followed by a delete): the last operation must win, matching the
+// semantics of the map field this replaced.
+func TestNotificationsSealDeduplicates(t *testing.T) {
+	n := newNotifications(1, 5, 100)
+	n.Modified("a", 7, 0)
+	n.Modified("b", 8, 1)
+	n.Deleted("a")
+
+	sealed := n.seal()
+	assert.Equal(t, 2, len(sealed.Notifications))
+	assert.Equal(t, "a", sealed.Notifications[0].GetKey())
+	assert.Equal(t, proto.NotificationType_KEY_DELETED, sealed.Notifications[0].Value.Type)
+	assert.Equal(t, "b", sealed.Notifications[1].GetKey())
+	assert.Equal(t, proto.NotificationType_KEY_MODIFIED, sealed.Notifications[1].Value.Type)
+
+	// The bytes equal a batch where only the surviving operations happened
+	direct := newNotifications(1, 5, 100)
+	direct.Deleted("a")
+	direct.Modified("b", 8, 1)
+	assert.Equal(t, marshalSealed(t, direct), marshalSealed(t, n))
+}
+
 func BenchmarkNotificationBatchMarshal(b *testing.B) {
 	versionId := int64(7)
-	notifications := &Notifications{
-		batch: proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1234567890},
-		byKey: map[string]*proto.Notification{},
-	}
+	notifications := notificationsFromMap(proto.NotificationBatch{Shard: 2, Offset: 1, Timestamp: 1234567890}, nil)
 	for i := 0; i < 10; i++ {
-		notifications.byKey[fmt.Sprintf("/app/users/%04d/profile", i)] =
-			&proto.Notification{Type: proto.NotificationType_KEY_MODIFIED, VersionId: &versionId}
+		notifications.add(fmt.Sprintf("/app/users/%04d/profile", i),
+			&proto.Notification{Type: proto.NotificationType_KEY_MODIFIED, VersionId: &versionId})
 	}
 
 	b.Run("reflection-deterministic", func(b *testing.B) {

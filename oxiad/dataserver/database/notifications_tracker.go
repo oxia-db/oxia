@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,10 +51,6 @@ var (
 
 type Notifications struct {
 	batch proto.NotificationBatch
-
-	// byKey deduplicates notifications within the batch (the last operation
-	// on a key wins); seal() flattens it into the sorted repeated field.
-	byKey map[string]*proto.Notification
 }
 
 func newNotifications(shardId int64, offset int64, timestamp uint64) *Notifications {
@@ -64,25 +60,34 @@ func newNotifications(shardId int64, offset int64, timestamp uint64) *Notificati
 			Offset:    offset,
 			Timestamp: timestamp,
 		},
-		byKey: map[string]*proto.Notification{},
 	}
 }
 
-// seal flattens the accumulated notifications into the batch's repeated
-// field, sorted by key: the serialized batch feeds the replicated checksum,
-// and repeated fields marshal deterministically in slice order.
-func (n *Notifications) seal() *proto.NotificationBatch {
-	keys := make([]string, 0, len(n.byKey))
-	for k := range n.byKey {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+func (n *Notifications) add(key string, notification *proto.Notification) {
+	n.batch.Notifications = append(n.batch.Notifications,
+		&proto.NotificationEntry{Key: &key, Value: notification})
+}
 
-	n.batch.Notifications = make([]*proto.NotificationEntry, 0, len(keys))
-	for _, k := range keys {
-		n.batch.Notifications = append(n.batch.Notifications,
-			&proto.NotificationEntry{Key: &k, Value: n.byKey[k]})
+// seal sorts the accumulated entries in place and deduplicates them, keeping
+// the last operation recorded for each key. The sorted order makes the
+// generated marshal deterministic — the serialized batch feeds the replicated
+// checksum — and the sort must be stable so that "last within a run of equal
+// keys" still means "last operation applied".
+func (n *Notifications) seal() *proto.NotificationBatch {
+	entries := n.batch.Notifications
+	slices.SortStableFunc(entries, func(a, b *proto.NotificationEntry) int {
+		return strings.Compare(a.GetKey(), b.GetKey())
+	})
+
+	deduped := entries[:0]
+	for i, entry := range entries {
+		if i+1 < len(entries) && entries[i+1].GetKey() == entry.GetKey() {
+			// A later operation on the same key supersedes this one
+			continue
+		}
+		deduped = append(deduped, entry)
 	}
+	n.batch.Notifications = deduped
 	return &n.batch
 }
 
@@ -94,29 +99,29 @@ func (n *Notifications) Modified(key string, versionId, modificationsCount int64
 	if modificationsCount > 0 {
 		nType = proto.NotificationType_KEY_MODIFIED
 	}
-	n.byKey[key] = &proto.Notification{
+	n.add(key, &proto.Notification{
 		Type:      nType,
 		VersionId: &versionId,
-	}
+	})
 }
 
 func (n *Notifications) Deleted(key string) {
 	if strings.HasPrefix(key, constant.InternalKeyPrefix) {
 		return
 	}
-	n.byKey[key] = &proto.Notification{
+	n.add(key, &proto.Notification{
 		Type: proto.NotificationType_KEY_DELETED,
-	}
+	})
 }
 
 func (n *Notifications) DeletedRange(keyStartInclusive, keyEndExclusive string) {
 	if strings.HasPrefix(keyStartInclusive, constant.InternalKeyPrefix) {
 		return
 	}
-	n.byKey[keyStartInclusive] = &proto.Notification{
+	n.add(keyStartInclusive, &proto.Notification{
 		Type:         proto.NotificationType_KEY_RANGE_DELETED,
 		KeyRangeLast: &keyEndExclusive,
-	}
+	})
 }
 
 func notificationKey(offset int64) string {
