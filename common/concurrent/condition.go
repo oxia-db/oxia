@@ -17,6 +17,7 @@ package concurrent
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 )
 
 // ConditionContext implements a condition variable, a rendezvous point
@@ -60,23 +61,33 @@ type ConditionContext interface {
 }
 
 type conditionContext struct {
-	sync.RWMutex
-	locker sync.Locker
+	// mu serializes Signal and Broadcast: a Signal send racing with the
+	// channel close in Broadcast would panic
+	mu      sync.Mutex
+	locker  sync.Locker
+	waiters atomic.Int32
 
-	ch chan bool
+	// ch is replaced on every Broadcast, so waiters read it with an atomic
+	// load instead of locking mu.
+	ch atomic.Pointer[chan struct{}]
 }
 
 func NewConditionContext(locker sync.Locker) ConditionContext {
-	return &conditionContext{
+	c := &conditionContext{
 		locker: locker,
-		ch:     make(chan bool, 1),
 	}
+	ch := make(chan struct{}, 1)
+	c.ch.Store(&ch)
+	return c
 }
 
 func (c *conditionContext) Wait(ctx context.Context) error {
-	c.RLock()
-	ch := c.ch
-	c.RUnlock()
+	// The waiter count is incremented while still holding c.locker, so a
+	// Broadcast that holds the same locker cannot miss this waiter
+	c.waiters.Add(1)
+	defer c.waiters.Add(-1)
+
+	ch := *c.ch.Load()
 
 	// While we're waiting on the condition, the mutex is unlocked and
 	// gets relocked just after the wait is done
@@ -91,21 +102,37 @@ func (c *conditionContext) Wait(ctx context.Context) error {
 }
 
 func (c *conditionContext) Signal() {
-	c.RLock()
-	defer c.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// Signal to 1 single waiter, if any is there
 	select {
-	case c.ch <- true:
+	case *c.ch.Load() <- struct{}{}:
 	default:
 	}
 }
 
 func (c *conditionContext) Broadcast() {
-	c.Lock()
-	defer c.Unlock()
+	if c.waiters.Load() == 0 {
+		// Nobody is waiting: skip the channel close and re-allocation.
+		//
+		// This cannot miss a waiter as long as the condition state is
+		// mutated while holding c.locker. Wait() increments the counter
+		// before releasing c.locker, so a goroutine that started waiting
+		// before the state change is visible to this load, while one that
+		// starts waiting afterwards has already observed the new state
+		// when it checked the condition under c.locker.
+		return
+	}
 
-	// Broadcast closes the channel to wake every waiter
-	close(c.ch)
-	c.ch = make(chan bool, 1)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Broadcast closes the channel to wake every waiter. The new channel is
+	// stored before closing the old one, so a concurrent Wait loads either
+	// the channel being closed (immediate wakeup) or the new one
+	old := *c.ch.Load()
+	ch := make(chan struct{}, 1)
+	c.ch.Store(&ch)
+	close(old)
 }

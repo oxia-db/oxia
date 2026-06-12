@@ -322,6 +322,16 @@ func BenchmarkCond32(b *testing.B) {
 	benchmarkCond(b, 32)
 }
 
+func BenchmarkCondBroadcastNoWaiters(b *testing.B) {
+	m := &sync.Mutex{}
+	c := NewConditionContext(m)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		c.Broadcast()
+	}
+}
+
 func benchmarkCond(b *testing.B, waiters int) {
 	b.Helper()
 
