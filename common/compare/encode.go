@@ -143,12 +143,10 @@ func (encoderNatural) Decode(encoded []byte) string {
 	// only an implementation detail of the current version copies before
 	// they reach the caller.
 	if bytes.HasPrefix(encoded, encodedInternalKeyPrefixBytes) {
-		// Decode the internal key into a new string
-		var sb strings.Builder
-		sb.Grow(len(encoded))
-		sb.WriteString("__")
-		sb.Write(encoded[2:])
-		return sb.String()
+		// Decode the internal key into a new string. The concatenation makes
+		// a single allocation: the compiler does not allocate for a
+		// []byte-to-string conversion used directly as a concat operand.
+		return "__" + string(encoded[2:])
 	}
 
 	// Copy is necessary because the []byte memory is managed by Pebble
