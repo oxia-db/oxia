@@ -37,7 +37,7 @@ type deterministicNotificationBatch struct {
 }
 
 // Protobuf wire tags (field number << 3 | wire type) emitted below, matching
-// the generated NotificationBatch marshal code
+// the generated NotificationBatch marshal code.
 const (
 	wireTagShard            = 0x8  // field 1, varint
 	wireTagOffset           = 0x10 // field 2, varint
