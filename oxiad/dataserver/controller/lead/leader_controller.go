@@ -867,7 +867,11 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 }
 
 func (lc *leaderController) ListBlock(ctx context.Context, request *proto.ListRequest) ([]string, error) {
-	// todo: support leader status check without lock
+	// No status check and no RLock here, intentionally: the only caller is
+	// the session manager's Initialize, which runs while becomeLeader holds
+	// this controller's write lock — taking the RLock would self-deadlock,
+	// and the same write lock makes a race with close() (which also needs it
+	// to Wait on the group) impossible.
 	lc.waitGroup.Add(1)
 	defer lc.waitGroup.Done()
 
