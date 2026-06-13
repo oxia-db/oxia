@@ -191,9 +191,9 @@ func (snm *shardNotificationsManager) multiplexNotificationBatch(nb *proto.Notif
 		return nil
 	}
 
-	for key, n := range nb.Notifications {
+	for _, entry := range nb.Notifications {
 		select {
-		case snm.nm.multiplexCh <- convertNotification(key, n):
+		case snm.nm.multiplexCh <- convertNotification(entry.GetKey(), entry.Value):
 
 		// Unblock from channel write when we're closing down
 		case <-snm.ctx.Done():

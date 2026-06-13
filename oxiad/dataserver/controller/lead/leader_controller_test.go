@@ -1086,7 +1086,8 @@ func TestLeaderController_Notifications(t *testing.T) {
 	nb1 := <-adaptor.Ch()
 	assert.EqualValues(t, 0, nb1.Offset)
 	assert.Equal(t, 1, len(nb1.Notifications))
-	n1 := nb1.Notifications["a"]
+	assert.Equal(t, "a", nb1.Notifications[0].GetKey())
+	n1 := nb1.Notifications[0].Value
 	assert.Equal(t, proto.NotificationType_KEY_CREATED, n1.Type)
 	assert.EqualValues(t, 0, *n1.VersionId)
 

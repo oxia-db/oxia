@@ -29,7 +29,6 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
 
@@ -409,14 +408,11 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 }
 
 func (*db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
-	// Use deterministic marshaling to ensure consistent serialization order
-	// for the Notifications map, which is critical for checksum reproducibility.
-	value, err := pb.MarshalOptions{Deterministic: true}.Marshal(&notifications.batch)
-	if err != nil {
-		return err
-	}
-
-	return batch.Put(notificationKey(notifications.batch.Offset), value)
+	// seal() sorts the entries by key, which makes the generated marshal
+	// deterministic — required because the value feeds the replicated batch
+	// checksum. The bytes land directly in the batch arena.
+	nb := notifications.seal()
+	return batch.PutMarshalable(notificationKey(nb.Offset), nb)
 }
 
 func (d *db) addASCIILong(key string, value int64, batch kvstore.WriteBatch, timestamp uint64) error {

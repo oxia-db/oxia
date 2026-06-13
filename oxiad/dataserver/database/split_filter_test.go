@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/hash"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -62,15 +61,21 @@ func putStorageEntry(t *testing.T, kv kvstore.KV, key string, partitionKey *stri
 
 func putNotificationBatch(t *testing.T, kv kvstore.KV, offset int64, keys map[string]*proto.Notification) {
 	t.Helper()
-	nb := &proto.NotificationBatch{
-		Shard:         0,
-		Offset:        offset,
-		Timestamp:     1000,
-		Notifications: keys,
+	notifications := newNotifications(0, offset, 1000)
+	for k, v := range keys {
+		notifications.add(k, v)
 	}
-	data, err := pb.MarshalOptions{Deterministic: true}.Marshal(nb)
+	data, err := notifications.seal().MarshalVT()
 	assert.NoError(t, err)
 	putRawKey(t, kv, notificationKey(offset), data)
+}
+
+func notificationKeys(nb *proto.NotificationBatch) []string {
+	keys := make([]string, 0, len(nb.Notifications))
+	for _, e := range nb.Notifications {
+		keys = append(keys, e.GetKey())
+	}
+	return keys
 }
 
 func keyExists(t *testing.T, kv kvstore.KV, key string) bool {
@@ -231,7 +236,7 @@ func TestFilterDBForSplit_Notifications(t *testing.T) {
 	nb0 := readNotificationBatch(t, kv, 0)
 	assert.NotNil(t, nb0)
 	assert.Equal(t, 1, len(nb0.Notifications))
-	assert.Contains(t, nb0.Notifications, leftKey)
+	assert.Contains(t, notificationKeys(nb0), leftKey)
 
 	// Offset 1: deleted (right key only)
 	nb1 := readNotificationBatch(t, kv, 1)
@@ -241,8 +246,8 @@ func TestFilterDBForSplit_Notifications(t *testing.T) {
 	nb2 := readNotificationBatch(t, kv, 2)
 	assert.NotNil(t, nb2)
 	assert.Equal(t, 1, len(nb2.Notifications))
-	assert.Contains(t, nb2.Notifications, leftKey)
-	assert.NotContains(t, nb2.Notifications, rightKey)
+	assert.Contains(t, notificationKeys(nb2), leftKey)
+	assert.NotContains(t, notificationKeys(nb2), rightKey)
 }
 
 func TestFilterDBForSplit_SessionKeys(t *testing.T) {

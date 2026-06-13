@@ -507,7 +507,20 @@ message NotificationBatch {
   int64 offset = 2;
   fixed64 timestamp = 3;
 
-  map<string, Notification> notifications = 4;
+  // Wire-compatible with the former `map<string, Notification>` field: a map
+  // entry encodes exactly as NotificationEntry{key = 1, value = 2}. The
+  // server emits entries sorted by key, because the serialized batch feeds
+  // the replicated checksum and must be byte-identical on every replica —
+  // generated marshalers emit repeated fields in slice order, which makes
+  // that determinism structural instead of requiring a special marshaler.
+  repeated NotificationEntry notifications = 4;
+}
+
+message NotificationEntry {
+  // optional: presence-tracked, so the field is emitted even for an empty
+  // key, exactly as a map entry encodes it
+  optional string key = 1;
+  Notification value = 2;
 }
 
 message Notification {

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,13 +55,40 @@ type Notifications struct {
 
 func newNotifications(shardId int64, offset int64, timestamp uint64) *Notifications {
 	return &Notifications{
-		proto.NotificationBatch{
-			Shard:         shardId,
-			Offset:        offset,
-			Timestamp:     timestamp,
-			Notifications: map[string]*proto.Notification{},
+		batch: proto.NotificationBatch{
+			Shard:     shardId,
+			Offset:    offset,
+			Timestamp: timestamp,
 		},
 	}
+}
+
+func (n *Notifications) add(key string, notification *proto.Notification) {
+	n.batch.Notifications = append(n.batch.Notifications,
+		&proto.NotificationEntry{Key: &key, Value: notification})
+}
+
+// seal sorts the accumulated entries in place and deduplicates them, keeping
+// the last operation recorded for each key. The sorted order makes the
+// generated marshal deterministic — the serialized batch feeds the replicated
+// checksum — and the sort must be stable so that "last within a run of equal
+// keys" still means "last operation applied".
+func (n *Notifications) seal() *proto.NotificationBatch {
+	entries := n.batch.Notifications
+	slices.SortStableFunc(entries, func(a, b *proto.NotificationEntry) int {
+		return strings.Compare(a.GetKey(), b.GetKey())
+	})
+
+	deduped := entries[:0]
+	for i, entry := range entries {
+		if i+1 < len(entries) && entries[i+1].GetKey() == entry.GetKey() {
+			// A later operation on the same key supersedes this one
+			continue
+		}
+		deduped = append(deduped, entry)
+	}
+	n.batch.Notifications = deduped
+	return &n.batch
 }
 
 func (n *Notifications) Modified(key string, versionId, modificationsCount int64) {
@@ -71,29 +99,29 @@ func (n *Notifications) Modified(key string, versionId, modificationsCount int64
 	if modificationsCount > 0 {
 		nType = proto.NotificationType_KEY_MODIFIED
 	}
-	n.batch.Notifications[key] = &proto.Notification{
+	n.add(key, &proto.Notification{
 		Type:      nType,
 		VersionId: &versionId,
-	}
+	})
 }
 
 func (n *Notifications) Deleted(key string) {
 	if strings.HasPrefix(key, constant.InternalKeyPrefix) {
 		return
 	}
-	n.batch.Notifications[key] = &proto.Notification{
+	n.add(key, &proto.Notification{
 		Type: proto.NotificationType_KEY_DELETED,
-	}
+	})
 }
 
 func (n *Notifications) DeletedRange(keyStartInclusive, keyEndExclusive string) {
 	if strings.HasPrefix(keyStartInclusive, constant.InternalKeyPrefix) {
 		return
 	}
-	n.batch.Notifications[keyStartInclusive] = &proto.Notification{
+	n.add(keyStartInclusive, &proto.Notification{
 		Type:         proto.NotificationType_KEY_RANGE_DELETED,
 		KeyRangeLast: &keyEndExclusive,
-	}
+	})
 }
 
 func notificationKey(offset int64) string {

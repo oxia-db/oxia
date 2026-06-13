@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/hash"
@@ -200,14 +199,18 @@ func filterNotificationKey(
 		return splitActionKeep, errors.Wrap(err, "failed to deserialize notification batch")
 	}
 
-	// Filter: remove notifications for keys outside this child's range
+	// Filter: remove notifications for keys outside this child's range. The
+	// slice keeps its original (sorted) order, so the rewrite below stays
+	// deterministic.
 	originalLen := len(nb.Notifications)
-	for notifKey := range nb.Notifications {
-		h := hash.Xxh332(notifKey)
-		if !isHashInRange(h, hashRange) {
-			delete(nb.Notifications, notifKey)
+	kept := nb.Notifications[:0]
+	for _, entry := range nb.Notifications {
+		h := hash.Xxh332(entry.GetKey())
+		if isHashInRange(h, hashRange) {
+			kept = append(kept, entry)
 		}
 	}
+	nb.Notifications = kept
 
 	if len(nb.Notifications) == 0 {
 		// All notifications were for keys outside our range: delete entirely
@@ -219,11 +222,7 @@ func filterNotificationKey(
 
 	if len(nb.Notifications) < originalLen {
 		// Some notifications were removed: rewrite
-		newValue, err := pb.MarshalOptions{Deterministic: true}.Marshal(nb)
-		if err != nil {
-			return splitActionKeep, errors.Wrap(err, "failed to marshal filtered notification batch")
-		}
-		if err := batch.Put(key, newValue); err != nil {
+		if err := batch.PutMarshalable(key, nb); err != nil {
 			return splitActionKeep, err
 		}
 		return splitActionFilteredNotification, nil
