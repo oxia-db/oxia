@@ -772,42 +772,37 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 		cb.OnComplete(err)
 		return
 	}
-	lc.waitGroup.Go(func() {
-		process.DoWithLabels(
-			ctx,
-			map[string]string{
-				"oxia":  "read",
-				"shard": fmt.Sprintf("%d", lc.shardId),
-				"peer":  commonrpc.GetPeer(ctx),
-			},
-			func() {
-				if lc.log.Enabled(ctx, slog.LevelDebug) {
-					lc.log.Debug("Received read request", slog.Int64("term", lc.term.Load()))
-				}
-				var response *proto.GetResponse
-				var err error
-
-				for _, get := range request.Gets {
-					if get.SecondaryIndexName != nil {
-						response, err = secondaryIndexGet(get, lc.db)
-					} else {
-						response, err = lc.db.Get(get)
-					}
-					if err != nil {
-						break
-					}
-					if err = cb.OnNext(response); err != nil {
-						break
-					}
-					if err = ctx.Err(); err != nil {
-						break
-					}
-				}
-				cb.OnComplete(err)
-			},
-		)
-	})
+	// Track the in-flight read so close() waits for it — the Add must happen
+	// under the status lock, exactly like the goroutine spawn it replaces —
+	// but run the loop inline: the gRPC handler goroutine only parks on the
+	// result otherwise, and the per-request goroutine plus pprof label set
+	// were pure overhead on the hot read path.
+	lc.waitGroup.Add(1)
 	lc.RUnlock()
+	defer lc.waitGroup.Done()
+
+	if lc.log.Enabled(ctx, slog.LevelDebug) {
+		lc.log.Debug("Received read request", slog.Int64("term", lc.term.Load()))
+	}
+
+	var response *proto.GetResponse
+	for _, get := range request.Gets {
+		if get.SecondaryIndexName != nil {
+			response, err = secondaryIndexGet(get, lc.db)
+		} else {
+			response, err = lc.db.Get(get)
+		}
+		if err != nil {
+			break
+		}
+		if err = cb.OnNext(response); err != nil {
+			break
+		}
+		if err = ctx.Err(); err != nil {
+			break
+		}
+	}
+	cb.OnComplete(err)
 }
 
 func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto.GetSequenceUpdatesRequest) (database.SequenceWaiter, error) {
@@ -830,56 +825,46 @@ func (lc *leaderController) List(ctx context.Context, request *proto.ListRequest
 		cb.OnComplete(err)
 		return
 	}
-	lc.waitGroup.Go(func() {
-		lc.list(ctx, request, cb)
-	})
+	lc.waitGroup.Add(1)
 	lc.RUnlock()
+	defer lc.waitGroup.Done()
+	lc.list(ctx, request, cb)
 }
 
 func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
-	process.DoWithLabels(
-		ctx,
-		map[string]string{
-			"oxia":  "list",
-			"shard": fmt.Sprintf("%d", lc.shardId),
-			"peer":  commonrpc.GetPeer(ctx),
-		},
-		func() {
-			if lc.log.Enabled(ctx, slog.LevelDebug) {
-				lc.log.Debug("Received list request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
-			}
+	if lc.log.Enabled(ctx, slog.LevelDebug) {
+		lc.log.Debug("Received list request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
+	}
 
-			var it kvstore.KeyIterator
-			var err error
+	var it kvstore.KeyIterator
+	var err error
 
-			if request.SecondaryIndexName != nil {
-				it, err = newSecondaryIndexListIterator(request, lc.db)
-			} else {
-				it, err = lc.db.List(request)
-			}
-			if err != nil {
-				lc.log.Warn(
-					"Failed to process list request",
-					slog.Any("error", err),
-					slog.Int64("term", lc.term.Load()),
-				)
-				cb.OnComplete(err)
-				return
-			}
+	if request.SecondaryIndexName != nil {
+		it, err = newSecondaryIndexListIterator(request, lc.db)
+	} else {
+		it, err = lc.db.List(request)
+	}
+	if err != nil {
+		lc.log.Warn(
+			"Failed to process list request",
+			slog.Any("error", err),
+			slog.Int64("term", lc.term.Load()),
+		)
+		cb.OnComplete(err)
+		return
+	}
 
-			for ; it.Valid(); it.Next() {
-				if err = cb.OnNext(it.Key()); err != nil {
-					break
-				}
-				if err = ctx.Err(); err != nil {
-					break
-				}
-			}
+	for ; it.Valid(); it.Next() {
+		if err = cb.OnNext(it.Key()); err != nil {
+			break
+		}
+		if err = ctx.Err(); err != nil {
+			break
+		}
+	}
 
-			err = multierr.Combine(err, it.Close())
-			cb.OnComplete(err)
-		},
-	)
+	err = multierr.Combine(err, it.Close())
+	cb.OnComplete(err)
 }
 
 func (lc *leaderController) ListBlock(ctx context.Context, request *proto.ListRequest) ([]string, error) {
@@ -898,40 +883,30 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 		return
 	}
 
-	lc.waitGroup.Go(func() {
-		process.DoWithLabels(ctx,
-			map[string]string{
-				"oxia":  "range-scan",
-				"shard": fmt.Sprintf("%d", lc.shardId),
-				"peer":  commonrpc.GetPeer(ctx),
-			},
-			func() {
-				if lc.log.Enabled(ctx, slog.LevelDebug) {
-					lc.log.Debug("Received range-scan request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
-				}
-
-				var it database.RangeScanIterator
-				var err error
-
-				if request.SecondaryIndexName != nil {
-					it, err = newSecondaryIndexRangeScanIterator(request, lc.db)
-				} else {
-					it, err = lc.db.RangeScan(request)
-				}
-
-				if err != nil {
-					lc.log.Warn("Failed to process range-scan request", slog.Any("error", err), slog.Int64("term", lc.term.Load()))
-					cb.OnComplete(err)
-					return
-				}
-
-				err = rangeScanIterate(ctx, it, cb)
-				err = multierr.Combine(err, it.Close())
-				cb.OnComplete(err)
-			},
-		)
-	})
+	lc.waitGroup.Add(1)
 	lc.RUnlock()
+	defer lc.waitGroup.Done()
+
+	if lc.log.Enabled(ctx, slog.LevelDebug) {
+		lc.log.Debug("Received range-scan request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
+	}
+
+	var it database.RangeScanIterator
+	if request.SecondaryIndexName != nil {
+		it, err = newSecondaryIndexRangeScanIterator(request, lc.db)
+	} else {
+		it, err = lc.db.RangeScan(request)
+	}
+
+	if err != nil {
+		lc.log.Warn("Failed to process range-scan request", slog.Any("error", err), slog.Int64("term", lc.term.Load()))
+		cb.OnComplete(err)
+		return
+	}
+
+	err = rangeScanIterate(ctx, it, cb)
+	err = multierr.Combine(err, it.Close())
+	cb.OnComplete(err)
 }
 
 func rangeScanIterate(ctx context.Context, it database.RangeScanIterator, cb concurrent.StreamCallback[*proto.GetResponse]) error {

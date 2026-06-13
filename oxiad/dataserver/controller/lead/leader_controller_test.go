@@ -17,6 +17,7 @@ package lead
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -1769,6 +1770,78 @@ func TestLeaderController_IsFeatureEnabled_NoFeatures(t *testing.T) {
 	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 
 	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+type blockingReadCallback struct {
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (c *blockingReadCallback) OnNext(*proto.GetResponse) error {
+	c.once.Do(func() { close(c.started) })
+	<-c.release
+	return nil
+}
+
+func (c *blockingReadCallback) OnComplete(error) {}
+
+// Reads run inline on the caller's goroutine; the waitGroup tracking taken
+// under the status lock is what makes Close() wait for in-flight reads
+// instead of tearing the db down underneath them.
+func TestLeaderController_CloseWaitsForInflightRead(t *testing.T) {
+	var shard int64 = 1
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard: shard, Term: 1, ReplicationFactor: 1})
+	assert.NoError(t, err)
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "a", Value: []byte("v")}}})
+	assert.NoError(t, err)
+
+	cb := &blockingReadCallback{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		lc.Read(context.Background(), &proto.ReadRequest{
+			Shard: &shard,
+			Gets:  []*proto.GetRequest{{Key: "a"}, {Key: "a"}}}, cb)
+	}()
+
+	<-cb.started
+	closeDone := make(chan struct{})
+	go func() {
+		assert.NoError(t, lc.Close())
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatal("close returned while a read was still in flight")
+	case <-time.After(200 * time.Millisecond):
+		// expected: close is waiting on the in-flight read
+	}
+
+	close(cb.release)
+	select {
+	case <-closeDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("close did not complete after the read finished")
+	}
+	<-readDone
+
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
