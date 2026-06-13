@@ -17,6 +17,7 @@ package lead
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,10 +38,6 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
 
-	"github.com/oxia-db/oxia/common/channel"
-
-	oentity "github.com/oxia-db/oxia/common/entity"
-
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -55,6 +52,24 @@ func AssertProtoEqual(t *testing.T, expected, actual pb.Message) {
 		actualJSON, _ := protoMarshal.Marshal(actual)
 		assert.Equal(t, string(expectedJSON), string(actualJSON))
 	}
+}
+
+func readAll(ctx context.Context, lc LeaderController, req *proto.ReadRequest) ([]*proto.GetResponse, error) {
+	var out []*proto.GetResponse
+	err := lc.Read(ctx, req, func(r *proto.GetResponse) error {
+		out = append(out, r)
+		return nil
+	})
+	return out, err
+}
+
+func scanAll(ctx context.Context, lc LeaderController, req *proto.RangeScanRequest) ([]*proto.GetResponse, error) {
+	var out []*proto.GetResponse
+	err := lc.RangeScan(ctx, req, func(r *proto.GetResponse) error {
+		out = append(out, r)
+		return nil
+	})
+	return out, err
 }
 
 func TestLeaderController_NotInitialized(t *testing.T) {
@@ -80,13 +95,10 @@ func TestLeaderController_NotInitialized(t *testing.T) {
 	assert.Nil(t, res)
 	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
-	responses := make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	_, err = readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: "a"}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	_, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
+	})
 	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
 	assert.NoError(t, lc.Close())
@@ -203,13 +215,10 @@ func TestLeaderController_BecomeLeader_RF1(t *testing.T) {
 	assert.NotEqualValues(t, 0, res.Puts[0].Version.ModifiedTimestamp)
 	assert.EqualValues(t, res.Puts[0].Version.CreatedTimestamp, res.Puts[0].Version.ModifiedTimestamp)
 
-	responses := make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: "a", IncludeValue: true}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	results, err := channel.ReadAll[*proto.GetResponse](context.Background(), responses)
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(results))
 	assert.Equal(t, proto.Status_OK, results[0].Status)
@@ -240,13 +249,10 @@ func TestLeaderController_BecomeLeader_RF1(t *testing.T) {
 	assert.Nil(t, res3)
 	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
-	responses = make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	_, err = readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: "a"}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	_, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
+	})
 	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
 	assert.NoError(t, lc.Close())
@@ -310,13 +316,10 @@ func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	assert.Equal(t, proto.Status_OK, res.Puts[0].Status)
 	assert.EqualValues(t, 0, res.Puts[0].Version.VersionId)
 
-	responses := make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: "a", IncludeValue: true}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	results, err := channel.ReadAll[*proto.GetResponse](context.Background(), responses) // Read entry
+	})
 
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(results))
@@ -348,13 +351,10 @@ func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	assert.Nil(t, res3)
 	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
-	responses = make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	_, err = readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: "a"}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	_, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
+	})
 	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
 
 	close(provider.AckResps)
@@ -1040,13 +1040,10 @@ func TestLeaderController_EntryVisibilityAfterBecomingLeader(t *testing.T) {
 	})
 
 	// We should be able to read the entry, even if it was not fully committed before the leader started
-	responses := make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: "my-key", IncludeValue: true}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	results, err := channel.ReadAll[*proto.GetResponse](context.Background(), responses)
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(results))
 	assert.Equal(t, proto.Status_OK, results[0].Status)
@@ -1236,33 +1233,23 @@ func TestLeaderController_RangeScan(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	ch := make(chan *oentity.TWithError[*proto.GetResponse], 100)
-	lc.RangeScan(context.Background(), &proto.RangeScanRequest{
+	results, err := scanAll(context.Background(), lc, &proto.RangeScanRequest{
 		Shard:          &shard,
 		StartInclusive: "/a",
 		EndExclusive:   "/c",
-	}, concurrent.ReadFromStreamCallback(ch))
-	entity, more := <-ch
-	assert.Nil(t, entity.Err)
-	assert.Equal(t, "/a", *entity.T.Key)
-	assert.True(t, more)
-	entity, more = <-ch
-	assert.Nil(t, entity.Err)
-	assert.Equal(t, "/b", *entity.T.Key)
-	assert.True(t, more)
-	entity, more = <-ch
-	assert.Nil(t, entity)
-	assert.False(t, more)
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(results))
+	assert.Equal(t, "/a", *results[0].Key)
+	assert.Equal(t, "/b", *results[1].Key)
 
-	ch = make(chan *oentity.TWithError[*proto.GetResponse], 100)
-	lc.RangeScan(context.Background(), &proto.RangeScanRequest{
+	results, err = scanAll(context.Background(), lc, &proto.RangeScanRequest{
 		Shard:          &shard,
 		StartInclusive: "/y",
 		EndExclusive:   "/z",
-	}, concurrent.ReadFromStreamCallback(ch))
-	entity, more = <-ch
-	assert.Nil(t, entity)
-	assert.False(t, more)
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, results)
 }
 
 func TestLeaderController_DeleteShard(t *testing.T) {
@@ -1304,13 +1291,10 @@ func TestLeaderController_DeleteShard(t *testing.T) {
 		FollowerMaps:      nil,
 	})
 
-	responses := make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: "a", IncludeValue: true}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	results, err := channel.ReadAll[*proto.GetResponse](context.Background(), responses) // Read entry
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(results))
 	assert.Equal(t, proto.Status_KEY_NOT_FOUND, results[0].Status)
@@ -1445,26 +1429,20 @@ func TestLeaderController_Write(t *testing.T) {
 	assert.NotEqualValues(t, 0, res2.Puts[0].Version.ModifiedTimestamp)
 	assert.EqualValues(t, res2.Puts[0].Version.CreatedTimestamp, res2.Puts[0].Version.ModifiedTimestamp)
 
-	responses := make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: "a", IncludeValue: true}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	results, err := channel.ReadAll[*proto.GetResponse](context.Background(), responses) // Read entry a
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(results))
 	assert.Equal(t, proto.Status_OK, results[0].Status)
 	assert.Equal(t, []byte("value-a"), results[0].Value)
 	assert.EqualValues(t, 0, res1.Puts[0].Version.VersionId)
 
-	responses = make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	results, err = readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: "b", IncludeValue: true}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	results, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses) // Read entry a
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, results[0].Status)
 	assert.Equal(t, []byte("value-b"), results[0].Value)
@@ -1575,13 +1553,10 @@ func TestLeaderController_DuplicateNewTerm_WithSession(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	responses := make(chan *oentity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shard,
 		Gets:  []*proto.GetRequest{{Key: key}},
-	}, concurrent.ReadFromStreamCallback(responses))
-
-	results, err := channel.ReadAll[*proto.GetResponse](context.Background(), responses) // Read entry
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(results))
 	assert.Equal(t, proto.Status_KEY_NOT_FOUND, results[0].Status)
@@ -1769,6 +1744,68 @@ func TestLeaderController_IsFeatureEnabled_NoFeatures(t *testing.T) {
 	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 
 	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// Reads run inline on the caller's goroutine; the waitGroup tracking taken
+// under the status lock is what makes Close() wait for in-flight reads
+// instead of tearing the db down underneath them.
+func TestLeaderController_CloseWaitsForInflightRead(t *testing.T) {
+	var shard int64 = 1
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard: shard, Term: 1, ReplicationFactor: 1})
+	assert.NoError(t, err)
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "a", Value: []byte("v")}}})
+	assert.NoError(t, err)
+
+	var once sync.Once
+	readStarted := make(chan struct{})
+	releaseRead := make(chan struct{})
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		_ = lc.Read(context.Background(), &proto.ReadRequest{
+			Shard: &shard,
+			Gets:  []*proto.GetRequest{{Key: "a"}, {Key: "a"}}},
+			func(*proto.GetResponse) error {
+				once.Do(func() { close(readStarted) })
+				<-releaseRead
+				return nil
+			})
+	}()
+
+	<-readStarted
+	closeDone := make(chan struct{})
+	go func() {
+		assert.NoError(t, lc.Close())
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatal("close returned while a read was still in flight")
+	case <-time.After(200 * time.Millisecond):
+		// expected: close is waiting on the in-flight read
+	}
+
+	close(releaseRead)
+	select {
+	case <-closeDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("close did not complete after the read finished")
+	}
+	<-readDone
+
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
