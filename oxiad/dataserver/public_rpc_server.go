@@ -313,28 +313,21 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 		return err
 	}
 
-	finish := make(chan error, 1)
-	lc.Read(ctx, request, concurrent.NewBatchStreamOnce[*proto.GetResponse](maxTotalReadCount, maxTotalReadValueSize,
+	batcher := concurrent.NewBatcher[*proto.GetResponse](maxTotalReadCount, maxTotalReadValueSize,
 		func(result *proto.GetResponse) int { return protowire.SizeBytes(len(result.Value)) },
-		func(container []*proto.GetResponse) error { return stream.Send(&proto.ReadResponse{Gets: container}) },
-		func(err error) { finish <- err },
-	))
+		func(container []*proto.GetResponse) error { return stream.Send(&proto.ReadResponse{Gets: container}) })
 
-	for {
-		select {
-		case err = <-finish:
-			if err != nil {
-				s.log.Warn(
-					"Failed to perform list operation",
-					slog.Any("error", err),
-				)
-				return constant.IntoGrpcStatusError(err)
-			}
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	if err = lc.Read(ctx, request, batcher.Add); err == nil {
+		err = batcher.Flush()
 	}
+	if err != nil {
+		s.log.Warn(
+			"Failed to perform read operation",
+			slog.Any("error", err),
+		)
+		return constant.IntoGrpcStatusError(err)
+	}
+	return nil
 }
 
 func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
@@ -350,27 +343,21 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 	if err != nil {
 		return err
 	}
-	finish := make(chan error, 1)
-	lc.List(ctx, request, concurrent.NewBatchStreamOnce[string](maxTotalListKeyCount, maxTotalListKeySize,
+	batcher := concurrent.NewBatcher[string](maxTotalListKeyCount, maxTotalListKeySize,
 		func(key string) int { return protowire.SizeBytes(len(key)) },
-		func(container []string) error { return stream.Send(&proto.ListResponse{Keys: container}) },
-		func(err error) { finish <- err },
-	))
-	for {
-		select {
-		case err = <-finish:
-			if err != nil {
-				s.log.Warn(
-					"Failed to perform list operation",
-					slog.Any("error", err),
-				)
-				return constant.IntoGrpcStatusError(err)
-			}
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		func(container []string) error { return stream.Send(&proto.ListResponse{Keys: container}) })
+
+	if err = lc.List(ctx, request, batcher.Add); err == nil {
+		err = batcher.Flush()
 	}
+	if err != nil {
+		s.log.Warn(
+			"Failed to perform list operation",
+			slog.Any("error", err),
+		)
+		return constant.IntoGrpcStatusError(err)
+	}
+	return nil
 }
 
 func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream proto.OxiaClient_RangeScanServer) error {
@@ -389,34 +376,23 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 		return err
 	}
 
-	finish := make(chan error, 1)
-	lc.RangeScan(ctx, request,
-		concurrent.NewBatchStreamOnce[*proto.GetResponse](maxTotalScanBatchCount, maxTotalReadValueSize,
-			func(response *proto.GetResponse) int { return len(response.Value) },
-			func(container []*proto.GetResponse) error {
-				return stream.Send(&proto.RangeScanResponse{Records: container})
-			},
-			func(err error) {
-				finish <- err
-				close(finish)
-			}),
-	)
+	batcher := concurrent.NewBatcher[*proto.GetResponse](maxTotalScanBatchCount, maxTotalReadValueSize,
+		func(response *proto.GetResponse) int { return len(response.Value) },
+		func(container []*proto.GetResponse) error {
+			return stream.Send(&proto.RangeScanResponse{Records: container})
+		})
 
-	for {
-		select {
-		case err := <-finish:
-			if err != nil {
-				s.log.Warn(
-					"Failed to perform range-scan operation",
-					slog.Any("error", err),
-				)
-				return constant.IntoGrpcStatusError(err)
-			}
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	if err = lc.RangeScan(ctx, request, batcher.Add); err == nil {
+		err = batcher.Flush()
 	}
+	if err != nil {
+		s.log.Warn(
+			"Failed to perform range-scan operation",
+			slog.Any("error", err),
+		)
+		return constant.IntoGrpcStatusError(err)
+	}
+	return nil
 }
 
 func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stream proto.OxiaClient_GetNotificationsServer) error {

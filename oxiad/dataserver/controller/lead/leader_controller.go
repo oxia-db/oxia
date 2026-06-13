@@ -35,7 +35,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
-	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/entity"
@@ -54,9 +53,13 @@ type LeaderController interface {
 	ListBlock(ctx context.Context, request *proto.ListRequest) ([]string, error)
 
 	Write(ctx context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse])
-	List(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string])
-	Read(ctx context.Context, request *proto.ReadRequest, cb concurrent.StreamCallback[*proto.GetResponse])
-	RangeScan(ctx context.Context, request *proto.RangeScanRequest, cb concurrent.StreamCallback[*proto.GetResponse])
+
+	// List, Read and RangeScan run synchronously on the caller's goroutine,
+	// invoking onNext for every result; the returned error is the final
+	// status of the operation.
+	List(ctx context.Context, request *proto.ListRequest, onNext func(string) error) error
+	Read(ctx context.Context, request *proto.ReadRequest, onNext func(*proto.GetResponse) error) error
+	RangeScan(ctx context.Context, request *proto.RangeScanRequest, onNext func(*proto.GetResponse) error) error
 
 	GetSequenceUpdates(ctx context.Context, request *proto.GetSequenceUpdatesRequest) (database.SequenceWaiter, error)
 
@@ -764,13 +767,12 @@ func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {
 	return constant2.InvalidEntryId, nil
 }
 
-func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
+func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest, onNext func(*proto.GetResponse) error) error {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
 	if err != nil {
 		lc.RUnlock()
-		cb.OnComplete(err)
-		return
+		return err
 	}
 	// Track the in-flight read so close() waits for it — the Add must happen
 	// under the status lock, exactly like the goroutine spawn it replaces —
@@ -793,16 +795,16 @@ func (lc *leaderController) Read(ctx context.Context, request *proto.ReadRequest
 			response, err = lc.db.Get(get)
 		}
 		if err != nil {
-			break
+			return err
 		}
-		if err = cb.OnNext(response); err != nil {
-			break
+		if err = onNext(response); err != nil {
+			return err
 		}
 		if err = ctx.Err(); err != nil {
-			break
+			return err
 		}
 	}
-	cb.OnComplete(err)
+	return nil
 }
 
 func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto.GetSequenceUpdatesRequest) (database.SequenceWaiter, error) {
@@ -817,21 +819,20 @@ func (lc *leaderController) GetSequenceUpdates(_ context.Context, request *proto
 	return lc.db.GetSequenceUpdates(request.Key)
 }
 
-func (lc *leaderController) List(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
+func (lc *leaderController) List(ctx context.Context, request *proto.ListRequest, onNext func(string) error) error {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
 	if err != nil {
 		lc.RUnlock()
-		cb.OnComplete(err)
-		return
+		return err
 	}
 	lc.waitGroup.Add(1)
 	lc.RUnlock()
 	defer lc.waitGroup.Done()
-	lc.list(ctx, request, cb)
+	return lc.list(ctx, request, onNext)
 }
 
-func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest, cb concurrent.StreamCallback[string]) {
+func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest, onNext func(string) error) error {
 	if lc.log.Enabled(ctx, slog.LevelDebug) {
 		lc.log.Debug("Received list request", slog.Int64("term", lc.term.Load()), slog.Any("request", request))
 	}
@@ -850,12 +851,11 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 			slog.Any("error", err),
 			slog.Int64("term", lc.term.Load()),
 		)
-		cb.OnComplete(err)
-		return
+		return err
 	}
 
 	for ; it.Valid(); it.Next() {
-		if err = cb.OnNext(it.Key()); err != nil {
+		if err = onNext(it.Key()); err != nil {
 			break
 		}
 		if err = ctx.Err(); err != nil {
@@ -863,24 +863,31 @@ func (lc *leaderController) list(ctx context.Context, request *proto.ListRequest
 		}
 	}
 
-	err = multierr.Combine(err, it.Close())
-	cb.OnComplete(err)
+	return multierr.Combine(err, it.Close())
 }
 
 func (lc *leaderController) ListBlock(ctx context.Context, request *proto.ListRequest) ([]string, error) {
 	// todo: support leader status check without lock
-	ch := make(chan *entity.TWithError[string])
-	lc.waitGroup.Go(func() { lc.list(ctx, request, concurrent.ReadFromStreamCallback(ch)) })
-	return channel.ReadAll(ctx, ch)
+	lc.waitGroup.Add(1)
+	defer lc.waitGroup.Done()
+
+	var keys []string
+	err := lc.list(ctx, request, func(key string) error {
+		keys = append(keys, key)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
-func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeScanRequest, cb concurrent.StreamCallback[*proto.GetResponse]) {
+func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeScanRequest, onNext func(*proto.GetResponse) error) error {
 	lc.RLock()
 	err := checkStatusIsLeader(lc.status)
 	if err != nil {
 		lc.RUnlock()
-		cb.OnComplete(err)
-		return
+		return err
 	}
 
 	lc.waitGroup.Add(1)
@@ -900,22 +907,20 @@ func (lc *leaderController) RangeScan(ctx context.Context, request *proto.RangeS
 
 	if err != nil {
 		lc.log.Warn("Failed to process range-scan request", slog.Any("error", err), slog.Int64("term", lc.term.Load()))
-		cb.OnComplete(err)
-		return
+		return err
 	}
 
-	err = rangeScanIterate(ctx, it, cb)
-	err = multierr.Combine(err, it.Close())
-	cb.OnComplete(err)
+	err = rangeScanIterate(ctx, it, onNext)
+	return multierr.Combine(err, it.Close())
 }
 
-func rangeScanIterate(ctx context.Context, it database.RangeScanIterator, cb concurrent.StreamCallback[*proto.GetResponse]) error {
+func rangeScanIterate(ctx context.Context, it database.RangeScanIterator, onNext func(*proto.GetResponse) error) error {
 	for ; it.Valid(); it.Next() {
 		gr, err := it.Value()
 		if err != nil {
 			return err
 		}
-		if err := cb.OnNext(gr); err != nil {
+		if err := onNext(gr); err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {

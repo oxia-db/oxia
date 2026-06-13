@@ -40,11 +40,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
-	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
-
-	"github.com/oxia-db/oxia/common/channel"
-	"github.com/oxia-db/oxia/common/entity"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -438,8 +434,7 @@ func TestMultipleSessionsExpiry(t *testing.T) {
 		return getSessionMetadata(t, lc, sessionId2) == nil
 	}, 10*time.Second, 30*time.Millisecond)
 
-	responses := make(chan *entity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shardId,
 		Gets: []*proto.GetRequest{{
 			Key:          "/ephemeral-1",
@@ -448,8 +443,7 @@ func TestMultipleSessionsExpiry(t *testing.T) {
 			Key:          "/ephemeral-2",
 			IncludeValue: true,
 		}},
-	}, concurrent.ReadFromStreamCallback(responses))
-	results, err := channel.ReadAll[*proto.GetResponse](context.Background(), responses) // Read entry a
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(results))
 
@@ -464,8 +458,7 @@ func TestMultipleSessionsExpiry(t *testing.T) {
 		return getSessionMetadata(t, lc, sessionId1) == nil
 	}, 10*time.Second, 30*time.Millisecond)
 
-	responses = make(chan *entity.TWithError[*proto.GetResponse], 1000)
-	lc.Read(context.Background(), &proto.ReadRequest{
+	results, err = readAll(context.Background(), lc, &proto.ReadRequest{
 		Shard: &shardId,
 		Gets: []*proto.GetRequest{{
 			Key:          "/ephemeral-1",
@@ -474,8 +467,7 @@ func TestMultipleSessionsExpiry(t *testing.T) {
 			Key:          "/ephemeral-2",
 			IncludeValue: true,
 		}},
-	}, concurrent.ReadFromStreamCallback(responses))
-	results, err = channel.ReadAll[*proto.GetResponse](context.Background(), responses)
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(results))
 	// ephemeral-1

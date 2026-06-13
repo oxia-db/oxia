@@ -26,10 +26,7 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
-	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
-
-	"github.com/oxia-db/oxia/common/entity"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -159,32 +156,28 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	ch := make(chan *entity.TWithError[*proto.GetResponse], 100)
-	lc.RangeScan(ctx, &proto.RangeScanRequest{
+	results, err := scanAll(ctx, lc, &proto.RangeScanRequest{
 		Shard:              &shard,
 		StartInclusive:     "1",
 		EndExclusive:       "3",
 		SecondaryIndexName: pb.String("my-idx"),
-	}, concurrent.ReadFromStreamCallback(ch))
+	})
 	assert.NoError(t, err)
+	assert.Equal(t, 2, len(results))
+	assert.Equal(t, "/b", *results[0].Key)
+	assert.Equal(t, "1", string(results[0].Value))
+	assert.Equal(t, "/c", *results[1].Key)
+	assert.Equal(t, "2", string(results[1].Value))
 
-	gr := <-ch
-	assert.Equal(t, "/b", *gr.T.Key)
-	assert.Equal(t, "1", string(gr.T.Value))
-	gr = <-ch
-	assert.Equal(t, "/c", *gr.T.Key)
-	assert.Equal(t, "2", string(gr.T.Value))
-	assert.Empty(t, ch)
-
-	ch = make(chan *entity.TWithError[*proto.GetResponse], 100)
 	// Wrong index
-	lc.RangeScan(ctx, &proto.RangeScanRequest{
+	results, err = scanAll(ctx, lc, &proto.RangeScanRequest{
 		Shard:              &shard,
 		StartInclusive:     "/a",
 		EndExclusive:       "/d",
 		SecondaryIndexName: pb.String("wrong-idx"),
-	}, concurrent.ReadFromStreamCallback(ch))
-	assert.Empty(t, ch)
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, results)
 
 	// Individual delete
 	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
@@ -193,23 +186,18 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	ch = make(chan *entity.TWithError[*proto.GetResponse], 100)
-	lc.RangeScan(ctx, &proto.RangeScanRequest{
+	results, err = scanAll(ctx, lc, &proto.RangeScanRequest{
 		Shard:              &shard,
 		StartInclusive:     "0",
 		EndExclusive:       "99999",
 		SecondaryIndexName: pb.String("my-idx"),
-	}, concurrent.ReadFromStreamCallback(ch))
-
-	gr = <-ch
-	assert.Equal(t, "/a", *gr.T.Key)
-	gr = <-ch
-	assert.Equal(t, "/c", *gr.T.Key)
-	gr = <-ch
-	assert.Equal(t, "/d", *gr.T.Key)
-	gr = <-ch
-	assert.Equal(t, "/e", *gr.T.Key)
-	assert.Empty(t, ch)
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 4, len(results))
+	assert.Equal(t, "/a", *results[0].Key)
+	assert.Equal(t, "/c", *results[1].Key)
+	assert.Equal(t, "/d", *results[2].Key)
+	assert.Equal(t, "/e", *results[3].Key)
 
 	// Range delete
 	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
@@ -221,19 +209,16 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	ch = make(chan *entity.TWithError[*proto.GetResponse], 100)
-	lc.RangeScan(ctx, &proto.RangeScanRequest{
+	results, err = scanAll(ctx, lc, &proto.RangeScanRequest{
 		Shard:              &shard,
 		StartInclusive:     "0",
 		EndExclusive:       "99999",
 		SecondaryIndexName: pb.String("my-idx"),
-	}, concurrent.ReadFromStreamCallback(ch))
-
-	gr = <-ch
-	assert.Equal(t, "/d", *gr.T.Key)
-	gr = <-ch
-	assert.Equal(t, "/e", *gr.T.Key)
-	assert.Empty(t, ch)
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(results))
+	assert.Equal(t, "/d", *results[0].Key)
+	assert.Equal(t, "/e", *results[1].Key)
 
 	cancel()
 	assert.NoError(t, lc.Close())
