@@ -15,6 +15,7 @@
 package kubernetes
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,18 @@ func TestCoordinatorInfoLeaseIdentity(t *testing.T) {
 		Identity:      "coordinator-0",
 		PublicAddress: "coordinator-0.example.com:6651",
 	}
+
+	identity, err := EncodeCoordinatorInfo(info)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(identity, coordinatorInfoLeaseIdentityPrefix))
+
+	decoded, err := DecodeCoordinatorInfo(identity)
+	require.NoError(t, err)
+	require.True(t, gproto.Equal(info, decoded))
+}
+
+func TestCoordinatorInfoLeaseIdentityAllowsEmptyFields(t *testing.T) {
+	info := &commonproto.CoordinatorInfo{}
 
 	identity, err := EncodeCoordinatorInfo(info)
 	require.NoError(t, err)

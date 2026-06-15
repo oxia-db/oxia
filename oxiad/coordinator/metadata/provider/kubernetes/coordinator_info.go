@@ -24,17 +24,13 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 )
 
-const coordinatorInfoLeaseIdentityPrefix = "oxia-coordinator-info:"
+// coordinatorInfoLeaseIdentityPrefix distinguishes encoded coordinator info from
+// legacy plain-text lease identities during rolling upgrades.
+const coordinatorInfoLeaseIdentityPrefix = "oxia-ci:"
 
 func EncodeCoordinatorInfo(info *commonproto.CoordinatorInfo) (string, error) {
 	if info == nil {
 		return "", errors.New("coordinator info must not be nil")
-	}
-	if info.GetIdentity() == "" {
-		return "", errors.New("coordinator info identity must not be empty")
-	}
-	if info.GetPublicAddress() == "" {
-		return "", errors.New("coordinator info public address must not be empty")
 	}
 
 	data, err := gproto.Marshal(info)
