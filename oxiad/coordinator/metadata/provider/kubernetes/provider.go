@@ -102,7 +102,7 @@ func NewProvider[T gproto.Message](
 		name:            name,
 		codec:           codec,
 		watchEnabled:    watchEnabled,
-		coordinatorInfo: gproto.Clone(coordinatorInfo).(*commonproto.CoordinatorInfo),
+		coordinatorInfo: coordinatorInfo,
 		leaseIdentity:   leaseIdentity,
 		logger:          slog.With("component", "metadata-config-map"),
 

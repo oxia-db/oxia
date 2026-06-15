@@ -53,6 +53,13 @@ func TestCoordinatorInfoLeaseIdentityAllowsEmptyFields(t *testing.T) {
 	require.True(t, gproto.Equal(info, decoded))
 }
 
+func TestDecodeCoordinatorInfoLegacyIdentity(t *testing.T) {
+	decoded, err := DecodeCoordinatorInfo("coordinator-0.example.com:6651")
+	require.NoError(t, err)
+	require.Equal(t, "coordinator-0.example.com:6651", decoded.GetIdentity())
+	require.Equal(t, "coordinator-0.example.com:6651", decoded.GetPublicAddress())
+}
+
 func TestProviderElectionIdentityUsesConfiguredCoordinatorInfo(t *testing.T) {
 	info := &commonproto.CoordinatorInfo{
 		Identity:      "coordinator-0",
@@ -74,7 +81,7 @@ func TestProviderElectionIdentityUsesConfiguredCoordinatorInfo(t *testing.T) {
 	})
 
 	provider := p.(*Provider[*commonproto.ClusterStatus])
-	require.True(t, gproto.Equal(info, provider.coordinatorInfo))
+	require.Same(t, info, provider.coordinatorInfo)
 	decoded, err := DecodeCoordinatorInfo(provider.leaseIdentity)
 	require.NoError(t, err)
 	require.True(t, gproto.Equal(info, decoded))

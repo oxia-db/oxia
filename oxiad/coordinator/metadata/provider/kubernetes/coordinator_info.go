@@ -42,7 +42,7 @@ func EncodeCoordinatorInfo(info *commonproto.CoordinatorInfo) (string, error) {
 
 func DecodeCoordinatorInfo(identity string) (*commonproto.CoordinatorInfo, error) {
 	if !strings.HasPrefix(identity, coordinatorInfoLeaseIdentityPrefix) {
-		return &commonproto.CoordinatorInfo{Identity: identity}, nil
+		return &commonproto.CoordinatorInfo{Identity: identity, PublicAddress: identity}, nil
 	}
 
 	encoded := strings.TrimPrefix(identity, coordinatorInfoLeaseIdentityPrefix)
