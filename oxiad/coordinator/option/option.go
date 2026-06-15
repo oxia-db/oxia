@@ -120,7 +120,12 @@ func (pso *PublicServerOptions) WithDefault() {
 		pso.BindAddress = defaultBindAddress
 	}
 	if pso.AdvertisedAddress == "" {
-		pso.AdvertisedAddress = defaultAdvertisedAddress(pso.BindAddress)
+		pso.AdvertisedAddress = pso.BindAddress
+		if _, port, err := net.SplitHostPort(pso.BindAddress); err == nil {
+			if hostname, err := os.Hostname(); err == nil && hostname != "" {
+				pso.AdvertisedAddress = net.JoinHostPort(hostname, port)
+			}
+		}
 	}
 	pso.Auth.WithDefault()
 	pso.TLS.WithDefault()
@@ -141,19 +146,6 @@ func (pso *PublicServerOptions) Validate() error {
 		pso.Auth.Validate(),
 		pso.TLS.Validate(),
 	)
-}
-
-func defaultAdvertisedAddress(bindAddress string) string {
-	_, port, err := net.SplitHostPort(bindAddress)
-	if err != nil {
-		return bindAddress
-	}
-
-	hostname, err := os.Hostname()
-	if err != nil || hostname == "" {
-		return bindAddress
-	}
-	return net.JoinHostPort(hostname, port)
 }
 
 type ControllerOptions struct {
