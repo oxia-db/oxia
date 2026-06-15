@@ -15,6 +15,7 @@
 package coordinator
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -125,8 +126,11 @@ metadata:
 	require.NoError(t, err)
 
 	// Verify that partial config overrides defaults but other values use defaults
+	hostname, err := os.Hostname()
+	require.NoError(t, err)
+	require.NotEmpty(t, hostname)
 	assert.Equal(t, "0.0.0.0:7000", opts.Server.Public.BindAddress) // From config
-	assert.Equal(t, "0.0.0.0:7000", opts.Server.Public.AdvertisedAddress)
+	assert.Equal(t, net.JoinHostPort(hostname, "7000"), opts.Server.Public.AdvertisedAddress)
 	assert.Equal(t, "memory", opts.Metadata.ProviderName) // From config
 
 	// Verify defaults are applied to unset values

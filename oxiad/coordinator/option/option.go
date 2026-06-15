@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,7 +120,7 @@ func (pso *PublicServerOptions) WithDefault() {
 		pso.BindAddress = defaultBindAddress
 	}
 	if pso.AdvertisedAddress == "" {
-		pso.AdvertisedAddress = pso.BindAddress
+		pso.AdvertisedAddress = defaultAdvertisedAddress(pso.BindAddress)
 	}
 	pso.Auth.WithDefault()
 	pso.TLS.WithDefault()
@@ -140,6 +141,19 @@ func (pso *PublicServerOptions) Validate() error {
 		pso.Auth.Validate(),
 		pso.TLS.Validate(),
 	)
+}
+
+func defaultAdvertisedAddress(bindAddress string) string {
+	_, port, err := net.SplitHostPort(bindAddress)
+	if err != nil {
+		return bindAddress
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		return bindAddress
+	}
+	return net.JoinHostPort(hostname, port)
 }
 
 type ControllerOptions struct {

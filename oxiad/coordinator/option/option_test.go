@@ -15,6 +15,8 @@
 package option
 
 import (
+	"net"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -65,7 +67,20 @@ metadata:
 `)
 
 	require.NoError(t, opts.Validate())
-	require.Equal(t, "0.0.0.0:7000", opts.Server.Public.AdvertisedAddress)
+	require.Equal(t, hostPort(t, "7000"), opts.Server.Public.AdvertisedAddress)
+}
+
+func TestPublicServerOptionsDefaultAdvertisedAddressUsesHostnameWithBindPort(t *testing.T) {
+	opts := readOptions(t, `
+server:
+  public:
+    bindAddress: coordinator.example.com:7000
+metadata:
+  providerName: memory
+`)
+
+	require.NoError(t, opts.Validate())
+	require.Equal(t, hostPort(t, "7000"), opts.Server.Public.AdvertisedAddress)
 }
 
 func TestPublicServerOptionsExplicitAdvertisedAddress(t *testing.T) {
@@ -163,4 +178,13 @@ func readOptions(t *testing.T, data string) *Options {
 	require.NoError(t, yaml.Unmarshal([]byte(data), opts))
 	opts.WithDefault()
 	return opts
+}
+
+func hostPort(t *testing.T, port string) string {
+	t.Helper()
+
+	hostname, err := os.Hostname()
+	require.NoError(t, err)
+	require.NotEmpty(t, hostname)
+	return net.JoinHostPort(hostname, port)
 }
