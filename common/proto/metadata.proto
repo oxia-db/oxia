@@ -24,6 +24,11 @@ message DataServerIdentity {
   string internal = 3;
 }
 
+message CoordinatorInfo {
+  string identity = 1;
+  string public_address = 2;
+}
+
 message DataServerMetadata {
   map<string, string> labels = 1;
 }

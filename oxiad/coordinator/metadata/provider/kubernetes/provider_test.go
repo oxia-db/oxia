@@ -15,9 +15,11 @@
 package kubernetes
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 	"k8s.io/client-go/kubernetes/fake"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
@@ -25,7 +27,45 @@ import (
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 )
 
-func TestProviderElectionIdentityUsesConfiguredIdentity(t *testing.T) {
+func TestCoordinatorInfoLeaseIdentity(t *testing.T) {
+	info := &commonproto.CoordinatorInfo{
+		Identity:      "coordinator-0",
+		PublicAddress: "coordinator-0.example.com:6651",
+	}
+
+	identity, err := EncodeCoordinatorInfo(info)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(identity, coordinatorInfoLeaseIdentityPrefix))
+
+	decoded, err := DecodeCoordinatorInfo(identity)
+	require.NoError(t, err)
+	require.True(t, gproto.Equal(info, decoded))
+}
+
+func TestCoordinatorInfoLeaseIdentityAllowsEmptyFields(t *testing.T) {
+	info := &commonproto.CoordinatorInfo{}
+
+	identity, err := EncodeCoordinatorInfo(info)
+	require.NoError(t, err)
+
+	decoded, err := DecodeCoordinatorInfo(identity)
+	require.NoError(t, err)
+	require.True(t, gproto.Equal(info, decoded))
+}
+
+func TestDecodeCoordinatorInfoLegacyIdentity(t *testing.T) {
+	decoded, err := DecodeCoordinatorInfo("coordinator-0.example.com:6651")
+	require.NoError(t, err)
+	require.Equal(t, "coordinator-0.example.com:6651", decoded.GetIdentity())
+	require.Equal(t, "coordinator-0.example.com:6651", decoded.GetPublicAddress())
+}
+
+func TestProviderElectionIdentityUsesConfiguredCoordinatorInfo(t *testing.T) {
+	info := &commonproto.CoordinatorInfo{
+		Identity:      "coordinator-0",
+		PublicAddress: "coordinator-0.example.com:6651",
+	}
+
 	p, err := NewProvider(
 		t.Context(),
 		fake.NewSimpleClientset(),
@@ -33,12 +73,16 @@ func TestProviderElectionIdentityUsesConfiguredIdentity(t *testing.T) {
 		"status",
 		metadatacodec.ClusterStatusCodec,
 		metadatacommon.WatchDisabled,
-		"coordinator-0",
+		info,
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, p.Close())
 	})
 
-	require.Equal(t, "coordinator-0", p.(*Provider[*commonproto.ClusterStatus]).identity)
+	provider := p.(*Provider[*commonproto.ClusterStatus])
+	require.Same(t, info, provider.coordinatorInfo)
+	decoded, err := DecodeCoordinatorInfo(provider.leaseIdentity)
+	require.NoError(t, err)
+	require.True(t, gproto.Equal(info, decoded))
 }
