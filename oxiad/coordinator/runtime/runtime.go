@@ -375,6 +375,10 @@ func (c *runtime) WaitForNextUpdate(ctx context.Context, currentValue *proto.Sha
 	}
 }
 
+func (c *runtime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.ShardAssignments] {
+	return c.assignmentsWatch.Subscribe()
+}
+
 func (c *runtime) startBackgroundActionWorker() {
 	for {
 		select {

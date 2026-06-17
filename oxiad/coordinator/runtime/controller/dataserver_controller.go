@@ -36,6 +36,7 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 	commontime "github.com/oxia-db/oxia/common/time"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 )
 
 type DataServerStatus uint32
@@ -52,8 +53,10 @@ const (
 	defaultInitialRetryBackoff = 10 * time.Second
 )
 
+var errDataServerNotReadyForAssignments = errors.New("data server is not ready for assignments")
+
 type ShardAssignmentsProvider interface {
-	WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error)
+	SubscribeShardAssignments() *commonwatch.Receiver[*proto.ShardAssignments]
 }
 
 // The DataServerController takes care of checking the health-status of each dataServer
@@ -130,6 +133,9 @@ func (n *dataServerController) Close() error {
 
 func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 	_ = backoff.RetryNotify(func() error {
+		if err := n.checkReadyForAssignments(); err != nil {
+			return err
+		}
 		n.logger.Debug("Ready to send assignments")
 
 		stream, err := n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
@@ -138,7 +144,8 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 			return err
 		}
 		streamCtx := stream.Context()
-		var assignments *proto.ShardAssignments
+		receiver := n.SubscribeShardAssignments()
+		assignments := receiver.Load()
 		for {
 			select {
 			case <-n.ctx.Done():
@@ -146,18 +153,6 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 			case <-streamCtx.Done():
 				return streamCtx.Err()
 			default:
-				n.logger.Debug(
-					"Waiting for next assignments update",
-					slog.Any("current-assignments", assignments),
-				)
-				if assignments, err = n.WaitForNextUpdate(streamCtx, assignments); err != nil {
-					n.logger.Debug("Failed to send assignments", slog.Any("error", err))
-					return err
-				}
-				if assignments == nil {
-					continue
-				}
-
 				n.logger.Debug("Sending assignments", slog.Any("assignments", assignments))
 				if err := stream.Send(assignments); err != nil {
 					n.logger.Debug("Failed to send assignments", slog.Any("error", err))
@@ -165,9 +160,26 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 				}
 				n.logger.Debug("Send assignments completed successfully")
 				n.dispatchAssignmentsBackoff.Reset()
+
+				select {
+				case <-n.ctx.Done():
+					return nil
+				case <-streamCtx.Done():
+					return streamCtx.Err()
+				case <-receiver.Changed():
+					assignments = receiver.Load()
+				}
 			}
 		}
 	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {
+		if errors.Is(err, errDataServerNotReadyForAssignments) {
+			n.logger.Info(
+				"Waiting for data server to be ready before sending assignments",
+				slog.Any("status", n.Status()),
+				slog.Duration("retry-after", duration),
+			)
+			return
+		}
 		if !errors.Is(err, context.Canceled) {
 			n.logger.Warn(
 				"Failed to send assignments updates to storage data server",
@@ -176,6 +188,21 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 			)
 		}
 	})
+}
+
+func (n *dataServerController) checkReadyForAssignments() error {
+	select {
+	case <-n.ctx.Done():
+		return n.ctx.Err()
+	default:
+	}
+
+	switch n.Status() {
+	case Running, Draining:
+		return nil
+	default:
+		return errDataServerNotReadyForAssignments
+	}
 }
 
 func (n *dataServerController) doHealthPing(healthClient grpc_health_v1.HealthClient) error {
