@@ -15,6 +15,7 @@
 package kubernetes
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -25,6 +26,7 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	metadataprovider "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
 func TestCoordinatorInfoLeaseIdentity(t *testing.T) {
@@ -85,4 +87,52 @@ func TestProviderElectionIdentityUsesConfiguredCoordinatorInfo(t *testing.T) {
 	decoded, err := DecodeCoordinatorInfo(provider.leaseIdentity)
 	require.NoError(t, err)
 	require.True(t, gproto.Equal(info, decoded))
+}
+
+func TestProviderGetLeaderInfoUsesLeaderElector(t *testing.T) {
+	info := &commonproto.CoordinatorInfo{
+		Identity:      "coordinator-0",
+		PublicAddress: "coordinator-0.example.com:6651",
+	}
+	kc := fake.NewSimpleClientset()
+
+	p, err := NewProvider(
+		t.Context(),
+		kc,
+		"ns",
+		"status",
+		metadatacodec.ClusterStatusCodec,
+		metadatacommon.WatchDisabled,
+		info,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, p.Close())
+	})
+
+	_, err = p.WaitToBecomeLeader()
+	require.NoError(t, err)
+
+	leader, err := p.GetLeaderInfo()
+	require.NoError(t, err)
+	require.True(t, gproto.Equal(info, leader))
+}
+
+func TestProviderGetLeaderInfoUnavailable(t *testing.T) {
+	p, err := NewProvider(
+		t.Context(),
+		fake.NewSimpleClientset(),
+		"ns",
+		"status",
+		metadatacodec.ClusterStatusCodec,
+		metadatacommon.WatchDisabled,
+		&commonproto.CoordinatorInfo{},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, p.Close())
+	})
+
+	_, err = p.GetLeaderInfo()
+	require.True(t, errors.Is(err, metadataprovider.ErrCoordinatorLeaderUnavailable))
 }

@@ -85,7 +85,7 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 	t.Helper()
 
 	rpcMock := newMockRpcProvider()
-	metaProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metaProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 	clusterConfig := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              constant.DefaultNamespace,
@@ -112,7 +112,9 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 		},
 	})
 	require.NoError(t, err)
-	metadata, _, err := metadataFactory.CreateMetadata(t.Context())
+	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	assert.NoError(t, err)
+	_, err = metadata.WaitToBecomeLeader()
 	assert.NoError(t, err)
 	t.Cleanup(func() {
 		assert.NoError(t, metadata.Close())

@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	grpcstatus "google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/rpc"
 )
@@ -105,6 +106,8 @@ func (*mockAdminRpcClient) SplitShard(context.Context, *proto.SplitShardRequest,
 
 type mockAdminClientPool struct {
 	adminClient proto.OxiaAdminClient
+	clients     map[string]proto.OxiaAdminClient
+	targets     []string
 	err         error
 }
 
@@ -128,7 +131,11 @@ func (m *mockAdminClientPool) GetReplicationRpc(string) (proto.OxiaLogReplicatio
 	return nil, errors.New("unexpected GetReplicationRpc call")
 }
 
-func (m *mockAdminClientPool) GetAminRpc(string) (proto.OxiaAdminClient, error) {
+func (m *mockAdminClientPool) GetAminRpc(target string) (proto.OxiaAdminClient, error) {
+	m.targets = append(m.targets, target)
+	if m.clients != nil {
+		return m.clients[target], m.err
+	}
 	return m.adminClient, m.err
 }
 
@@ -222,6 +229,43 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 	assert.Equal(t, serverName, *dataServers[0].Identity.Name)
 	assert.Equal(t, "public-1", dataServers[0].Identity.GetPublic())
 	assert.Equal(t, "internal-1", dataServers[0].Identity.GetInternal())
+}
+
+func TestAdminClientListDataServersRedirectsToCoordinatorLeader(t *testing.T) {
+	serverName := "server-1"
+	pool := &mockAdminClientPool{
+		clients: map[string]proto.OxiaAdminClient{
+			"coordinator-0:6651": &mockAdminRpcClient{
+				listDataServersErr: constant.IntoGrpcStatusError(
+					constant.ErrNodeIsNotLeader,
+					constant.WithCoordinatorLeaderHint("coordinator-1:6651"),
+				),
+			},
+			"coordinator-1:6651": &mockAdminRpcClient{
+				listDataServersResponse: &proto.ListDataServersResponse{
+					DataServers: []*proto.DataServer{
+						{
+							Identity: &proto.DataServerIdentity{
+								Name:     &serverName,
+								Public:   "public-1",
+								Internal: "internal-1",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	admin := &adminClientImpl{
+		adminAddr:  "coordinator-0:6651",
+		clientPool: pool,
+	}
+
+	dataServers, err := admin.ListDataServers()
+	require.NoError(t, err)
+	require.Len(t, dataServers, 1)
+	assert.Equal(t, serverName, dataServers[0].GetNameOrDefault())
+	assert.Equal(t, []string{"coordinator-0:6651", "coordinator-1:6651"}, pool.targets)
 }
 
 func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {

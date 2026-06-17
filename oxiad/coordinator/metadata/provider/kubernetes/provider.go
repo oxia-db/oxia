@@ -68,6 +68,7 @@ type Provider[T gproto.Message] struct {
 	watchEnabled    metadatacommon.WatchMode
 	coordinatorInfo *commonproto.CoordinatorInfo
 	leaseIdentity   string
+	leaderElector   atomic.Pointer[leaderelection.LeaderElector]
 
 	metadataSize      atomic.Int64
 	getLatencyHisto   metric.LatencyHistogram
@@ -317,6 +318,7 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	if err != nil {
 		panic(err)
 	}
+	m.leaderElector.Store(leaderElector)
 
 	m.wg.Go(func() {
 		process.DoWithLabels(m.ctx, map[string]string{
@@ -328,6 +330,16 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	})
 
 	return lost, wg.Wait(m.ctx)
+}
+
+func (m *Provider[T]) GetLeaderInfo() (*commonproto.CoordinatorInfo, error) {
+	if leaderElector := m.leaderElector.Load(); leaderElector != nil {
+		leader := leaderElector.GetLeader()
+		if leader != "" {
+			return DecodeCoordinatorInfo(leader)
+		}
+	}
+	return nil, provider.ErrCoordinatorLeaderUnavailable
 }
 
 func (m *Provider[T]) Close() error {

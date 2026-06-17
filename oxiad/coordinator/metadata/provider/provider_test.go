@@ -54,12 +54,12 @@ var (
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			return memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			return memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
 			assert.NoError(t, err)
 			return p
 		},
@@ -86,6 +86,13 @@ var (
 		},
 	}
 )
+
+func testCoordinatorInfo() *proto.CoordinatorInfo {
+	return &proto.CoordinatorInfo{
+		Identity:      "coordinator-test",
+		PublicAddress: "coordinator-test:6651",
+	}
+}
 
 func TestProvider(t *testing.T) {
 	for name, newProvider := range providers {
@@ -126,17 +133,50 @@ func TestProvider(t *testing.T) {
 	}
 }
 
+func TestLocalProviderGetLeaderInfoReturnsSelf(t *testing.T) {
+	providers := map[string]func(t *testing.T) provider.Provider[*proto.ClusterStatus]{
+		"memory": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
+			t.Helper()
+			return memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
+		},
+		"file": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
+			t.Helper()
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
+			require.NoError(t, err)
+			return p
+		},
+	}
+
+	for name, newProvider := range providers {
+		t.Run(name, func(t *testing.T) {
+			p := newProvider(t)
+			t.Cleanup(func() {
+				require.NoError(t, p.Close())
+			})
+
+			info, err := p.GetLeaderInfo()
+			require.NoError(t, err)
+			require.Equal(t, "coordinator-test", info.GetIdentity())
+			require.Equal(t, "coordinator-test:6651", info.GetPublicAddress())
+
+			nextInfo, err := p.GetLeaderInfo()
+			require.NoError(t, err)
+			require.Same(t, info, nextInfo)
+		})
+	}
+}
+
 func TestProviderConfigResource(t *testing.T) {
 	providers := map[string]func(t *testing.T) provider.Provider[*proto.ClusterConfiguration]{
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			return memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+			return memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, testCoordinatorInfo())
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled)
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
 			assert.NoError(t, err)
 			return p
 		},
