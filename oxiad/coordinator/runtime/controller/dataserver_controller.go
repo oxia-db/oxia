@@ -130,6 +130,9 @@ func (n *dataServerController) Close() error {
 
 func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 	_ = backoff.RetryNotify(func() error {
+		if err := n.waitUntilReadyForAssignments(); err != nil {
+			return err
+		}
 		n.logger.Debug("Ready to send assignments")
 
 		stream, err := n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
@@ -176,6 +179,25 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 			)
 		}
 	})
+}
+
+func (n *dataServerController) waitUntilReadyForAssignments() error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		switch n.Status() {
+		case Running, Draining:
+			return nil
+		case NotRunning:
+		}
+
+		select {
+		case <-n.ctx.Done():
+			return n.ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (n *dataServerController) doHealthPing(healthClient grpc_health_v1.HealthClient) error {
