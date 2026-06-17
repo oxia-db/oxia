@@ -26,12 +26,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
-	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 
-	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -45,39 +44,21 @@ var (
 )
 
 type mockShardAssignmentsProvider struct {
-	sync.Mutex
-	cond    concurrent.ConditionContext
-	current *proto.ShardAssignments
+	assignments *commonwatch.Watch[*proto.ShardAssignments]
 }
 
 func newMockShardAssignmentsProvider() *mockShardAssignmentsProvider {
-	sap := &mockShardAssignmentsProvider{
-		current: nil,
+	return &mockShardAssignmentsProvider{
+		assignments: commonwatch.New(&proto.ShardAssignments{}),
 	}
-
-	sap.cond = concurrent.NewConditionContext(sap)
-	return sap
 }
 
 func (sap *mockShardAssignmentsProvider) set(value *proto.ShardAssignments) {
-	sap.Lock()
-	defer sap.Unlock()
-
-	sap.current = value
-	sap.cond.Broadcast()
+	sap.assignments.Publish(value)
 }
 
-func (sap *mockShardAssignmentsProvider) WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error) {
-	sap.Lock()
-	defer sap.Unlock()
-
-	for pb.Equal(currentValue, sap.current) {
-		if err := sap.cond.Wait(ctx); err != nil {
-			return nil, err
-		}
-	}
-
-	return sap.current, nil
+func (sap *mockShardAssignmentsProvider) SubscribeShardAssignments() *commonwatch.Receiver[*proto.ShardAssignments] {
+	return sap.assignments.Subscribe()
 }
 
 type mockNodeAvailabilityListener struct {
