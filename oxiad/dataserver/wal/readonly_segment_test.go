@@ -31,7 +31,7 @@ func TestReadOnlySegment(t *testing.T) {
 	rw, err := newReadWriteSegment(path, 0, 128*1024, 0, nil)
 	assert.NoError(t, err)
 	for i := int64(0); i < 10; i++ {
-		assert.NoError(t, rw.Append(i, []byte(fmt.Sprintf("entry-%d", i))))
+		assert.NoError(t, appendRecord(rw, i, []byte(fmt.Sprintf("entry-%d", i))))
 	}
 	assert.NoError(t, rw.Close())
 
@@ -63,7 +63,7 @@ func TestRO_auto_recover_broken_index(t *testing.T) {
 	rw, err := newReadWriteSegment(path, 0, 128*1024, 0, nil)
 	assert.NoError(t, err)
 	for i := int64(0); i < 10; i++ {
-		assert.NoError(t, rw.Append(i, []byte(fmt.Sprintf("entry-%d", i))))
+		assert.NoError(t, appendRecord(rw, i, []byte(fmt.Sprintf("entry-%d", i))))
 	}
 	rwSegment := rw.(*readWriteSegment)
 	assert.NoError(t, rw.Close())

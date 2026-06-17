@@ -31,7 +31,7 @@ import (
 type ReadWriteSegment interface {
 	ReadOnlySegment
 
-	Append(offset int64, data []byte) error
+	Append(offset int64, data []byte) (previousCrc uint32, payloadCrc uint32, err error)
 
 	Truncate(lastSafeOffset int64) error
 
@@ -169,27 +169,28 @@ func (ms *readWriteSegment) HasSpace(l int) bool {
 	return ms.currentFileOffset+ms.c.codec.GetHeaderSize()+uint32(l) <= ms.segmentSize
 }
 
-func (ms *readWriteSegment) Append(offset int64, data []byte) error {
+func (ms *readWriteSegment) Append(offset int64, data []byte) (previousCrc uint32, payloadCrc uint32, err error) {
 	ms.Lock()
 	defer ms.Unlock()
 
 	if len(data) == 0 {
-		return codec.ErrEmptyPayload
+		return 0, 0, codec.ErrEmptyPayload
 	}
 	if !ms.HasSpace(len(data)) {
-		return ErrSegmentFull
+		return 0, 0, ErrSegmentFull
 	}
 	if offset != ms.lastOffset+1 {
-		return ErrInvalidNextOffset
+		return 0, 0, ErrInvalidNextOffset
 	}
 
 	fOffset := ms.currentFileOffset
+	previousCrc = ms.lastCrc
 	var recordSize uint32
 	recordSize, ms.lastCrc = ms.c.codec.WriteRecord(ms.txnMappedFile, fOffset, ms.lastCrc, data)
 	ms.currentFileOffset += recordSize
 	ms.lastOffset = offset
 	ms.writingIdx = binary.BigEndian.AppendUint32(ms.writingIdx, fOffset)
-	return nil
+	return previousCrc, ms.lastCrc, nil
 }
 
 // Flush msyncs the mapped file without holding the segment mutex: appends and

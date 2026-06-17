@@ -25,6 +25,13 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
+// appendRecord adapts the CRC-returning segment Append for tests that only
+// assert on the error.
+func appendRecord(rw ReadWriteSegment, offset int64, data []byte) error {
+	_, _, err := rw.Append(offset, data)
+	return err
+}
+
 func TestReadWriteSegment(t *testing.T) {
 	path := t.TempDir()
 
@@ -34,13 +41,13 @@ func TestReadWriteSegment(t *testing.T) {
 	assert.EqualValues(t, 0, rw.BaseOffset())
 	assert.EqualValues(t, -1, rw.LastOffset())
 
-	assert.NoError(t, rw.Append(0, []byte("entry-0")))
+	assert.NoError(t, appendRecord(rw, 0, []byte("entry-0")))
 	assert.EqualValues(t, 0, rw.BaseOffset())
 	assert.EqualValues(t, 0, rw.LastOffset())
 
 	assert.NoError(t, rw.Flush())
 
-	assert.NoError(t, rw.Append(1, []byte("entry-1")))
+	assert.NoError(t, appendRecord(rw, 1, []byte("entry-1")))
 	assert.EqualValues(t, 0, rw.BaseOffset())
 	assert.EqualValues(t, 1, rw.LastOffset())
 
@@ -72,21 +79,21 @@ func TestReadWriteSegment_NonZero(t *testing.T) {
 	assert.EqualValues(t, 5, rw.BaseOffset())
 	assert.EqualValues(t, 4, rw.LastOffset())
 
-	assert.NoError(t, rw.Append(5, []byte("entry-0")))
+	assert.NoError(t, appendRecord(rw, 5, []byte("entry-0")))
 	assert.EqualValues(t, 5, rw.BaseOffset())
 	assert.EqualValues(t, 5, rw.LastOffset())
 
 	assert.NoError(t, rw.Flush())
 
-	assert.NoError(t, rw.Append(6, []byte("entry-1")))
+	assert.NoError(t, appendRecord(rw, 6, []byte("entry-1")))
 	assert.EqualValues(t, 5, rw.BaseOffset())
 	assert.EqualValues(t, 6, rw.LastOffset())
 
-	assert.ErrorIs(t, rw.Append(4, []byte("entry-4")), ErrInvalidNextOffset)
+	assert.ErrorIs(t, appendRecord(rw, 4, []byte("entry-4")), ErrInvalidNextOffset)
 	assert.EqualValues(t, 5, rw.BaseOffset())
 	assert.EqualValues(t, 6, rw.LastOffset())
 
-	assert.ErrorIs(t, rw.Append(8, []byte("entry-8")), ErrInvalidNextOffset)
+	assert.ErrorIs(t, appendRecord(rw, 8, []byte("entry-8")), ErrInvalidNextOffset)
 	assert.EqualValues(t, 5, rw.BaseOffset())
 	assert.EqualValues(t, 6, rw.LastOffset())
 
@@ -110,7 +117,7 @@ func TestReadWriteSegment_HasSpace(t *testing.T) {
 	assert.True(t, rw.HasSpace(1024-headerSize))
 	assert.False(t, rw.HasSpace(1021))
 
-	assert.NoError(t, rw.Append(0, make([]byte, 100)))
+	assert.NoError(t, appendRecord(rw, 0, make([]byte, 100)))
 	assert.True(t, rw.HasSpace(10))
 	assert.False(t, rw.HasSpace(1020))
 	assert.False(t, rw.HasSpace(1020-100))
@@ -133,11 +140,11 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrOffsetOutOfBounds(t *testing.
 	rw, err := newReadWriteSegment(dir, 0, 1024, 0, commitOffsetProvider)
 	assert.NoError(t, err)
 	payload1 := []byte("entry-0")
-	assert.NoError(t, rw.Append(0, payload1))
+	assert.NoError(t, appendRecord(rw, 0, payload1))
 	payload2 := []byte("entry-1")
-	assert.NoError(t, rw.Append(1, payload2))
+	assert.NoError(t, appendRecord(rw, 1, payload2))
 	payload3 := []byte("entry-2")
-	assert.NoError(t, rw.Append(2, payload3))
+	assert.NoError(t, appendRecord(rw, 2, payload3))
 	actualPayload1, _, _, err := rw.Read(0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload1, actualPayload1)
@@ -165,7 +172,7 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrOffsetOutOfBounds(t *testing.
 	assert.EqualValues(t, 1, rw.LastOffset())
 
 	// test functionality
-	assert.NoError(t, rw.Append(2, payload3))
+	assert.NoError(t, appendRecord(rw, 2, payload3))
 	actualPayload3, _, _, err = rw.Read(2)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload3, actualPayload3)
@@ -181,11 +188,11 @@ func TestReadWriteSegment_BrokenCommittedData_ErrOffsetOutOfBounds(t *testing.T)
 	rw, err := newReadWriteSegment(dir, 0, 1024, 0, commitOffsetProvider)
 	assert.NoError(t, err)
 	payload1 := []byte("entry-0")
-	assert.NoError(t, rw.Append(0, payload1))
+	assert.NoError(t, appendRecord(rw, 0, payload1))
 	payload2 := []byte("entry-1")
-	assert.NoError(t, rw.Append(1, payload2))
+	assert.NoError(t, appendRecord(rw, 1, payload2))
 	payload3 := []byte("entry-2")
-	assert.NoError(t, rw.Append(2, payload3))
+	assert.NoError(t, appendRecord(rw, 2, payload3))
 	actualPayload1, _, _, err := rw.Read(0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload1, actualPayload1)
@@ -220,11 +227,11 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrDataCorrupted(t *testing.T) {
 	rw, err := newReadWriteSegment(dir, 0, 1024, 0, commitOffsetProvider)
 	assert.NoError(t, err)
 	payload1 := []byte("entry-0")
-	assert.NoError(t, rw.Append(0, payload1))
+	assert.NoError(t, appendRecord(rw, 0, payload1))
 	payload2 := []byte("entry-1")
-	assert.NoError(t, rw.Append(1, payload2))
+	assert.NoError(t, appendRecord(rw, 1, payload2))
 	payload3 := []byte("entry-2")
-	assert.NoError(t, rw.Append(2, payload3))
+	assert.NoError(t, appendRecord(rw, 2, payload3))
 	actualPayload1, _, _, err := rw.Read(0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload1, actualPayload1)
@@ -252,7 +259,7 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrDataCorrupted(t *testing.T) {
 	assert.EqualValues(t, 1, rw.LastOffset())
 
 	// test functionality
-	assert.NoError(t, rw.Append(2, payload3))
+	assert.NoError(t, appendRecord(rw, 2, payload3))
 	actualPayload3, _, _, err = rw.Read(2)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload3, actualPayload3)
@@ -268,11 +275,11 @@ func TestReadWriteSegment_BrokenCommittedData_ErrDataCorrupted(t *testing.T) {
 	rw, err := newReadWriteSegment(dir, 0, 1024, 0, commitOffsetProvider)
 	assert.NoError(t, err)
 	payload1 := []byte("entry-0")
-	assert.NoError(t, rw.Append(0, payload1))
+	assert.NoError(t, appendRecord(rw, 0, payload1))
 	payload2 := []byte("entry-1")
-	assert.NoError(t, rw.Append(1, payload2))
+	assert.NoError(t, appendRecord(rw, 1, payload2))
 	payload3 := []byte("entry-2")
-	assert.NoError(t, rw.Append(2, payload3))
+	assert.NoError(t, appendRecord(rw, 2, payload3))
 	actualPayload1, _, _, err := rw.Read(0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload1, actualPayload1)
@@ -304,11 +311,11 @@ func TestSegmentAppendShouldNotPanic(t *testing.T) {
 	rw, err := newReadWriteSegment(basePath, 0, 1024, 0, nil)
 	assert.NoError(t, err)
 	for i := int64(0); i < 51; i++ {
-		err := rw.Append(i, fmt.Appendf(nil, "entry-%d", i))
+		err := appendRecord(rw, i, fmt.Appendf(nil, "entry-%d", i))
 		assert.NoError(t, err)
 	}
 
-	err = rw.Append(51, fmt.Appendf(nil, "entry-%d", 51))
+	err = appendRecord(rw, 51, fmt.Appendf(nil, "entry-%d", 51))
 	assert.ErrorIs(t, err, ErrSegmentFull)
 }
 
@@ -360,7 +367,7 @@ func TestReadWriteSegment_ConcurrentAppendReadFlush(t *testing.T) {
 	}()
 
 	for i := 0; i < entries; i++ {
-		assert.NoError(t, rw.Append(int64(i), []byte(fmt.Sprintf("entry-%d", i))))
+		assert.NoError(t, appendRecord(rw, int64(i), []byte(fmt.Sprintf("entry-%d", i))))
 	}
 
 	close(done)
@@ -383,7 +390,7 @@ func TestReadWriteSegment_CloseWithConcurrentFlush(t *testing.T) {
 
 	rw, err := newReadWriteSegment(path, 0, 128*1024, 0, nil)
 	assert.NoError(t, err)
-	assert.NoError(t, rw.Append(0, []byte("entry-0")))
+	assert.NoError(t, appendRecord(rw, 0, []byte("entry-0")))
 
 	flusherDone := make(chan struct{})
 	go func() {

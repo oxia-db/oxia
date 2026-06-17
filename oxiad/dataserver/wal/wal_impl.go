@@ -92,6 +92,10 @@ type wal struct {
 	// holding the WAL write lock
 	marshalBuf []byte
 
+	// In-memory cache of the most recently appended entries, read by tailing
+	// follower cursors without taking the WAL lock (see tail_cache.go)
+	tailCache *tailCache
+
 	trimmer Trimmer
 
 	appendLatency metric.LatencyHistogram
@@ -146,6 +150,8 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 			"The time it takes to fsync the wal data on disk", labels),
 	}
 
+	w.tailCache = newTailCache(defaultTailCacheMaxBytes)
+
 	var err error
 	if w.readOnlySegments, err = newReadOnlySegmentsGroup(w.walPath); err != nil {
 		return nil, err
@@ -181,6 +187,13 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 }
 
 func (t *wal) readAtIndex(index int64) (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
+	// Serve tailing reads from the in-memory cache without taking the WAL
+	// lock: a cache hit avoids the mmap copy, the UnmarshalVT and, crucially,
+	// blocking queued appenders that need the write lock.
+	if entry, previousCrc, entryCrc, ok := t.tailCache.get(index); ok {
+		return entry, previousCrc, entryCrc, nil
+	}
+
 	t.RLock()
 	defer t.RUnlock()
 
@@ -353,7 +366,8 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 		}
 	}
 
-	if err = t.currentSegment.Append(entry.Offset, val); err != nil {
+	appendedPreviousCrc, appendedCrc, err := t.currentSegment.Append(entry.Offset, val)
+	if err != nil {
 		if !errors.Is(err, ErrSegmentFull) {
 			t.writeErrors.Inc()
 			return err
@@ -364,7 +378,7 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 		}
 
 		// After the rollover, try to append again
-		if err = t.currentSegment.Append(entry.Offset, val); err != nil {
+		if appendedPreviousCrc, appendedCrc, err = t.currentSegment.Append(entry.Offset, val); err != nil {
 			t.writeErrors.Inc()
 			return err
 		}
@@ -372,6 +386,7 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 
 	t.lastAppendedOffset.Store(entry.Offset)
 	t.firstOffset.CompareAndSwap(InvalidOffset, entry.Offset)
+	t.tailCache.add(entry, appendedPreviousCrc, appendedCrc)
 
 	t.appendBytes.Add(len(val))
 	return nil
@@ -627,6 +642,7 @@ func (t *wal) clearWithoutLock() error {
 	t.lastAppendedOffset.Store(InvalidOffset)
 	t.lastSyncedOffset.Store(InvalidOffset)
 	t.firstOffset.Store(InvalidOffset)
+	t.tailCache.clear()
 	return nil
 }
 
@@ -656,6 +672,8 @@ func (t *wal) TruncateLog(lastSafeOffset int64) (int64, error) { //nolint:revive
 
 	t.Lock()
 	defer t.Unlock()
+
+	t.tailCache.truncate(lastSafeOffset)
 
 	// Bring any rolled-over segment still pending close into the read-only
 	// group, so that the truncation below sees the complete set of segments
