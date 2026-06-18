@@ -90,10 +90,12 @@ func TestValidate_NoServers(t *testing.T) {
 	assert.ErrorContains(t, cc.Validate(), "at least one server must be configured")
 }
 
-func TestValidate_NoNamespaces(t *testing.T) {
-	cc := validConfig()
-	cc.Namespaces = nil
-	assert.ErrorContains(t, cc.Validate(), "at least one namespace must be configured")
+func TestValidate_NoNamespacesAllowed(t *testing.T) {
+	for _, namespaces := range [][]NamespaceConfig{nil, {}} {
+		cc := validConfig()
+		cc.Namespaces = namespaces
+		assert.NoError(t, cc.Validate())
+	}
 }
 
 func TestValidate_EmptyNamespaceName(t *testing.T) {

@@ -25,8 +25,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
@@ -438,6 +440,36 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 	for _, serverObj := range servers {
 		assert.NoError(t, serverObj.Close())
 	}
+}
+
+func TestCoordinator_NoNamespacesSendsEmptyAssignments(t *testing.T) {
+	s1, sa1 := newServer(t)
+	defer s1.Close()
+
+	metadataProvider := metadata.NewMetadataProviderMemory()
+	clusterConfig := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{},
+		Servers:    []model.Server{sa1},
+	}
+	clientPool := rpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
+
+	coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) { return clusterConfig, nil }, nil, rpc2.NewRpcProvider(clientPool))
+	require.NoError(t, err)
+	defer coordinatorInstance.Close()
+
+	healthClient, err := clientPool.GetHealthRpc(sa1.Public)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		response, err := healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{
+			Service: oxiadcommonrpc.ReadinessProbeService,
+		})
+		return err == nil && response.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING
+	}, 10*time.Second, 10*time.Millisecond)
 }
 
 func TestCoordinator_DynamicallAddNamespace(t *testing.T) {

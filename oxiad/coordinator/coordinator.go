@@ -795,19 +795,26 @@ func NewCoordinator(meta metadata.Provider,
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 	}
 	clusterStatus, _, _ = c.statusResource.ApplyChanges(clusterConfig, c.selectNewEnsemble)
-
-	// init shard controller
-	for ns, shards := range clusterStatus.Namespaces {
-		for shard := range shards.Shards {
-			shardMetadata := shards.Shards[shard]
-			var nsConfig *model.NamespaceConfig
-			var exist bool
-			if nsConfig, exist = c.configResource.NamespaceConfig(ns); !exist {
-				nsConfig = &model.NamespaceConfig{}
+	if len(clusterStatus.Namespaces) == 0 {
+		// No shard controllers will run leader election and publish assignments,
+		// so send the empty assignment set now to make data servers ready.
+		c.Lock()
+		c.computeNewAssignments()
+		c.Unlock()
+	} else {
+		// init shard controller
+		for ns, shards := range clusterStatus.Namespaces {
+			for shard := range shards.Shards {
+				shardMetadata := shards.Shards[shard]
+				var nsConfig *model.NamespaceConfig
+				var exist bool
+				if nsConfig, exist = c.configResource.NamespaceConfig(ns); !exist {
+					nsConfig = &model.NamespaceConfig{}
+				}
+				c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
+					shardMetadata, c.configResource, c.statusResource, c.findDataServerFeatures,
+					c, c.rpc, controller.DefaultPeriodicTasksInterval)
 			}
-			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
-				shardMetadata, c.configResource, c.statusResource, c.findDataServerFeatures,
-				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		}
 	}
 
