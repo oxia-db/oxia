@@ -98,15 +98,17 @@ type wal struct {
 
 	trimmer Trimmer
 
-	appendLatency metric.LatencyHistogram
-	appendBytes   metric.Counter
-	readLatency   metric.LatencyHistogram
-	readBytes     metric.Counter
-	trimOps       metric.Counter
-	readErrors    metric.Counter
-	writeErrors   metric.Counter
-	activeEntries metric.Gauge
-	syncLatency   metric.LatencyHistogram
+	appendLatency      metric.LatencyHistogram
+	appendBytes        metric.Counter
+	readLatency        metric.LatencyHistogram
+	readBytes          metric.Counter
+	trimOps            metric.Counter
+	readErrors         metric.Counter
+	writeErrors        metric.Counter
+	activeEntries      metric.Gauge
+	readCacheHits      atomic.Int64
+	readCacheHitsGauge metric.Gauge
+	syncLatency        metric.LatencyHistogram
 }
 
 func walPath(logDir string, namespace string, shard int64) string {
@@ -165,6 +167,13 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 			return w.lastSyncedOffset.Load() - w.firstOffset.Load()
 		})
 
+	// Cumulative tail-cache hits, kept as an atomic so the read hot path stays
+	// allocation-free, and observed through a gauge callback.
+	w.readCacheHitsGauge = metric.NewGauge("oxia_server_wal_read_cache_hits",
+		"The number of WAL reads served from the in-memory tail cache", "count", labels, func() int64 {
+			return w.readCacheHits.Load()
+		})
+
 	if err := w.recoverWal(); err != nil {
 		return nil, errors.Wrapf(err, "failed to recover wal for shard %s / %d", namespace, shard)
 	}
@@ -189,14 +198,20 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 func (t *wal) readAtIndex(index int64) (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
 	// Serve tailing reads from the in-memory cache without taking the WAL
 	// lock: a cache hit avoids the mmap copy, the UnmarshalVT and, crucially,
-	// blocking queued appenders that need the write lock.
+	// blocking queued appenders that need the write lock. Cache hits are not
+	// fed into the latency histogram — recording a ~14ns lookup through the
+	// OTel histogram would cost several times the lookup itself and bury the
+	// segment-read distribution under a spike of near-zero samples; the hit
+	// counter is the metric that matters for the cache.
 	if entry, previousCrc, entryCrc, ok := t.tailCache.get(index); ok {
+		t.readCacheHits.Add(1)
 		return entry, previousCrc, entryCrc, nil
 	}
 
 	t.RLock()
 	defer t.RUnlock()
 
+	// Time the segment path only: the reads that actually vary and can be slow.
 	timer := t.readLatency.Timer()
 	defer timer.Done()
 
@@ -287,6 +302,7 @@ func (t *wal) closeWithoutLock() error {
 	default:
 		t.cancel()
 		t.activeEntries.Unregister()
+		t.readCacheHitsGauge.Unregister()
 
 		return multierr.Combine(
 			t.drainPendingCloseSegments(),

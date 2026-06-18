@@ -223,3 +223,89 @@ func BenchmarkWALReadAtIndex(b *testing.B) {
 		}
 	})
 }
+
+// The follower replication path reads through NewReader/ReadNext, not
+// readAtIndex directly: this pins that the reader actually consults the cache
+// (it returns the shared cached pointer).
+func TestWALReaderUsesTailCache(t *testing.T) {
+	f, w := createWal(t)
+	defer func() {
+		assert.NoError(t, w.Close())
+		assert.NoError(t, f.Close())
+	}()
+
+	tw := w.(*wal)
+	const n = 20
+	for i := int64(0); i < n; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{Term: 1, Offset: i, Value: []byte(fmt.Sprintf("value-%d", i))}))
+	}
+
+	cached, _, _, ok := tw.tailCache.get(n - 1)
+	assert.True(t, ok)
+
+	// NewReader(after) starts at after+1, so this reads offset n-1.
+	reader, err := w.NewReader(n - 2)
+	assert.NoError(t, err)
+	defer reader.Close()
+	assert.True(t, reader.HasNext())
+	got, _, _, err := reader.ReadNext()
+	assert.NoError(t, err)
+	assert.Same(t, cached, got)
+}
+
+// BenchmarkWALReaderTailing exercises the real reader path (NewReader/ReadNext)
+// rather than readAtIndex directly, contrasting a cache-warm tail read with a
+// segment read.
+func BenchmarkWALReaderTailing(b *testing.B) {
+	_, w, tw := benchWAL(b, 1000, 256)
+
+	b.Run("cache-hit", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			last := tw.lastAppendedOffset.Load()
+			r, err := w.NewReader(last - 1)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if _, _, _, err := r.ReadNext(); err != nil {
+				b.Fatal(err)
+			}
+			_ = r.Close()
+		}
+	})
+
+	b.Run("segment", func(b *testing.B) {
+		tw.tailCache.clear()
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			r, err := w.NewReader(-1) // reads offset 0
+			if err != nil {
+				b.Fatal(err)
+			}
+			if _, _, _, err := r.ReadNext(); err != nil {
+				b.Fatal(err)
+			}
+			_ = r.Close()
+		}
+	})
+}
+
+func benchWAL(b *testing.B, prefill, entrySize int) (Factory, Wal, *wal) {
+	b.Helper()
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  b.TempDir(),
+		Retention:   1 * time.Hour,
+		SegmentSize: 1 << 20,
+		SyncData:    false,
+	})
+	b.Cleanup(func() { _ = f.Close() })
+	w, err := f.NewWal(constant.DefaultNamespace, 1, nil)
+	assert.NoError(b, err)
+	b.Cleanup(func() { _ = w.Close() })
+
+	value := make([]byte, entrySize)
+	for i := 0; i < prefill; i++ {
+		assert.NoError(b, w.Append(&proto.LogEntry{Term: 1, Offset: int64(i), Value: value}))
+	}
+	return f, w, w.(*wal)
+}
