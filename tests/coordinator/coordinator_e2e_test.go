@@ -664,11 +664,17 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 		return len(c.ListDataServer()) == 3
 	}, 10*time.Second, 10*time.Millisecond)
 
-	// Wait for all shards to be ready
+	// Wait for all shards to be ready. With RF=1 the balancer cannot move the
+	// shard off the removed (but still running) leader, so the shard stays put
+	// in steady state at the term it was first elected with. A clean startup
+	// election lands at term 0 (term starts at -1, the first election bumps it
+	// once), so we only require a valid elected term here. This previously
+	// asserted Term > 0, which silently relied on the startup handshake race
+	// producing a spurious extra election that bumped the term to 1.
 	assert.Eventually(t, func() bool {
 		for _, ns := range mock.StatusSnapshot(t, metadata).Namespaces {
 			for _, shard := range ns.Shards {
-				return shard.Term > 0 && shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
+				return shard.Term >= 0 && shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
 			}
 		}
 		return true

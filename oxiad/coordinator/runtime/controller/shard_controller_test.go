@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -164,7 +165,7 @@ func TestShardController(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, metadata, NoOpSupportedFeaturesSupplier, nil, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -242,7 +243,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 		Term:     1,
 		Leader:   s1,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, metadata, NoOpSupportedFeaturesSupplier, nil, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, shard)
 	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
@@ -254,6 +255,64 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	n1.expectNoMoreNewTermRequest(t)
 	n2.expectNoMoreNewTermRequest(t)
 	n3.expectNoMoreNewTermRequest(t)
+
+	assert.NoError(t, sc.Close())
+}
+
+// TestShardController_GatesElectionUntilHandshakeComplete verifies that the
+// initial leader election does not fire NewTerm until the ensemble's data
+// servers have completed the coordinator handshake. This prevents the startup
+// race where NewTerm beats the handshake and gets rejected with
+// "server not initialized yet".
+func TestShardController_GatesElectionUntilHandshakeComplete(t *testing.T) {
+	var shard int64 = 5
+	rpc := newMockRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled), &proto.ClusterConfiguration{})
+
+	// Readiness is controlled by the test: no data server is handshake-bound yet.
+	var readyCount atomic.Int32
+	readiness := func(ensemble []*proto.DataServerIdentity) int {
+		return int(readyCount.Load())
+	}
+
+	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, metadata, NoOpSupportedFeaturesSupplier, readiness, nil, rpc, DefaultPeriodicTasksInterval)
+
+	// While the ensemble has not completed the handshake, no election is
+	// attempted. Checking one node is enough: an election would NewTerm the
+	// whole ensemble. The negative wait stays well under ensembleReadinessMaxWait.
+	rpc.GetNode(s1).expectNoMoreNewTermRequest(t)
+
+	// Prepare the election responses, then mark the whole ensemble as
+	// handshake-bound. The gate releases and the election proceeds.
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	readyCount.Store(3)
+
+	rpc.GetNode(s1).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).expectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).expectNewTermRequest(t, shard, 2, true)
+
+	// s1 has the highest offset, so it becomes the leader.
+	rpc.GetNode(s1).expectBecomeLeaderRequest(t, shard, 2, 3)
+
+	assert.Eventually(t, func() bool {
+		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.Equal(t, s1, sc.Metadata().Leader())
 
 	assert.NoError(t, sc.Close())
 }
@@ -273,7 +332,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, metadata, NoOpSupportedFeaturesSupplier, nil, nil, rpc, DefaultPeriodicTasksInterval)
 
 	timeStart := time.Now()
 
@@ -320,7 +379,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, metadata, NoOpSupportedFeaturesSupplier, nil, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// s3 is failing, though we can still elect a leader
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -375,7 +434,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 		Term:     4,
 		Leader:   s1,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, metadata, NoOpSupportedFeaturesSupplier, nil, nil, rpc, DefaultPeriodicTasksInterval)
 
 	n1.expectGetStatusRequest(t, 5)
 	n1.GetStatusResponse(4, proto.ServingStatus_LEADER, 0, 0)
@@ -421,7 +480,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, metadata, NoOpSupportedFeaturesSupplier, nil, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -454,7 +513,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, metadata, NoOpSupportedFeaturesSupplier, nil, nil, rpc, DefaultPeriodicTasksInterval)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -552,7 +611,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	}, metadata, NoOpSupportedFeaturesSupplier, nil, nil, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -671,7 +730,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	}, metadata, NoOpSupportedFeaturesSupplier, nil, nil, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -782,7 +841,7 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, metadata, featureSupplier, nil, nil, rpc, DefaultPeriodicTasksInterval)
 
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
@@ -837,7 +896,7 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, metadata, featureSupplier, nil, nil, rpc, DefaultPeriodicTasksInterval)
 
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
