@@ -296,6 +296,33 @@ func (s *internalRpcServer) RemoveObserver(c context.Context, req *proto.RemoveO
 	return res, constant.IntoGrpcStatusError(err)
 }
 
+func (s *internalRpcServer) FreezeShard(c context.Context, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	log := s.log.With(
+		slog.Any("request", req),
+		slog.String("peer", rpc.GetPeer(c)),
+	)
+
+	log.Info("Received FreezeShard request")
+
+	leader, err := s.shardsDirector.GetLeader(req.Shard)
+	if err != nil {
+		log.Warn(
+			"FreezeShard failed: could not get leader controller",
+			slog.Any("error", err),
+		)
+		return nil, constant.IntoGrpcStatusError(err)
+	}
+
+	res, err := leader.Freeze(req)
+	if err != nil {
+		log.Warn(
+			"FreezeShard failed",
+			slog.Any("error", err),
+		)
+	}
+	return res, constant.IntoGrpcStatusError(err)
+}
+
 // GetInfo is a deprecated legacy endpoint kept for rolling-upgrade
 // compatibility. New coordinators should use Handshake, and this endpoint
 // still follows the normal instance-id validation flow until removal in the

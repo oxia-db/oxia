@@ -105,6 +105,10 @@ func (m *maelstromCoordinatorRpcProvider) RemoveObserver(ctx context.Context, no
 	return &proto.RemoveObserverResponse{}, nil
 }
 
+func (m *maelstromCoordinatorRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	return &proto.FreezeShardResponse{}, nil
+}
+
 func (m *maelstromCoordinatorRpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdentity, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 	return &proto.HandshakeResponse{
 		Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,

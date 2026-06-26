@@ -260,6 +260,95 @@ func TestLeaderController_BecomeLeader_RF1(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// TestLeaderController_Freeze verifies the write-freeze used during split
+// cutover: a frozen leader rejects writes (so its head stops advancing) but
+// stays LEADER and keeps serving reads, and the freeze is cleared on a new term.
+func TestLeaderController_Freeze(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+	assert.NoError(t, err)
+
+	// One committed write -> head offset = 0.
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "a", Value: []byte("value-a")}},
+	})
+	assert.NoError(t, err)
+
+	// Freeze: still LEADER at the same term, returns the current head offset.
+	fr, err := lc.Freeze(&proto.FreezeShardRequest{Shard: shard, Term: 1, Frozen: true})
+	assert.NoError(t, err)
+	assert.EqualValues(t, 0, fr.HeadOffset)
+	assert.Equal(t, proto.ServingStatus_LEADER, lc.Status())
+	assert.EqualValues(t, 1, lc.Term())
+
+	// Writes are rejected while frozen, and the head does not advance.
+	res, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "b", Value: []byte("value-b")}},
+	})
+	assert.Nil(t, res)
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
+
+	st, err := lc.GetStatus(&proto.GetStatusRequest{Shard: shard})
+	assert.NoError(t, err)
+	assert.EqualValues(t, 0, st.HeadOffset)
+
+	// Reads still work while frozen.
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
+		Shard: &shard,
+		Gets:  []*proto.GetRequest{{Key: "a", IncludeValue: true}},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(results))
+	assert.Equal(t, []byte("value-a"), results[0].Value)
+
+	// A freeze with the wrong term is rejected.
+	_, err = lc.Freeze(&proto.FreezeShardRequest{Shard: shard, Term: 99, Frozen: false})
+	assert.ErrorIs(t, err, constant.ErrInvalidTerm)
+
+	// Unfreeze: writes are accepted again and the head advances.
+	_, err = lc.Freeze(&proto.FreezeShardRequest{Shard: shard, Term: 1, Frozen: false})
+	assert.NoError(t, err)
+
+	res2, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "b", Value: []byte("value-b")}},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, res2.Puts[0].Status)
+
+	st, err = lc.GetStatus(&proto.GetStatusRequest{Shard: shard})
+	assert.NoError(t, err)
+	assert.EqualValues(t, 1, st.HeadOffset)
+
+	// A new term clears the freeze: once fenced the controller is no longer a
+	// leader, so Freeze fails with an invalid-status error.
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+	assert.NoError(t, err)
+	_, err = lc.Freeze(&proto.FreezeShardRequest{Shard: shard, Term: 2, Frozen: true})
+	assert.ErrorIs(t, err, constant.ErrInvalidStatus)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	var shard int64 = 1
 
