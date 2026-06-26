@@ -336,9 +336,7 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 		stop    atomic.Bool
 		wg      sync.WaitGroup
 	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; !stop.Load(); i++ {
 			key := fmt.Sprintf("live-%06d", i)
 			value := []byte(fmt.Sprintf("live-value-%06d", i))
@@ -352,7 +350,7 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 			}
 			time.Sleep(2 * time.Millisecond)
 		}
-	}()
+	})
 
 	// Run the split while writes are in flight, then stop the writer.
 	c.splitAndWait(t)

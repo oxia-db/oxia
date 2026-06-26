@@ -536,8 +536,10 @@ func (sc *SplitController) runCatchUpRound() (bool, error) {
 // runCutover completes the split. It first freezes the parent — stopping new
 // writes while keeping its observer cursors alive — so the children can drain
 // the final tail up to the parent's frozen head. Only once the children have
-// committed that tail does it fence the parent (the point of no return),
-// re-elect the children in clean terms, and mark the parent for deletion.
+// RECEIVED that tail (in their WALs; their commit is still capped at the
+// parent's advertised commit) does it fence the parent (the point of no
+// return). Re-electing the children in clean terms then commits the tail
+// through each child's own quorum, and the parent is marked for deletion.
 //
 // Freezing before fencing closes the gap where fencing the parent destroys the
 // observer cursors that feed the children: by the time we fence, the children
