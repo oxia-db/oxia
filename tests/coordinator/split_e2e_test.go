@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -294,6 +296,102 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 	for _, serverObj := range servers {
 		assert.NoError(t, serverObj.Close())
 	}
+}
+
+// TestCoordinator_ShardSplit_WritesDuringSplit exercises the cutover tail: a
+// client writes continuously to the parent throughout the whole split. The
+// parent's head keeps advancing right up to cutover, so there is always a tail
+// of entries the observer cursors have not yet delivered to the children when
+// the parent is quiesced. The freeze-then-fence cutover must drain that tail
+// (freeze stops writes but keeps observers streaming) before fencing the
+// parent — otherwise the children could never reach the parent's final offset
+// and the split would hang, or acknowledged writes would be lost.
+func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
+	c := setupSplitCluster(t)
+	defer c.close(t)
+
+	ctx := context.Background()
+
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+
+	// Seed some initial data so both children start non-empty.
+	initialKeys := make(map[string][]byte)
+	for i := 0; i < 50; i++ {
+		key := fmt.Sprintf("seed-%04d", i)
+		value := []byte(fmt.Sprintf("seed-value-%04d", i))
+		_, _, err := client.Put(ctx, key, value)
+		require.NoError(t, err)
+		initialKeys[key] = value
+	}
+
+	// Background writer: keep writing new keys for the entire duration of the
+	// split, recording only the writes the server acknowledged.
+	writerClient, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+
+	var (
+		mu      sync.Mutex
+		written = make(map[string][]byte)
+		stop    atomic.Bool
+		wg      sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; !stop.Load(); i++ {
+			key := fmt.Sprintf("live-%06d", i)
+			value := []byte(fmt.Sprintf("live-value-%06d", i))
+			putCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			_, _, putErr := writerClient.Put(putCtx, key, value)
+			cancel()
+			if putErr == nil {
+				mu.Lock()
+				written[key] = value
+				mu.Unlock()
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	// Run the split while writes are in flight, then stop the writer.
+	c.splitAndWait(t)
+	stop.Store(true)
+	wg.Wait()
+	assert.NoError(t, writerClient.Close())
+
+	mu.Lock()
+	liveCount := len(written)
+	mu.Unlock()
+	require.Positive(t, liveCount, "expected some acknowledged writes during the split")
+	slog.Info("Split completed with concurrent writes",
+		slog.Int("seed-keys", len(initialKeys)),
+		slog.Int("live-keys-acked", liveCount),
+	)
+
+	// Reconnect to pick up the post-split assignments, then verify EVERY
+	// acknowledged write (seed + live) is readable from the children with the
+	// correct value. A lost cutover tail would surface here as a missing key.
+	client = c.reconnectClient(t, client, "seed-0000")
+
+	for key, expected := range initialKeys {
+		_, value, _, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "seed key %s missing after split", key) {
+			assert.Equal(t, expected, value, "seed value mismatch for %s", key)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for key, expected := range written {
+		_, value, _, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "acknowledged live key %s missing after split", key) {
+			assert.Equal(t, expected, value, "live value mismatch for %s", key)
+		}
+	}
+
+	slog.Info("All acknowledged writes survived the split", slog.Int("verified", len(written)+len(initialKeys)))
+	assert.NoError(t, client.Close())
 }
 
 // splitTestCluster holds references to a 3-node test cluster with a

@@ -40,6 +40,12 @@ service OxiaCoordination {
   // Removes an observer follower from the parent leader without fencing.
   // Used during split abort to cleanly stop data streaming to children.
   rpc RemoveObserver(RemoveObserverRequest) returns (RemoveObserverResponse);
+
+  // FreezeShard stops a leader from accepting new writes (or resumes it)
+  // without fencing it, so its observer/follower cursors keep streaming.
+  // Used during split cutover to quiesce the parent and let children drain
+  // the final tail before the parent is fenced.
+  rpc FreezeShard(FreezeShardRequest) returns (FreezeShardResponse);
 }
 
 // node (leader) -> node (follower)
@@ -223,6 +229,20 @@ message RemoveObserverRequest {
 }
 
 message RemoveObserverResponse {}
+
+message FreezeShardRequest {
+  string namespace = 1;
+  int64 shard = 2;
+  int64 term = 3;
+  // When true, the leader stops accepting new writes; when false, it resumes.
+  bool frozen = 4;
+}
+
+message FreezeShardResponse {
+  // The leader's head offset at the moment it was frozen. While frozen the
+  // head no longer advances, so this is the final offset children must reach.
+  int64 head_offset = 1;
+}
 
 //// Status RPC
 

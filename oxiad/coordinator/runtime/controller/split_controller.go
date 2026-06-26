@@ -160,8 +160,18 @@ func (sc *SplitController) run() {
 		if !exists {
 			return
 		}
-		if phase == proto.SplitPhaseBootstrap || phase == proto.SplitPhaseCatchUp {
+		switch phase {
+		case proto.SplitPhaseBootstrap, proto.SplitPhaseCatchUp:
 			sc.abort()
+		case proto.SplitPhaseCutover:
+			// Cutover is abortable only before the parent is fenced. After the
+			// fence (the point of no return) it is forward-only and is resumed
+			// from the persisted phase, so we must not roll it back here.
+			if !sc.parentFenced() {
+				sc.abort()
+			}
+		default:
+			// No cleanup needed for any other phase.
 		}
 	}
 }
@@ -523,62 +533,109 @@ func (sc *SplitController) runCatchUpRound() (bool, error) {
 	return true, nil
 }
 
-// runCutover fences the parent, waits for children to commit all remaining
-// data, re-elects child leaders in a clean term, updates shard assignments,
-// and marks the parent for deletion.
+// runCutover completes the split. It first freezes the parent — stopping new
+// writes while keeping its observer cursors alive — so the children can drain
+// the final tail up to the parent's frozen head. Only once the children have
+// committed that tail does it fence the parent (the point of no return),
+// re-elect the children in clean terms, and mark the parent for deletion.
+//
+// Freezing before fencing closes the gap where fencing the parent destroys the
+// observer cursors that feed the children: by the time we fence, the children
+// already hold everything up to the parent's final offset.
 func (sc *SplitController) runCutover() error {
-	sc.logger.Info("Phase Cutover: fencing parent and completing split")
+	sc.logger.Info("Phase Cutover: freezing parent, draining tail, then fencing")
+
+	// If a parent or child leader election invalidated the observer cursors
+	// since bootstrap, rebuild them before cutover. Unfreeze the parent first
+	// in case an earlier cutover attempt had frozen it.
+	if fallback, err := sc.checkObserverCursorsStale(); err != nil {
+		return err
+	} else if fallback {
+		sc.unfreezeParentBestEffort()
+		return nil
+	}
 
 	parentMeta := sc.loadParentMeta()
-	if parentMeta == nil {
-		return errors.New("parent shard not found")
+	if parentMeta == nil || parentMeta.Leader == nil {
+		return errors.New("parent shard has no leader")
 	}
+	parentLeader := parentMeta.Leader
+	parentTerm := parentMeta.Term
 
-	// Step 1: Fence the parent (increment term, send NewTerm).
-	// This stops the parent from accepting writes and kills observer cursors.
-	newParentTerm := parentMeta.Term + 1
-	parentHeadEntries, err := sc.fenceEnsemble(sc.parentShardId, newParentTerm, parentMeta.Ensemble)
+	// Step 1: Freeze the parent. It stops accepting new writes but is NOT
+	// fenced, so its observer cursors keep streaming. The head offset stops
+	// advancing at the returned value — the final offset for the cutover.
+	freezeResp, err := sc.rpcProvider.FreezeShard(sc.ctx, parentLeader, &proto.FreezeShardRequest{
+		Namespace: sc.namespace,
+		Shard:     sc.parentShardId,
+		Term:      parentTerm,
+		Frozen:    true,
+	})
 	if err != nil {
-		return errors.Wrap(err, "failed to fence parent during cutover")
+		return errors.Wrap(err, "failed to freeze parent during cutover")
 	}
+	parentFinalOffset := freezeResp.HeadOffset
 
-	// Find the parent's final head offset
-	var parentFinalOffset int64 = -1
-	for _, entry := range parentHeadEntries {
-		if entry.Offset > parentFinalOffset {
-			parentFinalOffset = entry.Offset
-		}
-	}
-
-	sc.logger.Info("Parent fenced",
-		slog.Int64("new-term", newParentTerm),
+	sc.logger.Info("Parent frozen",
+		slog.Int64("term", parentTerm),
 		slog.Int64("final-offset", parentFinalOffset),
 	)
 
-	// Update parent term in metadata
+	// Step 2: Wait for both children to RECEIVE every entry up to the parent's
+	// frozen head. We check the child head offset, not its commit: a child runs
+	// as an observer-follower whose commit is capped at the parent's advertised
+	// commit, which can never reach the frozen head (no further entries carry an
+	// updated commit). The child has the entries in its WAL (head); re-electing
+	// it below in a clean term commits them through the child's own quorum.
+	// Re-check observer staleness each round so a parent/child election during
+	// the wait falls back to Bootstrap instead of hanging.
+	for {
+		if err := sc.ctx.Err(); err != nil {
+			return backoff.Permanent(err)
+		}
+		if fallback, err := sc.checkObserverCursorsStale(); err != nil {
+			return err
+		} else if fallback {
+			sc.unfreezeParentBestEffort()
+			return nil
+		}
+		caughtUp, err := sc.cutoverCatchUpRound(parentFinalOffset)
+		if err != nil {
+			return err
+		}
+		if caughtUp {
+			break
+		}
+	}
+
+	sc.logger.Info("Children received parent tail, fencing parent",
+		slog.Int64("final-offset", parentFinalOffset),
+	)
+
+	// Step 3: Fence the parent — the point of no return. This stops the parent
+	// for good and kills the (now fully-drained) observer cursors. The children
+	// already hold everything up to parentFinalOffset, so no data is lost.
+	newParentTerm := parentTerm + 1
+	if _, err := sc.fenceEnsemble(sc.parentShardId, newParentTerm, parentMeta.Ensemble); err != nil {
+		return errors.Wrap(err, "failed to fence parent during cutover")
+	}
+
 	sc.updateParentMeta(func(meta *proto.ShardMetadata) {
 		meta.Term = newParentTerm
 		meta.Leader = nil
 		meta.Status = proto.ShardStatusElection
 	})
 
-	// Step 2: Wait for children to commit parentFinalOffset.
-	// Children were already elected leader in Bootstrap, so commitOffset
-	// advances as their followers acknowledge.
-	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		if err := sc.waitForChildCommitOffset(sc.ctx, childId, parentFinalOffset); err != nil {
-			return errors.Wrapf(err, "child %d failed to commit parent final offset", childId)
-		}
-	}
+	sc.logger.Info("Parent fenced", slog.Int64("new-term", newParentTerm))
 
-	// Step 3: Re-elect child leaders in a clean term (independent of parent).
+	// Step 4: Re-elect child leaders in a clean term (independent of parent).
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
 		if err := sc.reelectChild(childId); err != nil {
 			return errors.Wrapf(err, "failed to re-elect child %d leader", childId)
 		}
 	}
 
-	// Step 4: Clear split metadata from children and mark parent for deletion.
+	// Step 5: Clear split metadata from children and mark parent for deletion.
 	// Children are now independent shards.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
 		sc.updateChildMeta(childId, func(meta *proto.ShardMetadata) {
@@ -596,7 +653,7 @@ func (sc *SplitController) runCutover() error {
 		meta.Split = nil
 	})
 
-	// Step 5: Notify the coordinator. This triggers the parent shard
+	// Step 6: Notify the coordinator. This triggers the parent shard
 	// controller's DeleteShard (which retries indefinitely with backoff)
 	// and recomputes shard assignments so clients discover the children.
 	sc.eventListener.SplitComplete(sc.parentShardId, sc.leftChildId, sc.rightChildId)
@@ -604,9 +661,67 @@ func (sc *SplitController) runCutover() error {
 	return nil
 }
 
-// abort cleans up a failed/timed-out split that hasn't reached Cutover.
-// It removes observer cursors from the parent, deletes child shards from
-// status, clears the parent's split metadata, and notifies the coordinator.
+// cutoverCatchUpRound waits up to CatchUpRoundTimeout for both children to
+// RECEIVE every entry up to the parent's frozen head (head offset, not commit —
+// see runCutover). Returns true if both reached it, false if the round timed
+// out (the caller retries). Because the parent is frozen, the target is fixed.
+func (sc *SplitController) cutoverCatchUpRound(target int64) (bool, error) {
+	roundCtx, roundCancel := context.WithTimeout(sc.ctx, CatchUpRoundTimeout)
+	defer roundCancel()
+
+	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
+		if err := sc.waitForChildHeadOffset(roundCtx, childId, target); err != nil {
+			if roundCtx.Err() != nil {
+				sc.logger.Info("Cutover round timed out, retrying",
+					slog.Int64("child-shard", childId),
+					slog.Int64("target", target),
+				)
+				return false, nil
+			}
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// unfreezeParentBestEffort lifts a write-freeze previously placed on the parent
+// leader, so it resumes serving writes. Used when cutover falls back to
+// Bootstrap or aborts before fencing. Best-effort: a new parent term clears the
+// freeze on its own, and after fencing the parent is gone anyway.
+func (sc *SplitController) unfreezeParentBestEffort() {
+	parentMeta := sc.loadParentMeta()
+	if parentMeta == nil || parentMeta.Leader == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := sc.rpcProvider.FreezeShard(ctx, parentMeta.Leader, &proto.FreezeShardRequest{
+		Namespace: sc.namespace,
+		Shard:     sc.parentShardId,
+		Term:      parentMeta.Term,
+		Frozen:    false,
+	}); err != nil {
+		sc.logger.Warn("Failed to unfreeze parent (best-effort)", slog.Any("error", err))
+	}
+}
+
+// parentFenced reports whether the parent has already been fenced during
+// cutover — the point of no return — detected by its term having advanced past
+// the term recorded at bootstrap. Used to decide whether a timed-out cutover is
+// still safe to abort (pre-fence) or must be resumed forward (post-fence).
+func (sc *SplitController) parentFenced() bool {
+	parentMeta := sc.loadParentMeta()
+	if parentMeta == nil || parentMeta.Split == nil {
+		// Split metadata cleared => cutover already finished.
+		return true
+	}
+	return parentMeta.Term > parentMeta.Split.ParentTermAtBootstrap
+}
+
+// abort cleans up a failed/timed-out split that has not yet fenced the parent.
+// It unfreezes the parent (if cutover had frozen it), removes observer cursors
+// from the parent, deletes child shards from status, clears the parent's split
+// metadata, and notifies the coordinator.
 func (sc *SplitController) abort() {
 	sc.logger.Warn("Aborting split due to timeout or cancellation")
 
@@ -641,6 +756,10 @@ func (sc *SplitController) abort() {
 			}
 		}
 	}
+
+	// Lift any write-freeze placed on the parent during cutover so it resumes
+	// serving (best-effort; a new term would clear it anyway).
+	sc.unfreezeParentBestEffort()
 
 	// Delete child shards from status.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
@@ -809,6 +928,44 @@ func (sc *SplitController) waitForChildCommitOffset(ctx context.Context, childId
 		return errors.Errorf("child %d commit offset %d, target %d", childId, resp.CommitOffset, targetOffset)
 	}, oxiatime.NewBackOff(ctx), func(err error, duration time.Duration) {
 		sc.logger.Debug("Waiting for child commit offset",
+			slog.Int64("child-shard", childId),
+			slog.Int64("target-offset", targetOffset),
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+}
+
+// waitForChildHeadOffset polls until the child's head offset reaches the target,
+// i.e. the child has received (in its WAL) every entry up to that offset. Used
+// during cutover, where a child observer-follower has the entries but its commit
+// is capped at the parent's advertised commit (see runCutover).
+func (sc *SplitController) waitForChildHeadOffset(ctx context.Context, childId int64, targetOffset int64) error {
+	return backoff.RetryNotify(func() error {
+		childMeta := sc.loadShardMeta(childId)
+		if childMeta == nil || childMeta.Leader == nil {
+			return errors.Errorf("child shard %d has no leader", childId)
+		}
+
+		resp, err := sc.rpcProvider.GetStatus(ctx, childMeta.Leader, &proto.GetStatusRequest{
+			Shard: childId,
+		})
+		if err != nil {
+			return err
+		}
+
+		if resp.HeadOffset >= targetOffset {
+			sc.logger.Info("Child received entries up to target head offset",
+				slog.Int64("child-shard", childId),
+				slog.Int64("target", targetOffset),
+				slog.Int64("head-offset", resp.HeadOffset),
+			)
+			return nil
+		}
+
+		return errors.Errorf("child %d head offset %d, target %d", childId, resp.HeadOffset, targetOffset)
+	}, oxiatime.NewBackOff(ctx), func(err error, duration time.Duration) {
+		sc.logger.Debug("Waiting for child head offset",
 			slog.Int64("child-shard", childId),
 			slog.Int64("target-offset", targetOffset),
 			slog.Any("error", err),
