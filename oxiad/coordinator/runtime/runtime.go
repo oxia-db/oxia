@@ -240,19 +240,31 @@ func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity
 }
 
 // countReadyDataServers reports how many of the given data servers have
-// completed the coordinator handshake (Status == Running). Shard controllers
-// use it to hold the initial leader election until the ensemble's data servers
-// are handshake-bound, avoiding the startup race where NewTerm is rejected with
-// "server not initialized yet".
+// completed the coordinator handshake. Shard controllers use it to hold the
+// initial leader election until the ensemble's data servers are handshake-bound,
+// avoiding the startup race where NewTerm is rejected with "server not
+// initialized yet".
+//
+// A node both Running and Draining counts as ready: a node removed from the
+// cluster config is moved to drainingNodes (with Status Draining) but may still
+// belong to a shard ensemble that could not be rebalanced (e.g. an RF=1 shard).
+// It already completed the handshake, so it can be fenced and must not stall the
+// gate on the overall timeout.
 func (c *runtime) countReadyDataServers(dataServers []*proto.DataServerIdentity) int {
 	c.RLock()
 	defer c.RUnlock()
 
 	ready := 0
 	for _, dataServer := range dataServers {
-		if serverController, exist := c.dataServerControllers[dataServer.GetNameOrDefault()]; exist &&
-			serverController.Status() == controller.Running {
-			ready++
+		name := dataServer.GetNameOrDefault()
+		serverController, exist := c.dataServerControllers[name]
+		if !exist {
+			serverController, exist = c.drainingNodes[name]
+		}
+		if exist {
+			if status := serverController.Status(); status == controller.Running || status == controller.Draining {
+				ready++
+			}
 		}
 	}
 	return ready
