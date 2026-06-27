@@ -20,7 +20,6 @@ import (
 
 	gproto "google.golang.org/protobuf/proto"
 
-	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 )
@@ -43,7 +42,7 @@ type Provider[T gproto.Message] interface {
 	// channel means the leadership cannot be lost.
 	WaitToBecomeLeader() (lost <-chan struct{}, err error)
 
-	GetLeaderInfo() (*commonproto.CoordinatorInfo, error)
+	GetLeaderName() (string, error)
 
 	Watch() *commonwatch.Watch[Versioned[T]]
 }

@@ -54,22 +54,19 @@ var (
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			return memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
+			return memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorName)
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorName)
 			assert.NoError(t, err)
 			return p
 		},
 		"configmap": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
 
-			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "n", metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, &proto.CoordinatorInfo{
-				Identity:      "coordinator-test",
-				PublicAddress: "coordinator-test:6651",
-			})
+			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "n", metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "coordinator-test")
 			assert.NoError(t, err)
 			return p
 		},
@@ -87,12 +84,7 @@ var (
 	}
 )
 
-func testCoordinatorInfo() *proto.CoordinatorInfo {
-	return &proto.CoordinatorInfo{
-		Identity:      "coordinator-test",
-		PublicAddress: "coordinator-test:6651",
-	}
-}
+const testCoordinatorName = "coordinator-test"
 
 func TestProvider(t *testing.T) {
 	for name, newProvider := range providers {
@@ -133,15 +125,15 @@ func TestProvider(t *testing.T) {
 	}
 }
 
-func TestLocalProviderGetLeaderInfoReturnsSelf(t *testing.T) {
+func TestLocalProviderGetLeaderNameReturnsSelf(t *testing.T) {
 	providers := map[string]func(t *testing.T) provider.Provider[*proto.ClusterStatus]{
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
-			return memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
+			return memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorName)
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterStatus] {
 			t.Helper()
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "metadata"), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorName)
 			require.NoError(t, err)
 			return p
 		},
@@ -154,14 +146,13 @@ func TestLocalProviderGetLeaderInfoReturnsSelf(t *testing.T) {
 				require.NoError(t, p.Close())
 			})
 
-			info, err := p.GetLeaderInfo()
+			leaderName, err := p.GetLeaderName()
 			require.NoError(t, err)
-			require.Equal(t, "coordinator-test", info.GetIdentity())
-			require.Equal(t, "coordinator-test:6651", info.GetPublicAddress())
+			require.Equal(t, testCoordinatorName, leaderName)
 
-			nextInfo, err := p.GetLeaderInfo()
+			nextLeaderName, err := p.GetLeaderName()
 			require.NoError(t, err)
-			require.Same(t, info, nextInfo)
+			require.Equal(t, leaderName, nextLeaderName)
 		})
 	}
 }
@@ -171,22 +162,19 @@ func TestProviderConfigResource(t *testing.T) {
 		"memory": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			return memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, testCoordinatorInfo())
+			return memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, testCoordinatorName)
 		},
 		"file": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled, testCoordinatorInfo())
+			p, err := file.NewProvider(t.Context(), filepath.Join(t.TempDir(), "cluster.yaml"), metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled, testCoordinatorName)
 			assert.NoError(t, err)
 			return p
 		},
 		"configmap": func(t *testing.T) provider.Provider[*proto.ClusterConfiguration] {
 			t.Helper()
 
-			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "config", metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled, &proto.CoordinatorInfo{
-				Identity:      "coordinator-test",
-				PublicAddress: "coordinator-test:6651",
-			})
+			p, err := kubernetes.NewProvider(t.Context(), newFake(), "ns", "config", metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled, "coordinator-test")
 			assert.NoError(t, err)
 			return p
 		},

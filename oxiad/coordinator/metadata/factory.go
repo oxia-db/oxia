@@ -40,7 +40,7 @@ type Factory struct {
 
 	statusProvider  provider.Provider[*commonproto.ClusterStatus]
 	configProvider  provider.Provider[*commonproto.ClusterConfiguration]
-	coordinatorInfo *commonproto.CoordinatorInfo
+	coordinatorName string
 	raft            *raft.Raft
 	raftInterceptor raft.Interceptor
 }
@@ -61,22 +61,18 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	if err := meta.ApplyLegacyClusterConfigPath(options.Cluster.ConfigPath); err != nil {
 		return nil, err
 	}
-	coordinatorInfo := &commonproto.CoordinatorInfo{
-		Identity:      meta.Identity,
-		PublicAddress: options.Server.Public.AdvertisedAddress,
-	}
 	factory := &Factory{
-		coordinatorInfo: coordinatorInfo,
+		coordinatorName: meta.Name,
 	}
 	switch meta.ProviderName {
 	case metadatacommon.NameMemory:
-		factory.statusProvider = memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, coordinatorInfo)
-		factory.configProvider = memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, coordinatorInfo)
+		factory.statusProvider = memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Name)
+		factory.configProvider = memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, meta.Name)
 	case metadatacommon.NameFile:
-		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, coordinatorInfo); err != nil {
+		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Name); err != nil {
 			return nil, err
 		}
-		if factory.configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, coordinatorInfo); err != nil {
+		if factory.configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, meta.Name); err != nil {
 			return nil, err
 		}
 	case metadatacommon.NameConfigMap:
@@ -84,10 +80,10 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 		if err != nil {
 			return nil, err
 		}
-		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, coordinatorInfo); err != nil {
+		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, meta.Name); err != nil {
 			return nil, err
 		}
-		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, coordinatorInfo); err != nil {
+		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Name); err != nil {
 			return nil, err
 		}
 	case metadatacommon.NameRaft:
@@ -114,10 +110,10 @@ func (f *Factory) CreateMetadata(ctx context.Context) (Metadata, error) {
 	f.mu.Lock()
 	statusProvider := f.statusProvider
 	configProvider := f.configProvider
-	coordinatorInfo := f.coordinatorInfo
+	coordinatorName := f.coordinatorName
 	f.mu.Unlock()
 
-	return newMetadata(ctx, statusProvider, configProvider, coordinatorInfo), nil
+	return newMetadata(ctx, statusProvider, configProvider, coordinatorName), nil
 }
 
 func (f *Factory) Close() error {

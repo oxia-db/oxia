@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -66,8 +67,7 @@ type Provider[T gproto.Message] struct {
 	namespace, name string
 	codec           metadatacodec.Codec[T]
 	watchEnabled    metadatacommon.WatchMode
-	coordinatorInfo *commonproto.CoordinatorInfo
-	leaseIdentity   string
+	coordinatorName string
 	leaderElector   atomic.Pointer[leaderelection.LeaderElector]
 
 	metadataSize      atomic.Int64
@@ -90,11 +90,11 @@ func NewProvider[T gproto.Message](
 	namespace, name string,
 	codec metadatacodec.Codec[T],
 	watchEnabled metadatacommon.WatchMode,
-	coordinatorInfo *commonproto.CoordinatorInfo,
+	coordinatorName string,
 ) (provider.Provider[T], error) {
-	leaseIdentity, err := EncodeCoordinatorInfo(coordinatorInfo)
-	if err != nil {
-		return nil, err
+	coordinatorName = strings.TrimSpace(coordinatorName)
+	if coordinatorName == "" {
+		return nil, errors.New("coordinator name must not be empty")
 	}
 
 	m := &Provider[T]{
@@ -103,8 +103,7 @@ func NewProvider[T gproto.Message](
 		name:            name,
 		codec:           codec,
 		watchEnabled:    watchEnabled,
-		coordinatorInfo: coordinatorInfo,
-		leaseIdentity:   leaseIdentity,
+		coordinatorName: coordinatorName,
 		logger:          slog.With("component", "metadata-config-map"),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
@@ -254,7 +253,7 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 }
 
 func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
-	myIdentity := m.leaseIdentity
+	myIdentity := m.coordinatorName
 
 	// Create a lease lock
 	lock := &resourcelock.LeaseLock{
@@ -269,8 +268,7 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	}
 
 	logger := m.logger.With(
-		slog.String("identity", m.coordinatorInfo.GetIdentity()),
-		slog.String("public-address", m.coordinatorInfo.GetPublicAddress()))
+		slog.String("name", m.coordinatorName))
 	wg := concurrent.NewWaitGroup(1)
 	lost := make(chan struct{})
 
@@ -301,14 +299,7 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 					return
 				}
 
-				newLeaderInfo, err := DecodeCoordinatorInfo(newLeader)
-				if err != nil {
-					logger.Info("New leader elected", slog.String("leader", newLeader))
-					return
-				}
-				logger.Info("New leader elected",
-					slog.String("leader", newLeaderInfo.GetIdentity()),
-					slog.String("leader-public-address", newLeaderInfo.GetPublicAddress()))
+				logger.Info("New leader elected", slog.String("leader", newLeader))
 			},
 		},
 	}
@@ -332,14 +323,14 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	return lost, wg.Wait(m.ctx)
 }
 
-func (m *Provider[T]) GetLeaderInfo() (*commonproto.CoordinatorInfo, error) {
+func (m *Provider[T]) GetLeaderName() (string, error) {
 	if leaderElector := m.leaderElector.Load(); leaderElector != nil {
 		leader := leaderElector.GetLeader()
 		if leader != "" {
-			return DecodeCoordinatorInfo(leader)
+			return leader, nil
 		}
 	}
-	return nil, provider.ErrCoordinatorLeaderUnavailable
+	return "", provider.ErrCoordinatorLeaderUnavailable
 }
 
 func (m *Provider[T]) Close() error {

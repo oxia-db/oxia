@@ -39,8 +39,8 @@ type Metadata interface {
 	io.Closer
 
 	WaitToBecomeLeader() (lost <-chan struct{}, err error)
-	GetSelf() *commonproto.CoordinatorInfo
-	GetLeaderInfo() (*commonproto.CoordinatorInfo, error)
+	GetSelf() (*commonproto.Coordinator, error)
+	GetLeaderInfo() (*commonproto.Coordinator, error)
 	GetInstanceID() string
 	ReserveShardIDs(count uint32) int64
 
@@ -85,25 +85,25 @@ type coordinatorMetadata struct {
 	statusProvider provider.Provider[*commonproto.ClusterStatus]
 	statusLock     sync.Mutex
 
-	configProvider provider.Provider[*commonproto.ClusterConfiguration]
-	configLock     sync.Mutex
-	selfInfo       *commonproto.CoordinatorInfo
+	configProvider  provider.Provider[*commonproto.ClusterConfiguration]
+	configLock      sync.Mutex
+	coordinatorName string
 }
 
 func newMetadata(
 	ctx context.Context,
 	statusProvider provider.Provider[*commonproto.ClusterStatus],
 	configProvider provider.Provider[*commonproto.ClusterConfiguration],
-	selfInfo *commonproto.CoordinatorInfo,
+	coordinatorName string,
 ) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
-		logger:         slog.With(slog.String("component", "coordinator-metadata")),
-		ctx:            metadataCtx,
-		cancel:         cancel,
-		statusProvider: statusProvider,
-		configProvider: configProvider,
-		selfInfo:       selfInfo.CloneVT(),
+		logger:          slog.With(slog.String("component", "coordinator-metadata")),
+		ctx:             metadataCtx,
+		cancel:          cancel,
+		statusProvider:  statusProvider,
+		configProvider:  configProvider,
+		coordinatorName: coordinatorName,
 	}
 	return m
 }
@@ -180,12 +180,24 @@ func (m *coordinatorMetadata) GetInstanceID() string {
 	return m.statusProvider.Watch().Load().Value.GetInstanceId()
 }
 
-func (m *coordinatorMetadata) GetSelf() *commonproto.CoordinatorInfo {
-	return m.selfInfo.CloneVT()
+func (m *coordinatorMetadata) GetSelf() (*commonproto.Coordinator, error) {
+	return m.getConfiguredCoordinator(m.coordinatorName)
 }
 
-func (m *coordinatorMetadata) GetLeaderInfo() (*commonproto.CoordinatorInfo, error) {
-	return m.statusProvider.GetLeaderInfo()
+func (m *coordinatorMetadata) GetLeaderInfo() (*commonproto.Coordinator, error) {
+	leaderName, err := m.statusProvider.GetLeaderName()
+	if err != nil {
+		return nil, err
+	}
+	return m.getConfiguredCoordinator(leaderName)
+}
+
+func (m *coordinatorMetadata) getConfiguredCoordinator(name string) (*commonproto.Coordinator, error) {
+	coordinator, ok := m.configProvider.Watch().Load().Value.GetCoordinator(name)
+	if !ok {
+		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", name)
+	}
+	return coordinator.CloneVT(), nil
 }
 
 func (m *coordinatorMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {

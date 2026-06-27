@@ -42,12 +42,12 @@ func (m *DataServerIdentity) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
-func (m *CoordinatorInfo) CloneVT() *CoordinatorInfo {
+func (m *Coordinator) CloneVT() *Coordinator {
 	if m == nil {
-		return (*CoordinatorInfo)(nil)
+		return (*Coordinator)(nil)
 	}
-	r := new(CoordinatorInfo)
-	r.Identity = m.Identity
+	r := new(Coordinator)
+	r.Name = m.Name
 	r.PublicAddress = m.PublicAddress
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -56,7 +56,7 @@ func (m *CoordinatorInfo) CloneVT() *CoordinatorInfo {
 	return r
 }
 
-func (m *CoordinatorInfo) CloneMessageVT() proto.Message {
+func (m *Coordinator) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
@@ -203,6 +203,13 @@ func (m *ClusterConfiguration) CloneVT() *ClusterConfiguration {
 			tmpContainer[k] = v.CloneVT()
 		}
 		r.ServerMetadata = tmpContainer
+	}
+	if rhs := m.Coordinators; rhs != nil {
+		tmpContainer := make([]*Coordinator, len(rhs))
+		for k, v := range rhs {
+			tmpContainer[k] = v.CloneVT()
+		}
+		r.Coordinators = tmpContainer
 	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -383,13 +390,13 @@ func (this *DataServerIdentity) EqualMessageVT(thatMsg proto.Message) bool {
 	}
 	return this.EqualVT(that)
 }
-func (this *CoordinatorInfo) EqualVT(that *CoordinatorInfo) bool {
+func (this *Coordinator) EqualVT(that *Coordinator) bool {
 	if this == that {
 		return true
 	} else if this == nil || that == nil {
 		return false
 	}
-	if this.Identity != that.Identity {
+	if this.Name != that.Name {
 		return false
 	}
 	if this.PublicAddress != that.PublicAddress {
@@ -398,8 +405,8 @@ func (this *CoordinatorInfo) EqualVT(that *CoordinatorInfo) bool {
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
-func (this *CoordinatorInfo) EqualMessageVT(thatMsg proto.Message) bool {
-	that, ok := thatMsg.(*CoordinatorInfo)
+func (this *Coordinator) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*Coordinator)
 	if !ok {
 		return false
 	}
@@ -624,6 +631,23 @@ func (this *ClusterConfiguration) EqualVT(that *ClusterConfiguration) bool {
 	}
 	if !this.LoadBalancer.EqualVT(that.LoadBalancer) {
 		return false
+	}
+	if len(this.Coordinators) != len(that.Coordinators) {
+		return false
+	}
+	for i, vx := range this.Coordinators {
+		vy := that.Coordinators[i]
+		if p, q := vx, vy; p != q {
+			if p == nil {
+				p = &Coordinator{}
+			}
+			if q == nil {
+				q = &Coordinator{}
+			}
+			if !p.EqualVT(q) {
+				return false
+			}
+		}
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -929,7 +953,7 @@ func (m *DataServerIdentity) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *CoordinatorInfo) MarshalVT() (dAtA []byte, err error) {
+func (m *Coordinator) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -942,12 +966,12 @@ func (m *CoordinatorInfo) MarshalVT() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *CoordinatorInfo) MarshalToVT(dAtA []byte) (int, error) {
+func (m *Coordinator) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
 }
 
-func (m *CoordinatorInfo) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+func (m *Coordinator) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m == nil {
 		return 0, nil
 	}
@@ -966,10 +990,10 @@ func (m *CoordinatorInfo) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x12
 	}
-	if len(m.Identity) > 0 {
-		i -= len(m.Identity)
-		copy(dAtA[i:], m.Identity)
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Identity)))
+	if len(m.Name) > 0 {
+		i -= len(m.Name)
+		copy(dAtA[i:], m.Name)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Name)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -1285,6 +1309,18 @@ func (m *ClusterConfiguration) MarshalToSizedBufferVT(dAtA []byte) (int, error) 
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.Coordinators) > 0 {
+		for iNdEx := len(m.Coordinators) - 1; iNdEx >= 0; iNdEx-- {
+			size, err := m.Coordinators[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+			i--
+			dAtA[i] = 0x32
+		}
 	}
 	if m.LoadBalancer != nil {
 		size, err := m.LoadBalancer.MarshalToSizedBufferVT(dAtA[:i])
@@ -1754,13 +1790,13 @@ func (m *DataServerIdentity) SizeVT() (n int) {
 	return n
 }
 
-func (m *CoordinatorInfo) SizeVT() (n int) {
+func (m *Coordinator) SizeVT() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
-	l = len(m.Identity)
+	l = len(m.Name)
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
@@ -1919,6 +1955,12 @@ func (m *ClusterConfiguration) SizeVT() (n int) {
 	if m.LoadBalancer != nil {
 		l = m.LoadBalancer.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if len(m.Coordinators) > 0 {
+		for _, e := range m.Coordinators {
+			l = e.SizeVT()
+			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
 	}
 	n += len(m.unknownFields)
 	return n
@@ -2233,7 +2275,7 @@ func (m *DataServerIdentity) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *CoordinatorInfo) UnmarshalVT(dAtA []byte) error {
+func (m *Coordinator) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -2256,15 +2298,15 @@ func (m *CoordinatorInfo) UnmarshalVT(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: CoordinatorInfo: wiretype end group for non-group")
+			return fmt.Errorf("proto: Coordinator: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: CoordinatorInfo: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: Coordinator: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Identity", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -2292,7 +2334,7 @@ func (m *CoordinatorInfo) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Identity = string(dAtA[iNdEx:postIndex])
+			m.Name = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -3378,6 +3420,40 @@ func (m *ClusterConfiguration) UnmarshalVT(dAtA []byte) error {
 				m.LoadBalancer = &LoadBalancer{}
 			}
 			if err := m.LoadBalancer.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Coordinators", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Coordinators = append(m.Coordinators, &Coordinator{})
+			if err := m.Coordinators[len(m.Coordinators)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -4721,7 +4797,7 @@ func (m *DataServerIdentity) UnmarshalVTUnsafe(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *CoordinatorInfo) UnmarshalVTUnsafe(dAtA []byte) error {
+func (m *Coordinator) UnmarshalVTUnsafe(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -4744,15 +4820,15 @@ func (m *CoordinatorInfo) UnmarshalVTUnsafe(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: CoordinatorInfo: wiretype end group for non-group")
+			return fmt.Errorf("proto: Coordinator: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: CoordinatorInfo: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: Coordinator: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Identity", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -4784,7 +4860,7 @@ func (m *CoordinatorInfo) UnmarshalVTUnsafe(dAtA []byte) error {
 			if intStringLen > 0 {
 				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
 			}
-			m.Identity = stringValue
+			m.Name = stringValue
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -5914,6 +5990,40 @@ func (m *ClusterConfiguration) UnmarshalVTUnsafe(dAtA []byte) error {
 				m.LoadBalancer = &LoadBalancer{}
 			}
 			if err := m.LoadBalancer.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Coordinators", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Coordinators = append(m.Coordinators, &Coordinator{})
+			if err := m.Coordinators[len(m.Coordinators)-1].UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

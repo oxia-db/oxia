@@ -25,7 +25,6 @@ import (
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 
-	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
@@ -80,8 +79,8 @@ func (mpr *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	return mpr.raft.waitToBecomeLeader()
 }
 
-func (*Provider[T]) GetLeaderInfo() (*commonproto.CoordinatorInfo, error) {
-	return nil, provider.ErrCoordinatorLeaderUnavailable
+func (*Provider[T]) GetLeaderName() (string, error) {
+	return "", provider.ErrCoordinatorLeaderUnavailable
 }
 
 func (mpr *Provider[T]) Close() error {

@@ -35,7 +35,7 @@ type Provider[T gproto.Message] struct {
 	value        T
 	version      metadatacommon.Version
 	watchEnabled metadatacommon.WatchMode
-	selfInfo     *proto.CoordinatorInfo
+	leaderName   string
 	watch        *commonwatch.Watch[provider.Versioned[T]]
 }
 
@@ -44,25 +44,21 @@ func (*Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	return nil, nil //nolint:nilnil
 }
 
-func (m *Provider[T]) GetLeaderInfo() (*proto.CoordinatorInfo, error) {
-	return m.selfInfo, nil
+func (m *Provider[T]) GetLeaderName() (string, error) {
+	return m.leaderName, nil
 }
 
 func NewProvider[T gproto.Message](
 	codec metadatacodec.Codec[T],
 	watchEnabled metadatacommon.WatchMode,
-	selfInfo *proto.CoordinatorInfo,
+	coordinatorName string,
 ) provider.Provider[T] {
-	info := &proto.CoordinatorInfo{}
-	if selfInfo != nil {
-		info = selfInfo
-	}
 	p := &Provider[T]{
 		codec:        codec,
 		value:        codec.NewZero(),
 		version:      metadatacommon.NotExists,
 		watchEnabled: watchEnabled,
-		selfInfo:     info.CloneVT(),
+		leaderName:   coordinatorName,
 		watch: commonwatch.New(provider.Versioned[T]{
 			Value:   codec.NewZero(),
 			Version: metadatacommon.NotExists,

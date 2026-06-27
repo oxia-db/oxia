@@ -62,17 +62,20 @@ func (management *managementServer) redirectError() error {
 		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
 	}
 
-	info, err := metadata.GetLeaderInfo()
-	if err != nil || info == nil {
+	leaderInfo, err := metadata.GetLeaderInfo()
+	if err != nil || leaderInfo == nil {
 		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
 	}
 
-	self := metadata.GetSelf()
-	if info.GetIdentity() == self.GetIdentity() && info.GetPublicAddress() == self.GetPublicAddress() {
+	self, err := metadata.GetSelf()
+	if err != nil || self == nil {
+		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
+	}
+	if leaderInfo.GetName() == self.GetName() {
 		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
 	}
 
-	leader := info.GetPublicAddress()
+	leader := leaderInfo.GetPublicAddress()
 	if leader == "" {
 		return constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader)
 	}

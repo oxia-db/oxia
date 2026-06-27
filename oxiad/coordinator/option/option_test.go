@@ -15,8 +15,6 @@
 package option
 
 import (
-	"net"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -36,41 +34,28 @@ metadata:
 	require.Equal(t, "metadata/cluster.yaml", opts.Metadata.File.ConfigPath())
 }
 
-func TestMetadataOptionsIdentity(t *testing.T) {
+func TestMetadataOptionsName(t *testing.T) {
 	opts := readOptions(t, `
 metadata:
-  identity: coordinator-0
+  name: coordinator-0
   providerName: memory
 `)
 
 	require.NoError(t, opts.Validate())
-	require.Equal(t, "coordinator-0", opts.Metadata.Identity)
+	require.Equal(t, "coordinator-0", opts.Metadata.Name)
 }
 
-func TestMetadataOptionsDefaultIdentity(t *testing.T) {
+func TestMetadataOptionsDefaultName(t *testing.T) {
 	opts := readOptions(t, `
-metadata:
-  providerName: memory
-`)
-
-	require.NoError(t, opts.Validate())
-	require.NotEmpty(t, opts.Metadata.Identity)
-}
-
-func TestPublicServerOptionsDefaultAdvertisedAddress(t *testing.T) {
-	opts := readOptions(t, `
-server:
-  public:
-    bindAddress: 0.0.0.0:7000
 metadata:
   providerName: memory
 `)
 
 	require.NoError(t, opts.Validate())
-	require.Equal(t, hostPort(t, "7000"), opts.Server.Public.AdvertisedAddress)
+	require.NotEmpty(t, opts.Metadata.Name)
 }
 
-func TestPublicServerOptionsDefaultAdvertisedAddressUsesHostnameWithBindPort(t *testing.T) {
+func TestPublicServerOptionsBindAddress(t *testing.T) {
 	opts := readOptions(t, `
 server:
   public:
@@ -80,23 +65,7 @@ metadata:
 `)
 
 	require.NoError(t, opts.Validate())
-	require.Equal(t, hostPort(t, "7000"), opts.Server.Public.AdvertisedAddress)
-}
-
-func TestPublicServerOptionsExplicitAdvertisedAddress(t *testing.T) {
-	opts := NewDefaultOptions()
-	require.NoError(t, yaml.Unmarshal([]byte(`
-server:
-  public:
-    bindAddress: 0.0.0.0:7000
-    advertisedAddress: 0.0.0.0:6651
-metadata:
-  providerName: memory
-`), opts))
-	opts.WithDefault()
-
-	require.NoError(t, opts.Validate())
-	require.Equal(t, "0.0.0.0:6651", opts.Server.Public.AdvertisedAddress)
+	require.Equal(t, "coordinator.example.com:7000", opts.Server.Public.BindAddress)
 }
 
 func TestMetadataOptionsFileDefaultsStatusPathWithoutDir(t *testing.T) {
@@ -178,13 +147,4 @@ func readOptions(t *testing.T, data string) *Options {
 	require.NoError(t, yaml.Unmarshal([]byte(data), opts))
 	opts.WithDefault()
 	return opts
-}
-
-func hostPort(t *testing.T, port string) string {
-	t.Helper()
-
-	hostname, err := os.Hostname()
-	require.NoError(t, err)
-	require.NotEmpty(t, hostname)
-	return net.JoinHostPort(hostname, port)
 }
