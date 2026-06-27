@@ -38,7 +38,7 @@ const metadataFilePerm = 0o600
 func NewConfigProvider(t *testing.T, clusterConfig *proto.ClusterConfiguration) provider.Provider[*proto.ClusterConfiguration] {
 	t.Helper()
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 	PutConfig(t, configProvider, clusterConfig)
 	return configProvider
 }
@@ -84,7 +84,9 @@ func NewMetadataFromProviders(
 	})
 	require.NoError(t, err)
 
-	metadata, _, err := metadataFactory.CreateMetadata(t.Context())
+	metadata, err := metadataFactory.CreateMetadata(t.Context())
+	require.NoError(t, err)
+	_, err = metadata.WaitToBecomeLeader()
 	require.NoError(t, err)
 	return metadataFactory, metadata
 }

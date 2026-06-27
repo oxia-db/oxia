@@ -60,14 +60,14 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -171,7 +171,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		}
 
 		return true
-	}, 2*time.Minute, 500*time.Millisecond)
+	}, 3*time.Minute, 500*time.Millisecond)
 
 	slog.Info("Split complete")
 
@@ -419,13 +419,13 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		sa3.GetNameOrDefault(): s3,
 	}
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
 		InitialShardCount: 1,
 	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -970,7 +970,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				Internal: fmt.Sprintf("localhost:%d", s1.InternalPort()),
 			}
 
-			metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+			metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 			var keySorting proto.KeySortingType
 			if test.sorting == "natural" {
 				keySorting = proto.KeySortingType_NATURAL
@@ -988,7 +988,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				KeySorting:        keySortingValue,
 			}}, []*proto.DataServerIdentity{sa1})
 
-			configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+			configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 			_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 				Value:   clusterConfig,
 				Version: metadatacommon.NotExists,

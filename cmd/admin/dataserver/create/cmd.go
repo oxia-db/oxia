@@ -77,7 +77,7 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	created, err := client.CreateDataServer(&proto.DataServer{
+	created, err := client.CreateDataServer(cmd.Context(), &proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &name,
 			Public:   fields.PublicAddress,

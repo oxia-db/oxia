@@ -104,7 +104,7 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	patched, err := client.PatchDataServer(dataServer)
+	patched, err := client.PatchDataServer(cmd.Context(), dataServer)
 	if err != nil {
 		return err
 	}

@@ -42,9 +42,9 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -104,9 +104,9 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -166,9 +166,9 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -218,9 +218,9 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -280,9 +280,9 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -336,9 +336,9 @@ func TestLeaderHintWithClient(t *testing.T) {
 	defer s2.Close()
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,

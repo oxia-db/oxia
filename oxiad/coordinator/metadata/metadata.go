@@ -38,6 +38,9 @@ import (
 type Metadata interface {
 	io.Closer
 
+	WaitToBecomeLeader() (lost <-chan struct{}, err error)
+	GetSelf() *commonproto.CoordinatorInfo
+	GetLeaderInfo() (*commonproto.CoordinatorInfo, error)
 	GetInstanceID() string
 	ReserveShardIDs(count uint32) int64
 
@@ -84,9 +87,15 @@ type coordinatorMetadata struct {
 
 	configProvider provider.Provider[*commonproto.ClusterConfiguration]
 	configLock     sync.Mutex
+	selfInfo       *commonproto.CoordinatorInfo
 }
 
-func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration]) Metadata {
+func newMetadata(
+	ctx context.Context,
+	statusProvider provider.Provider[*commonproto.ClusterStatus],
+	configProvider provider.Provider[*commonproto.ClusterConfiguration],
+	selfInfo *commonproto.CoordinatorInfo,
+) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
 		logger:         slog.With(slog.String("component", "coordinator-metadata")),
@@ -94,9 +103,8 @@ func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonpr
 		cancel:         cancel,
 		statusProvider: statusProvider,
 		configProvider: configProvider,
+		selfInfo:       selfInfo.CloneVT(),
 	}
-
-	m.doStatusRecovery()
 	return m
 }
 
@@ -170,6 +178,25 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 
 func (m *coordinatorMetadata) GetInstanceID() string {
 	return m.statusProvider.Watch().Load().Value.GetInstanceId()
+}
+
+func (m *coordinatorMetadata) GetSelf() *commonproto.CoordinatorInfo {
+	return m.selfInfo.CloneVT()
+}
+
+func (m *coordinatorMetadata) GetLeaderInfo() (*commonproto.CoordinatorInfo, error) {
+	return m.statusProvider.GetLeaderInfo()
+}
+
+func (m *coordinatorMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
+	m.logger.Info("Waiting to become leader")
+	leadershipLost, err := m.statusProvider.WaitToBecomeLeader()
+	if err != nil {
+		return nil, fmt.Errorf("failed to wait in becoming leader: %w", err)
+	}
+	m.logger.Info("This coordinator is now leader")
+	m.doStatusRecovery()
+	return leadershipLost, nil
 }
 
 func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {

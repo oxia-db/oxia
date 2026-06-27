@@ -27,8 +27,9 @@ import (
 const OxiaErrorDomain = "oxia.io"
 
 const (
-	ErrorMetadataShard  = "shard"
-	ErrorMetadataLeader = "leader"
+	ErrorMetadataShard             = "shard"
+	ErrorMetadataLeader            = "leader"
+	ErrorMetadataCoordinatorLeader = "coordinator-leader"
 )
 
 type ErrorMetadata map[string]string
@@ -43,6 +44,11 @@ func (m ErrorMetadata) GetLeaderHint() (int64, string, bool) {
 		return 0, "", false
 	}
 	return shard, leader, true
+}
+
+func (m ErrorMetadata) GetCoordinatorLeaderHint() (string, bool) {
+	leader := m[ErrorMetadataCoordinatorLeader]
+	return leader, leader != ""
 }
 
 const (
@@ -87,6 +93,15 @@ func WithLeaderHint(shard int64, leader string) GrpcStatusOption {
 		}
 		metadata[ErrorMetadataShard] = strconv.FormatInt(shard, 10)
 		metadata[ErrorMetadataLeader] = leader
+	}
+}
+
+func WithCoordinatorLeaderHint(leader string) GrpcStatusOption {
+	return func(metadata ErrorMetadata) {
+		if leader == "" {
+			return
+		}
+		metadata[ErrorMetadataCoordinatorLeader] = leader
 	}
 }
 

@@ -59,7 +59,7 @@ func exec(cmd *cobra.Command, _ []string) error {
 		sp = &splitPoint
 	}
 
-	result := client.SplitShard(namespace, shardId, sp)
+	result := client.SplitShard(cmd.Context(), namespace, shardId, sp)
 	if result.Error != nil {
 		return result.Error
 	}

@@ -82,7 +82,7 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	patched, err := client.PatchNamespace(namespace)
+	patched, err := client.PatchNamespace(cmd.Context(), namespace)
 	if err != nil {
 		return err
 	}

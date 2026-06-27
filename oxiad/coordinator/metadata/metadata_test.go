@@ -40,7 +40,7 @@ func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	metadata, _, err := factory.CreateMetadata(t.Context())
+	metadata, err := factory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())
@@ -71,7 +71,7 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	metadata, _, err := factory.CreateMetadata(t.Context())
+	metadata, err := factory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())
@@ -81,6 +81,36 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 	config := metadata.GetConfig().UnsafeBorrow()
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
+}
+
+func TestMetadataGetSelfReturnsCoordinatorInfo(t *testing.T) {
+	factory, err := New(t.Context(), &option.Options{
+		Server: option.ServerOptions{
+			Public: option.PublicServerOptions{
+				AdvertisedAddress: "coordinator-0.example.com:6651",
+			},
+		},
+		Metadata: option.MetadataOptions{
+			Identity: "coordinator-0",
+			ProviderOptions: option.ProviderOptions{
+				ProviderName: metadataconstant.NameMemory,
+			},
+		},
+	})
+	require.NoError(t, err)
+	metadata, err := factory.CreateMetadata(t.Context())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, metadata.Close())
+		require.NoError(t, factory.Close())
+	}()
+
+	self := metadata.GetSelf()
+	require.Equal(t, "coordinator-0", self.GetIdentity())
+	require.Equal(t, "coordinator-0.example.com:6651", self.GetPublicAddress())
+
+	self.Identity = "changed"
+	require.Equal(t, "coordinator-0", metadata.GetSelf().GetIdentity())
 }
 
 func writeClusterConfig(t *testing.T, path string) {
