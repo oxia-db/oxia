@@ -47,26 +47,10 @@ func (management *managementServer) setRuntime(runtime coordruntime.Runtime) {
 	management.runtime.Store(runtime)
 }
 
-func (management *managementServer) loadRuntime() coordruntime.Runtime {
-	runtime, ok := management.runtime.Load().(coordruntime.Runtime)
-	if !ok {
-		return nil
-	}
-	return runtime
-}
-
-func (management *managementServer) getMetadata() (coordmetadata.Metadata, error) {
-	metadata := management.metadata
-	if metadata != nil && management.loadRuntime() != nil {
-		return metadata, nil
-	}
-	return nil, management.redirectError()
-}
-
 func (management *managementServer) getRuntime() (coordruntime.Runtime, error) {
 	metadata := management.metadata
-	runtime := management.loadRuntime()
-	if metadata == nil || runtime == nil {
+	runtime, runtimeLoaded := management.runtime.Load().(coordruntime.Runtime)
+	if metadata == nil || !runtimeLoaded {
 		return nil, management.redirectError()
 	}
 	return runtime, nil
@@ -96,11 +80,11 @@ func (management *managementServer) redirectError() error {
 }
 
 func (management *managementServer) ListDataServers(_ context.Context, _ *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
-	cnf := metadata.GetConfig().UnsafeBorrow()
+	cnf := runtime.Metadata().GetConfig().UnsafeBorrow()
 
 	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
 	for _, server := range cnf.GetServers() {
@@ -128,7 +112,7 @@ func (management *managementServer) ListDataServers(_ context.Context, _ *proto.
 }
 
 func (management *managementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +120,7 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
 
-	borrowedDataServer, found := metadata.GetDataServer(req.DataServer)
+	borrowedDataServer, found := runtime.Metadata().GetDataServer(req.DataServer)
 	if !found {
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
@@ -147,7 +131,7 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 }
 
 func (management *managementServer) CreateDataServer(_ context.Context, req *proto.CreateDataServerRequest) (*proto.CreateDataServerResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +151,7 @@ func (management *managementServer) CreateDataServer(_ context.Context, req *pro
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server internal address must not be empty")
 	}
 
-	err = metadata.CreateDataServer(req.DataServer)
+	err = runtime.Metadata().CreateDataServer(req.DataServer)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrAlreadyExists) {
 			return nil, grpcstatus.Errorf(codes.AlreadyExists, "data server %q already exists", req.DataServer.GetNameOrDefault())
@@ -184,7 +168,7 @@ func (management *managementServer) CreateDataServer(_ context.Context, req *pro
 }
 
 func (management *managementServer) PatchDataServer(_ context.Context, req *proto.PatchDataServerRequest) (*proto.PatchDataServerResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +182,7 @@ func (management *managementServer) PatchDataServer(_ context.Context, req *prot
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server identity name must not be empty")
 	}
 
-	dataServer, err := metadata.PatchDataServer(req.DataServer)
+	dataServer, err := runtime.Metadata().PatchDataServer(req.DataServer)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer.GetNameOrDefault())
@@ -215,7 +199,7 @@ func (management *managementServer) PatchDataServer(_ context.Context, req *prot
 }
 
 func (management *managementServer) DeleteDataServer(_ context.Context, req *proto.DeleteDataServerRequest) (*proto.DeleteDataServerResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +207,7 @@ func (management *managementServer) DeleteDataServer(_ context.Context, req *pro
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
 
-	dataServer, err := metadata.DeleteDataServer(req.DataServer)
+	dataServer, err := runtime.Metadata().DeleteDataServer(req.DataServer)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
@@ -243,11 +227,11 @@ func (management *managementServer) DeleteDataServer(_ context.Context, req *pro
 }
 
 func (management *managementServer) ListNamespaces(_ context.Context, _ *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
-	namespaces := metadata.ListNamespace()
+	namespaces := runtime.Metadata().ListNamespace()
 	responseNamespaces := make([]*proto.Namespace, 0, len(namespaces))
 	for _, namespace := range namespaces {
 		responseNamespaces = append(responseNamespaces, namespace.UnsafeBorrow())
@@ -259,7 +243,7 @@ func (management *managementServer) ListNamespaces(_ context.Context, _ *proto.L
 }
 
 func (management *managementServer) CreateNamespace(_ context.Context, req *proto.CreateNamespaceRequest) (*proto.CreateNamespaceResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +270,7 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace anti-affinities cannot be set on create")
 	}
 
-	err = metadata.CreateNamespace(req.Namespace)
+	err = runtime.Metadata().CreateNamespace(req.Namespace)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrAlreadyExists) {
 			return nil, grpcstatus.Errorf(codes.AlreadyExists, "namespace %q already exists", req.Namespace.GetName())
@@ -306,7 +290,7 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 }
 
 func (management *managementServer) PatchNamespace(_ context.Context, req *proto.PatchNamespaceRequest) (*proto.PatchNamespaceResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +310,7 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace anti-affinities cannot be patched")
 	}
 
-	namespace, err := metadata.PatchNamespace(req.Namespace)
+	namespace, err := runtime.Metadata().PatchNamespace(req.Namespace)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace.GetName())
@@ -346,7 +330,7 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 }
 
 func (management *managementServer) DeleteNamespace(_ context.Context, req *proto.DeleteNamespaceRequest) (*proto.DeleteNamespaceResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +341,7 @@ func (management *managementServer) DeleteNamespace(_ context.Context, req *prot
 		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
 	}
 
-	namespace, err := metadata.DeleteNamespace(req.Namespace)
+	namespace, err := runtime.Metadata().DeleteNamespace(req.Namespace)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
@@ -374,7 +358,7 @@ func (management *managementServer) DeleteNamespace(_ context.Context, req *prot
 }
 
 func (management *managementServer) GetNamespace(_ context.Context, req *proto.GetNamespaceRequest) (*proto.GetNamespaceResponse, error) {
-	metadata, err := management.getMetadata()
+	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +366,7 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be empty")
 	}
 
-	namespace, found := metadata.GetNamespace(req.Namespace)
+	namespace, found := runtime.Metadata().GetNamespace(req.Namespace)
 	if !found {
 		return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
 	}

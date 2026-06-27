@@ -55,7 +55,7 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	})
 
 	serverName := "server-1"
-	created, err := client.CreateDataServer(&proto.DataServer{
+	created, err := client.CreateDataServer(t.Context(), &proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &serverName,
 			Public:   "localhost:19001",
@@ -73,7 +73,7 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	assert.Equal(t, map[string]string{"rack": "rack-1"}, created.GetMetadata().GetLabels())
 
 	remainingServerName := "server-2"
-	_, err = client.CreateDataServer(&proto.DataServer{
+	_, err = client.CreateDataServer(t.Context(), &proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &remainingServerName,
 			Public:   "localhost:19003",
@@ -85,17 +85,17 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	dataServers, err := client.ListDataServers()
+	dataServers, err := client.ListDataServers(t.Context())
 	require.NoError(t, err)
 	require.Len(t, dataServers, 2)
 
-	found, err := client.GetDataServer(serverName)
+	found, err := client.GetDataServer(t.Context(), serverName)
 	require.NoError(t, err)
 	assert.Equal(t, serverName, found.GetIdentity().GetName())
 	assert.Equal(t, "localhost:19001", found.GetIdentity().GetPublic())
 	assert.Equal(t, map[string]string{"rack": "rack-1"}, found.GetMetadata().GetLabels())
 
-	patched, err := client.PatchDataServer(&proto.DataServer{
+	patched, err := client.PatchDataServer(t.Context(), &proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:   &serverName,
 			Public: "localhost:19101",
@@ -110,7 +110,7 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	assert.Equal(t, "localhost:19002", patched.GetIdentity().GetInternal())
 	assert.Equal(t, map[string]string{"rack": "rack-3"}, patched.GetMetadata().GetLabels())
 
-	deleted, err := client.DeleteDataServer(serverName)
+	deleted, err := client.DeleteDataServer(t.Context(), serverName)
 	require.NoError(t, err)
 	require.NotNil(t, deleted)
 	require.NotNil(t, deleted.GetIdentity())
@@ -119,7 +119,7 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	assert.Equal(t, "localhost:19002", deleted.GetIdentity().GetInternal())
 	assert.Equal(t, map[string]string{"rack": "rack-3"}, deleted.GetMetadata().GetLabels())
 
-	dataServers, err = client.ListDataServers()
+	dataServers, err = client.ListDataServers(t.Context())
 	require.NoError(t, err)
 	require.Len(t, dataServers, 1)
 	require.NotNil(t, dataServers[0].GetIdentity())

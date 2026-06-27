@@ -291,10 +291,11 @@ func TestManagementServerReturnsUnavailableWhenLocalLeaderIsNotReady(t *testing.
 }
 
 func TestManagementServerServesAfterShardSplitterReady(t *testing.T) {
-	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{Name: "ns-1"}},
-	}))
-	management.setRuntime(&testRuntime{})
+	})
+	management := newManagementServer(metadata)
+	management.setRuntime(&testRuntime{metadata: metadata})
 
 	res, err := management.ListNamespaces(t.Context(), &proto.ListNamespacesRequest{})
 	require.NoError(t, err)

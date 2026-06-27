@@ -33,6 +33,7 @@ import (
 
 type mockAdminRpcClient struct {
 	listDataServersResponse *proto.ListDataServersResponse
+	listDataServersCtx      context.Context
 	listDataServersErr      error
 	getDataServerResponse   *proto.GetDataServerResponse
 	getDataServerErr        error
@@ -55,7 +56,8 @@ type mockAdminRpcClient struct {
 	getNamespaceErr         error
 }
 
-func (m *mockAdminRpcClient) ListDataServers(context.Context, *proto.ListDataServersRequest, ...grpc.CallOption) (*proto.ListDataServersResponse, error) {
+func (m *mockAdminRpcClient) ListDataServers(ctx context.Context, _ *proto.ListDataServersRequest, _ ...grpc.CallOption) (*proto.ListDataServersResponse, error) {
+	m.listDataServersCtx = ctx
 	return m.listDataServersResponse, m.listDataServersErr
 }
 
@@ -143,6 +145,26 @@ func (m *mockAdminClientPool) Clear(string) {}
 
 var _ rpc.ClientPool = (*mockAdminClientPool)(nil)
 
+type adminContextKey struct{}
+
+func TestAdminClientListDataServersPassesContext(t *testing.T) {
+	adminClient := &mockAdminRpcClient{
+		listDataServersResponse: &proto.ListDataServersResponse{},
+	}
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: adminClient,
+		},
+	}
+	ctx := context.WithValue(context.Background(), adminContextKey{}, "request")
+
+	_, err := admin.ListDataServers(ctx)
+
+	require.NoError(t, err)
+	assert.Equal(t, "request", adminClient.listDataServersCtx.Value(adminContextKey{}))
+}
+
 func TestAdminClientListDataServersMapsGrpcErrors(t *testing.T) {
 	admin := &adminClientImpl{
 		adminAddr: "admin-addr",
@@ -153,7 +175,7 @@ func TestAdminClientListDataServersMapsGrpcErrors(t *testing.T) {
 		},
 	}
 
-	_, err := admin.ListDataServers()
+	_, err := admin.ListDataServers(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnknown)
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
@@ -167,7 +189,7 @@ func TestAdminClientListDataServersMapsUnavailableConnection(t *testing.T) {
 		},
 	}
 
-	_, err := admin.ListDataServers()
+	_, err := admin.ListDataServers(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnknown)
 	assert.Equal(t, codes.Unavailable, grpcstatus.Code(err))
@@ -183,7 +205,7 @@ func TestAdminClientListDataServersMapsAuthErrors(t *testing.T) {
 		},
 	}
 
-	_, err := admin.ListDataServers()
+	_, err := admin.ListDataServers(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnauthorized)
 	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
@@ -194,7 +216,7 @@ func TestAdminClientListDataServersMapsAuthErrors(t *testing.T) {
 		},
 	}
 
-	_, err = admin.ListDataServers()
+	_, err = admin.ListDataServers(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnauthenticated)
 	assert.Equal(t, codes.Unauthenticated, grpcstatus.Code(err))
@@ -221,7 +243,7 @@ func TestAdminClientListDataServersReturnsResponse(t *testing.T) {
 		},
 	}
 
-	dataServers, err := admin.ListDataServers()
+	dataServers, err := admin.ListDataServers(context.Background())
 	require.NoError(t, err)
 	require.Len(t, dataServers, 1)
 	require.NotNil(t, dataServers[0].Identity)
@@ -261,7 +283,7 @@ func TestAdminClientListDataServersRedirectsToCoordinatorLeader(t *testing.T) {
 		clientPool: pool,
 	}
 
-	dataServers, err := admin.ListDataServers()
+	dataServers, err := admin.ListDataServers(context.Background())
 	require.NoError(t, err)
 	require.Len(t, dataServers, 1)
 	assert.Equal(t, serverName, dataServers[0].GetNameOrDefault())
@@ -290,7 +312,7 @@ func TestAdminClientGetDataServerReturnsResponse(t *testing.T) {
 		},
 	}
 
-	dataServer, err := admin.GetDataServer(serverName)
+	dataServer, err := admin.GetDataServer(context.Background(), serverName)
 	require.NoError(t, err)
 	require.NotNil(t, dataServer)
 	require.NotNil(t, dataServer.Identity)
@@ -323,7 +345,7 @@ func TestAdminClientCreateDataServerReturnsResponse(t *testing.T) {
 		},
 	}
 
-	dataServer, err := admin.CreateDataServer(&proto.DataServer{
+	dataServer, err := admin.CreateDataServer(context.Background(), &proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &serverName,
 			Public:   "public-1",
@@ -362,7 +384,7 @@ func TestAdminClientPatchDataServerReturnsResponse(t *testing.T) {
 		},
 	}
 
-	dataServer, err := admin.PatchDataServer(&proto.DataServer{
+	dataServer, err := admin.PatchDataServer(context.Background(), &proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:   &serverName,
 			Public: "public-2",
@@ -403,7 +425,7 @@ func TestAdminClientDeleteDataServerReturnsResponse(t *testing.T) {
 		},
 	}
 
-	dataServer, err := admin.DeleteDataServer(serverName)
+	dataServer, err := admin.DeleteDataServer(context.Background(), serverName)
 	require.NoError(t, err)
 	require.NotNil(t, dataServer)
 	require.NotNil(t, dataServer.Identity)
@@ -431,7 +453,7 @@ func TestAdminClientCreateNamespaceReturnsResponse(t *testing.T) {
 		},
 	}
 
-	namespace, err := admin.CreateNamespace(&proto.Namespace{Name: "ns-1"})
+	namespace, err := admin.CreateNamespace(context.Background(), &proto.Namespace{Name: "ns-1"})
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
@@ -460,7 +482,7 @@ func TestAdminClientPatchNamespaceReturnsResponse(t *testing.T) {
 		},
 	}
 
-	namespace, err := admin.PatchNamespace(&proto.Namespace{Name: "ns-1", NotificationsEnabled: &notificationsEnabled})
+	namespace, err := admin.PatchNamespace(context.Background(), &proto.Namespace{Name: "ns-1", NotificationsEnabled: &notificationsEnabled})
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
@@ -487,7 +509,7 @@ func TestAdminClientDeleteNamespaceReturnsResponse(t *testing.T) {
 		},
 	}
 
-	namespace, err := admin.DeleteNamespace("ns-1")
+	namespace, err := admin.DeleteNamespace(context.Background(), "ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())
@@ -514,7 +536,7 @@ func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {
 		},
 	}
 
-	namespaces, err := admin.ListNamespaces()
+	namespaces, err := admin.ListNamespaces(context.Background())
 	require.NoError(t, err)
 	require.Len(t, namespaces, 1)
 	assert.Equal(t, "ns-1", namespaces[0].GetName())
@@ -539,7 +561,7 @@ func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
 		},
 	}
 
-	namespace, err := admin.GetNamespace("ns-1")
+	namespace, err := admin.GetNamespace(context.Background(), "ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
 	assert.Equal(t, "ns-1", namespace.GetName())

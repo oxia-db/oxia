@@ -15,6 +15,7 @@
 package oxia
 
 import (
+	"context"
 	"io"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -23,19 +24,19 @@ import (
 type AdminClient interface {
 	io.Closer
 
-	ListDataServers() ([]*proto.DataServer, error)
-	GetDataServer(dataServer string) (*proto.DataServer, error)
-	CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error)
-	PatchDataServer(dataServer *proto.DataServer) (*proto.DataServer, error)
-	DeleteDataServer(dataServer string) (*proto.DataServer, error)
+	ListDataServers(ctx context.Context) ([]*proto.DataServer, error)
+	GetDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error)
+	CreateDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error)
+	PatchDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error)
+	DeleteDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error)
 
-	CreateNamespace(namespace *proto.Namespace) (*proto.Namespace, error)
-	PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error)
-	DeleteNamespace(namespace string) (*proto.Namespace, error)
-	ListNamespaces() ([]*proto.Namespace, error)
-	GetNamespace(namespace string) (*proto.Namespace, error)
+	CreateNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error)
+	PatchNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error)
+	DeleteNamespace(ctx context.Context, namespace string) (*proto.Namespace, error)
+	ListNamespaces(ctx context.Context) ([]*proto.Namespace, error)
+	GetNamespace(ctx context.Context, namespace string) (*proto.Namespace, error)
 
-	SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
+	SplitShard(ctx context.Context, namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
 }
 
 type SplitShardResult struct {

@@ -38,8 +38,8 @@ type adminClientImpl struct {
 	clientPool rpc.ClientPool
 }
 
-func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.ListDataServersResponse, error) {
+func (admin *adminClientImpl) ListDataServers(ctx context.Context) ([]*proto.DataServer, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.ListDataServersResponse, error) {
 		return client.ListDataServers(ctx, &proto.ListDataServersRequest{})
 	})
 	if err != nil {
@@ -48,8 +48,8 @@ func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
 	return response.DataServers, nil
 }
 
-func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServer, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.GetDataServerResponse, error) {
+func (admin *adminClientImpl) GetDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.GetDataServerResponse, error) {
 		return client.GetDataServer(ctx, &proto.GetDataServerRequest{DataServer: dataServer})
 	})
 	if err != nil {
@@ -58,8 +58,8 @@ func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServe
 	return response.DataServer, nil
 }
 
-func (admin *adminClientImpl) CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.CreateDataServerResponse, error) {
+func (admin *adminClientImpl) CreateDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.CreateDataServerResponse, error) {
 		return client.CreateDataServer(ctx, &proto.CreateDataServerRequest{DataServer: dataServer})
 	})
 	if err != nil {
@@ -68,8 +68,8 @@ func (admin *adminClientImpl) CreateDataServer(dataServer *proto.DataServer) (*p
 	return response.DataServer, nil
 }
 
-func (admin *adminClientImpl) PatchDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.PatchDataServerResponse, error) {
+func (admin *adminClientImpl) PatchDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.PatchDataServerResponse, error) {
 		return client.PatchDataServer(ctx, &proto.PatchDataServerRequest{
 			DataServer: dataServer,
 		})
@@ -80,8 +80,8 @@ func (admin *adminClientImpl) PatchDataServer(dataServer *proto.DataServer) (*pr
 	return response.DataServer, nil
 }
 
-func (admin *adminClientImpl) DeleteDataServer(dataServer string) (*proto.DataServer, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.DeleteDataServerResponse, error) {
+func (admin *adminClientImpl) DeleteDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.DeleteDataServerResponse, error) {
 		return client.DeleteDataServer(ctx, &proto.DeleteDataServerRequest{
 			DataServer: dataServer,
 		})
@@ -96,8 +96,8 @@ func (admin *adminClientImpl) Close() error {
 	return admin.clientPool.Close()
 }
 
-func (admin *adminClientImpl) CreateNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.CreateNamespaceResponse, error) {
+func (admin *adminClientImpl) CreateNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.CreateNamespaceResponse, error) {
 		return client.CreateNamespace(ctx, &proto.CreateNamespaceRequest{
 			Namespace: namespace,
 		})
@@ -108,8 +108,8 @@ func (admin *adminClientImpl) CreateNamespace(namespace *proto.Namespace) (*prot
 	return response.Namespace, nil
 }
 
-func (admin *adminClientImpl) PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.PatchNamespaceResponse, error) {
+func (admin *adminClientImpl) PatchNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.PatchNamespaceResponse, error) {
 		return client.PatchNamespace(ctx, &proto.PatchNamespaceRequest{
 			Namespace: namespace,
 		})
@@ -120,8 +120,8 @@ func (admin *adminClientImpl) PatchNamespace(namespace *proto.Namespace) (*proto
 	return response.Namespace, nil
 }
 
-func (admin *adminClientImpl) DeleteNamespace(namespace string) (*proto.Namespace, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.DeleteNamespaceResponse, error) {
+func (admin *adminClientImpl) DeleteNamespace(ctx context.Context, namespace string) (*proto.Namespace, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.DeleteNamespaceResponse, error) {
 		return client.DeleteNamespace(ctx, &proto.DeleteNamespaceRequest{
 			Namespace: namespace,
 		})
@@ -132,8 +132,8 @@ func (admin *adminClientImpl) DeleteNamespace(namespace string) (*proto.Namespac
 	return response.Namespace, nil
 }
 
-func (admin *adminClientImpl) ListNamespaces() ([]*proto.Namespace, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.ListNamespacesResponse, error) {
+func (admin *adminClientImpl) ListNamespaces(ctx context.Context) ([]*proto.Namespace, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.ListNamespacesResponse, error) {
 		return client.ListNamespaces(ctx, &proto.ListNamespacesRequest{})
 	})
 	if err != nil {
@@ -142,8 +142,8 @@ func (admin *adminClientImpl) ListNamespaces() ([]*proto.Namespace, error) {
 	return response.Namespaces, nil
 }
 
-func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, error) {
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.GetNamespaceResponse, error) {
+func (admin *adminClientImpl) GetNamespace(ctx context.Context, namespace string) (*proto.Namespace, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.GetNamespaceResponse, error) {
 		return client.GetNamespace(ctx, &proto.GetNamespaceRequest{Namespace: namespace})
 	})
 	if err != nil {
@@ -152,7 +152,7 @@ func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, 
 	return response.Namespace, nil
 }
 
-func (admin *adminClientImpl) SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult {
+func (admin *adminClientImpl) SplitShard(ctx context.Context, namespace string, shardId int64, splitPoint *uint32) *SplitShardResult {
 	req := &proto.SplitShardRequest{
 		Namespace: namespace,
 		Shard:     shardId,
@@ -161,7 +161,7 @@ func (admin *adminClientImpl) SplitShard(namespace string, shardId int64, splitP
 		req.SplitPoint = splitPoint
 	}
 
-	response, err := executeAdminRPCWithRedirect(admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.SplitShardResponse, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.SplitShardResponse, error) {
 		return client.SplitShard(ctx, req)
 	})
 	if err != nil {
@@ -181,11 +181,11 @@ func NewAdminClient(adminAddr string, tlsConf *tls.Config, authentication auth.A
 	}, nil
 }
 
-func executeAdminRPCWithRedirect[T any](admin *adminClientImpl, operation func(context.Context, proto.OxiaAdminClient) (T, error)) (T, error) {
+func executeAdminRPCWithRedirect[T any](ctx context.Context, admin *adminClientImpl, operation func(context.Context, proto.OxiaAdminClient) (T, error)) (T, error) {
 	var result T
 	target := admin.adminAddr
 
-	ctx, cancel := context.WithTimeout(context.Background(), rpc.DefaultRpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, rpc.DefaultRpcTimeout)
 	defer cancel()
 	err := backoff.Retry(func() error {
 		client, err := admin.clientPool.GetAminRpc(target)

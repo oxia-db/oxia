@@ -78,7 +78,7 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	created, err := client.CreateNamespace(&proto.Namespace{
+	created, err := client.CreateNamespace(cmd.Context(), &proto.Namespace{
 		Name:                 name,
 		InitialShardCount:    fields.InitialShardCount,
 		ReplicationFactor:    fields.ReplicationFactor,
