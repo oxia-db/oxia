@@ -49,14 +49,14 @@ func exec(cmd *cobra.Command, args []string) error {
 	}(client)
 
 	if len(args) == 0 {
-		dataServers, err := client.ListDataServers()
+		dataServers, err := client.ListDataServers(cmd.Context())
 		if err != nil {
 			return err
 		}
 		return dataservercli.WriteDataServers(cmd.OutOrStdout(), outputFormat, dataServers)
 	}
 
-	dataServer, err := client.GetDataServer(args[0])
+	dataServer, err := client.GetDataServer(cmd.Context(), args[0])
 	if err != nil {
 		return err
 	}

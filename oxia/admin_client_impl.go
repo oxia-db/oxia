@@ -35,7 +35,7 @@ type adminClientImpl struct {
 	clientPool rpc.ClientPool
 }
 
-func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
+func (admin *adminClientImpl) ListDataServers(ctx context.Context) ([]*proto.DataServer, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -45,14 +45,14 @@ func (admin *adminClientImpl) ListDataServers() ([]*proto.DataServer, error) {
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
+	response, err := client.ListDataServers(ctx, &proto.ListDataServersRequest{})
 	if err != nil {
 		return nil, mapAdminError(err)
 	}
 	return response.DataServers, nil
 }
 
-func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServer, error) {
+func (admin *adminClientImpl) GetDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -62,14 +62,14 @@ func (admin *adminClientImpl) GetDataServer(dataServer string) (*proto.DataServe
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: dataServer})
+	response, err := client.GetDataServer(ctx, &proto.GetDataServerRequest{DataServer: dataServer})
 	if err != nil {
 		return nil, mapAdminError(err)
 	}
 	return response.DataServer, nil
 }
 
-func (admin *adminClientImpl) CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
+func (admin *adminClientImpl) CreateDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -79,14 +79,14 @@ func (admin *adminClientImpl) CreateDataServer(dataServer *proto.DataServer) (*p
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{DataServer: dataServer})
+	response, err := client.CreateDataServer(ctx, &proto.CreateDataServerRequest{DataServer: dataServer})
 	if err != nil {
 		return nil, mapAdminError(err)
 	}
 	return response.DataServer, nil
 }
 
-func (admin *adminClientImpl) PatchDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
+func (admin *adminClientImpl) PatchDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -96,7 +96,7 @@ func (admin *adminClientImpl) PatchDataServer(dataServer *proto.DataServer) (*pr
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.PatchDataServer(context.Background(), &proto.PatchDataServerRequest{
+	response, err := client.PatchDataServer(ctx, &proto.PatchDataServerRequest{
 		DataServer: dataServer,
 	})
 	if err != nil {
@@ -105,7 +105,7 @@ func (admin *adminClientImpl) PatchDataServer(dataServer *proto.DataServer) (*pr
 	return response.DataServer, nil
 }
 
-func (admin *adminClientImpl) DeleteDataServer(dataServer string) (*proto.DataServer, error) {
+func (admin *adminClientImpl) DeleteDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -115,7 +115,7 @@ func (admin *adminClientImpl) DeleteDataServer(dataServer string) (*proto.DataSe
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.DeleteDataServer(context.Background(), &proto.DeleteDataServerRequest{
+	response, err := client.DeleteDataServer(ctx, &proto.DeleteDataServerRequest{
 		DataServer: dataServer,
 	})
 	if err != nil {
@@ -128,7 +128,7 @@ func (admin *adminClientImpl) Close() error {
 	return admin.clientPool.Close()
 }
 
-func (admin *adminClientImpl) CreateNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
+func (admin *adminClientImpl) CreateNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -138,7 +138,7 @@ func (admin *adminClientImpl) CreateNamespace(namespace *proto.Namespace) (*prot
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
+	response, err := client.CreateNamespace(ctx, &proto.CreateNamespaceRequest{
 		Namespace: namespace,
 	})
 	if err != nil {
@@ -147,7 +147,7 @@ func (admin *adminClientImpl) CreateNamespace(namespace *proto.Namespace) (*prot
 	return response.Namespace, nil
 }
 
-func (admin *adminClientImpl) PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
+func (admin *adminClientImpl) PatchNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -157,7 +157,7 @@ func (admin *adminClientImpl) PatchNamespace(namespace *proto.Namespace) (*proto
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
+	response, err := client.PatchNamespace(ctx, &proto.PatchNamespaceRequest{
 		Namespace: namespace,
 	})
 	if err != nil {
@@ -166,7 +166,7 @@ func (admin *adminClientImpl) PatchNamespace(namespace *proto.Namespace) (*proto
 	return response.Namespace, nil
 }
 
-func (admin *adminClientImpl) DeleteNamespace(namespace string) (*proto.Namespace, error) {
+func (admin *adminClientImpl) DeleteNamespace(ctx context.Context, namespace string) (*proto.Namespace, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -176,7 +176,7 @@ func (admin *adminClientImpl) DeleteNamespace(namespace string) (*proto.Namespac
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.DeleteNamespace(context.Background(), &proto.DeleteNamespaceRequest{
+	response, err := client.DeleteNamespace(ctx, &proto.DeleteNamespaceRequest{
 		Namespace: namespace,
 	})
 	if err != nil {
@@ -185,7 +185,7 @@ func (admin *adminClientImpl) DeleteNamespace(namespace string) (*proto.Namespac
 	return response.Namespace, nil
 }
 
-func (admin *adminClientImpl) ListNamespaces() ([]*proto.Namespace, error) {
+func (admin *adminClientImpl) ListNamespaces(ctx context.Context) ([]*proto.Namespace, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -195,14 +195,14 @@ func (admin *adminClientImpl) ListNamespaces() ([]*proto.Namespace, error) {
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
+	response, err := client.ListNamespaces(ctx, &proto.ListNamespacesRequest{})
 	if err != nil {
 		return nil, mapAdminError(err)
 	}
 	return response.Namespaces, nil
 }
 
-func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, error) {
+func (admin *adminClientImpl) GetNamespace(ctx context.Context, namespace string) (*proto.Namespace, error) {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return nil, mapAdminError(err)
@@ -212,14 +212,14 @@ func (admin *adminClientImpl) GetNamespace(namespace string) (*proto.Namespace, 
 		return nil, wrapAdminError(ErrUnknown, errors.New(errUnableToConnectToAdminServer))
 	}
 
-	response, err := client.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: namespace})
+	response, err := client.GetNamespace(ctx, &proto.GetNamespaceRequest{Namespace: namespace})
 	if err != nil {
 		return nil, mapAdminError(err)
 	}
 	return response.Namespace, nil
 }
 
-func (admin *adminClientImpl) SplitShard(namespace string, shardId int64, splitPoint *uint32) *SplitShardResult {
+func (admin *adminClientImpl) SplitShard(ctx context.Context, namespace string, shardId int64, splitPoint *uint32) *SplitShardResult {
 	client, err := admin.clientPool.GetAminRpc(admin.adminAddr)
 	if err != nil {
 		return &SplitShardResult{Error: err}
@@ -236,7 +236,7 @@ func (admin *adminClientImpl) SplitShard(namespace string, shardId int64, splitP
 		req.SplitPoint = splitPoint
 	}
 
-	response, err := client.SplitShard(context.Background(), req)
+	response, err := client.SplitShard(ctx, req)
 	if err != nil {
 		return &SplitShardResult{Error: err}
 	}

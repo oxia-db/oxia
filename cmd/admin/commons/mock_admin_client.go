@@ -15,6 +15,8 @@
 package commons
 
 import (
+	"context"
+
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/mock"
 
@@ -37,7 +39,7 @@ func (m *MockAdminClient) Close() error {
 	return args.Error(0)
 }
 
-func (m *MockAdminClient) ListNamespaces() ([]*proto.Namespace, error) {
+func (m *MockAdminClient) ListNamespaces(context.Context) ([]*proto.Namespace, error) {
 	args := m.MethodCalled("ListNamespaces")
 	if v, ok := args.Get(0).([]*proto.Namespace); ok {
 		return v, args.Error(1)
@@ -45,7 +47,7 @@ func (m *MockAdminClient) ListNamespaces() ([]*proto.Namespace, error) {
 	return nil, errors.New("no namespaces available")
 }
 
-func (m *MockAdminClient) ListDataServers() ([]*proto.DataServer, error) {
+func (m *MockAdminClient) ListDataServers(context.Context) ([]*proto.DataServer, error) {
 	args := m.MethodCalled("ListDataServers")
 	if v, ok := args.Get(0).([]*proto.DataServer); ok {
 		return v, args.Error(1)
@@ -53,7 +55,7 @@ func (m *MockAdminClient) ListDataServers() ([]*proto.DataServer, error) {
 	return nil, errors.New("no data servers available")
 }
 
-func (m *MockAdminClient) GetDataServer(dataServer string) (*proto.DataServer, error) {
+func (m *MockAdminClient) GetDataServer(_ context.Context, dataServer string) (*proto.DataServer, error) {
 	args := m.MethodCalled("GetDataServer", dataServer)
 	if v, ok := args.Get(0).(*proto.DataServer); ok {
 		return v, args.Error(1)
@@ -61,7 +63,7 @@ func (m *MockAdminClient) GetDataServer(dataServer string) (*proto.DataServer, e
 	return nil, errors.New("data server not found")
 }
 
-func (m *MockAdminClient) CreateDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
+func (m *MockAdminClient) CreateDataServer(_ context.Context, dataServer *proto.DataServer) (*proto.DataServer, error) {
 	args := m.MethodCalled("CreateDataServer", dataServer)
 	if v, ok := args.Get(0).(*proto.DataServer); ok {
 		return v, args.Error(1)
@@ -69,7 +71,7 @@ func (m *MockAdminClient) CreateDataServer(dataServer *proto.DataServer) (*proto
 	return nil, errors.New("failed to create data server")
 }
 
-func (m *MockAdminClient) PatchDataServer(dataServer *proto.DataServer) (*proto.DataServer, error) {
+func (m *MockAdminClient) PatchDataServer(_ context.Context, dataServer *proto.DataServer) (*proto.DataServer, error) {
 	args := m.MethodCalled("PatchDataServer", dataServer)
 	if v, ok := args.Get(0).(*proto.DataServer); ok {
 		return v, args.Error(1)
@@ -77,7 +79,7 @@ func (m *MockAdminClient) PatchDataServer(dataServer *proto.DataServer) (*proto.
 	return nil, errors.New("failed to patch data server")
 }
 
-func (m *MockAdminClient) DeleteDataServer(dataServer string) (*proto.DataServer, error) {
+func (m *MockAdminClient) DeleteDataServer(_ context.Context, dataServer string) (*proto.DataServer, error) {
 	args := m.MethodCalled("DeleteDataServer", dataServer)
 	if v, ok := args.Get(0).(*proto.DataServer); ok {
 		return v, args.Error(1)
@@ -85,7 +87,7 @@ func (m *MockAdminClient) DeleteDataServer(dataServer string) (*proto.DataServer
 	return nil, errors.New("failed to delete data server")
 }
 
-func (m *MockAdminClient) CreateNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
+func (m *MockAdminClient) CreateNamespace(_ context.Context, namespace *proto.Namespace) (*proto.Namespace, error) {
 	args := m.MethodCalled("CreateNamespace", namespace)
 	if v, ok := args.Get(0).(*proto.Namespace); ok {
 		return v, args.Error(1)
@@ -93,7 +95,7 @@ func (m *MockAdminClient) CreateNamespace(namespace *proto.Namespace) (*proto.Na
 	return nil, errors.New("failed to create namespace")
 }
 
-func (m *MockAdminClient) PatchNamespace(namespace *proto.Namespace) (*proto.Namespace, error) {
+func (m *MockAdminClient) PatchNamespace(_ context.Context, namespace *proto.Namespace) (*proto.Namespace, error) {
 	args := m.MethodCalled("PatchNamespace", namespace)
 	if v, ok := args.Get(0).(*proto.Namespace); ok {
 		return v, args.Error(1)
@@ -101,7 +103,7 @@ func (m *MockAdminClient) PatchNamespace(namespace *proto.Namespace) (*proto.Nam
 	return nil, errors.New("failed to patch namespace")
 }
 
-func (m *MockAdminClient) DeleteNamespace(namespace string) (*proto.Namespace, error) {
+func (m *MockAdminClient) DeleteNamespace(_ context.Context, namespace string) (*proto.Namespace, error) {
 	args := m.MethodCalled("DeleteNamespace", namespace)
 	if v, ok := args.Get(0).(*proto.Namespace); ok {
 		return v, args.Error(1)
@@ -109,7 +111,7 @@ func (m *MockAdminClient) DeleteNamespace(namespace string) (*proto.Namespace, e
 	return nil, errors.New("failed to delete namespace")
 }
 
-func (m *MockAdminClient) GetNamespace(namespace string) (*proto.Namespace, error) {
+func (m *MockAdminClient) GetNamespace(_ context.Context, namespace string) (*proto.Namespace, error) {
 	args := m.MethodCalled("GetNamespace", namespace)
 	if v, ok := args.Get(0).(*proto.Namespace); ok {
 		return v, args.Error(1)
@@ -117,7 +119,7 @@ func (m *MockAdminClient) GetNamespace(namespace string) (*proto.Namespace, erro
 	return nil, errors.New("namespace not found")
 }
 
-func (m *MockAdminClient) SplitShard(namespace string, shardId int64, splitPoint *uint32) *oxia.SplitShardResult {
+func (m *MockAdminClient) SplitShard(_ context.Context, namespace string, shardId int64, splitPoint *uint32) *oxia.SplitShardResult {
 	args := m.MethodCalled("SplitShard", namespace, shardId, splitPoint)
 	if v, ok := args.Get(0).(*oxia.SplitShardResult); ok {
 		return v
