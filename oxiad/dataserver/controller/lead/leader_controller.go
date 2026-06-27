@@ -76,6 +76,7 @@ type LeaderController interface {
 	GetStatus(request *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
 	DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
 	RemoveObserver(request *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error)
+	Freeze(request *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error)
 
 	Context() context.Context
 	// Term The current term of the leader
@@ -108,6 +109,12 @@ type leaderController struct {
 	quorumAckTracker  QuorumAckTracker
 	followers         map[string]FollowerCursor
 	observers         map[string]FollowerCursor
+
+	// frozen, when set, makes the leader reject new write proposals without
+	// fencing it: existing follower/observer cursors keep streaming. Used
+	// during split cutover to quiesce the parent so children can drain the
+	// final tail before the parent is fenced. Cleared on every new term.
+	frozen atomic.Bool
 
 	// This represents the last entry in the WAL at the time this node
 	// became leader. It's used in the logic for deciding where to
@@ -299,6 +306,9 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	lc.term.Store(req.Term)
 	lc.status = proto.ServingStatus_FENCED
 	lc.replicationFactor = 0
+	// A new term clears any freeze: a freshly fenced/re-elected leader must
+	// not inherit a stale write-freeze from a previous (aborted) cutover.
+	lc.frozen.Store(false)
 
 	lc.headOffsetGauge.Unregister()
 	lc.commitOffsetGauge.Unregister()
@@ -537,6 +547,44 @@ func (lc *leaderController) RemoveObserver(req *proto.RemoveObserverRequest) (*p
 	)
 
 	return &proto.RemoveObserverResponse{}, nil
+}
+
+// Freeze toggles the leader's write-freeze. When frozen, the leader rejects new
+// write proposals without fencing itself, so its follower and observer cursors
+// keep streaming the existing WAL while the head offset stops advancing. It is
+// used during split cutover to quiesce the parent shard so the children can
+// drain the final tail before the parent is fenced. Returns the leader's head
+// offset, which while frozen is the final offset the children must reach.
+func (lc *leaderController) Freeze(req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	lc.Lock()
+	defer lc.Unlock()
+
+	if lc.closed {
+		return nil, constant.ErrResourceUnavailable
+	}
+
+	if req.Term != lc.term.Load() {
+		return nil, constant.ErrInvalidTerm
+	}
+
+	if lc.status != proto.ServingStatus_LEADER {
+		return nil, errors.Wrap(constant.ErrInvalidStatus, "Node is not leader")
+	}
+
+	lc.frozen.Store(req.Frozen)
+
+	headOffset := wal.InvalidOffset
+	if lc.quorumAckTracker != nil {
+		headOffset = lc.quorumAckTracker.HeadOffset()
+	}
+
+	lc.log.Info("Set shard write-freeze",
+		slog.Bool("frozen", req.Frozen),
+		slog.Int64("term", lc.term.Load()),
+		slog.Int64("head-offset", headOffset),
+	)
+
+	return &proto.FreezeShardResponse{HeadOffset: headOffset}, nil
 }
 
 func (lc *leaderController) addFollower(follower string, followerHeadEntryId *proto.EntryId) error {
@@ -1005,6 +1053,14 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 	if err := checkStatusIsLeader(lc.status); err != nil {
 		lc.Unlock()
 		cb.OnCompleteError(err)
+		return
+	}
+	if lc.frozen.Load() {
+		// The shard is frozen for split cutover: reject new writes with a
+		// retryable error so clients re-resolve and route to the child shards
+		// once the cutover completes. Head must not advance while frozen.
+		lc.Unlock()
+		cb.OnCompleteError(constant.ErrNodeIsNotLeader)
 		return
 	}
 	newOffset := lc.quorumAckTracker.NextOffset()

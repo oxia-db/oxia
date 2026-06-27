@@ -131,6 +131,12 @@ type mockPerNodeChannels struct {
 		error
 	}
 
+	freezeShardRequests  chan *proto.FreezeShardRequest
+	freezeShardResponses chan struct {
+		*proto.FreezeShardResponse
+		error
+	}
+
 	shardAssignmentsStream *mockShardAssignmentClient
 	healthClient           *mockHealthClient
 	err                    error
@@ -313,6 +319,13 @@ func (m *mockPerNodeChannels) RemoveObserverResponse(err error) {
 	}{&proto.RemoveObserverResponse{}, err}
 }
 
+func (m *mockPerNodeChannels) FreezeShardResponse(headOffset int64, err error) {
+	m.freezeShardResponses <- struct {
+		*proto.FreezeShardResponse
+		error
+	}{&proto.FreezeShardResponse{HeadOffset: headOffset}, err}
+}
+
 func newMockPerNodeChannels() *mockPerNodeChannels {
 	return &mockPerNodeChannels{
 		newTermRequests: make(chan *proto.NewTermRequest, 100),
@@ -343,6 +356,11 @@ func newMockPerNodeChannels() *mockPerNodeChannels {
 		removeObserverRequests: make(chan *proto.RemoveObserverRequest, 100),
 		removeObserverResponses: make(chan struct {
 			*proto.RemoveObserverResponse
+			error
+		}, 100),
+		freezeShardRequests: make(chan *proto.FreezeShardRequest, 100),
+		freezeShardResponses: make(chan struct {
+			*proto.FreezeShardResponse
 			error
 		}, 100),
 		shardAssignmentsStream: newMockShardAssignmentClient(),
@@ -588,6 +606,30 @@ func (r *mockRpcProvider) RemoveObserver(ctx context.Context, node *proto.DataSe
 		return nil, ctx.Err()
 	case <-time.After(3 * time.Second):
 		return nil, errors.New("timeout")
+	}
+}
+
+func (r *mockRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	r.Lock()
+
+	s := r.getNode(node)
+	s.freezeShardRequests <- req
+
+	if s.err != nil {
+		r.Unlock()
+		return nil, s.err
+	}
+
+	r.Unlock()
+
+	// Non-blocking: use a scripted response if the test queued one, otherwise
+	// return a default. This keeps best-effort unfreeze calls (from cutover
+	// fallback or abort) from stalling tests that don't explicitly script them.
+	select {
+	case response := <-s.freezeShardResponses:
+		return response.FreezeShardResponse, response.error
+	default:
+		return &proto.FreezeShardResponse{}, nil
 	}
 }
 

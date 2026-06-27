@@ -234,14 +234,18 @@ func queueCatchUpResponses(rpcMock *mockRpcProvider) {
 
 // queueCutoverResponses queues all responses needed for the cutover phase.
 func queueCutoverResponses(rpcMock *mockRpcProvider) {
-	// Fence parent ensemble
+	// Freeze the parent leader: returns its frozen head offset (the target the
+	// children's head must reach before the parent is fenced).
+	rpcMock.GetNode(ps1).FreezeShardResponse(105, nil)
+
+	// Children head offset >= frozen parent head, while still observing.
+	rpcMock.GetNode(ls1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+	rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+
+	// Fence parent ensemble (point of no return, after children caught up)
 	rpcMock.GetNode(ps1).NewTermResponse(5, 105, nil)
 	rpcMock.GetNode(ps2).NewTermResponse(5, 105, nil)
 	rpcMock.GetNode(ps3).NewTermResponse(5, 105, nil)
-
-	// Children commit offset >= parentFinalOffset
-	rpcMock.GetNode(ls1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
 
 	// Re-elect children in clean term
 	rpcMock.GetNode(ls1).NewTermResponse(1, 106, nil)

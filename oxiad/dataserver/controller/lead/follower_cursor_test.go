@@ -127,6 +127,10 @@ func TestFollowerCursor(t *testing.T) {
 	assert.EqualValues(t, 0, req.CommitOffset)
 
 	assert.NoError(t, fc.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, wf.Close())
+	assert.NoError(t, db.Close())
+	assert.NoError(t, kvf.Close())
 }
 
 func TestFollowerCursor_SendSnapshot(t *testing.T) {
@@ -216,6 +220,10 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 	assert.EqualValues(t, n, firstAppend.Entry.Offset)
 
 	assert.NoError(t, fc.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, wf.Close())
+	assert.NoError(t, db.Close())
+	assert.NoError(t, kvf.Close())
 }
 
 func TestFollowerCursor_StreamToEmptyFollowerWhenWalComplete(t *testing.T) {
@@ -273,6 +281,10 @@ func TestFollowerCursor_StreamToEmptyFollowerWhenWalComplete(t *testing.T) {
 	assert.Empty(t, stream.SendSnapshotStream.Requests)
 
 	assert.NoError(t, fc.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, wf.Close())
+	assert.NoError(t, db.Close())
+	assert.NoError(t, kvf.Close())
 }
 
 func TestFollowerCursor_CloseWaitsForInFlightSnapshot(t *testing.T) {

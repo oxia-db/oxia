@@ -44,6 +44,7 @@ type Provider interface {
 	DeleteShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
 	Handshake(ctx context.Context, node *proto.DataServerIdentity, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error)
 	RemoveObserver(ctx context.Context, node *proto.DataServerIdentity, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error)
+	FreezeShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error)
 
 	GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error)
 }
@@ -196,6 +197,21 @@ func (r *rpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServer
 	defer cancel()
 
 	response, err := client.RemoveObserver(ctx, req)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
+}
+
+func (r *rpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	client, err := r.pool.GetCoordinationRpc(node.Internal)
+	if err != nil {
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return nil, oxiaErr
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
+
+	response, err := client.FreezeShard(ctx, req)
 	oxiaErr, _ := constant.FromGrpcError(err)
 	return response, oxiaErr
 }
