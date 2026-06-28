@@ -43,7 +43,7 @@ func TestProviderUsesConfiguredCoordinatorName(t *testing.T) {
 	})
 
 	provider := p.(*Provider[*commonproto.ClusterStatus])
-	require.Equal(t, "coordinator-0", provider.coordinatorName)
+	require.Equal(t, "coordinator-0", provider.name)
 }
 
 func TestProviderRejectsEmptyCoordinatorName(t *testing.T) {

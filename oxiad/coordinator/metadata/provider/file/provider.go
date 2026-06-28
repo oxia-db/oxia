@@ -50,7 +50,7 @@ type Provider[T gproto.Message] struct {
 	lockAcquired bool
 	watchEnabled metadatacommon.WatchMode
 	version      metadatacommon.Version
-	leaderName   string
+	name         string
 
 	ctx       context.Context
 	ctxCancel context.CancelFunc
@@ -65,7 +65,7 @@ func NewProvider[T gproto.Message](
 	path string,
 	codec metadatacodec.Codec[T],
 	watchEnabled metadatacommon.WatchMode,
-	coordinatorName string,
+	name string,
 ) (provider.Provider[T], error) {
 	p := &Provider[T]{
 		path:         path,
@@ -73,7 +73,7 @@ func NewProvider[T gproto.Message](
 		fileLock:     fslock.New(path),
 		watchEnabled: watchEnabled,
 		version:      metadatacommon.NotExists,
-		leaderName:   coordinatorName,
+		name:         name,
 		logger:       slog.With(slog.String("component", "metadata-file-provider"), slog.String("path", path)),
 	}
 	p.ctx, p.ctxCancel = context.WithCancel(ctx)
@@ -129,7 +129,7 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 }
 
 func (m *Provider[T]) GetLeaderName() (string, error) {
-	return m.leaderName, nil
+	return m.name, nil
 }
 
 func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {

@@ -33,7 +33,7 @@ import (
 
 func NewCoordinator(t *testing.T, configProvider provider.Provider[*commonproto.ClusterConfiguration]) coordruntime.Runtime {
 	t.Helper()
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, RandomCoordinatorName())
 	metadataFactory, metadata := NewMetadataFromProviders(t, metadataProvider, configProvider)
 	t.Cleanup(func() {
 		assert.NoError(t, metadata.Close())

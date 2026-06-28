@@ -107,10 +107,11 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Internal: fmt.Sprintf("localhost:%d", s3.InternalPort()),
 	}
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
+	coordinatorName := fmt.Sprintf("coordinator-%s", generateRandomStr(t))
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, coordinatorName)
 	clusterConfig := newDefaultClusterConfig(s1Addr, s2Addr, s3Addr)
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, coordinatorName)
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,

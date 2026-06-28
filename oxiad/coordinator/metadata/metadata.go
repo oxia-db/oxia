@@ -85,25 +85,25 @@ type coordinatorMetadata struct {
 	statusProvider provider.Provider[*commonproto.ClusterStatus]
 	statusLock     sync.Mutex
 
-	configProvider  provider.Provider[*commonproto.ClusterConfiguration]
-	configLock      sync.Mutex
-	coordinatorName string
+	configProvider provider.Provider[*commonproto.ClusterConfiguration]
+	configLock     sync.Mutex
+	name           string
 }
 
 func newMetadata(
 	ctx context.Context,
 	statusProvider provider.Provider[*commonproto.ClusterStatus],
 	configProvider provider.Provider[*commonproto.ClusterConfiguration],
-	coordinatorName string,
+	name string,
 ) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
-		logger:          slog.With(slog.String("component", "coordinator-metadata")),
-		ctx:             metadataCtx,
-		cancel:          cancel,
-		statusProvider:  statusProvider,
-		configProvider:  configProvider,
-		coordinatorName: coordinatorName,
+		logger:         slog.With(slog.String("component", "coordinator-metadata")),
+		ctx:            metadataCtx,
+		cancel:         cancel,
+		statusProvider: statusProvider,
+		configProvider: configProvider,
+		name:           name,
 	}
 	return m
 }
@@ -181,18 +181,18 @@ func (m *coordinatorMetadata) GetInstanceID() string {
 }
 
 func (m *coordinatorMetadata) GetSelf() (*commonproto.Coordinator, error) {
-	return m.getConfiguredCoordinator(m.coordinatorName)
+	coordinator, ok := m.configProvider.Watch().Load().Value.GetCoordinator(m.name)
+	if !ok {
+		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", m.name)
+	}
+	return coordinator.CloneVT(), nil
 }
 
 func (m *coordinatorMetadata) GetLeaderInfo() (*commonproto.Coordinator, error) {
-	leaderName, err := m.statusProvider.GetLeaderName()
+	name, err := m.statusProvider.GetLeaderName()
 	if err != nil {
 		return nil, err
 	}
-	return m.getConfiguredCoordinator(leaderName)
-}
-
-func (m *coordinatorMetadata) getConfiguredCoordinator(name string) (*commonproto.Coordinator, error) {
 	coordinator, ok := m.configProvider.Watch().Load().Value.GetCoordinator(name)
 	if !ok {
 		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", name)
