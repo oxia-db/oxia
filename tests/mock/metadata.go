@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"

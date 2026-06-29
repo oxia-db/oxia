@@ -260,21 +260,24 @@ func (cc *ClusterConfiguration) Validate() error {
 		}
 	}
 
-	coordinators := map[string]struct{}{}
+	return cc.validateCoordinators()
+}
+
+func (cc *ClusterConfiguration) validateCoordinators() error {
+	seen := map[string]struct{}{}
 	for _, coordinator := range cc.GetCoordinators() {
 		name := strings.TrimSpace(coordinator.GetName())
 		if name == "" {
 			return errors.New("cluster configuration: coordinator name must not be empty")
 		}
-		if _, exists := coordinators[name]; exists {
+		if _, exists := seen[name]; exists {
 			return fmt.Errorf("cluster configuration: duplicate coordinator %q", name)
 		}
-		coordinators[name] = struct{}{}
+		seen[name] = struct{}{}
 		if strings.TrimSpace(coordinator.GetPublicAddress()) == "" {
 			return fmt.Errorf("cluster configuration: coordinator %q publicAddress must not be empty", name)
 		}
 	}
-
 	return nil
 }
 
