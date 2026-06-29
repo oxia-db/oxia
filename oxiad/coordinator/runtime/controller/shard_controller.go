@@ -47,6 +47,20 @@ const (
 	chanBufferSize = 100
 
 	DefaultPeriodicTasksInterval = 1 * time.Minute
+
+	// ensembleReadinessPollInterval is how often the initial leader election
+	// re-checks whether the shard's ensemble has completed the coordinator
+	// handshake before it starts.
+	ensembleReadinessPollInterval = 10 * time.Millisecond
+	// ensembleReadinessQuorumGrace is how long, after a quorum of the ensemble
+	// is handshake-bound, the initial election keeps waiting for the remaining
+	// members before proceeding anyway.
+	ensembleReadinessQuorumGrace = 100 * time.Millisecond
+	// ensembleReadinessMaxWait caps the total time the initial election waits
+	// for handshakes, so an unreachable data server (no quorum) cannot wedge
+	// startup; past it the election proceeds and its retry loop surfaces the
+	// problem.
+	ensembleReadinessMaxWait = 5 * time.Second
 )
 
 var _ ShardController = &shardController{}
@@ -74,6 +88,13 @@ func NoOpSupportedFeaturesSupplier([]*proto.DataServerIdentity) map[string][]pro
 	return map[string][]proto.Feature{}
 }
 
+// DataServerReadinessSupplier reports how many of the given data servers have
+// completed the coordinator handshake and are therefore ready to accept
+// internal RPCs such as NewTerm. It is used to gate the initial leader
+// election so it does not race ahead of the handshake, which would otherwise be
+// rejected with "server not initialized yet". A nil supplier disables the gate.
+type DataServerReadinessSupplier = func(dataServers []*proto.DataServerIdentity) int
+
 type shardController struct {
 	namespace       string
 	shard           int64
@@ -86,6 +107,7 @@ type shardController struct {
 	eventListener                       ShardEventListener
 	metadataStore                       coordmetadata.Metadata
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
+	dataServerReadiness                 DataServerReadinessSupplier
 
 	electionOp          chan *action.ElectionAction
 	deleteOp            chan any
@@ -123,6 +145,7 @@ func NewShardController(
 	shardMetadata *proto.ShardMetadata,
 	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
+	dataServerReadiness DataServerReadinessSupplier,
 	eventListener ShardEventListener,
 	rpcProvider rpc.Provider,
 	periodTasksInterval time.Duration) ShardController {
@@ -135,6 +158,7 @@ func NewShardController(
 		rpc:                                 rpcProvider,
 		metadataStore:                       metadataStore,
 		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
+		dataServerReadiness:                 dataServerReadiness,
 		eventListener:                       eventListener,
 		leaderSelector:                      leaderselector.NewSelector(),
 		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
@@ -223,6 +247,7 @@ func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
+		s.waitForEnsembleReady(initShardMeta.Ensemble)
 		s.onElectLeader(nil)
 	default:
 		s.logger.Info(
@@ -230,6 +255,7 @@ func (s *shardController) run(initShardMeta *proto.ShardMetadata) {
 			slog.Any("current-leader", initShardMeta.Leader),
 		)
 
+		s.waitForEnsembleReady(initShardMeta.Ensemble)
 		if !s.verifyCurrentEnsemble(initShardMeta) {
 			s.onElectLeader(nil)
 		} else {
@@ -381,6 +407,64 @@ func (s *shardController) verifyCurrentEnsemble(initShardMeta *proto.ShardMetada
 
 	s.logger.Info("All data servers look good. No need to trigger new leader election")
 	return true
+}
+
+// waitForEnsembleReady blocks until the shard's ensemble has completed the
+// coordinator handshake, so the first leader election (and its pre-flight
+// verification) does not race ahead of the data servers binding the
+// coordinator instance id — internal RPCs are rejected with "server not
+// initialized yet" until that binding exists.
+//
+// To stay available when some data servers are slow or unreachable, it returns
+// as soon as the whole ensemble is bound, or once a quorum is bound and a short
+// grace period for the stragglers has elapsed, or after an overall safety
+// timeout (after which the election proceeds and its own retry loop surfaces
+// any remaining problem).
+func (s *shardController) waitForEnsembleReady(ensemble []*proto.DataServerIdentity) {
+	if s.dataServerReadiness == nil || len(ensemble) == 0 {
+		return
+	}
+	total := len(ensemble)
+	majority := total/2 + 1
+
+	if s.dataServerReadiness(ensemble) >= total {
+		return
+	}
+	s.logger.Debug("Waiting for ensemble data servers to complete handshake before electing")
+
+	ticker := time.NewTicker(ensembleReadinessPollInterval)
+	defer ticker.Stop()
+	overall := time.NewTimer(ensembleReadinessMaxWait)
+	defer overall.Stop()
+
+	var quorumGrace *time.Timer
+	var quorumGraceC <-chan time.Time
+	defer func() {
+		if quorumGrace != nil {
+			quorumGrace.Stop()
+		}
+	}()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-overall.C:
+			s.logger.Warn("Timed out waiting for ensemble data servers to complete handshake; electing anyway")
+			return
+		case <-quorumGraceC:
+			return
+		case <-ticker.C:
+			ready := s.dataServerReadiness(ensemble)
+			if ready >= total {
+				return
+			}
+			if ready >= majority && quorumGrace == nil {
+				quorumGrace = time.NewTimer(ensembleReadinessQuorumGrace)
+				quorumGraceC = quorumGrace.C
+			}
+		}
+	}
 }
 
 func (s *shardController) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServerIdentity {

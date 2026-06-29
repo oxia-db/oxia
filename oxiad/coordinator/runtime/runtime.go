@@ -189,7 +189,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 
 	for shard, shardMetadata := range namespaceStatus.GetShards() {
 		c.shardControllers[shard] = controller.NewShardController(name, shard, namespaceConfig,
-			shardMetadata, c.metadata, c.findDataServerFeatures,
+			shardMetadata, c.metadata, c.findDataServerFeatures, c.countReadyDataServers,
 			c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		slog.Info("Added new shard", slog.Int64("shard", shard),
 			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
@@ -237,6 +237,37 @@ func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity
 		}
 	}
 	return features
+}
+
+// countReadyDataServers reports how many of the given data servers have
+// completed the coordinator handshake. Shard controllers use it to hold the
+// initial leader election until the ensemble's data servers are handshake-bound,
+// avoiding the startup race where NewTerm is rejected with "server not
+// initialized yet".
+//
+// A node both Running and Draining counts as ready: a node removed from the
+// cluster config is moved to drainingNodes (with Status Draining) but may still
+// belong to a shard ensemble that could not be rebalanced (e.g. an RF=1 shard).
+// It already completed the handshake, so it can be fenced and must not stall the
+// gate on the overall timeout.
+func (c *runtime) countReadyDataServers(dataServers []*proto.DataServerIdentity) int {
+	c.RLock()
+	defer c.RUnlock()
+
+	ready := 0
+	for _, dataServer := range dataServers {
+		name := dataServer.GetNameOrDefault()
+		serverController, exist := c.dataServerControllers[name]
+		if !exist {
+			serverController, exist = c.drainingNodes[name]
+		}
+		if exist {
+			if status := serverController.Status(); status == controller.Running || status == controller.Draining {
+				ready++
+			}
+		}
+	}
+	return ready
 }
 
 func dataServersToCandidatesAndMetadata(dataServers map[string]commonobject.Borrowed[*proto.DataServer]) (
@@ -668,7 +699,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	for _, childId := range []int64{leftChildId, rightChildId} {
 		childMeta := nsCloned.Shards[childId]
 		c.shardControllers[childId] = controller.NewShardController(namespace, childId, nsConfig,
-			childMeta, c.metadata, c.findDataServerFeatures,
+			childMeta, c.metadata, c.findDataServerFeatures, c.countReadyDataServers,
 			c, c.rpc, controller.DefaultPeriodicTasksInterval)
 	}
 
@@ -870,7 +901,7 @@ func New(
 				nsConfig = borrowedNsConfig.UnsafeBorrow()
 			}
 			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
-				shardMetadata, c.metadata, c.findDataServerFeatures,
+				shardMetadata, c.metadata, c.findDataServerFeatures, c.countReadyDataServers,
 				c, c.rpc, controller.DefaultPeriodicTasksInterval)
 		}
 	}
