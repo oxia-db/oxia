@@ -146,6 +146,8 @@ type KV interface {
 	Flush() error
 
 	Delete() error
+
+	DiskSpaceUsage() uint64
 }
 type FactoryOptions struct {
 	DataDir     string

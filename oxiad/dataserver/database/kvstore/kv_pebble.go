@@ -404,6 +404,10 @@ func (p *Pebble) Flush() error {
 	return p.db.Flush()
 }
 
+func (p *Pebble) DiskSpaceUsage() uint64 {
+	return p.db.Metrics().DiskSpaceUsage()
+}
+
 func (p *Pebble) NewWriteBatch() WriteBatch {
 	return &PebbleBatch{p: p, b: p.db.NewIndexedBatch()}
 }
