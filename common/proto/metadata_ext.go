@@ -201,12 +201,11 @@ func (cc *ClusterConfiguration) GetCoordinator(name string) (*Coordinator, bool)
 		return nil, false
 	}
 
-	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, false
 	}
 	for _, coordinator := range cc.GetCoordinators() {
-		if strings.TrimSpace(coordinator.GetName()) == name {
+		if coordinator.GetName() == name {
 			return coordinator, true
 		}
 	}
@@ -266,7 +265,7 @@ func (cc *ClusterConfiguration) Validate() error {
 func (cc *ClusterConfiguration) validateCoordinators() error {
 	seen := map[string]struct{}{}
 	for _, coordinator := range cc.GetCoordinators() {
-		name := strings.TrimSpace(coordinator.GetName())
+		name := coordinator.GetName()
 		if name == "" {
 			return errors.New("cluster configuration: coordinator name must not be empty")
 		}
