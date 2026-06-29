@@ -300,8 +300,6 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 		res.Deletes = append(res.Deletes, dr)
 	}
 
-	d.writeOpsTotal.Add(uint64(len(b.Puts) + len(b.Deletes) + len(b.DeleteRanges)))
-
 	d.deleteRangesCounter.Add(len(b.DeleteRanges))
 	for _, delRangeReq := range b.DeleteRanges {
 		dr, err := d.applyDeleteRange(batch, notifications, delRangeReq, updateOperationCallback)
@@ -311,6 +309,8 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 
 		res.DeleteRanges = append(res.DeleteRanges, dr)
 	}
+
+	d.writeOpsTotal.Add(uint64(len(b.Puts) + len(b.Deletes) + len(b.DeleteRanges)))
 
 	return notifications, res, nil
 }
