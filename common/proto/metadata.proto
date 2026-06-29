@@ -63,11 +63,7 @@ message AutoSplitConfig {
   uint32 max_throughput_ops = 3;
   string stabilization_period = 4;
   string cooldown_period = 5;
-}
-
-message ShardManagement {
-  uint32 max_shards_per_namespace = 1;
-  AutoSplitConfig auto_split = 2;
+  uint32 max_shards_per_namespace = 6;
 }
 
 message ClusterConfiguration {
@@ -77,7 +73,7 @@ message ClusterConfiguration {
   map<string, DataServerMetadata> server_metadata = 4;
   LoadBalancer load_balancer = 5;
   repeated Coordinator coordinators = 6;
-  ShardManagement shard_management = 7;
+  AutoSplitConfig auto_split = 7;
 }
 
 message HashRange {

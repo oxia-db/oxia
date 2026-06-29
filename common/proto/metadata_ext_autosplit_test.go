@@ -59,39 +59,37 @@ func TestAutoSplitConfig_MaxThroughputOpsOrDefault(t *testing.T) {
 	assert.Equal(t, uint32(5000), (&AutoSplitConfig{MaxThroughputOps: 5000}).GetMaxThroughputOpsOrDefault())
 }
 
-func TestShardManagement_MaxShardsPerNamespaceOrDefault(t *testing.T) {
-	assert.Equal(t, uint32(64), (*ShardManagement)(nil).GetMaxShardsPerNamespaceOrDefault())
-	assert.Equal(t, uint32(64), (&ShardManagement{}).GetMaxShardsPerNamespaceOrDefault())
-	assert.Equal(t, uint32(128), (&ShardManagement{MaxShardsPerNamespace: 128}).GetMaxShardsPerNamespaceOrDefault())
+func TestAutoSplitConfig_MaxShardsPerNamespaceOrDefault(t *testing.T) {
+	assert.Equal(t, uint32(64), (*AutoSplitConfig)(nil).GetMaxShardsPerNamespaceOrDefault())
+	assert.Equal(t, uint32(64), (&AutoSplitConfig{}).GetMaxShardsPerNamespaceOrDefault())
+	assert.Equal(t, uint32(128), (&AutoSplitConfig{MaxShardsPerNamespace: 128}).GetMaxShardsPerNamespaceOrDefault())
 }
 
-func TestClusterConfiguration_GetShardManagementWithDefaults(t *testing.T) {
+func TestClusterConfiguration_GetAutoSplitWithDefaults(t *testing.T) {
 	t.Run("nil config", func(t *testing.T) {
-		sm := (*ClusterConfiguration)(nil).GetShardManagementWithDefaults()
-		assert.Equal(t, uint32(64), sm.GetMaxShardsPerNamespace())
-		assert.False(t, sm.GetAutoSplit().GetEnabled())
-		assert.Equal(t, uint32(1024), sm.GetAutoSplit().GetMaxShardSizeMb())
-		assert.Equal(t, uint32(10000), sm.GetAutoSplit().GetMaxThroughputOps())
-		assert.Equal(t, "1m", sm.GetAutoSplit().GetStabilizationPeriod())
-		assert.Equal(t, "5m", sm.GetAutoSplit().GetCooldownPeriod())
+		as := (*ClusterConfiguration)(nil).GetAutoSplitWithDefaults()
+		assert.False(t, as.GetEnabled())
+		assert.Equal(t, uint32(1024), as.GetMaxShardSizeMb())
+		assert.Equal(t, uint32(10000), as.GetMaxThroughputOps())
+		assert.Equal(t, "1m", as.GetStabilizationPeriod())
+		assert.Equal(t, "5m", as.GetCooldownPeriod())
+		assert.Equal(t, uint32(64), as.GetMaxShardsPerNamespace())
 	})
 
 	t.Run("partial override", func(t *testing.T) {
 		cc := &ClusterConfiguration{
-			ShardManagement: &ShardManagement{
+			AutoSplit: &AutoSplitConfig{
+				Enabled:               true,
+				MaxShardSizeMb:        2048,
 				MaxShardsPerNamespace: 32,
-				AutoSplit: &AutoSplitConfig{
-					Enabled:      true,
-					MaxShardSizeMb: 2048,
-				},
 			},
 		}
-		sm := cc.GetShardManagementWithDefaults()
-		assert.Equal(t, uint32(32), sm.GetMaxShardsPerNamespace())
-		assert.True(t, sm.GetAutoSplit().GetEnabled())
-		assert.Equal(t, uint32(2048), sm.GetAutoSplit().GetMaxShardSizeMb())
-		assert.Equal(t, uint32(10000), sm.GetAutoSplit().GetMaxThroughputOps())
-		assert.Equal(t, "1m", sm.GetAutoSplit().GetStabilizationPeriod())
-		assert.Equal(t, "5m", sm.GetAutoSplit().GetCooldownPeriod())
+		as := cc.GetAutoSplitWithDefaults()
+		assert.True(t, as.GetEnabled())
+		assert.Equal(t, uint32(2048), as.GetMaxShardSizeMb())
+		assert.Equal(t, uint32(10000), as.GetMaxThroughputOps())
+		assert.Equal(t, "1m", as.GetStabilizationPeriod())
+		assert.Equal(t, "5m", as.GetCooldownPeriod())
+		assert.Equal(t, uint32(32), as.GetMaxShardsPerNamespace())
 	})
 }

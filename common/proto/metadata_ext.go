@@ -425,51 +425,45 @@ func (c *AutoSplitConfig) GetMaxThroughputOpsOrDefault() uint32 {
 	return c.GetMaxThroughputOps()
 }
 
-func (sm *ShardManagement) GetMaxShardsPerNamespaceOrDefault() uint32 {
-	if sm == nil || sm.GetMaxShardsPerNamespace() == 0 {
+func (c *AutoSplitConfig) GetMaxShardsPerNamespaceOrDefault() uint32 {
+	if c == nil || c.GetMaxShardsPerNamespace() == 0 {
 		return defaultMaxShardsPerNamespace
 	}
-	return sm.GetMaxShardsPerNamespace()
+	return c.GetMaxShardsPerNamespace()
 }
 
-func (cc *ClusterConfiguration) GetShardManagementWithDefaults() *ShardManagement {
-	sm := &ShardManagement{
+func (cc *ClusterConfiguration) GetAutoSplitWithDefaults() *AutoSplitConfig {
+	as := &AutoSplitConfig{
+		MaxShardSizeMb:       defaultAutoSplitMaxShardSizeMB,
+		MaxThroughputOps:     defaultAutoSplitMaxThroughputOps,
+		StabilizationPeriod:  defaultAutoSplitStabilizationString,
+		CooldownPeriod:       defaultAutoSplitCooldownString,
 		MaxShardsPerNamespace: defaultMaxShardsPerNamespace,
-		AutoSplit: &AutoSplitConfig{
-			MaxShardSizeMb:      defaultAutoSplitMaxShardSizeMB,
-			MaxThroughputOps:    defaultAutoSplitMaxThroughputOps,
-			StabilizationPeriod: defaultAutoSplitStabilizationString,
-			CooldownPeriod:      defaultAutoSplitCooldownString,
-		},
 	}
 
-	if cc == nil || cc.GetShardManagement() == nil {
-		return sm
+	if cc == nil || cc.GetAutoSplit() == nil {
+		return as
 	}
 
-	src := cc.GetShardManagement()
+	src := cc.GetAutoSplit()
+	as.Enabled = src.GetEnabled()
+	if v := src.GetMaxShardSizeMb(); v != 0 {
+		as.MaxShardSizeMb = v
+	}
+	if v := src.GetMaxThroughputOps(); v != 0 {
+		as.MaxThroughputOps = v
+	}
+	if v := src.GetStabilizationPeriod(); v != "" {
+		as.StabilizationPeriod = v
+	}
+	if v := src.GetCooldownPeriod(); v != "" {
+		as.CooldownPeriod = v
+	}
 	if v := src.GetMaxShardsPerNamespace(); v != 0 {
-		sm.MaxShardsPerNamespace = v
+		as.MaxShardsPerNamespace = v
 	}
 
-	if src.GetAutoSplit() != nil {
-		as := src.GetAutoSplit()
-		sm.AutoSplit.Enabled = as.GetEnabled()
-		if v := as.GetMaxShardSizeMb(); v != 0 {
-			sm.AutoSplit.MaxShardSizeMb = v
-		}
-		if v := as.GetMaxThroughputOps(); v != 0 {
-			sm.AutoSplit.MaxThroughputOps = v
-		}
-		if v := as.GetStabilizationPeriod(); v != "" {
-			sm.AutoSplit.StabilizationPeriod = v
-		}
-		if v := as.GetCooldownPeriod(); v != "" {
-			sm.AutoSplit.CooldownPeriod = v
-		}
-	}
-
-	return sm
+	return as
 }
 
 func formatKeySortingType(value KeySortingType) string {
