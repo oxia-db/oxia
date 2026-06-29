@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/uuid"
+
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
@@ -35,10 +37,14 @@ import (
 
 const metadataFilePerm = 0o600
 
+func RandomCoordinatorName() string {
+	return "coordinator-" + uuid.NewString()
+}
+
 func NewConfigProvider(t *testing.T, clusterConfig *proto.ClusterConfiguration) provider.Provider[*proto.ClusterConfiguration] {
 	t.Helper()
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, nil)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, RandomCoordinatorName())
 	PutConfig(t, configProvider, clusterConfig)
 	return configProvider
 }
@@ -71,9 +77,12 @@ func NewMetadataFromProviders(
 	writeSnapshot(t, statusPath, metadatacodec.ClusterStatusCodec, statusProvider.Watch().Load().Value)
 	writeSnapshot(t, configPath, metadatacodec.ClusterConfigCodec, configProvider.Watch().Load().Value)
 	mirrorProviderToFile(t, configPath, metadatacodec.ClusterConfigCodec, configProvider)
+	name, err := statusProvider.GetLeaderName()
+	require.NoError(t, err)
 
 	metadataFactory, err := coordmetadata.New(t.Context(), &coordoption.Options{
 		Metadata: coordoption.MetadataOptions{
+			Name: name,
 			ProviderOptions: coordoption.ProviderOptions{
 				ProviderName: metadatacommon.NameFile,
 				File: coordoption.FileMetadata{

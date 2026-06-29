@@ -248,11 +248,11 @@ func (m *mockNamespaceMetadata) GetNamespace(namespace string) (commonobject.Bor
 
 var _ coordmetadata.Metadata = (*mockNamespaceMetadata)(nil)
 
-func (*mockNamespaceMetadata) GetSelf() *proto.CoordinatorInfo {
-	return nil
+func (*mockNamespaceMetadata) GetSelf() (*proto.Coordinator, error) {
+	return nil, nil //nolint:nilnil
 }
 
-func (*mockNamespaceMetadata) GetLeaderInfo() (*proto.CoordinatorInfo, error) {
+func (*mockNamespaceMetadata) GetLeaderInfo() (*proto.Coordinator, error) {
 	return nil, nil //nolint:nilnil
 }
 

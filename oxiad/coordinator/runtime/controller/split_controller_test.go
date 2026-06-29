@@ -85,7 +85,7 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 	t.Helper()
 
 	rpcMock := newMockRpcProvider()
-	metaProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, nil)
+	metaProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
 			Name:              constant.DefaultNamespace,

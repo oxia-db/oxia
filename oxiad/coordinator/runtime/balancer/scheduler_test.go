@@ -54,11 +54,11 @@ var _ coordmetadata.Metadata = (*mockMetadata)(nil)
 
 func (*mockMetadata) Close() error { return nil }
 
-func (*mockMetadata) GetSelf() *proto.CoordinatorInfo {
-	return nil
+func (*mockMetadata) GetSelf() (*proto.Coordinator, error) {
+	return nil, nil //nolint:nilnil
 }
 
-func (*mockMetadata) GetLeaderInfo() (*proto.CoordinatorInfo, error) {
+func (*mockMetadata) GetLeaderInfo() (*proto.Coordinator, error) {
 	return nil, nil //nolint:nilnil
 }
 

@@ -83,17 +83,22 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
 }
 
-func TestMetadataGetSelfReturnsCoordinatorInfo(t *testing.T) {
+func TestMetadataGetSelfReturnsConfiguredCoordinator(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, option.DefaultFileConfigName), []byte(`
+coordinators:
+  - name: coordinator-0
+    publicAddress: coordinator-0.example.com:6651
+`), 0600))
+
 	factory, err := New(t.Context(), &option.Options{
-		Server: option.ServerOptions{
-			Public: option.PublicServerOptions{
-				AdvertisedAddress: "coordinator-0.example.com:6651",
-			},
-		},
 		Metadata: option.MetadataOptions{
-			Identity: "coordinator-0",
+			Name: "coordinator-0",
 			ProviderOptions: option.ProviderOptions{
-				ProviderName: metadataconstant.NameMemory,
+				ProviderName: metadataconstant.NameFile,
+				File: option.FileMetadata{
+					Dir: dir,
+				},
 			},
 		},
 	})
@@ -105,12 +110,15 @@ func TestMetadataGetSelfReturnsCoordinatorInfo(t *testing.T) {
 		require.NoError(t, factory.Close())
 	}()
 
-	self := metadata.GetSelf()
-	require.Equal(t, "coordinator-0", self.GetIdentity())
+	self, err := metadata.GetSelf()
+	require.NoError(t, err)
+	require.Equal(t, "coordinator-0", self.GetName())
 	require.Equal(t, "coordinator-0.example.com:6651", self.GetPublicAddress())
 
-	self.Identity = "changed"
-	require.Equal(t, "coordinator-0", metadata.GetSelf().GetIdentity())
+	self.Name = "changed"
+	nextSelf, err := metadata.GetSelf()
+	require.NoError(t, err)
+	require.Equal(t, "coordinator-0", nextSelf.GetName())
 }
 
 func writeClusterConfig(t *testing.T, path string) {

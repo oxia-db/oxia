@@ -24,8 +24,8 @@ message DataServerIdentity {
   string internal = 3;
 }
 
-message CoordinatorInfo {
-  string identity = 1;
+message Coordinator {
+  string name = 1;
   string public_address = 2;
 }
 
@@ -63,6 +63,7 @@ message ClusterConfiguration {
   repeated string allow_extra_authorities = 3;
   map<string, DataServerMetadata> server_metadata = 4;
   LoadBalancer load_balancer = 5;
+  repeated Coordinator coordinators = 6;
 }
 
 message HashRange {

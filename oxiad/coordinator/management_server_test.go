@@ -48,16 +48,19 @@ func dataServer(name *string, public, internal string) *proto.DataServerIdentity
 
 type testLeaderMetadata struct {
 	coordmetadata.Metadata
-	info *proto.CoordinatorInfo
-	self *proto.CoordinatorInfo
+	info *proto.Coordinator
+	self *proto.Coordinator
 	err  error
 }
 
-func (p *testLeaderMetadata) GetSelf() *proto.CoordinatorInfo {
-	return p.self.CloneVT()
+func (p *testLeaderMetadata) GetSelf() (*proto.Coordinator, error) {
+	if p.self == nil {
+		return nil, nil //nolint:nilnil
+	}
+	return p.self.CloneVT(), nil
 }
 
-func (p *testLeaderMetadata) GetLeaderInfo() (*proto.CoordinatorInfo, error) {
+func (p *testLeaderMetadata) GetLeaderInfo() (*proto.Coordinator, error) {
 	return p.info, p.err
 }
 
@@ -148,12 +151,12 @@ func newReadyManagementServer(
 
 func TestManagementServerRedirectsRequestsToCoordinatorLeader(t *testing.T) {
 	management := newManagementServer(&testLeaderMetadata{
-		info: &proto.CoordinatorInfo{
-			Identity:      "coordinator-1",
+		info: &proto.Coordinator{
+			Name:          "coordinator-1",
 			PublicAddress: "coordinator-1.example.com:6651",
 		},
-		self: &proto.CoordinatorInfo{
-			Identity:      "coordinator-0",
+		self: &proto.Coordinator{
+			Name:          "coordinator-0",
 			PublicAddress: "coordinator-0.example.com:6651",
 		},
 	})
@@ -271,12 +274,12 @@ func TestManagementServerReturnsUnavailableWithoutLeader(t *testing.T) {
 
 func TestManagementServerReturnsUnavailableWhenLocalLeaderIsNotReady(t *testing.T) {
 	management := newManagementServer(&testLeaderMetadata{
-		info: &proto.CoordinatorInfo{
-			Identity:      "coordinator-0",
+		info: &proto.Coordinator{
+			Name:          "coordinator-0",
 			PublicAddress: "coordinator-0.example.com:6651",
 		},
-		self: &proto.CoordinatorInfo{
-			Identity:      "coordinator-0",
+		self: &proto.Coordinator{
+			Name:          "coordinator-0",
 			PublicAddress: "coordinator-0.example.com:6651",
 		},
 	})
