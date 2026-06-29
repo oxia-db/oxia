@@ -29,13 +29,13 @@ const (
 	defaultLoadBalancerScheduleString   = "30s"
 	defaultLoadBalancerQuarantineString = "5m"
 
-	defaultAutoSplitMaxShardSizeMB       uint32 = 1024
-	defaultAutoSplitMaxThroughputOps     uint32 = 10000
-	defaultAutoSplitStabilizationPeriod         = 1 * time.Minute
-	defaultAutoSplitCooldownPeriod              = 5 * time.Minute
-	defaultAutoSplitStabilizationString         = "1m"
-	defaultAutoSplitCooldownString              = "5m"
-	defaultMaxShardsPerNamespace         uint32 = 64
+	defaultAutoSplitMaxShardSizeMB      uint32 = 1024
+	defaultAutoSplitMaxThroughputOps    uint32 = 10000
+	defaultAutoSplitStabilizationPeriod        = 1 * time.Minute
+	defaultAutoSplitCooldownPeriod             = 5 * time.Minute
+	defaultAutoSplitStabilizationString        = "1m"
+	defaultAutoSplitCooldownString             = "5m"
+	defaultMaxShardsPerNamespace        uint32 = 64
 
 	AntiAffinityModeUnknown = ""
 	AntiAffinityModeStrict  = "strict"
@@ -434,10 +434,10 @@ func (c *AutoSplitConfig) GetMaxShardsPerNamespaceOrDefault() uint32 {
 
 func (cc *ClusterConfiguration) GetAutoSplitWithDefaults() *AutoSplitConfig {
 	as := &AutoSplitConfig{
-		MaxShardSizeMb:       defaultAutoSplitMaxShardSizeMB,
-		MaxThroughputOps:     defaultAutoSplitMaxThroughputOps,
-		StabilizationPeriod:  defaultAutoSplitStabilizationString,
-		CooldownPeriod:       defaultAutoSplitCooldownString,
+		MaxShardSizeMb:        defaultAutoSplitMaxShardSizeMB,
+		MaxThroughputOps:      defaultAutoSplitMaxThroughputOps,
+		StabilizationPeriod:   defaultAutoSplitStabilizationString,
+		CooldownPeriod:        defaultAutoSplitCooldownString,
 		MaxShardsPerNamespace: defaultMaxShardsPerNamespace,
 	}
 
