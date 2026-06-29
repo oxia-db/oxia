@@ -40,7 +40,7 @@ func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	metadata, _, err := factory.CreateMetadata(t.Context())
+	metadata, err := factory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())
@@ -71,7 +71,7 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	metadata, _, err := factory.CreateMetadata(t.Context())
+	metadata, err := factory.CreateMetadata(t.Context())
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, metadata.Close())
@@ -81,6 +81,44 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 	config := metadata.GetConfig().UnsafeBorrow()
 	require.Len(t, config.GetNamespaces(), 1)
 	require.Equal(t, "default", config.GetNamespaces()[0].GetName())
+}
+
+func TestMetadataGetSelfReturnsConfiguredCoordinator(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, option.DefaultFileConfigName), []byte(`
+coordinators:
+  - name: coordinator-0
+    publicAddress: coordinator-0.example.com:6651
+`), 0600))
+
+	factory, err := New(t.Context(), &option.Options{
+		Metadata: option.MetadataOptions{
+			Name: "coordinator-0",
+			ProviderOptions: option.ProviderOptions{
+				ProviderName: metadataconstant.NameFile,
+				File: option.FileMetadata{
+					Dir: dir,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	metadata, err := factory.CreateMetadata(t.Context())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, metadata.Close())
+		require.NoError(t, factory.Close())
+	}()
+
+	self, err := metadata.GetSelf()
+	require.NoError(t, err)
+	require.Equal(t, "coordinator-0", self.GetName())
+	require.Equal(t, "coordinator-0.example.com:6651", self.GetPublicAddress())
+
+	self.Name = "changed"
+	nextSelf, err := metadata.GetSelf()
+	require.NoError(t, err)
+	require.Equal(t, "coordinator-0", nextSelf.GetName())
 }
 
 func writeClusterConfig(t *testing.T, path string) {

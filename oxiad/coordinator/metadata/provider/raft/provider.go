@@ -79,6 +79,10 @@ func (mpr *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	return mpr.raft.waitToBecomeLeader()
 }
 
+func (*Provider[T]) GetLeaderName() (string, error) {
+	return "", provider.ErrCoordinatorLeaderUnavailable
+}
+
 func (mpr *Provider[T]) Close() error {
 	mpr.ctxCancel()
 	mpr.wg.Wait()

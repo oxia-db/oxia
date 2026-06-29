@@ -49,14 +49,14 @@ func exec(cmd *cobra.Command, args []string) error {
 	}(client)
 
 	if len(args) == 0 {
-		namespaces, err := client.ListNamespaces()
+		namespaces, err := client.ListNamespaces(cmd.Context())
 		if err != nil {
 			return err
 		}
 		return namespacecli.WriteNamespaces(cmd.OutOrStdout(), outputFormat, namespaces)
 	}
 
-	namespace, err := client.GetNamespace(args[0])
+	namespace, err := client.GetNamespace(cmd.Context(), args[0])
 	if err != nil {
 		return err
 	}

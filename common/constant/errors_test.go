@@ -35,6 +35,16 @@ func TestWithLeaderHint(t *testing.T) {
 	assert.Equal(t, "leader:6648", leader)
 }
 
+func TestWithCoordinatorLeaderHint(t *testing.T) {
+	err := IntoGrpcStatusError(ErrNodeIsNotLeader, WithCoordinatorLeaderHint("coordinator:6651"))
+	oxiaErr, metadata := FromGrpcError(err)
+	leader, ok := metadata.GetCoordinatorLeaderHint()
+
+	assert.ErrorIs(t, oxiaErr, ErrNodeIsNotLeader)
+	assert.True(t, ok)
+	assert.Equal(t, "coordinator:6651", leader)
+}
+
 func TestIntoGrpcStatusError(t *testing.T) {
 	tests := []struct {
 		err  error

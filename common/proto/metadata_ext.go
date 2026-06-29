@@ -204,6 +204,23 @@ func (cc *ClusterConfiguration) GetDataServer(id string) (*DataServer, bool) {
 	return nil, false
 }
 
+func (cc *ClusterConfiguration) GetCoordinator(name string) (*Coordinator, bool) {
+	if cc == nil {
+		return nil, false
+	}
+
+	if name == "" {
+		return nil, false
+	}
+	for _, coordinator := range cc.GetCoordinators() {
+		if coordinator.GetName() == name {
+			return coordinator, true
+		}
+	}
+
+	return nil, false
+}
+
 func (cc *ClusterConfiguration) Validate() error {
 	if cc == nil {
 		return errors.New("cluster configuration: must not be nil")
@@ -250,6 +267,24 @@ func (cc *ClusterConfiguration) Validate() error {
 		}
 	}
 
+	return cc.validateCoordinators()
+}
+
+func (cc *ClusterConfiguration) validateCoordinators() error {
+	seen := map[string]struct{}{}
+	for _, coordinator := range cc.GetCoordinators() {
+		name := coordinator.GetName()
+		if name == "" {
+			return errors.New("cluster configuration: coordinator name must not be empty")
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("cluster configuration: duplicate coordinator %q", name)
+		}
+		seen[name] = struct{}{}
+		if strings.TrimSpace(coordinator.GetPublicAddress()) == "" {
+			return fmt.Errorf("cluster configuration: coordinator %q publicAddress must not be empty", name)
+		}
+	}
 	return nil
 }
 

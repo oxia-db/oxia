@@ -38,6 +38,9 @@ import (
 type Metadata interface {
 	io.Closer
 
+	WaitToBecomeLeader() (lost <-chan struct{}, err error)
+	GetSelf() (*commonproto.Coordinator, error)
+	GetLeaderInfo() (*commonproto.Coordinator, error)
 	GetInstanceID() string
 	ReserveShardIDs(count uint32) int64
 
@@ -84,9 +87,15 @@ type coordinatorMetadata struct {
 
 	configProvider provider.Provider[*commonproto.ClusterConfiguration]
 	configLock     sync.Mutex
+	name           string
 }
 
-func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonproto.ClusterStatus], configProvider provider.Provider[*commonproto.ClusterConfiguration]) Metadata {
+func newMetadata(
+	ctx context.Context,
+	statusProvider provider.Provider[*commonproto.ClusterStatus],
+	configProvider provider.Provider[*commonproto.ClusterConfiguration],
+	name string,
+) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &coordinatorMetadata{
 		logger:         slog.With(slog.String("component", "coordinator-metadata")),
@@ -94,9 +103,8 @@ func newMetadata(ctx context.Context, statusProvider provider.Provider[*commonpr
 		cancel:         cancel,
 		statusProvider: statusProvider,
 		configProvider: configProvider,
+		name:           name,
 	}
-
-	m.doStatusRecovery()
 	return m
 }
 
@@ -170,6 +178,37 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 
 func (m *coordinatorMetadata) GetInstanceID() string {
 	return m.statusProvider.Watch().Load().Value.GetInstanceId()
+}
+
+func (m *coordinatorMetadata) GetSelf() (*commonproto.Coordinator, error) {
+	coordinator, ok := m.configProvider.Watch().Load().Value.GetCoordinator(m.name)
+	if !ok {
+		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", m.name)
+	}
+	return coordinator.CloneVT(), nil
+}
+
+func (m *coordinatorMetadata) GetLeaderInfo() (*commonproto.Coordinator, error) {
+	name, err := m.statusProvider.GetLeaderName()
+	if err != nil {
+		return nil, err
+	}
+	coordinator, ok := m.configProvider.Watch().Load().Value.GetCoordinator(name)
+	if !ok {
+		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", name)
+	}
+	return coordinator.CloneVT(), nil
+}
+
+func (m *coordinatorMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
+	m.logger.Info("Waiting to become leader")
+	leadershipLost, err := m.statusProvider.WaitToBecomeLeader()
+	if err != nil {
+		return nil, fmt.Errorf("failed to wait in becoming leader: %w", err)
+	}
+	m.logger.Info("This coordinator is now leader")
+	m.doStatusRecovery()
+	return leadershipLost, nil
 }
 
 func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {

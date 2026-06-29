@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sync"
 
 	"go.uber.org/multierr"
@@ -41,6 +40,7 @@ type Factory struct {
 
 	statusProvider  provider.Provider[*commonproto.ClusterStatus]
 	configProvider  provider.Provider[*commonproto.ClusterConfiguration]
+	coordinatorName string
 	raft            *raft.Raft
 	raftInterceptor raft.Interceptor
 }
@@ -61,16 +61,18 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	if err := meta.ApplyLegacyClusterConfigPath(options.Cluster.ConfigPath); err != nil {
 		return nil, err
 	}
-	factory := &Factory{}
+	factory := &Factory{
+		coordinatorName: meta.Name,
+	}
 	switch meta.ProviderName {
 	case metadatacommon.NameMemory:
-		factory.statusProvider = memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
-		factory.configProvider = memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+		factory.statusProvider = memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Name)
+		factory.configProvider = memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, meta.Name)
 	case metadatacommon.NameFile:
-		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled); err != nil {
+		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Name); err != nil {
 			return nil, err
 		}
-		if factory.configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled); err != nil {
+		if factory.configProvider, err = file.NewProvider(ctx, meta.File.ConfigPath(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, meta.Name); err != nil {
 			return nil, err
 		}
 	case metadatacommon.NameConfigMap:
@@ -78,14 +80,10 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 		if err != nil {
 			return nil, err
 		}
-		coordinatorInfo := &commonproto.CoordinatorInfo{
-			Identity:      meta.Identity,
-			PublicAddress: options.Server.Public.AdvertisedAddress,
-		}
-		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, coordinatorInfo); err != nil {
+		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, meta.Name); err != nil {
 			return nil, err
 		}
-		if factory.configProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.ConfigNameOrDefault(), metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, coordinatorInfo); err != nil {
+		if factory.statusProvider, err = kubernetes.NewProvider(ctx, client, meta.Kubernetes.Namespace, meta.Kubernetes.StatusNameOrDefault(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Name); err != nil {
 			return nil, err
 		}
 	case metadatacommon.NameRaft:
@@ -108,24 +106,14 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	return factory, nil
 }
 
-// CreateMetadata blocks until this coordinator becomes the leader. The
-// returned channel gets closed if the leadership is subsequently lost; it is
-// nil when the leadership cannot be lost.
-func (f *Factory) CreateMetadata(ctx context.Context) (Metadata, <-chan struct{}, error) {
+func (f *Factory) CreateMetadata(ctx context.Context) (Metadata, error) {
 	f.mu.Lock()
 	statusProvider := f.statusProvider
 	configProvider := f.configProvider
+	coordinatorName := f.coordinatorName
 	f.mu.Unlock()
 
-	slog.Info("Waiting to become leader", slog.String("component", "coordinator"))
-	leadershipLost, err := statusProvider.WaitToBecomeLeader()
-	if err != nil {
-		_ = f.Close()
-		return nil, nil, fmt.Errorf("failed to wait in becoming leader: %w", err)
-	}
-	slog.Info("This coordinator is now leader", slog.String("component", "coordinator"))
-
-	return newMetadata(ctx, statusProvider, configProvider), leadershipLost, nil
+	return newMetadata(ctx, statusProvider, configProvider, coordinatorName), nil
 }
 
 func (f *Factory) Close() error {

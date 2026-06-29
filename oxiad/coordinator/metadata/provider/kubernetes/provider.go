@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,13 +62,14 @@ const (
 )
 
 type Provider[T gproto.Message] struct {
-	mu              sync.Mutex
-	kubernetes      kubernetes.Interface
-	namespace, name string
-	codec           metadatacodec.Codec[T]
-	watchEnabled    metadatacommon.WatchMode
-	coordinatorInfo *commonproto.CoordinatorInfo
-	leaseIdentity   string
+	mu            sync.Mutex
+	kubernetes    kubernetes.Interface
+	namespace     string
+	configMapName string
+	codec         metadatacodec.Codec[T]
+	watchEnabled  metadatacommon.WatchMode
+	name          string
+	leaderElector atomic.Pointer[leaderelection.LeaderElector]
 
 	metadataSize      atomic.Int64
 	getLatencyHisto   metric.LatencyHistogram
@@ -86,25 +88,24 @@ type Provider[T gproto.Message] struct {
 func NewProvider[T gproto.Message](
 	ctx context.Context,
 	kc kubernetes.Interface,
-	namespace, name string,
+	namespace, configMapName string,
 	codec metadatacodec.Codec[T],
 	watchEnabled metadatacommon.WatchMode,
-	coordinatorInfo *commonproto.CoordinatorInfo,
+	name string,
 ) (provider.Provider[T], error) {
-	leaseIdentity, err := EncodeCoordinatorInfo(coordinatorInfo)
-	if err != nil {
-		return nil, err
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("coordinator name must not be empty")
 	}
 
 	m := &Provider[T]{
-		kubernetes:      kc,
-		namespace:       namespace,
-		name:            name,
-		codec:           codec,
-		watchEnabled:    watchEnabled,
-		coordinatorInfo: coordinatorInfo,
-		leaseIdentity:   leaseIdentity,
-		logger:          slog.With("component", "metadata-config-map"),
+		kubernetes:    kc,
+		namespace:     namespace,
+		configMapName: configMapName,
+		codec:         codec,
+		watchEnabled:  watchEnabled,
+		name:          name,
+		logger:        slog.With("component", "metadata-config-map"),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
 			"Latency for reading coordinator metadata", nil),
@@ -169,7 +170,7 @@ func (m *Provider[T]) loadLatestWithoutLock() (snapshot provider.Versioned[T], e
 	ctx, cancel := context.WithTimeout(m.ctx, k8sRequestTimeout)
 	defer cancel()
 
-	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Get(ctx, m.name, metav1.GetOptions{})
+	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Get(ctx, m.configMapName, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return provider.Versioned[T]{
@@ -213,7 +214,7 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 	if err != nil {
 		return metadatacommon.NotExists, err
 	}
-	cmData := makeDesiredConfigMap(m.name, m.codec.GetKey(), data, snapshot.Version)
+	cmData := makeDesiredConfigMap(m.configMapName, m.codec.GetKey(), data, snapshot.Version)
 	desiredBytes, err := json.Marshal(cmData)
 	if err != nil {
 		return metadatacommon.NotExists, err
@@ -232,7 +233,7 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 		if snapshot.Version == "" {
 			return metadatacommon.NotExists, metadatacommon.ErrBadVersion
 		}
-		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Patch(ctx, m.name, types.ApplyPatchType, desiredBytes, metav1.PatchOptions{
+		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Patch(ctx, m.configMapName, types.ApplyPatchType, desiredBytes, metav1.PatchOptions{
 			FieldManager: fieldManager,
 			Force:        gproto.Bool(true),
 		})
@@ -253,12 +254,12 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 }
 
 func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
-	myIdentity := m.leaseIdentity
+	myIdentity := m.name
 
 	// Create a lease lock
 	lock := &resourcelock.LeaseLock{
 		LeaseMeta: metav1.ObjectMeta{
-			Name:      m.name,
+			Name:      m.configMapName,
 			Namespace: m.namespace,
 		},
 		Client: m.kubernetes.CoordinationV1(),
@@ -268,8 +269,7 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	}
 
 	logger := m.logger.With(
-		slog.String("identity", m.coordinatorInfo.GetIdentity()),
-		slog.String("public-address", m.coordinatorInfo.GetPublicAddress()))
+		slog.String("name", m.name))
 	wg := concurrent.NewWaitGroup(1)
 	lost := make(chan struct{})
 
@@ -300,14 +300,7 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 					return
 				}
 
-				newLeaderInfo, err := DecodeCoordinatorInfo(newLeader)
-				if err != nil {
-					logger.Info("New leader elected", slog.String("leader", newLeader))
-					return
-				}
-				logger.Info("New leader elected",
-					slog.String("leader", newLeaderInfo.GetIdentity()),
-					slog.String("leader-public-address", newLeaderInfo.GetPublicAddress()))
+				logger.Info("New leader elected", slog.String("leader", newLeader))
 			},
 		},
 	}
@@ -317,6 +310,7 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	if err != nil {
 		panic(err)
 	}
+	m.leaderElector.Store(leaderElector)
 
 	m.wg.Go(func() {
 		process.DoWithLabels(m.ctx, map[string]string{
@@ -328,6 +322,16 @@ func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 	})
 
 	return lost, wg.Wait(m.ctx)
+}
+
+func (m *Provider[T]) GetLeaderName() (string, error) {
+	if leaderElector := m.leaderElector.Load(); leaderElector != nil {
+		leader := leaderElector.GetLeader()
+		if leader != "" {
+			return leader, nil
+		}
+	}
+	return "", provider.ErrCoordinatorLeaderUnavailable
 }
 
 func (m *Provider[T]) Close() error {
@@ -352,7 +356,7 @@ func (m *Provider[T]) watchLoop() {
 	}, oxiatime.NewBackOffWithInitialInterval(m.ctx, time.Second), func(err error, duration time.Duration) {
 		m.logger.Warn("K8S config map watch failed, reconnecting",
 			slog.String("k8s-namespace", m.namespace),
-			slog.String("k8s-config-map", m.name),
+			slog.String("k8s-config-map", m.configMapName),
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration))
 	})
@@ -361,7 +365,7 @@ func (m *Provider[T]) watchLoop() {
 func (m *Provider[T]) watch() error {
 	w, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Watch(
 		m.ctx,
-		metav1.SingleObject(metav1.ObjectMeta{Name: m.name, Namespace: m.namespace}),
+		metav1.SingleObject(metav1.ObjectMeta{Name: m.configMapName, Namespace: m.namespace}),
 	)
 	if err != nil {
 		return err

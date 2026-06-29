@@ -121,14 +121,14 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -146,14 +146,14 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -175,14 +175,14 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -210,14 +210,14 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -246,14 +246,14 @@ func TestClientHandshakeSuccess(t *testing.T) {
 	s3, sa3 := newTLSServer(t)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 	option, err := getPeerTLSOption()
 	assert.NoError(t, err)
 	tlsConf, err := option.TryIntoClientTLSConf()
 	assert.NoError(t, err)
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,
@@ -283,10 +283,10 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 	s3, sa3 := newTLSServerWithInterceptor(t, disableInternalTLS)
 	defer s3.Close()
 
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
 
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: metadatacommon.NotExists,

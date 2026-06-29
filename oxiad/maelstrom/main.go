@@ -242,10 +242,15 @@ func runCoordinator(dispatcher *dispatcher, servers []*commonproto.DataServerIde
 		return errors.Wrap(err, "failed to create coordinator metadata factory")
 	}
 
-	metadata, _, err := metadataFactory.CreateMetadata(ctx)
+	metadata, err := metadataFactory.CreateMetadata(ctx)
 	if err != nil {
 		_ = commonio.CloseIfNotNil(metadataFactory)
 		return errors.Wrap(err, "failed to create coordinator metadata")
+	}
+	if _, err = metadata.WaitToBecomeLeader(); err != nil {
+		_ = commonio.CloseIfNotNil(metadata)
+		_ = commonio.CloseIfNotNil(metadataFactory)
+		return errors.Wrap(err, "failed to wait for coordinator metadata leadership")
 	}
 	for _, server := range clusterConfig.GetServers() {
 		if err := metadata.CreateDataServer(&commonproto.DataServer{Identity: server}); err != nil {

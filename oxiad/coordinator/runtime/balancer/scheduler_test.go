@@ -54,6 +54,18 @@ var _ coordmetadata.Metadata = (*mockMetadata)(nil)
 
 func (*mockMetadata) Close() error { return nil }
 
+func (*mockMetadata) GetSelf() (*proto.Coordinator, error) {
+	return nil, nil //nolint:nilnil
+}
+
+func (*mockMetadata) GetLeaderInfo() (*proto.Coordinator, error) {
+	return nil, nil //nolint:nilnil
+}
+
+func (*mockMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
+	return nil, nil //nolint:nilnil
+}
+
 func (m *mockMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
 
 func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }

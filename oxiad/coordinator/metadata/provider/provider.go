@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"errors"
 	"io"
 
 	gproto "google.golang.org/protobuf/proto"
@@ -22,6 +23,8 @@ import (
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 )
+
+var ErrCoordinatorLeaderUnavailable = errors.New("coordinator leader unavailable")
 
 type Versioned[T any] struct {
 	Value   T
@@ -38,6 +41,8 @@ type Provider[T gproto.Message] interface {
 	// lost: the caller must stop coordinating when that happens. A nil
 	// channel means the leadership cannot be lost.
 	WaitToBecomeLeader() (lost <-chan struct{}, err error)
+
+	GetLeaderName() (string, error)
 
 	Watch() *commonwatch.Watch[Versioned[T]]
 }

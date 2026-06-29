@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,24 +107,15 @@ func (iso *InternalServerOptions) Validate() error {
 }
 
 type PublicServerOptions struct {
-	BindAddress       string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public management API server,example=0.0.0.0:6651,format=hostname"`
-	AdvertisedAddress string              `yaml:"advertisedAddress,omitempty" json:"advertisedAddress,omitempty" jsonschema:"description=Advertised public management API address used by other coordinators for redirects,example=coordinator-0.example.com:6651,format=hostname"`
-	Auth              auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public management API"`
-	TLS               security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public management API connections"`
+	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public management API server,example=0.0.0.0:6651,format=hostname"`
+	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public management API"`
+	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public management API connections"`
 }
 
 func (pso *PublicServerOptions) WithDefault() {
 	defaultBindAddress := fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort)
 	if pso.BindAddress == "" {
 		pso.BindAddress = defaultBindAddress
-	}
-	if pso.AdvertisedAddress == "" {
-		pso.AdvertisedAddress = pso.BindAddress
-		if _, port, err := net.SplitHostPort(pso.BindAddress); err == nil {
-			if hostname, err := os.Hostname(); err == nil && hostname != "" {
-				pso.AdvertisedAddress = net.JoinHostPort(hostname, port)
-			}
-		}
 	}
 	pso.Auth.WithDefault()
 	pso.TLS.WithDefault()
@@ -168,19 +158,22 @@ type ProviderOptions struct {
 }
 
 type MetadataOptions struct {
-	Identity        string `yaml:"identity,omitempty" json:"identity,omitempty" jsonschema:"description=Stable coordinator identity used by metadata leader election,example=coordinator-0"`
+	Name            string `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Stable coordinator name used by metadata leader election,example=coordinator-0"`
 	ProviderOptions `yaml:",inline"`
 }
 
 func (mo *MetadataOptions) WithDefault() {
-	if mo.Identity == "" {
+	if mo.Name == "" {
 		if hostname, err := os.Hostname(); err == nil {
-			mo.Identity = hostname
+			mo.Name = hostname
 		}
 	}
 }
 
 func (mo *MetadataOptions) Validate() error {
+	if strings.TrimSpace(mo.Name) == "" {
+		return errors.New("metadata.name must be set")
+	}
 	return mo.ProviderOptions.Validate()
 }
 

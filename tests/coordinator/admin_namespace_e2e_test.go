@@ -54,7 +54,7 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	})
 
 	serverName := "server-1"
-	_, err = client.CreateDataServer(&proto.DataServer{
+	_, err = client.CreateDataServer(t.Context(), &proto.DataServer{
 		Identity: &proto.DataServerIdentity{
 			Name:     &serverName,
 			Public:   "localhost:19001",
@@ -64,7 +64,7 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	require.NoError(t, err)
 
 	notificationsEnabled := false
-	created, err := client.CreateNamespace(&proto.Namespace{
+	created, err := client.CreateNamespace(t.Context(), &proto.Namespace{
 		Name:                 "ns-1",
 		InitialShardCount:    2,
 		ReplicationFactor:    1,
@@ -79,7 +79,7 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	assert.False(t, created.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", created.GetKeySorting())
 
-	found, err := client.GetNamespace("ns-1")
+	found, err := client.GetNamespace(t.Context(), "ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "ns-1", found.GetName())
@@ -87,7 +87,7 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	assert.False(t, found.NotificationsEnabledOrDefault())
 
 	notificationsEnabled = true
-	patched, err := client.PatchNamespace(&proto.Namespace{
+	patched, err := client.PatchNamespace(t.Context(), &proto.Namespace{
 		Name:                 "ns-1",
 		NotificationsEnabled: &notificationsEnabled,
 	})
@@ -99,18 +99,18 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	assert.True(t, patched.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", patched.GetKeySorting())
 
-	found, err = client.GetNamespace("ns-1")
+	found, err = client.GetNamespace(t.Context(), "ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.True(t, found.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", found.GetKeySorting())
 
-	namespaces, err := client.ListNamespaces()
+	namespaces, err := client.ListNamespaces(t.Context())
 	require.NoError(t, err)
 	require.Len(t, namespaces, 1)
 	assert.Equal(t, "ns-1", namespaces[0].GetName())
 
-	deleted, err := client.DeleteNamespace("ns-1")
+	deleted, err := client.DeleteNamespace(t.Context(), "ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, deleted)
 	assert.Equal(t, "ns-1", deleted.GetName())
@@ -119,7 +119,7 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	assert.True(t, deleted.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", deleted.GetKeySorting())
 
-	namespaces, err = client.ListNamespaces()
+	namespaces, err = client.ListNamespaces(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, namespaces)
 }

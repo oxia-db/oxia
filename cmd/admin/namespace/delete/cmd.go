@@ -57,7 +57,7 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	deleted, err := client.DeleteNamespace(name)
+	deleted, err := client.DeleteNamespace(cmd.Context(), name)
 	if err != nil {
 		return err
 	}

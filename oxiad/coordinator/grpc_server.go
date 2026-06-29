@@ -109,26 +109,17 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	if err != nil {
 		return nil, err
 	}
-	var leadershipLost <-chan struct{}
-	metadata, leadershipLost, err = metadataFactory.CreateMetadata(parent)
+	metadata, err = metadataFactory.CreateMetadata(parent)
 	if err != nil {
 		return nil, err
 	}
-	runtime, err = coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
-	if err != nil {
-		return nil, err
-	}
-	reconciler = coordreconciler.New(parent, runtime)
 
 	managementSv := options.Server.Public
 	managementSvTLS, err := managementSv.TLS.TryIntoServerTLSConf()
 	if err != nil {
 		return nil, err
 	}
-	management := newManagementServer(
-		runtime.Metadata(),
-		runtime,
-	)
+	management := newManagementServer(metadata)
 	managementGrpcServer, err = commonrpc.Default.StartGrpcServer("public", managementSv.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		proto.RegisterOxiaAdminServer(registrar, management)
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
@@ -136,6 +127,18 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	if err != nil {
 		return nil, err
 	}
+
+	var leadershipLost <-chan struct{}
+	leadershipLost, err = metadata.WaitToBecomeLeader()
+	if err != nil {
+		return nil, err
+	}
+	runtime, err = coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
+	if err != nil {
+		return nil, err
+	}
+	management.setRuntime(runtime)
+	reconciler = coordreconciler.New(parent, runtime)
 
 	metricsServer, err = startMetricsServer(options.Observability.Metric) //nolint:contextcheck
 	if err != nil {
