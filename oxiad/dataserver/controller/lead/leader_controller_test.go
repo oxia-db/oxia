@@ -1457,12 +1457,13 @@ func TestLeaderController_GetStatus(t *testing.T) {
 
 	res, err := lc.GetStatus(&proto.GetStatusRequest{Shard: shard})
 	assert.NoError(t, err)
-	assert.Equal(t, &proto.GetStatusResponse{
-		Term:         2,
-		Status:       proto.ServingStatus_LEADER,
-		HeadOffset:   1,
-		CommitOffset: 1,
-	}, res)
+	assert.EqualValues(t, 2, res.Term)
+	assert.Equal(t, proto.ServingStatus_LEADER, res.Status)
+	assert.EqualValues(t, 1, res.HeadOffset)
+	assert.EqualValues(t, 1, res.CommitOffset)
+	assert.NotNil(t, res.ShardStats)
+	assert.Greater(t, res.ShardStats.DbSizeBytes, uint64(0))
+	assert.EqualValues(t, 2, res.ShardStats.WriteOpsTotal)
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())

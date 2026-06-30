@@ -1313,11 +1313,17 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 		commitOffset = lc.quorumAckTracker.CommitOffset()
 	}
 
+	var shardStats *proto.ShardStats
+	if lc.db != nil {
+		shardStats = lc.db.Stats()
+	}
+
 	return &proto.GetStatusResponse{
 		Term:         lc.term.Load(),
 		Status:       lc.status,
 		HeadOffset:   headOffset,
 		CommitOffset: commitOffset,
+		ShardStats:   shardStats,
 	}, nil
 }
 

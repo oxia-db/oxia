@@ -274,7 +274,7 @@ func TestShardController_GatesElectionUntilHandshakeComplete(t *testing.T) {
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
 	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
 
-	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled), &proto.ClusterConfiguration{})
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
 	// Readiness is controlled by the test: no data server is handshake-bound yet.
 	var readyCount atomic.Int32

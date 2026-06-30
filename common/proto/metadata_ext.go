@@ -29,6 +29,14 @@ const (
 	defaultLoadBalancerScheduleString   = "30s"
 	defaultLoadBalancerQuarantineString = "5m"
 
+	defaultAutoSplitMaxShardSizeMB      uint32 = 1024
+	defaultAutoSplitMaxThroughputOps    uint32 = 10000
+	defaultAutoSplitStabilizationPeriod        = 1 * time.Minute
+	defaultAutoSplitCooldownPeriod             = 5 * time.Minute
+	defaultAutoSplitStabilizationString        = "1m"
+	defaultAutoSplitCooldownString             = "5m"
+	defaultMaxShardsPerNamespace        uint32 = 64
+
 	AntiAffinityModeUnknown = ""
 	AntiAffinityModeStrict  = "strict"
 	AntiAffinityModeRelaxed = "relaxed"
@@ -363,6 +371,99 @@ func (cc *ClusterConfiguration) GetLoadBalancerWithDefaults() *LoadBalancer {
 	}
 
 	return loadBalancer
+}
+
+// AutoSplitConfig helpers — follow the same pattern as LoadBalancer duration fields.
+
+func (c *AutoSplitConfig) GetStabilizationPeriodDuration() (time.Duration, error) {
+	if c == nil || c.GetStabilizationPeriod() == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(c.GetStabilizationPeriod())
+}
+
+func (c *AutoSplitConfig) GetStabilizationPeriodDurationOrDefault() time.Duration {
+	if c == nil {
+		return defaultAutoSplitStabilizationPeriod
+	}
+	duration, err := c.GetStabilizationPeriodDuration()
+	if err != nil || duration == 0 {
+		return defaultAutoSplitStabilizationPeriod
+	}
+	return duration
+}
+
+func (c *AutoSplitConfig) GetCooldownPeriodDuration() (time.Duration, error) {
+	if c == nil || c.GetCooldownPeriod() == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(c.GetCooldownPeriod())
+}
+
+func (c *AutoSplitConfig) GetCooldownPeriodDurationOrDefault() time.Duration {
+	if c == nil {
+		return defaultAutoSplitCooldownPeriod
+	}
+	duration, err := c.GetCooldownPeriodDuration()
+	if err != nil || duration == 0 {
+		return defaultAutoSplitCooldownPeriod
+	}
+	return duration
+}
+
+func (c *AutoSplitConfig) GetMaxShardSizeMBOrDefault() uint32 {
+	if c == nil || c.GetMaxShardSizeMb() == 0 {
+		return defaultAutoSplitMaxShardSizeMB
+	}
+	return c.GetMaxShardSizeMb()
+}
+
+func (c *AutoSplitConfig) GetMaxThroughputOpsOrDefault() uint32 {
+	if c == nil || c.GetMaxThroughputOps() == 0 {
+		return defaultAutoSplitMaxThroughputOps
+	}
+	return c.GetMaxThroughputOps()
+}
+
+func (c *AutoSplitConfig) GetMaxShardsPerNamespaceOrDefault() uint32 {
+	if c == nil || c.GetMaxShardsPerNamespace() == 0 {
+		return defaultMaxShardsPerNamespace
+	}
+	return c.GetMaxShardsPerNamespace()
+}
+
+func (cc *ClusterConfiguration) GetAutoSplitWithDefaults() *AutoSplitConfig {
+	as := &AutoSplitConfig{
+		MaxShardSizeMb:        defaultAutoSplitMaxShardSizeMB,
+		MaxThroughputOps:      defaultAutoSplitMaxThroughputOps,
+		StabilizationPeriod:   defaultAutoSplitStabilizationString,
+		CooldownPeriod:        defaultAutoSplitCooldownString,
+		MaxShardsPerNamespace: defaultMaxShardsPerNamespace,
+	}
+
+	if cc == nil || cc.GetAutoSplit() == nil {
+		return as
+	}
+
+	src := cc.GetAutoSplit()
+	as.Enabled = src.GetEnabled()
+	if v := src.GetMaxShardSizeMb(); v != 0 {
+		as.MaxShardSizeMb = v
+	}
+	if v := src.GetMaxThroughputOps(); v != 0 {
+		as.MaxThroughputOps = v
+	}
+	if v := src.GetStabilizationPeriod(); v != "" {
+		as.StabilizationPeriod = v
+	}
+	if v := src.GetCooldownPeriod(); v != "" {
+		as.CooldownPeriod = v
+	}
+	if v := src.GetMaxShardsPerNamespace(); v != 0 {
+		as.MaxShardsPerNamespace = v
+	}
+
+	return as
 }
 
 func formatKeySortingType(value KeySortingType) string {

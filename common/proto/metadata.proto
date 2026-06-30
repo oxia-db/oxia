@@ -57,6 +57,15 @@ message LoadBalancer {
   string quarantine_time = 2;
 }
 
+message AutoSplitConfig {
+  bool enabled = 1;
+  uint32 max_shard_size_mb = 2;
+  uint32 max_throughput_ops = 3;
+  string stabilization_period = 4;
+  string cooldown_period = 5;
+  uint32 max_shards_per_namespace = 6;
+}
+
 message ClusterConfiguration {
   repeated Namespace namespaces = 1;
   repeated DataServerIdentity servers = 2;
@@ -64,6 +73,7 @@ message ClusterConfiguration {
   map<string, DataServerMetadata> server_metadata = 4;
   LoadBalancer load_balancer = 5;
   repeated Coordinator coordinators = 6;
+  AutoSplitConfig auto_split = 7;
 }
 
 message HashRange {

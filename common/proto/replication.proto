@@ -263,4 +263,12 @@ message GetStatusResponse {
 
   int64 head_offset = 3;
   int64 commit_offset = 4;
+
+  ShardStats shard_stats = 5;
+}
+
+message ShardStats {
+  uint64 db_size_bytes = 1;
+  uint64 read_ops_total = 2;
+  uint64 write_ops_total = 3;
 }

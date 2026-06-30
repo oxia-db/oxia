@@ -118,6 +118,9 @@ type DB interface {
 
 	// Delete and close the database and all its files
 	Delete() error
+
+	// Stats returns cumulative shard statistics for auto-split monitoring.
+	Stats() *proto.ShardStats
 }
 
 func NewDB(namespace string, shardId int64, factory kvstore.Factory,
@@ -213,6 +216,9 @@ type db struct {
 	listCounter               metric.Counter
 	rangeScanCounter          metric.Counter
 
+	readOpsTotal  atomic.Uint64
+	writeOpsTotal atomic.Uint64
+
 	batchWriteLatencyHisto metric.LatencyHistogram
 	getLatencyHisto        metric.LatencyHistogram
 	listLatencyHisto       metric.LatencyHistogram
@@ -244,6 +250,14 @@ func (d *db) Close() error {
 		d.notificationsTracker.Close(),
 		d.kv.Close(),
 	)
+}
+
+func (d *db) Stats() *proto.ShardStats {
+	return &proto.ShardStats{
+		DbSizeBytes:   d.kv.DiskSpaceUsage(),
+		ReadOpsTotal:  d.readOpsTotal.Load(),
+		WriteOpsTotal: d.writeOpsTotal.Load(),
+	}
 }
 
 func (d *db) Delete() error {
@@ -295,6 +309,8 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 
 		res.DeleteRanges = append(res.DeleteRanges, dr)
 	}
+
+	d.writeOpsTotal.Add(uint64(len(b.Puts) + len(b.Deletes) + len(b.DeleteRanges)))
 
 	return notifications, res, nil
 }
@@ -430,6 +446,7 @@ func (d *db) Get(request *proto.GetRequest) (*proto.GetResponse, error) {
 	defer timer.Done()
 
 	d.getCounter.Add(1)
+	d.readOpsTotal.Add(1)
 	return applyGet(d.kv, request)
 }
 
@@ -466,6 +483,7 @@ func (it *listIterator) Close() error {
 
 func (d *db) List(request *proto.ListRequest) (kvstore.KeyIterator, error) {
 	d.listCounter.Add(1)
+	d.readOpsTotal.Add(1)
 
 	it, err := d.kv.KeyRangeScan(request.StartInclusive, request.EndExclusive,
 		kvstore.IteratorOpts{IncludeInternalKeys: request.IncludeInternalKeys})
@@ -528,6 +546,7 @@ func (it *rangeScanIterator) Close() error {
 
 func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error) {
 	d.rangeScanCounter.Add(1)
+	d.readOpsTotal.Add(1)
 
 	it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive,
 		kvstore.IteratorOpts{IncludeInternalKeys: request.IncludeInternalKeys})
