@@ -15,7 +15,6 @@
 package commons
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -108,7 +107,7 @@ func writeJSON(out io.Writer, value any) error {
 }
 
 func marshalProtoJSON(value any) ([]byte, bool, error) {
-	options := protojson.MarshalOptions{
+	messageOptions := protojson.MarshalOptions{
 		UseProtoNames: true,
 		Indent:        "  ",
 	}
@@ -116,7 +115,7 @@ func marshalProtoJSON(value any) ([]byte, bool, error) {
 		if isNilValue(reflect.ValueOf(value)) {
 			return []byte("null"), true, nil
 		}
-		data, err := options.Marshal(msg)
+		data, err := messageOptions.Marshal(msg)
 		return data, true, err
 	}
 
@@ -128,31 +127,25 @@ func marshalProtoJSON(value any) ([]byte, bool, error) {
 		return []byte("null"), true, nil
 	}
 
-	var buf bytes.Buffer
-	buf.WriteByte('[')
-	if v.Len() > 0 {
-		buf.WriteByte('\n')
-	}
+	rawMessages := make([]json.RawMessage, v.Len())
+	elementOptions := protojson.MarshalOptions{UseProtoNames: true}
 	for i := 0; i < v.Len(); i++ {
-		if i > 0 {
-			buf.WriteString(",\n")
-		}
 		data := []byte("null")
 		if elem := v.Index(i); !isNilValue(elem) {
-			msg := elem.Interface().(goproto.Message) //nolint:forcetypeassert
+			msg, ok := elem.Interface().(goproto.Message)
+			if !ok {
+				return nil, false, nil
+			}
 			var err error
-			data, err = options.Marshal(msg)
+			data, err = elementOptions.Marshal(msg)
 			if err != nil {
 				return nil, true, err
 			}
 		}
-		writeIndentedJSONElement(&buf, data)
+		rawMessages[i] = data
 	}
-	if v.Len() > 0 {
-		buf.WriteByte('\n')
-	}
-	buf.WriteByte(']')
-	return buf.Bytes(), true, nil
+	data, err := json.MarshalIndent(rawMessages, "", "  ")
+	return data, true, err
 }
 
 func isProtoMessageSlice(t reflect.Type) bool {
@@ -166,16 +159,6 @@ func isNilValue(v reflect.Value) bool {
 		return v.IsNil()
 	default:
 		return false
-	}
-}
-
-func writeIndentedJSONElement(buf *bytes.Buffer, data []byte) {
-	for i, line := range bytes.Split(data, []byte("\n")) {
-		if i > 0 {
-			buf.WriteByte('\n')
-		}
-		buf.WriteString("  ")
-		buf.Write(line)
 	}
 }
 
