@@ -50,6 +50,13 @@ func dataServerView(dataServer *proto.DataServer) *proto.DataServerView {
 	}
 }
 
+func requireJSONMap(t *testing.T, value any) map[string]any {
+	t.Helper()
+	result, ok := value.(map[string]any)
+	require.True(t, ok)
+	return result
+}
+
 func Test_cmd_getDataServer(t *testing.T) {
 	serverName := "server-1"
 	commons.MockedAdminClient = commons.NewMockAdminClient()
@@ -77,15 +84,18 @@ func Test_cmd_getDataServer(t *testing.T) {
 	out, err := runCmd(cmd, "-o", "json", serverName)
 
 	assert.NoError(t, err)
-	var dataServer proto.DataServerView
+	var dataServer map[string]any
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServer))
-	require.NotNil(t, dataServer.GetDataServer().GetIdentity())
-	assert.NotNil(t, dataServer.GetDataServer().GetIdentity().Name)
-	assert.Equal(t, serverName, dataServer.GetDataServer().GetIdentity().GetName())
-	assert.Equal(t, "public1", dataServer.GetDataServer().GetIdentity().GetPublic())
-	assert.Equal(t, "internal1", dataServer.GetDataServer().GetIdentity().GetInternal())
-	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.GetDataServer().GetMetadata().GetLabels())
-	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, dataServer.GetDataServerStatus().GetState())
+	ds := requireJSONMap(t, dataServer["data_server"])
+	identity := requireJSONMap(t, ds["identity"])
+	metadata := requireJSONMap(t, ds["metadata"])
+	labels := requireJSONMap(t, metadata["labels"])
+	status := requireJSONMap(t, dataServer["data_server_status"])
+	assert.Equal(t, serverName, identity["name"])
+	assert.Equal(t, "public1", identity["public"])
+	assert.Equal(t, "internal1", identity["internal"])
+	assert.Equal(t, "rack-1", labels["rack"])
+	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status["state"])
 }
 
 func Test_cmd_getDataServersIdentities(t *testing.T) {
@@ -128,21 +138,27 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 	out, err := runCmd(cmd, "-o", "json")
 
 	assert.NoError(t, err)
-	var dataServers []proto.DataServerView
+	var dataServers []map[string]any
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServers))
 	require.Len(t, dataServers, 2)
-	require.NotNil(t, dataServers[0].GetDataServer().GetIdentity())
-	require.NotNil(t, dataServers[1].GetDataServer().GetIdentity())
-	require.NotNil(t, dataServers[0].GetDataServer().GetIdentity().Name)
-	require.NotNil(t, dataServers[1].GetDataServer().GetIdentity().Name)
-	assert.Equal(t, serverName1, dataServers[0].GetDataServer().GetIdentity().GetName())
-	assert.Equal(t, serverName2, dataServers[1].GetDataServer().GetIdentity().GetName())
-	assert.Equal(t, "public1", dataServers[0].GetDataServer().GetIdentity().GetPublic())
-	assert.Equal(t, "public2", dataServers[1].GetDataServer().GetIdentity().GetPublic())
-	assert.Equal(t, "internal1", dataServers[0].GetDataServer().GetIdentity().GetInternal())
-	assert.Equal(t, "internal2", dataServers[1].GetDataServer().GetIdentity().GetInternal())
-	require.Equal(t, map[string]string{"rack": "rack-1"}, dataServers[0].GetDataServer().GetMetadata().GetLabels())
-	require.Equal(t, map[string]string{"rack": "rack-2"}, dataServers[1].GetDataServer().GetMetadata().GetLabels())
+	dataServer1 := requireJSONMap(t, dataServers[0]["data_server"])
+	dataServer2 := requireJSONMap(t, dataServers[1]["data_server"])
+	identity1 := requireJSONMap(t, dataServer1["identity"])
+	identity2 := requireJSONMap(t, dataServer2["identity"])
+	labels1 := requireJSONMap(t, requireJSONMap(t, dataServer1["metadata"])["labels"])
+	labels2 := requireJSONMap(t, requireJSONMap(t, dataServer2["metadata"])["labels"])
+	status1 := requireJSONMap(t, dataServers[0]["data_server_status"])
+	status2 := requireJSONMap(t, dataServers[1]["data_server_status"])
+	assert.Equal(t, serverName1, identity1["name"])
+	assert.Equal(t, serverName2, identity2["name"])
+	assert.Equal(t, "public1", identity1["public"])
+	assert.Equal(t, "public2", identity2["public"])
+	assert.Equal(t, "internal1", identity1["internal"])
+	assert.Equal(t, "internal2", identity2["internal"])
+	assert.Equal(t, "rack-1", labels1["rack"])
+	assert.Equal(t, "rack-2", labels2["rack"])
+	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status1["state"])
+	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status2["state"])
 }
 
 func Test_cmd_getDataServer_YAML(t *testing.T) {
