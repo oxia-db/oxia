@@ -45,7 +45,8 @@ func dataServerView(dataServer *proto.DataServer) *proto.DataServerView {
 	return &proto.DataServerView{
 		DataServer: dataServer,
 		DataServerStatus: &proto.DataServerStatus{
-			State: proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+			State:             proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+			SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 		},
 	}
 }
@@ -95,7 +96,8 @@ func Test_cmd_getDataServer(t *testing.T) {
 	assert.Equal(t, "public1", identity["public"])
 	assert.Equal(t, "internal1", identity["internal"])
 	assert.Equal(t, "rack-1", labels["rack"])
-	assert.EqualValues(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, status["state"])
+	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status["state"])
+	assert.Equal(t, []any{"FEATURE_DB_CHECKSUM"}, status["supported_features"])
 }
 
 func Test_cmd_getDataServersIdentities(t *testing.T) {
@@ -157,8 +159,10 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 	assert.Equal(t, "internal2", identity2["internal"])
 	assert.Equal(t, "rack-1", labels1["rack"])
 	assert.Equal(t, "rack-2", labels2["rack"])
-	assert.EqualValues(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, status1["state"])
-	assert.EqualValues(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, status2["state"])
+	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status1["state"])
+	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status2["state"])
+	assert.Equal(t, []any{"FEATURE_DB_CHECKSUM"}, status1["supported_features"])
+	assert.Equal(t, []any{"FEATURE_DB_CHECKSUM"}, status2["supported_features"])
 }
 
 func Test_cmd_getDataServer_YAML(t *testing.T) {
@@ -197,30 +201,14 @@ func Test_cmd_getDataServer_YAML(t *testing.T) {
 	assert.Equal(t, serverName, identity["name"])
 	assert.Equal(t, "public1", identity["public"])
 	assert.Equal(t, "internal1", identity["internal"])
+	status, ok := dataServer["dataserverstatus"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status["state"])
+	assert.Equal(t, []any{"FEATURE_DB_CHECKSUM"}, status["supportedfeatures"])
 }
 
-func Test_cmd_getDataServersIdentities_Name(t *testing.T) {
-	serverName1 := "server-1"
-	serverName2 := "internal2"
-	commons.MockedAdminClient = commons.NewMockAdminClient()
-
-	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServerView{
-		dataServerView(&proto.DataServer{
-			Identity: &proto.DataServerIdentity{
-				Name:     &serverName1,
-				Public:   "public1",
-				Internal: "internal1",
-			},
-		}),
-		dataServerView(&proto.DataServer{
-			Identity: &proto.DataServerIdentity{
-				Name:     &serverName2,
-				Public:   "public2",
-				Internal: "internal2",
-			},
-		}),
-	}, nil)
+func Test_cmd_getDataServersIdentities_RejectsNameOutput(t *testing.T) {
+	commons.MockedAdminClient = nil
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -232,8 +220,9 @@ func Test_cmd_getDataServersIdentities_Name(t *testing.T) {
 	}
 	out, err := runCmd(cmd, "-o", "name")
 
-	assert.NoError(t, err)
-	assert.Equal(t, "dataserver/server-1\ndataserver/internal2", out)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `unsupported output format "name"`)
+	assert.Contains(t, out, `unsupported output format "name"`)
 }
 
 func Test_cmd_getDataServer_InvalidOutput(t *testing.T) {
@@ -285,11 +274,13 @@ func Test_cmd_getDataServer_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "PUBLIC")
 	assert.Contains(t, out, "INTERNAL")
 	assert.Contains(t, out, "STATE")
-	assert.Contains(t, out, "LABELS")
+	assert.NotContains(t, out, "FEATURES")
+	assert.NotContains(t, out, "LABELS")
 	assert.Contains(t, out, "server-1")
 	assert.Contains(t, out, "public1")
 	assert.Contains(t, out, "internal1")
-	assert.Contains(t, out, "rack=rack-1")
+	assert.Contains(t, out, "DATA_SERVER_STATE_RUNNING")
+	assert.NotContains(t, out, "rack=rack-1")
 }
 
 func Test_cmd_getDataServersIdentities_DefaultTable(t *testing.T) {
@@ -330,9 +321,12 @@ func Test_cmd_getDataServersIdentities_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "PUBLIC")
 	assert.Contains(t, out, "INTERNAL")
 	assert.Contains(t, out, "STATE")
+	assert.NotContains(t, out, "FEATURES")
+	assert.NotContains(t, out, "LABELS")
 	assert.Contains(t, out, "server-1")
 	assert.Contains(t, out, "public1")
 	assert.Contains(t, out, "internal1")
 	assert.Contains(t, out, "internal2")
 	assert.Contains(t, out, "public2")
+	assert.Contains(t, out, "DATA_SERVER_STATE_RUNNING")
 }

@@ -17,7 +17,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/pkg/errors"
 
@@ -25,17 +24,35 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func WriteDataServers(out io.Writer, format string, dataServers []*proto.DataServerView) error {
+type dataServerViewOutput struct {
+	DataServer       *proto.DataServer       `json:"data_server,omitempty" yaml:"dataserver,omitempty"`
+	DataServerStatus *dataServerStatusOutput `json:"data_server_status,omitempty" yaml:"dataserverstatus,omitempty"`
+}
+
+type dataServerStatusOutput struct {
+	State             string   `json:"state,omitempty" yaml:"state,omitempty"`
+	SupportedFeatures []string `json:"supported_features,omitempty" yaml:"supportedfeatures,omitempty"`
+}
+
+func ValidateOutputFormat(format string) error {
 	if err := commons.ValidateOutputFormat(format); err != nil {
+		return err
+	}
+	if format == commons.OutputName {
+		return errors.Errorf("unsupported output format %q, expected one of: json, yaml, table", format)
+	}
+	return nil
+}
+
+func WriteDataServers(out io.Writer, format string, dataServers []*proto.DataServerView) error {
+	if err := ValidateOutputFormat(format); err != nil {
 		return err
 	}
 
 	format = commons.NormalizeOutputFormat(format)
 	switch format {
 	case commons.OutputJSON, commons.OutputYAML:
-		return commons.WriteStructuredOutput(out, format, dataServers)
-	case commons.OutputName:
-		return commons.WriteResourceNames(out, "dataserver", dataServerNames(dataServers))
+		return commons.WriteStructuredOutput(out, format, dataServerViewsOutput(dataServers))
 	case commons.OutputTable:
 		return writeDataServerTable(out, dataServers)
 	default:
@@ -44,7 +61,7 @@ func WriteDataServers(out io.Writer, format string, dataServers []*proto.DataSer
 }
 
 func WriteDataServer(out io.Writer, format string, dataServer *proto.DataServer) error {
-	if err := commons.ValidateOutputFormat(format); err != nil {
+	if err := ValidateOutputFormat(format); err != nil {
 		return err
 	}
 
@@ -52,8 +69,6 @@ func WriteDataServer(out io.Writer, format string, dataServer *proto.DataServer)
 	switch format {
 	case commons.OutputJSON, commons.OutputYAML:
 		return commons.WriteStructuredOutput(out, format, dataServer)
-	case commons.OutputName:
-		return commons.WriteResourceNames(out, "dataserver", []string{dataServer.GetNameOrDefault()})
 	case commons.OutputTable:
 		return writeDataServerConfigTable(out, []*proto.DataServer{dataServer})
 	default:
@@ -62,16 +77,14 @@ func WriteDataServer(out io.Writer, format string, dataServer *proto.DataServer)
 }
 
 func WriteDataServerView(out io.Writer, format string, dataServer *proto.DataServerView) error {
-	if err := commons.ValidateOutputFormat(format); err != nil {
+	if err := ValidateOutputFormat(format); err != nil {
 		return err
 	}
 
 	format = commons.NormalizeOutputFormat(format)
 	switch format {
 	case commons.OutputJSON, commons.OutputYAML:
-		return commons.WriteStructuredOutput(out, format, dataServer)
-	case commons.OutputName:
-		return commons.WriteResourceNames(out, "dataserver", []string{dataServer.GetDataServer().GetNameOrDefault()})
+		return commons.WriteStructuredOutput(out, format, dataServerViewOutputFor(dataServer))
 	case commons.OutputTable:
 		return writeDataServerTable(out, []*proto.DataServerView{dataServer})
 	default:
@@ -103,7 +116,7 @@ func writeDataServerConfigTable(out io.Writer, dataServers []*proto.DataServer) 
 
 func writeDataServerTable(out io.Writer, dataServers []*proto.DataServerView) error {
 	tw := commons.NewTableWriter(out)
-	if _, err := fmt.Fprintln(tw, "NAME\tPUBLIC\tINTERNAL\tSTATE\tFEATURES\tLABELS"); err != nil {
+	if _, err := fmt.Fprintln(tw, "NAME\tPUBLIC\tINTERNAL\tSTATE"); err != nil {
 		return err
 	}
 	for _, view := range dataServers {
@@ -113,13 +126,11 @@ func writeDataServerTable(out io.Writer, dataServers []*proto.DataServerView) er
 		dataServer := view.GetDataServer()
 		identity := dataServer.GetIdentity()
 		status := view.GetDataServerStatus()
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
 			dataServer.GetNameOrDefault(),
 			identity.GetPublic(),
 			identity.GetInternal(),
 			status.GetState().String(),
-			formatFeatures(status.GetSupportedFeatures()),
-			commons.FormatLabels(dataServer.GetMetadata().GetLabels()),
 		); err != nil {
 			return err
 		}
@@ -127,24 +138,41 @@ func writeDataServerTable(out io.Writer, dataServers []*proto.DataServerView) er
 	return tw.Flush()
 }
 
-func dataServerNames(dataServers []*proto.DataServerView) []string {
-	names := make([]string, 0, len(dataServers))
+func dataServerViewsOutput(dataServers []*proto.DataServerView) []dataServerViewOutput {
+	values := make([]dataServerViewOutput, 0, len(dataServers))
 	for _, view := range dataServers {
-		if view == nil || view.GetDataServer() == nil {
+		if view == nil {
 			continue
 		}
-		names = append(names, view.GetDataServer().GetNameOrDefault())
+		values = append(values, dataServerViewOutputFor(view))
 	}
-	return names
+	return values
 }
 
-func formatFeatures(features []proto.Feature) string {
-	if len(features) == 0 {
-		return ""
+func dataServerViewOutputFor(view *proto.DataServerView) dataServerViewOutput {
+	if view == nil {
+		return dataServerViewOutput{}
 	}
+	return dataServerViewOutput{
+		DataServer:       view.GetDataServer(),
+		DataServerStatus: dataServerStatusOutputFor(view.GetDataServerStatus()),
+	}
+}
+
+func dataServerStatusOutputFor(status *proto.DataServerStatus) *dataServerStatusOutput {
+	if status == nil {
+		return nil
+	}
+	return &dataServerStatusOutput{
+		State:             status.GetState().String(),
+		SupportedFeatures: featureNames(status.GetSupportedFeatures()),
+	}
+}
+
+func featureNames(features []proto.Feature) []string {
 	values := make([]string, 0, len(features))
 	for _, feature := range features {
 		values = append(values, feature.String())
 	}
-	return strings.Join(values, ",")
+	return values
 }

@@ -131,19 +131,10 @@ func Test_cmd_createDataServer_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "internal1")
 }
 
-func Test_cmd_createDataServer_Name(t *testing.T) {
+func Test_cmd_createDataServer_RejectsNameOutput(t *testing.T) {
 	serverName := "server-1"
-	commons.MockedAdminClient = commons.NewMockAdminClient()
+	commons.MockedAdminClient = nil
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
-
-	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("CreateDataServer", mock.Anything).Return(&proto.DataServer{
-		Identity: &proto.DataServerIdentity{
-			Name:     &serverName,
-			Public:   "public1",
-			Internal: "internal1",
-		},
-	}, nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -158,8 +149,9 @@ func Test_cmd_createDataServer_Name(t *testing.T) {
 	_ = cmd.MarkFlagRequired(dataservercli.InternalFlagName)
 	out, err := runCmd(cmd, serverName, "--public", "public1", "--internal", "internal1", "-o", "name")
 
-	assert.NoError(t, err)
-	assert.Equal(t, "dataserver/server-1", out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unsupported output format "name"`)
+	assert.Contains(t, out, `unsupported output format "name"`)
 }
 
 func Test_cmd_createDataServer_InvalidLabel(t *testing.T) {
