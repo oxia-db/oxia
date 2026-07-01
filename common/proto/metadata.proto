@@ -78,6 +78,7 @@ message AutoSplitConfig {
   string stabilization_period = 4;
   string cooldown_period = 5;
   uint32 max_shards_per_namespace = 6;
+  string collection_interval = 7;
 }
 
 message ClusterConfiguration {

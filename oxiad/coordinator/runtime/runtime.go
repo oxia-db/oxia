@@ -959,7 +959,8 @@ func New(
 	})
 	c.loadBalancer.Start()
 
-	c.autoSplitMonitor = autosplit.NewMonitor(c.metadata, c.rpc, c, autosplit.DefaultCollectionInterval)
+	autoSplitInterval := c.metadata.GetConfig().UnsafeBorrow().GetAutoSplitWithDefaults().GetCollectionIntervalDurationOrDefault()
+	c.autoSplitMonitor = autosplit.NewMonitor(c.metadata, c.rpc, c, autoSplitInterval)
 	c.autoSplitMonitor.Start()
 
 	return c, nil

@@ -644,6 +644,7 @@ type AutoSplitConfig struct {
 	StabilizationPeriod   string                 `protobuf:"bytes,4,opt,name=stabilization_period,json=stabilizationPeriod,proto3" json:"stabilization_period,omitempty"`
 	CooldownPeriod        string                 `protobuf:"bytes,5,opt,name=cooldown_period,json=cooldownPeriod,proto3" json:"cooldown_period,omitempty"`
 	MaxShardsPerNamespace uint32                 `protobuf:"varint,6,opt,name=max_shards_per_namespace,json=maxShardsPerNamespace,proto3" json:"max_shards_per_namespace,omitempty"`
+	CollectionInterval    string                 `protobuf:"bytes,7,opt,name=collection_interval,json=collectionInterval,proto3" json:"collection_interval,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -718,6 +719,13 @@ func (x *AutoSplitConfig) GetMaxShardsPerNamespace() uint32 {
 		return x.MaxShardsPerNamespace
 	}
 	return 0
+}
+
+func (x *AutoSplitConfig) GetCollectionInterval() string {
+	if x != nil {
+		return x.CollectionInterval
+	}
+	return ""
 }
 
 type ClusterConfiguration struct {
@@ -1215,14 +1223,15 @@ const file_metadata_proto_rawDesc = "" +
 	"\x16_notifications_enabled\"d\n" +
 	"\fLoadBalancer\x12+\n" +
 	"\x11schedule_interval\x18\x01 \x01(\tR\x10scheduleInterval\x12'\n" +
-	"\x0fquarantine_time\x18\x02 \x01(\tR\x0equarantineTime\"\x99\x02\n" +
+	"\x0fquarantine_time\x18\x02 \x01(\tR\x0equarantineTime\"\xca\x02\n" +
 	"\x0fAutoSplitConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12)\n" +
 	"\x11max_shard_size_mb\x18\x02 \x01(\rR\x0emaxShardSizeMb\x12,\n" +
 	"\x12max_throughput_ops\x18\x03 \x01(\rR\x10maxThroughputOps\x121\n" +
 	"\x14stabilization_period\x18\x04 \x01(\tR\x13stabilizationPeriod\x12'\n" +
 	"\x0fcooldown_period\x18\x05 \x01(\tR\x0ecooldownPeriod\x127\n" +
-	"\x18max_shards_per_namespace\x18\x06 \x01(\rR\x15maxShardsPerNamespace\"\xe3\x04\n" +
+	"\x18max_shards_per_namespace\x18\x06 \x01(\rR\x15maxShardsPerNamespace\x12/\n" +
+	"\x13collection_interval\x18\a \x01(\tR\x12collectionInterval\"\xe3\x04\n" +
 	"\x14ClusterConfiguration\x12;\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\v2\x1b.io.oxia.proto.v1.NamespaceR\n" +
