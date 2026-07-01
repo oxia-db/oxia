@@ -32,6 +32,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/autosplit"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
@@ -64,6 +65,7 @@ type runtime struct {
 	drainingNodes map[string]controller.DataServerController
 
 	loadBalancer     balancer.LoadBalancer
+	autoSplitMonitor *autosplit.Monitor
 	ensembleSelector selector.Selector[*ensemble.Context, []string]
 
 	assignmentsWatch *commonwatch.Watch[*proto.ShardAssignments]
@@ -372,6 +374,10 @@ func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Nam
 
 func (c *runtime) Close() error {
 	c.ctxCancel()
+
+	if c.autoSplitMonitor != nil {
+		c.autoSplitMonitor.Close()
+	}
 
 	// The shard controllers must be closed before waiting for the action
 	// worker: the worker blocks on in-flight election actions, which only
@@ -952,5 +958,9 @@ func New(
 		}, c.startBackgroundActionWorker)
 	})
 	c.loadBalancer.Start()
+
+	c.autoSplitMonitor = autosplit.NewMonitor(c.metadata, c.rpc, c, autosplit.DefaultCollectionInterval)
+	c.autoSplitMonitor.Start()
+
 	return c, nil
 }

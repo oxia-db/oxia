@@ -93,3 +93,36 @@ func TestClusterConfiguration_GetAutoSplitWithDefaults(t *testing.T) {
 		assert.Equal(t, uint32(32), as.GetMaxShardsPerNamespace())
 	})
 }
+
+func TestClusterConfiguration_Validate_AutoSplitDurations(t *testing.T) {
+	base := func() *ClusterConfiguration {
+		return &ClusterConfiguration{
+			Namespaces: []*Namespace{{Name: "default", InitialShardCount: 1, ReplicationFactor: 1}},
+			Servers:    []*DataServerIdentity{{Public: "s1:6648", Internal: "s1:6649"}},
+		}
+	}
+
+	t.Run("valid durations pass", func(t *testing.T) {
+		cc := base()
+		cc.AutoSplit = &AutoSplitConfig{Enabled: true, StabilizationPeriod: "1m", CooldownPeriod: "5m"}
+		assert.NoError(t, cc.Validate())
+	})
+
+	t.Run("empty durations pass", func(t *testing.T) {
+		cc := base()
+		cc.AutoSplit = &AutoSplitConfig{Enabled: true}
+		assert.NoError(t, cc.Validate())
+	})
+
+	t.Run("malformed stabilizationPeriod is rejected", func(t *testing.T) {
+		cc := base()
+		cc.AutoSplit = &AutoSplitConfig{Enabled: true, StabilizationPeriod: "1minute"}
+		assert.ErrorContains(t, cc.Validate(), "stabilizationPeriod")
+	})
+
+	t.Run("malformed cooldownPeriod is rejected", func(t *testing.T) {
+		cc := base()
+		cc.AutoSplit = &AutoSplitConfig{Enabled: true, CooldownPeriod: "5min"}
+		assert.ErrorContains(t, cc.Validate(), "cooldownPeriod")
+	})
+}
