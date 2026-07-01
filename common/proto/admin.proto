@@ -131,7 +131,11 @@ message GetNamespaceResponse {
 
 message NamespaceView {
   Namespace namespace = 1;
-  NamespaceStatus namespace_status = 2;
+  NamespaceRuntimeStatus namespace_status = 2;
+}
+
+message NamespaceRuntimeStatus {
+  map<int64, ShardMetadata> shards = 1;
 }
 
 message SplitShardRequest {

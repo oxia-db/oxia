@@ -538,9 +538,7 @@ func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {
 								InitialShardCount: 4,
 								ReplicationFactor: 3,
 							},
-							NamespaceStatus: &proto.NamespaceStatus{
-								ReplicationFactor: 3,
-							},
+							NamespaceStatus: &proto.NamespaceRuntimeStatus{},
 						},
 					},
 				},
@@ -554,7 +552,7 @@ func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {
 	assert.Equal(t, "ns-1", namespaces[0].GetNamespace().GetName())
 	assert.EqualValues(t, 4, namespaces[0].GetNamespace().GetInitialShardCount())
 	assert.EqualValues(t, 3, namespaces[0].GetNamespace().GetReplicationFactor())
-	assert.EqualValues(t, 3, namespaces[0].GetNamespaceStatus().GetReplicationFactor())
+	assert.NotNil(t, namespaces[0].GetNamespaceStatus())
 }
 
 func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
@@ -570,9 +568,7 @@ func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
 							ReplicationFactor: 3,
 							KeySorting:        proto.KeySortingType_NATURAL.String(),
 						},
-						NamespaceStatus: &proto.NamespaceStatus{
-							ReplicationFactor: 3,
-						},
+						NamespaceStatus: &proto.NamespaceRuntimeStatus{},
 					},
 				},
 			},
@@ -586,7 +582,7 @@ func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
 	assert.EqualValues(t, 4, namespace.GetNamespace().GetInitialShardCount())
 	assert.EqualValues(t, 3, namespace.GetNamespace().GetReplicationFactor())
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetNamespace().GetKeySorting())
-	assert.EqualValues(t, 3, namespace.GetNamespaceStatus().GetReplicationFactor())
+	assert.NotNil(t, namespace.GetNamespaceStatus())
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

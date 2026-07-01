@@ -483,7 +483,6 @@ func TestManagementServerGetNamespace(t *testing.T) {
 	assert.EqualValues(t, 4, res.Namespace.GetNamespace().GetInitialShardCount())
 	assert.EqualValues(t, 3, res.Namespace.GetNamespace().GetReplicationFactor())
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), res.Namespace.GetNamespace().GetKeySorting())
-	assert.EqualValues(t, 3, res.Namespace.GetNamespaceStatus().GetReplicationFactor())
 	assert.Len(t, res.Namespace.GetNamespaceStatus().GetShards(), 2)
 }
 
