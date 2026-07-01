@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
 	"sync/atomic"
 
 	"google.golang.org/grpc/codes"
@@ -32,6 +33,8 @@ import (
 )
 
 var _ proto.OxiaAdminServer = (*managementServer)(nil)
+
+const errNamespaceNotFoundFmt = "namespace %q not found"
 
 type managementServer struct {
 	proto.UnimplementedOxiaAdminServer
@@ -341,7 +344,7 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	namespace, err := runtime.Metadata().PatchNamespace(req.Namespace)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrNotFound) {
-			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace.GetName())
+			return nil, grpcstatus.Errorf(codes.NotFound, errNamespaceNotFoundFmt, req.Namespace.GetName())
 		}
 		if errors.Is(err, metadatacommon.ErrBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to patch namespace %q due to concurrent config update", req.Namespace.GetName())
@@ -372,7 +375,7 @@ func (management *managementServer) DeleteNamespace(_ context.Context, req *prot
 	namespace, err := runtime.Metadata().DeleteNamespace(req.Namespace)
 	if err != nil {
 		if errors.Is(err, metadatacommon.ErrNotFound) {
-			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
+			return nil, grpcstatus.Errorf(codes.NotFound, errNamespaceNotFoundFmt, req.Namespace)
 		}
 		if errors.Is(err, metadatacommon.ErrBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to delete namespace %q due to concurrent config update", req.Namespace)
@@ -396,7 +399,7 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 
 	namespace, found := runtime.Metadata().GetNamespace(req.Namespace)
 	if !found {
-		return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
+		return nil, grpcstatus.Errorf(codes.NotFound, errNamespaceNotFoundFmt, req.Namespace)
 	}
 
 	namespaceStatus := &proto.NamespaceRuntimeStatus{}
@@ -409,6 +412,79 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 		Namespace: &proto.NamespaceView{
 			Namespace:       namespace.UnsafeBorrow(),
 			NamespaceStatus: namespaceStatus,
+		},
+	}, nil
+}
+
+func (management *managementServer) ListShards(_ context.Context, req *proto.ListShardsRequest) (*proto.ListShardsResponse, error) {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	if req == nil || req.Namespace == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be empty")
+	}
+	if _, found := runtime.Metadata().GetNamespace(req.Namespace); !found {
+		return nil, grpcstatus.Errorf(codes.NotFound, errNamespaceNotFoundFmt, req.Namespace)
+	}
+
+	namespaceStatus, found := runtime.Metadata().GetNamespaceStatus(req.Namespace)
+	if !found {
+		return &proto.ListShardsResponse{}, nil
+	}
+
+	shards := namespaceStatus.UnsafeBorrow().GetShards()
+	shardIDs := make([]int64, 0, len(shards))
+	for shardID := range shards {
+		shardIDs = append(shardIDs, shardID)
+	}
+	sort.Slice(shardIDs, func(i, j int) bool {
+		return shardIDs[i] < shardIDs[j]
+	})
+
+	responseShards := make([]*proto.ShardView, 0, len(shardIDs))
+	for _, shardID := range shardIDs {
+		status := shards[shardID]
+		if status == nil {
+			status = &proto.ShardMetadata{}
+		}
+		responseShards = append(responseShards, &proto.ShardView{
+			Namespace:   req.Namespace,
+			Shard:       shardID,
+			ShardStatus: status,
+		})
+	}
+	return &proto.ListShardsResponse{Shards: responseShards}, nil
+}
+
+func (management *managementServer) GetShard(_ context.Context, req *proto.GetShardRequest) (*proto.GetShardResponse, error) {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	if req == nil || req.Namespace == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be empty")
+	}
+	if req.Shard < 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "shard must not be negative")
+	}
+	if _, found := runtime.Metadata().GetNamespace(req.Namespace); !found {
+		return nil, grpcstatus.Errorf(codes.NotFound, errNamespaceNotFoundFmt, req.Namespace)
+	}
+
+	shardStatus, found := runtime.Metadata().GetShardStatus(req.Namespace, req.Shard)
+	if !found {
+		return nil, grpcstatus.Errorf(codes.NotFound, "shard %d in namespace %q not found", req.Shard, req.Namespace)
+	}
+	status := shardStatus.UnsafeBorrow()
+	if status == nil {
+		status = &proto.ShardMetadata{}
+	}
+	return &proto.GetShardResponse{
+		Shard: &proto.ShardView{
+			Namespace:   req.Namespace,
+			Shard:       req.Shard,
+			ShardStatus: status,
 		},
 	}, nil
 }

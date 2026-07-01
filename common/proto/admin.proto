@@ -38,6 +38,9 @@ service OxiaAdmin {
   rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
   rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
 
+  rpc ListShards(ListShardsRequest) returns (ListShardsResponse);
+  rpc GetShard(GetShardRequest) returns (GetShardResponse);
+
   /**
    * Triggers a shard split. The specified shard is split into two child
    * shards at the given split point (or midpoint if not specified).
@@ -136,6 +139,29 @@ message NamespaceView {
 
 message NamespaceRuntimeStatus {
   map<int64, ShardMetadata> shards = 1;
+}
+
+message ListShardsRequest {
+  string namespace = 1;
+}
+
+message ListShardsResponse {
+  repeated ShardView shards = 1;
+}
+
+message GetShardRequest {
+  string namespace = 1;
+  int64 shard = 2;
+}
+
+message GetShardResponse {
+  ShardView shard = 1;
+}
+
+message ShardView {
+  string namespace = 1;
+  int64 shard = 2;
+  ShardMetadata shard_status = 3;
 }
 
 message SplitShardRequest {

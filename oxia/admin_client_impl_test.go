@@ -54,6 +54,10 @@ type mockAdminRpcClient struct {
 	listNamespacesErr       error
 	getNamespaceResp        *proto.GetNamespaceResponse
 	getNamespaceErr         error
+	listShardsResp          *proto.ListShardsResponse
+	listShardsErr           error
+	getShardResp            *proto.GetShardResponse
+	getShardErr             error
 }
 
 func (m *mockAdminRpcClient) ListDataServers(ctx context.Context, _ *proto.ListDataServersRequest, _ ...grpc.CallOption) (*proto.ListDataServersResponse, error) {
@@ -100,6 +104,14 @@ func (m *mockAdminRpcClient) GetNamespace(context.Context, *proto.GetNamespaceRe
 
 func (m *mockAdminRpcClient) ListNamespaces(context.Context, *proto.ListNamespacesRequest, ...grpc.CallOption) (*proto.ListNamespacesResponse, error) {
 	return m.listNamespacesResp, m.listNamespacesErr
+}
+
+func (m *mockAdminRpcClient) ListShards(context.Context, *proto.ListShardsRequest, ...grpc.CallOption) (*proto.ListShardsResponse, error) {
+	return m.listShardsResp, m.listShardsErr
+}
+
+func (m *mockAdminRpcClient) GetShard(context.Context, *proto.GetShardRequest, ...grpc.CallOption) (*proto.GetShardResponse, error) {
+	return m.getShardResp, m.getShardErr
 }
 
 func (*mockAdminRpcClient) SplitShard(context.Context, *proto.SplitShardRequest, ...grpc.CallOption) (*proto.SplitShardResponse, error) {
@@ -583,6 +595,64 @@ func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
 	assert.EqualValues(t, 3, namespace.GetNamespace().GetReplicationFactor())
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetNamespace().GetKeySorting())
 	assert.NotNil(t, namespace.GetNamespaceStatus())
+}
+
+func TestAdminClientListShardsReturnsResponse(t *testing.T) {
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				listShardsResp: &proto.ListShardsResponse{
+					Shards: []*proto.ShardView{
+						{
+							Namespace: "ns-1",
+							Shard:     1,
+							ShardStatus: &proto.ShardMetadata{
+								Status: proto.ShardStatusSteadyState,
+								Term:   3,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	shards, err := admin.ListShards(context.Background(), "ns-1")
+	require.NoError(t, err)
+	require.Len(t, shards, 1)
+	assert.Equal(t, "ns-1", shards[0].GetNamespace())
+	assert.EqualValues(t, 1, shards[0].GetShard())
+	assert.Equal(t, proto.ShardStatusSteadyState, shards[0].GetShardStatus().GetStatus())
+	assert.EqualValues(t, 3, shards[0].GetShardStatus().GetTerm())
+}
+
+func TestAdminClientGetShardReturnsResponse(t *testing.T) {
+	admin := &adminClientImpl{
+		adminAddr: "admin-addr",
+		clientPool: &mockAdminClientPool{
+			adminClient: &mockAdminRpcClient{
+				getShardResp: &proto.GetShardResponse{
+					Shard: &proto.ShardView{
+						Namespace: "ns-1",
+						Shard:     1,
+						ShardStatus: &proto.ShardMetadata{
+							Status: proto.ShardStatusElection,
+							Term:   4,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	shard, err := admin.GetShard(context.Background(), "ns-1", 1)
+	require.NoError(t, err)
+	require.NotNil(t, shard)
+	assert.Equal(t, "ns-1", shard.GetNamespace())
+	assert.EqualValues(t, 1, shard.GetShard())
+	assert.Equal(t, proto.ShardStatusElection, shard.GetShardStatus().GetStatus())
+	assert.EqualValues(t, 4, shard.GetShardStatus().GetTerm())
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

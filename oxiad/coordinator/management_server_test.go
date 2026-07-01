@@ -528,6 +528,91 @@ func TestManagementServerListNamespaces(t *testing.T) {
 	assert.Len(t, viewsByName["ns-2"].GetNamespaceStatus().GetShards(), 2)
 }
 
+func TestManagementServerListShards(t *testing.T) {
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
+			Name:              "ns-1",
+			InitialShardCount: 2,
+			ReplicationFactor: 1,
+		}},
+	})
+	require.True(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{
+			2: {
+				Status: proto.ShardStatusElection,
+				Term:   4,
+			},
+			1: {
+				Status: proto.ShardStatusSteadyState,
+				Term:   3,
+			},
+		},
+	}))
+	management := newReadyManagementServer(metadata, nil)
+
+	res, err := management.ListShards(context.Background(), &proto.ListShardsRequest{Namespace: "ns-1"})
+	require.NoError(t, err)
+	require.Len(t, res.Shards, 2)
+	assert.EqualValues(t, 1, res.Shards[0].GetShard())
+	assert.Equal(t, proto.ShardStatusSteadyState, res.Shards[0].GetShardStatus().GetStatus())
+	assert.EqualValues(t, 2, res.Shards[1].GetShard())
+	assert.Equal(t, proto.ShardStatusElection, res.Shards[1].GetShardStatus().GetStatus())
+}
+
+func TestManagementServerGetShard(t *testing.T) {
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
+			Name:              "ns-1",
+			InitialShardCount: 2,
+			ReplicationFactor: 1,
+		}},
+	})
+	require.True(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{
+			1: {
+				Status: proto.ShardStatusSteadyState,
+				Term:   3,
+				Leader: dataServer(nil, "public-1", "internal-1"),
+				Ensemble: []*proto.DataServerIdentity{
+					dataServer(nil, "public-1", "internal-1"),
+				},
+				Int32HashRange: &proto.HashRange{Min: 1, Max: 10},
+			},
+		},
+	}))
+	management := newReadyManagementServer(metadata, nil)
+
+	res, err := management.GetShard(context.Background(), &proto.GetShardRequest{Namespace: "ns-1", Shard: 1})
+	require.NoError(t, err)
+	require.NotNil(t, res.Shard)
+	assert.Equal(t, "ns-1", res.Shard.GetNamespace())
+	assert.EqualValues(t, 1, res.Shard.GetShard())
+	assert.Equal(t, proto.ShardStatusSteadyState, res.Shard.GetShardStatus().GetStatus())
+	assert.EqualValues(t, 3, res.Shard.GetShardStatus().GetTerm())
+	assert.Equal(t, "internal-1", res.Shard.GetShardStatus().GetLeader().GetNameOrDefault())
+	assert.EqualValues(t, 1, res.Shard.GetShardStatus().GetInt32HashRange().GetMin())
+	assert.EqualValues(t, 10, res.Shard.GetShardStatus().GetInt32HashRange().GetMax())
+}
+
+func TestManagementServerGetShardNotFound(t *testing.T) {
+	management := newReadyManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{{
+				Name:              "ns-1",
+				InitialShardCount: 1,
+				ReplicationFactor: 1,
+			}},
+		}),
+		nil,
+	)
+
+	_, err := management.GetShard(context.Background(), &proto.GetShardRequest{Namespace: "ns-1", Shard: 1})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
+}
+
 func TestManagementServerCreateNamespace(t *testing.T) {
 	serverName1 := "server-1"
 	serverName2 := "server-2"

@@ -36,6 +36,8 @@ type AdminClient interface {
 	ListNamespaces(ctx context.Context) ([]*proto.NamespaceView, error)
 	GetNamespace(ctx context.Context, namespace string) (*proto.NamespaceView, error)
 
+	ListShards(ctx context.Context, namespace string) ([]*proto.ShardView, error)
+	GetShard(ctx context.Context, namespace string, shardId int64) (*proto.ShardView, error)
 	SplitShard(ctx context.Context, namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
 }
 

@@ -1050,6 +1050,250 @@ func (x *NamespaceRuntimeStatus) GetShards() map[int64]*ShardMetadata {
 	return nil
 }
 
+type ListShardsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListShardsRequest) Reset() {
+	*x = ListShardsRequest{}
+	mi := &file_admin_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListShardsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListShardsRequest) ProtoMessage() {}
+
+func (x *ListShardsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListShardsRequest.ProtoReflect.Descriptor instead.
+func (*ListShardsRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ListShardsRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+type ListShardsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Shards        []*ShardView           `protobuf:"bytes,1,rep,name=shards,proto3" json:"shards,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListShardsResponse) Reset() {
+	*x = ListShardsResponse{}
+	mi := &file_admin_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListShardsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListShardsResponse) ProtoMessage() {}
+
+func (x *ListShardsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListShardsResponse.ProtoReflect.Descriptor instead.
+func (*ListShardsResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ListShardsResponse) GetShards() []*ShardView {
+	if x != nil {
+		return x.Shards
+	}
+	return nil
+}
+
+type GetShardRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Shard         int64                  `protobuf:"varint,2,opt,name=shard,proto3" json:"shard,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetShardRequest) Reset() {
+	*x = GetShardRequest{}
+	mi := &file_admin_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetShardRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetShardRequest) ProtoMessage() {}
+
+func (x *GetShardRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetShardRequest.ProtoReflect.Descriptor instead.
+func (*GetShardRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *GetShardRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *GetShardRequest) GetShard() int64 {
+	if x != nil {
+		return x.Shard
+	}
+	return 0
+}
+
+type GetShardResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Shard         *ShardView             `protobuf:"bytes,1,opt,name=shard,proto3" json:"shard,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetShardResponse) Reset() {
+	*x = GetShardResponse{}
+	mi := &file_admin_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetShardResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetShardResponse) ProtoMessage() {}
+
+func (x *GetShardResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetShardResponse.ProtoReflect.Descriptor instead.
+func (*GetShardResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *GetShardResponse) GetShard() *ShardView {
+	if x != nil {
+		return x.Shard
+	}
+	return nil
+}
+
+type ShardView struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Shard         int64                  `protobuf:"varint,2,opt,name=shard,proto3" json:"shard,omitempty"`
+	ShardStatus   *ShardMetadata         `protobuf:"bytes,3,opt,name=shard_status,json=shardStatus,proto3" json:"shard_status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShardView) Reset() {
+	*x = ShardView{}
+	mi := &file_admin_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShardView) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShardView) ProtoMessage() {}
+
+func (x *ShardView) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShardView.ProtoReflect.Descriptor instead.
+func (*ShardView) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ShardView) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *ShardView) GetShard() int64 {
+	if x != nil {
+		return x.Shard
+	}
+	return 0
+}
+
+func (x *ShardView) GetShardStatus() *ShardMetadata {
+	if x != nil {
+		return x.ShardStatus
+	}
+	return nil
+}
+
 type SplitShardRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
@@ -1062,7 +1306,7 @@ type SplitShardRequest struct {
 
 func (x *SplitShardRequest) Reset() {
 	*x = SplitShardRequest{}
-	mi := &file_admin_proto_msgTypes[23]
+	mi := &file_admin_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1074,7 +1318,7 @@ func (x *SplitShardRequest) String() string {
 func (*SplitShardRequest) ProtoMessage() {}
 
 func (x *SplitShardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[23]
+	mi := &file_admin_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1087,7 +1331,7 @@ func (x *SplitShardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SplitShardRequest.ProtoReflect.Descriptor instead.
 func (*SplitShardRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{23}
+	return file_admin_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *SplitShardRequest) GetNamespace() string {
@@ -1121,7 +1365,7 @@ type SplitShardResponse struct {
 
 func (x *SplitShardResponse) Reset() {
 	*x = SplitShardResponse{}
-	mi := &file_admin_proto_msgTypes[24]
+	mi := &file_admin_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1133,7 +1377,7 @@ func (x *SplitShardResponse) String() string {
 func (*SplitShardResponse) ProtoMessage() {}
 
 func (x *SplitShardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[24]
+	mi := &file_admin_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1146,7 +1390,7 @@ func (x *SplitShardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SplitShardResponse.ProtoReflect.Descriptor instead.
 func (*SplitShardResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{24}
+	return file_admin_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *SplitShardResponse) GetLeftChildShard() int64 {
@@ -1227,7 +1471,20 @@ const file_admin_proto_rawDesc = "" +
 	"\x06shards\x18\x01 \x03(\v24.io.oxia.proto.v1.NamespaceRuntimeStatus.ShardsEntryR\x06shards\x1aZ\n" +
 	"\vShardsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\x03R\x03key\x125\n" +
-	"\x05value\x18\x02 \x01(\v2\x1f.io.oxia.proto.v1.ShardMetadataR\x05value:\x028\x01\"}\n" +
+	"\x05value\x18\x02 \x01(\v2\x1f.io.oxia.proto.v1.ShardMetadataR\x05value:\x028\x01\"1\n" +
+	"\x11ListShardsRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\"I\n" +
+	"\x12ListShardsResponse\x123\n" +
+	"\x06shards\x18\x01 \x03(\v2\x1b.io.oxia.proto.v1.ShardViewR\x06shards\"E\n" +
+	"\x0fGetShardRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
+	"\x05shard\x18\x02 \x01(\x03R\x05shard\"E\n" +
+	"\x10GetShardResponse\x121\n" +
+	"\x05shard\x18\x01 \x01(\v2\x1b.io.oxia.proto.v1.ShardViewR\x05shard\"\x83\x01\n" +
+	"\tShardView\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
+	"\x05shard\x18\x02 \x01(\x03R\x05shard\x12B\n" +
+	"\fshard_status\x18\x03 \x01(\v2\x1f.io.oxia.proto.v1.ShardMetadataR\vshardStatus\"}\n" +
 	"\x11SplitShardRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
 	"\x05shard\x18\x02 \x01(\x03R\x05shard\x12$\n" +
@@ -1236,7 +1493,8 @@ const file_admin_proto_rawDesc = "" +
 	"\f_split_point\"j\n" +
 	"\x12SplitShardResponse\x12(\n" +
 	"\x10left_child_shard\x18\x01 \x01(\x03R\x0eleftChildShard\x12*\n" +
-	"\x11right_child_shard\x18\x02 \x01(\x03R\x0frightChildShard2\xe5\b\n" +
+	"\x11right_child_shard\x18\x02 \x01(\x03R\x0frightChildShard2\x91\n" +
+	"\n" +
 	"\tOxiaAdmin\x12f\n" +
 	"\x0fListDataServers\x12(.io.oxia.proto.v1.ListDataServersRequest\x1a).io.oxia.proto.v1.ListDataServersResponse\x12`\n" +
 	"\rGetDataServer\x12&.io.oxia.proto.v1.GetDataServerRequest\x1a'.io.oxia.proto.v1.GetDataServerResponse\x12i\n" +
@@ -1248,6 +1506,9 @@ const file_admin_proto_rawDesc = "" +
 	"\x0fDeleteNamespace\x12(.io.oxia.proto.v1.DeleteNamespaceRequest\x1a).io.oxia.proto.v1.DeleteNamespaceResponse\x12]\n" +
 	"\fGetNamespace\x12%.io.oxia.proto.v1.GetNamespaceRequest\x1a&.io.oxia.proto.v1.GetNamespaceResponse\x12c\n" +
 	"\x0eListNamespaces\x12'.io.oxia.proto.v1.ListNamespacesRequest\x1a(.io.oxia.proto.v1.ListNamespacesResponse\x12W\n" +
+	"\n" +
+	"ListShards\x12#.io.oxia.proto.v1.ListShardsRequest\x1a$.io.oxia.proto.v1.ListShardsResponse\x12Q\n" +
+	"\bGetShard\x12!.io.oxia.proto.v1.GetShardRequest\x1a\".io.oxia.proto.v1.GetShardResponse\x12W\n" +
 	"\n" +
 	"SplitShard\x12#.io.oxia.proto.v1.SplitShardRequest\x1a$.io.oxia.proto.v1.SplitShardResponseB(P\x01Z$github.com/oxia-db/oxia/common/protob\x06proto3"
 
@@ -1263,7 +1524,7 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_admin_proto_goTypes = []any{
 	(*ListDataServersRequest)(nil),   // 0: io.oxia.proto.v1.ListDataServersRequest
 	(*ListDataServersResponse)(nil),  // 1: io.oxia.proto.v1.ListDataServersResponse
@@ -1288,62 +1549,74 @@ var file_admin_proto_goTypes = []any{
 	(*GetNamespaceResponse)(nil),     // 20: io.oxia.proto.v1.GetNamespaceResponse
 	(*NamespaceView)(nil),            // 21: io.oxia.proto.v1.NamespaceView
 	(*NamespaceRuntimeStatus)(nil),   // 22: io.oxia.proto.v1.NamespaceRuntimeStatus
-	(*SplitShardRequest)(nil),        // 23: io.oxia.proto.v1.SplitShardRequest
-	(*SplitShardResponse)(nil),       // 24: io.oxia.proto.v1.SplitShardResponse
-	nil,                              // 25: io.oxia.proto.v1.NamespaceRuntimeStatus.ShardsEntry
-	(*DataServer)(nil),               // 26: io.oxia.proto.v1.DataServer
-	(*DataServerStatus)(nil),         // 27: io.oxia.proto.v1.DataServerStatus
-	(*Namespace)(nil),                // 28: io.oxia.proto.v1.Namespace
-	(*ShardMetadata)(nil),            // 29: io.oxia.proto.v1.ShardMetadata
+	(*ListShardsRequest)(nil),        // 23: io.oxia.proto.v1.ListShardsRequest
+	(*ListShardsResponse)(nil),       // 24: io.oxia.proto.v1.ListShardsResponse
+	(*GetShardRequest)(nil),          // 25: io.oxia.proto.v1.GetShardRequest
+	(*GetShardResponse)(nil),         // 26: io.oxia.proto.v1.GetShardResponse
+	(*ShardView)(nil),                // 27: io.oxia.proto.v1.ShardView
+	(*SplitShardRequest)(nil),        // 28: io.oxia.proto.v1.SplitShardRequest
+	(*SplitShardResponse)(nil),       // 29: io.oxia.proto.v1.SplitShardResponse
+	nil,                              // 30: io.oxia.proto.v1.NamespaceRuntimeStatus.ShardsEntry
+	(*DataServer)(nil),               // 31: io.oxia.proto.v1.DataServer
+	(*DataServerStatus)(nil),         // 32: io.oxia.proto.v1.DataServerStatus
+	(*Namespace)(nil),                // 33: io.oxia.proto.v1.Namespace
+	(*ShardMetadata)(nil),            // 34: io.oxia.proto.v1.ShardMetadata
 }
 var file_admin_proto_depIdxs = []int32{
 	4,  // 0: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServerView
 	4,  // 1: io.oxia.proto.v1.GetDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServerView
-	26, // 2: io.oxia.proto.v1.DataServerView.data_server:type_name -> io.oxia.proto.v1.DataServer
-	27, // 3: io.oxia.proto.v1.DataServerView.data_server_status:type_name -> io.oxia.proto.v1.DataServerStatus
-	26, // 4: io.oxia.proto.v1.CreateDataServerRequest.data_server:type_name -> io.oxia.proto.v1.DataServer
-	26, // 5: io.oxia.proto.v1.CreateDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServer
-	26, // 6: io.oxia.proto.v1.PatchDataServerRequest.data_server:type_name -> io.oxia.proto.v1.DataServer
-	26, // 7: io.oxia.proto.v1.PatchDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServer
-	26, // 8: io.oxia.proto.v1.DeleteDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServer
-	28, // 9: io.oxia.proto.v1.CreateNamespaceRequest.namespace:type_name -> io.oxia.proto.v1.Namespace
-	28, // 10: io.oxia.proto.v1.CreateNamespaceResponse.namespace:type_name -> io.oxia.proto.v1.Namespace
-	28, // 11: io.oxia.proto.v1.PatchNamespaceRequest.namespace:type_name -> io.oxia.proto.v1.Namespace
-	28, // 12: io.oxia.proto.v1.PatchNamespaceResponse.namespace:type_name -> io.oxia.proto.v1.Namespace
-	28, // 13: io.oxia.proto.v1.DeleteNamespaceResponse.namespace:type_name -> io.oxia.proto.v1.Namespace
+	31, // 2: io.oxia.proto.v1.DataServerView.data_server:type_name -> io.oxia.proto.v1.DataServer
+	32, // 3: io.oxia.proto.v1.DataServerView.data_server_status:type_name -> io.oxia.proto.v1.DataServerStatus
+	31, // 4: io.oxia.proto.v1.CreateDataServerRequest.data_server:type_name -> io.oxia.proto.v1.DataServer
+	31, // 5: io.oxia.proto.v1.CreateDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServer
+	31, // 6: io.oxia.proto.v1.PatchDataServerRequest.data_server:type_name -> io.oxia.proto.v1.DataServer
+	31, // 7: io.oxia.proto.v1.PatchDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServer
+	31, // 8: io.oxia.proto.v1.DeleteDataServerResponse.data_server:type_name -> io.oxia.proto.v1.DataServer
+	33, // 9: io.oxia.proto.v1.CreateNamespaceRequest.namespace:type_name -> io.oxia.proto.v1.Namespace
+	33, // 10: io.oxia.proto.v1.CreateNamespaceResponse.namespace:type_name -> io.oxia.proto.v1.Namespace
+	33, // 11: io.oxia.proto.v1.PatchNamespaceRequest.namespace:type_name -> io.oxia.proto.v1.Namespace
+	33, // 12: io.oxia.proto.v1.PatchNamespaceResponse.namespace:type_name -> io.oxia.proto.v1.Namespace
+	33, // 13: io.oxia.proto.v1.DeleteNamespaceResponse.namespace:type_name -> io.oxia.proto.v1.Namespace
 	21, // 14: io.oxia.proto.v1.ListNamespacesResponse.namespaces:type_name -> io.oxia.proto.v1.NamespaceView
 	21, // 15: io.oxia.proto.v1.GetNamespaceResponse.namespace:type_name -> io.oxia.proto.v1.NamespaceView
-	28, // 16: io.oxia.proto.v1.NamespaceView.namespace:type_name -> io.oxia.proto.v1.Namespace
+	33, // 16: io.oxia.proto.v1.NamespaceView.namespace:type_name -> io.oxia.proto.v1.Namespace
 	22, // 17: io.oxia.proto.v1.NamespaceView.namespace_status:type_name -> io.oxia.proto.v1.NamespaceRuntimeStatus
-	25, // 18: io.oxia.proto.v1.NamespaceRuntimeStatus.shards:type_name -> io.oxia.proto.v1.NamespaceRuntimeStatus.ShardsEntry
-	29, // 19: io.oxia.proto.v1.NamespaceRuntimeStatus.ShardsEntry.value:type_name -> io.oxia.proto.v1.ShardMetadata
-	0,  // 20: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
-	2,  // 21: io.oxia.proto.v1.OxiaAdmin.GetDataServer:input_type -> io.oxia.proto.v1.GetDataServerRequest
-	5,  // 22: io.oxia.proto.v1.OxiaAdmin.CreateDataServer:input_type -> io.oxia.proto.v1.CreateDataServerRequest
-	7,  // 23: io.oxia.proto.v1.OxiaAdmin.PatchDataServer:input_type -> io.oxia.proto.v1.PatchDataServerRequest
-	9,  // 24: io.oxia.proto.v1.OxiaAdmin.DeleteDataServer:input_type -> io.oxia.proto.v1.DeleteDataServerRequest
-	11, // 25: io.oxia.proto.v1.OxiaAdmin.CreateNamespace:input_type -> io.oxia.proto.v1.CreateNamespaceRequest
-	13, // 26: io.oxia.proto.v1.OxiaAdmin.PatchNamespace:input_type -> io.oxia.proto.v1.PatchNamespaceRequest
-	15, // 27: io.oxia.proto.v1.OxiaAdmin.DeleteNamespace:input_type -> io.oxia.proto.v1.DeleteNamespaceRequest
-	19, // 28: io.oxia.proto.v1.OxiaAdmin.GetNamespace:input_type -> io.oxia.proto.v1.GetNamespaceRequest
-	17, // 29: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
-	23, // 30: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
-	1,  // 31: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
-	3,  // 32: io.oxia.proto.v1.OxiaAdmin.GetDataServer:output_type -> io.oxia.proto.v1.GetDataServerResponse
-	6,  // 33: io.oxia.proto.v1.OxiaAdmin.CreateDataServer:output_type -> io.oxia.proto.v1.CreateDataServerResponse
-	8,  // 34: io.oxia.proto.v1.OxiaAdmin.PatchDataServer:output_type -> io.oxia.proto.v1.PatchDataServerResponse
-	10, // 35: io.oxia.proto.v1.OxiaAdmin.DeleteDataServer:output_type -> io.oxia.proto.v1.DeleteDataServerResponse
-	12, // 36: io.oxia.proto.v1.OxiaAdmin.CreateNamespace:output_type -> io.oxia.proto.v1.CreateNamespaceResponse
-	14, // 37: io.oxia.proto.v1.OxiaAdmin.PatchNamespace:output_type -> io.oxia.proto.v1.PatchNamespaceResponse
-	16, // 38: io.oxia.proto.v1.OxiaAdmin.DeleteNamespace:output_type -> io.oxia.proto.v1.DeleteNamespaceResponse
-	20, // 39: io.oxia.proto.v1.OxiaAdmin.GetNamespace:output_type -> io.oxia.proto.v1.GetNamespaceResponse
-	18, // 40: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
-	24, // 41: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
-	31, // [31:42] is the sub-list for method output_type
-	20, // [20:31] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	30, // 18: io.oxia.proto.v1.NamespaceRuntimeStatus.shards:type_name -> io.oxia.proto.v1.NamespaceRuntimeStatus.ShardsEntry
+	27, // 19: io.oxia.proto.v1.ListShardsResponse.shards:type_name -> io.oxia.proto.v1.ShardView
+	27, // 20: io.oxia.proto.v1.GetShardResponse.shard:type_name -> io.oxia.proto.v1.ShardView
+	34, // 21: io.oxia.proto.v1.ShardView.shard_status:type_name -> io.oxia.proto.v1.ShardMetadata
+	34, // 22: io.oxia.proto.v1.NamespaceRuntimeStatus.ShardsEntry.value:type_name -> io.oxia.proto.v1.ShardMetadata
+	0,  // 23: io.oxia.proto.v1.OxiaAdmin.ListDataServers:input_type -> io.oxia.proto.v1.ListDataServersRequest
+	2,  // 24: io.oxia.proto.v1.OxiaAdmin.GetDataServer:input_type -> io.oxia.proto.v1.GetDataServerRequest
+	5,  // 25: io.oxia.proto.v1.OxiaAdmin.CreateDataServer:input_type -> io.oxia.proto.v1.CreateDataServerRequest
+	7,  // 26: io.oxia.proto.v1.OxiaAdmin.PatchDataServer:input_type -> io.oxia.proto.v1.PatchDataServerRequest
+	9,  // 27: io.oxia.proto.v1.OxiaAdmin.DeleteDataServer:input_type -> io.oxia.proto.v1.DeleteDataServerRequest
+	11, // 28: io.oxia.proto.v1.OxiaAdmin.CreateNamespace:input_type -> io.oxia.proto.v1.CreateNamespaceRequest
+	13, // 29: io.oxia.proto.v1.OxiaAdmin.PatchNamespace:input_type -> io.oxia.proto.v1.PatchNamespaceRequest
+	15, // 30: io.oxia.proto.v1.OxiaAdmin.DeleteNamespace:input_type -> io.oxia.proto.v1.DeleteNamespaceRequest
+	19, // 31: io.oxia.proto.v1.OxiaAdmin.GetNamespace:input_type -> io.oxia.proto.v1.GetNamespaceRequest
+	17, // 32: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:input_type -> io.oxia.proto.v1.ListNamespacesRequest
+	23, // 33: io.oxia.proto.v1.OxiaAdmin.ListShards:input_type -> io.oxia.proto.v1.ListShardsRequest
+	25, // 34: io.oxia.proto.v1.OxiaAdmin.GetShard:input_type -> io.oxia.proto.v1.GetShardRequest
+	28, // 35: io.oxia.proto.v1.OxiaAdmin.SplitShard:input_type -> io.oxia.proto.v1.SplitShardRequest
+	1,  // 36: io.oxia.proto.v1.OxiaAdmin.ListDataServers:output_type -> io.oxia.proto.v1.ListDataServersResponse
+	3,  // 37: io.oxia.proto.v1.OxiaAdmin.GetDataServer:output_type -> io.oxia.proto.v1.GetDataServerResponse
+	6,  // 38: io.oxia.proto.v1.OxiaAdmin.CreateDataServer:output_type -> io.oxia.proto.v1.CreateDataServerResponse
+	8,  // 39: io.oxia.proto.v1.OxiaAdmin.PatchDataServer:output_type -> io.oxia.proto.v1.PatchDataServerResponse
+	10, // 40: io.oxia.proto.v1.OxiaAdmin.DeleteDataServer:output_type -> io.oxia.proto.v1.DeleteDataServerResponse
+	12, // 41: io.oxia.proto.v1.OxiaAdmin.CreateNamespace:output_type -> io.oxia.proto.v1.CreateNamespaceResponse
+	14, // 42: io.oxia.proto.v1.OxiaAdmin.PatchNamespace:output_type -> io.oxia.proto.v1.PatchNamespaceResponse
+	16, // 43: io.oxia.proto.v1.OxiaAdmin.DeleteNamespace:output_type -> io.oxia.proto.v1.DeleteNamespaceResponse
+	20, // 44: io.oxia.proto.v1.OxiaAdmin.GetNamespace:output_type -> io.oxia.proto.v1.GetNamespaceResponse
+	18, // 45: io.oxia.proto.v1.OxiaAdmin.ListNamespaces:output_type -> io.oxia.proto.v1.ListNamespacesResponse
+	24, // 46: io.oxia.proto.v1.OxiaAdmin.ListShards:output_type -> io.oxia.proto.v1.ListShardsResponse
+	26, // 47: io.oxia.proto.v1.OxiaAdmin.GetShard:output_type -> io.oxia.proto.v1.GetShardResponse
+	29, // 48: io.oxia.proto.v1.OxiaAdmin.SplitShard:output_type -> io.oxia.proto.v1.SplitShardResponse
+	36, // [36:49] is the sub-list for method output_type
+	23, // [23:36] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -1352,14 +1625,14 @@ func file_admin_proto_init() {
 		return
 	}
 	file_metadata_proto_init()
-	file_admin_proto_msgTypes[23].OneofWrappers = []any{}
+	file_admin_proto_msgTypes[28].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   26,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

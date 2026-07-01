@@ -15,6 +15,7 @@
 package shard
 
 import (
+	getcmd "github.com/oxia-db/oxia/cmd/admin/shard/get"
 	splitcmd "github.com/oxia-db/oxia/cmd/admin/shard/split"
 
 	"github.com/spf13/cobra"
@@ -27,5 +28,6 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
+	Cmd.AddCommand(getcmd.Cmd)
 	Cmd.AddCommand(splitcmd.Cmd)
 }

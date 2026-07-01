@@ -152,6 +152,26 @@ func (admin *adminClientImpl) GetNamespace(ctx context.Context, namespace string
 	return response.Namespace, nil
 }
 
+func (admin *adminClientImpl) ListShards(ctx context.Context, namespace string) ([]*proto.ShardView, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.ListShardsResponse, error) {
+		return client.ListShards(ctx, &proto.ListShardsRequest{Namespace: namespace})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return response.Shards, nil
+}
+
+func (admin *adminClientImpl) GetShard(ctx context.Context, namespace string, shardId int64) (*proto.ShardView, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.GetShardResponse, error) {
+		return client.GetShard(ctx, &proto.GetShardRequest{Namespace: namespace, Shard: shardId})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return response.Shard, nil
+}
+
 func (admin *adminClientImpl) SplitShard(ctx context.Context, namespace string, shardId int64, splitPoint *uint32) *SplitShardResult {
 	req := &proto.SplitShardRequest{
 		Namespace: namespace,

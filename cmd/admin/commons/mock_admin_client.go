@@ -119,6 +119,22 @@ func (m *MockAdminClient) GetNamespace(_ context.Context, namespace string) (*pr
 	return nil, errors.New("namespace not found")
 }
 
+func (m *MockAdminClient) ListShards(_ context.Context, namespace string) ([]*proto.ShardView, error) {
+	args := m.MethodCalled("ListShards", namespace)
+	if v, ok := args.Get(0).([]*proto.ShardView); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("no shards available")
+}
+
+func (m *MockAdminClient) GetShard(_ context.Context, namespace string, shardId int64) (*proto.ShardView, error) {
+	args := m.MethodCalled("GetShard", namespace, shardId)
+	if v, ok := args.Get(0).(*proto.ShardView); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("shard not found")
+}
+
 func (m *MockAdminClient) SplitShard(_ context.Context, namespace string, shardId int64, splitPoint *uint32) *oxia.SplitShardResult {
 	args := m.MethodCalled("SplitShard", namespace, shardId, splitPoint)
 	if v, ok := args.Get(0).(*oxia.SplitShardResult); ok {
