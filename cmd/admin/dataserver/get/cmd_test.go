@@ -41,38 +41,27 @@ func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	return strings.TrimSpace(actual.String()), err
 }
 
-func dataServerView(dataServer *proto.DataServer) *proto.DataServerView {
-	return &proto.DataServerView{
-		DataServer: dataServer,
-		DataServerStatus: &proto.DataServerStatus{
-			State:             proto.DataServerState_DATA_SERVER_STATE_RUNNING,
-			SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
-		},
-	}
-}
-
-func requireJSONMap(t *testing.T, value any) map[string]any {
-	t.Helper()
-	result, ok := value.(map[string]any)
-	require.True(t, ok)
-	return result
-}
-
 func Test_cmd_getDataServer(t *testing.T) {
 	serverName := "server-1"
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetDataServer", serverName).Return(dataServerView(&proto.DataServer{
-		Identity: &proto.DataServerIdentity{
-			Name:     &serverName,
-			Public:   "public1",
-			Internal: "internal1",
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServerView{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{
+				Name:     &serverName,
+				Public:   "public1",
+				Internal: "internal1",
+			},
+			Metadata: &proto.DataServerMetadata{
+				Labels: map[string]string{"rack": "rack-1"},
+			},
 		},
-		Metadata: &proto.DataServerMetadata{
-			Labels: map[string]string{"rack": "rack-1"},
+		DataServerStatus: &proto.DataServerStatus{
+			State:             proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+			SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 		},
-	}), nil)
+	}, nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -87,11 +76,16 @@ func Test_cmd_getDataServer(t *testing.T) {
 	assert.NoError(t, err)
 	var dataServer map[string]any
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServer))
-	ds := requireJSONMap(t, dataServer["data_server"])
-	identity := requireJSONMap(t, ds["identity"])
-	metadata := requireJSONMap(t, ds["metadata"])
-	labels := requireJSONMap(t, metadata["labels"])
-	status := requireJSONMap(t, dataServer["data_server_status"])
+	ds, ok := dataServer["data_server"].(map[string]any)
+	require.True(t, ok)
+	identity, ok := ds["identity"].(map[string]any)
+	require.True(t, ok)
+	metadata, ok := ds["metadata"].(map[string]any)
+	require.True(t, ok)
+	labels, ok := metadata["labels"].(map[string]any)
+	require.True(t, ok)
+	status, ok := dataServer["data_server_status"].(map[string]any)
+	require.True(t, ok)
 	assert.Equal(t, serverName, identity["name"])
 	assert.Equal(t, "public1", identity["public"])
 	assert.Equal(t, "internal1", identity["internal"])
@@ -107,26 +101,38 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServerView{
-		dataServerView(&proto.DataServer{
-			Identity: &proto.DataServerIdentity{
-				Name:     &serverName1,
-				Public:   "public1",
-				Internal: "internal1",
+		{
+			DataServer: &proto.DataServer{
+				Identity: &proto.DataServerIdentity{
+					Name:     &serverName1,
+					Public:   "public1",
+					Internal: "internal1",
+				},
+				Metadata: &proto.DataServerMetadata{
+					Labels: map[string]string{"rack": "rack-1"},
+				},
 			},
-			Metadata: &proto.DataServerMetadata{
-				Labels: map[string]string{"rack": "rack-1"},
+			DataServerStatus: &proto.DataServerStatus{
+				State:             proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+				SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 			},
-		}),
-		dataServerView(&proto.DataServer{
-			Identity: &proto.DataServerIdentity{
-				Name:     &serverName2,
-				Public:   "public2",
-				Internal: "internal2",
+		},
+		{
+			DataServer: &proto.DataServer{
+				Identity: &proto.DataServerIdentity{
+					Name:     &serverName2,
+					Public:   "public2",
+					Internal: "internal2",
+				},
+				Metadata: &proto.DataServerMetadata{
+					Labels: map[string]string{"rack": "rack-2"},
+				},
 			},
-			Metadata: &proto.DataServerMetadata{
-				Labels: map[string]string{"rack": "rack-2"},
+			DataServerStatus: &proto.DataServerStatus{
+				State:             proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+				SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 			},
-		}),
+		},
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -143,14 +149,26 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 	var dataServers []map[string]any
 	assert.NoError(t, json.Unmarshal([]byte(out), &dataServers))
 	require.Len(t, dataServers, 2)
-	dataServer1 := requireJSONMap(t, dataServers[0]["data_server"])
-	dataServer2 := requireJSONMap(t, dataServers[1]["data_server"])
-	identity1 := requireJSONMap(t, dataServer1["identity"])
-	identity2 := requireJSONMap(t, dataServer2["identity"])
-	labels1 := requireJSONMap(t, requireJSONMap(t, dataServer1["metadata"])["labels"])
-	labels2 := requireJSONMap(t, requireJSONMap(t, dataServer2["metadata"])["labels"])
-	status1 := requireJSONMap(t, dataServers[0]["data_server_status"])
-	status2 := requireJSONMap(t, dataServers[1]["data_server_status"])
+	dataServer1, ok := dataServers[0]["data_server"].(map[string]any)
+	require.True(t, ok)
+	dataServer2, ok := dataServers[1]["data_server"].(map[string]any)
+	require.True(t, ok)
+	identity1, ok := dataServer1["identity"].(map[string]any)
+	require.True(t, ok)
+	identity2, ok := dataServer2["identity"].(map[string]any)
+	require.True(t, ok)
+	metadata1, ok := dataServer1["metadata"].(map[string]any)
+	require.True(t, ok)
+	metadata2, ok := dataServer2["metadata"].(map[string]any)
+	require.True(t, ok)
+	labels1, ok := metadata1["labels"].(map[string]any)
+	require.True(t, ok)
+	labels2, ok := metadata2["labels"].(map[string]any)
+	require.True(t, ok)
+	status1, ok := dataServers[0]["data_server_status"].(map[string]any)
+	require.True(t, ok)
+	status2, ok := dataServers[1]["data_server_status"].(map[string]any)
+	require.True(t, ok)
 	assert.Equal(t, serverName1, identity1["name"])
 	assert.Equal(t, serverName2, identity2["name"])
 	assert.Equal(t, "public1", identity1["public"])
@@ -170,16 +188,22 @@ func Test_cmd_getDataServer_YAML(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetDataServer", serverName).Return(dataServerView(&proto.DataServer{
-		Identity: &proto.DataServerIdentity{
-			Name:     &serverName,
-			Public:   "public1",
-			Internal: "internal1",
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServerView{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{
+				Name:     &serverName,
+				Public:   "public1",
+				Internal: "internal1",
+			},
+			Metadata: &proto.DataServerMetadata{
+				Labels: map[string]string{"rack": "rack-1"},
+			},
 		},
-		Metadata: &proto.DataServerMetadata{
-			Labels: map[string]string{"rack": "rack-1"},
+		DataServerStatus: &proto.DataServerStatus{
+			State:             proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+			SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 		},
-	}), nil)
+	}, nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -248,16 +272,22 @@ func Test_cmd_getDataServer_DefaultTable(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetDataServer", serverName).Return(dataServerView(&proto.DataServer{
-		Identity: &proto.DataServerIdentity{
-			Name:     &serverName,
-			Public:   "public1",
-			Internal: "internal1",
+	commons.MockedAdminClient.On("GetDataServer", serverName).Return(&proto.DataServerView{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{
+				Name:     &serverName,
+				Public:   "public1",
+				Internal: "internal1",
+			},
+			Metadata: &proto.DataServerMetadata{
+				Labels: map[string]string{"rack": "rack-1"},
+			},
 		},
-		Metadata: &proto.DataServerMetadata{
-			Labels: map[string]string{"rack": "rack-1"},
+		DataServerStatus: &proto.DataServerStatus{
+			State:             proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+			SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 		},
-	}), nil)
+	}, nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -290,20 +320,32 @@ func Test_cmd_getDataServersIdentities_DefaultTable(t *testing.T) {
 
 	commons.MockedAdminClient.On("Close").Return(nil)
 	commons.MockedAdminClient.On("ListDataServers").Return([]*proto.DataServerView{
-		dataServerView(&proto.DataServer{
-			Identity: &proto.DataServerIdentity{
-				Name:     &serverName1,
-				Public:   "public1",
-				Internal: "internal1",
+		{
+			DataServer: &proto.DataServer{
+				Identity: &proto.DataServerIdentity{
+					Name:     &serverName1,
+					Public:   "public1",
+					Internal: "internal1",
+				},
 			},
-		}),
-		dataServerView(&proto.DataServer{
-			Identity: &proto.DataServerIdentity{
-				Name:     &serverName2,
-				Public:   "public2",
-				Internal: "internal2",
+			DataServerStatus: &proto.DataServerStatus{
+				State:             proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+				SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 			},
-		}),
+		},
+		{
+			DataServer: &proto.DataServer{
+				Identity: &proto.DataServerIdentity{
+					Name:     &serverName2,
+					Public:   "public2",
+					Internal: "internal2",
+				},
+			},
+			DataServerStatus: &proto.DataServerStatus{
+				State:             proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+				SupportedFeatures: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+			},
+		},
 	}, nil)
 
 	cmd := &cobra.Command{
