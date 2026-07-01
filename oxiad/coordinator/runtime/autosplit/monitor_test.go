@@ -573,6 +573,56 @@ func TestMonitor_LeaderChangeResetsThroughput(t *testing.T) {
 	assert.Empty(t, splitter.getSplits())
 }
 
+// A same-identity leader restart resets the cumulative counters; the derived
+// throughput must be dropped rather than carried forward as a stale spike.
+func TestMonitor_CounterResetDropsThroughput(t *testing.T) {
+	config := &proto.ClusterConfiguration{
+		AutoSplit: &proto.AutoSplitConfig{
+			Enabled:             true,
+			MaxThroughputOps:    100,
+			StabilizationPeriod: "0s",
+			CooldownPeriod:      "0s",
+		},
+	}
+	metadata := newTestMetadata(t, config)
+	leader := &proto.DataServerIdentity{Name: strPtr("nodeA"), Public: "a:9091", Internal: "a:8191"}
+
+	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leader, 0, 4294967295),
+		},
+	})
+
+	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
+	splitter := &mockSplitter{}
+	m := NewMonitor(metadata, rpcMock, splitter, time.Millisecond)
+
+	// Two same-leader samples establish a high throughput rate.
+	rpcMock.setStats(0, &proto.ShardStats{ReadOpsTotal: 0, WriteOpsTotal: 0})
+	m.evaluate()
+	key := shardKey{namespace: "default", shardId: 0}
+	m.mu.Lock()
+	m.trackers[key].lastSampleTime = time.Now().Add(-time.Second)
+	m.mu.Unlock()
+	rpcMock.setStats(0, &proto.ShardStats{ReadOpsTotal: 500, WriteOpsTotal: 500})
+	m.evaluate()
+	require.Len(t, splitter.getSplits(), 1) // 1000 ops/s > 100 -> split
+
+	// Same leader, counters drop to near-zero (process restart). The stale high
+	// rate must be dropped by the code, not carried forward.
+	rpcMock.setStats(0, &proto.ShardStats{ReadOpsTotal: 1, WriteOpsTotal: 1})
+	m.mu.Lock()
+	m.trackers[key].lastSampleTime = time.Now().Add(-time.Second)
+	m.mu.Unlock()
+
+	m.evaluate()
+
+	m.mu.Lock()
+	got := m.trackers[key].throughputOps
+	m.mu.Unlock()
+	assert.Equal(t, float64(0), got, "throughput must reset when counters go backwards")
+}
+
 // Trackers for a namespace that is temporarily skipped at the shard-count cap
 // must be retained (their stabilization history not pruned).
 func TestMonitor_MaxShardCountRetainsTrackers(t *testing.T) {

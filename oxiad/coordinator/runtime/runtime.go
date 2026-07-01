@@ -338,7 +338,9 @@ func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Nam
 func (c *runtime) Close() error {
 	c.ctxCancel()
 
-	c.autoSplitMonitor.Close()
+	if c.autoSplitMonitor != nil {
+		c.autoSplitMonitor.Close()
+	}
 
 	// The shard controllers must be closed before waiting for the action
 	// worker: the worker blocks on in-flight election actions, which only

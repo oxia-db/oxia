@@ -333,6 +333,11 @@ func (m *Monitor) computeOvershoot(key shardKey, leader *proto.DataServerIdentit
 			currTotal := stats.GetReadOpsTotal() + stats.GetWriteOpsTotal()
 			if currTotal >= prevTotal {
 				tracker.throughputOps = float64(currTotal-prevTotal) / elapsed
+			} else {
+				// Counters went backwards: the leader kept its identity but its
+				// process restarted, so there is no meaningful rate across the
+				// reset. Drop the stale value instead of carrying it forward.
+				tracker.throughputOps = 0
 			}
 		}
 	default:
