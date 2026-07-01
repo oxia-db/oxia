@@ -257,7 +257,13 @@ func (management *managementServer) ListNamespaces(_ context.Context, _ *proto.L
 		if borrowedStatus, found := statuses[name]; found {
 			status = borrowedStatus.UnsafeBorrow()
 		}
-		responseNamespaces = append(responseNamespaces, namespaceView(namespace.UnsafeBorrow(), status))
+		if status == nil {
+			status = &proto.NamespaceStatus{}
+		}
+		responseNamespaces = append(responseNamespaces, &proto.NamespaceView{
+			Namespace:       namespace.UnsafeBorrow(),
+			NamespaceStatus: status,
+		})
 	}
 
 	return &proto.ListNamespacesResponse{
@@ -395,19 +401,16 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 	}
 
 	status, _ := runtime.Metadata().GetNamespaceStatus(req.Namespace)
+	namespaceStatus := status.UnsafeBorrow()
+	if namespaceStatus == nil {
+		namespaceStatus = &proto.NamespaceStatus{}
+	}
 	return &proto.GetNamespaceResponse{
-		Namespace: namespaceView(namespace.UnsafeBorrow(), status.UnsafeBorrow()),
+		Namespace: &proto.NamespaceView{
+			Namespace:       namespace.UnsafeBorrow(),
+			NamespaceStatus: namespaceStatus,
+		},
 	}, nil
-}
-
-func namespaceView(namespace *proto.Namespace, status *proto.NamespaceStatus) *proto.NamespaceView {
-	if status == nil {
-		status = &proto.NamespaceStatus{}
-	}
-	return &proto.NamespaceView{
-		Namespace:       namespace,
-		NamespaceStatus: status,
-	}
 }
 
 func (management *managementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
