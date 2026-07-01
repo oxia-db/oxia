@@ -284,8 +284,11 @@ func (cc *ClusterConfiguration) validateDurations() error {
 		if _, err := autoSplit.GetCooldownPeriodDuration(); err != nil {
 			return fmt.Errorf("cluster configuration: invalid autoSplit.cooldownPeriod: %w", err)
 		}
-		if _, err := autoSplit.GetCollectionIntervalDuration(); err != nil {
+		if d, err := autoSplit.GetCollectionIntervalDuration(); err != nil {
 			return fmt.Errorf("cluster configuration: invalid autoSplit.collectionInterval: %w", err)
+		} else if d < 0 {
+			return fmt.Errorf("cluster configuration: autoSplit.collectionInterval must not be negative: %q",
+				autoSplit.GetCollectionInterval())
 		}
 	}
 
@@ -445,7 +448,9 @@ func (c *AutoSplitConfig) GetCollectionIntervalDurationOrDefault() time.Duration
 		return defaultAutoSplitCollectionInterval
 	}
 	duration, err := c.GetCollectionIntervalDuration()
-	if err != nil || duration == 0 {
+	// A non-positive interval would panic time.NewTicker, so fall back to the
+	// default defensively even if validation was somehow bypassed.
+	if err != nil || duration <= 0 {
 		return defaultAutoSplitCollectionInterval
 	}
 	return duration

@@ -15,6 +15,7 @@
 package coordinator
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -154,7 +155,7 @@ func TestCoordinator_AutoSplit(t *testing.T) {
 		ranges = append(ranges, ns.Shards[id].GetInt32HashRange())
 	}
 	slices.SortFunc(ranges, func(a, b *proto.HashRange) int {
-		return int(a.GetMin()) - int(b.GetMin())
+		return cmp.Compare(a.GetMin(), b.GetMin())
 	})
 	assert.EqualValues(t, 0, ranges[0].GetMin(), "coverage must start at 0")
 	assert.EqualValues(t, math.MaxUint32, ranges[len(ranges)-1].GetMax(), "coverage must end at MaxUint32")
