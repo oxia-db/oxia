@@ -34,18 +34,8 @@ type dataServerStatusOutput struct {
 	SupportedFeatures []string `json:"supported_features,omitempty" yaml:"supportedfeatures,omitempty"`
 }
 
-func ValidateOutputFormat(format string) error {
-	if err := commons.ValidateOutputFormat(format); err != nil {
-		return err
-	}
-	if format == commons.OutputName {
-		return errors.Errorf("unsupported output format %q, expected one of: json, yaml, table", format)
-	}
-	return nil
-}
-
 func WriteDataServers(out io.Writer, format string, dataServers []*proto.DataServerView) error {
-	if err := ValidateOutputFormat(format); err != nil {
+	if err := commons.ValidateOutputFormat(format); err != nil {
 		return err
 	}
 
@@ -71,7 +61,7 @@ func WriteDataServers(out io.Writer, format string, dataServers []*proto.DataSer
 }
 
 func WriteDataServer(out io.Writer, format string, dataServer *proto.DataServer) error {
-	if err := ValidateOutputFormat(format); err != nil {
+	if err := commons.ValidateOutputFormat(format); err != nil {
 		return err
 	}
 
@@ -87,7 +77,7 @@ func WriteDataServer(out io.Writer, format string, dataServer *proto.DataServer)
 }
 
 func WriteDataServerView(out io.Writer, format string, dataServer *proto.DataServerView) error {
-	if err := ValidateOutputFormat(format); err != nil {
+	if err := commons.ValidateOutputFormat(format); err != nil {
 		return err
 	}
 

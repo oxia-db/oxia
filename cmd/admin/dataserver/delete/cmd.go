@@ -40,7 +40,7 @@ func exec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := dataservercli.ValidateOutputFormat(outputFormat); err != nil {
+	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
 		return err
 	}
 

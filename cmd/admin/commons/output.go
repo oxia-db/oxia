@@ -29,16 +29,15 @@ import (
 const (
 	OutputJSON  = "json"
 	OutputYAML  = "yaml"
-	OutputName  = "name"
 	OutputTable = "table"
 )
 
 func ValidateOutputFormat(format string) error {
 	switch format {
-	case "", OutputJSON, OutputYAML, OutputName, OutputTable:
+	case "", OutputJSON, OutputYAML, OutputTable:
 		return nil
 	default:
-		return errors.Errorf("unsupported output format %q, expected one of: json, yaml, name, table", format)
+		return errors.Errorf("unsupported output format %q, expected one of: json, yaml, table", format)
 	}
 }
 
@@ -58,15 +57,6 @@ func WriteStructuredOutput(out io.Writer, format string, value any) error {
 	default:
 		return errors.Errorf("unsupported structured output format %q, expected one of: json, yaml", format)
 	}
-}
-
-func WriteResourceNames(out io.Writer, resource string, names []string) error {
-	for _, name := range names {
-		if _, err := fmt.Fprintf(out, "%s/%s\n", resource, name); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func NewTableWriter(out io.Writer) *tabwriter.Writer {

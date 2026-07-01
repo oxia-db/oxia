@@ -33,7 +33,7 @@ import (
 func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	actual := new(bytes.Buffer)
 	root := &cobra.Command{Use: "admin"}
-	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
+	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|table")
 	root.AddCommand(cmd)
 	root.SetOut(actual)
 	root.SetErr(actual)

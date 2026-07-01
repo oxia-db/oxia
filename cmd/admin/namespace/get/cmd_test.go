@@ -32,7 +32,7 @@ import (
 func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	actual := new(bytes.Buffer)
 	root := &cobra.Command{Use: "admin"}
-	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
+	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|table")
 	root.AddCommand(cmd)
 	root.SetOut(actual)
 	root.SetErr(actual)
@@ -100,7 +100,17 @@ func Test_cmd_getNamespaces(t *testing.T) {
 	}
 	out, err := runCmd(cmd)
 	require.NoError(t, err)
-	assert.Equal(t, "namespace/ns-1\nnamespace/ns-2", out)
+	assert.Contains(t, out, "NAME")
+	assert.Contains(t, out, "INITIAL_SHARDS")
+	assert.Contains(t, out, "REPLICATION_FACTOR")
+	assert.Contains(t, out, "NOTIFICATIONS")
+	assert.Contains(t, out, "KEY_SORTING")
+	assert.Contains(t, out, "ns-1")
+	assert.Contains(t, out, "ns-2")
+	assert.Contains(t, out, "4")
+	assert.Contains(t, out, "2")
+	assert.Contains(t, out, "3")
+	assert.Contains(t, out, "1")
 }
 
 func Test_cmd_getNamespaces_JSON(t *testing.T) {
@@ -133,16 +143,9 @@ func Test_cmd_getNamespaces_JSON(t *testing.T) {
 	assert.Equal(t, "ns-1", namespaces[0].GetName())
 }
 
-func Test_cmd_getNamespace_Name(t *testing.T) {
-	commons.MockedAdminClient = commons.NewMockAdminClient()
+func Test_cmd_getNamespace_RejectsNameOutput(t *testing.T) {
+	commons.MockedAdminClient = nil
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
-
-	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetNamespace", "ns-1").Return(&proto.Namespace{
-		Name:              "ns-1",
-		InitialShardCount: 4,
-		ReplicationFactor: 3,
-	}, nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -153,8 +156,9 @@ func Test_cmd_getNamespace_Name(t *testing.T) {
 		SilenceUsage: Cmd.SilenceUsage,
 	}
 	out, err := runCmd(cmd, "-o", "name", "ns-1")
-	require.NoError(t, err)
-	assert.Equal(t, "namespace/ns-1", out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unsupported output format "name"`)
+	assert.Contains(t, out, `unsupported output format "name"`)
 }
 
 func Test_cmd_getNamespace_DefaultTable(t *testing.T) {

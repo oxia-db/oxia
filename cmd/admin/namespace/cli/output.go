@@ -37,8 +37,6 @@ func WriteNamespace(out io.Writer, format string, namespace *proto.Namespace) er
 	switch format {
 	case commons.OutputJSON, commons.OutputYAML:
 		return commons.WriteStructuredOutput(out, format, namespace)
-	case commons.OutputName:
-		return commons.WriteResourceNames(out, "namespace", []string{namespace.GetName()})
 	case commons.OutputTable:
 		return writeNamespaceTable(out, []*proto.Namespace{namespace})
 	default:
@@ -56,14 +54,10 @@ func WriteNamespaces(out io.Writer, format string, namespaces []*proto.Namespace
 		}
 	}
 
-	if format == "" {
-		format = commons.OutputName
-	}
+	format = commons.NormalizeOutputFormat(format)
 	switch format {
 	case commons.OutputJSON, commons.OutputYAML:
 		return commons.WriteStructuredOutput(out, format, namespaces)
-	case commons.OutputName:
-		return commons.WriteResourceNames(out, "namespace", namespaceNames(namespaces))
 	case commons.OutputTable:
 		return writeNamespaceTable(out, namespaces)
 	default:
@@ -91,15 +85,4 @@ func writeNamespaceTable(out io.Writer, namespaces []*proto.Namespace) error {
 		}
 	}
 	return tw.Flush()
-}
-
-func namespaceNames(namespaces []*proto.Namespace) []string {
-	names := make([]string, 0, len(namespaces))
-	for _, namespace := range namespaces {
-		if namespace == nil {
-			continue
-		}
-		names = append(names, namespace.GetName())
-	}
-	return names
 }
