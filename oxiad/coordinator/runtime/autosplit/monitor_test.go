@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -59,8 +60,9 @@ func (m *mockRpcProvider) setStats(shard int64, stats *proto.ShardStats) {
 // mockRpcProvider implements autosplit.StatusGetter.
 
 type mockSplitter struct {
-	mu     sync.Mutex
-	splits []splitCall
+	mu      sync.Mutex
+	splits  []splitCall
+	failFor map[int64]bool // shard IDs for which InitiateSplit returns an error
 }
 
 type splitCall struct {
@@ -68,9 +70,12 @@ type splitCall struct {
 	shardId   int64
 }
 
-func (s *mockSplitter) InitiateSplit(namespace string, parentShardId int64, _ *uint32) (int64, int64, error) {
+func (s *mockSplitter) InitiateSplit(namespace string, parentShardId int64, _ *uint32) (leftChild, rightChild int64, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failFor[parentShardId] {
+		return 0, 0, errors.Errorf("cannot split shard %d", parentShardId)
+	}
 	s.splits = append(s.splits, splitCall{namespace, parentShardId})
 	return parentShardId + 100, parentShardId + 101, nil
 }
@@ -405,3 +410,223 @@ func TestMonitor_PicksWorstOffender(t *testing.T) {
 	require.Len(t, splits, 1)
 	assert.Equal(t, int64(1), splits[0].shardId)
 }
+
+// steadyShard is a helper for building a steady-state shard with a leader and a
+// full hash range.
+func steadyShard(leader *proto.DataServerIdentity, minHash, maxHash uint32) *proto.ShardMetadata {
+	return &proto.ShardMetadata{
+		Status:         proto.ShardStatusSteadyState,
+		Term:           1,
+		Leader:         leader,
+		Ensemble:       []*proto.DataServerIdentity{leader},
+		Int32HashRange: &proto.HashRange{Min: minHash, Max: maxHash},
+	}
+}
+
+// A malformed cooldown_period must fall back to the default, NOT silently
+// disable the cooldown (which a discarded parse error -> 0 would do).
+func TestMonitor_MalformedCooldownFallsBackToDefault(t *testing.T) {
+	config := &proto.ClusterConfiguration{
+		AutoSplit: &proto.AutoSplitConfig{
+			Enabled:             true,
+			MaxShardSizeMb:      100,
+			StabilizationPeriod: "0s",
+			CooldownPeriod:      "5min", // invalid Go duration; correct is "5m"
+		},
+	}
+	metadata := newTestMetadata(t, config)
+	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+
+	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leader, 0, 2147483647),
+			1: steadyShard(leader, 2147483648, 4294967295),
+		},
+	})
+
+	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
+	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
+	rpcMock.setStats(1, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
+
+	splitter := &mockSplitter{}
+	m := NewMonitor(metadata, rpcMock, splitter, time.Millisecond)
+
+	m.evaluate()
+	require.Len(t, splitter.getSplits(), 1)
+
+	// With the parse error correctly defaulting to 5m (not 0), the cooldown
+	// blocks the second split. A regression (cooldown=0) would split shard 1.
+	m.evaluate()
+	assert.Len(t, splitter.getSplits(), 1)
+}
+
+// If the worst-overshoot shard cannot be split, the monitor must fall through
+// to the next candidate rather than getting wedged on it forever.
+func TestMonitor_StarvationFallThrough(t *testing.T) {
+	config := &proto.ClusterConfiguration{
+		AutoSplit: &proto.AutoSplitConfig{
+			Enabled:             true,
+			MaxShardSizeMb:      100,
+			StabilizationPeriod: "0s",
+			CooldownPeriod:      "0s",
+		},
+	}
+	metadata := newTestMetadata(t, config)
+	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+
+	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leader, 0, 2147483647), // worst offender, but unsplittable
+			1: steadyShard(leader, 2147483648, 4294967295),
+		},
+	})
+
+	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
+	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 500 * 1024 * 1024}) // higher overshoot
+	rpcMock.setStats(1, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
+
+	splitter := &mockSplitter{failFor: map[int64]bool{0: true}}
+	m := NewMonitor(metadata, rpcMock, splitter, time.Millisecond)
+
+	m.evaluate()
+
+	splits := splitter.getSplits()
+	require.Len(t, splits, 1)
+	assert.Equal(t, int64(1), splits[0].shardId) // fell through to shard 1
+}
+
+// A shard whose hash range is too small to split must be pre-filtered so it is
+// never even attempted (and cannot block other candidates).
+func TestMonitor_UnsplittableShardSkipped(t *testing.T) {
+	config := &proto.ClusterConfiguration{
+		AutoSplit: &proto.AutoSplitConfig{
+			Enabled:             true,
+			MaxShardSizeMb:      100,
+			StabilizationPeriod: "0s",
+			CooldownPeriod:      "0s",
+		},
+	}
+	metadata := newTestMetadata(t, config)
+	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+
+	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leader, 100, 100), // width 0 -> unsplittable
+		},
+	})
+
+	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
+	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 500 * 1024 * 1024})
+
+	splitter := &mockSplitter{}
+	m := NewMonitor(metadata, rpcMock, splitter, time.Millisecond)
+
+	m.evaluate()
+	assert.Empty(t, splitter.getSplits())
+}
+
+// A leader change resets the throughput baseline so a cross-leader counter
+// delta cannot be mistaken for a genuine spike and trigger a wrong split.
+func TestMonitor_LeaderChangeResetsThroughput(t *testing.T) {
+	config := &proto.ClusterConfiguration{
+		AutoSplit: &proto.AutoSplitConfig{
+			Enabled:             true,
+			MaxThroughputOps:    100,
+			StabilizationPeriod: "0s",
+			CooldownPeriod:      "0s",
+		},
+	}
+	metadata := newTestMetadata(t, config)
+	leaderA := &proto.DataServerIdentity{Name: strPtr("nodeA"), Public: "a:9091", Internal: "a:8191"}
+	leaderB := &proto.DataServerIdentity{Name: strPtr("nodeB"), Public: "b:9091", Internal: "b:8191"}
+
+	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leaderA, 0, 4294967295),
+		},
+	})
+
+	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
+	rpcMock.setStats(0, &proto.ShardStats{ReadOpsTotal: 1000, WriteOpsTotal: 1000})
+
+	splitter := &mockSplitter{}
+	m := NewMonitor(metadata, rpcMock, splitter, time.Millisecond)
+
+	// Establish a baseline under leader A.
+	m.evaluate()
+	require.Empty(t, splitter.getSplits())
+
+	// Leader moves to B, whose cumulative counters are much higher. Age the
+	// sample so elapsed > 0.
+	metadata.UpdateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leaderB, 0, 4294967295),
+		},
+	})
+	m.mu.Lock()
+	m.trackers[shardKey{namespace: "default", shardId: 0}].lastSampleTime = time.Now().Add(-time.Second)
+	m.mu.Unlock()
+	rpcMock.setStats(0, &proto.ShardStats{ReadOpsTotal: 5000000, WriteOpsTotal: 5000000})
+
+	// Because the leader changed, the huge cross-leader delta must be ignored.
+	m.evaluate()
+	assert.Empty(t, splitter.getSplits())
+}
+
+// Trackers for a namespace that is temporarily skipped at the shard-count cap
+// must be retained (their stabilization history not pruned).
+func TestMonitor_MaxShardCountRetainsTrackers(t *testing.T) {
+	config := &proto.ClusterConfiguration{
+		AutoSplit: &proto.AutoSplitConfig{
+			Enabled:               true,
+			MaxShardSizeMb:        100,
+			StabilizationPeriod:   "0s",
+			CooldownPeriod:        "0s",
+			MaxShardsPerNamespace: 2,
+		},
+	}
+	metadata := newTestMetadata(t, config)
+	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+
+	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leader, 0, 2147483647),
+			1: steadyShard(leader, 2147483648, 4294967295),
+		},
+	})
+
+	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
+	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
+	rpcMock.setStats(1, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
+
+	splitter := &mockSplitter{}
+	m := NewMonitor(metadata, rpcMock, splitter, time.Millisecond)
+
+	// Seed a tracker for shard 0 directly, then evaluate: the namespace is at
+	// the cap (2 >= 2) so it is skipped, but the tracker must survive.
+	m.mu.Lock()
+	m.trackers[shardKey{namespace: "default", shardId: 0}] = &shardStatsTracker{exceedingSince: time.Now()}
+	m.mu.Unlock()
+
+	m.evaluate()
+
+	m.mu.Lock()
+	_, retained := m.trackers[shardKey{namespace: "default", shardId: 0}]
+	m.mu.Unlock()
+	assert.True(t, retained, "tracker for a shard in a capped namespace must not be pruned")
+	assert.Empty(t, splitter.getSplits())
+}
+
+// Start()/Close() must run and shut down the background loop cleanly.
+func TestMonitor_StartCloseLifecycle(t *testing.T) {
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{})
+	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
+	splitter := &mockSplitter{}
+
+	m := NewMonitor(metadata, rpcMock, splitter, time.Millisecond)
+	m.Start()
+	time.Sleep(10 * time.Millisecond) // let a few ticks run
+	m.Close()                         // must return without hanging or panicking
+}
+
+func strPtr(s string) *string { return &s }

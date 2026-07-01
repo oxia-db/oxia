@@ -15,8 +15,10 @@
 package autosplit
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -29,10 +31,14 @@ import (
 )
 
 type StatusGetter interface {
-	GetStatus(ctx context.Context, node *proto.DataServerIdentity, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
+	GetStatus(ctx context.Context, node *proto.DataServerIdentity,
+		req *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
 }
 
-const DefaultCollectionInterval = 30 * time.Second
+const (
+	DefaultCollectionInterval = 30 * time.Second
+	statusCollectionTimeout   = 5 * time.Second
+)
 
 type shardKey struct {
 	namespace string
@@ -40,10 +46,19 @@ type shardKey struct {
 }
 
 type shardStatsTracker struct {
+	// leader identifies the server the last sample came from. Op counters are
+	// per-process cumulative, so a rate is only meaningful between two samples
+	// from the same leader.
+	leader         string
 	lastStats      *proto.ShardStats
 	lastSampleTime time.Time
 	throughputOps  float64
 	exceedingSince time.Time
+}
+
+type candidate struct {
+	key            shardKey
+	overshootRatio float64
 }
 
 type Monitor struct {
@@ -56,9 +71,11 @@ type Monitor struct {
 	splitter           controller.ShardSplitter
 	collectionInterval time.Duration
 
-	mu                 sync.Mutex
-	trackers           map[shardKey]*shardStatsTracker
-	lastSplitCompleted time.Time
+	mu       sync.Mutex
+	trackers map[shardKey]*shardStatsTracker
+	// lastSplitInitiated is the time the most recent split was started (not
+	// finished). The cooldown window is measured from initiation.
+	lastSplitInitiated time.Time
 
 	evaluationsCounter metric.Counter
 	initiatedCounter   metric.Counter
@@ -145,100 +162,140 @@ func (m *Monitor) evaluate() {
 	defer m.mu.Unlock()
 
 	now := time.Now()
-	cooldown, _ := autoSplit.GetCooldownPeriodDuration()
-	if !m.lastSplitCompleted.IsZero() && now.Sub(m.lastSplitCompleted) < cooldown {
+	cooldown := m.cooldownPeriod(autoSplit)
+	if !m.lastSplitInitiated.IsZero() && now.Sub(m.lastSplitInitiated) < cooldown {
 		return
 	}
 
-	type candidate struct {
-		key            shardKey
-		overshootRatio float64
+	candidates := m.collectCandidates(namespaces, autoSplit, now)
+	if len(candidates) == 0 {
+		return
 	}
-	var best *candidate
 
+	// Most overloaded shard first.
+	slices.SortFunc(candidates, func(a, b candidate) int {
+		return cmp.Compare(b.overshootRatio, a.overshootRatio)
+	})
+
+	// Try candidates in order. If InitiateSplit rejects the worst offender
+	// (e.g. an ensemble-selection failure), fall through to the next so a
+	// single unsplittable shard cannot starve the rest of the namespace.
+	for _, c := range candidates {
+		m.logger.Info("Initiating auto-split",
+			slog.String("namespace", c.key.namespace),
+			slog.Int64("shard", c.key.shardId),
+			slog.Float64("overshoot-ratio", c.overshootRatio),
+		)
+
+		leftChild, rightChild, err := m.splitter.InitiateSplit(c.key.namespace, c.key.shardId, nil)
+		if err != nil {
+			m.logger.Warn("Auto-split initiation failed, trying next candidate",
+				slog.String("namespace", c.key.namespace),
+				slog.Int64("shard", c.key.shardId),
+				slog.Any("error", err),
+			)
+			continue
+		}
+
+		m.initiatedCounter.Inc()
+		m.lastSplitInitiated = now
+
+		m.logger.Info("Auto-split initiated",
+			slog.String("namespace", c.key.namespace),
+			slog.Int64("parent-shard", c.key.shardId),
+			slog.Int64("left-child", leftChild),
+			slog.Int64("right-child", rightChild),
+		)
+		return
+	}
+}
+
+// collectCandidates samples every steady-state shard, updates the per-shard
+// trackers, prunes trackers for shards that no longer exist, and returns the
+// shards whose overshoot ratio (after stabilization) exceeds 1.
+func (m *Monitor) collectCandidates(
+	namespaces map[string]commonobject.Borrowed[*proto.NamespaceStatus],
+	autoSplit *proto.AutoSplitConfig,
+	now time.Time,
+) []candidate {
+	var candidates []candidate
 	activeShards := make(map[shardKey]struct{})
+	maxShards := autoSplit.GetMaxShardsPerNamespaceOrDefault()
 
 	for ns, borrowedNs := range namespaces {
 		nsStatus := borrowedNs.UnsafeBorrow()
 
-		shardCount := uint32(len(nsStatus.GetShards()))
-		if shardCount >= autoSplit.GetMaxShardsPerNamespaceOrDefault() {
+		// Record every existing shard as active before any skip, so a namespace
+		// that is temporarily skipped (e.g. at the shard-count cap) does not
+		// lose the stabilization history of its shards to pruneTrackers.
+		for shardId := range nsStatus.GetShards() {
+			activeShards[shardKey{namespace: ns, shardId: shardId}] = struct{}{}
+		}
+
+		if uint32(len(nsStatus.GetShards())) >= maxShards {
 			m.logger.Warn("Namespace at max shard count, skipping",
 				slog.String("namespace", ns),
-				slog.Uint64("shards", uint64(shardCount)),
-				slog.Uint64("max", uint64(autoSplit.GetMaxShardsPerNamespaceOrDefault())),
+				slog.Int("shards", len(nsStatus.GetShards())),
+				slog.Uint64("max", uint64(maxShards)),
 			)
 			continue
 		}
 
 		for shardId, meta := range nsStatus.GetShards() {
-			key := shardKey{namespace: ns, shardId: shardId}
-			activeShards[key] = struct{}{}
-
-			if meta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
-				continue
-			}
-			if meta.Leader == nil {
-				continue
-			}
-			if meta.Split != nil {
-				continue
-			}
-			if len(meta.PendingDeleteShardNodes) > 0 {
-				continue
-			}
-
-			stats := m.collectStats(key, meta.Leader)
-			if stats == nil {
-				continue
-			}
-
-			ratio := m.computeOvershoot(key, stats, autoSplit, now)
-			if ratio <= 1.0 {
-				continue
-			}
-
-			if best == nil || ratio > best.overshootRatio {
-				best = &candidate{key: key, overshootRatio: ratio}
+			if c, ok := m.shardCandidate(shardKey{namespace: ns, shardId: shardId}, meta, autoSplit, now); ok {
+				candidates = append(candidates, c)
 			}
 		}
 	}
 
 	m.pruneTrackers(activeShards)
+	return candidates
+}
 
-	if best == nil {
-		return
+// shardCandidate samples one shard and reports whether it is a split candidate
+// (steady-state, splittable, and over the threshold past its stabilization
+// window). It updates the shard's tracker as a side effect.
+func (m *Monitor) shardCandidate(key shardKey, meta *proto.ShardMetadata,
+	autoSplit *proto.AutoSplitConfig, now time.Time) (candidate, bool) {
+	if meta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+		return candidate{}, false
+	}
+	if meta.Leader == nil {
+		return candidate{}, false
+	}
+	if meta.Split != nil {
+		return candidate{}, false
+	}
+	if len(meta.PendingDeleteShardNodes) > 0 {
+		return candidate{}, false
+	}
+	// Skip shards whose hash range is too small to split; InitiateSplit would
+	// reject them and they must not block other candidates.
+	if !splittable(meta) {
+		return candidate{}, false
 	}
 
-	m.logger.Info("Initiating auto-split",
-		slog.String("namespace", best.key.namespace),
-		slog.Int64("shard", best.key.shardId),
-		slog.Float64("overshoot-ratio", best.overshootRatio),
-	)
-
-	leftChild, rightChild, err := m.splitter.InitiateSplit(best.key.namespace, best.key.shardId, nil)
-	if err != nil {
-		m.logger.Warn("Auto-split initiation failed",
-			slog.String("namespace", best.key.namespace),
-			slog.Int64("shard", best.key.shardId),
-			slog.Any("error", err),
-		)
-		return
+	stats := m.collectStats(key, meta.Leader)
+	if stats == nil {
+		return candidate{}, false
 	}
 
-	m.initiatedCounter.Inc()
-	m.lastSplitCompleted = now
+	ratio := m.computeOvershoot(key, meta.Leader, stats, autoSplit, now)
+	if ratio <= 1.0 {
+		return candidate{}, false
+	}
+	return candidate{key: key, overshootRatio: ratio}, true
+}
 
-	m.logger.Info("Auto-split initiated",
-		slog.String("namespace", best.key.namespace),
-		slog.Int64("parent-shard", best.key.shardId),
-		slog.Int64("left-child", leftChild),
-		slog.Int64("right-child", rightChild),
-	)
+// splittable reports whether the shard's hash range is wide enough to split,
+// mirroring the guard in runtime.InitiateSplit.
+func splittable(meta *proto.ShardMetadata) bool {
+	r := meta.GetInt32HashRange()
+	return r.GetMax()-r.GetMin() >= 1
 }
 
 func (m *Monitor) collectStats(key shardKey, leader *proto.DataServerIdentity) *proto.ShardStats {
-	ctx, cancel := context.WithTimeout(m.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(m.ctx, statusCollectionTimeout)
 	defer cancel()
 
 	resp, err := m.rpc.GetStatus(ctx, leader, &proto.GetStatusRequest{Shard: key.shardId})
@@ -253,14 +310,23 @@ func (m *Monitor) collectStats(key shardKey, leader *proto.DataServerIdentity) *
 	return resp.GetShardStats()
 }
 
-func (m *Monitor) computeOvershoot(key shardKey, stats *proto.ShardStats, config *proto.AutoSplitConfig, now time.Time) float64 {
+func (m *Monitor) computeOvershoot(key shardKey, leader *proto.DataServerIdentity,
+	stats *proto.ShardStats, config *proto.AutoSplitConfig, now time.Time) float64 {
 	tracker, exists := m.trackers[key]
 	if !exists {
 		tracker = &shardStatsTracker{}
 		m.trackers[key] = tracker
 	}
 
-	if tracker.lastStats != nil {
+	leaderID := leader.GetNameOrDefault()
+
+	switch {
+	case tracker.leader != leaderID:
+		// Leader changed (or first sample): the cumulative counters belong to a
+		// different process, so drop the rate until we have two same-leader
+		// samples rather than computing a spurious cross-leader delta.
+		tracker.throughputOps = 0
+	case tracker.lastStats != nil:
 		elapsed := now.Sub(tracker.lastSampleTime).Seconds()
 		if elapsed > 0 {
 			prevTotal := tracker.lastStats.GetReadOpsTotal() + tracker.lastStats.GetWriteOpsTotal()
@@ -269,14 +335,17 @@ func (m *Monitor) computeOvershoot(key shardKey, stats *proto.ShardStats, config
 				tracker.throughputOps = float64(currTotal-prevTotal) / elapsed
 			}
 		}
+	default:
+		// Same leader, first sample for this tracker: no rate to compute yet.
 	}
 
+	tracker.leader = leaderID
 	tracker.lastStats = stats
 	tracker.lastSampleTime = now
 
 	maxSizeMB := float64(config.GetMaxShardSizeMBOrDefault())
 	maxThroughput := float64(config.GetMaxThroughputOpsOrDefault())
-	stabilization, _ := config.GetStabilizationPeriodDuration()
+	stabilization := m.stabilizationPeriod(config)
 
 	sizeMB := float64(stats.GetDbSizeBytes()) / (1024 * 1024)
 	var sizeRatio, throughputRatio float64
@@ -305,7 +374,30 @@ func (m *Monitor) computeOvershoot(key shardKey, stats *proto.ShardStats, config
 	return overshoot
 }
 
-func (m *Monitor) anySplitInProgress(namespaces map[string]commonobject.Borrowed[*proto.NamespaceStatus]) bool {
+// cooldownPeriod returns the configured cooldown. A malformed duration string
+// must not silently disable the safety window, so on a parse error it falls
+// back to the default instead of zero. An explicit "0s" remains valid.
+func (m *Monitor) cooldownPeriod(config *proto.AutoSplitConfig) time.Duration {
+	d, err := config.GetCooldownPeriodDuration()
+	if err != nil {
+		m.logger.Warn("Invalid cooldown_period, using default", slog.Any("error", err))
+		return config.GetCooldownPeriodDurationOrDefault()
+	}
+	return d
+}
+
+// stabilizationPeriod mirrors cooldownPeriod: a parse error falls back to the
+// default rather than silently disabling the stabilization window.
+func (m *Monitor) stabilizationPeriod(config *proto.AutoSplitConfig) time.Duration {
+	d, err := config.GetStabilizationPeriodDuration()
+	if err != nil {
+		m.logger.Warn("Invalid stabilization_period, using default", slog.Any("error", err))
+		return config.GetStabilizationPeriodDurationOrDefault()
+	}
+	return d
+}
+
+func (*Monitor) anySplitInProgress(namespaces map[string]commonobject.Borrowed[*proto.NamespaceStatus]) bool {
 	for _, borrowedNs := range namespaces {
 		ns := borrowedNs.UnsafeBorrow()
 		for _, meta := range ns.GetShards() {

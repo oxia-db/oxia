@@ -64,9 +64,9 @@ type runtime struct {
 	// because they might be still reachable to clients.
 	drainingNodes map[string]controller.DataServerController
 
-	loadBalancer      balancer.LoadBalancer
-	autoSplitMonitor  *autosplit.Monitor
-	ensembleSelector  selector.Selector[*ensemble.Context, []string]
+	loadBalancer     balancer.LoadBalancer
+	autoSplitMonitor *autosplit.Monitor
+	ensembleSelector selector.Selector[*ensemble.Context, []string]
 
 	assignmentsWatch *commonwatch.Watch[*proto.ShardAssignments]
 

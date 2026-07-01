@@ -258,6 +258,14 @@ func (cc *ClusterConfiguration) Validate() error {
 		}
 	}
 
+	if err := cc.validateDurations(); err != nil {
+		return err
+	}
+
+	return cc.validateCoordinators()
+}
+
+func (cc *ClusterConfiguration) validateDurations() error {
 	if loadBalancer := cc.GetLoadBalancer(); loadBalancer != nil {
 		if _, err := loadBalancer.GetScheduleIntervalDuration(); err != nil {
 			return fmt.Errorf("cluster configuration: invalid loadBalancer.scheduleInterval: %w", err)
@@ -267,7 +275,16 @@ func (cc *ClusterConfiguration) Validate() error {
 		}
 	}
 
-	return cc.validateCoordinators()
+	if autoSplit := cc.GetAutoSplit(); autoSplit != nil {
+		if _, err := autoSplit.GetStabilizationPeriodDuration(); err != nil {
+			return fmt.Errorf("cluster configuration: invalid autoSplit.stabilizationPeriod: %w", err)
+		}
+		if _, err := autoSplit.GetCooldownPeriodDuration(); err != nil {
+			return fmt.Errorf("cluster configuration: invalid autoSplit.cooldownPeriod: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (cc *ClusterConfiguration) validateCoordinators() error {
