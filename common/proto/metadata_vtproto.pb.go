@@ -205,6 +205,7 @@ func (m *AutoSplitConfig) CloneVT() *AutoSplitConfig {
 	r.StabilizationPeriod = m.StabilizationPeriod
 	r.CooldownPeriod = m.CooldownPeriod
 	r.MaxShardsPerNamespace = m.MaxShardsPerNamespace
+	r.CollectionInterval = m.CollectionInterval
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -655,6 +656,9 @@ func (this *AutoSplitConfig) EqualVT(that *AutoSplitConfig) bool {
 		return false
 	}
 	if this.MaxShardsPerNamespace != that.MaxShardsPerNamespace {
+		return false
+	}
+	if this.CollectionInterval != that.CollectionInterval {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1479,6 +1483,13 @@ func (m *AutoSplitConfig) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.CollectionInterval) > 0 {
+		i -= len(m.CollectionInterval)
+		copy(dAtA[i:], m.CollectionInterval)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.CollectionInterval)))
+		i--
+		dAtA[i] = 0x3a
+	}
 	if m.MaxShardsPerNamespace != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.MaxShardsPerNamespace))
 		i--
@@ -2211,6 +2222,10 @@ func (m *AutoSplitConfig) SizeVT() (n int) {
 	}
 	if m.MaxShardsPerNamespace != 0 {
 		n += 1 + protohelpers.SizeOfVarint(uint64(m.MaxShardsPerNamespace))
+	}
+	l = len(m.CollectionInterval)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -3088,6 +3103,10 @@ func (m *DataServerStatus) UnmarshalVT(dAtA []byte) error {
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
 				}
+				var elementCount int
+				if elementCount != 0 && len(m.SupportedFeatures) == 0 {
+					m.SupportedFeatures = make([]Feature, 0, elementCount)
+				}
 				for iNdEx < postIndex {
 					var v Feature
 					for shift := uint(0); ; shift += 7 {
@@ -3739,6 +3758,38 @@ func (m *AutoSplitConfig) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CollectionInterval", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.CollectionInterval = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -5989,6 +6040,10 @@ func (m *DataServerStatus) UnmarshalVTUnsafe(dAtA []byte) error {
 				if postIndex > l {
 					return io.ErrUnexpectedEOF
 				}
+				var elementCount int
+				if elementCount != 0 && len(m.SupportedFeatures) == 0 {
+					m.SupportedFeatures = make([]Feature, 0, elementCount)
+				}
 				for iNdEx < postIndex {
 					var v Feature
 					for shift := uint(0); ; shift += 7 {
@@ -6672,6 +6727,42 @@ func (m *AutoSplitConfig) UnmarshalVTUnsafe(dAtA []byte) error {
 					break
 				}
 			}
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CollectionInterval", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			var stringValue string
+			if intStringLen > 0 {
+				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
+			}
+			m.CollectionInterval = stringValue
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

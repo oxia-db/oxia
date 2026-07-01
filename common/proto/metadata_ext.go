@@ -35,6 +35,8 @@ const (
 	defaultAutoSplitCooldownPeriod             = 5 * time.Minute
 	defaultAutoSplitStabilizationString        = "1m"
 	defaultAutoSplitCooldownString             = "5m"
+	defaultAutoSplitCollectionInterval         = 30 * time.Second
+	defaultAutoSplitCollectionString           = "30s"
 	defaultMaxShardsPerNamespace        uint32 = 64
 
 	AntiAffinityModeUnknown = ""
@@ -282,6 +284,12 @@ func (cc *ClusterConfiguration) validateDurations() error {
 		if _, err := autoSplit.GetCooldownPeriodDuration(); err != nil {
 			return fmt.Errorf("cluster configuration: invalid autoSplit.cooldownPeriod: %w", err)
 		}
+		if d, err := autoSplit.GetCollectionIntervalDuration(); err != nil {
+			return fmt.Errorf("cluster configuration: invalid autoSplit.collectionInterval: %w", err)
+		} else if d < 0 {
+			return fmt.Errorf("cluster configuration: autoSplit.collectionInterval must not be negative: %q",
+				autoSplit.GetCollectionInterval())
+		}
 	}
 
 	return nil
@@ -428,6 +436,26 @@ func (c *AutoSplitConfig) GetCooldownPeriodDurationOrDefault() time.Duration {
 	return duration
 }
 
+func (c *AutoSplitConfig) GetCollectionIntervalDuration() (time.Duration, error) {
+	if c == nil || c.GetCollectionInterval() == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(c.GetCollectionInterval())
+}
+
+func (c *AutoSplitConfig) GetCollectionIntervalDurationOrDefault() time.Duration {
+	if c == nil {
+		return defaultAutoSplitCollectionInterval
+	}
+	duration, err := c.GetCollectionIntervalDuration()
+	// A non-positive interval would panic time.NewTicker, so fall back to the
+	// default defensively even if validation was somehow bypassed.
+	if err != nil || duration <= 0 {
+		return defaultAutoSplitCollectionInterval
+	}
+	return duration
+}
+
 func (c *AutoSplitConfig) GetMaxShardSizeMBOrDefault() uint32 {
 	if c == nil || c.GetMaxShardSizeMb() == 0 {
 		return defaultAutoSplitMaxShardSizeMB
@@ -456,6 +484,7 @@ func (cc *ClusterConfiguration) GetAutoSplitWithDefaults() *AutoSplitConfig {
 		StabilizationPeriod:   defaultAutoSplitStabilizationString,
 		CooldownPeriod:        defaultAutoSplitCooldownString,
 		MaxShardsPerNamespace: defaultMaxShardsPerNamespace,
+		CollectionInterval:    defaultAutoSplitCollectionString,
 	}
 
 	if cc == nil || cc.GetAutoSplit() == nil {
@@ -478,6 +507,9 @@ func (cc *ClusterConfiguration) GetAutoSplitWithDefaults() *AutoSplitConfig {
 	}
 	if v := src.GetMaxShardsPerNamespace(); v != 0 {
 		as.MaxShardsPerNamespace = v
+	}
+	if v := src.GetCollectionInterval(); v != "" {
+		as.CollectionInterval = v
 	}
 
 	return as

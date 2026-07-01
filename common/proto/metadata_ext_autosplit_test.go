@@ -94,6 +94,23 @@ func TestClusterConfiguration_GetAutoSplitWithDefaults(t *testing.T) {
 	})
 }
 
+func TestAutoSplitConfig_CollectionInterval(t *testing.T) {
+	c := &AutoSplitConfig{CollectionInterval: "500ms"}
+	d, err := c.GetCollectionIntervalDuration()
+	assert.NoError(t, err)
+	assert.Equal(t, 500*time.Millisecond, d)
+	assert.Equal(t, 500*time.Millisecond, c.GetCollectionIntervalDurationOrDefault())
+}
+
+func TestAutoSplitConfig_CollectionInterval_Default(t *testing.T) {
+	assert.Equal(t, 30*time.Second, (*AutoSplitConfig)(nil).GetCollectionIntervalDurationOrDefault())
+	assert.Equal(t, 30*time.Second, (&AutoSplitConfig{}).GetCollectionIntervalDurationOrDefault())
+	assert.Equal(t, 30*time.Second, (&AutoSplitConfig{CollectionInterval: "bad"}).GetCollectionIntervalDurationOrDefault())
+	// A non-positive interval would panic time.NewTicker; it must default.
+	assert.Equal(t, 30*time.Second, (&AutoSplitConfig{CollectionInterval: "-1s"}).GetCollectionIntervalDurationOrDefault())
+	assert.Equal(t, 30*time.Second, (&AutoSplitConfig{CollectionInterval: "0s"}).GetCollectionIntervalDurationOrDefault())
+}
+
 func TestClusterConfiguration_Validate_AutoSplitDurations(t *testing.T) {
 	base := func() *ClusterConfiguration {
 		return &ClusterConfiguration{
@@ -124,5 +141,17 @@ func TestClusterConfiguration_Validate_AutoSplitDurations(t *testing.T) {
 		cc := base()
 		cc.AutoSplit = &AutoSplitConfig{Enabled: true, CooldownPeriod: "5min"}
 		assert.ErrorContains(t, cc.Validate(), "cooldownPeriod")
+	})
+
+	t.Run("malformed collectionInterval is rejected", func(t *testing.T) {
+		cc := base()
+		cc.AutoSplit = &AutoSplitConfig{Enabled: true, CollectionInterval: "200"}
+		assert.ErrorContains(t, cc.Validate(), "collectionInterval")
+	})
+
+	t.Run("negative collectionInterval is rejected", func(t *testing.T) {
+		cc := base()
+		cc.AutoSplit = &AutoSplitConfig{Enabled: true, CollectionInterval: "-1s"}
+		assert.ErrorContains(t, cc.Validate(), "collectionInterval")
 	})
 }

@@ -89,7 +89,7 @@ func NewMonitor(
 	splitter controller.ShardSplitter,
 	collectionInterval time.Duration,
 ) *Monitor {
-	if collectionInterval == 0 {
+	if collectionInterval <= 0 {
 		collectionInterval = DefaultCollectionInterval
 	}
 	labels := map[string]any{}
