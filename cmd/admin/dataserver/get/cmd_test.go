@@ -95,7 +95,7 @@ func Test_cmd_getDataServer(t *testing.T) {
 	assert.Equal(t, "public1", identity["public"])
 	assert.Equal(t, "internal1", identity["internal"])
 	assert.Equal(t, "rack-1", labels["rack"])
-	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status["state"])
+	assert.EqualValues(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, status["state"])
 }
 
 func Test_cmd_getDataServersIdentities(t *testing.T) {
@@ -157,8 +157,8 @@ func Test_cmd_getDataServersIdentities(t *testing.T) {
 	assert.Equal(t, "internal2", identity2["internal"])
 	assert.Equal(t, "rack-1", labels1["rack"])
 	assert.Equal(t, "rack-2", labels2["rack"])
-	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status1["state"])
-	assert.Equal(t, "DATA_SERVER_STATE_RUNNING", status2["state"])
+	assert.EqualValues(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, status1["state"])
+	assert.EqualValues(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, status2["state"])
 }
 
 func Test_cmd_getDataServer_YAML(t *testing.T) {

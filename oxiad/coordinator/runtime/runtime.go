@@ -106,17 +106,17 @@ func (c *runtime) ListDataServerStatus() map[string]*proto.DataServerStatus {
 	defer c.RUnlock()
 
 	statuses := make(map[string]*proto.DataServerStatus, len(c.dataServerControllers)+len(c.drainingNodes))
-	addStatus := func(name string, dataServerController controller.DataServerController) {
+	for name, dataServerController := range c.dataServerControllers {
 		statuses[name] = &proto.DataServerStatus{
 			State:             dataServerController.Status().ToProto(),
 			SupportedFeatures: dataServerController.SupportedFeatures(),
 		}
 	}
-	for name, dataServerController := range c.dataServerControllers {
-		addStatus(name, dataServerController)
-	}
 	for name, dataServerController := range c.drainingNodes {
-		addStatus(name, dataServerController)
+		statuses[name] = &proto.DataServerStatus{
+			State:             dataServerController.Status().ToProto(),
+			SupportedFeatures: dataServerController.SupportedFeatures(),
+		}
 	}
 	return statuses
 }

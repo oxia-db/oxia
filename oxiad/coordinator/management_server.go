@@ -93,11 +93,29 @@ func (management *managementServer) ListDataServers(_ context.Context, _ *proto.
 	views := make([]*proto.DataServerView, 0, len(config.GetServers()))
 	for _, server := range config.GetServers() {
 		name := server.GetNameOrDefault()
-		dataServer, found := config.GetDataServer(name)
-		if !found {
-			continue
+		identity := server
+		if server.GetName() == "" {
+			identity = &proto.DataServerIdentity{
+				Name:     &name,
+				Public:   server.GetPublic(),
+				Internal: server.GetInternal(),
+			}
 		}
-		views = append(views, dataServerView(dataServer, statuses[name]))
+		metadata := &proto.DataServerMetadata{}
+		if value, found := config.GetServerMetadata()[name]; found {
+			metadata = value
+		}
+		status := statuses[name]
+		if status == nil {
+			status = &proto.DataServerStatus{}
+		}
+		views = append(views, &proto.DataServerView{
+			DataServer: &proto.DataServer{
+				Identity: identity,
+				Metadata: metadata,
+			},
+			DataServerStatus: status,
+		})
 	}
 
 	return &proto.ListDataServersResponse{DataServers: views}, nil
@@ -118,19 +136,15 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 	}
 
 	status, _ := runtime.GetDataServerStatus(req.DataServer)
-	return &proto.GetDataServerResponse{
-		DataServer: dataServerView(borrowedDataServer.UnsafeBorrow(), status),
-	}, nil
-}
-
-func dataServerView(dataServer *proto.DataServer, status *proto.DataServerStatus) *proto.DataServerView {
 	if status == nil {
 		status = &proto.DataServerStatus{}
 	}
-	return &proto.DataServerView{
-		DataServer:       dataServer,
-		DataServerStatus: status,
-	}
+	return &proto.GetDataServerResponse{
+		DataServer: &proto.DataServerView{
+			DataServer:       borrowedDataServer.UnsafeBorrow(),
+			DataServerStatus: status,
+		},
+	}, nil
 }
 
 func (management *managementServer) CreateDataServer(_ context.Context, req *proto.CreateDataServerRequest) (*proto.CreateDataServerResponse, error) {

@@ -18,14 +18,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/encoding/protojson"
-	goproto "google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -95,71 +92,12 @@ func FormatLabels(labels map[string]string) string {
 }
 
 func writeJSON(out io.Writer, value any) error {
-	data, handled, err := marshalProtoJSON(value)
-	if !handled {
-		data, err = json.MarshalIndent(value, "", "  ")
-	}
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(out, "%s\n", data)
 	return err
-}
-
-func marshalProtoJSON(value any) ([]byte, bool, error) {
-	messageOptions := protojson.MarshalOptions{
-		UseProtoNames: true,
-		Indent:        "  ",
-	}
-	if msg, ok := value.(goproto.Message); ok {
-		if isNilValue(reflect.ValueOf(value)) {
-			return []byte("null"), true, nil
-		}
-		data, err := messageOptions.Marshal(msg)
-		return data, true, err
-	}
-
-	v := reflect.ValueOf(value)
-	if !v.IsValid() || (v.Kind() != reflect.Slice && v.Kind() != reflect.Array) || !isProtoMessageSlice(v.Type()) {
-		return nil, false, nil
-	}
-	if v.Kind() == reflect.Slice && v.IsNil() {
-		return []byte("null"), true, nil
-	}
-
-	rawMessages := make([]json.RawMessage, v.Len())
-	elementOptions := protojson.MarshalOptions{UseProtoNames: true}
-	for i := 0; i < v.Len(); i++ {
-		data := []byte("null")
-		if elem := v.Index(i); !isNilValue(elem) {
-			msg, ok := elem.Interface().(goproto.Message)
-			if !ok {
-				return nil, false, nil
-			}
-			var err error
-			data, err = elementOptions.Marshal(msg)
-			if err != nil {
-				return nil, true, err
-			}
-		}
-		rawMessages[i] = data
-	}
-	data, err := json.MarshalIndent(rawMessages, "", "  ")
-	return data, true, err
-}
-
-func isProtoMessageSlice(t reflect.Type) bool {
-	messageType := reflect.TypeOf((*goproto.Message)(nil)).Elem()
-	return t.Elem().Implements(messageType)
-}
-
-func isNilValue(v reflect.Value) bool {
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
 }
 
 func writeYAML(out io.Writer, value any) error {

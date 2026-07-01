@@ -16,6 +16,7 @@ package commons
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,7 +25,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func TestWriteStructuredOutputJSONUsesProtoEnumNames(t *testing.T) {
+func TestWriteStructuredOutputJSONUsesEncodingJSON(t *testing.T) {
 	serverName := "server-1"
 	view := &proto.DataServerView{
 		DataServer: &proto.DataServer{
@@ -43,12 +44,15 @@ func TestWriteStructuredOutputJSONUsesProtoEnumNames(t *testing.T) {
 	out := new(bytes.Buffer)
 	require.NoError(t, WriteStructuredOutput(out, OutputJSON, view))
 
-	assert.Contains(t, out.String(), `"DATA_SERVER_STATE_RUNNING"`)
-	assert.Contains(t, out.String(), `"FEATURE_DB_CHECKSUM"`)
-	assert.NotContains(t, out.String(), `"state": 1`)
+	var actual map[string]any
+	require.NoError(t, json.Unmarshal(out.Bytes(), &actual))
+	status := actual["data_server_status"].(map[string]any)
+	features := status["supported_features"].([]any)
+	assert.EqualValues(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, status["state"])
+	assert.EqualValues(t, proto.Feature_FEATURE_DB_CHECKSUM, features[0])
 }
 
-func TestWriteStructuredOutputJSONUsesProtoEnumNamesForSlices(t *testing.T) {
+func TestWriteStructuredOutputJSONUsesEncodingJSONForSlices(t *testing.T) {
 	views := []*proto.DataServerView{{
 		DataServerStatus: &proto.DataServerStatus{
 			State: proto.DataServerState_DATA_SERVER_STATE_DRAINING,
@@ -58,6 +62,8 @@ func TestWriteStructuredOutputJSONUsesProtoEnumNamesForSlices(t *testing.T) {
 	out := new(bytes.Buffer)
 	require.NoError(t, WriteStructuredOutput(out, OutputJSON, views))
 
-	assert.Contains(t, out.String(), `"DATA_SERVER_STATE_DRAINING"`)
-	assert.NotContains(t, out.String(), `"state": 3`)
+	var actual []map[string]any
+	require.NoError(t, json.Unmarshal(out.Bytes(), &actual))
+	status := actual[0]["data_server_status"].(map[string]any)
+	assert.EqualValues(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING, status["state"])
 }
