@@ -16,6 +16,7 @@ package coordinator
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,12 +80,21 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	assert.False(t, created.NotificationsEnabledOrDefault())
 	assert.Equal(t, "natural", created.GetKeySorting())
 
-	found, err := client.GetNamespace(t.Context(), "ns-1")
-	require.NoError(t, err)
+	var found *proto.NamespaceView
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		var err error
+		found, err = client.GetNamespace(t.Context(), "ns-1")
+		if !assert.NoError(c, err) || !assert.NotNil(c, found) {
+			return
+		}
+		shardCount := len(found.GetNamespaceStatus().GetShards())
+		assert.Equalf(c, 2, shardCount, "last error: %v, last shard count: %d", err, shardCount)
+	}, 5*time.Second, 50*time.Millisecond)
 	require.NotNil(t, found)
-	assert.Equal(t, "ns-1", found.GetName())
-	assert.EqualValues(t, 2, found.GetInitialShardCount())
-	assert.False(t, found.NotificationsEnabledOrDefault())
+	assert.Equal(t, "ns-1", found.GetNamespace().GetName())
+	assert.EqualValues(t, 2, found.GetNamespace().GetInitialShardCount())
+	assert.False(t, found.GetNamespace().NotificationsEnabledOrDefault())
+	assert.Len(t, found.GetNamespaceStatus().GetShards(), 2)
 
 	notificationsEnabled = true
 	patched, err := client.PatchNamespace(t.Context(), &proto.Namespace{
@@ -102,13 +112,14 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	found, err = client.GetNamespace(t.Context(), "ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, found)
-	assert.True(t, found.NotificationsEnabledOrDefault())
-	assert.Equal(t, "natural", found.GetKeySorting())
+	assert.True(t, found.GetNamespace().NotificationsEnabledOrDefault())
+	assert.Equal(t, "natural", found.GetNamespace().GetKeySorting())
 
 	namespaces, err := client.ListNamespaces(t.Context())
 	require.NoError(t, err)
 	require.Len(t, namespaces, 1)
-	assert.Equal(t, "ns-1", namespaces[0].GetName())
+	assert.Equal(t, "ns-1", namespaces[0].GetNamespace().GetName())
+	assert.Len(t, namespaces[0].GetNamespaceStatus().GetShards(), 2)
 
 	deleted, err := client.DeleteNamespace(t.Context(), "ns-1")
 	require.NoError(t, err)

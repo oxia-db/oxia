@@ -249,9 +249,20 @@ func (management *managementServer) ListNamespaces(_ context.Context, _ *proto.L
 		return nil, err
 	}
 	namespaces := runtime.Metadata().ListNamespace()
-	responseNamespaces := make([]*proto.Namespace, 0, len(namespaces))
-	for _, namespace := range namespaces {
-		responseNamespaces = append(responseNamespaces, namespace.UnsafeBorrow())
+	statuses := runtime.Metadata().ListNamespaceStatus()
+
+	responseNamespaces := make([]*proto.NamespaceView, 0, len(namespaces))
+	for name, namespace := range namespaces {
+		namespaceStatus := &proto.NamespaceStatus{}
+		if borrowedStatus, found := statuses[name]; found {
+			if status := borrowedStatus.UnsafeBorrow(); status != nil {
+				namespaceStatus = status
+			}
+		}
+		responseNamespaces = append(responseNamespaces, &proto.NamespaceView{
+			Namespace:       namespace.UnsafeBorrow(),
+			NamespaceStatus: namespaceStatus,
+		})
 	}
 
 	return &proto.ListNamespacesResponse{
@@ -388,8 +399,17 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 		return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
 	}
 
+	namespaceStatus := &proto.NamespaceStatus{}
+	if borrowedStatus, found := runtime.Metadata().GetNamespaceStatus(req.Namespace); found {
+		if status := borrowedStatus.UnsafeBorrow(); status != nil {
+			namespaceStatus = status
+		}
+	}
 	return &proto.GetNamespaceResponse{
-		Namespace: namespace.UnsafeBorrow(),
+		Namespace: &proto.NamespaceView{
+			Namespace:       namespace.UnsafeBorrow(),
+			NamespaceStatus: namespaceStatus,
+		},
 	}, nil
 }
 

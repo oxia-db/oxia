@@ -39,9 +39,9 @@ func (m *MockAdminClient) Close() error {
 	return args.Error(0)
 }
 
-func (m *MockAdminClient) ListNamespaces(context.Context) ([]*proto.Namespace, error) {
+func (m *MockAdminClient) ListNamespaces(context.Context) ([]*proto.NamespaceView, error) {
 	args := m.MethodCalled("ListNamespaces")
-	if v, ok := args.Get(0).([]*proto.Namespace); ok {
+	if v, ok := args.Get(0).([]*proto.NamespaceView); ok {
 		return v, args.Error(1)
 	}
 	return nil, errors.New("no namespaces available")
@@ -111,9 +111,9 @@ func (m *MockAdminClient) DeleteNamespace(_ context.Context, namespace string) (
 	return nil, errors.New("failed to delete namespace")
 }
 
-func (m *MockAdminClient) GetNamespace(_ context.Context, namespace string) (*proto.Namespace, error) {
+func (m *MockAdminClient) GetNamespace(_ context.Context, namespace string) (*proto.NamespaceView, error) {
 	args := m.MethodCalled("GetNamespace", namespace)
-	if v, ok := args.Get(0).(*proto.Namespace); ok {
+	if v, ok := args.Get(0).(*proto.NamespaceView); ok {
 		return v, args.Error(1)
 	}
 	return nil, errors.New("namespace not found")

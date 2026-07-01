@@ -25,41 +25,57 @@ import (
 )
 
 func WriteNamespace(out io.Writer, format string, namespace *proto.Namespace) error {
-	if namespace == nil {
-		return errors.New("namespace must not be nil")
-	}
-
-	if err := commons.ValidateOutputFormat(format); err != nil {
-		return err
-	}
-
-	format = commons.NormalizeOutputFormat(format)
-	switch format {
-	case commons.OutputJSON, commons.OutputYAML:
-		return commons.WriteStructuredOutput(out, format, namespace)
-	case commons.OutputTable:
+	return writeNamespaceConfigOutput(out, format, namespace, []*proto.Namespace{namespace}, func() error {
 		return writeNamespaceTable(out, []*proto.Namespace{namespace})
-	default:
-		return errors.Errorf("unsupported output format %q", format)
-	}
+	})
 }
 
 func WriteNamespaces(out io.Writer, format string, namespaces []*proto.Namespace) error {
-	if err := commons.ValidateOutputFormat(format); err != nil {
-		return err
-	}
+	return writeNamespaceConfigOutput(out, format, namespaces, namespaces, func() error {
+		return writeNamespaceTable(out, namespaces)
+	})
+}
+
+func WriteNamespaceView(out io.Writer, format string, namespace *proto.NamespaceView) error {
+	return writeNamespaceViewOutput(out, format, namespace, []*proto.NamespaceView{namespace}, func() error {
+		return writeNamespaceViewTable(out, []*proto.NamespaceView{namespace})
+	})
+}
+
+func WriteNamespaceViews(out io.Writer, format string, namespaces []*proto.NamespaceView) error {
+	return writeNamespaceViewOutput(out, format, namespaces, namespaces, func() error {
+		return writeNamespaceViewTable(out, namespaces)
+	})
+}
+
+func writeNamespaceConfigOutput(out io.Writer, format string, value any, namespaces []*proto.Namespace, writeTable func() error) error {
 	for _, namespace := range namespaces {
 		if namespace == nil {
 			return errors.New("namespace must not be nil")
 		}
 	}
+	return writeNamespaceOutput(out, format, value, writeTable)
+}
 
+func writeNamespaceViewOutput(out io.Writer, format string, value any, namespaces []*proto.NamespaceView, writeTable func() error) error {
+	for _, namespace := range namespaces {
+		if namespace == nil || namespace.GetNamespace() == nil {
+			return errors.New("namespace must not be nil")
+		}
+	}
+	return writeNamespaceOutput(out, format, value, writeTable)
+}
+
+func writeNamespaceOutput(out io.Writer, format string, value any, writeTable func() error) error {
+	if err := commons.ValidateOutputFormat(format); err != nil {
+		return err
+	}
 	format = commons.NormalizeOutputFormat(format)
 	switch format {
 	case commons.OutputJSON, commons.OutputYAML:
-		return commons.WriteStructuredOutput(out, format, namespaces)
+		return commons.WriteStructuredOutput(out, format, value)
 	case commons.OutputTable:
-		return writeNamespaceTable(out, namespaces)
+		return writeTable()
 	default:
 		return errors.Errorf("unsupported output format %q", format)
 	}
@@ -67,19 +83,38 @@ func WriteNamespaces(out io.Writer, format string, namespaces []*proto.Namespace
 
 func writeNamespaceTable(out io.Writer, namespaces []*proto.Namespace) error {
 	tw := commons.NewTableWriter(out)
-	if _, err := fmt.Fprintln(tw, "NAME\tINITIAL_SHARDS\tREPLICATION_FACTOR\tNOTIFICATIONS\tKEY_SORTING"); err != nil {
+	if _, err := fmt.Fprintln(tw, "NAME\tINITIAL_SHARDS\tREPLICATION_FACTOR"); err != nil {
 		return err
 	}
 	for _, namespace := range namespaces {
 		if namespace == nil {
 			continue
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\t%t\t%s\n",
+		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\n",
 			namespace.GetName(),
 			namespace.GetInitialShardCount(),
 			namespace.GetReplicationFactor(),
-			namespace.NotificationsEnabledOrDefault(),
-			namespace.GetKeySorting(),
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func writeNamespaceViewTable(out io.Writer, namespaces []*proto.NamespaceView) error {
+	tw := commons.NewTableWriter(out)
+	if _, err := fmt.Fprintln(tw, "NAME\tINITIAL_SHARDS\tREPLICATION_FACTOR"); err != nil {
+		return err
+	}
+	for _, view := range namespaces {
+		if view == nil || view.GetNamespace() == nil {
+			continue
+		}
+		namespace := view.GetNamespace()
+		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\n",
+			namespace.GetName(),
+			namespace.GetInitialShardCount(),
+			namespace.GetReplicationFactor(),
 		); err != nil {
 			return err
 		}
