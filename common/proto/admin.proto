@@ -118,7 +118,7 @@ message ListNamespacesRequest {
 }
 
 message ListNamespacesResponse {
-  repeated Namespace namespaces = 1;
+  repeated NamespaceView namespaces = 1;
 }
 
 message GetNamespaceRequest {
@@ -126,7 +126,12 @@ message GetNamespaceRequest {
 }
 
 message GetNamespaceResponse {
+  NamespaceView namespace = 1;
+}
+
+message NamespaceView {
   Namespace namespace = 1;
+  NamespaceStatus namespace_status = 2;
 }
 
 message SplitShardRequest {

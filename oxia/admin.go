@@ -33,8 +33,8 @@ type AdminClient interface {
 	CreateNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error)
 	PatchNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error)
 	DeleteNamespace(ctx context.Context, namespace string) (*proto.Namespace, error)
-	ListNamespaces(ctx context.Context) ([]*proto.Namespace, error)
-	GetNamespace(ctx context.Context, namespace string) (*proto.Namespace, error)
+	ListNamespaces(ctx context.Context) ([]*proto.NamespaceView, error)
+	GetNamespace(ctx context.Context, namespace string) (*proto.NamespaceView, error)
 
 	SplitShard(ctx context.Context, namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
 }

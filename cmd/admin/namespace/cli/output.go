@@ -24,9 +24,14 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+const (
+	errNamespaceMustNotBeNil = "namespace must not be nil"
+	errUnsupportedOutputFmt  = "unsupported output format %q"
+)
+
 func WriteNamespace(out io.Writer, format string, namespace *proto.Namespace) error {
 	if namespace == nil {
-		return errors.New("namespace must not be nil")
+		return errors.New(errNamespaceMustNotBeNil)
 	}
 
 	if err := commons.ValidateOutputFormat(format); err != nil {
@@ -40,7 +45,7 @@ func WriteNamespace(out io.Writer, format string, namespace *proto.Namespace) er
 	case commons.OutputTable:
 		return writeNamespaceTable(out, []*proto.Namespace{namespace})
 	default:
-		return errors.Errorf("unsupported output format %q", format)
+		return errors.Errorf(errUnsupportedOutputFmt, format)
 	}
 }
 
@@ -50,7 +55,7 @@ func WriteNamespaces(out io.Writer, format string, namespaces []*proto.Namespace
 	}
 	for _, namespace := range namespaces {
 		if namespace == nil {
-			return errors.New("namespace must not be nil")
+			return errors.New(errNamespaceMustNotBeNil)
 		}
 	}
 
@@ -61,7 +66,48 @@ func WriteNamespaces(out io.Writer, format string, namespaces []*proto.Namespace
 	case commons.OutputTable:
 		return writeNamespaceTable(out, namespaces)
 	default:
-		return errors.Errorf("unsupported output format %q", format)
+		return errors.Errorf(errUnsupportedOutputFmt, format)
+	}
+}
+
+func WriteNamespaceView(out io.Writer, format string, namespace *proto.NamespaceView) error {
+	if namespace == nil || namespace.GetNamespace() == nil {
+		return errors.New(errNamespaceMustNotBeNil)
+	}
+
+	if err := commons.ValidateOutputFormat(format); err != nil {
+		return err
+	}
+
+	format = commons.NormalizeOutputFormat(format)
+	switch format {
+	case commons.OutputJSON, commons.OutputYAML:
+		return commons.WriteStructuredOutput(out, format, namespace)
+	case commons.OutputTable:
+		return writeNamespaceViewTable(out, []*proto.NamespaceView{namespace})
+	default:
+		return errors.Errorf(errUnsupportedOutputFmt, format)
+	}
+}
+
+func WriteNamespaceViews(out io.Writer, format string, namespaces []*proto.NamespaceView) error {
+	if err := commons.ValidateOutputFormat(format); err != nil {
+		return err
+	}
+	for _, namespace := range namespaces {
+		if namespace == nil || namespace.GetNamespace() == nil {
+			return errors.New(errNamespaceMustNotBeNil)
+		}
+	}
+
+	format = commons.NormalizeOutputFormat(format)
+	switch format {
+	case commons.OutputJSON, commons.OutputYAML:
+		return commons.WriteStructuredOutput(out, format, namespaces)
+	case commons.OutputTable:
+		return writeNamespaceViewTable(out, namespaces)
+	default:
+		return errors.Errorf(errUnsupportedOutputFmt, format)
 	}
 }
 
@@ -77,6 +123,30 @@ func writeNamespaceTable(out io.Writer, namespaces []*proto.Namespace) error {
 		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\t%t\t%s\n",
 			namespace.GetName(),
 			namespace.GetInitialShardCount(),
+			namespace.GetReplicationFactor(),
+			namespace.NotificationsEnabledOrDefault(),
+			namespace.GetKeySorting(),
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func writeNamespaceViewTable(out io.Writer, namespaces []*proto.NamespaceView) error {
+	tw := commons.NewTableWriter(out)
+	if _, err := fmt.Fprintln(tw, "NAME\tINITIAL_SHARDS\tCURRENT_SHARDS\tREPLICATION_FACTOR\tNOTIFICATIONS\tKEY_SORTING"); err != nil {
+		return err
+	}
+	for _, view := range namespaces {
+		if view == nil || view.GetNamespace() == nil {
+			continue
+		}
+		namespace := view.GetNamespace()
+		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%t\t%s\n",
+			namespace.GetName(),
+			namespace.GetInitialShardCount(),
+			len(view.GetNamespaceStatus().GetShards()),
 			namespace.GetReplicationFactor(),
 			namespace.NotificationsEnabledOrDefault(),
 			namespace.GetKeySorting(),

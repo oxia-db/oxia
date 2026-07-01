@@ -531,11 +531,16 @@ func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
 				listNamespacesResp: &proto.ListNamespacesResponse{
-					Namespaces: []*proto.Namespace{
+					Namespaces: []*proto.NamespaceView{
 						{
-							Name:              "ns-1",
-							InitialShardCount: 4,
-							ReplicationFactor: 3,
+							Namespace: &proto.Namespace{
+								Name:              "ns-1",
+								InitialShardCount: 4,
+								ReplicationFactor: 3,
+							},
+							NamespaceStatus: &proto.NamespaceStatus{
+								ReplicationFactor: 3,
+							},
 						},
 					},
 				},
@@ -546,9 +551,10 @@ func TestAdminClientListNamespacesReturnsResponse(t *testing.T) {
 	namespaces, err := admin.ListNamespaces(context.Background())
 	require.NoError(t, err)
 	require.Len(t, namespaces, 1)
-	assert.Equal(t, "ns-1", namespaces[0].GetName())
-	assert.EqualValues(t, 4, namespaces[0].GetInitialShardCount())
-	assert.EqualValues(t, 3, namespaces[0].GetReplicationFactor())
+	assert.Equal(t, "ns-1", namespaces[0].GetNamespace().GetName())
+	assert.EqualValues(t, 4, namespaces[0].GetNamespace().GetInitialShardCount())
+	assert.EqualValues(t, 3, namespaces[0].GetNamespace().GetReplicationFactor())
+	assert.EqualValues(t, 3, namespaces[0].GetNamespaceStatus().GetReplicationFactor())
 }
 
 func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
@@ -557,11 +563,16 @@ func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
 		clientPool: &mockAdminClientPool{
 			adminClient: &mockAdminRpcClient{
 				getNamespaceResp: &proto.GetNamespaceResponse{
-					Namespace: &proto.Namespace{
-						Name:              "ns-1",
-						InitialShardCount: 4,
-						ReplicationFactor: 3,
-						KeySorting:        proto.KeySortingType_NATURAL.String(),
+					Namespace: &proto.NamespaceView{
+						Namespace: &proto.Namespace{
+							Name:              "ns-1",
+							InitialShardCount: 4,
+							ReplicationFactor: 3,
+							KeySorting:        proto.KeySortingType_NATURAL.String(),
+						},
+						NamespaceStatus: &proto.NamespaceStatus{
+							ReplicationFactor: 3,
+						},
 					},
 				},
 			},
@@ -571,10 +582,11 @@ func TestAdminClientGetNamespaceReturnsResponse(t *testing.T) {
 	namespace, err := admin.GetNamespace(context.Background(), "ns-1")
 	require.NoError(t, err)
 	require.NotNil(t, namespace)
-	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetKeySorting())
+	assert.Equal(t, "ns-1", namespace.GetNamespace().GetName())
+	assert.EqualValues(t, 4, namespace.GetNamespace().GetInitialShardCount())
+	assert.EqualValues(t, 3, namespace.GetNamespace().GetReplicationFactor())
+	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetNamespace().GetKeySorting())
+	assert.EqualValues(t, 3, namespace.GetNamespaceStatus().GetReplicationFactor())
 }
 
 func TestWrapAdminErrorPreservesCause(t *testing.T) {

@@ -249,9 +249,15 @@ func (management *managementServer) ListNamespaces(_ context.Context, _ *proto.L
 		return nil, err
 	}
 	namespaces := runtime.Metadata().ListNamespace()
-	responseNamespaces := make([]*proto.Namespace, 0, len(namespaces))
-	for _, namespace := range namespaces {
-		responseNamespaces = append(responseNamespaces, namespace.UnsafeBorrow())
+	statuses := runtime.Metadata().ListNamespaceStatus()
+
+	responseNamespaces := make([]*proto.NamespaceView, 0, len(namespaces))
+	for name, namespace := range namespaces {
+		var status *proto.NamespaceStatus
+		if borrowedStatus, found := statuses[name]; found {
+			status = borrowedStatus.UnsafeBorrow()
+		}
+		responseNamespaces = append(responseNamespaces, namespaceView(namespace.UnsafeBorrow(), status))
 	}
 
 	return &proto.ListNamespacesResponse{
@@ -388,9 +394,20 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 		return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
 	}
 
+	status, _ := runtime.Metadata().GetNamespaceStatus(req.Namespace)
 	return &proto.GetNamespaceResponse{
-		Namespace: namespace.UnsafeBorrow(),
+		Namespace: namespaceView(namespace.UnsafeBorrow(), status.UnsafeBorrow()),
 	}, nil
+}
+
+func namespaceView(namespace *proto.Namespace, status *proto.NamespaceStatus) *proto.NamespaceView {
+	if status == nil {
+		status = &proto.NamespaceStatus{}
+	}
+	return &proto.NamespaceView{
+		Namespace:       namespace,
+		NamespaceStatus: status,
+	}
 }
 
 func (management *managementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {

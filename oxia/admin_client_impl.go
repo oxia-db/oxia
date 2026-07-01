@@ -132,7 +132,7 @@ func (admin *adminClientImpl) DeleteNamespace(ctx context.Context, namespace str
 	return response.Namespace, nil
 }
 
-func (admin *adminClientImpl) ListNamespaces(ctx context.Context) ([]*proto.Namespace, error) {
+func (admin *adminClientImpl) ListNamespaces(ctx context.Context) ([]*proto.NamespaceView, error) {
 	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.ListNamespacesResponse, error) {
 		return client.ListNamespaces(ctx, &proto.ListNamespacesRequest{})
 	})
@@ -142,7 +142,7 @@ func (admin *adminClientImpl) ListNamespaces(ctx context.Context) ([]*proto.Name
 	return response.Namespaces, nil
 }
 
-func (admin *adminClientImpl) GetNamespace(ctx context.Context, namespace string) (*proto.Namespace, error) {
+func (admin *adminClientImpl) GetNamespace(ctx context.Context, namespace string) (*proto.NamespaceView, error) {
 	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.GetNamespaceResponse, error) {
 		return client.GetNamespace(ctx, &proto.GetNamespaceRequest{Namespace: namespace})
 	})

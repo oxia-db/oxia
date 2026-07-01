@@ -46,11 +46,19 @@ func Test_cmd_getNamespace(t *testing.T) {
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetNamespace", "ns-1").Return(&proto.Namespace{
-		Name:              "ns-1",
-		InitialShardCount: 4,
-		ReplicationFactor: 3,
-		KeySorting:        proto.KeySortingType_NATURAL.String(),
+	commons.MockedAdminClient.On("GetNamespace", "ns-1").Return(&proto.NamespaceView{
+		Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 4,
+			ReplicationFactor: 3,
+			KeySorting:        proto.KeySortingType_NATURAL.String(),
+		},
+		NamespaceStatus: &proto.NamespaceStatus{
+			ReplicationFactor: 3,
+			Shards: map[int64]*proto.ShardMetadata{
+				0: {Status: proto.ShardStatusSteadyState},
+			},
+		},
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -64,12 +72,18 @@ func Test_cmd_getNamespace(t *testing.T) {
 	out, err := runCmd(cmd, "-o", "json", "ns-1")
 	require.NoError(t, err)
 
-	var namespace proto.Namespace
+	var namespace map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &namespace))
-	assert.Equal(t, "ns-1", namespace.GetName())
-	assert.EqualValues(t, 4, namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, namespace.GetReplicationFactor())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespace.GetKeySorting())
+	namespaceConfig := namespace["namespace"].(map[string]any)
+	namespaceStatus := namespace["namespace_status"].(map[string]any)
+	shards := namespaceStatus["shards"].(map[string]any)
+	shard := shards["0"].(map[string]any)
+	assert.Equal(t, "ns-1", namespaceConfig["name"])
+	assert.EqualValues(t, 4, namespaceConfig["initial_shard_count"])
+	assert.EqualValues(t, 3, namespaceConfig["replication_factor"])
+	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespaceConfig["key_sorting"])
+	assert.EqualValues(t, 3, namespaceStatus["replication_factor"])
+	assert.EqualValues(t, proto.ShardStatusSteadyState, shard["status"])
 }
 
 func Test_cmd_getNamespaces(t *testing.T) {
@@ -77,16 +91,20 @@ func Test_cmd_getNamespaces(t *testing.T) {
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ListNamespaces").Return([]*proto.Namespace{
+	commons.MockedAdminClient.On("ListNamespaces").Return([]*proto.NamespaceView{
 		{
-			Name:              "ns-1",
-			InitialShardCount: 4,
-			ReplicationFactor: 3,
+			Namespace: &proto.Namespace{
+				Name:              "ns-1",
+				InitialShardCount: 4,
+				ReplicationFactor: 3,
+			},
 		},
 		{
-			Name:              "ns-2",
-			InitialShardCount: 2,
-			ReplicationFactor: 1,
+			Namespace: &proto.Namespace{
+				Name:              "ns-2",
+				InitialShardCount: 2,
+				ReplicationFactor: 1,
+			},
 		},
 	}, nil)
 
@@ -118,11 +136,19 @@ func Test_cmd_getNamespaces_JSON(t *testing.T) {
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ListNamespaces").Return([]*proto.Namespace{
+	commons.MockedAdminClient.On("ListNamespaces").Return([]*proto.NamespaceView{
 		{
-			Name:              "ns-1",
-			InitialShardCount: 4,
-			ReplicationFactor: 3,
+			Namespace: &proto.Namespace{
+				Name:              "ns-1",
+				InitialShardCount: 4,
+				ReplicationFactor: 3,
+			},
+			NamespaceStatus: &proto.NamespaceStatus{
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					0: {Status: proto.ShardStatusSteadyState},
+				},
+			},
 		},
 	}, nil)
 
@@ -137,10 +163,14 @@ func Test_cmd_getNamespaces_JSON(t *testing.T) {
 	out, err := runCmd(cmd, "-o", "json")
 	require.NoError(t, err)
 
-	var namespaces []proto.Namespace
+	var namespaces []map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &namespaces))
 	require.Len(t, namespaces, 1)
-	assert.Equal(t, "ns-1", namespaces[0].GetName())
+	namespaceConfig := namespaces[0]["namespace"].(map[string]any)
+	namespaceStatus := namespaces[0]["namespace_status"].(map[string]any)
+	shards := namespaceStatus["shards"].(map[string]any)
+	assert.Equal(t, "ns-1", namespaceConfig["name"])
+	assert.Len(t, shards, 1)
 }
 
 func Test_cmd_getNamespace_RejectsNameOutput(t *testing.T) {
@@ -166,11 +196,20 @@ func Test_cmd_getNamespace_DefaultTable(t *testing.T) {
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("GetNamespace", "ns-1").Return(&proto.Namespace{
-		Name:              "ns-1",
-		InitialShardCount: 4,
-		ReplicationFactor: 3,
-		KeySorting:        proto.KeySortingType_NATURAL.String(),
+	commons.MockedAdminClient.On("GetNamespace", "ns-1").Return(&proto.NamespaceView{
+		Namespace: &proto.Namespace{
+			Name:              "ns-1",
+			InitialShardCount: 4,
+			ReplicationFactor: 3,
+			KeySorting:        proto.KeySortingType_NATURAL.String(),
+		},
+		NamespaceStatus: &proto.NamespaceStatus{
+			ReplicationFactor: 3,
+			Shards: map[int64]*proto.ShardMetadata{
+				0: {Status: proto.ShardStatusSteadyState},
+				1: {Status: proto.ShardStatusElection},
+			},
+		},
 	}, nil)
 
 	cmd := &cobra.Command{
@@ -185,11 +224,13 @@ func Test_cmd_getNamespace_DefaultTable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "NAME")
 	assert.Contains(t, out, "INITIAL_SHARDS")
+	assert.Contains(t, out, "CURRENT_SHARDS")
 	assert.Contains(t, out, "REPLICATION_FACTOR")
 	assert.Contains(t, out, "NOTIFICATIONS")
 	assert.Contains(t, out, "KEY_SORTING")
 	assert.Contains(t, out, "ns-1")
 	assert.Contains(t, out, "4")
+	assert.Contains(t, out, "2")
 	assert.Contains(t, out, "3")
 	assert.Contains(t, out, "true")
 	assert.Contains(t, out, proto.KeySortingType_NATURAL.String())

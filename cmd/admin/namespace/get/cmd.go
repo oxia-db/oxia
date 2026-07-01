@@ -53,12 +53,12 @@ func exec(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		return namespacecli.WriteNamespaces(cmd.OutOrStdout(), outputFormat, namespaces)
+		return namespacecli.WriteNamespaceViews(cmd.OutOrStdout(), outputFormat, namespaces)
 	}
 
 	namespace, err := client.GetNamespace(cmd.Context(), args[0])
 	if err != nil {
 		return err
 	}
-	return namespacecli.WriteNamespace(cmd.OutOrStdout(), outputFormat, namespace)
+	return namespacecli.WriteNamespaceView(cmd.OutOrStdout(), outputFormat, namespace)
 }

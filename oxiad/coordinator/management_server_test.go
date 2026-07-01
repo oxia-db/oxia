@@ -307,7 +307,7 @@ func TestManagementServerServesAfterShardSplitterReady(t *testing.T) {
 	res, err := management.ListNamespaces(t.Context(), &proto.ListNamespacesRequest{})
 	require.NoError(t, err)
 	require.Len(t, res.Namespaces, 1)
-	assert.Equal(t, "ns-1", res.Namespaces[0].GetName())
+	assert.Equal(t, "ns-1", res.Namespaces[0].GetNamespace().GetName())
 }
 
 func TestManagementServerReturnsUnavailableBeforeRuntimeReady(t *testing.T) {
@@ -458,51 +458,75 @@ func TestManagementServerGetDataServerRejectsEmptyLookup(t *testing.T) {
 }
 
 func TestManagementServerGetNamespace(t *testing.T) {
-	management := newReadyManagementServer(
-		newTestMetadata(t, &proto.ClusterConfiguration{
-			Namespaces: []*proto.Namespace{{
-				Name:              "ns-1",
-				InitialShardCount: 4,
-				ReplicationFactor: 3,
-				KeySorting:        proto.KeySortingType_NATURAL.String(),
-			}},
-		}),
-		nil,
-	)
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
+			Name:              "ns-1",
+			InitialShardCount: 4,
+			ReplicationFactor: 3,
+			KeySorting:        proto.KeySortingType_NATURAL.String(),
+		}},
+	})
+	require.True(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
+		ReplicationFactor: 3,
+		Shards: map[int64]*proto.ShardMetadata{
+			0: {Status: proto.ShardStatusSteadyState},
+			1: {Status: proto.ShardStatusElection},
+		},
+	}))
+	management := newReadyManagementServer(metadata, nil)
 
 	res, err := management.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: "ns-1"})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Namespace)
-	assert.Equal(t, "ns-1", res.Namespace.GetName())
-	assert.EqualValues(t, 4, res.Namespace.GetInitialShardCount())
-	assert.EqualValues(t, 3, res.Namespace.GetReplicationFactor())
-	assert.Equal(t, proto.KeySortingType_NATURAL.String(), res.Namespace.GetKeySorting())
+	assert.Equal(t, "ns-1", res.Namespace.GetNamespace().GetName())
+	assert.EqualValues(t, 4, res.Namespace.GetNamespace().GetInitialShardCount())
+	assert.EqualValues(t, 3, res.Namespace.GetNamespace().GetReplicationFactor())
+	assert.Equal(t, proto.KeySortingType_NATURAL.String(), res.Namespace.GetNamespace().GetKeySorting())
+	assert.EqualValues(t, 3, res.Namespace.GetNamespaceStatus().GetReplicationFactor())
+	assert.Len(t, res.Namespace.GetNamespaceStatus().GetShards(), 2)
 }
 
 func TestManagementServerListNamespaces(t *testing.T) {
-	management := newReadyManagementServer(
-		newTestMetadata(t, &proto.ClusterConfiguration{
-			Namespaces: []*proto.Namespace{
-				{
-					Name:              "ns-1",
-					InitialShardCount: 4,
-					ReplicationFactor: 3,
-				},
-				{
-					Name:              "ns-2",
-					InitialShardCount: 2,
-					ReplicationFactor: 1,
-				},
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
+			{
+				Name:              "ns-1",
+				InitialShardCount: 4,
+				ReplicationFactor: 3,
 			},
-		}),
-		nil,
-	)
+			{
+				Name:              "ns-2",
+				InitialShardCount: 2,
+				ReplicationFactor: 1,
+			},
+		},
+	})
+	require.True(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
+		ReplicationFactor: 3,
+		Shards: map[int64]*proto.ShardMetadata{
+			0: {Status: proto.ShardStatusSteadyState},
+		},
+	}))
+	require.True(t, metadata.CreateNamespaceStatus("ns-2", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{
+			1: {Status: proto.ShardStatusElection},
+			2: {Status: proto.ShardStatusElection},
+		},
+	}))
+	management := newReadyManagementServer(metadata, nil)
 
 	res, err := management.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
 	require.NoError(t, err)
 	require.Len(t, res.Namespaces, 2)
-	assert.ElementsMatch(t, []string{"ns-1", "ns-2"}, []string{res.Namespaces[0].GetName(), res.Namespaces[1].GetName()})
+	viewsByName := map[string]*proto.NamespaceView{}
+	for _, view := range res.Namespaces {
+		viewsByName[view.GetNamespace().GetName()] = view
+	}
+	assert.ElementsMatch(t, []string{"ns-1", "ns-2"}, []string{res.Namespaces[0].GetNamespace().GetName(), res.Namespaces[1].GetNamespace().GetName()})
+	assert.Len(t, viewsByName["ns-1"].GetNamespaceStatus().GetShards(), 1)
+	assert.Len(t, viewsByName["ns-2"].GetNamespaceStatus().GetShards(), 2)
 }
 
 func TestManagementServerCreateNamespace(t *testing.T) {
