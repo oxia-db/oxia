@@ -53,7 +53,8 @@ func Test_cmd_getNamespace(t *testing.T) {
 			ReplicationFactor: 3,
 			KeySorting:        proto.KeySortingType_NATURAL.String(),
 		},
-		NamespaceStatus: &proto.NamespaceRuntimeStatus{
+		NamespaceStatus: &proto.NamespaceStatus{
+			ReplicationFactor: 3,
 			Shards: map[int64]*proto.ShardMetadata{
 				0: {Status: proto.ShardStatusSteadyState},
 			},
@@ -81,7 +82,7 @@ func Test_cmd_getNamespace(t *testing.T) {
 	assert.EqualValues(t, 4, namespaceConfig["initial_shard_count"])
 	assert.EqualValues(t, 3, namespaceConfig["replication_factor"])
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), namespaceConfig["key_sorting"])
-	assert.NotContains(t, namespaceStatus, "replication_factor")
+	assert.EqualValues(t, 3, namespaceStatus["replication_factor"])
 	assert.EqualValues(t, proto.ShardStatusSteadyState, shard["status"])
 }
 
@@ -143,7 +144,8 @@ func Test_cmd_getNamespaces_JSON(t *testing.T) {
 				InitialShardCount: 4,
 				ReplicationFactor: 3,
 			},
-			NamespaceStatus: &proto.NamespaceRuntimeStatus{
+			NamespaceStatus: &proto.NamespaceStatus{
+				ReplicationFactor: 3,
 				Shards: map[int64]*proto.ShardMetadata{
 					0: {Status: proto.ShardStatusSteadyState},
 				},
@@ -169,6 +171,7 @@ func Test_cmd_getNamespaces_JSON(t *testing.T) {
 	namespaceStatus := namespaces[0]["namespace_status"].(map[string]any)
 	shards := namespaceStatus["shards"].(map[string]any)
 	assert.Equal(t, "ns-1", namespaceConfig["name"])
+	assert.EqualValues(t, 3, namespaceStatus["replication_factor"])
 	assert.Len(t, shards, 1)
 }
 
@@ -202,7 +205,8 @@ func Test_cmd_getNamespace_DefaultTable(t *testing.T) {
 			ReplicationFactor: 3,
 			KeySorting:        proto.KeySortingType_NATURAL.String(),
 		},
-		NamespaceStatus: &proto.NamespaceRuntimeStatus{
+		NamespaceStatus: &proto.NamespaceStatus{
+			ReplicationFactor: 3,
 			Shards: map[int64]*proto.ShardMetadata{
 				0: {Status: proto.ShardStatusSteadyState},
 				1: {Status: proto.ShardStatusElection},

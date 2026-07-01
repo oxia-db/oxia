@@ -253,10 +253,10 @@ func (management *managementServer) ListNamespaces(_ context.Context, _ *proto.L
 
 	responseNamespaces := make([]*proto.NamespaceView, 0, len(namespaces))
 	for name, namespace := range namespaces {
-		namespaceStatus := &proto.NamespaceRuntimeStatus{}
+		namespaceStatus := &proto.NamespaceStatus{}
 		if borrowedStatus, found := statuses[name]; found {
 			if status := borrowedStatus.UnsafeBorrow(); status != nil {
-				namespaceStatus.Shards = status.GetShards()
+				namespaceStatus = status
 			}
 		}
 		responseNamespaces = append(responseNamespaces, &proto.NamespaceView{
@@ -399,10 +399,10 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 		return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
 	}
 
-	namespaceStatus := &proto.NamespaceRuntimeStatus{}
+	namespaceStatus := &proto.NamespaceStatus{}
 	if borrowedStatus, found := runtime.Metadata().GetNamespaceStatus(req.Namespace); found {
 		if status := borrowedStatus.UnsafeBorrow(); status != nil {
-			namespaceStatus.Shards = status.GetShards()
+			namespaceStatus = status
 		}
 	}
 	return &proto.GetNamespaceResponse{

@@ -483,6 +483,7 @@ func TestManagementServerGetNamespace(t *testing.T) {
 	assert.EqualValues(t, 4, res.Namespace.GetNamespace().GetInitialShardCount())
 	assert.EqualValues(t, 3, res.Namespace.GetNamespace().GetReplicationFactor())
 	assert.Equal(t, proto.KeySortingType_NATURAL.String(), res.Namespace.GetNamespace().GetKeySorting())
+	assert.EqualValues(t, 3, res.Namespace.GetNamespaceStatus().GetReplicationFactor())
 	assert.Len(t, res.Namespace.GetNamespaceStatus().GetShards(), 2)
 }
 
@@ -524,7 +525,9 @@ func TestManagementServerListNamespaces(t *testing.T) {
 		viewsByName[view.GetNamespace().GetName()] = view
 	}
 	assert.ElementsMatch(t, []string{"ns-1", "ns-2"}, []string{res.Namespaces[0].GetNamespace().GetName(), res.Namespaces[1].GetNamespace().GetName()})
+	assert.EqualValues(t, 3, viewsByName["ns-1"].GetNamespaceStatus().GetReplicationFactor())
 	assert.Len(t, viewsByName["ns-1"].GetNamespaceStatus().GetShards(), 1)
+	assert.EqualValues(t, 1, viewsByName["ns-2"].GetNamespaceStatus().GetReplicationFactor())
 	assert.Len(t, viewsByName["ns-2"].GetNamespaceStatus().GetShards(), 2)
 }
 
