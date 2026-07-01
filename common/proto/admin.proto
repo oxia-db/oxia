@@ -50,7 +50,7 @@ message ListDataServersRequest {
 }
 
 message ListDataServersResponse {
-  repeated DataServer data_servers = 1;
+  repeated DataServerView data_servers = 1;
 }
 
 message GetDataServerRequest {
@@ -58,7 +58,12 @@ message GetDataServerRequest {
 }
 
 message GetDataServerResponse {
+  DataServerView data_server = 1;
+}
+
+message DataServerView {
   DataServer data_server = 1;
+  DataServerStatus data_server_status = 2;
 }
 
 message CreateDataServerRequest {

@@ -87,14 +87,14 @@ func (management *managementServer) ListDataServers(_ context.Context, _ *proto.
 	if err != nil {
 		return nil, err
 	}
-	cnf := runtime.Metadata().GetConfig().UnsafeBorrow()
+	config := runtime.Metadata().GetConfig().UnsafeBorrow()
+	statuses := runtime.ListDataServerStatus()
 
-	dataServers := make([]*proto.DataServer, 0, len(cnf.GetServers()))
-	for _, server := range cnf.GetServers() {
-		id := server.GetNameOrDefault()
+	views := make([]*proto.DataServerView, 0, len(config.GetServers()))
+	for _, server := range config.GetServers() {
+		name := server.GetNameOrDefault()
 		identity := server
 		if server.GetName() == "" {
-			name := id
 			identity = &proto.DataServerIdentity{
 				Name:     &name,
 				Public:   server.GetPublic(),
@@ -102,16 +102,23 @@ func (management *managementServer) ListDataServers(_ context.Context, _ *proto.
 			}
 		}
 		metadata := &proto.DataServerMetadata{}
-		if value, found := cnf.GetServerMetadata()[id]; found {
+		if value, found := config.GetServerMetadata()[name]; found {
 			metadata = value
 		}
-		dataServers = append(dataServers, &proto.DataServer{
-			Identity: identity,
-			Metadata: metadata,
+		status := statuses[name]
+		if status == nil {
+			status = &proto.DataServerStatus{}
+		}
+		views = append(views, &proto.DataServerView{
+			DataServer: &proto.DataServer{
+				Identity: identity,
+				Metadata: metadata,
+			},
+			DataServerStatus: status,
 		})
 	}
 
-	return &proto.ListDataServersResponse{DataServers: dataServers}, nil
+	return &proto.ListDataServersResponse{DataServers: views}, nil
 }
 
 func (management *managementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
@@ -128,8 +135,15 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 	}
 
+	status, _ := runtime.GetDataServerStatus(req.DataServer)
+	if status == nil {
+		status = &proto.DataServerStatus{}
+	}
 	return &proto.GetDataServerResponse{
-		DataServer: borrowedDataServer.UnsafeBorrow(),
+		DataServer: &proto.DataServerView{
+			DataServer:       borrowedDataServer.UnsafeBorrow(),
+			DataServerStatus: status,
+		},
 	}, nil
 }
 

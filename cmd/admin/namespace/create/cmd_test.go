@@ -33,7 +33,7 @@ import (
 func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	actual := new(bytes.Buffer)
 	root := &cobra.Command{Use: "admin"}
-	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
+	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|table")
 	root.AddCommand(cmd)
 	root.SetOut(actual)
 	root.SetErr(actual)
@@ -129,14 +129,9 @@ func Test_cmd_createNamespace_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "hierarchical")
 }
 
-func Test_cmd_createNamespace_Name(t *testing.T) {
-	commons.MockedAdminClient = commons.NewMockAdminClient()
+func Test_cmd_createNamespace_RejectsNameOutput(t *testing.T) {
+	commons.MockedAdminClient = nil
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
-
-	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("CreateNamespace", mock.Anything).Return(&proto.Namespace{
-		Name: "ns-1",
-	}, nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -151,8 +146,9 @@ func Test_cmd_createNamespace_Name(t *testing.T) {
 	_ = cmd.MarkFlagRequired(namespacecli.ReplicationFactorFlagName)
 	out, err := runCmd(cmd, "ns-1", "--initial-shards", "4", "--replication-factor", "3", "-o", "name")
 
-	require.NoError(t, err)
-	assert.Equal(t, "namespace/ns-1", out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unsupported output format "name"`)
+	assert.Contains(t, out, `unsupported output format "name"`)
 }
 
 func Test_cmd_createNamespace_RejectsInvalidName(t *testing.T) {

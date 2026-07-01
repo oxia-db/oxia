@@ -24,8 +24,8 @@ import (
 type AdminClient interface {
 	io.Closer
 
-	ListDataServers(ctx context.Context) ([]*proto.DataServer, error)
-	GetDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error)
+	ListDataServers(ctx context.Context) ([]*proto.DataServerView, error)
+	GetDataServer(ctx context.Context, dataServer string) (*proto.DataServerView, error)
 	CreateDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error)
 	PatchDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error)
 	DeleteDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error)

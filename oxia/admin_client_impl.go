@@ -38,7 +38,7 @@ type adminClientImpl struct {
 	clientPool rpc.ClientPool
 }
 
-func (admin *adminClientImpl) ListDataServers(ctx context.Context) ([]*proto.DataServer, error) {
+func (admin *adminClientImpl) ListDataServers(ctx context.Context) ([]*proto.DataServerView, error) {
 	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.ListDataServersResponse, error) {
 		return client.ListDataServers(ctx, &proto.ListDataServersRequest{})
 	})
@@ -48,7 +48,7 @@ func (admin *adminClientImpl) ListDataServers(ctx context.Context) ([]*proto.Dat
 	return response.DataServers, nil
 }
 
-func (admin *adminClientImpl) GetDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error) {
+func (admin *adminClientImpl) GetDataServer(ctx context.Context, dataServer string) (*proto.DataServerView, error) {
 	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.GetDataServerResponse, error) {
 		return client.GetDataServer(ctx, &proto.GetDataServerRequest{DataServer: dataServer})
 	})

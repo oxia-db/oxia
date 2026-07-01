@@ -35,6 +35,8 @@ type Runtime interface {
 	DeleteDataServer(name string)
 
 	ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer]
+	ListDataServerStatus() map[string]*proto.DataServerStatus
+	GetDataServerStatus(name string) (*proto.DataServerStatus, bool)
 
 	CreateNamespace(name string, namespaceConfig *proto.Namespace) bool
 	DeleteNamespace(namespace string)

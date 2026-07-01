@@ -60,5 +60,5 @@ func exec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return dataservercli.WriteDataServer(cmd.OutOrStdout(), outputFormat, dataServer)
+	return dataservercli.WriteDataServerView(cmd.OutOrStdout(), outputFormat, dataServer)
 }

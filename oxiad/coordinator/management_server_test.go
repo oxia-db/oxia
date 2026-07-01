@@ -92,6 +92,10 @@ func (*testRuntime) DeleteDataServer(string) {}
 
 func (*testRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] { return nil }
 
+func (*testRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus { return nil }
+
+func (*testRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) { return nil, false }
+
 func (*testRuntime) CreateNamespace(string, *proto.Namespace) bool { return false }
 
 func (*testRuntime) DeleteNamespace(string) {}
@@ -340,26 +344,29 @@ func TestManagementServerListDataServers(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.DataServers, 3)
 
-	require.NotNil(t, res.DataServers[0].Identity)
-	require.NotNil(t, res.DataServers[0].Identity.Name)
-	assert.Equal(t, serverName1, *res.DataServers[0].Identity.Name)
-	assert.Equal(t, "public-1", res.DataServers[0].Identity.GetPublic())
-	assert.Equal(t, "internal-1", res.DataServers[0].Identity.GetInternal())
-	assert.Equal(t, map[string]string{"rack": "rack-1"}, res.DataServers[0].Metadata.GetLabels())
+	ds := res.DataServers[0].GetDataServer()
+	require.NotNil(t, ds.GetIdentity())
+	require.NotNil(t, ds.GetIdentity().Name)
+	assert.Equal(t, serverName1, ds.GetIdentity().GetName())
+	assert.Equal(t, "public-1", ds.GetIdentity().GetPublic())
+	assert.Equal(t, "internal-1", ds.GetIdentity().GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, ds.GetMetadata().GetLabels())
 
-	require.NotNil(t, res.DataServers[1].Identity)
-	require.NotNil(t, res.DataServers[1].Identity.Name)
-	assert.Equal(t, serverName2, *res.DataServers[1].Identity.Name)
-	assert.Equal(t, "public-2", res.DataServers[1].Identity.GetPublic())
-	assert.Equal(t, "internal-2", res.DataServers[1].Identity.GetInternal())
-	assert.Equal(t, map[string]string{"rack": "rack-2"}, res.DataServers[1].Metadata.GetLabels())
+	ds = res.DataServers[1].GetDataServer()
+	require.NotNil(t, ds.GetIdentity())
+	require.NotNil(t, ds.GetIdentity().Name)
+	assert.Equal(t, serverName2, ds.GetIdentity().GetName())
+	assert.Equal(t, "public-2", ds.GetIdentity().GetPublic())
+	assert.Equal(t, "internal-2", ds.GetIdentity().GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-2"}, ds.GetMetadata().GetLabels())
 
-	require.NotNil(t, res.DataServers[2].Identity)
-	require.NotNil(t, res.DataServers[2].Identity.Name)
-	assert.Equal(t, "internal-3", *res.DataServers[2].Identity.Name)
-	assert.Equal(t, "public-3", res.DataServers[2].Identity.GetPublic())
-	assert.Equal(t, "internal-3", res.DataServers[2].Identity.GetInternal())
-	assert.Equal(t, map[string]string{"rack": "rack-3"}, res.DataServers[2].Metadata.GetLabels())
+	ds = res.DataServers[2].GetDataServer()
+	require.NotNil(t, ds.GetIdentity())
+	require.NotNil(t, ds.GetIdentity().Name)
+	assert.Equal(t, "internal-3", ds.GetIdentity().GetName())
+	assert.Equal(t, "public-3", ds.GetIdentity().GetPublic())
+	assert.Equal(t, "internal-3", ds.GetIdentity().GetInternal())
+	assert.Equal(t, map[string]string{"rack": "rack-3"}, ds.GetMetadata().GetLabels())
 }
 
 func TestManagementServerGetDataServerByName(t *testing.T) {
@@ -381,12 +388,13 @@ func TestManagementServerGetDataServerByName(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.DataServer)
-	require.NotNil(t, res.DataServer.Identity)
-	require.NotNil(t, res.DataServer.Identity.Name)
-	assert.Equal(t, serverName, *res.DataServer.Identity.Name)
-	assert.Equal(t, "public-2", res.DataServer.Identity.GetPublic())
-	assert.Equal(t, "internal-2", res.DataServer.Identity.GetInternal())
-	assert.Equal(t, map[string]string{"zone": "zone-2"}, res.DataServer.Metadata.GetLabels())
+	ds := res.DataServer.GetDataServer()
+	require.NotNil(t, ds.GetIdentity())
+	require.NotNil(t, ds.GetIdentity().Name)
+	assert.Equal(t, serverName, ds.GetIdentity().GetName())
+	assert.Equal(t, "public-2", ds.GetIdentity().GetPublic())
+	assert.Equal(t, "internal-2", ds.GetIdentity().GetInternal())
+	assert.Equal(t, map[string]string{"zone": "zone-2"}, ds.GetMetadata().GetLabels())
 }
 
 func TestManagementServerGetDataServerByIdentifierFallback(t *testing.T) {
@@ -410,12 +418,13 @@ func TestManagementServerGetDataServerByIdentifierFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.DataServer)
-	require.NotNil(t, res.DataServer.Identity)
-	require.NotNil(t, res.DataServer.Identity.Name)
-	assert.Equal(t, "internal-3", *res.DataServer.Identity.Name)
-	assert.Equal(t, "public-3", res.DataServer.Identity.GetPublic())
-	assert.Equal(t, "internal-3", res.DataServer.Identity.GetInternal())
-	assert.Equal(t, map[string]string{"role": "fallback"}, res.DataServer.Metadata.GetLabels())
+	ds := res.DataServer.GetDataServer()
+	require.NotNil(t, ds.GetIdentity())
+	require.NotNil(t, ds.GetIdentity().Name)
+	assert.Equal(t, "internal-3", ds.GetIdentity().GetName())
+	assert.Equal(t, "public-3", ds.GetIdentity().GetPublic())
+	assert.Equal(t, "internal-3", ds.GetIdentity().GetInternal())
+	assert.Equal(t, map[string]string{"role": "fallback"}, ds.GetMetadata().GetLabels())
 
 	_, err = management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "internal-2"})
 	require.Error(t, err)

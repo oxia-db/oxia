@@ -32,7 +32,7 @@ import (
 func runCmd(cmd *cobra.Command, args ...string) (string, error) {
 	actual := new(bytes.Buffer)
 	root := &cobra.Command{Use: "admin"}
-	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|name|table")
+	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|table")
 	root.AddCommand(cmd)
 	root.SetOut(actual)
 	root.SetErr(actual)
@@ -122,14 +122,9 @@ func Test_cmd_patchNamespace_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "natural")
 }
 
-func Test_cmd_patchNamespace_Name(t *testing.T) {
-	commons.MockedAdminClient = commons.NewMockAdminClient()
+func Test_cmd_patchNamespace_RejectsNameOutput(t *testing.T) {
+	commons.MockedAdminClient = nil
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
-
-	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("PatchNamespace", mock.Anything).Return(&proto.Namespace{
-		Name: "ns-1",
-	}, nil)
 
 	cmd := &cobra.Command{
 		Use:          Cmd.Use,
@@ -142,8 +137,9 @@ func Test_cmd_patchNamespace_Name(t *testing.T) {
 	fields.AddPatchFlags(cmd)
 	out, err := runCmd(cmd, "ns-1", "--notifications=false", "-o", "name")
 
-	require.NoError(t, err)
-	assert.Equal(t, "namespace/ns-1", out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unsupported output format "name"`)
+	assert.Contains(t, out, `unsupported output format "name"`)
 }
 
 func Test_cmd_patchNamespace_RejectsEmptyPatch(t *testing.T) {

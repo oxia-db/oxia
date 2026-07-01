@@ -91,9 +91,9 @@ func TestAdminDataServerCRUD(t *testing.T) {
 
 	found, err := client.GetDataServer(t.Context(), serverName)
 	require.NoError(t, err)
-	assert.Equal(t, serverName, found.GetIdentity().GetName())
-	assert.Equal(t, "localhost:19001", found.GetIdentity().GetPublic())
-	assert.Equal(t, map[string]string{"rack": "rack-1"}, found.GetMetadata().GetLabels())
+	assert.Equal(t, serverName, found.GetDataServer().GetIdentity().GetName())
+	assert.Equal(t, "localhost:19001", found.GetDataServer().GetIdentity().GetPublic())
+	assert.Equal(t, map[string]string{"rack": "rack-1"}, found.GetDataServer().GetMetadata().GetLabels())
 
 	patched, err := client.PatchDataServer(t.Context(), &proto.DataServer{
 		Identity: &proto.DataServerIdentity{
@@ -122,9 +122,9 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	dataServers, err = client.ListDataServers(t.Context())
 	require.NoError(t, err)
 	require.Len(t, dataServers, 1)
-	require.NotNil(t, dataServers[0].GetIdentity())
-	assert.Equal(t, remainingServerName, dataServers[0].GetIdentity().GetName())
-	assert.Equal(t, map[string]string{"rack": "rack-2"}, dataServers[0].GetMetadata().GetLabels())
+	require.NotNil(t, dataServers[0].GetDataServer().GetIdentity())
+	assert.Equal(t, remainingServerName, dataServers[0].GetDataServer().GetIdentity().GetName())
+	assert.Equal(t, map[string]string{"rack": "rack-2"}, dataServers[0].GetDataServer().GetMetadata().GetLabels())
 }
 
 func freeAddress(t *testing.T) string {

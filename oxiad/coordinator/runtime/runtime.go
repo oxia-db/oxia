@@ -101,6 +101,43 @@ func (c *runtime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataS
 	return dataServers
 }
 
+func (c *runtime) ListDataServerStatus() map[string]*proto.DataServerStatus {
+	c.RLock()
+	defer c.RUnlock()
+
+	statuses := make(map[string]*proto.DataServerStatus, len(c.dataServerControllers)+len(c.drainingNodes))
+	for name, dataServerController := range c.dataServerControllers {
+		statuses[name] = &proto.DataServerStatus{
+			State:             dataServerController.Status().ToProto(),
+			SupportedFeatures: dataServerController.SupportedFeatures(),
+		}
+	}
+	for name, dataServerController := range c.drainingNodes {
+		statuses[name] = &proto.DataServerStatus{
+			State:             dataServerController.Status().ToProto(),
+			SupportedFeatures: dataServerController.SupportedFeatures(),
+		}
+	}
+	return statuses
+}
+
+func (c *runtime) GetDataServerStatus(name string) (*proto.DataServerStatus, bool) {
+	c.RLock()
+	defer c.RUnlock()
+
+	dataServerController, found := c.dataServerControllers[name]
+	if !found {
+		dataServerController, found = c.drainingNodes[name]
+	}
+	if !found {
+		return nil, false
+	}
+	return &proto.DataServerStatus{
+		State:             dataServerController.Status().ToProto(),
+		SupportedFeatures: dataServerController.SupportedFeatures(),
+	}, true
+}
+
 func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bool {
 	c.Lock()
 	defer c.Unlock()

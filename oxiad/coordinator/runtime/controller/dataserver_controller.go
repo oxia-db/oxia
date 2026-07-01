@@ -46,6 +46,19 @@ const (
 	Draining //
 )
 
+func (s DataServerStatus) ToProto() proto.DataServerState {
+	switch s {
+	case Running:
+		return proto.DataServerState_DATA_SERVER_STATE_RUNNING
+	case NotRunning:
+		return proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE
+	case Draining:
+		return proto.DataServerState_DATA_SERVER_STATE_DRAINING
+	default:
+		return proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED
+	}
+}
+
 const (
 	healthCheckProbeInterval   = 2 * time.Second
 	healthCheckProbeTimeout    = 2 * time.Second
