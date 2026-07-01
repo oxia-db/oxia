@@ -122,9 +122,20 @@ func (c *runtime) ListDataServerStatus() map[string]*proto.DataServerStatus {
 }
 
 func (c *runtime) GetDataServerStatus(name string) (*proto.DataServerStatus, bool) {
-	statuses := c.ListDataServerStatus()
-	status, found := statuses[name]
-	return status, found
+	c.RLock()
+	defer c.RUnlock()
+
+	dataServerController, found := c.dataServerControllers[name]
+	if !found {
+		dataServerController, found = c.drainingNodes[name]
+	}
+	if !found {
+		return nil, false
+	}
+	return &proto.DataServerStatus{
+		State:             dataServerController.Status().ToProto(),
+		SupportedFeatures: dataServerController.SupportedFeatures(),
+	}, true
 }
 
 func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bool {
