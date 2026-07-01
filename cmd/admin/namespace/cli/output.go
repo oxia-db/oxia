@@ -33,15 +33,9 @@ func WriteNamespace(out io.Writer, format string, namespace *proto.Namespace) er
 		return err
 	}
 
-	format = commons.NormalizeOutputFormat(format)
-	switch format {
-	case commons.OutputJSON, commons.OutputYAML:
-		return commons.WriteStructuredOutput(out, format, namespace)
-	case commons.OutputTable:
+	return writeNamespaceOutput(out, format, namespace, func() error {
 		return writeNamespaceTable(out, []*proto.Namespace{namespace})
-	default:
-		return unsupportedOutputFormat(format)
-	}
+	})
 }
 
 func WriteNamespaces(out io.Writer, format string, namespaces []*proto.Namespace) error {
@@ -54,15 +48,9 @@ func WriteNamespaces(out io.Writer, format string, namespaces []*proto.Namespace
 		}
 	}
 
-	format = commons.NormalizeOutputFormat(format)
-	switch format {
-	case commons.OutputJSON, commons.OutputYAML:
-		return commons.WriteStructuredOutput(out, format, namespaces)
-	case commons.OutputTable:
+	return writeNamespaceOutput(out, format, namespaces, func() error {
 		return writeNamespaceTable(out, namespaces)
-	default:
-		return unsupportedOutputFormat(format)
-	}
+	})
 }
 
 func WriteNamespaceView(out io.Writer, format string, namespace *proto.NamespaceView) error {
@@ -74,15 +62,9 @@ func WriteNamespaceView(out io.Writer, format string, namespace *proto.Namespace
 		return err
 	}
 
-	format = commons.NormalizeOutputFormat(format)
-	switch format {
-	case commons.OutputJSON, commons.OutputYAML:
-		return commons.WriteStructuredOutput(out, format, namespace)
-	case commons.OutputTable:
+	return writeNamespaceOutput(out, format, namespace, func() error {
 		return writeNamespaceViewTable(out, []*proto.NamespaceView{namespace})
-	default:
-		return unsupportedOutputFormat(format)
-	}
+	})
 }
 
 func WriteNamespaceViews(out io.Writer, format string, namespaces []*proto.NamespaceView) error {
@@ -95,23 +77,25 @@ func WriteNamespaceViews(out io.Writer, format string, namespaces []*proto.Names
 		}
 	}
 
-	format = commons.NormalizeOutputFormat(format)
-	switch format {
-	case commons.OutputJSON, commons.OutputYAML:
-		return commons.WriteStructuredOutput(out, format, namespaces)
-	case commons.OutputTable:
+	return writeNamespaceOutput(out, format, namespaces, func() error {
 		return writeNamespaceViewTable(out, namespaces)
-	default:
-		return unsupportedOutputFormat(format)
-	}
+	})
 }
 
 func namespaceMustNotBeNil() error {
 	return errors.New("namespace must not be nil")
 }
 
-func unsupportedOutputFormat(format string) error {
-	return errors.Errorf("unsupported output format %q", format)
+func writeNamespaceOutput(out io.Writer, format string, value any, writeTable func() error) error {
+	format = commons.NormalizeOutputFormat(format)
+	switch format {
+	case commons.OutputJSON, commons.OutputYAML:
+		return commons.WriteStructuredOutput(out, format, value)
+	case commons.OutputTable:
+		return writeTable()
+	default:
+		return errors.Errorf("unsupported output format %q", format)
+	}
 }
 
 func writeNamespaceTable(out io.Writer, namespaces []*proto.Namespace) error {
