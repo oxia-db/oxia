@@ -83,19 +83,17 @@ func writeNamespaceOutput(out io.Writer, format string, value any, writeTable fu
 
 func writeNamespaceTable(out io.Writer, namespaces []*proto.Namespace) error {
 	tw := commons.NewTableWriter(out)
-	if _, err := fmt.Fprintln(tw, "NAME\tINITIAL_SHARDS\tREPLICATION_FACTOR\tNOTIFICATIONS\tKEY_SORTING"); err != nil {
+	if _, err := fmt.Fprintln(tw, "NAME\tINITIAL_SHARDS\tREPLICATION_FACTOR"); err != nil {
 		return err
 	}
 	for _, namespace := range namespaces {
 		if namespace == nil {
 			continue
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\t%t\t%s\n",
+		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\n",
 			namespace.GetName(),
 			namespace.GetInitialShardCount(),
 			namespace.GetReplicationFactor(),
-			namespace.NotificationsEnabledOrDefault(),
-			namespace.GetKeySorting(),
 		); err != nil {
 			return err
 		}
@@ -105,7 +103,7 @@ func writeNamespaceTable(out io.Writer, namespaces []*proto.Namespace) error {
 
 func writeNamespaceViewTable(out io.Writer, namespaces []*proto.NamespaceView) error {
 	tw := commons.NewTableWriter(out)
-	if _, err := fmt.Fprintln(tw, "NAME\tINITIAL_SHARDS\tCURRENT_SHARDS\tREPLICATION_FACTOR\tNOTIFICATIONS\tKEY_SORTING"); err != nil {
+	if _, err := fmt.Fprintln(tw, "NAME\tINITIAL_SHARDS\tREPLICATION_FACTOR"); err != nil {
 		return err
 	}
 	for _, view := range namespaces {
@@ -113,13 +111,10 @@ func writeNamespaceViewTable(out io.Writer, namespaces []*proto.NamespaceView) e
 			continue
 		}
 		namespace := view.GetNamespace()
-		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%t\t%s\n",
+		if _, err := fmt.Fprintf(tw, "%s\t%d\t%d\n",
 			namespace.GetName(),
 			namespace.GetInitialShardCount(),
-			len(view.GetNamespaceStatus().GetShards()),
 			namespace.GetReplicationFactor(),
-			namespace.NotificationsEnabledOrDefault(),
-			namespace.GetKeySorting(),
 		); err != nil {
 			return err
 		}

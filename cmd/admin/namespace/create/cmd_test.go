@@ -120,13 +120,11 @@ func Test_cmd_createNamespace_DefaultTable(t *testing.T) {
 	assert.Contains(t, out, "NAME")
 	assert.Contains(t, out, "INITIAL_SHARDS")
 	assert.Contains(t, out, "REPLICATION_FACTOR")
-	assert.Contains(t, out, "NOTIFICATIONS")
-	assert.Contains(t, out, "KEY_SORTING")
+	assert.NotContains(t, out, "NOTIFICATIONS")
+	assert.NotContains(t, out, "KEY_SORTING")
 	assert.Contains(t, out, "ns-1")
 	assert.Contains(t, out, "4")
 	assert.Contains(t, out, "3")
-	assert.Contains(t, out, "true")
-	assert.Contains(t, out, "hierarchical")
 }
 
 func Test_cmd_createNamespace_RejectsNameOutput(t *testing.T) {
