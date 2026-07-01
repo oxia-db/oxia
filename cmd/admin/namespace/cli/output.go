@@ -25,68 +25,51 @@ import (
 )
 
 func WriteNamespace(out io.Writer, format string, namespace *proto.Namespace) error {
-	if namespace == nil {
-		return namespaceMustNotBeNil()
-	}
-
-	if err := commons.ValidateOutputFormat(format); err != nil {
-		return err
-	}
-
-	return writeNamespaceOutput(out, format, namespace, func() error {
+	return writeNamespaceConfigOutput(out, format, namespace, []*proto.Namespace{namespace}, func() error {
 		return writeNamespaceTable(out, []*proto.Namespace{namespace})
 	})
 }
 
 func WriteNamespaces(out io.Writer, format string, namespaces []*proto.Namespace) error {
-	if err := commons.ValidateOutputFormat(format); err != nil {
-		return err
-	}
-	for _, namespace := range namespaces {
-		if namespace == nil {
-			return namespaceMustNotBeNil()
-		}
-	}
-
-	return writeNamespaceOutput(out, format, namespaces, func() error {
+	return writeNamespaceConfigOutput(out, format, namespaces, namespaces, func() error {
 		return writeNamespaceTable(out, namespaces)
 	})
 }
 
 func WriteNamespaceView(out io.Writer, format string, namespace *proto.NamespaceView) error {
-	if namespace == nil || namespace.GetNamespace() == nil {
-		return namespaceMustNotBeNil()
-	}
-
-	if err := commons.ValidateOutputFormat(format); err != nil {
-		return err
-	}
-
-	return writeNamespaceOutput(out, format, namespace, func() error {
+	return writeNamespaceViewOutput(out, format, namespace, []*proto.NamespaceView{namespace}, func() error {
 		return writeNamespaceViewTable(out, []*proto.NamespaceView{namespace})
 	})
 }
 
 func WriteNamespaceViews(out io.Writer, format string, namespaces []*proto.NamespaceView) error {
-	if err := commons.ValidateOutputFormat(format); err != nil {
-		return err
-	}
-	for _, namespace := range namespaces {
-		if namespace == nil || namespace.GetNamespace() == nil {
-			return namespaceMustNotBeNil()
-		}
-	}
-
-	return writeNamespaceOutput(out, format, namespaces, func() error {
+	return writeNamespaceViewOutput(out, format, namespaces, namespaces, func() error {
 		return writeNamespaceViewTable(out, namespaces)
 	})
 }
 
-func namespaceMustNotBeNil() error {
-	return errors.New("namespace must not be nil")
+func writeNamespaceConfigOutput(out io.Writer, format string, value any, namespaces []*proto.Namespace, writeTable func() error) error {
+	for _, namespace := range namespaces {
+		if namespace == nil {
+			return errors.New("namespace must not be nil")
+		}
+	}
+	return writeNamespaceOutput(out, format, value, writeTable)
+}
+
+func writeNamespaceViewOutput(out io.Writer, format string, value any, namespaces []*proto.NamespaceView, writeTable func() error) error {
+	for _, namespace := range namespaces {
+		if namespace == nil || namespace.GetNamespace() == nil {
+			return errors.New("namespace must not be nil")
+		}
+	}
+	return writeNamespaceOutput(out, format, value, writeTable)
 }
 
 func writeNamespaceOutput(out io.Writer, format string, value any, writeTable func() error) error {
+	if err := commons.ValidateOutputFormat(format); err != nil {
+		return err
+	}
 	format = commons.NormalizeOutputFormat(format)
 	switch format {
 	case commons.OutputJSON, commons.OutputYAML:
