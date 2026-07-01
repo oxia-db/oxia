@@ -81,10 +81,14 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	assert.Equal(t, "natural", created.GetKeySorting())
 
 	var found *proto.NamespaceView
-	require.Eventually(t, func() bool {
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		var err error
 		found, err = client.GetNamespace(t.Context(), "ns-1")
-		return err == nil && found != nil && len(found.GetNamespaceStatus().GetShards()) == 2
+		if !assert.NoError(c, err) || !assert.NotNil(c, found) {
+			return
+		}
+		shardCount := len(found.GetNamespaceStatus().GetShards())
+		assert.Equalf(c, 2, shardCount, "last error: %v, last shard count: %d", err, shardCount)
 	}, 5*time.Second, 50*time.Millisecond)
 	require.NotNil(t, found)
 	assert.Equal(t, "ns-1", found.GetNamespace().GetName())
