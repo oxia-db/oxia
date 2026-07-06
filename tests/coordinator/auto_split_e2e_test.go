@@ -79,6 +79,7 @@ func TestCoordinator_AutoSplit(t *testing.T) {
 	require.NoError(t, err)
 
 	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	defer func() { assert.NoError(t, coordinatorInstance.Close()) }()
 	metadata := coordinatorInstance.Metadata()
 
 	// Wait for the initial single shard to reach steady state.
