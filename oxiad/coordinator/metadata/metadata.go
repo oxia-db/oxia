@@ -40,7 +40,7 @@ type Metadata interface {
 
 	WaitToBecomeLeader() (lost <-chan struct{}, err error)
 	GetSelf() (*commonproto.Coordinator, error)
-	GetLeaderInfo() (*commonproto.Coordinator, error)
+	GetLeader() (*commonproto.Coordinator, error)
 	GetInstanceID() string
 	ReserveShardIDs(count uint32) int64
 
@@ -188,7 +188,7 @@ func (m *coordinatorMetadata) GetSelf() (*commonproto.Coordinator, error) {
 	return coordinator.CloneVT(), nil
 }
 
-func (m *coordinatorMetadata) GetLeaderInfo() (*commonproto.Coordinator, error) {
+func (m *coordinatorMetadata) GetLeader() (*commonproto.Coordinator, error) {
 	name, err := m.statusProvider.GetLeaderName()
 	if err != nil {
 		return nil, err

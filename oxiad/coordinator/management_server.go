@@ -62,7 +62,7 @@ func (management *managementServer) redirectError() error {
 		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
 	}
 
-	leaderInfo, err := metadata.GetLeaderInfo()
+	leaderInfo, err := metadata.GetLeader()
 	if err != nil || leaderInfo == nil {
 		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
 	}

@@ -58,7 +58,7 @@ func (*mockMetadata) GetSelf() (*proto.Coordinator, error) {
 	return nil, nil //nolint:nilnil
 }
 
-func (*mockMetadata) GetLeaderInfo() (*proto.Coordinator, error) {
+func (*mockMetadata) GetLeader() (*proto.Coordinator, error) {
 	return nil, nil //nolint:nilnil
 }
 
