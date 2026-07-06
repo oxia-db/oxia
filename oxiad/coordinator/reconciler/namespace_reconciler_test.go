@@ -252,7 +252,7 @@ func (*mockNamespaceMetadata) GetSelf() (*proto.Coordinator, error) {
 	return nil, nil //nolint:nilnil
 }
 
-func (*mockNamespaceMetadata) GetLeaderInfo() (*proto.Coordinator, error) {
+func (*mockNamespaceMetadata) GetLeader() (*proto.Coordinator, error) {
 	return nil, nil //nolint:nilnil
 }
 

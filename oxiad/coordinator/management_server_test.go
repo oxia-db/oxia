@@ -60,7 +60,7 @@ func (p *testLeaderMetadata) GetSelf() (*proto.Coordinator, error) {
 	return p.self.CloneVT(), nil
 }
 
-func (p *testLeaderMetadata) GetLeaderInfo() (*proto.Coordinator, error) {
+func (p *testLeaderMetadata) GetLeader() (*proto.Coordinator, error) {
 	return p.info, p.err
 }
 
