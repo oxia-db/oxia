@@ -443,7 +443,7 @@ func minEnsembleLeaders(status map[string]commonobject.Borrowed[*commonproto.Nam
 }
 
 func (r *nodeBasedBalancer) Trigger() {
-	r.logger.Info("manually trigger balance")
+	r.logger.Debug("trigger balance")
 	channel.PushNoBlock(r.triggerCh, nil)
 }
 
