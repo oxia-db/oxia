@@ -41,7 +41,8 @@ func init() {
 }
 
 var (
-	ErrNotImplement = errors.New("not implement")
+	errNotImplemented = errors.New("not implemented")
+	errTimeout        = errors.New("timeout")
 )
 
 type ShardAssignmentsProvider struct {
@@ -377,8 +378,8 @@ func (m *PerNodeChannels) SetNodeFeatures(features []proto.Feature) {
 
 // SetOldNode simulates an old node that doesn't support the GetInfo RPC.
 func (m *PerNodeChannels) SetOldNode() {
-	m.handshakeErr = ErrNotImplement
-	m.getInfoErr = ErrNotImplement
+	m.handshakeErr = errNotImplemented
+	m.getInfoErr = errNotImplemented
 	m.supportedFeatures = nil
 }
 
@@ -387,7 +388,7 @@ type RpcProvider struct {
 	channels map[string]*PerNodeChannels
 }
 
-func (r *RpcProvider) Close() error {
+func (*RpcProvider) Close() error {
 	return nil
 }
 
@@ -490,7 +491,7 @@ func (r *RpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentit
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(3 * time.Second):
-		return nil, errors.New("timeout")
+		return nil, errTimeout
 	}
 }
 
@@ -513,7 +514,7 @@ func (r *RpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerId
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(3 * time.Second):
-		return nil, errors.New("timeout")
+		return nil, errTimeout
 	}
 }
 
@@ -536,7 +537,7 @@ func (r *RpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdent
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(3 * time.Second):
-		return nil, errors.New("timeout")
+		return nil, errTimeout
 	}
 }
 
@@ -559,7 +560,7 @@ func (r *RpcProvider) DeleteShard(ctx context.Context, node *proto.DataServerIde
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(3 * time.Second):
-		return nil, errors.New("timeout")
+		return nil, errTimeout
 	}
 }
 
@@ -582,7 +583,7 @@ func (r *RpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIde
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(3 * time.Second):
-		return nil, errors.New("timeout")
+		return nil, errTimeout
 	}
 }
 
@@ -605,11 +606,11 @@ func (r *RpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServer
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(3 * time.Second):
-		return nil, errors.New("timeout")
+		return nil, errTimeout
 	}
 }
 
-func (r *RpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+func (r *RpcProvider) FreezeShard(_ context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -673,32 +674,32 @@ func (m *ShardAssignmentClient) Send(response *proto.ShardAssignments) error {
 	return nil
 }
 
-func (m *ShardAssignmentClient) CloseAndRecv() (*proto.CoordinationShardAssignmentsResponse, error) {
-	panic(ErrNotImplement)
+func (*ShardAssignmentClient) CloseAndRecv() (*proto.CoordinationShardAssignmentsResponse, error) {
+	panic(errNotImplemented)
 }
 
-func (m *ShardAssignmentClient) Header() (metadata.MD, error) {
-	panic(ErrNotImplement)
+func (*ShardAssignmentClient) Header() (metadata.MD, error) {
+	panic(errNotImplemented)
 }
 
-func (m *ShardAssignmentClient) Trailer() metadata.MD {
-	panic(ErrNotImplement)
+func (*ShardAssignmentClient) Trailer() metadata.MD {
+	panic(errNotImplemented)
 }
 
-func (m *ShardAssignmentClient) CloseSend() error {
-	panic(ErrNotImplement)
+func (*ShardAssignmentClient) CloseSend() error {
+	panic(errNotImplemented)
 }
 
 func (m *ShardAssignmentClient) Context() context.Context {
 	return m.ctx
 }
 
-func (m *ShardAssignmentClient) SendMsg(any) error {
-	panic(ErrNotImplement)
+func (*ShardAssignmentClient) SendMsg(any) error {
+	panic(errNotImplemented)
 }
 
-func (m *ShardAssignmentClient) RecvMsg(any) error {
-	panic(ErrNotImplement)
+func (*ShardAssignmentClient) RecvMsg(any) error {
+	panic(errNotImplemented)
 }
 
 type HealthClient struct {
@@ -709,7 +710,7 @@ type HealthClient struct {
 	watches []*healthWatchClient
 }
 
-func (m *HealthClient) Close() error {
+func (*HealthClient) Close() error {
 	return nil
 }
 
@@ -741,7 +742,7 @@ func (m *HealthClient) SetError(err error) {
 	}
 }
 
-func (m *HealthClient) Check(ctx context.Context, in *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
+func (m *HealthClient) Check(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
 	m.Lock()
 	defer m.Unlock()
 	if m.err != nil {
@@ -750,7 +751,7 @@ func (m *HealthClient) Check(ctx context.Context, in *grpc_health_v1.HealthCheck
 	return &grpc_health_v1.HealthCheckResponse{Status: m.status}, nil
 }
 
-func (m *HealthClient) Watch(ctx context.Context, in *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {
+func (m *HealthClient) Watch(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -760,7 +761,7 @@ func (m *HealthClient) Watch(ctx context.Context, in *grpc_health_v1.HealthCheck
 	return w, nil
 }
 
-func (m *HealthClient) List(ctx context.Context, in *grpc_health_v1.HealthListRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthListResponse, error) {
+func (m *HealthClient) List(_ context.Context, _ *grpc_health_v1.HealthListRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthListResponse, error) {
 	m.Lock()
 	defer m.Unlock()
 	if m.err != nil {
@@ -805,26 +806,26 @@ func (m *healthWatchClient) Recv() (*grpc_health_v1.HealthCheckResponse, error) 
 	}
 }
 
-func (m *healthWatchClient) Header() (metadata.MD, error) {
-	panic("not implemented")
+func (*healthWatchClient) Header() (metadata.MD, error) {
+	panic(errNotImplemented)
 }
 
-func (m *healthWatchClient) Trailer() metadata.MD {
-	panic("not implemented")
+func (*healthWatchClient) Trailer() metadata.MD {
+	panic(errNotImplemented)
 }
 
-func (m *healthWatchClient) CloseSend() error {
-	panic("not implemented")
+func (*healthWatchClient) CloseSend() error {
+	panic(errNotImplemented)
 }
 
-func (m *healthWatchClient) Context() context.Context {
-	panic("not implemented")
+func (*healthWatchClient) Context() context.Context {
+	panic(errNotImplemented)
 }
 
-func (m *healthWatchClient) SendMsg(msg any) error {
-	panic("not implemented")
+func (*healthWatchClient) SendMsg(_ any) error {
+	panic(errNotImplemented)
 }
 
-func (m *healthWatchClient) RecvMsg(msg any) error {
-	panic("not implemented")
+func (*healthWatchClient) RecvMsg(_ any) error {
+	panic(errNotImplemented)
 }
