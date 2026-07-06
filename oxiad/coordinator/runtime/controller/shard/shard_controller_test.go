@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package controller
+package shard
 
 import (
 	"context"
@@ -152,7 +152,7 @@ func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
 	}
 }
 
-func TestShardController(t *testing.T) {
+func TestController(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -162,7 +162,7 @@ func TestShardController(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -227,7 +227,7 @@ func TestShardController(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
-func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
+func TestController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -240,7 +240,7 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusSteadyState,
 		Term:     1,
 		Leader:   s1,
@@ -261,12 +261,12 @@ func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
-// TestShardController_GatesElectionUntilHandshakeComplete verifies that the
+// TestController_GatesElectionUntilHandshakeComplete verifies that the
 // initial leader election does not fire NewTerm until the ensemble's data
 // servers have completed the coordinator handshake. This prevents the startup
 // race where NewTerm beats the handshake and gets rejected with
 // "server not initialized yet".
-func TestShardController_GatesElectionUntilHandshakeComplete(t *testing.T) {
+func TestController_GatesElectionUntilHandshakeComplete(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -282,7 +282,7 @@ func TestShardController_GatesElectionUntilHandshakeComplete(t *testing.T) {
 		return int(readyCount.Load())
 	}
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -319,7 +319,7 @@ func TestShardController_GatesElectionUntilHandshakeComplete(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
-func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
+func TestController_NewTermWithNonRespondingServer(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -329,7 +329,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -366,7 +366,7 @@ func TestShardController_NewTermWithNonRespondingServer(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
-func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
+func TestController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -376,7 +376,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -418,7 +418,7 @@ func TestShardController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
-func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
+func TestController_VerifyFollowersWereAllFenced(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -431,7 +431,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusSteadyState,
 		Term:     4,
 		Leader:   s1,
@@ -457,7 +457,7 @@ func TestShardController_VerifyFollowersWereAllFenced(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
-func TestShardController_NotificationsDisabled(t *testing.T) {
+func TestController_NotificationsDisabled(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -477,7 +477,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 		},
 	})
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -499,7 +499,7 @@ func TestShardController_NotificationsDisabled(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
-func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
+func TestController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -510,7 +510,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -597,7 +597,7 @@ func TestShardController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
-func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) {
+func TestController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -608,7 +608,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -696,7 +696,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	// Eventually, the shard should get deleted
 	rpc.GetNode(s1).expectDeleteShardRequest(t, shard, 3)
 	assert.Eventually(t, func() bool {
-		c := sc.(*shardController)
+		c := sc.(*controller)
 		shardMeta := c.metadata.Load()
 		return len(shardMeta.PendingDeleteShardNodes) == 1
 	}, 10*time.Second, 100*time.Millisecond)
@@ -707,7 +707,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 
 	// s1 should be completely removed from list
 	assert.Eventually(t, func() bool {
-		c := sc.(*shardController)
+		c := sc.(*controller)
 		shardMeta := c.metadata.Load()
 		return len(shardMeta.PendingDeleteShardNodes) == 0
 	}, 10*time.Second, 100*time.Millisecond)
@@ -715,7 +715,7 @@ func TestShardController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) 
 	assert.NoError(t, sc.Close())
 }
 
-func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
+func TestController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	var shardId = rand.Int63()
 	rpc := newMockRpcProvider()
 
@@ -727,7 +727,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	s6 := &proto.DataServerIdentity{Public: "s6:9091", Internal: "s6:8191"}
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
-	sc := NewShardController(constant.DefaultNamespace, shardId, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shardId, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -811,7 +811,7 @@ func TestShardController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 }
 
 // Test feature negotiation with all nodes supporting the same features.
-func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
+func TestController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -838,7 +838,7 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 		return result
 	}
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -866,7 +866,7 @@ func TestShardController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 }
 
 // Test feature negotiation with mixed node versions (one old node).
-func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
+func TestController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 
@@ -893,7 +893,7 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 		return result
 	}
 
-	sc := NewShardController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
@@ -926,7 +926,7 @@ func TestShardController_FeatureNegotiation_MixedVersions(t *testing.T) {
 // status resource diverges from the controller's local view. Every real
 // persist replaces the cached status object graph, so pointer identity
 // through GetShardStatus observes whether a write happened.
-func TestShardController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
+func TestController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 	var shard int64 = 5
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
@@ -939,9 +939,9 @@ func TestShardController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 		Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
 	}))
 
-	// Built by hand instead of through NewShardController so the run loop's
+	// Built by hand instead of through NewController so the run loop's
 	// own periodic timer cannot race the direct handlePeriodicTasks calls
-	s := &shardController{
+	s := &controller{
 		namespace:     constant.DefaultNamespace,
 		shard:         shard,
 		metadata:      NewMetadata(shardMeta),
@@ -976,7 +976,7 @@ func TestShardController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 // (runtime.SplitComplete syncing the parent after Cutover). Clearing the
 // pending-delete nodes must merge with that update, not write the whole
 // pre-RPC snapshot back over it.
-func TestShardController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *testing.T) {
+func TestController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *testing.T) {
 	var shard int64 = 5
 	rpc := newMockRpcProvider()
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
@@ -994,7 +994,7 @@ func TestShardController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *
 	}))
 
 	// Built by hand so the run loop's own timer cannot race the direct call
-	s := &shardController{
+	s := &controller{
 		namespace:     constant.DefaultNamespace,
 		shard:         shard,
 		metadata:      NewMetadata(shardMeta),

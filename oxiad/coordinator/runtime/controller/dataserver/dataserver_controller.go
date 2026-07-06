@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package controller
+package dataserver
 
 import (
 	"context"
@@ -29,6 +29,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 
@@ -38,15 +39,15 @@ import (
 	commontime "github.com/oxia-db/oxia/common/time"
 )
 
-type DataServerStatus uint32
+type Status uint32
 
 const (
-	Running DataServerStatus = iota
+	Running Status = iota
 	NotRunning
 	Draining //
 )
 
-func (s DataServerStatus) ToProto() proto.DataServerState {
+func (s Status) ToProto() proto.DataServerState {
 	switch s {
 	case Running:
 		return proto.DataServerState_DATA_SERVER_STATE_RUNNING
@@ -65,29 +66,25 @@ const (
 	defaultInitialRetryBackoff = 10 * time.Second
 )
 
-type ShardAssignmentsProvider interface {
-	WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error)
-}
-
-// The DataServerController takes care of checking the health-status of each dataServer
+// The Controller takes care of checking the health-status of each dataServer
 // and to push all the service discovery updates.
-type DataServerController interface {
+type Controller interface {
 	io.Closer
 
 	GetDataServer() commonobject.Borrowed[*proto.DataServer]
 
-	Status() DataServerStatus
+	Status() Status
 
 	SupportedFeatures() []proto.Feature
 
-	SetStatus(status DataServerStatus)
+	SetStatus(status Status)
 }
 
-type dataServerController struct {
+type controller struct {
 	logger *slog.Logger
 	wg     sync.WaitGroup
-	ShardAssignmentsProvider
-	DataServerEventListener
+	controllerapi.ShardAssignmentsProvider
+	controllerapi.DataServerEventListener
 
 	ctx        context.Context
 	ctxCancel  context.CancelFunc
@@ -97,7 +94,7 @@ type dataServerController struct {
 	closed     atomic.Bool
 
 	statusLock        sync.RWMutex
-	status            DataServerStatus
+	status            Status
 	supportedFeatures atomic.Value
 
 	healthCheckBackoff         *commontime.ConcurrentBackOff
@@ -107,21 +104,21 @@ type dataServerController struct {
 	failedHealthChecks     metric.Counter
 }
 
-func (n *dataServerController) GetDataServer() commonobject.Borrowed[*proto.DataServer] {
+func (n *controller) GetDataServer() commonobject.Borrowed[*proto.DataServer] {
 	return commonobject.Borrow(n.dataServer)
 }
 
-func (n *dataServerController) Status() DataServerStatus {
+func (n *controller) Status() Status {
 	n.statusLock.RLock()
 	defer n.statusLock.RUnlock()
 	return n.status
 }
 
-func (n *dataServerController) SupportedFeatures() []proto.Feature {
+func (n *controller) SupportedFeatures() []proto.Feature {
 	return n.supportedFeatures.Load().([]proto.Feature) //nolint: revive
 }
 
-func (n *dataServerController) SetStatus(status DataServerStatus) {
+func (n *controller) SetStatus(status Status) {
 	n.statusLock.Lock()
 	defer n.statusLock.Unlock()
 	previous := n.status
@@ -129,7 +126,7 @@ func (n *dataServerController) SetStatus(status DataServerStatus) {
 	n.logger.Info("Changed status", slog.Any("from", previous), slog.Any("to", status))
 }
 
-func (n *dataServerController) Close() error {
+func (n *controller) Close() error {
 	if !n.closed.CompareAndSwap(false, true) {
 		return nil
 	}
@@ -141,7 +138,7 @@ func (n *dataServerController) Close() error {
 	return nil
 }
 
-func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
+func (n *controller) sendAssignmentsDispatchWithRetries() {
 	_ = backoff.RetryNotify(func() error {
 		n.logger.Debug("Ready to send assignments")
 
@@ -191,14 +188,14 @@ func (n *dataServerController) sendAssignmentsDispatchWithRetries() {
 	})
 }
 
-func (n *dataServerController) doHealthPing(healthClient grpc_health_v1.HealthClient) error {
+func (n *controller) doHealthPing(healthClient grpc_health_v1.HealthClient) error {
 	pingCtx, pingCancel := context.WithTimeout(n.ctx, healthCheckProbeTimeout)
 	response, err := healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 	pingCancel()
 	return n.healthCheckHandler(response, err)
 }
 
-func (n *dataServerController) healthPingWithRetries() {
+func (n *controller) healthPingWithRetries() {
 	_ = backoff.RetryNotify(func() error {
 		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
 		if err != nil {
@@ -232,7 +229,7 @@ func (n *dataServerController) healthPingWithRetries() {
 	})
 }
 
-func (n *dataServerController) healthWatchWithRetries() {
+func (n *controller) healthWatchWithRetries() {
 	_ = backoff.RetryNotify(func() error {
 		n.logger.Debug("Start new health watch cycle")
 		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
@@ -263,7 +260,7 @@ func (n *dataServerController) healthWatchWithRetries() {
 	})
 }
 
-func (n *dataServerController) becomeUnavailable() {
+func (n *controller) becomeUnavailable() {
 	currentStatus := n.Status()
 	if currentStatus != Running && currentStatus != Draining {
 		return
@@ -282,7 +279,7 @@ func (n *dataServerController) becomeUnavailable() {
 	n.BecameUnavailable(n.dataServer.GetIdentity())
 }
 
-func (n *dataServerController) becomeAvailable() {
+func (n *controller) becomeAvailable() {
 	if n.Status() != NotRunning {
 		return
 	}
@@ -325,7 +322,7 @@ func (n *dataServerController) becomeAvailable() {
 	n.statusLock.Unlock()
 }
 
-func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
+func (n *controller) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
 			n.logger.Warn("Data server health check failed", slog.Any("error", err))
@@ -339,20 +336,20 @@ func (n *dataServerController) healthCheckHandler(response *grpc_health_v1.Healt
 	return nil
 }
 
-func NewDataServerController(ctx context.Context, dataServer *proto.DataServer,
-	shardAssignmentsProvider ShardAssignmentsProvider,
-	dataServerEventListener DataServerEventListener,
+func NewController(ctx context.Context, dataServer *proto.DataServer,
+	shardAssignmentsProvider controllerapi.ShardAssignmentsProvider,
+	dataServerEventListener controllerapi.DataServerEventListener,
 	rpcProvider rpc.Provider,
-	insID string) DataServerController {
-	return newDataServerController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, insID, defaultInitialRetryBackoff)
+	insID string) Controller {
+	return newController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, insID, defaultInitialRetryBackoff)
 }
 
-func newDataServerController(ctx context.Context, dataServer *proto.DataServer,
-	shardAssignmentsProvider ShardAssignmentsProvider,
-	dataServerEventListener DataServerEventListener,
+func newController(ctx context.Context, dataServer *proto.DataServer,
+	shardAssignmentsProvider controllerapi.ShardAssignmentsProvider,
+	dataServerEventListener controllerapi.DataServerEventListener,
 	rpcProvider rpc.Provider,
 	insID string,
-	initialRetryBackoff time.Duration) DataServerController {
+	initialRetryBackoff time.Duration) Controller {
 	dataServerCtx, cancel := context.WithCancel(ctx)
 	dataServerID := dataServer.GetIdentity().GetNameOrDefault()
 	labels := map[string]any{"data-server": dataServerID}
@@ -364,7 +361,7 @@ func newDataServerController(ctx context.Context, dataServer *proto.DataServer,
 	supportedFeatures := atomic.Value{}
 	supportedFeatures.Store(make([]proto.Feature, 0))
 
-	nc := &dataServerController{
+	nc := &controller{
 		ctx:                        dataServerCtx,
 		ctxCancel:                  cancel,
 		dataServer:                 dataServer,

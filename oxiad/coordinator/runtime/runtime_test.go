@@ -20,17 +20,19 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/dataserver"
 )
 
-// statusOnlyDataServerController is a DataServerController stub that only
+// statusOnlyDataServerController is a Controller stub that only
 // implements Status; countReadyDataServers touches nothing else.
 type statusOnlyDataServerController struct {
-	controller.DataServerController
-	status controller.DataServerStatus
+	dataservercontroller.Controller
+	status dataservercontroller.Status
 }
 
-func (s statusOnlyDataServerController) Status() controller.DataServerStatus { return s.status }
+func (s statusOnlyDataServerController) Status() dataservercontroller.Status {
+	return s.status
+}
 
 func TestCountReadyDataServers(t *testing.T) {
 	running := &proto.DataServerIdentity{Internal: "running", Public: "running"}
@@ -39,12 +41,12 @@ func TestCountReadyDataServers(t *testing.T) {
 	unknown := &proto.DataServerIdentity{Internal: "unknown", Public: "unknown"}
 
 	c := &runtime{
-		dataServerControllers: map[string]controller.DataServerController{
-			running.GetNameOrDefault():    statusOnlyDataServerController{status: controller.Running},
-			notRunning.GetNameOrDefault(): statusOnlyDataServerController{status: controller.NotRunning},
+		dataServerControllers: map[string]dataservercontroller.Controller{
+			running.GetNameOrDefault():    statusOnlyDataServerController{status: dataservercontroller.Running},
+			notRunning.GetNameOrDefault(): statusOnlyDataServerController{status: dataservercontroller.NotRunning},
 		},
-		drainingNodes: map[string]controller.DataServerController{
-			draining.GetNameOrDefault(): statusOnlyDataServerController{status: controller.Draining},
+		drainingNodes: map[string]dataservercontroller.Controller{
+			draining.GetNameOrDefault(): statusOnlyDataServerController{status: dataservercontroller.Draining},
 		},
 	}
 

@@ -38,7 +38,8 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/ensemble"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/state"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/dataserver"
+	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/shard"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
@@ -56,13 +57,13 @@ type runtime struct {
 
 	metadata coordmetadata.Metadata
 
-	shardControllers      map[int64]controller.ShardController
-	splitControllers      map[int64]*controller.SplitController // keyed by parent shard ID
-	dataServerControllers map[string]controller.DataServerController
+	shardControllers      map[int64]shardcontroller.Controller
+	splitControllers      map[int64]*shardcontroller.SplitController // keyed by parent shard ID
+	dataServerControllers map[string]dataservercontroller.Controller
 	// Draining nodes are nodes that were removed from the
 	// nodes list. We keep sending them assignments updates
 	// because they might be still reachable to clients.
-	drainingNodes map[string]controller.DataServerController
+	drainingNodes map[string]dataservercontroller.Controller
 
 	loadBalancer     balancer.LoadBalancer
 	autoSplitMonitor *autosplit.Monitor
@@ -156,7 +157,7 @@ func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bo
 		_ = nc.Close()
 		delete(c.drainingNodes, name)
 	}
-	c.dataServerControllers[name] = controller.NewDataServerController(
+	c.dataServerControllers[name] = dataservercontroller.NewController(
 		c.ctx,
 		dataServer,
 		c,
@@ -177,7 +178,7 @@ func (c *runtime) DeleteDataServer(name string) {
 	}
 	c.logger.Info("Detected a removed node", slog.Any("server", name))
 	delete(c.dataServerControllers, name)
-	nc.SetStatus(controller.Draining)
+	nc.SetStatus(dataservercontroller.Draining)
 	c.drainingNodes[name] = nc
 }
 
@@ -227,9 +228,9 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	defer c.Unlock()
 
 	for shard, shardMetadata := range namespaceStatus.GetShards() {
-		c.shardControllers[shard] = controller.NewShardController(name, shard, namespaceConfig,
+		c.shardControllers[shard] = shardcontroller.NewController(name, shard, namespaceConfig,
 			shardMetadata, c.metadata, c.findDataServerFeatures, c.countReadyDataServers,
-			c, c.rpc, controller.DefaultPeriodicTasksInterval)
+			c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
 		slog.Info("Added new shard", slog.Int64("shard", shard),
 			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
 	}
@@ -301,7 +302,7 @@ func (c *runtime) countReadyDataServers(dataServers []*proto.DataServerIdentity)
 			serverController, exist = c.drainingNodes[name]
 		}
 		if exist {
-			if status := serverController.Status(); status == controller.Running || status == controller.Draining {
+			if status := serverController.Status(); status == dataservercontroller.Running || status == dataservercontroller.Draining {
 				ready++
 			}
 		}
@@ -417,7 +418,7 @@ func (c *runtime) BecameUnavailable(node *proto.DataServerIdentity) {
 		}()
 	}
 
-	ctrls := make(map[int64]controller.ShardController)
+	ctrls := make(map[int64]shardcontroller.Controller)
 	for k, sc := range c.shardControllers {
 		ctrls[k] = sc
 	}
@@ -741,13 +742,13 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	// Create shard controllers for children
 	for _, childId := range []int64{leftChildId, rightChildId} {
 		childMeta := nsCloned.Shards[childId]
-		c.shardControllers[childId] = controller.NewShardController(namespace, childId, nsConfig,
+		c.shardControllers[childId] = shardcontroller.NewController(namespace, childId, nsConfig,
 			childMeta, c.metadata, c.findDataServerFeatures, c.countReadyDataServers,
-			c, c.rpc, controller.DefaultPeriodicTasksInterval)
+			c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
 	}
 
 	// Start split controller
-	sc := controller.NewSplitController(controller.SplitControllerConfig{
+	sc := shardcontroller.NewSplitController(shardcontroller.SplitControllerConfig{
 		Namespace:     namespace,
 		ParentShardId: parentShardId,
 		Metadata:      c.metadata,
@@ -863,7 +864,7 @@ func (c *runtime) restartInProgressSplits(clusterStatus map[string]commonobject.
 				slog.String("phase", meta.Split.GetPhaseOrDefault().String()),
 			)
 
-			sc := controller.NewSplitController(controller.SplitControllerConfig{
+			sc := shardcontroller.NewSplitController(shardcontroller.SplitControllerConfig{
 				Namespace:     ns,
 				ParentShardId: shardId,
 				Metadata:      c.metadata,
@@ -887,10 +888,10 @@ func New(
 			slog.String("component", "coordinator"),
 		),
 		ensembleSelector:      ensemble.NewSelector(),
-		shardControllers:      make(map[int64]controller.ShardController),
-		splitControllers:      make(map[int64]*controller.SplitController),
-		dataServerControllers: make(map[string]controller.DataServerController),
-		drainingNodes:         make(map[string]controller.DataServerController),
+		shardControllers:      make(map[int64]shardcontroller.Controller),
+		splitControllers:      make(map[int64]*shardcontroller.SplitController),
+		dataServerControllers: make(map[string]dataservercontroller.Controller),
+		drainingNodes:         make(map[string]dataservercontroller.Controller),
 		metadata:              metadata,
 		assignmentsWatch:      commonwatch.New(&proto.ShardAssignments{}),
 	}
@@ -909,7 +910,7 @@ func New(
 				// data server that was just registered
 				return false
 			}
-			return nc.Status() == controller.Running
+			return nc.Status() == dataservercontroller.Running
 		},
 	})
 
@@ -921,7 +922,7 @@ func New(
 	// init node controller
 	for _, node := range dataServersFromStatus(clusterStatus) {
 		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
-		c.dataServerControllers[node.GetNameOrDefault()] = controller.NewDataServerController(
+		c.dataServerControllers[node.GetNameOrDefault()] = dataservercontroller.NewController(
 			c.ctx,
 			dataServer,
 			c,
@@ -943,9 +944,9 @@ func New(
 			} else {
 				nsConfig = borrowedNsConfig.UnsafeBorrow()
 			}
-			c.shardControllers[shard] = controller.NewShardController(ns, shard, nsConfig,
+			c.shardControllers[shard] = shardcontroller.NewController(ns, shard, nsConfig,
 				shardMetadata, c.metadata, c.findDataServerFeatures, c.countReadyDataServers,
-				c, c.rpc, controller.DefaultPeriodicTasksInterval)
+				c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
 		}
 	}
 

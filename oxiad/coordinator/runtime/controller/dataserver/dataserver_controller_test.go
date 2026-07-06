@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package controller
+package dataserver
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
 
@@ -79,7 +79,7 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
 
@@ -140,7 +140,7 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 	sap := newMockShardAssignmentsProvider()
 	nal := newMockNodeAvailabilityListener()
 	rpc := newMockRpcProvider()
-	nc := newDataServerController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
 

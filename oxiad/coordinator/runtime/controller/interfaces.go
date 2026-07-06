@@ -14,6 +14,32 @@
 
 package controller
 
+import (
+	"context"
+
+	commonproto "github.com/oxia-db/oxia/common/proto"
+)
+
 type ShardSplitter interface {
 	InitiateSplit(namespace string, parentShardId int64, splitPoint *uint32) (leftChild, rightChild int64, err error)
+}
+
+type ShardEventListener interface {
+	LeaderElected(shard int64, leader *commonproto.DataServerIdentity, followers []*commonproto.DataServerIdentity)
+
+	ShardDeleted(shard int64)
+}
+
+type ShardSplitEventListener interface {
+	SplitComplete(parentShard int64, leftChild int64, rightChild int64)
+
+	SplitAborted(parentShard int64, leftChild int64, rightChild int64)
+}
+
+type ShardAssignmentsProvider interface {
+	WaitForNextUpdate(ctx context.Context, currentValue *commonproto.ShardAssignments) (*commonproto.ShardAssignments, error)
+}
+
+type DataServerEventListener interface {
+	BecameUnavailable(dataServer *commonproto.DataServerIdentity)
 }

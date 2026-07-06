@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package controller
+package shard
 
 import (
 	"errors"
@@ -37,7 +37,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-type mockSplitEventListener struct {
+type mockShardSplitEventListener struct {
 	completions chan splitEvent
 	aborts      chan splitEvent
 }
@@ -48,18 +48,18 @@ type splitEvent struct {
 	rightChild  int64
 }
 
-func newMockSplitEventListener() *mockSplitEventListener {
-	return &mockSplitEventListener{
+func newMockShardSplitEventListener() *mockShardSplitEventListener {
+	return &mockShardSplitEventListener{
 		completions: make(chan splitEvent, 10),
 		aborts:      make(chan splitEvent, 10),
 	}
 }
 
-func (m *mockSplitEventListener) SplitComplete(parentShard int64, leftChild int64, rightChild int64) {
+func (m *mockShardSplitEventListener) SplitComplete(parentShard int64, leftChild int64, rightChild int64) {
 	m.completions <- splitEvent{parentShard, leftChild, rightChild}
 }
 
-func (m *mockSplitEventListener) SplitAborted(parentShard int64, leftChild int64, rightChild int64) {
+func (m *mockShardSplitEventListener) SplitAborted(parentShard int64, leftChild int64, rightChild int64) {
 	m.aborts <- splitEvent{parentShard, leftChild, rightChild}
 }
 
@@ -80,7 +80,7 @@ var (
 func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 	*mockRpcProvider,
 	coordmetadata.Metadata,
-	*mockSplitEventListener,
+	*mockShardSplitEventListener,
 ) {
 	t.Helper()
 
@@ -177,7 +177,7 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 
 	require.Equal(t, int64(0), metadata.ReserveShardIDs(3))
 	metadata.CreateNamespaceStatus(constant.DefaultNamespace, clusterStatus.Namespaces[constant.DefaultNamespace])
-	listener := newMockSplitEventListener()
+	listener := newMockShardSplitEventListener()
 
 	return rpcMock, metadata, listener
 }

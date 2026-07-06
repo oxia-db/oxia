@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package controller
+package shard
 
 import (
 	"context"
@@ -34,6 +34,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/leader"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
@@ -47,7 +48,7 @@ var (
 	ErrFollowerNotCaughtUp       = errors.New("follower not caught up yet")
 )
 
-type ShardElection struct {
+type Election struct {
 	logger    *slog.Logger
 	ctx       context.Context
 	ctxCancel context.CancelFunc
@@ -61,7 +62,7 @@ type ShardElection struct {
 	metadataStore                       coordmetadata.Metadata
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
-	eventListener                       ShardEventListener
+	eventListener                       controllerapi.ShardEventListener
 	provider                            rpc.Provider
 	meta                                *Metadata
 	// owned status
@@ -74,7 +75,7 @@ type ShardElection struct {
 	started atomic.Bool
 }
 
-func (e *ShardElection) refreshedEnsemble(ensemble []*proto.DataServerIdentity) []*proto.DataServerIdentity {
+func (e *Election) refreshedEnsemble(ensemble []*proto.DataServerIdentity) []*proto.DataServerIdentity {
 	refreshedEnsembleDataServerAddress := make([]*proto.DataServerIdentity, len(ensemble))
 	for idx, candidate := range ensemble {
 		if borrowedDataServer, exist := e.metadataStore.GetDataServer(candidate.GetNameOrDefault()); exist {
@@ -94,7 +95,7 @@ func (e *ShardElection) refreshedEnsemble(ensemble []*proto.DataServerIdentity) 
 	return refreshedEnsembleDataServerAddress
 }
 
-func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer *proto.DataServerIdentity) (*proto.EntryId, error) {
+func (e *Election) fenceNewTerm(ctx context.Context, term int64, dataServer *proto.DataServerIdentity) (*proto.EntryId, error) {
 	res, err := e.provider.NewTerm(ctx, dataServer, &proto.NewTermRequest{
 		Namespace: e.namespace,
 		Shard:     e.shard,
@@ -110,7 +111,7 @@ func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer
 
 // Send NewTerm to all the ensemble members in parallel and wait for
 // a majority of them to reply successfully.
-func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []*proto.DataServerIdentity, removedCandidates []*proto.DataServerIdentity) (map[*proto.DataServerIdentity]*proto.EntryId, error) {
+func (e *Election) fenceNewTermQuorum(term int64, ensemble []*proto.DataServerIdentity, removedCandidates []*proto.DataServerIdentity) (map[*proto.DataServerIdentity]*proto.EntryId, error) {
 	fenceQuorumTimer := e.newTermQuorumLatency.Timer()
 
 	fencingDataServers := slices.Concat(ensemble, removedCandidates)
@@ -167,7 +168,7 @@ func (e *ShardElection) fenceNewTermQuorum(term int64, ensemble []*proto.DataSer
 	return candidatesResponse, nil
 }
 
-func (*ShardElection) waitForGracePeriod(ch chan struct {
+func (*Election) waitForGracePeriod(ch chan struct {
 	DataServer *proto.DataServerIdentity
 	EntryID    *proto.EntryId
 	Err        error
@@ -191,7 +192,7 @@ func (*ShardElection) waitForGracePeriod(ch chan struct {
 	}
 }
 
-func (*ShardElection) waitForMajority(ch chan struct {
+func (*Election) waitForMajority(ch chan struct {
 	DataServer *proto.DataServerIdentity
 	EntryID    *proto.EntryId
 	Err        error
@@ -221,7 +222,7 @@ func (*ShardElection) waitForMajority(ch chan struct {
 	return res, totalResponses, nil
 }
 
-func (e *ShardElection) selectNewLeader(candidatesStatus map[*proto.DataServerIdentity]*proto.EntryId) (
+func (e *Election) selectNewLeader(candidatesStatus map[*proto.DataServerIdentity]*proto.EntryId) (
 	leader *proto.DataServerIdentity, followers map[*proto.DataServerIdentity]*proto.EntryId, err error) {
 	candidates := chooseCandidates(candidatesStatus)
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
@@ -241,7 +242,7 @@ func (e *ShardElection) selectNewLeader(candidatesStatus map[*proto.DataServerId
 	return leader, followers, nil
 }
 
-func (e *ShardElection) becomeLeader(term int64, leader *proto.DataServerIdentity, followers map[*proto.DataServerIdentity]*proto.EntryId,
+func (e *Election) becomeLeader(term int64, leader *proto.DataServerIdentity, followers map[*proto.DataServerIdentity]*proto.EntryId,
 	replicationFactor uint32, negotiateFeatures []proto.Feature) error {
 	becomeLeaderTimer := e.becomeLeaderLatency.Timer()
 
@@ -265,7 +266,7 @@ func (e *ShardElection) becomeLeader(term int64, leader *proto.DataServerIdentit
 }
 
 // ensureFollowerCaught Must be called before we change ensemble to avoid any potential data lost.
-func (e *ShardElection) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity, leaderEntry *proto.EntryId) {
+func (e *Election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity, leaderEntry *proto.EntryId) {
 	waitGroup := sync.WaitGroup{}
 	for _, server := range ensemble {
 		if server.GetNameOrDefault() == leader.GetNameOrDefault() {
@@ -327,7 +328,7 @@ func (e *ShardElection) ensureFollowerCaught(ensemble []*proto.DataServerIdentit
 	waitGroup.Wait()
 }
 
-func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int64, leader *proto.DataServerIdentity, follower *proto.DataServerIdentity) error {
+func (e *Election) fenceNewTermAndAddFollower(ctx context.Context, term int64, leader *proto.DataServerIdentity, follower *proto.DataServerIdentity) error {
 	fr, err := e.fenceNewTerm(ctx, term, follower)
 	if err != nil {
 		return err
@@ -354,7 +355,7 @@ func (e *ShardElection) fenceNewTermAndAddFollower(ctx context.Context, term int
 	return nil
 }
 
-func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
+func (e *Election) fencingFailedFollowers(term int64, ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
 	successfulFollowers map[*proto.DataServerIdentity]*proto.EntryId) {
 	if len(successfulFollowers) == len(ensemble)-1 {
 		e.logger.Debug(
@@ -413,7 +414,7 @@ func (e *ShardElection) fencingFailedFollowers(term int64, ensemble []*proto.Dat
 	}
 }
 
-func (e *ShardElection) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
+func (e *Election) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	from := e.changeEnsembleAction.From
 	to := e.changeEnsembleAction.To
 	if !slices.ContainsFunc(mutShardMeta.RemovedNodes, func(server *proto.DataServerIdentity) bool {
@@ -438,7 +439,7 @@ func (e *ShardElection) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadat
 	)
 }
 
-func (e *ShardElection) start() (*proto.DataServerIdentity, error) {
+func (e *Election) start() (*proto.DataServerIdentity, error) {
 	e.logger.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
 
@@ -573,11 +574,11 @@ func negotiate(nodeFeatures map[string][]proto.Feature) []proto.Feature {
 	return negotiated
 }
 
-func (e *ShardElection) IsReadyForChangeEnsemble() bool {
+func (e *Election) IsReadyForChangeEnsemble() bool {
 	return e.followerCaughtUp.Load()
 }
 
-func (e *ShardElection) Start() *proto.DataServerIdentity {
+func (e *Election) Start() *proto.DataServerIdentity {
 	if swapped := e.started.CompareAndSwap(false, true); !swapped {
 		panic("bug! the election has been started")
 	}
@@ -595,23 +596,23 @@ func (e *ShardElection) Start() *proto.DataServerIdentity {
 	return newLeader
 }
 
-func (e *ShardElection) Stop() {
+func (e *Election) Stop() {
 	e.ctxCancel()
 	e.wg.Wait()
 	e.logger.Info("stopped the election", slog.Any("term", e.meta.Term()))
 }
 
 //nolint:revive
-func NewShardElection(ctx context.Context, logger *slog.Logger, eventListener ShardEventListener,
+func NewElection(ctx context.Context, logger *slog.Logger, eventListener controllerapi.ShardEventListener,
 	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
 	provider rpc.Provider, metadata *Metadata, namespace string, shard int64,
 	changeEnsembleAction *action.ChangeEnsembleAction, termOptions *proto.NewTermOptions,
 	leaderElectionLatency metric.LatencyHistogram, newTermQuorumLatency metric.LatencyHistogram,
-	becomeLeaderLatency metric.LatencyHistogram, leaderElectionsFailed metric.Counter) *ShardElection {
+	becomeLeaderLatency metric.LatencyHistogram, leaderElectionsFailed metric.Counter) *Election {
 	current, cancelFunc := context.WithCancel(ctx)
-	return &ShardElection{
+	return &Election{
 		logger:                              logger,
 		ctx:                                 current,
 		ctxCancel:                           cancelFunc,
