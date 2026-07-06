@@ -86,8 +86,12 @@ docker_multi_arch:
 	docker buildx build --platform linux/x86_64,linux/arm64 -t oxia:latest .
 
 .PHONY: proto
+PROTOC_GO_INJECT_TAG ?= protoc-go-inject-tag
+
 proto:
 	# go install github.com/planetscale/vtprotobuf/cmd/protoc-gen-go-vtproto@latest
+	# go install github.com/favadi/protoc-go-inject-tag@v1.4.0
+	@command -v $(PROTOC_GO_INJECT_TAG) >/dev/null || (echo "protoc-go-inject-tag not found; run: go install github.com/favadi/protoc-go-inject-tag@v1.4.0" >&2; exit 1)
 	cd common/proto && \
 	protoc \
 		--go_out=. \
@@ -100,7 +104,8 @@ proto:
       	--go-vtproto_opt paths=source_relative \
       	--plugin protoc-gen-go-vtproto="${GOPATH}/bin/protoc-gen-go-vtproto" \
       	--go-vtproto_opt=features=marshal+unmarshal+unmarshal_unsafe+size+pool+equal+clone \
-	    *.proto compat/*.proto
+	    *.proto compat/*.proto && \
+	$(PROTOC_GO_INJECT_TAG) -input=metadata.pb.go -remove_tag_comment
 
 proto_clean:
 	rm -f */*.pb.go
@@ -147,4 +152,3 @@ license-format:
 .PHONY: generate-conf-schema
 generate-conf-schema: build
 	bin/oxia config create-schema -o conf/schema
-

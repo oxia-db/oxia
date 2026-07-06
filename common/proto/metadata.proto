@@ -21,22 +21,30 @@ option go_package = "github.com/oxia-db/oxia/common/proto";
 import "replication.proto";
 
 message DataServerIdentity {
+  // @gotags: yaml:"name,omitempty"
   optional string name = 1;
+  // @gotags: yaml:"public"
   string public = 2;
+  // @gotags: yaml:"internal"
   string internal = 3;
 }
 
 message Coordinator {
+  // @gotags: yaml:"name,omitempty"
   string name = 1;
+  // @gotags: yaml:"publicAddress,omitempty"
   string public_address = 2;
 }
 
 message DataServerMetadata {
+  // @gotags: yaml:"labels,omitempty"
   map<string, string> labels = 1;
 }
 
 message DataServer {
+  // @gotags: yaml:"identity,omitempty"
   DataServerIdentity identity = 1;
+  // @gotags: yaml:"metadata,omitempty"
   DataServerMetadata metadata = 2;
 }
 
@@ -53,46 +61,72 @@ message DataServerStatus {
 }
 
 message AntiAffinity {
+  // @gotags: yaml:"labels,omitempty"
   repeated string labels = 1;
+  // @gotags: yaml:"mode,omitempty"
   string mode = 2;
 }
 
 message Namespace {
+  // @gotags: yaml:"name,omitempty"
   string name = 1;
+  // @gotags: yaml:"initialShardCount,omitempty"
   uint32 initial_shard_count = 2;
+  // @gotags: yaml:"replicationFactor,omitempty"
   uint32 replication_factor = 3;
+  // @gotags: yaml:"notificationsEnabled,omitempty"
   optional bool notifications_enabled = 4;
+  // @gotags: yaml:"keySorting,omitempty"
   string key_sorting = 5;
+  // @gotags: yaml:"antiAffinities,omitempty"
   repeated AntiAffinity anti_affinities = 6;
 }
 
 message LoadBalancer {
+  // @gotags: yaml:"scheduleInterval,omitempty"
   string schedule_interval = 1;
+  // @gotags: yaml:"quarantineTime,omitempty"
   string quarantine_time = 2;
 }
 
 message AutoSplitConfig {
+  // @gotags: yaml:"enabled,omitempty"
   bool enabled = 1;
+  // @gotags: yaml:"maxShardSizeMb,omitempty"
   uint32 max_shard_size_mb = 2;
+  // @gotags: yaml:"maxThroughputOps,omitempty"
   uint32 max_throughput_ops = 3;
+  // @gotags: yaml:"stabilizationPeriod,omitempty"
   string stabilization_period = 4;
+  // @gotags: yaml:"cooldownPeriod,omitempty"
   string cooldown_period = 5;
+  // @gotags: yaml:"maxShardsPerNamespace,omitempty"
   uint32 max_shards_per_namespace = 6;
+  // @gotags: yaml:"collectionInterval,omitempty"
   string collection_interval = 7;
 }
 
 message ClusterConfiguration {
+  // @gotags: yaml:"namespaces,omitempty"
   repeated Namespace namespaces = 1;
+  // @gotags: yaml:"servers,omitempty"
   repeated DataServerIdentity servers = 2;
+  // @gotags: yaml:"allowExtraAuthorities,omitempty"
   repeated string allow_extra_authorities = 3;
+  // @gotags: yaml:"serverMetadata,omitempty"
   map<string, DataServerMetadata> server_metadata = 4;
+  // @gotags: yaml:"loadBalancer,omitempty"
   LoadBalancer load_balancer = 5;
+  // @gotags: yaml:"coordinators,omitempty"
   repeated Coordinator coordinators = 6;
+  // @gotags: yaml:"autoSplit,omitempty"
   AutoSplitConfig auto_split = 7;
 }
 
 message HashRange {
+  // @gotags: yaml:"min"
   uint32 min = 1;
+  // @gotags: yaml:"max"
   uint32 max = 2;
 }
 
@@ -103,12 +137,19 @@ enum SplitPhase {
 }
 
 message SplitMetadata {
+  // @gotags: yaml:"phase"
   SplitPhase phase = 1;
+  // @gotags: yaml:"parentShardId"
   int64 parent_shard_id = 2;
+  // @gotags: yaml:"childShardIds,omitempty"
   repeated int64 child_shard_ids = 3;
+  // @gotags: yaml:"splitPoint"
   uint32 split_point = 4;
+  // @gotags: yaml:"snapshotOffset,omitempty"
   int64 snapshot_offset = 5;
+  // @gotags: yaml:"parentTermAtBootstrap,omitempty"
   int64 parent_term_at_bootstrap = 6;
+  // @gotags: yaml:"childLeadersAtBootstrap,omitempty"
   map<int64, string> child_leaders_at_bootstrap = 7;
 }
 
@@ -120,24 +161,38 @@ enum ShardStatus {
 }
 
 message ShardMetadata {
+  // @gotags: yaml:"status"
   ShardStatus status = 1;
+  // @gotags: yaml:"term"
   int64 term = 2;
+  // @gotags: yaml:"leader,omitempty"
   DataServerIdentity leader = 3;
+  // @gotags: yaml:"ensemble,omitempty"
   repeated DataServerIdentity ensemble = 4;
+  // @gotags: yaml:"removedNodes,omitempty"
   repeated DataServerIdentity removed_nodes = 5;
+  // @gotags: yaml:"pendingDeleteShardNodes,omitempty"
   repeated DataServerIdentity pending_delete_shard_nodes = 6;
+  // @gotags: yaml:"int32HashRange,omitempty"
   HashRange int32_hash_range = 7;
+  // @gotags: yaml:"split,omitempty"
   SplitMetadata split = 8;
 }
 
 message NamespaceStatus {
+  // @gotags: yaml:"replicationFactor"
   uint32 replication_factor = 1;
+  // @gotags: yaml:"shards"
   map<int64, ShardMetadata> shards = 2;
 }
 
 message ClusterStatus {
+  // @gotags: yaml:"namespaces,omitempty"
   map<string, NamespaceStatus> namespaces = 1;
+  // @gotags: yaml:"shardIdGenerator,omitempty"
   int64 shard_id_generator = 2;
+  // @gotags: yaml:"serverIdx,omitempty"
   uint32 server_idx = 3;
+  // @gotags: yaml:"instanceId,omitempty"
   string instance_id = 4;
 }
