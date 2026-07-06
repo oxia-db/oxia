@@ -243,10 +243,45 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 			ScheduleInterval: "30s",
 			QuarantineTime:   "5m",
 		},
+		Coordinators: []*commonproto.Coordinator{
+			{
+				Name:          "coordinator-1",
+				PublicAddress: "localhost:6650",
+			},
+		},
+		AutoSplit: &commonproto.AutoSplitConfig{
+			Enabled:               true,
+			MaxShardSizeMb:        512,
+			MaxThroughputOps:      5000,
+			StabilizationPeriod:   "2m",
+			CooldownPeriod:        "10m",
+			MaxShardsPerNamespace: 128,
+			CollectionInterval:    "15s",
+		},
 	}
 
 	data, err := ClusterConfigCodec.MarshalYAML(config)
 	require.NoError(t, err)
+	require.Contains(t, string(data), "initialShardCount: 1")
+	require.Contains(t, string(data), "replicationFactor: 3")
+	require.Contains(t, string(data), "notificationsEnabled: false")
+	require.Contains(t, string(data), "antiAffinities:")
+	require.Contains(t, string(data), "allowExtraAuthorities:")
+	require.Contains(t, string(data), "serverMetadata:")
+	require.Contains(t, string(data), "loadBalancer:")
+	require.Contains(t, string(data), "scheduleInterval: 30s")
+	require.Contains(t, string(data), "coordinators:")
+	require.Contains(t, string(data), "publicAddress: localhost:6650")
+	require.Contains(t, string(data), "autoSplit:")
+	require.Contains(t, string(data), "maxShardSizeMb: 512")
+	require.Contains(t, string(data), "collectionInterval: 15s")
+	require.NotContains(t, string(data), "name: null")
+	require.NotContains(t, string(data), "initialshardcount:")
+	require.NotContains(t, string(data), "allowextraauthorities:")
+	require.NotContains(t, string(data), "servermetadata:")
+	require.NotContains(t, string(data), "publicaddress:")
+	require.NotContains(t, string(data), "autosplit:")
+	require.NotContains(t, string(data), "collectioninterval:")
 
 	decoded, err := ClusterConfigCodec.UnmarshalYAML(data)
 	require.NoError(t, err)
@@ -343,6 +378,35 @@ func TestDecodeClusterStatusJSONIgnoresUnknownFields(t *testing.T) {
   "instanceId": "instance-1",
   "unknownTopLevelField": 123
 }`))
+	require.NoError(t, err)
+	require.Equal(t, "instance-1", status.GetInstanceId())
+	require.Equal(t, uint32(3), status.GetNamespaces()["default"].GetReplicationFactor())
+	shard := status.GetNamespaces()["default"].GetShards()[1]
+	require.Equal(t, commonproto.ShardStatusSteadyState, shard.GetStatusOrDefault())
+	require.Equal(t, int64(12), shard.GetTerm())
+	require.Equal(t, uint32(0), shard.GetInt32HashRange().GetMin())
+	require.Equal(t, uint32(4294967295), shard.GetInt32HashRange().GetMax())
+}
+
+func TestDecodeClusterStatusYAMLIgnoresUnknownFields(t *testing.T) {
+	status, err := ClusterStatusCodec.UnmarshalYAML([]byte(`
+namespaces:
+  default:
+    replicationFactor: 3
+    unknownNamespaceField: ignored
+    shards:
+      1:
+        status: SteadyState
+        term: 12
+        unknownShardField:
+          nested: true
+        int32HashRange:
+          min: 0
+          max: 4294967295
+          unknownRangeField: 1
+instanceId: instance-1
+unknownTopLevelField: 123
+`))
 	require.NoError(t, err)
 	require.Equal(t, "instance-1", status.GetInstanceId())
 	require.Equal(t, uint32(3), status.GetNamespaces()["default"].GetReplicationFactor())
@@ -454,10 +518,13 @@ func TestEncodeClusterStatusYAMLRoundTrip(t *testing.T) {
 							Max: 20,
 						},
 						Split: &commonproto.SplitMetadata{
-							Phase:         commonproto.SplitPhaseCatchUp,
-							ParentShardId: 0,
-							ChildShardIds: []int64{2, 3},
-							SplitPoint:    15,
+							Phase:                   commonproto.SplitPhaseCatchUp,
+							ParentShardId:           0,
+							ChildShardIds:           []int64{2, 3},
+							SplitPoint:              15,
+							SnapshotOffset:          456,
+							ParentTermAtBootstrap:   789,
+							ChildLeadersAtBootstrap: map[int64]string{2: "localhost:7659"},
 						},
 					},
 				},
@@ -472,6 +539,68 @@ func TestEncodeClusterStatusYAMLRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), "status: 1")
 	require.Contains(t, string(data), "phase: 1")
+	require.Regexp(t, `(?m)^\s+1:\s*$`, string(data))
+	require.Contains(t, string(data), "term: 3")
+	require.Contains(t, string(data), "shardIdGenerator: 4")
+	require.Contains(t, string(data), "snapshotOffset: 456")
+	require.Contains(t, string(data), "parentTermAtBootstrap: 789")
+	require.Contains(t, string(data), "childLeadersAtBootstrap:")
+	require.NotContains(t, string(data), "name: null")
+	require.NotContains(t, string(data), `"1":`)
+	require.NotContains(t, string(data), `"2":`)
+	require.NotContains(t, string(data), `term: "3"`)
+	require.NotContains(t, string(data), `shardIdGenerator: "4"`)
+	require.NotContains(t, string(data), `snapshotOffset: "456"`)
+
+	decoded, err := ClusterStatusCodec.UnmarshalYAML(data)
+	require.NoError(t, err)
+	require.True(t, gproto.Equal(status, decoded))
+}
+
+func TestEncodeClusterStatusYAMLOmitsUnsetFields(t *testing.T) {
+	status := &commonproto.ClusterStatus{
+		Namespaces: map[string]*commonproto.NamespaceStatus{
+			"default": {
+				ReplicationFactor: 1,
+				Shards: map[int64]*commonproto.ShardMetadata{
+					1: {
+						Status: commonproto.ShardStatusSteadyState,
+						Term:   3,
+					},
+				},
+			},
+		},
+		ShardIdGenerator: 2,
+		ServerIdx:        1,
+	}
+
+	data, err := ClusterStatusCodec.MarshalYAML(status)
+	require.NoError(t, err)
+	require.Regexp(t, `(?m)^\s+1:\s*$`, string(data))
+	require.NotContains(t, string(data), "name: null")
+	require.NotContains(t, string(data), "leader: null")
+	require.NotContains(t, string(data), "ensemble: []")
+	require.NotContains(t, string(data), "removedNodes: []")
+	require.NotContains(t, string(data), "pendingDeleteShardNodes: []")
+	require.NotContains(t, string(data), "int32HashRange: null")
+	require.NotContains(t, string(data), "split: null")
+
+	decoded, err := ClusterStatusCodec.UnmarshalYAML(data)
+	require.NoError(t, err)
+	require.True(t, gproto.Equal(status, decoded))
+}
+
+func TestEncodeClusterStatusYAMLOmitsZeroTopLevelFields(t *testing.T) {
+	status := &commonproto.ClusterStatus{
+		InstanceId: "instance-only",
+	}
+
+	data, err := ClusterStatusCodec.MarshalYAML(status)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "instanceId: instance-only")
+	require.NotContains(t, string(data), "namespaces:")
+	require.NotContains(t, string(data), "shardIdGenerator:")
+	require.NotContains(t, string(data), "serverIdx:")
 
 	decoded, err := ClusterStatusCodec.UnmarshalYAML(data)
 	require.NoError(t, err)
