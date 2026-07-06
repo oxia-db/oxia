@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package controller
+package shard
 
 import (
 	"testing"
@@ -139,7 +139,7 @@ func TestNegotiate_MixedVersions_RollingUpgrade(t *testing.T) {
 }
 
 func TestWaitForMajority_Success(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -159,7 +159,7 @@ func TestWaitForMajority_Success(t *testing.T) {
 }
 
 func TestWaitForMajority_FailureNoQuorum(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -179,7 +179,7 @@ func TestWaitForMajority_FailureNoQuorum(t *testing.T) {
 }
 
 func TestWaitForMajority_MixedSuccessAndFailure(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -200,7 +200,7 @@ func TestWaitForMajority_MixedSuccessAndFailure(t *testing.T) {
 }
 
 func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -223,7 +223,7 @@ func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
 }
 
 func TestWaitForMajority_EarlyReturn(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -241,7 +241,7 @@ func TestWaitForMajority_EarlyReturn(t *testing.T) {
 }
 
 func TestWaitForGracePeriod_AllResponsesReceived(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -264,7 +264,7 @@ func TestWaitForGracePeriod_AllResponsesReceived(t *testing.T) {
 }
 
 func TestWaitForGracePeriod_Timeout(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	ensemble := []*proto.DataServerIdentity{server1, server2}
@@ -285,7 +285,7 @@ func TestWaitForGracePeriod_Timeout(t *testing.T) {
 }
 
 func TestWaitForGracePeriod_IgnoresErrors(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -308,7 +308,7 @@ func TestWaitForGracePeriod_IgnoresErrors(t *testing.T) {
 }
 
 func TestWaitForGracePeriod_ExcludesRemovedServers(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	removedServer := testDataServer("removed")
@@ -331,7 +331,7 @@ func TestWaitForGracePeriod_ExcludesRemovedServers(t *testing.T) {
 }
 
 func TestWaitForGracePeriod_AlreadyComplete(t *testing.T) {
-	e := &ShardElection{}
+	e := &Election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	ensemble := []*proto.DataServerIdentity{server1, server2}

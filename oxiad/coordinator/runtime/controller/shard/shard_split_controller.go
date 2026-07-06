@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package controller
+package shard
 
 import (
 	"context"
@@ -30,25 +30,12 @@ import (
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 )
-
-// SplitEventListener is notified when split phases complete or abort.
-type SplitEventListener interface {
-	// SplitComplete is called at the end of the cutover phase, after children
-	// are re-elected in clean terms and the parent is marked Deleting. The
-	// coordinator should close the parent ShardController and recompute
-	// shard assignments so clients discover the children.
-	SplitComplete(parentShard int64, leftChild int64, rightChild int64)
-
-	// SplitAborted is called when the split has been aborted (e.g. due to
-	// timeout). The coordinator should close child shard controllers and
-	// recompute shard assignments.
-	SplitAborted(parentShard int64, leftChild int64, rightChild int64)
-}
 
 // SplitController drives the shard split state machine through 4 phases
 // (Bootstrap → CatchUp → Cutover → Cleanup). It runs alongside the parent's
-// ShardController.
+// Controller.
 type SplitController struct {
 	namespace     string
 	parentShardId int64
@@ -58,7 +45,7 @@ type SplitController struct {
 
 	metadata      coordmetadata.Metadata
 	rpcProvider   rpc.Provider
-	eventListener SplitEventListener
+	eventListener controllerapi.ShardSplitEventListener
 
 	// ensembleSelector selects server ensembles for new shards.
 	ensembleSelector func(namespace string) ([]*proto.DataServerIdentity, error)
@@ -77,7 +64,7 @@ type SplitControllerConfig struct {
 	ParentShardId    int64
 	Metadata         coordmetadata.Metadata
 	RpcProvider      rpc.Provider
-	EventListener    SplitEventListener
+	EventListener    controllerapi.ShardSplitEventListener
 	EnsembleSelector func(namespace string) ([]*proto.DataServerIdentity, error)
 
 	// SplitTimeout is the maximum duration for the entire split operation.
@@ -98,7 +85,7 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 		eventListener:    cfg.EventListener,
 		ensembleSelector: cfg.EnsembleSelector,
 		logger: slog.With(
-			slog.String("component", "split-controller"),
+			slog.String("component", "shard-split-controller"),
 			slog.String("namespace", cfg.Namespace),
 			slog.Int64("parent-shard", cfg.ParentShardId),
 		),
@@ -126,7 +113,7 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 		process.DoWithLabels(
 			sc.ctx,
 			map[string]string{
-				"oxia":      "split-controller",
+				"oxia":      "shard-split-controller",
 				"namespace": sc.namespace,
 				"parent":    fmt.Sprintf("%d", sc.parentShardId),
 			},
