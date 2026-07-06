@@ -31,6 +31,7 @@ import (
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/mockutils"
 
 	"github.com/oxia-db/oxia/common/constant"
 
@@ -78,13 +79,13 @@ var (
 // setupSplitTest creates a cluster status with a parent shard in SteadyState,
 // two child shards ready for split, and returns the test resources.
 func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
-	*mockRpcProvider,
+	*mockutils.RpcProvider,
 	coordmetadata.Metadata,
 	*mockShardSplitEventListener,
 ) {
 	t.Helper()
 
-	rpcMock := newMockRpcProvider()
+	rpcMock := mockutils.NewRpcProvider()
 	metaProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{
@@ -203,7 +204,7 @@ func loadTestStatus(t *testing.T, metadata coordmetadata.Metadata) *proto.Cluste
 
 // queueBootstrapResponses queues all responses needed for the bootstrap phase.
 // The *1 nodes report a higher offset so pickLeader deterministically chooses them.
-func queueBootstrapResponses(rpcMock *mockRpcProvider) {
+func queueBootstrapResponses(rpcMock *mockutils.RpcProvider) {
 	// Fence left child ensemble: ls1 has highest offset -> becomes leader
 	rpcMock.GetNode(ls1).NewTermResponse(0, 0, nil)
 	rpcMock.GetNode(ls2).NewTermResponse(0, -1, nil)
@@ -224,7 +225,7 @@ func queueBootstrapResponses(rpcMock *mockRpcProvider) {
 }
 
 // queueCatchUpResponses queues all responses needed for the catch-up phase.
-func queueCatchUpResponses(rpcMock *mockRpcProvider) {
+func queueCatchUpResponses(rpcMock *mockutils.RpcProvider) {
 	// Parent commitOffset as target
 	rpcMock.GetNode(ps1).GetStatusResponse(5, proto.ServingStatus_LEADER, 105, 105)
 	// Children commitOffset >= target
@@ -233,7 +234,7 @@ func queueCatchUpResponses(rpcMock *mockRpcProvider) {
 }
 
 // queueCutoverResponses queues all responses needed for the cutover phase.
-func queueCutoverResponses(rpcMock *mockRpcProvider) {
+func queueCutoverResponses(rpcMock *mockutils.RpcProvider) {
 	// Freeze the parent leader: returns its frozen head offset (the target the
 	// children's head must reach before the parent is fenced).
 	rpcMock.GetNode(ps1).FreezeShardResponse(105, nil)
@@ -333,10 +334,10 @@ func TestSplitController_ChildrenFencedAtParentTerm(t *testing.T) {
 	expectNewTermAt := func(node *proto.DataServerIdentity, shard int64) {
 		t.Helper()
 		select {
-		case r := <-rpcMock.GetNode(node).newTermRequests:
+		case r := <-rpcMock.GetNode(node).NewTermRequests:
 			assert.Equal(t, shard, r.Shard)
 			assert.Equal(t, parentTerm, r.Term)
-		case <-time.After(defaultTimeout):
+		case <-time.After(10 * time.Second):
 			t.Fatalf("did not receive NewTerm request for shard %d", shard)
 		}
 	}
@@ -344,16 +345,16 @@ func TestSplitController_ChildrenFencedAtParentTerm(t *testing.T) {
 	for _, node := range []*proto.DataServerIdentity{ls1, ls2, ls3} {
 		expectNewTermAt(node, 1)
 	}
-	rpcMock.GetNode(ls1).expectBecomeLeaderRequest(t, 1, parentTerm, 3)
+	rpcMock.GetNode(ls1).ExpectBecomeLeaderRequest(t, 1, parentTerm, 3)
 
 	for _, node := range []*proto.DataServerIdentity{rs1, rs2, rs3} {
 		expectNewTermAt(node, 2)
 	}
-	rpcMock.GetNode(rs1).expectBecomeLeaderRequest(t, 2, parentTerm, 3)
+	rpcMock.GetNode(rs1).ExpectBecomeLeaderRequest(t, 2, parentTerm, 3)
 
 	// Observers are added on the parent leader at the same term.
-	rpcMock.GetNode(ps1).expectAddFollowerRequest(t, 0, parentTerm)
-	rpcMock.GetNode(ps1).expectAddFollowerRequest(t, 0, parentTerm)
+	rpcMock.GetNode(ps1).ExpectAddFollowerRequest(t, 0, parentTerm)
+	rpcMock.GetNode(ps1).ExpectAddFollowerRequest(t, 0, parentTerm)
 
 	select {
 	case <-listener.completions:
@@ -474,7 +475,7 @@ func TestSplitController_TimeoutDuringBootstrap(t *testing.T) {
 		Namespace:     constant.DefaultNamespace,
 		ParentShardId: 0,
 		Metadata:      statusRes,
-		RpcProvider:   newMockRpcProvider(), // fresh mock, no responses queued
+		RpcProvider:   mockutils.NewRpcProvider(), // fresh mock, no responses queued
 		EventListener: listener,
 		SplitTimeout:  2 * time.Second,
 	})

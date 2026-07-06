@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package shard
+package mockutils
 
 import (
 	"context"
@@ -44,14 +44,14 @@ var (
 	ErrNotImplement = errors.New("not implement")
 )
 
-type mockShardAssignmentsProvider struct {
+type ShardAssignmentsProvider struct {
 	sync.Mutex
 	cond    concurrent.ConditionContext
 	current *proto.ShardAssignments
 }
 
-func newMockShardAssignmentsProvider() *mockShardAssignmentsProvider {
-	sap := &mockShardAssignmentsProvider{
+func NewShardAssignmentsProvider() *ShardAssignmentsProvider {
+	sap := &ShardAssignmentsProvider{
 		current: nil,
 	}
 
@@ -59,7 +59,7 @@ func newMockShardAssignmentsProvider() *mockShardAssignmentsProvider {
 	return sap
 }
 
-func (sap *mockShardAssignmentsProvider) set(value *proto.ShardAssignments) {
+func (sap *ShardAssignmentsProvider) Set(value *proto.ShardAssignments) {
 	sap.Lock()
 	defer sap.Unlock()
 
@@ -67,7 +67,7 @@ func (sap *mockShardAssignmentsProvider) set(value *proto.ShardAssignments) {
 	sap.cond.Broadcast()
 }
 
-func (sap *mockShardAssignmentsProvider) WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error) {
+func (sap *ShardAssignmentsProvider) WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error) {
 	sap.Lock()
 	defer sap.Unlock()
 
@@ -80,22 +80,22 @@ func (sap *mockShardAssignmentsProvider) WaitForNextUpdate(ctx context.Context, 
 	return sap.current, nil
 }
 
-type mockNodeAvailabilityListener struct {
-	events chan *proto.DataServerIdentity
+type NodeAvailabilityListener struct {
+	Events chan *proto.DataServerIdentity
 }
 
-func newMockNodeAvailabilityListener() *mockNodeAvailabilityListener {
-	return &mockNodeAvailabilityListener{
-		events: make(chan *proto.DataServerIdentity, 100),
+func NewNodeAvailabilityListener() *NodeAvailabilityListener {
+	return &NodeAvailabilityListener{
+		Events: make(chan *proto.DataServerIdentity, 100),
 	}
 }
 
-func (nal *mockNodeAvailabilityListener) BecameUnavailable(node *proto.DataServerIdentity) {
-	nal.events <- node
+func (nal *NodeAvailabilityListener) BecameUnavailable(node *proto.DataServerIdentity) {
+	nal.Events <- node
 }
 
-type mockPerNodeChannels struct {
-	newTermRequests  chan *proto.NewTermRequest
+type PerNodeChannels struct {
+	NewTermRequests  chan *proto.NewTermRequest
 	newTermResponses chan struct {
 		*proto.NewTermResponse
 		error
@@ -137,15 +137,15 @@ type mockPerNodeChannels struct {
 		error
 	}
 
-	shardAssignmentsStream *mockShardAssignmentClient
-	healthClient           *mockHealthClient
+	ShardAssignmentsStream *ShardAssignmentClient
+	HealthClient           *HealthClient
 	err                    error
 
 	// Feature negotiation support
 	supportedFeatures []proto.Feature
 	handshakeStatus   proto.HandshakeStatus
 	handshakeErr      error
-	handshakeCount    atomic.Int64
+	HandshakeCount    atomic.Int64
 	getInfoErr        error
 	getInfoCount      atomic.Int64
 }
@@ -153,7 +153,7 @@ type mockPerNodeChannels struct {
 const defaultTimeout = 10 * time.Second
 const defaultNegativeTimeout = 1 * time.Second
 
-func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int64, term int64, replicationFactor uint32) {
+func (m *PerNodeChannels) ExpectBecomeLeaderRequest(t *testing.T, shard int64, term int64, replicationFactor uint32) {
 	t.Helper()
 
 	var r *proto.BecomeLeaderRequest
@@ -169,8 +169,8 @@ func (m *mockPerNodeChannels) expectBecomeLeaderRequest(t *testing.T, shard int6
 	assert.Equal(t, replicationFactor, r.ReplicationFactor)
 }
 
-// expectBecomeLeaderRequestWithFeatures verifies the BecomeLeader request includes expected negotiated features.
-func (m *mockPerNodeChannels) expectBecomeLeaderRequestWithFeatures(t *testing.T, shard int64, term int64, replicationFactor uint32, expectedFeatures []proto.Feature) {
+// ExpectBecomeLeaderRequestWithFeatures verifies the BecomeLeader request includes expected negotiated features.
+func (m *PerNodeChannels) ExpectBecomeLeaderRequestWithFeatures(t *testing.T, shard int64, term int64, replicationFactor uint32, expectedFeatures []proto.Feature) {
 	t.Helper()
 
 	var r *proto.BecomeLeaderRequest
@@ -187,12 +187,12 @@ func (m *mockPerNodeChannels) expectBecomeLeaderRequestWithFeatures(t *testing.T
 	assert.ElementsMatch(t, expectedFeatures, r.FeaturesSupported, "negotiated features should match")
 }
 
-func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, term int64, notificationsEnabled bool) {
+func (m *PerNodeChannels) ExpectNewTermRequest(t *testing.T, shard int64, term int64, notificationsEnabled bool) {
 	t.Helper()
 
 	var r *proto.NewTermRequest
 	select {
-	case r = <-m.newTermRequests:
+	case r = <-m.NewTermRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive NewTerm request in time")
 		return
@@ -203,18 +203,18 @@ func (m *mockPerNodeChannels) expectNewTermRequest(t *testing.T, shard int64, te
 	assert.Equal(t, notificationsEnabled, r.Options.EnableNotifications)
 }
 
-func (m *mockPerNodeChannels) expectNoMoreNewTermRequest(t *testing.T) {
+func (m *PerNodeChannels) ExpectNoMoreNewTermRequest(t *testing.T) {
 	t.Helper()
 
 	select {
-	case <-m.newTermRequests:
+	case <-m.NewTermRequests:
 		assert.Fail(t, "should not have received any new term request")
 	case <-time.After(defaultNegativeTimeout):
 		// expected
 	}
 }
 
-func (m *mockPerNodeChannels) expectDeleteShardRequest(t *testing.T, shard int64, term int64) {
+func (m *PerNodeChannels) ExpectDeleteShardRequest(t *testing.T, shard int64, term int64) {
 	t.Helper()
 
 	var r *proto.DeleteShardRequest
@@ -229,7 +229,7 @@ func (m *mockPerNodeChannels) expectDeleteShardRequest(t *testing.T, shard int64
 	assert.Equal(t, term, r.Term)
 }
 
-func (m *mockPerNodeChannels) expectAddFollowerRequest(t *testing.T, shard int64, term int64) {
+func (m *PerNodeChannels) ExpectAddFollowerRequest(t *testing.T, shard int64, term int64) {
 	t.Helper()
 
 	var r *proto.AddFollowerRequest
@@ -244,7 +244,7 @@ func (m *mockPerNodeChannels) expectAddFollowerRequest(t *testing.T, shard int64
 	assert.Equal(t, term, r.Term)
 }
 
-func (m *mockPerNodeChannels) expectGetStatusRequest(t *testing.T, shard int64) {
+func (m *PerNodeChannels) ExpectGetStatusRequest(t *testing.T, shard int64) {
 	t.Helper()
 
 	var r *proto.GetStatusRequest
@@ -258,7 +258,7 @@ func (m *mockPerNodeChannels) expectGetStatusRequest(t *testing.T, shard int64) 
 	assert.Equal(t, shard, r.Shard)
 }
 
-func (m *mockPerNodeChannels) NewTermResponse(term int64, offset int64, err error) {
+func (m *PerNodeChannels) NewTermResponse(term int64, offset int64, err error) {
 	m.newTermResponses <- struct {
 		*proto.NewTermResponse
 		error
@@ -271,7 +271,7 @@ func (m *mockPerNodeChannels) NewTermResponse(term int64, offset int64, err erro
 }
 
 //nolint:revive
-func (m *mockPerNodeChannels) GetStatusResponse(term int64, status proto.ServingStatus,
+func (m *PerNodeChannels) GetStatusResponse(term int64, status proto.ServingStatus,
 	headOffset int64, commitOffset int64) {
 	m.getStatusResponses <- struct {
 		*proto.GetStatusResponse
@@ -284,51 +284,51 @@ func (m *mockPerNodeChannels) GetStatusResponse(term int64, status proto.Serving
 	}, nil}
 }
 
-func (m *mockPerNodeChannels) EnqueueGetStatusError(err error) {
+func (m *PerNodeChannels) EnqueueGetStatusError(err error) {
 	m.getStatusResponses <- struct {
 		*proto.GetStatusResponse
 		error
 	}{nil, err}
 }
 
-func (m *mockPerNodeChannels) BecomeLeaderResponse(err error) {
+func (m *PerNodeChannels) BecomeLeaderResponse(err error) {
 	m.becomeLeaderResponses <- struct {
 		*proto.BecomeLeaderResponse
 		error
 	}{&proto.BecomeLeaderResponse{}, err}
 }
 
-func (m *mockPerNodeChannels) DeleteShardResponse(err error) {
+func (m *PerNodeChannels) DeleteShardResponse(err error) {
 	m.deleteShardResponses <- struct {
 		*proto.DeleteShardResponse
 		error
 	}{&proto.DeleteShardResponse{}, err}
 }
 
-func (m *mockPerNodeChannels) AddFollowerResponse(err error) {
+func (m *PerNodeChannels) AddFollowerResponse(err error) {
 	m.addFollowerResponses <- struct {
 		*proto.AddFollowerResponse
 		error
 	}{&proto.AddFollowerResponse{}, err}
 }
 
-func (m *mockPerNodeChannels) RemoveObserverResponse(err error) {
+func (m *PerNodeChannels) RemoveObserverResponse(err error) {
 	m.removeObserverResponses <- struct {
 		*proto.RemoveObserverResponse
 		error
 	}{&proto.RemoveObserverResponse{}, err}
 }
 
-func (m *mockPerNodeChannels) FreezeShardResponse(headOffset int64, err error) {
+func (m *PerNodeChannels) FreezeShardResponse(headOffset int64, err error) {
 	m.freezeShardResponses <- struct {
 		*proto.FreezeShardResponse
 		error
 	}{&proto.FreezeShardResponse{HeadOffset: headOffset}, err}
 }
 
-func newMockPerNodeChannels() *mockPerNodeChannels {
-	return &mockPerNodeChannels{
-		newTermRequests: make(chan *proto.NewTermRequest, 100),
+func newPerNodeChannels() *PerNodeChannels {
+	return &PerNodeChannels{
+		NewTermRequests: make(chan *proto.NewTermRequest, 100),
 		newTermResponses: make(chan struct {
 			*proto.NewTermResponse
 			error
@@ -363,48 +363,48 @@ func newMockPerNodeChannels() *mockPerNodeChannels {
 			*proto.FreezeShardResponse
 			error
 		}, 100),
-		shardAssignmentsStream: newMockShardAssignmentClient(),
-		healthClient:           newMockHealthClient(),
+		ShardAssignmentsStream: newShardAssignmentClient(),
+		HealthClient:           newHealthClient(),
 		supportedFeatures:      feature.SupportedFeatures(), // Default to current version
 		handshakeStatus:        proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
 	}
 }
 
 // SetNodeFeatures sets the features supported by this node (simulates a specific version).
-func (m *mockPerNodeChannels) SetNodeFeatures(features []proto.Feature) {
+func (m *PerNodeChannels) SetNodeFeatures(features []proto.Feature) {
 	m.supportedFeatures = features
 }
 
 // SetOldNode simulates an old node that doesn't support the GetInfo RPC.
-func (m *mockPerNodeChannels) SetOldNode() {
+func (m *PerNodeChannels) SetOldNode() {
 	m.handshakeErr = ErrNotImplement
 	m.getInfoErr = ErrNotImplement
 	m.supportedFeatures = nil
 }
 
-type mockRpcProvider struct {
+type RpcProvider struct {
 	sync.Mutex
-	channels map[string]*mockPerNodeChannels
+	channels map[string]*PerNodeChannels
 }
 
-func (r *mockRpcProvider) Close() error {
+func (r *RpcProvider) Close() error {
 	return nil
 }
 
-func newMockRpcProvider() *mockRpcProvider {
-	return &mockRpcProvider{
-		channels: make(map[string]*mockPerNodeChannels),
+func NewRpcProvider() *RpcProvider {
+	return &RpcProvider{
+		channels: make(map[string]*PerNodeChannels),
 	}
 }
 
-func (r *mockRpcProvider) FailNode(node *proto.DataServerIdentity, err error) {
+func (r *RpcProvider) FailNode(node *proto.DataServerIdentity, err error) {
 	r.Lock()
 	defer r.Unlock()
 
 	n := r.getNode(node)
 	n.err = err
 }
-func (r *mockRpcProvider) GetInfo(_ context.Context, node *proto.DataServerIdentity, _ *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
+func (r *RpcProvider) GetInfo(_ context.Context, node *proto.DataServerIdentity, _ *proto.GetInfoRequest) (*proto.GetInfoResponse, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -418,12 +418,12 @@ func (r *mockRpcProvider) GetInfo(_ context.Context, node *proto.DataServerIdent
 	}, nil
 }
 
-func (r *mockRpcProvider) Handshake(_ context.Context, node *proto.DataServerIdentity, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+func (r *RpcProvider) Handshake(_ context.Context, node *proto.DataServerIdentity, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 	r.Lock()
 	defer r.Unlock()
 
 	n := r.getNode(node)
-	n.handshakeCount.Add(1)
+	n.HandshakeCount.Add(1)
 	if n.handshakeErr != nil {
 		return nil, n.handshakeErr
 	}
@@ -433,7 +433,7 @@ func (r *mockRpcProvider) Handshake(_ context.Context, node *proto.DataServerIde
 	}, nil
 }
 
-func (r *mockRpcProvider) RecoverNode(node *proto.DataServerIdentity) {
+func (r *RpcProvider) RecoverNode(node *proto.DataServerIdentity) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -441,25 +441,25 @@ func (r *mockRpcProvider) RecoverNode(node *proto.DataServerIdentity) {
 	n.err = nil
 }
 
-func (r *mockRpcProvider) GetNode(node *proto.DataServerIdentity) *mockPerNodeChannels {
+func (r *RpcProvider) GetNode(node *proto.DataServerIdentity) *PerNodeChannels {
 	r.Lock()
 	defer r.Unlock()
 
 	return r.getNode(node)
 }
 
-func (r *mockRpcProvider) getNode(node *proto.DataServerIdentity) *mockPerNodeChannels {
+func (r *RpcProvider) getNode(node *proto.DataServerIdentity) *PerNodeChannels {
 	res, ok := r.channels[node.GetInternal()]
 	if ok {
 		return res
 	}
 
-	res = newMockPerNodeChannels()
+	res = newPerNodeChannels()
 	r.channels[node.GetInternal()] = res
 	return res
 }
 
-func (r *mockRpcProvider) PushShardAssignments(ctx context.Context, node *proto.DataServerIdentity) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
+func (r *RpcProvider) PushShardAssignments(ctx context.Context, node *proto.DataServerIdentity) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -467,15 +467,15 @@ func (r *mockRpcProvider) PushShardAssignments(ctx context.Context, node *proto.
 	if n.err != nil {
 		return nil, n.err
 	}
-	n.shardAssignmentsStream.ctx = ctx
-	return n.shardAssignmentsStream, nil
+	n.ShardAssignmentsStream.ctx = ctx
+	return n.ShardAssignmentsStream, nil
 }
 
-func (r *mockRpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+func (r *RpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
-	s.newTermRequests <- req
+	s.NewTermRequests <- req
 
 	if s.err != nil {
 		r.Unlock()
@@ -494,7 +494,7 @@ func (r *mockRpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIde
 	}
 }
 
-func (r *mockRpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
+func (r *RpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -517,7 +517,7 @@ func (r *mockRpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServ
 	}
 }
 
-func (r *mockRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+func (r *RpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -540,7 +540,7 @@ func (r *mockRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerI
 	}
 }
 
-func (r *mockRpcProvider) DeleteShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
+func (r *RpcProvider) DeleteShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -563,7 +563,7 @@ func (r *mockRpcProvider) DeleteShard(ctx context.Context, node *proto.DataServe
 	}
 }
 
-func (r *mockRpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+func (r *RpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -586,7 +586,7 @@ func (r *mockRpcProvider) AddFollower(ctx context.Context, node *proto.DataServe
 	}
 }
 
-func (r *mockRpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServerIdentity, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
+func (r *RpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServerIdentity, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -609,7 +609,7 @@ func (r *mockRpcProvider) RemoveObserver(ctx context.Context, node *proto.DataSe
 	}
 }
 
-func (r *mockRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+func (r *RpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
 	r.Lock()
 
 	s := r.getNode(node)
@@ -633,33 +633,33 @@ func (r *mockRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServe
 	}
 }
 
-func (r *mockRpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
-	c := r.GetNode(node).healthClient
+func (r *RpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
+	c := r.GetNode(node).HealthClient
 	return c, nil
 }
 
-type mockShardAssignmentClient struct {
+type ShardAssignmentClient struct {
 	ctx context.Context
 	sync.Mutex
 
 	err     error
-	updates chan *proto.ShardAssignments
+	Updates chan *proto.ShardAssignments
 }
 
-func newMockShardAssignmentClient() *mockShardAssignmentClient {
-	return &mockShardAssignmentClient{
-		updates: make(chan *proto.ShardAssignments, 100),
+func newShardAssignmentClient() *ShardAssignmentClient {
+	return &ShardAssignmentClient{
+		Updates: make(chan *proto.ShardAssignments, 100),
 	}
 }
 
-func (m *mockShardAssignmentClient) SetError(err error) {
+func (m *ShardAssignmentClient) SetError(err error) {
 	m.Lock()
 	defer m.Unlock()
 
 	m.err = err
 }
 
-func (m *mockShardAssignmentClient) Send(response *proto.ShardAssignments) error {
+func (m *ShardAssignmentClient) Send(response *proto.ShardAssignments) error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -669,58 +669,58 @@ func (m *mockShardAssignmentClient) Send(response *proto.ShardAssignments) error
 		return err
 	}
 
-	m.updates <- response
+	m.Updates <- response
 	return nil
 }
 
-func (m *mockShardAssignmentClient) CloseAndRecv() (*proto.CoordinationShardAssignmentsResponse, error) {
+func (m *ShardAssignmentClient) CloseAndRecv() (*proto.CoordinationShardAssignmentsResponse, error) {
 	panic(ErrNotImplement)
 }
 
-func (m *mockShardAssignmentClient) Header() (metadata.MD, error) {
+func (m *ShardAssignmentClient) Header() (metadata.MD, error) {
 	panic(ErrNotImplement)
 }
 
-func (m *mockShardAssignmentClient) Trailer() metadata.MD {
+func (m *ShardAssignmentClient) Trailer() metadata.MD {
 	panic(ErrNotImplement)
 }
 
-func (m *mockShardAssignmentClient) CloseSend() error {
+func (m *ShardAssignmentClient) CloseSend() error {
 	panic(ErrNotImplement)
 }
 
-func (m *mockShardAssignmentClient) Context() context.Context {
+func (m *ShardAssignmentClient) Context() context.Context {
 	return m.ctx
 }
 
-func (m *mockShardAssignmentClient) SendMsg(any) error {
+func (m *ShardAssignmentClient) SendMsg(any) error {
 	panic(ErrNotImplement)
 }
 
-func (m *mockShardAssignmentClient) RecvMsg(any) error {
+func (m *ShardAssignmentClient) RecvMsg(any) error {
 	panic(ErrNotImplement)
 }
 
-type mockHealthClient struct {
+type HealthClient struct {
 	sync.Mutex
 
 	status  grpc_health_v1.HealthCheckResponse_ServingStatus
 	err     error
-	watches []*mockHealthWatchClient
+	watches []*healthWatchClient
 }
 
-func (m *mockHealthClient) Close() error {
+func (m *HealthClient) Close() error {
 	return nil
 }
 
-func newMockHealthClient() *mockHealthClient {
-	return &mockHealthClient{
+func newHealthClient() *HealthClient {
+	return &HealthClient{
 		status:  grpc_health_v1.HealthCheckResponse_SERVING,
-		watches: make([]*mockHealthWatchClient, 0),
+		watches: make([]*healthWatchClient, 0),
 	}
 }
 
-func (m *mockHealthClient) SetStatus(status grpc_health_v1.HealthCheckResponse_ServingStatus) {
+func (m *HealthClient) SetStatus(status grpc_health_v1.HealthCheckResponse_ServingStatus) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -731,7 +731,7 @@ func (m *mockHealthClient) SetStatus(status grpc_health_v1.HealthCheckResponse_S
 	}
 }
 
-func (m *mockHealthClient) SetError(err error) {
+func (m *HealthClient) SetError(err error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -741,7 +741,7 @@ func (m *mockHealthClient) SetError(err error) {
 	}
 }
 
-func (m *mockHealthClient) Check(ctx context.Context, in *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
+func (m *HealthClient) Check(ctx context.Context, in *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
 	m.Lock()
 	defer m.Unlock()
 	if m.err != nil {
@@ -750,17 +750,17 @@ func (m *mockHealthClient) Check(ctx context.Context, in *grpc_health_v1.HealthC
 	return &grpc_health_v1.HealthCheckResponse{Status: m.status}, nil
 }
 
-func (m *mockHealthClient) Watch(ctx context.Context, in *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {
+func (m *HealthClient) Watch(ctx context.Context, in *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {
 	m.Lock()
 	defer m.Unlock()
 
-	w := newMockHealthWatchClient(ctx)
+	w := newHealthWatchClient(ctx)
 	m.sendWatchResponse(w)
 	m.watches = append(m.watches, w)
 	return w, nil
 }
 
-func (m *mockHealthClient) List(ctx context.Context, in *grpc_health_v1.HealthListRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthListResponse, error) {
+func (m *HealthClient) List(ctx context.Context, in *grpc_health_v1.HealthListRequest, opts ...grpc.CallOption) (*grpc_health_v1.HealthListResponse, error) {
 	m.Lock()
 	defer m.Unlock()
 	if m.err != nil {
@@ -769,7 +769,7 @@ func (m *mockHealthClient) List(ctx context.Context, in *grpc_health_v1.HealthLi
 	return &grpc_health_v1.HealthListResponse{}, nil
 }
 
-func (m *mockHealthClient) sendWatchResponse(w *mockHealthWatchClient) {
+func (m *HealthClient) sendWatchResponse(w *healthWatchClient) {
 	w.responses <- struct {
 		*grpc_health_v1.HealthCheckResponse
 		error
@@ -778,7 +778,7 @@ func (m *mockHealthClient) sendWatchResponse(w *mockHealthWatchClient) {
 	}, m.err}
 }
 
-type mockHealthWatchClient struct {
+type healthWatchClient struct {
 	ctx       context.Context
 	responses chan struct {
 		*grpc_health_v1.HealthCheckResponse
@@ -786,8 +786,8 @@ type mockHealthWatchClient struct {
 	}
 }
 
-func newMockHealthWatchClient(ctx context.Context) *mockHealthWatchClient {
-	return &mockHealthWatchClient{
+func newHealthWatchClient(ctx context.Context) *healthWatchClient {
+	return &healthWatchClient{
 		ctx: ctx,
 		responses: make(chan struct {
 			*grpc_health_v1.HealthCheckResponse
@@ -796,7 +796,7 @@ func newMockHealthWatchClient(ctx context.Context) *mockHealthWatchClient {
 	}
 }
 
-func (m *mockHealthWatchClient) Recv() (*grpc_health_v1.HealthCheckResponse, error) {
+func (m *healthWatchClient) Recv() (*grpc_health_v1.HealthCheckResponse, error) {
 	select {
 	case r := <-m.responses:
 		return r.HealthCheckResponse, r.error
@@ -805,26 +805,26 @@ func (m *mockHealthWatchClient) Recv() (*grpc_health_v1.HealthCheckResponse, err
 	}
 }
 
-func (m *mockHealthWatchClient) Header() (metadata.MD, error) {
+func (m *healthWatchClient) Header() (metadata.MD, error) {
 	panic("not implemented")
 }
 
-func (m *mockHealthWatchClient) Trailer() metadata.MD {
+func (m *healthWatchClient) Trailer() metadata.MD {
 	panic("not implemented")
 }
 
-func (m *mockHealthWatchClient) CloseSend() error {
+func (m *healthWatchClient) CloseSend() error {
 	panic("not implemented")
 }
 
-func (m *mockHealthWatchClient) Context() context.Context {
+func (m *healthWatchClient) Context() context.Context {
 	panic("not implemented")
 }
 
-func (m *mockHealthWatchClient) SendMsg(msg any) error {
+func (m *healthWatchClient) SendMsg(msg any) error {
 	panic("not implemented")
 }
 
-func (m *mockHealthWatchClient) RecvMsg(msg any) error {
+func (m *healthWatchClient) RecvMsg(msg any) error {
 	panic("not implemented")
 }

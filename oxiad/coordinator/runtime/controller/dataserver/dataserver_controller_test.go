@@ -25,6 +25,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/mockutils"
 )
 
 func TestDataServerController_HealthCheck(t *testing.T) {
@@ -34,9 +35,9 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 	}
 	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
 
-	sap := newMockShardAssignmentsProvider()
-	nal := newMockNodeAvailabilityListener()
-	rpc := newMockRpcProvider()
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
 	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
@@ -46,22 +47,22 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 		return nc.Status() == Running
 	}, 10*time.Second, 100*time.Millisecond)
 
-	node.healthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
-	unavailableNode := <-nal.events
+	unavailableNode := <-nal.Events
 	assert.Equal(t, addr, unavailableNode)
 
 	assert.Equal(t, NotRunning, nc.Status())
 
-	node.healthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
 
 	assert.Eventually(t, func() bool {
 		return nc.Status() == Running
 	}, 10*time.Second, 100*time.Millisecond)
 
-	node.healthClient.SetError(errors.New("failed to connect"))
+	node.HealthClient.SetError(errors.New("failed to connect"))
 
-	unavailableNode = <-nal.events
+	unavailableNode = <-nal.Events
 	assert.Equal(t, addr, unavailableNode)
 
 	assert.Equal(t, NotRunning, nc.Status())
@@ -76,9 +77,9 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 	}
 	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
 
-	sap := newMockShardAssignmentsProvider()
-	nal := newMockNodeAvailabilityListener()
-	rpc := newMockRpcProvider()
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
 	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
@@ -86,44 +87,44 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 	// Wait for the initial Handshake call that happens when the controller starts
 	// (the controller starts in Running state, transitions through health check)
 	assert.Eventually(t, func() bool {
-		return node.handshakeCount.Load() >= 1
+		return node.HandshakeCount.Load() >= 1
 	}, 10*time.Second, 100*time.Millisecond)
 
 	// Record the count after initial startup
-	initialCount := node.handshakeCount.Load()
+	initialCount := node.HandshakeCount.Load()
 
 	// Wait for several health check cycles (health check runs every 2s)
 	// If Handshake were called on every health check, we'd see the count increase
 	time.Sleep(5 * time.Second)
 
 	// The count should NOT have increased while the server stayed Running
-	countAfterWait := node.handshakeCount.Load()
+	countAfterWait := node.HandshakeCount.Load()
 	assert.Equal(t, initialCount, countAfterWait,
 		"Handshake should not be called repeatedly while server is already Running")
 
 	// Now simulate the server going down and coming back
-	node.healthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
-	unavailableNode := <-nal.events
+	unavailableNode := <-nal.Events
 	assert.Equal(t, addr, unavailableNode)
 	assert.Equal(t, NotRunning, nc.Status())
 
 	// Bring the server back online
-	node.healthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
 
 	// Handshake should have been called again for the NotRunning -> Running transition
 	assert.Eventually(t, func() bool {
-		return node.handshakeCount.Load() > countAfterWait
+		return node.HandshakeCount.Load() > countAfterWait
 	}, 10*time.Second, 100*time.Millisecond,
 		"Handshake should be called on state transition from NotRunning to Running")
 
 	assert.Equal(t, Running, nc.Status())
-	countAfterRecovery := node.handshakeCount.Load()
+	countAfterRecovery := node.HandshakeCount.Load()
 
 	// Wait again to confirm no further redundant calls
 	time.Sleep(5 * time.Second)
 
-	countAfterSecondWait := node.handshakeCount.Load()
+	countAfterSecondWait := node.HandshakeCount.Load()
 	assert.Equal(t, countAfterRecovery, countAfterSecondWait,
 		"Handshake should not be called repeatedly after recovery")
 
@@ -137,9 +138,9 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 	}
 	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
 
-	sap := newMockShardAssignmentsProvider()
-	nal := newMockNodeAvailabilityListener()
-	rpc := newMockRpcProvider()
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
 	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
@@ -159,13 +160,13 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 		},
 	}
 
-	sap.set(resp)
+	sap.Set(resp)
 
-	update := <-node.shardAssignmentsStream.updates
+	update := <-node.ShardAssignmentsStream.Updates
 	assert.Equal(t, resp, update)
 
 	// Simulate 1 single stream send error
-	node.shardAssignmentsStream.SetError(errors.New("failed to send"))
+	node.ShardAssignmentsStream.SetError(errors.New("failed to send"))
 
 	resp2 := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
@@ -182,9 +183,9 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 		},
 	}
 
-	sap.set(resp2)
+	sap.Set(resp2)
 
-	update = <-node.shardAssignmentsStream.updates
+	update = <-node.ShardAssignmentsStream.Updates
 	assert.Equal(t, resp2, update)
 
 	assert.NoError(t, nc.Close())
