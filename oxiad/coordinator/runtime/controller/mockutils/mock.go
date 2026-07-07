@@ -81,8 +81,6 @@ func (sap *ShardAssignmentsProvider) WaitForNextUpdate(ctx context.Context, curr
 	return sap.current, nil
 }
 
-func (*ShardAssignmentsProvider) RecomputeAssignments() {}
-
 type NodeAvailabilityListener struct {
 	Events chan *proto.DataServerIdentity
 }
