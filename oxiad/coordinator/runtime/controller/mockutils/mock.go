@@ -675,7 +675,7 @@ func (m *ShardAssignmentClient) Send(response *proto.ShardAssignments) error {
 }
 
 func (*ShardAssignmentClient) CloseAndRecv() (*proto.CoordinationShardAssignmentsResponse, error) {
-	return &proto.CoordinationShardAssignmentsResponse{}, nil
+	panic(errNotImplemented)
 }
 
 func (*ShardAssignmentClient) Header() (metadata.MD, error) {
@@ -687,7 +687,7 @@ func (*ShardAssignmentClient) Trailer() metadata.MD {
 }
 
 func (*ShardAssignmentClient) CloseSend() error {
-	panic(errNotImplemented)
+	return nil
 }
 
 func (m *ShardAssignmentClient) Context() context.Context {

@@ -162,7 +162,7 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 			return err
 		}
 		defer func() {
-			_, _ = stream.CloseAndRecv()
+			_ = stream.CloseSend()
 		}()
 		streamCtx := stream.Context()
 		var assignments *proto.ShardAssignments
