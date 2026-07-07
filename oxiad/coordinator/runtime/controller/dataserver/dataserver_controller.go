@@ -328,6 +328,8 @@ func (n *controller) becomeAvailable() {
 		n.status = Running
 	}
 	n.statusLock.Unlock()
+
+	n.RecomputeAssignments()
 }
 
 func (n *controller) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
