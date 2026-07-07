@@ -126,7 +126,8 @@ func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch
 	if err != nil {
 		return nil, err
 	}
-	s.internalRpcServer, err = newInternalRpcServer(provider, internalServer.BindAddress, //nolint:contextcheck
+	//nolint:contextcheck
+	s.internalRpcServer, err = newInternalRpcServer(provider, internalServer.BindAddress,
 		s.shardsDirector, s.shardAssignmentDispatcher, s.healthServer, internalServerTLS, &internalServer.Auth, manifest)
 	if err != nil {
 		return nil, err
