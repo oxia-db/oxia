@@ -933,5 +933,7 @@ func New(
 	c.autoSplitMonitor = autosplit.NewMonitor(c.metadata, c.rpc, c, autoSplitInterval)
 	c.autoSplitMonitor.Start()
 
+	c.computeNewAssignments()
+
 	return c, nil
 }
