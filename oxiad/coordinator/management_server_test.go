@@ -32,6 +32,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
@@ -80,8 +81,8 @@ func (*testRuntime) LeaderElected(int64, *proto.DataServerIdentity, []*proto.Dat
 
 func (*testRuntime) ShardDeleted(int64) {}
 
-func (*testRuntime) WaitForNextUpdate(context.Context, *proto.ShardAssignments) (*proto.ShardAssignments, error) {
-	return nil, context.Canceled
+func (*testRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.ShardAssignments] {
+	return commonwatch.New(&proto.ShardAssignments{}).Subscribe()
 }
 
 func (*testRuntime) BecameUnavailable(*proto.DataServerIdentity) {}

@@ -398,25 +398,8 @@ func (c *runtime) BecameUnavailable(node *proto.DataServerIdentity) {
 	}
 }
 
-func (c *runtime) WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error) {
-	receiver := c.assignmentsWatch.Subscribe()
-	latest := c.assignmentsWatch.Load()
-	if !pb.Equal(currentValue, latest) {
-		return latest, nil
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-receiver.Changed():
-		}
-
-		latest = receiver.Load()
-		if !pb.Equal(currentValue, latest) {
-			return latest, nil
-		}
-	}
+func (c *runtime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.ShardAssignments] {
+	return c.assignmentsWatch.Subscribe()
 }
 
 func (c *runtime) startBackgroundActionWorker() {

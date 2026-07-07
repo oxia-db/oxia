@@ -278,8 +278,8 @@ func (*mockNamespaceRuntime) LeaderElected(int64, *proto.DataServerIdentity, []*
 
 func (*mockNamespaceRuntime) ShardDeleted(int64) {}
 
-func (*mockNamespaceRuntime) WaitForNextUpdate(context.Context, *proto.ShardAssignments) (*proto.ShardAssignments, error) {
-	return nil, context.Canceled
+func (*mockNamespaceRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.ShardAssignments] {
+	return commonwatch.New(&proto.ShardAssignments{}).Subscribe()
 }
 
 func (*mockNamespaceRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
