@@ -146,9 +146,12 @@ func (e *Election) fenceNewTermQuorum(term int64, ensemble []*proto.DataServerId
 					"data-server": pinedServer.GetNameOrDefault(),
 				}, func() {
 					entryId, err := e.fenceNewTerm(fencingContext, term, pinedServer)
-					if err != nil {
+					switch {
+					case errors.Is(err, constant.ErrNotInitialized):
+						e.logger.Debug("FenceNewTerm is waiting for data server initialization", slog.Any("data-server", pinedServer))
+					case err != nil:
 						e.logger.Warn("FenceNewTerm failed", slog.Any("error", err), slog.Any("data-server", pinedServer))
-					} else {
+					default:
 						e.logger.Info("Processed fenceNewTerm response", slog.Any("data-server", pinedServer), slog.Any("entry-id", entryId))
 					}
 					ch <- struct {
@@ -586,6 +589,15 @@ func (e *Election) Start() *proto.DataServerIdentity {
 		return e.start()
 	}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
 		e.leaderElectionsFailed.Inc()
+		if errors.Is(err, constant.ErrNotInitialized) {
+			e.logger.Debug(
+				"Leader election is waiting for data server initialization",
+				slog.Int64("term", e.meta.Term()),
+				slog.Duration("retry-after", duration),
+			)
+			return
+		}
+
 		e.logger.Warn(
 			"Leader election has failed, retrying later",
 			slog.Int64("term", e.meta.Term()),
