@@ -96,7 +96,6 @@ type controller struct {
 
 	statusLock        sync.RWMutex
 	status            Status
-	statusChanged     chan struct{}
 	supportedFeatures atomic.Value
 
 	healthCheckBackoff         *commontime.ConcurrentBackOff
@@ -122,18 +121,10 @@ func (n *controller) SupportedFeatures() []proto.Feature {
 
 func (n *controller) SetStatus(status Status) {
 	n.statusLock.Lock()
+	defer n.statusLock.Unlock()
 	previous := n.status
-	if previous != status {
-		n.status = status
-		n.notifyStatusChangedLocked()
-	}
-	n.statusLock.Unlock()
+	n.status = status
 	n.logger.Info("Changed status", slog.Any("from", previous), slog.Any("to", status))
-}
-
-func (n *controller) notifyStatusChangedLocked() {
-	close(n.statusChanged)
-	n.statusChanged = make(chan struct{})
 }
 
 func (n *controller) Close() error {
@@ -151,10 +142,6 @@ func (n *controller) Close() error {
 func (n *controller) sendAssignmentsDispatchWithRetries() {
 	_ = backoff.RetryNotify(func() error {
 		n.logger.Debug("Ready to send assignments")
-
-		if err := n.waitUntilReady(n.ctx); err != nil {
-			return err
-		}
 
 		stream, err := n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
 		if err != nil {
@@ -293,33 +280,11 @@ func (n *controller) becomeUnavailable() {
 	}
 	if n.status == Running {
 		n.status = NotRunning
-		n.notifyStatusChangedLocked()
 	}
 	n.statusLock.Unlock()
 
 	n.failedHealthChecks.Inc()
 	n.BecameUnavailable(n.dataServer.GetIdentity())
-}
-
-func (n *controller) waitUntilReady(ctx context.Context) error {
-	for {
-		status, statusChanged := n.statusAndChanged()
-		if status == Running || status == Draining {
-			return nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-statusChanged:
-		}
-	}
-}
-
-func (n *controller) statusAndChanged() (Status, <-chan struct{}) {
-	n.statusLock.RLock()
-	defer n.statusLock.RUnlock()
-	return n.status, n.statusChanged
 }
 
 func (n *controller) becomeAvailable() {
@@ -361,9 +326,10 @@ func (n *controller) becomeAvailable() {
 	n.statusLock.Lock()
 	if n.status == NotRunning {
 		n.status = Running
-		n.notifyStatusChangedLocked()
 	}
 	n.statusLock.Unlock()
+
+	n.RecomputeAssignments()
 }
 
 func (n *controller) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
@@ -415,7 +381,6 @@ func newController(ctx context.Context, dataServer *proto.DataServer,
 		insID:                      insID,
 		statusLock:                 sync.RWMutex{},
 		status:                     NotRunning,
-		statusChanged:              make(chan struct{}),
 		supportedFeatures:          supportedFeatures,
 		logger:                     logger,
 		healthCheckBackoff:         commontime.NewConcurrentBackOff(commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff)),
