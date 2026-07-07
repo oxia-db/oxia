@@ -190,3 +190,43 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 
 	assert.NoError(t, nc.Close())
 }
+
+func TestDataServerController_RetriesLatestAssignmentsAfterSendError(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	node := rpc.GetNode(addr)
+	node.ShardAssignmentsStream.SetError(errors.New("failed to send"))
+
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	resp := &proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{{
+					Shard:  0,
+					Leader: "leader-0",
+				}},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+	}
+
+	sap.Set(resp)
+
+	select {
+	case update := <-node.ShardAssignmentsStream.Updates:
+		assert.Equal(t, resp, update)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "did not retry latest assignments after send error")
+	}
+}
