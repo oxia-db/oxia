@@ -38,8 +38,6 @@ type ShardSplitEventListener interface {
 
 type ShardAssignmentsProvider interface {
 	WaitForNextUpdate(ctx context.Context, currentValue *commonproto.ShardAssignments) (*commonproto.ShardAssignments, error)
-
-	RecomputeAssignments()
 }
 
 type DataServerEventListener interface {

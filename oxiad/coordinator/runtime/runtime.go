@@ -401,7 +401,7 @@ func (c *runtime) BecameUnavailable(node *proto.DataServerIdentity) {
 func (c *runtime) WaitForNextUpdate(ctx context.Context, currentValue *proto.ShardAssignments) (*proto.ShardAssignments, error) {
 	receiver := c.assignmentsWatch.Subscribe()
 	latest := c.assignmentsWatch.Load()
-	if currentValue != latest {
+	if !pb.Equal(currentValue, latest) {
 		return latest, nil
 	}
 
@@ -413,7 +413,7 @@ func (c *runtime) WaitForNextUpdate(ctx context.Context, currentValue *proto.Sha
 		}
 
 		latest = receiver.Load()
-		if currentValue != latest {
+		if !pb.Equal(currentValue, latest) {
 			return latest, nil
 		}
 	}
