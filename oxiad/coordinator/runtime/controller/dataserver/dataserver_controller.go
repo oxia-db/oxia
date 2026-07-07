@@ -152,6 +152,27 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 			return err
 		}
 		streamCtx := stream.Context()
+
+		// The coordinator only ever sends on this stream and never reads it, so a
+		// server-side termination that leaves the underlying connection healthy
+		// (e.g. an initialization rejection or an idle-stream reset from an L7 hop)
+		// would otherwise go unnoticed until the next assignment change, leaving a
+		// freshly-started data server without its initial assignment. Drain the
+		// stream in the background: RecvMsg returns as soon as the server ends the
+		// RPC, which cancels streamCtx and wakes the loop below to re-establish it.
+		var drainWg sync.WaitGroup
+		drainWg.Add(1)
+		go func() {
+			defer drainWg.Done()
+			var resp proto.CoordinationShardAssignmentsResponse
+			for {
+				if err := stream.RecvMsg(&resp); err != nil {
+					return
+				}
+			}
+		}()
+		defer drainWg.Wait()
+
 		var assignments *proto.ShardAssignments
 		for {
 			latest := receiver.Load()
