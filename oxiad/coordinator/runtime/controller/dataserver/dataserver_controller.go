@@ -161,6 +161,9 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 			n.logger.Debug("Failed to create shard assignments stream", slog.Any("error", err))
 			return err
 		}
+		defer func() {
+			_, _ = stream.CloseAndRecv()
+		}()
 		streamCtx := stream.Context()
 		var assignments *proto.ShardAssignments
 		for {

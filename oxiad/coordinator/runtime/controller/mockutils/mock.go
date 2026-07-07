@@ -675,7 +675,7 @@ func (m *ShardAssignmentClient) Send(response *proto.ShardAssignments) error {
 }
 
 func (*ShardAssignmentClient) CloseAndRecv() (*proto.CoordinationShardAssignmentsResponse, error) {
-	panic(errNotImplemented)
+	return &proto.CoordinationShardAssignmentsResponse{}, nil
 }
 
 func (*ShardAssignmentClient) Header() (metadata.MD, error) {
