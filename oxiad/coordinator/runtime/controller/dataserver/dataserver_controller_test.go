@@ -22,11 +22,23 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/mockutils"
 )
+
+func expectShardAssignmentsUpdate(t *testing.T, updates <-chan *proto.ShardAssignments, expected *proto.ShardAssignments) {
+	t.Helper()
+
+	select {
+	case update := <-updates:
+		assert.True(t, pb.Equal(expected, update), "expected %v, got %v", expected, update)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "did not receive shard assignments update")
+	}
+}
 
 func TestDataServerController_HealthCheck(t *testing.T) {
 	addr := &proto.DataServerIdentity{
@@ -144,6 +156,7 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
 
 	node := rpc.GetNode(addr)
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
 
 	resp := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
@@ -161,9 +174,7 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 	}
 
 	sap.Set(resp)
-
-	update := <-node.ShardAssignmentsStream.Updates
-	assert.Equal(t, resp, update)
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
 
 	// Simulate 1 single stream send error
 	node.ShardAssignmentsStream.SetError(errors.New("failed to send"))
@@ -184,9 +195,7 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 	}
 
 	sap.Set(resp2)
-
-	update = <-node.ShardAssignmentsStream.Updates
-	assert.Equal(t, resp2, update)
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp2)
 
 	assert.NoError(t, nc.Close())
 }
@@ -203,12 +212,6 @@ func TestDataServerController_RetriesLatestAssignmentsAfterSendError(t *testing.
 	rpc := mockutils.NewRpcProvider()
 	node := rpc.GetNode(addr)
 	node.ShardAssignmentsStream.SetError(errors.New("failed to send"))
-
-	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond)
-	defer func() {
-		assert.NoError(t, nc.Close())
-	}()
-
 	resp := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
@@ -223,10 +226,10 @@ func TestDataServerController_RetriesLatestAssignmentsAfterSendError(t *testing.
 
 	sap.Set(resp)
 
-	select {
-	case update := <-node.ShardAssignmentsStream.Updates:
-		assert.Equal(t, resp, update)
-	case <-time.After(10 * time.Second):
-		assert.Fail(t, "did not retry latest assignments after send error")
-	}
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
 }

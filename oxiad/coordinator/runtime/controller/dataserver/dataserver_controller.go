@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	grpcstatus "google.golang.org/grpc/status"
+	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
@@ -140,6 +141,8 @@ func (n *controller) Close() error {
 }
 
 func (n *controller) sendAssignmentsDispatchWithRetries() {
+	receiver := n.SubscribeShardAssignments()
+
 	_ = backoff.RetryNotify(func() error {
 		n.logger.Debug("Ready to send assignments")
 
@@ -151,31 +154,24 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 		streamCtx := stream.Context()
 		var assignments *proto.ShardAssignments
 		for {
-			select {
-			case <-n.ctx.Done():
-				return nil
-			case <-streamCtx.Done():
-				return streamCtx.Err()
-			default:
-				n.logger.Debug(
-					"Waiting for next assignments update",
-					slog.Any("current-assignments", assignments),
-				)
-				if assignments, err = n.WaitForNextUpdate(streamCtx, assignments); err != nil {
-					n.logger.Debug("Failed to send assignments", slog.Any("error", err))
-					return err
-				}
-				if assignments == nil {
-					continue
-				}
-
-				n.logger.Debug("Sending assignments", slog.Any("assignments", assignments))
-				if err := stream.Send(assignments); err != nil {
+			latest := receiver.Load()
+			if latest != nil && !pb.Equal(assignments, latest) {
+				n.logger.Debug("Sending assignments", slog.Any("assignments", latest))
+				if err := stream.Send(latest); err != nil {
 					n.logger.Debug("Failed to send assignments", slog.Any("error", err))
 					return err
 				}
 				n.logger.Debug("Send assignments completed successfully")
 				n.dispatchAssignmentsBackoff.Reset()
+				assignments = latest
+			}
+
+			select {
+			case <-n.ctx.Done():
+				return nil
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			case <-receiver.Changed():
 			}
 		}
 	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {

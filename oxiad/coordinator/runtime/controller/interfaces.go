@@ -15,9 +15,8 @@
 package controller
 
 import (
-	"context"
-
 	commonproto "github.com/oxia-db/oxia/common/proto"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 )
 
 type ShardSplitter interface {
@@ -37,7 +36,7 @@ type ShardSplitEventListener interface {
 }
 
 type ShardAssignmentsProvider interface {
-	WaitForNextUpdate(ctx context.Context, currentValue *commonproto.ShardAssignments) (*commonproto.ShardAssignments, error)
+	SubscribeShardAssignments() *commonwatch.Receiver[*commonproto.ShardAssignments]
 }
 
 type DataServerEventListener interface {
