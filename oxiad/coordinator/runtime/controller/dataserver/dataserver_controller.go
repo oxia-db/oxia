@@ -31,6 +31,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
+	"github.com/oxia-db/oxia/common/constant"
 	commonobject "github.com/oxia-db/oxia/common/object"
 
 	"github.com/oxia-db/oxia/common/metric"
@@ -178,7 +179,14 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 			}
 		}
 	}, n.dispatchAssignmentsBackoff, func(err error, duration time.Duration) {
-		if !errors.Is(err, context.Canceled) {
+		switch {
+		case errors.Is(err, context.Canceled):
+		case errors.Is(err, constant.ErrNotInitialized):
+			n.logger.Debug(
+				"Waiting for data server initialization before sending assignments",
+				slog.Duration("retry-after", duration),
+			)
+		default:
 			n.logger.Warn(
 				"Failed to send assignments updates to storage data server",
 				slog.Duration("retry-after", duration),
