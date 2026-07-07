@@ -183,6 +183,15 @@ func (*maelstromShardAssignmentClient) CloseAndRecv() (*proto.CoordinationShardA
 	return &proto.CoordinationShardAssignmentsResponse{}, nil
 }
 
+// RecvMsg blocks until the stream context is cancelled. The coordinator drains
+// the assignment stream in the background to notice server-side teardown; in
+// Maelstrom the stream is torn down by cancelling its context (e.g. on a failed
+// health check), so block until then instead of BaseStream's panic stub.
+func (m *maelstromShardAssignmentClient) RecvMsg(any) error {
+	<-m.ctx.Done()
+	return m.ctx.Err()
+}
+
 type BaseStream struct {
 }
 

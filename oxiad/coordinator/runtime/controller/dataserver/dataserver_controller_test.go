@@ -233,3 +233,98 @@ func TestDataServerController_RetriesLatestAssignmentsAfterSendError(t *testing.
 
 	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
 }
+
+// TestDataServerController_ReestablishesStreamAfterServerEnd reproduces the bug
+// behind the "stuck shard assignment streams" fix: the server ends the assignment
+// RPC while the underlying connection stays healthy and the assignment snapshot is
+// unchanged. Because the coordinator only ever sends on the stream, this is noticed
+// only by the background drain (RecvMsg); the controller must then re-establish the
+// stream and re-send the latest (unchanged) snapshot.
+func TestDataServerController_ReestablishesStreamAfterServerEnd(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	node := rpc.GetNode(addr)
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+
+	resp := &proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{{
+					Shard:  0,
+					Leader: "leader-0",
+				}},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+	}
+	sap.Set(resp)
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
+
+	// Server ends the RPC without any new assignment being published.
+	node.ShardAssignmentsStream.EndStream()
+
+	// The controller must reconnect and re-send the same (unchanged) snapshot.
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
+}
+
+// TestDataServerController_RecoversFromStreamEstablishmentRejection covers the
+// other facet named in the fix's motivation: the stream is rejected at establishment
+// time (e.g. before the data server is initialized). The dispatch loop must keep
+// retrying and deliver the assignment once establishment succeeds.
+func TestDataServerController_RecoversFromStreamEstablishmentRejection(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+
+	// Reject stream establishment up front.
+	rpc.FailNode(addr, errors.New("data server not initialized"))
+
+	resp := &proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			constant.DefaultNamespace: {
+				Assignments: []*proto.ShardAssignment{{
+					Shard:  0,
+					Leader: "leader-0",
+				}},
+				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			},
+		},
+	}
+	sap.Set(resp)
+
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	node := rpc.GetNode(addr)
+
+	// While establishment keeps failing, no assignment can be delivered.
+	select {
+	case <-node.ShardAssignmentsStream.Updates:
+		assert.Fail(t, "should not deliver assignments while stream establishment is rejected")
+	case <-time.After(1 * time.Second):
+	}
+
+	rpc.RecoverNode(addr)
+
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
+}

@@ -17,6 +17,7 @@ package mockutils
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -449,7 +450,7 @@ func (r *RpcProvider) PushShardAssignments(ctx context.Context, node *proto.Data
 	if n.err != nil {
 		return nil, n.err
 	}
-	n.ShardAssignmentsStream.ctx = ctx
+	n.ShardAssignmentsStream.start(ctx)
 	return n.ShardAssignmentsStream, nil
 }
 
@@ -621,8 +622,16 @@ func (r *RpcProvider) GetHealthClient(node *proto.DataServerIdentity) (grpc_heal
 }
 
 type ShardAssignmentClient struct {
-	ctx context.Context
 	sync.Mutex
+
+	// ctx/cancel model a single gRPC client stream: canceling it mirrors the
+	// stream context being torn down when the RPC finishes. ended is closed to
+	// model the server terminating the RPC while the connection stays healthy;
+	// only a RecvMsg call observes it and cancels ctx, exactly as real gRPC only
+	// surfaces a server-side end once the client reads the stream.
+	ctx    context.Context
+	cancel context.CancelFunc
+	ended  chan struct{}
 
 	err     error
 	Updates chan *proto.ShardAssignments
@@ -631,6 +640,39 @@ type ShardAssignmentClient struct {
 func newShardAssignmentClient() *ShardAssignmentClient {
 	return &ShardAssignmentClient{
 		Updates: make(chan *proto.ShardAssignments, 100),
+	}
+}
+
+// start binds a fresh per-stream context, modeling a newly established stream.
+func (m *ShardAssignmentClient) start(ctx context.Context) {
+	m.Lock()
+	defer m.Unlock()
+
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.ctx, m.cancel = context.WithCancel(ctx)
+	m.ended = make(chan struct{})
+}
+
+// EndStream models the server ending the RPC (or rejecting it) while the
+// underlying connection stays healthy. It does not cancel the stream context
+// directly: the coordinator only notices once its background drain calls RecvMsg.
+func (m *ShardAssignmentClient) EndStream() {
+	m.Lock()
+	defer m.Unlock()
+
+	m.endLocked()
+}
+
+func (m *ShardAssignmentClient) endLocked() {
+	if m.ended == nil {
+		return
+	}
+	select {
+	case <-m.ended:
+	default:
+		close(m.ended)
 	}
 }
 
@@ -648,6 +690,9 @@ func (m *ShardAssignmentClient) Send(response *proto.ShardAssignments) error {
 	if m.err != nil {
 		err := m.err
 		m.err = nil
+		// A send failure tears the stream down; end it so the background drain
+		// unblocks, mirroring real gRPC stream teardown.
+		m.endLocked()
 		return err
 	}
 
@@ -672,6 +717,9 @@ func (*ShardAssignmentClient) CloseSend() error {
 }
 
 func (m *ShardAssignmentClient) Context() context.Context {
+	m.Lock()
+	defer m.Unlock()
+
 	return m.ctx
 }
 
@@ -679,8 +727,23 @@ func (*ShardAssignmentClient) SendMsg(any) error {
 	panic(errNotImplemented)
 }
 
-func (*ShardAssignmentClient) RecvMsg(any) error {
-	panic(errNotImplemented)
+// RecvMsg blocks until the stream ends, then cancels the per-stream context to
+// model gRPC's finish() (which is what makes stream.Context() fire in production).
+func (m *ShardAssignmentClient) RecvMsg(any) error {
+	m.Lock()
+	ctx, cancel, ended := m.ctx, m.cancel, m.ended
+	m.Unlock()
+
+	if ctx == nil {
+		return errNotImplemented
+	}
+	select {
+	case <-ended:
+		cancel()
+		return io.EOF
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type HealthClient struct {
