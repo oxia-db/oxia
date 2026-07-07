@@ -29,12 +29,15 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
+	coordrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/mockutils"
@@ -95,6 +98,112 @@ func newTestMetadata(t *testing.T, metadataProvider provider.Provider[*proto.Clu
 		assert.NoError(t, metadataFactory.Close())
 	})
 	return metadata
+}
+
+func newTestController( //nolint:revive // Test helper mirrors NewController and adds metadata setup.
+	t *testing.T,
+	metadata coordmetadata.Metadata,
+	namespace string,
+	shard int64,
+	namespaceConfig *proto.Namespace,
+	shardMetadata *proto.ShardMetadata,
+	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
+	rpcProvider coordrpc.Provider,
+	periodicTasksInterval time.Duration,
+) Controller {
+	t.Helper()
+	storeTestShardMetadata(t, metadata, namespace, shard, namespaceConfig, shardMetadata)
+	return NewController(
+		namespace,
+		shard,
+		namespaceConfig,
+		shardMetadata,
+		metadata,
+		dataServerSupportedFeaturesSupplier,
+		nil,
+		rpcProvider,
+		periodicTasksInterval,
+	)
+}
+
+func storeTestShardMetadata(
+	t *testing.T,
+	metadata coordmetadata.Metadata,
+	namespace string,
+	shard int64,
+	namespaceConfig *proto.Namespace,
+	shardMetadata *proto.ShardMetadata,
+) {
+	t.Helper()
+	namespaceStatus := &proto.NamespaceStatus{
+		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
+		Shards: map[int64]*proto.ShardMetadata{
+			shard: gproto.CloneOf(shardMetadata),
+		},
+	}
+	assert.True(t, metadata.CreateNamespaceStatus(namespace, namespaceStatus))
+}
+
+func testShardMetadata(metadata coordmetadata.Metadata, namespace string, shard int64) (*proto.ShardMetadata, bool) {
+	borrowedMeta, exists := metadata.GetShardStatus(namespace, shard)
+	if !exists {
+		return nil, false
+	}
+	return gproto.CloneOf(borrowedMeta.UnsafeBorrow()), true
+}
+
+func requireShardMetadata(t *testing.T, metadata coordmetadata.Metadata, namespace string, shard int64) *proto.ShardMetadata {
+	t.Helper()
+	shardMetadata, exists := testShardMetadata(metadata, namespace, shard)
+	assert.True(t, exists)
+	return shardMetadata
+}
+
+func shardStatus(metadata coordmetadata.Metadata, namespace string, shard int64) proto.ShardStatus {
+	shardMetadata, exists := testShardMetadata(metadata, namespace, shard)
+	if !exists {
+		return proto.ShardStatusUnknown
+	}
+	return shardMetadata.GetStatusOrDefault()
+}
+
+func shardTerm(metadata coordmetadata.Metadata, namespace string, shard int64) int64 {
+	shardMetadata, exists := testShardMetadata(metadata, namespace, shard)
+	if !exists {
+		return 0
+	}
+	return shardMetadata.Term
+}
+
+func shardLeader(metadata coordmetadata.Metadata, namespace string, shard int64) *proto.DataServerIdentity {
+	shardMetadata, exists := testShardMetadata(metadata, namespace, shard)
+	if !exists {
+		return nil
+	}
+	return shardMetadata.Leader
+}
+
+func assertShardLeader(
+	t *testing.T,
+	metadata coordmetadata.Metadata,
+	namespace string,
+	shard int64,
+	expected *proto.DataServerIdentity,
+) {
+	t.Helper()
+	assert.True(t, gproto.Equal(expected, shardLeader(metadata, namespace, shard)))
+}
+
+func assertShardEnsemble(
+	t *testing.T,
+	actual []*proto.DataServerIdentity,
+	expected ...*proto.DataServerIdentity,
+) {
+	t.Helper()
+	require.Len(t, actual, len(expected))
+	for i, expectedServer := range expected {
+		assert.True(t, gproto.Equal(expectedServer, actual[i]))
+	}
 }
 
 func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
@@ -162,12 +271,12 @@ func TestController(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -185,10 +294,10 @@ func TestController(t *testing.T) {
 	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 2, sc.Metadata().Term())
-	assert.Equal(t, s1, sc.Metadata().Leader())
+	assert.EqualValues(t, 2, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
 
 	rpc.GetNode(s2).NewTermResponse(2, 0, nil)
 	rpc.GetNode(s3).NewTermResponse(2, -1, nil)
@@ -207,11 +316,11 @@ func TestController(t *testing.T) {
 	rpc.GetNode(s2).ExpectBecomeLeaderRequest(t, shard, 3, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
 
-	assert.EqualValues(t, 3, sc.Metadata().Term())
-	assert.Equal(t, s2, sc.Metadata().Leader())
+	assert.EqualValues(t, 3, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s2)
 
 	// Simulate the failure of the leader
 	sc.BecameUnavailable(s2)
@@ -240,12 +349,12 @@ func TestController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusSteadyState,
 		Term:     1,
 		Leader:   s1,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	n1.ExpectGetStatusRequest(t, shard)
 	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
@@ -271,12 +380,12 @@ func TestController_RetriesElectionWhenDataServerNotInitialized(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	rpc.GetNode(s1).NewTermResponse(0, 0, constant.ErrNotInitialized)
 	rpc.GetNode(s2).NewTermResponse(0, 0, constant.ErrNotInitialized)
@@ -299,10 +408,10 @@ func TestController_RetriesElectionWhenDataServerNotInitialized(t *testing.T) {
 	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 3, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 3, sc.Metadata().Term())
-	assert.Equal(t, s1, sc.Metadata().Leader())
+	assert.EqualValues(t, 3, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
 
 	assert.NoError(t, sc.Close())
 }
@@ -317,12 +426,12 @@ func TestController_NewTermWithNonRespondingServer(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	timeStart := time.Now()
 
@@ -344,12 +453,12 @@ func TestController_NewTermWithNonRespondingServer(t *testing.T) {
 	assert.WithinDuration(t, timeStart, time.Now(), 1*time.Second)
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
 
-	assert.Equal(t, proto.ShardStatusSteadyState, sc.Metadata().Status())
-	assert.EqualValues(t, 2, sc.Metadata().Term())
-	assert.Equal(t, s1, sc.Metadata().Leader())
+	assert.Equal(t, proto.ShardStatusSteadyState, shardStatus(metadata, constant.DefaultNamespace, shard))
+	assert.EqualValues(t, 2, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
 
 	assert.NoError(t, sc.Close())
 }
@@ -364,12 +473,12 @@ func TestController_NewTermFollowerUntilItRecovers(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	// s3 is failing, though we can still elect a leader
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -385,11 +494,11 @@ func TestController_NewTermFollowerUntilItRecovers(t *testing.T) {
 	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 2, sc.Metadata().Term())
-	assert.NotNil(t, sc.Metadata().Leader())
-	assert.Equal(t, s1, sc.Metadata().Leader())
+	assert.EqualValues(t, 2, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assert.NotNil(t, shardLeader(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
 
 	// One more failure from s1
 	rpc.GetNode(s3).NewTermResponse(1, -1, errors.New("fails"))
@@ -419,12 +528,12 @@ func TestController_VerifyFollowersWereAllFenced(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusSteadyState,
 		Term:     4,
 		Leader:   s1,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	n1.ExpectGetStatusRequest(t, 5)
 	n1.GetStatusResponse(4, proto.ServingStatus_LEADER, 0, 0)
@@ -465,12 +574,12 @@ func TestController_NotificationsDisabled(t *testing.T) {
 		},
 	})
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	// Shard controller should initiate a leader election
 	// and newTerm each server
@@ -498,12 +607,12 @@ func TestController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -523,11 +632,11 @@ func TestController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 2, sc.Metadata().Term())
-	assert.NotNil(t, sc.Metadata().Leader())
-	assert.Equal(t, s1, sc.Metadata().Leader())
+	assert.EqualValues(t, 2, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assert.NotNil(t, shardLeader(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
 
 	wg := concurrent.NewWaitGroup(1)
 
@@ -576,11 +685,11 @@ func TestController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	rpc.GetNode(s3).ExpectBecomeLeaderRequest(t, shard, 4, 3)
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 4, sc.Metadata().Term())
-	assert.NotNil(t, sc.Metadata().Leader())
-	assert.Equal(t, s3, sc.Metadata().Leader())
+	assert.EqualValues(t, 4, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assert.NotNil(t, shardLeader(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s3)
 
 	assert.NoError(t, sc.Close())
 }
@@ -596,12 +705,12 @@ func TestController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) {
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	}, NoOpSupportedFeaturesSupplier, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -621,11 +730,11 @@ func TestController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) {
 	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 2, sc.Metadata().Term())
-	assert.NotNil(t, sc.Metadata().Leader())
-	assert.Equal(t, s1, sc.Metadata().Leader())
+	assert.EqualValues(t, 2, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assert.NotNil(t, shardLeader(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
 
 	// Now start the swap dataServer, which will trigger a new election
 	wg := concurrent.NewWaitGroup(1)
@@ -672,11 +781,11 @@ func TestController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) {
 	rpc.GetNode(s1).DeleteShardResponse(errors.New("could not delete shard"))
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
-	assert.EqualValues(t, 3, sc.Metadata().Term())
-	assert.NotNil(t, sc.Metadata().Leader())
-	assert.Equal(t, s2, sc.Metadata().Leader())
+	assert.EqualValues(t, 3, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assert.NotNil(t, shardLeader(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s2)
 
 	// The swap dataServer should be free to complete as well
 	assert.NoError(t, wg.Wait(context.Background()))
@@ -684,8 +793,7 @@ func TestController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) {
 	// Eventually, the shard should get deleted
 	rpc.GetNode(s1).ExpectDeleteShardRequest(t, shard, 3)
 	assert.Eventually(t, func() bool {
-		c := sc.(*controller)
-		shardMeta := c.metadata.Load()
+		shardMeta := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 		return len(shardMeta.PendingDeleteShardNodes) == 1
 	}, 10*time.Second, 100*time.Millisecond)
 
@@ -695,8 +803,7 @@ func TestController_LeaderElectionShouldNotFailIfRemoveFails(t *testing.T) {
 
 	// s1 should be completely removed from list
 	assert.Eventually(t, func() bool {
-		c := sc.(*controller)
-		shardMeta := c.metadata.Load()
+		shardMeta := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 		return len(shardMeta.PendingDeleteShardNodes) == 0
 	}, 10*time.Second, 100*time.Millisecond)
 
@@ -715,12 +822,12 @@ func TestController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	s6 := &proto.DataServerIdentity{Public: "s6:9091", Internal: "s6:8191"}
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
-	sc := NewController(constant.DefaultNamespace, shardId, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shardId, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, NoOpSupportedFeaturesSupplier, nil, rpc, 1*time.Second)
+	}, NoOpSupportedFeaturesSupplier, rpc, 1*time.Second)
 
 	// Do initial election
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -750,8 +857,8 @@ func TestController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	_, err = action3.Wait()
 	assert.Error(t, err)
 
-	metaSnap := sc.Metadata().Load()
-	assert.EqualValues(t, metaSnap.Ensemble, []*proto.DataServerIdentity{s1, s2, s3})
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shardId)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
 
 	// test become leader would not change metadata ensemble
 	wait := sync.WaitGroup{}
@@ -794,8 +901,8 @@ func TestController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	rpc.GetNode(s6).NewTermResponse(4, 3, nil)
 	wait.Wait()
 
-	metaSnap = sc.Metadata().Load()
-	assert.EqualValues(t, metaSnap.Ensemble, []*proto.DataServerIdentity{s1, s2, s3})
+	metaSnap = requireShardMetadata(t, metadata, constant.DefaultNamespace, shardId)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
 }
 
 // Test feature negotiation with all nodes supporting the same features.
@@ -826,12 +933,12 @@ func TestController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 		return result
 	}
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, featureSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
@@ -847,7 +954,7 @@ func TestController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
 
 	sc.Close()
@@ -881,12 +988,12 @@ func TestController_FeatureNegotiation_MixedVersions(t *testing.T) {
 		return result
 	}
 
-	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusUnknown,
 		Term:     1,
 		Leader:   nil,
 		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	}, metadata, featureSupplier, nil, rpc, DefaultPeriodicTasksInterval)
+	}, featureSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
@@ -902,7 +1009,7 @@ func TestController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, []proto.Feature{})
 
 	assert.Eventually(t, func() bool {
-		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
 	}, 10*time.Second, 100*time.Millisecond)
 
 	sc.Close()
@@ -910,10 +1017,8 @@ func TestController_FeatureNegotiation_MixedVersions(t *testing.T) {
 
 // Each UpdateShardStatus persists the full cluster status, so re-writing it
 // for every shard on every periodic tick costs O(shards^2) bytes per interval
-// on the metadata backend. The periodic task must persist only when the
-// status resource diverges from the controller's local view. Every real
-// persist replaces the cached status object graph, so pointer identity
-// through GetShardStatus observes whether a write happened.
+// on the metadata backend. The periodic task must not persist when it has no
+// pending-delete bookkeeping to apply.
 func TestController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 	var shard int64 = 5
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
@@ -932,7 +1037,6 @@ func TestController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 	s := &controller{
 		namespace:     constant.DefaultNamespace,
 		shard:         shard,
-		metadata:      NewMetadata(shardMeta),
 		metadataStore: metadata,
 		logger:        slog.Default(),
 	}
@@ -940,28 +1044,14 @@ func TestController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 	borrowedBefore, exists := metadata.GetShardStatus(constant.DefaultNamespace, shard)
 	assert.True(t, exists)
 
-	// Steady state: the status resource matches the local view — no persist
+	// Steady state without pending-delete nodes: no persist
 	s.handlePeriodicTasks()
 	borrowedAfter, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
-
-	// Local divergence (what an election leaves behind): must persist
-	shardMeta.Term = 2
-	s.metadata.Store(shardMeta)
-	s.handlePeriodicTasks()
-	borrowedChanged, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
-	assert.NotSame(t, borrowedAfter.UnsafeBorrow(), borrowedChanged.UnsafeBorrow())
-	assert.EqualValues(t, 2, borrowedChanged.UnsafeBorrow().Term)
-
-	// Converged again: back to skipping
-	s.handlePeriodicTasks()
-	borrowedFinal, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
-	assert.Same(t, borrowedChanged.UnsafeBorrow(), borrowedFinal.UnsafeBorrow())
 }
 
 // While handlePeriodicTasks is blocked in the DeleteShard RPCs, the split
-// controller can store a term bump into this controller's metadata
-// (runtime.SplitComplete syncing the parent after Cutover). Clearing the
+// controller can store a term bump into the metadata store. Clearing the
 // pending-delete nodes must merge with that update, not write the whole
 // pre-RPC snapshot back over it.
 func TestController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *testing.T) {
@@ -985,7 +1075,6 @@ func TestController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *testi
 	s := &controller{
 		namespace:     constant.DefaultNamespace,
 		shard:         shard,
-		metadata:      NewMetadata(shardMeta),
 		metadataStore: metadata,
 		rpc:           rpc,
 		logger:        slog.Default(),
@@ -1003,7 +1092,9 @@ func TestController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *testi
 	rpc.GetNode(removed).ExpectDeleteShardRequest(t, shard, 1)
 
 	// A concurrent term bump lands while the RPC is in flight
-	s.metadata.Compute(func(m *proto.ShardMetadata) { m.Term = 7 })
+	updatedShardMeta := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	updatedShardMeta.Term = 7
+	metadata.UpdateShardStatus(constant.DefaultNamespace, shard, updatedShardMeta)
 
 	rpc.GetNode(removed).DeleteShardResponse(nil)
 	select {
@@ -1014,8 +1105,6 @@ func TestController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *testi
 
 	// The bump survives the pending-delete bookkeeping, and the merged view
 	// is what gets persisted to the status resource
-	assert.EqualValues(t, 7, s.metadata.Term())
-	assert.Empty(t, s.metadata.Load().PendingDeleteShardNodes)
 	borrowed, exists := metadata.GetShardStatus(constant.DefaultNamespace, shard)
 	assert.True(t, exists)
 	assert.EqualValues(t, 7, borrowed.UnsafeBorrow().Term)
