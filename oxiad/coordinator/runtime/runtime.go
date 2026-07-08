@@ -25,6 +25,7 @@ import (
 	"go.uber.org/multierr"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/constant"
 	commonobject "github.com/oxia-db/oxia/common/object"
 	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -80,10 +81,20 @@ func (c *runtime) LeaderElected(int64, *proto.DataServerIdentity, []*proto.DataS
 	c.computeNewAssignments()
 }
 
-func (c *runtime) ShardDeleted(int64) {
+func (c *runtime) ShardDeleted(shard int64) {
 	c.Lock()
-	defer c.Unlock()
+	sc, exists := c.shardControllers[shard]
+	if exists {
+		delete(c.shardControllers, shard)
+	}
 	c.computeNewAssignments()
+	c.Unlock()
+
+	if exists {
+		if err := sc.Close(); err != nil {
+			c.logger.Error("Failed to close shard controller", slog.Int64("shard", shard), slog.Any("error", err))
+		}
+	}
 }
 
 func (c *runtime) LoadBalancer() balancer.LoadBalancer {
@@ -434,7 +445,7 @@ func (c *runtime) handleActionElection(ac action.Action) {
 	c.RUnlock()
 	if !ok {
 		c.logger.Warn("Shard controller not found", slog.Int64("shard", electionAc.Shard))
-		electionAc.Done(nil)
+		electionAc.Done("")
 		return
 	}
 	electionAc.Done(sc.Election(electionAc))
@@ -453,6 +464,7 @@ func (c *runtime) handleActionChangeEnsemble(ac action.Action) {
 	c.RUnlock()
 	if !ok {
 		c.logger.Warn("Shard controller not found", slog.Int64("shard", changeEnsembleAction.Shard))
+		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
 		return
 	}
 
@@ -742,18 +754,7 @@ func (c *runtime) SplitComplete(parentShard int64, leftChild int64, rightChild i
 	// Trigger the parent shard controller's deletion. The shard controller
 	// retries DeleteShard RPCs indefinitely with backoff, handles unreachable
 	// nodes, and removes the parent from cluster status when done.
-	//
-	// First, sync the shard controller's local metadata with the status
-	// resource, since the split controller may have bumped the parent's term
-	// during Cutover.
 	if sc, exists := c.shardControllers[parentShard]; exists {
-		// Sync shard controller metadata from the status resource.
-		for _, namespaceStatus := range c.metadata.ListNamespaceStatus() {
-			if parentMeta, ok := namespaceStatus.UnsafeBorrow().Shards[parentShard]; ok {
-				sc.Metadata().Store(parentMeta)
-				break
-			}
-		}
 		sc.DeleteShard()
 	}
 
