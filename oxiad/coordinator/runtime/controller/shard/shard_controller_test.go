@@ -155,7 +155,7 @@ func testShardMetadata(metadata coordmetadata.Metadata, namespace string, shard 
 func requireShardMetadata(t *testing.T, metadata coordmetadata.Metadata, namespace string, shard int64) *proto.ShardMetadata {
 	t.Helper()
 	shardMetadata, exists := testShardMetadata(metadata, namespace, shard)
-	assert.True(t, exists)
+	require.True(t, exists)
 	return shardMetadata
 }
 
@@ -1048,6 +1048,52 @@ func TestController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 	s.handlePeriodicTasks()
 	borrowedAfter, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
+}
+
+func TestController_DeleteShardAllowsNilEventListener(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	assert.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			shard: &proto.ShardMetadata{
+				Status:   proto.ShardStatusDeleting,
+				Term:     1,
+				Leader:   leader,
+				Ensemble: []*proto.DataServerIdentity{leader},
+			},
+		},
+	}))
+
+	s := &controller{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadataStore: metadata,
+		rpc:           rpc,
+		logger:        slog.Default(),
+	}
+	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
+	defer s.ctxCancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.deleteShardWithRetries()
+		close(done)
+	}()
+
+	rpc.GetNode(leader).ExpectDeleteShardRequest(t, shard, 1)
+	rpc.GetNode(leader).DeleteShardResponse(nil)
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("deleteShardWithRetries did not complete")
+	}
+	_, exists := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.False(t, exists)
+	assert.True(t, s.terminating.Load())
 }
 
 // While handlePeriodicTasks is blocked in the DeleteShard RPCs, the split

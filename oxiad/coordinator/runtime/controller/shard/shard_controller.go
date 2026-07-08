@@ -472,18 +472,20 @@ func (s *controller) deleteShardWithRetries() {
 
 		s.terminating.Store(true)
 		s.metadataStore.DeleteShardStatus(s.namespace, s.shard)
-		go func() {
-			process.DoWithLabels(
-				context.Background(),
-				map[string]string{
-					"oxia":      "shard-controller-deleted-callback",
-					"namespace": s.namespace,
-					"shard":     fmt.Sprintf("%d", s.shard),
-				}, func() {
-					s.eventListener.ShardDeleted(s.shard)
-				},
-			)
-		}()
+		if s.eventListener != nil {
+			go func() {
+				process.DoWithLabels(
+					context.Background(),
+					map[string]string{
+						"oxia":      "shard-controller-deleted-callback",
+						"namespace": s.namespace,
+						"shard":     fmt.Sprintf("%d", s.shard),
+					}, func() {
+						s.eventListener.ShardDeleted(s.shard)
+					},
+				)
+			}()
+		}
 		return nil
 	}, oxiatime.NewBackOff(s.ctx),
 		func(err error, duration time.Duration) {
