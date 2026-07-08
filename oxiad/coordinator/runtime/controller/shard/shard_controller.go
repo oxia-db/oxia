@@ -609,13 +609,13 @@ func (s *controller) SyncServerAddress() {
 
 func (s *controller) handlePeriodicTasks() {
 	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
-	shardMeta := common.Must(borrowedMeta, exists,
+	mutShardMeta := gproto.CloneOf(common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
-		s.shard).UnsafeBorrow()
+		s.shard).UnsafeBorrow())
 
-	if len(shardMeta.PendingDeleteShardNodes) > 0 {
-		pendingDeleteShardNodes := append([]*proto.DataServerIdentity(nil), shardMeta.PendingDeleteShardNodes...)
-		term := shardMeta.Term
+	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
+		pendingDeleteShardNodes := append([]*proto.DataServerIdentity(nil), mutShardMeta.PendingDeleteShardNodes...)
+		term := mutShardMeta.Term
 		for _, ds := range pendingDeleteShardNodes {
 			s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
 
@@ -631,13 +631,6 @@ func (s *controller) handlePeriodicTasks() {
 			s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
 		}
 
-		// The DeleteShard RPCs above can leave a long window since the initial
-		// read. Reload before clearing pending-delete nodes so concurrent status
-		// updates are preserved.
-		borrowedMeta, exists = s.metadataStore.GetShardStatus(s.namespace, s.shard)
-		mutShardMeta := gproto.CloneOf(common.Must(borrowedMeta, exists,
-			"bug: shard metadata missing while clearing pending-delete nodes: namespace=", s.namespace, " shard=",
-			s.shard).UnsafeBorrow())
 		mutShardMeta.PendingDeleteShardNodes = nil
 		s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
 	}
