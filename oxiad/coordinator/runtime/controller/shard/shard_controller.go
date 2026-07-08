@@ -264,7 +264,7 @@ func (s *controller) run() {
 		}
 	}
 
-	s.logger.Info("Shard is ready")
+	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
 
 	// All the shard controllers start together at coordinator startup: spread
 	// the first periodic tick over the interval so the periodic tasks don't
@@ -311,9 +311,7 @@ func (s *controller) waitForSplitComplete() {
 		case <-ticker.C:
 			borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 			if !exists {
-				s.logger.Info("Split child shard metadata is gone, stopping shard controller")
-				s.ctxCancel()
-				return
+				continue
 			}
 			meta := borrowedMeta.UnsafeBorrow()
 			if meta.Split == nil {
