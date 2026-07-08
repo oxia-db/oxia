@@ -208,28 +208,16 @@ func (s *controller) Election(electionAction *action.ElectionAction) string {
 	}
 	clonedAction := electionAction.Clone()
 	clonedAction.Waiter.Add(1)
-	select {
-	case s.electionOp <- clonedAction:
-	case <-s.ctx.Done():
+	if !channel.PushNoBlock(s.electionOp, clonedAction) {
 		s.terminationMu.RUnlock()
+		clonedAction.Waiter.Done()
+		s.logger.Debug("Discarding leader election because queue is full")
 		return ""
 	}
 	s.terminationMu.RUnlock()
 
-	done := make(chan struct{})
-	go func() {
-		clonedAction.Waiter.Wait()
-		close(done)
-	}()
-	// The shard controller might start terminating while the election operation
-	// is still queued: don't keep the caller blocked on an operation that will
-	// never be processed.
-	select {
-	case <-done:
-		return clonedAction.NewLeader
-	case <-s.ctx.Done():
-		return ""
-	}
+	clonedAction.Waiter.Wait()
+	return clonedAction.NewLeader
 }
 
 func (s *controller) run() {
@@ -597,13 +585,12 @@ func (s *controller) SyncServerAddress() {
 	s.logger.Info("server address changed, start a new leader election")
 	group := &sync.WaitGroup{}
 	group.Add(1)
-	select {
-	case s.electionOp <- &action.ElectionAction{
+	if !channel.PushNoBlock(s.electionOp, &action.ElectionAction{
 		Shard:  s.shard,
 		Waiter: group,
-	}:
-	case <-s.ctx.Done():
+	}) {
 		group.Done()
+		s.logger.Debug("Discarding sync-server-address election because queue is full")
 	}
 }
 

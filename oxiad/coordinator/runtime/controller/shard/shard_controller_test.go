@@ -1050,6 +1050,81 @@ func TestController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
 }
 
+func TestController_ElectionDiscardsWhenQueueIsFull(t *testing.T) {
+	var shard int64 = 5
+	s := &controller{
+		shard:      shard,
+		electionOp: make(chan *action.ElectionAction, chanBufferSize),
+		logger:     slog.Default(),
+	}
+	for range chanBufferSize {
+		group := &sync.WaitGroup{}
+		group.Add(1)
+		s.electionOp <- &action.ElectionAction{
+			Shard:  shard,
+			Waiter: group,
+		}
+	}
+
+	done := make(chan string)
+	go func() {
+		done <- s.Election(&action.ElectionAction{Shard: shard})
+	}()
+
+	select {
+	case newLeader := <-done:
+		assert.Empty(t, newLeader)
+	case <-time.After(time.Second):
+		t.Fatal("Election blocked on a full election queue")
+	}
+	assert.Len(t, s.electionOp, chanBufferSize)
+}
+
+func TestController_SyncServerAddressDiscardsElectionWhenQueueIsFull(t *testing.T) {
+	var shard int64 = 5
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	serverName := "s1"
+	oldIdentity := &proto.DataServerIdentity{Name: &serverName, Public: "old-public:9091", Internal: "old-internal:8191"}
+	newIdentity := &proto.DataServerIdentity{Name: &serverName, Public: "new-public:9091", Internal: "new-internal:8191"}
+	assert.NoError(t, metadata.CreateDataServer(&proto.DataServer{Identity: newIdentity}))
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     1,
+		Leader:   oldIdentity,
+		Ensemble: []*proto.DataServerIdentity{oldIdentity},
+	})
+
+	s := &controller{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadataStore: metadata,
+		electionOp:    make(chan *action.ElectionAction, chanBufferSize),
+		logger:        slog.Default(),
+	}
+	for range chanBufferSize {
+		group := &sync.WaitGroup{}
+		group.Add(1)
+		s.electionOp <- &action.ElectionAction{
+			Shard:  shard,
+			Waiter: group,
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.SyncServerAddress()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SyncServerAddress blocked on a full election queue")
+	}
+	assert.Len(t, s.electionOp, chanBufferSize)
+}
+
 func TestController_DeleteShardAllowsNilEventListener(t *testing.T) {
 	var shard int64 = 5
 	rpc := mockutils.NewRpcProvider()
