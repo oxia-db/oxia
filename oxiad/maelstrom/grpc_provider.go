@@ -89,6 +89,13 @@ func (m *maelstromGrpcProvider) HandleOxiaRequest(msgType MsgType, msg *Message[
 			m.sendResponse(msg, MsgTypeBecomeLeaderResponse, blr)
 		}
 
+	case MsgTypeAddFollowerRequest:
+		if afr, err := m.getService(oxiaCoordination).(proto.OxiaCoordinationServer).AddFollower(context.Background(), message.(*proto.AddFollowerRequest)); err != nil {
+			sendError(msg.Body.MsgId, msg.Src, err)
+		} else {
+			m.sendResponse(msg, MsgTypeAddFollowerResponse, afr)
+		}
+
 	case MsgTypeTruncateRequest:
 		if tr, err := m.getService(oxiaLogReplication).(proto.OxiaLogReplicationServer).Truncate(context.Background(), message.(*proto.TruncateRequest)); err != nil {
 			sendError(msg.Body.MsgId, msg.Src, err)
