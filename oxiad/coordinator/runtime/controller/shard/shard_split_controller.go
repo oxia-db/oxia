@@ -50,6 +50,10 @@ type SplitController struct {
 	// ensembleSelector selects server ensembles for new shards.
 	ensembleSelector func(namespace string) ([]*proto.DataServerIdentity, error)
 
+	// supportedFeaturesSupplier reports the features supported by each data
+	// server, used to negotiate the feature set of the children's clean terms.
+	supportedFeaturesSupplier DataServerSupportedFeaturesSupplier
+
 	ctx       context.Context
 	ctxCancel context.CancelFunc
 	wg        sync.WaitGroup
@@ -67,6 +71,11 @@ type SplitControllerConfig struct {
 	EventListener    controllerapi.ShardSplitEventListener
 	EnsembleSelector func(namespace string) ([]*proto.DataServerIdentity, error)
 
+	// SupportedFeaturesSupplier reports the features supported by each data
+	// server. Optional: when nil, no features are negotiated for the
+	// children's clean terms.
+	SupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
+
 	// SplitTimeout is the maximum duration for the entire split operation.
 	// If the split does not complete within this time, it is aborted.
 	// Zero means use DefaultSplitTimeout.
@@ -77,13 +86,18 @@ type SplitControllerConfig struct {
 // in the background. It will pick up from whatever phase is persisted in
 // the cluster status.
 func NewSplitController(cfg SplitControllerConfig) *SplitController {
+	supportedFeaturesSupplier := cfg.SupportedFeaturesSupplier
+	if supportedFeaturesSupplier == nil {
+		supportedFeaturesSupplier = NoOpSupportedFeaturesSupplier
+	}
 	sc := &SplitController{
-		namespace:        cfg.Namespace,
-		parentShardId:    cfg.ParentShardId,
-		metadata:         cfg.Metadata,
-		rpcProvider:      cfg.RpcProvider,
-		eventListener:    cfg.EventListener,
-		ensembleSelector: cfg.EnsembleSelector,
+		namespace:                 cfg.Namespace,
+		parentShardId:             cfg.ParentShardId,
+		metadata:                  cfg.Metadata,
+		rpcProvider:               cfg.RpcProvider,
+		eventListener:             cfg.EventListener,
+		ensembleSelector:          cfg.EnsembleSelector,
+		supportedFeaturesSupplier: supportedFeaturesSupplier,
 		logger: slog.With(
 			slog.String("component", "shard-split-controller"),
 			slog.String("namespace", cfg.Namespace),
@@ -302,7 +316,7 @@ func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) e
 	}
 
 	childTerm := parentTerm
-	headEntries, err := sc.fenceEnsemble(childId, childTerm, childMeta.Ensemble)
+	headEntries, err := sc.fenceEnsemble(childId, childTerm, nil, childMeta.Ensemble)
 	if err != nil {
 		return errors.Wrapf(err, "failed to fence child shard %d", childId)
 	}
@@ -352,6 +366,10 @@ func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.D
 	}
 	childLeader := childMeta.Leader
 
+	// The child leader applies the parent's replicated entries, so the parent
+	// leader must be able to validate it supports the shard's features.
+	childLeaderFeatures := sc.supportedFeaturesSupplier([]*proto.DataServerIdentity{childLeader})[childLeader.GetNameOrDefault()]
+
 	_, err := sc.rpcProvider.AddFollower(sc.ctx, parentLeader, &proto.AddFollowerRequest{
 		Namespace:    sc.namespace,
 		Shard:        sc.parentShardId,
@@ -367,6 +385,7 @@ func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.D
 			MinHashInclusive: childMeta.GetInt32HashRange().GetMin(),
 			MaxHashInclusive: childMeta.GetInt32HashRange().GetMax(),
 		},
+		FollowerFeatures: &proto.FollowerFeatures{Supported: childLeaderFeatures},
 	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to add child %d as observer on parent", childId)
@@ -605,7 +624,7 @@ func (sc *SplitController) runCutover() error {
 	// for good and kills the (now fully-drained) observer cursors. The children
 	// already hold everything up to parentFinalOffset, so no data is lost.
 	newParentTerm := parentTerm + 1
-	if _, err := sc.fenceEnsemble(sc.parentShardId, newParentTerm, parentMeta.Ensemble); err != nil {
+	if _, err := sc.fenceEnsemble(sc.parentShardId, newParentTerm, nil, parentMeta.Ensemble); err != nil {
 		return errors.Wrap(err, "failed to fence parent during cutover")
 	}
 
@@ -813,6 +832,7 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 func (sc *SplitController) fenceEnsemble(
 	shardId int64,
 	term int64,
+	options *proto.NewTermOptions,
 	ensemble []*proto.DataServerIdentity,
 ) (map[*proto.DataServerIdentity]*proto.EntryId, error) {
 	type fenceResult struct {
@@ -831,6 +851,7 @@ func (sc *SplitController) fenceEnsemble(
 				Namespace: sc.namespace,
 				Shard:     shardId,
 				Term:      term,
+				Options:   options,
 			})
 			var entry *proto.EntryId
 			if res != nil {
@@ -974,8 +995,16 @@ func (sc *SplitController) reelectChild(childId int64) error {
 		return errors.Errorf("child shard %d has no leader", childId)
 	}
 
+	// The child database inherited the parent's enabled features through the
+	// snapshot, so the clean term must carry a negotiated feature set that
+	// covers them: the child leader refuses to lead otherwise.
+	negotiatedFeatures := negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble))
+
 	newTerm := childMeta.Term + 1
-	headEntries, err := sc.fenceEnsemble(childId, newTerm, childMeta.Ensemble)
+	headEntries, err := sc.fenceEnsemble(childId, newTerm, &proto.NewTermOptions{
+		EnableNotifications: true,
+		Features:            negotiatedFeatures,
+	}, childMeta.Ensemble)
 	if err != nil {
 		return err
 	}
@@ -997,6 +1026,7 @@ func (sc *SplitController) reelectChild(childId int64) error {
 		Term:              newTerm,
 		ReplicationFactor: uint32(len(childMeta.Ensemble)),
 		FollowerMaps:      followerMap,
+		FeaturesSupported: negotiatedFeatures,
 	})
 	if err != nil {
 		return errors.Wrapf(err, "BecomeLeader failed for child %d", childId)

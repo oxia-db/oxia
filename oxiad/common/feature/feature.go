@@ -26,3 +26,44 @@ func SupportedFeatures() []proto.Feature {
 		proto.Feature_FEATURE_DB_CHECKSUM,
 	}
 }
+
+// IsSupported reports whether this binary implements the given feature.
+func IsSupported(feature proto.Feature) bool {
+	for _, f := range SupportedFeatures() {
+		if f == feature {
+			return true
+		}
+	}
+	return false
+}
+
+// Unsupported returns the subset of features that this binary does not
+// implement. An empty result means all the features are supported.
+func Unsupported(features []proto.Feature) []proto.Feature {
+	var unsupported []proto.Feature
+	for _, f := range features {
+		if !IsSupported(f) {
+			unsupported = append(unsupported, f)
+		}
+	}
+	return unsupported
+}
+
+// Missing returns the features in required that are not contained in
+// available. An empty result means all the required features are available.
+func Missing(required []proto.Feature, available []proto.Feature) []proto.Feature {
+	var missing []proto.Feature
+	for _, r := range required {
+		found := false
+		for _, a := range available {
+			if a == r {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, r)
+		}
+	}
+	return missing
+}

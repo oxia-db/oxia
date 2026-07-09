@@ -65,6 +65,7 @@ const (
 	ReasonNotInitialized          string = "NOT_INITIALIZED"
 	ReasonResourceConflict        string = "RESOURCE_CONFLICT"
 	ReasonResourceUnavailable     string = "RESOURCE_UNAVAILABLE"
+	ReasonUnsupportedFeatures     string = "UNSUPPORTED_FEATURES"
 	ReasonUnknown                        = "UNKNOWN"
 )
 
@@ -82,6 +83,7 @@ var (
 	ErrNotInitialized          = errors.New("oxia: server not initialized yet")
 	ErrResourceConflict        = errors.New("oxia: resource conflict")
 	ErrResourceUnavailable     = errors.New("oxia: resource unavailable")
+	ErrUnsupportedFeatures     = errors.New("oxia: unsupported features")
 )
 
 type GrpcStatusOption func(ErrorMetadata)
@@ -151,6 +153,8 @@ func IntoGrpcStatusError(err error, opts ...GrpcStatusOption) error { //nolint:r
 		return withErrorInfoDetails(status.New(codes.FailedPrecondition, err.Error()), ReasonResourceConflict, metadata)
 	case errors.Is(err, ErrResourceUnavailable):
 		return withErrorInfoDetails(status.New(codes.Unavailable, err.Error()), ReasonResourceUnavailable, metadata)
+	case errors.Is(err, ErrUnsupportedFeatures):
+		return withErrorInfoDetails(status.New(codes.FailedPrecondition, err.Error()), ReasonUnsupportedFeatures, metadata)
 	default:
 		return status.Error(codes.Unknown, err.Error())
 	}
@@ -206,6 +210,8 @@ func FromGrpcError(err error) (error, ErrorMetadata) { //nolint:revive,staticche
 			return ErrResourceConflict, info.Metadata
 		case ReasonResourceUnavailable:
 			return ErrResourceUnavailable, info.Metadata
+		case ReasonUnsupportedFeatures:
+			return ErrUnsupportedFeatures, info.Metadata
 		default:
 			return err, info.Metadata
 		}

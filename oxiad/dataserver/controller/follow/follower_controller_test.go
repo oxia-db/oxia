@@ -1598,3 +1598,41 @@ func TestFollower_CumulativeAcks(t *testing.T) {
 
 	assert.NoError(t, fc.Close())
 }
+
+func TestFollower_NewTermRejectsUnsupportedFeature(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// A term pinning a feature this binary does not implement must be refused
+	_, err = fc.NewTerm(&proto.NewTermRequest{
+		Term: 1,
+		Options: &proto.NewTermOptions{
+			EnableNotifications: true,
+			Features:            []proto.Feature{proto.Feature(999)},
+		},
+	})
+	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, fc.Status())
+
+	// The follower is still usable for a term with supported features
+	res, err := fc.NewTerm(&proto.NewTermRequest{
+		Term: 1,
+		Options: &proto.NewTermOptions{
+			EnableNotifications: true,
+			Features:            []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, res.FeaturesEnabled)
+	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
+	assert.EqualValues(t, 1, fc.Term())
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}

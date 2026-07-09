@@ -505,6 +505,85 @@ func TestDB_RecoverFeatureFlagsRejectsMalformedKeys(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDB_RecoverFeatureFlagsRejectsUnsupportedFeature(t *testing.T) {
+	const unknownFeature = proto.Feature(999)
+
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	// Plant a flag for a feature id this binary does not implement, as an
+	// upgraded leader would have written before this binary was rolled back.
+	batch := testDB.(*db).kv.NewWriteBatch()
+	err = testDB.(*db).addASCIILong(featureFlagKey(unknownFeature), int64(unknownFeature), batch, 0)
+	assert.NoError(t, err)
+	assert.NoError(t, batch.Commit())
+	assert.NoError(t, batch.Close())
+	assert.NoError(t, testDB.Close())
+
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.Nil(t, testDB)
+	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_ProcessControlRequestRejectsUnsupportedFeature(t *testing.T) {
+	const unknownFeature = proto.Feature(999)
+
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	_, err = testDB.ProcessControlRequest(&proto.ControlRequest{
+		Value: &proto.ControlRequest_FeatureEnable{
+			FeatureEnable: &proto.FeatureEnableRequest{
+				Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, unknownFeature},
+			},
+		},
+	}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+	assert.False(t, testDB.IsFeatureEnabled(unknownFeature))
+	assert.False(t, testDB.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+	assert.Empty(t, testDB.EnabledFeatures())
+
+	// The rejected flags must not have been persisted either.
+	assert.NoError(t, testDB.Close())
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	assert.Empty(t, testDB.EnabledFeatures())
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDb_UpdateTermPinnedFeatures(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	options := ToDbOption(&proto.NewTermOptions{
+		EnableNotifications: true,
+		Features:            []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+	})
+	assert.NoError(t, testDB.UpdateTerm(4, options))
+	assert.NoError(t, testDB.Close())
+
+	// Reopen and verify the pinned feature set survives restarts.
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	term, restored, err := testDB.ReadTerm()
+	assert.NoError(t, err)
+	assert.EqualValues(t, 4, term)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, restored.Features)
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestDb_UpdateTerm(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)

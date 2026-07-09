@@ -118,6 +118,13 @@ enum KeySortingType {
 message NewTermOptions {
   bool enable_notifications = 1;
   KeySortingType key_sorting = 2;
+
+  // The feature set negotiated across the shard ensemble, pinned for the
+  // whole duration of the term: every entry of the term is applied with
+  // exactly these semantics, and changing the set requires a new term.
+  // A data server that does not support all the listed features must
+  // reject the NewTerm request.
+  repeated Feature features = 3;
 }
 
 message NewTermRequest {
@@ -130,6 +137,11 @@ message NewTermRequest {
 
 message NewTermResponse {
   EntryId head_entry_id = 1;
+
+  // The features already enabled in the node's database. The coordinator
+  // verifies that the term's negotiated feature set covers all of them
+  // before proceeding with the election.
+  repeated Feature features_enabled = 2;
 }
 
 message BecomeLeaderRequest {
@@ -169,6 +181,17 @@ message AddFollowerRequest {
   // The child filters its database and WAL entries to only keep keys
   // whose hash falls within this range.
   optional io.oxia.proto.v1.Int32HashRange split_hash_range = 8;
+
+  // The features supported by the joining follower's binary, as observed
+  // by the coordinator during the handshake. When present, the leader
+  // rejects the follower unless it covers every feature enabled for the
+  // shard. Absent when the request comes from a coordinator that predates
+  // feature-checked joins, in which case the leader skips the validation.
+  FollowerFeatures follower_features = 9;
+}
+
+message FollowerFeatures {
+  repeated Feature supported = 1;
 }
 
 message BecomeLeaderResponse {}
@@ -265,6 +288,10 @@ message GetStatusResponse {
   int64 commit_offset = 4;
 
   ShardStats shard_stats = 5;
+
+  // The features currently enabled in the shard's database. Used by the
+  // coordinator to validate ensemble changes against the shard's needs.
+  repeated Feature features_enabled = 6;
 }
 
 message ShardStats {

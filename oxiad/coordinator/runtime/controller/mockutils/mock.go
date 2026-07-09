@@ -253,6 +253,69 @@ func (m *PerNodeChannels) NewTermResponse(term int64, offset int64, err error) {
 	}, err}
 }
 
+// NewTermResponseWithFeatures enqueues a NewTerm response that also reports
+// the features already enabled in the node's database.
+func (m *PerNodeChannels) NewTermResponseWithFeatures(term int64, offset int64, featuresEnabled []proto.Feature, err error) {
+	m.newTermResponses <- struct {
+		*proto.NewTermResponse
+		error
+	}{&proto.NewTermResponse{
+		HeadEntryId: &proto.EntryId{
+			Term:   term,
+			Offset: offset,
+		},
+		FeaturesEnabled: featuresEnabled,
+	}, err}
+}
+
+// ExpectNewTermRequestWithFeatures verifies the NewTerm request pins the
+// expected feature set for the term.
+func (m *PerNodeChannels) ExpectNewTermRequestWithFeatures(t *testing.T, shard int64, term int64, expectedFeatures []proto.Feature) {
+	t.Helper()
+
+	var r *proto.NewTermRequest
+	select {
+	case r = <-m.NewTermRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive NewTerm request in time")
+		return
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	assert.ElementsMatch(t, expectedFeatures, r.Options.GetFeatures(), "pinned features should match")
+}
+
+func (m *PerNodeChannels) ExpectNoBecomeLeaderRequest(t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-m.becomeLeaderRequests:
+		assert.Fail(t, "should not have received any become leader request")
+	case <-time.After(defaultNegativeTimeout):
+		// expected
+	}
+}
+
+// ExpectAddFollowerRequestWithFeatures verifies the AddFollower request
+// reports the joiner's supported features.
+func (m *PerNodeChannels) ExpectAddFollowerRequestWithFeatures(t *testing.T, shard int64, term int64, expectedFeatures []proto.Feature) {
+	t.Helper()
+
+	var r *proto.AddFollowerRequest
+	select {
+	case r = <-m.addFollowerRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive AddFollower request in time")
+		return
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	assert.NotNil(t, r.FollowerFeatures, "the coordinator should report the follower's features")
+	assert.ElementsMatch(t, expectedFeatures, r.FollowerFeatures.GetSupported())
+}
+
 //nolint:revive
 func (m *PerNodeChannels) GetStatusResponse(term int64, status proto.ServingStatus,
 	headOffset int64, commitOffset int64) {
@@ -264,6 +327,21 @@ func (m *PerNodeChannels) GetStatusResponse(term int64, status proto.ServingStat
 		Status:       status,
 		HeadOffset:   headOffset,
 		CommitOffset: commitOffset,
+	}, nil}
+}
+
+//nolint:revive
+func (m *PerNodeChannels) GetStatusResponseWithFeatures(term int64, status proto.ServingStatus,
+	headOffset int64, commitOffset int64, featuresEnabled []proto.Feature) {
+	m.getStatusResponses <- struct {
+		*proto.GetStatusResponse
+		error
+	}{&proto.GetStatusResponse{
+		Term:            term,
+		Status:          status,
+		HeadOffset:      headOffset,
+		CommitOffset:    commitOffset,
+		FeaturesEnabled: featuresEnabled,
 	}, nil}
 }
 

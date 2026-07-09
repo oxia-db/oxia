@@ -648,8 +648,14 @@ type NewTermOptions struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	EnableNotifications bool                   `protobuf:"varint,1,opt,name=enable_notifications,json=enableNotifications,proto3" json:"enable_notifications,omitempty"`
 	KeySorting          KeySortingType         `protobuf:"varint,2,opt,name=key_sorting,json=keySorting,proto3,enum=replication.KeySortingType" json:"key_sorting,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// The feature set negotiated across the shard ensemble, pinned for the
+	// whole duration of the term: every entry of the term is applied with
+	// exactly these semantics, and changing the set requires a new term.
+	// A data server that does not support all the listed features must
+	// reject the NewTerm request.
+	Features      []Feature `protobuf:"varint,3,rep,packed,name=features,proto3,enum=replication.Feature" json:"features,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *NewTermOptions) Reset() {
@@ -694,6 +700,13 @@ func (x *NewTermOptions) GetKeySorting() KeySortingType {
 		return x.KeySorting
 	}
 	return KeySortingType_UNKNOWN
+}
+
+func (x *NewTermOptions) GetFeatures() []Feature {
+	if x != nil {
+		return x.Features
+	}
+	return nil
 }
 
 type NewTermRequest struct {
@@ -765,10 +778,14 @@ func (x *NewTermRequest) GetOptions() *NewTermOptions {
 }
 
 type NewTermResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	HeadEntryId   *EntryId               `protobuf:"bytes,1,opt,name=head_entry_id,json=headEntryId,proto3" json:"head_entry_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	HeadEntryId *EntryId               `protobuf:"bytes,1,opt,name=head_entry_id,json=headEntryId,proto3" json:"head_entry_id,omitempty"`
+	// The features already enabled in the node's database. The coordinator
+	// verifies that the term's negotiated feature set covers all of them
+	// before proceeding with the election.
+	FeaturesEnabled []Feature `protobuf:"varint,2,rep,packed,name=features_enabled,json=featuresEnabled,proto3,enum=replication.Feature" json:"features_enabled,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *NewTermResponse) Reset() {
@@ -804,6 +821,13 @@ func (*NewTermResponse) Descriptor() ([]byte, []int) {
 func (x *NewTermResponse) GetHeadEntryId() *EntryId {
 	if x != nil {
 		return x.HeadEntryId
+	}
+	return nil
+}
+
+func (x *NewTermResponse) GetFeaturesEnabled() []Feature {
+	if x != nil {
+		return x.FeaturesEnabled
 	}
 	return nil
 }
@@ -915,8 +939,14 @@ type AddFollowerRequest struct {
 	// The child filters its database and WAL entries to only keep keys
 	// whose hash falls within this range.
 	SplitHashRange *Int32HashRange `protobuf:"bytes,8,opt,name=split_hash_range,json=splitHashRange,proto3,oneof" json:"split_hash_range,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The features supported by the joining follower's binary, as observed
+	// by the coordinator during the handshake. When present, the leader
+	// rejects the follower unless it covers every feature enabled for the
+	// shard. Absent when the request comes from a coordinator that predates
+	// feature-checked joins, in which case the leader skips the validation.
+	FollowerFeatures *FollowerFeatures `protobuf:"bytes,9,opt,name=follower_features,json=followerFeatures,proto3" json:"follower_features,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *AddFollowerRequest) Reset() {
@@ -1005,6 +1035,57 @@ func (x *AddFollowerRequest) GetSplitHashRange() *Int32HashRange {
 	return nil
 }
 
+func (x *AddFollowerRequest) GetFollowerFeatures() *FollowerFeatures {
+	if x != nil {
+		return x.FollowerFeatures
+	}
+	return nil
+}
+
+type FollowerFeatures struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Supported     []Feature              `protobuf:"varint,1,rep,packed,name=supported,proto3,enum=replication.Feature" json:"supported,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FollowerFeatures) Reset() {
+	*x = FollowerFeatures{}
+	mi := &file_replication_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FollowerFeatures) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FollowerFeatures) ProtoMessage() {}
+
+func (x *FollowerFeatures) ProtoReflect() protoreflect.Message {
+	mi := &file_replication_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FollowerFeatures.ProtoReflect.Descriptor instead.
+func (*FollowerFeatures) Descriptor() ([]byte, []int) {
+	return file_replication_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *FollowerFeatures) GetSupported() []Feature {
+	if x != nil {
+		return x.Supported
+	}
+	return nil
+}
+
 type BecomeLeaderResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1013,7 +1094,7 @@ type BecomeLeaderResponse struct {
 
 func (x *BecomeLeaderResponse) Reset() {
 	*x = BecomeLeaderResponse{}
-	mi := &file_replication_proto_msgTypes[13]
+	mi := &file_replication_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1025,7 +1106,7 @@ func (x *BecomeLeaderResponse) String() string {
 func (*BecomeLeaderResponse) ProtoMessage() {}
 
 func (x *BecomeLeaderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[13]
+	mi := &file_replication_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1038,7 +1119,7 @@ func (x *BecomeLeaderResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BecomeLeaderResponse.ProtoReflect.Descriptor instead.
 func (*BecomeLeaderResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{13}
+	return file_replication_proto_rawDescGZIP(), []int{14}
 }
 
 type AddFollowerResponse struct {
@@ -1049,7 +1130,7 @@ type AddFollowerResponse struct {
 
 func (x *AddFollowerResponse) Reset() {
 	*x = AddFollowerResponse{}
-	mi := &file_replication_proto_msgTypes[14]
+	mi := &file_replication_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1061,7 +1142,7 @@ func (x *AddFollowerResponse) String() string {
 func (*AddFollowerResponse) ProtoMessage() {}
 
 func (x *AddFollowerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[14]
+	mi := &file_replication_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1074,7 +1155,7 @@ func (x *AddFollowerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddFollowerResponse.ProtoReflect.Descriptor instead.
 func (*AddFollowerResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{14}
+	return file_replication_proto_rawDescGZIP(), []int{15}
 }
 
 type TruncateRequest struct {
@@ -1089,7 +1170,7 @@ type TruncateRequest struct {
 
 func (x *TruncateRequest) Reset() {
 	*x = TruncateRequest{}
-	mi := &file_replication_proto_msgTypes[15]
+	mi := &file_replication_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1101,7 +1182,7 @@ func (x *TruncateRequest) String() string {
 func (*TruncateRequest) ProtoMessage() {}
 
 func (x *TruncateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[15]
+	mi := &file_replication_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1114,7 +1195,7 @@ func (x *TruncateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TruncateRequest.ProtoReflect.Descriptor instead.
 func (*TruncateRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{15}
+	return file_replication_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *TruncateRequest) GetNamespace() string {
@@ -1154,7 +1235,7 @@ type TruncateResponse struct {
 
 func (x *TruncateResponse) Reset() {
 	*x = TruncateResponse{}
-	mi := &file_replication_proto_msgTypes[16]
+	mi := &file_replication_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1166,7 +1247,7 @@ func (x *TruncateResponse) String() string {
 func (*TruncateResponse) ProtoMessage() {}
 
 func (x *TruncateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[16]
+	mi := &file_replication_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1179,7 +1260,7 @@ func (x *TruncateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TruncateResponse.ProtoReflect.Descriptor instead.
 func (*TruncateResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{16}
+	return file_replication_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *TruncateResponse) GetHeadEntryId() *EntryId {
@@ -1206,7 +1287,7 @@ type Append struct {
 
 func (x *Append) Reset() {
 	*x = Append{}
-	mi := &file_replication_proto_msgTypes[17]
+	mi := &file_replication_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1218,7 +1299,7 @@ func (x *Append) String() string {
 func (*Append) ProtoMessage() {}
 
 func (x *Append) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[17]
+	mi := &file_replication_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1231,7 +1312,7 @@ func (x *Append) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Append.ProtoReflect.Descriptor instead.
 func (*Append) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{17}
+	return file_replication_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Append) GetTerm() int64 {
@@ -1280,7 +1361,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_replication_proto_msgTypes[18]
+	mi := &file_replication_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1292,7 +1373,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[18]
+	mi := &file_replication_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1305,7 +1386,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{18}
+	return file_replication_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Ack) GetOffset() int64 {
@@ -1324,7 +1405,7 @@ type SnapshotResponse struct {
 
 func (x *SnapshotResponse) Reset() {
 	*x = SnapshotResponse{}
-	mi := &file_replication_proto_msgTypes[19]
+	mi := &file_replication_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1336,7 +1417,7 @@ func (x *SnapshotResponse) String() string {
 func (*SnapshotResponse) ProtoMessage() {}
 
 func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[19]
+	mi := &file_replication_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1349,7 +1430,7 @@ func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotResponse.ProtoReflect.Descriptor instead.
 func (*SnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{19}
+	return file_replication_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SnapshotResponse) GetAckOffset() int64 {
@@ -1370,7 +1451,7 @@ type DeleteShardRequest struct {
 
 func (x *DeleteShardRequest) Reset() {
 	*x = DeleteShardRequest{}
-	mi := &file_replication_proto_msgTypes[20]
+	mi := &file_replication_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1382,7 +1463,7 @@ func (x *DeleteShardRequest) String() string {
 func (*DeleteShardRequest) ProtoMessage() {}
 
 func (x *DeleteShardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[20]
+	mi := &file_replication_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1395,7 +1476,7 @@ func (x *DeleteShardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteShardRequest.ProtoReflect.Descriptor instead.
 func (*DeleteShardRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{20}
+	return file_replication_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *DeleteShardRequest) GetNamespace() string {
@@ -1427,7 +1508,7 @@ type DeleteShardResponse struct {
 
 func (x *DeleteShardResponse) Reset() {
 	*x = DeleteShardResponse{}
-	mi := &file_replication_proto_msgTypes[21]
+	mi := &file_replication_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1439,7 +1520,7 @@ func (x *DeleteShardResponse) String() string {
 func (*DeleteShardResponse) ProtoMessage() {}
 
 func (x *DeleteShardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[21]
+	mi := &file_replication_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1452,7 +1533,7 @@ func (x *DeleteShardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteShardResponse.ProtoReflect.Descriptor instead.
 func (*DeleteShardResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{21}
+	return file_replication_proto_rawDescGZIP(), []int{22}
 }
 
 type RemoveObserverRequest struct {
@@ -1468,7 +1549,7 @@ type RemoveObserverRequest struct {
 
 func (x *RemoveObserverRequest) Reset() {
 	*x = RemoveObserverRequest{}
-	mi := &file_replication_proto_msgTypes[22]
+	mi := &file_replication_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1480,7 +1561,7 @@ func (x *RemoveObserverRequest) String() string {
 func (*RemoveObserverRequest) ProtoMessage() {}
 
 func (x *RemoveObserverRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[22]
+	mi := &file_replication_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1493,7 +1574,7 @@ func (x *RemoveObserverRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveObserverRequest.ProtoReflect.Descriptor instead.
 func (*RemoveObserverRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{22}
+	return file_replication_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *RemoveObserverRequest) GetNamespace() string {
@@ -1539,7 +1620,7 @@ type RemoveObserverResponse struct {
 
 func (x *RemoveObserverResponse) Reset() {
 	*x = RemoveObserverResponse{}
-	mi := &file_replication_proto_msgTypes[23]
+	mi := &file_replication_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1551,7 +1632,7 @@ func (x *RemoveObserverResponse) String() string {
 func (*RemoveObserverResponse) ProtoMessage() {}
 
 func (x *RemoveObserverResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[23]
+	mi := &file_replication_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1564,7 +1645,7 @@ func (x *RemoveObserverResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveObserverResponse.ProtoReflect.Descriptor instead.
 func (*RemoveObserverResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{23}
+	return file_replication_proto_rawDescGZIP(), []int{24}
 }
 
 type FreezeShardRequest struct {
@@ -1580,7 +1661,7 @@ type FreezeShardRequest struct {
 
 func (x *FreezeShardRequest) Reset() {
 	*x = FreezeShardRequest{}
-	mi := &file_replication_proto_msgTypes[24]
+	mi := &file_replication_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1592,7 +1673,7 @@ func (x *FreezeShardRequest) String() string {
 func (*FreezeShardRequest) ProtoMessage() {}
 
 func (x *FreezeShardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[24]
+	mi := &file_replication_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1605,7 +1686,7 @@ func (x *FreezeShardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FreezeShardRequest.ProtoReflect.Descriptor instead.
 func (*FreezeShardRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{24}
+	return file_replication_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *FreezeShardRequest) GetNamespace() string {
@@ -1647,7 +1728,7 @@ type FreezeShardResponse struct {
 
 func (x *FreezeShardResponse) Reset() {
 	*x = FreezeShardResponse{}
-	mi := &file_replication_proto_msgTypes[25]
+	mi := &file_replication_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1659,7 +1740,7 @@ func (x *FreezeShardResponse) String() string {
 func (*FreezeShardResponse) ProtoMessage() {}
 
 func (x *FreezeShardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[25]
+	mi := &file_replication_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1672,7 +1753,7 @@ func (x *FreezeShardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FreezeShardResponse.ProtoReflect.Descriptor instead.
 func (*FreezeShardResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{25}
+	return file_replication_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *FreezeShardResponse) GetHeadOffset() int64 {
@@ -1691,7 +1772,7 @@ type GetStatusRequest struct {
 
 func (x *GetStatusRequest) Reset() {
 	*x = GetStatusRequest{}
-	mi := &file_replication_proto_msgTypes[26]
+	mi := &file_replication_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1703,7 +1784,7 @@ func (x *GetStatusRequest) String() string {
 func (*GetStatusRequest) ProtoMessage() {}
 
 func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[26]
+	mi := &file_replication_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1716,7 +1797,7 @@ func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetStatusRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{26}
+	return file_replication_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *GetStatusRequest) GetShard() int64 {
@@ -1727,19 +1808,22 @@ func (x *GetStatusRequest) GetShard() int64 {
 }
 
 type GetStatusResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Term          int64                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
-	Status        ServingStatus          `protobuf:"varint,2,opt,name=status,proto3,enum=replication.ServingStatus" json:"status,omitempty"`
-	HeadOffset    int64                  `protobuf:"varint,3,opt,name=head_offset,json=headOffset,proto3" json:"head_offset,omitempty"`
-	CommitOffset  int64                  `protobuf:"varint,4,opt,name=commit_offset,json=commitOffset,proto3" json:"commit_offset,omitempty"`
-	ShardStats    *ShardStats            `protobuf:"bytes,5,opt,name=shard_stats,json=shardStats,proto3" json:"shard_stats,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Term         int64                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
+	Status       ServingStatus          `protobuf:"varint,2,opt,name=status,proto3,enum=replication.ServingStatus" json:"status,omitempty"`
+	HeadOffset   int64                  `protobuf:"varint,3,opt,name=head_offset,json=headOffset,proto3" json:"head_offset,omitempty"`
+	CommitOffset int64                  `protobuf:"varint,4,opt,name=commit_offset,json=commitOffset,proto3" json:"commit_offset,omitempty"`
+	ShardStats   *ShardStats            `protobuf:"bytes,5,opt,name=shard_stats,json=shardStats,proto3" json:"shard_stats,omitempty"`
+	// The features currently enabled in the shard's database. Used by the
+	// coordinator to validate ensemble changes against the shard's needs.
+	FeaturesEnabled []Feature `protobuf:"varint,6,rep,packed,name=features_enabled,json=featuresEnabled,proto3,enum=replication.Feature" json:"features_enabled,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *GetStatusResponse) Reset() {
 	*x = GetStatusResponse{}
-	mi := &file_replication_proto_msgTypes[27]
+	mi := &file_replication_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1751,7 +1835,7 @@ func (x *GetStatusResponse) String() string {
 func (*GetStatusResponse) ProtoMessage() {}
 
 func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[27]
+	mi := &file_replication_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1764,7 +1848,7 @@ func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetStatusResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{27}
+	return file_replication_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *GetStatusResponse) GetTerm() int64 {
@@ -1802,6 +1886,13 @@ func (x *GetStatusResponse) GetShardStats() *ShardStats {
 	return nil
 }
 
+func (x *GetStatusResponse) GetFeaturesEnabled() []Feature {
+	if x != nil {
+		return x.FeaturesEnabled
+	}
+	return nil
+}
+
 type ShardStats struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DbSizeBytes   uint64                 `protobuf:"varint,1,opt,name=db_size_bytes,json=dbSizeBytes,proto3" json:"db_size_bytes,omitempty"`
@@ -1813,7 +1904,7 @@ type ShardStats struct {
 
 func (x *ShardStats) Reset() {
 	*x = ShardStats{}
-	mi := &file_replication_proto_msgTypes[28]
+	mi := &file_replication_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1825,7 +1916,7 @@ func (x *ShardStats) String() string {
 func (*ShardStats) ProtoMessage() {}
 
 func (x *ShardStats) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[28]
+	mi := &file_replication_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1838,7 +1929,7 @@ func (x *ShardStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShardStats.ProtoReflect.Descriptor instead.
 func (*ShardStats) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{28}
+	return file_replication_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ShardStats) GetDbSizeBytes() uint64 {
@@ -1892,18 +1983,20 @@ const file_replication_proto_rawDesc = "" +
 	"\vchunk_index\x18\x04 \x01(\x05R\n" +
 	"chunkIndex\x12\x1f\n" +
 	"\vchunk_count\x18\x05 \x01(\x05R\n" +
-	"chunkCount\"\x81\x01\n" +
+	"chunkCount\"\xb3\x01\n" +
 	"\x0eNewTermOptions\x121\n" +
 	"\x14enable_notifications\x18\x01 \x01(\bR\x13enableNotifications\x12<\n" +
 	"\vkey_sorting\x18\x02 \x01(\x0e2\x1b.replication.KeySortingTypeR\n" +
-	"keySorting\"\x8f\x01\n" +
+	"keySorting\x120\n" +
+	"\bfeatures\x18\x03 \x03(\x0e2\x14.replication.FeatureR\bfeatures\"\x8f\x01\n" +
 	"\x0eNewTermRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
 	"\x05shard\x18\x02 \x01(\x03R\x05shard\x12\x12\n" +
 	"\x04term\x18\x03 \x01(\x03R\x04term\x125\n" +
-	"\aoptions\x18\x04 \x01(\v2\x1b.replication.NewTermOptionsR\aoptions\"K\n" +
+	"\aoptions\x18\x04 \x01(\v2\x1b.replication.NewTermOptionsR\aoptions\"\x8c\x01\n" +
 	"\x0fNewTermResponse\x128\n" +
-	"\rhead_entry_id\x18\x01 \x01(\v2\x14.replication.EntryIdR\vheadEntryId\"\x81\x03\n" +
+	"\rhead_entry_id\x18\x01 \x01(\v2\x14.replication.EntryIdR\vheadEntryId\x12?\n" +
+	"\x10features_enabled\x18\x02 \x03(\x0e2\x14.replication.FeatureR\x0ffeaturesEnabled\"\x81\x03\n" +
 	"\x13BecomeLeaderRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
 	"\x05shard\x18\x02 \x01(\x03R\x05shard\x12\x12\n" +
@@ -1913,7 +2006,7 @@ const file_replication_proto_rawDesc = "" +
 	"\x12features_supported\x18\x06 \x03(\x0e2\x14.replication.FeatureR\x11featuresSupported\x1aU\n" +
 	"\x11FollowerMapsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12*\n" +
-	"\x05value\x18\x02 \x01(\v2\x14.replication.EntryIdR\x05value:\x028\x01\"\x87\x03\n" +
+	"\x05value\x18\x02 \x01(\v2\x14.replication.EntryIdR\x05value:\x028\x01\"\xd3\x03\n" +
 	"\x12AddFollowerRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
 	"\x05shard\x18\x02 \x01(\x03R\x05shard\x12\x12\n" +
@@ -1922,9 +2015,12 @@ const file_replication_proto_rawDesc = "" +
 	"\x16follower_head_entry_id\x18\x05 \x01(\v2\x14.replication.EntryIdR\x13followerHeadEntryId\x12\x1a\n" +
 	"\bobserver\x18\x06 \x01(\bR\bobserver\x12&\n" +
 	"\ftarget_shard\x18\a \x01(\x03H\x00R\vtargetShard\x88\x01\x01\x12O\n" +
-	"\x10split_hash_range\x18\b \x01(\v2 .io.oxia.proto.v1.Int32HashRangeH\x01R\x0esplitHashRange\x88\x01\x01B\x0f\n" +
+	"\x10split_hash_range\x18\b \x01(\v2 .io.oxia.proto.v1.Int32HashRangeH\x01R\x0esplitHashRange\x88\x01\x01\x12J\n" +
+	"\x11follower_features\x18\t \x01(\v2\x1d.replication.FollowerFeaturesR\x10followerFeaturesB\x0f\n" +
 	"\r_target_shardB\x13\n" +
-	"\x11_split_hash_range\"\x16\n" +
+	"\x11_split_hash_range\"F\n" +
+	"\x10FollowerFeatures\x122\n" +
+	"\tsupported\x18\x01 \x03(\x0e2\x14.replication.FeatureR\tsupported\"\x16\n" +
 	"\x14BecomeLeaderResponse\"\x15\n" +
 	"\x13AddFollowerResponse\"\x93\x01\n" +
 	"\x0fTruncateRequest\x12\x1c\n" +
@@ -1967,7 +2063,7 @@ const file_replication_proto_rawDesc = "" +
 	"\vhead_offset\x18\x01 \x01(\x03R\n" +
 	"headOffset\"(\n" +
 	"\x10GetStatusRequest\x12\x14\n" +
-	"\x05shard\x18\x01 \x01(\x03R\x05shard\"\xdb\x01\n" +
+	"\x05shard\x18\x01 \x01(\x03R\x05shard\"\x9c\x02\n" +
 	"\x11GetStatusResponse\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x03R\x04term\x122\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x1a.replication.ServingStatusR\x06status\x12\x1f\n" +
@@ -1975,7 +2071,8 @@ const file_replication_proto_rawDesc = "" +
 	"headOffset\x12#\n" +
 	"\rcommit_offset\x18\x04 \x01(\x03R\fcommitOffset\x128\n" +
 	"\vshard_stats\x18\x05 \x01(\v2\x17.replication.ShardStatsR\n" +
-	"shardStats\"~\n" +
+	"shardStats\x12?\n" +
+	"\x10features_enabled\x18\x06 \x03(\x0e2\x14.replication.FeatureR\x0ffeaturesEnabled\"~\n" +
 	"\n" +
 	"ShardStats\x12\"\n" +
 	"\rdb_size_bytes\x18\x01 \x01(\x04R\vdbSizeBytes\x12$\n" +
@@ -2030,7 +2127,7 @@ func file_replication_proto_rawDescGZIP() []byte {
 }
 
 var file_replication_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_replication_proto_goTypes = []any{
 	(Feature)(0),                                 // 0: replication.Feature
 	(HandshakeStatus)(0),                         // 1: replication.HandshakeStatus
@@ -2049,74 +2146,80 @@ var file_replication_proto_goTypes = []any{
 	(*NewTermResponse)(nil),                      // 14: replication.NewTermResponse
 	(*BecomeLeaderRequest)(nil),                  // 15: replication.BecomeLeaderRequest
 	(*AddFollowerRequest)(nil),                   // 16: replication.AddFollowerRequest
-	(*BecomeLeaderResponse)(nil),                 // 17: replication.BecomeLeaderResponse
-	(*AddFollowerResponse)(nil),                  // 18: replication.AddFollowerResponse
-	(*TruncateRequest)(nil),                      // 19: replication.TruncateRequest
-	(*TruncateResponse)(nil),                     // 20: replication.TruncateResponse
-	(*Append)(nil),                               // 21: replication.Append
-	(*Ack)(nil),                                  // 22: replication.Ack
-	(*SnapshotResponse)(nil),                     // 23: replication.SnapshotResponse
-	(*DeleteShardRequest)(nil),                   // 24: replication.DeleteShardRequest
-	(*DeleteShardResponse)(nil),                  // 25: replication.DeleteShardResponse
-	(*RemoveObserverRequest)(nil),                // 26: replication.RemoveObserverRequest
-	(*RemoveObserverResponse)(nil),               // 27: replication.RemoveObserverResponse
-	(*FreezeShardRequest)(nil),                   // 28: replication.FreezeShardRequest
-	(*FreezeShardResponse)(nil),                  // 29: replication.FreezeShardResponse
-	(*GetStatusRequest)(nil),                     // 30: replication.GetStatusRequest
-	(*GetStatusResponse)(nil),                    // 31: replication.GetStatusResponse
-	(*ShardStats)(nil),                           // 32: replication.ShardStats
-	nil,                                          // 33: replication.BecomeLeaderRequest.FollowerMapsEntry
-	(*Int32HashRange)(nil),                       // 34: io.oxia.proto.v1.Int32HashRange
-	(*ShardAssignments)(nil),                     // 35: io.oxia.proto.v1.ShardAssignments
+	(*FollowerFeatures)(nil),                     // 17: replication.FollowerFeatures
+	(*BecomeLeaderResponse)(nil),                 // 18: replication.BecomeLeaderResponse
+	(*AddFollowerResponse)(nil),                  // 19: replication.AddFollowerResponse
+	(*TruncateRequest)(nil),                      // 20: replication.TruncateRequest
+	(*TruncateResponse)(nil),                     // 21: replication.TruncateResponse
+	(*Append)(nil),                               // 22: replication.Append
+	(*Ack)(nil),                                  // 23: replication.Ack
+	(*SnapshotResponse)(nil),                     // 24: replication.SnapshotResponse
+	(*DeleteShardRequest)(nil),                   // 25: replication.DeleteShardRequest
+	(*DeleteShardResponse)(nil),                  // 26: replication.DeleteShardResponse
+	(*RemoveObserverRequest)(nil),                // 27: replication.RemoveObserverRequest
+	(*RemoveObserverResponse)(nil),               // 28: replication.RemoveObserverResponse
+	(*FreezeShardRequest)(nil),                   // 29: replication.FreezeShardRequest
+	(*FreezeShardResponse)(nil),                  // 30: replication.FreezeShardResponse
+	(*GetStatusRequest)(nil),                     // 31: replication.GetStatusRequest
+	(*GetStatusResponse)(nil),                    // 32: replication.GetStatusResponse
+	(*ShardStats)(nil),                           // 33: replication.ShardStats
+	nil,                                          // 34: replication.BecomeLeaderRequest.FollowerMapsEntry
+	(*Int32HashRange)(nil),                       // 35: io.oxia.proto.v1.Int32HashRange
+	(*ShardAssignments)(nil),                     // 36: io.oxia.proto.v1.ShardAssignments
 }
 var file_replication_proto_depIdxs = []int32{
 	0,  // 0: replication.GetInfoResponse.features_supported:type_name -> replication.Feature
 	1,  // 1: replication.HandshakeResponse.status:type_name -> replication.HandshakeStatus
 	0,  // 2: replication.HandshakeResponse.features_supported:type_name -> replication.Feature
 	2,  // 3: replication.NewTermOptions.key_sorting:type_name -> replication.KeySortingType
-	12, // 4: replication.NewTermRequest.options:type_name -> replication.NewTermOptions
-	9,  // 5: replication.NewTermResponse.head_entry_id:type_name -> replication.EntryId
-	33, // 6: replication.BecomeLeaderRequest.follower_maps:type_name -> replication.BecomeLeaderRequest.FollowerMapsEntry
-	0,  // 7: replication.BecomeLeaderRequest.features_supported:type_name -> replication.Feature
-	9,  // 8: replication.AddFollowerRequest.follower_head_entry_id:type_name -> replication.EntryId
-	34, // 9: replication.AddFollowerRequest.split_hash_range:type_name -> io.oxia.proto.v1.Int32HashRange
-	9,  // 10: replication.TruncateRequest.head_entry_id:type_name -> replication.EntryId
-	9,  // 11: replication.TruncateResponse.head_entry_id:type_name -> replication.EntryId
-	10, // 12: replication.Append.entry:type_name -> replication.LogEntry
-	3,  // 13: replication.GetStatusResponse.status:type_name -> replication.ServingStatus
-	32, // 14: replication.GetStatusResponse.shard_stats:type_name -> replication.ShardStats
-	9,  // 15: replication.BecomeLeaderRequest.FollowerMapsEntry.value:type_name -> replication.EntryId
-	35, // 16: replication.OxiaCoordination.PushShardAssignments:input_type -> io.oxia.proto.v1.ShardAssignments
-	13, // 17: replication.OxiaCoordination.NewTerm:input_type -> replication.NewTermRequest
-	15, // 18: replication.OxiaCoordination.BecomeLeader:input_type -> replication.BecomeLeaderRequest
-	16, // 19: replication.OxiaCoordination.AddFollower:input_type -> replication.AddFollowerRequest
-	30, // 20: replication.OxiaCoordination.GetStatus:input_type -> replication.GetStatusRequest
-	24, // 21: replication.OxiaCoordination.DeleteShard:input_type -> replication.DeleteShardRequest
-	6,  // 22: replication.OxiaCoordination.Handshake:input_type -> replication.HandshakeRequest
-	4,  // 23: replication.OxiaCoordination.GetInfo:input_type -> replication.GetInfoRequest
-	26, // 24: replication.OxiaCoordination.RemoveObserver:input_type -> replication.RemoveObserverRequest
-	28, // 25: replication.OxiaCoordination.FreezeShard:input_type -> replication.FreezeShardRequest
-	19, // 26: replication.OxiaLogReplication.Truncate:input_type -> replication.TruncateRequest
-	21, // 27: replication.OxiaLogReplication.Replicate:input_type -> replication.Append
-	11, // 28: replication.OxiaLogReplication.SendSnapshot:input_type -> replication.SnapshotChunk
-	8,  // 29: replication.OxiaCoordination.PushShardAssignments:output_type -> replication.CoordinationShardAssignmentsResponse
-	14, // 30: replication.OxiaCoordination.NewTerm:output_type -> replication.NewTermResponse
-	17, // 31: replication.OxiaCoordination.BecomeLeader:output_type -> replication.BecomeLeaderResponse
-	18, // 32: replication.OxiaCoordination.AddFollower:output_type -> replication.AddFollowerResponse
-	31, // 33: replication.OxiaCoordination.GetStatus:output_type -> replication.GetStatusResponse
-	25, // 34: replication.OxiaCoordination.DeleteShard:output_type -> replication.DeleteShardResponse
-	7,  // 35: replication.OxiaCoordination.Handshake:output_type -> replication.HandshakeResponse
-	5,  // 36: replication.OxiaCoordination.GetInfo:output_type -> replication.GetInfoResponse
-	27, // 37: replication.OxiaCoordination.RemoveObserver:output_type -> replication.RemoveObserverResponse
-	29, // 38: replication.OxiaCoordination.FreezeShard:output_type -> replication.FreezeShardResponse
-	20, // 39: replication.OxiaLogReplication.Truncate:output_type -> replication.TruncateResponse
-	22, // 40: replication.OxiaLogReplication.Replicate:output_type -> replication.Ack
-	23, // 41: replication.OxiaLogReplication.SendSnapshot:output_type -> replication.SnapshotResponse
-	29, // [29:42] is the sub-list for method output_type
-	16, // [16:29] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	0,  // 4: replication.NewTermOptions.features:type_name -> replication.Feature
+	12, // 5: replication.NewTermRequest.options:type_name -> replication.NewTermOptions
+	9,  // 6: replication.NewTermResponse.head_entry_id:type_name -> replication.EntryId
+	0,  // 7: replication.NewTermResponse.features_enabled:type_name -> replication.Feature
+	34, // 8: replication.BecomeLeaderRequest.follower_maps:type_name -> replication.BecomeLeaderRequest.FollowerMapsEntry
+	0,  // 9: replication.BecomeLeaderRequest.features_supported:type_name -> replication.Feature
+	9,  // 10: replication.AddFollowerRequest.follower_head_entry_id:type_name -> replication.EntryId
+	35, // 11: replication.AddFollowerRequest.split_hash_range:type_name -> io.oxia.proto.v1.Int32HashRange
+	17, // 12: replication.AddFollowerRequest.follower_features:type_name -> replication.FollowerFeatures
+	0,  // 13: replication.FollowerFeatures.supported:type_name -> replication.Feature
+	9,  // 14: replication.TruncateRequest.head_entry_id:type_name -> replication.EntryId
+	9,  // 15: replication.TruncateResponse.head_entry_id:type_name -> replication.EntryId
+	10, // 16: replication.Append.entry:type_name -> replication.LogEntry
+	3,  // 17: replication.GetStatusResponse.status:type_name -> replication.ServingStatus
+	33, // 18: replication.GetStatusResponse.shard_stats:type_name -> replication.ShardStats
+	0,  // 19: replication.GetStatusResponse.features_enabled:type_name -> replication.Feature
+	9,  // 20: replication.BecomeLeaderRequest.FollowerMapsEntry.value:type_name -> replication.EntryId
+	36, // 21: replication.OxiaCoordination.PushShardAssignments:input_type -> io.oxia.proto.v1.ShardAssignments
+	13, // 22: replication.OxiaCoordination.NewTerm:input_type -> replication.NewTermRequest
+	15, // 23: replication.OxiaCoordination.BecomeLeader:input_type -> replication.BecomeLeaderRequest
+	16, // 24: replication.OxiaCoordination.AddFollower:input_type -> replication.AddFollowerRequest
+	31, // 25: replication.OxiaCoordination.GetStatus:input_type -> replication.GetStatusRequest
+	25, // 26: replication.OxiaCoordination.DeleteShard:input_type -> replication.DeleteShardRequest
+	6,  // 27: replication.OxiaCoordination.Handshake:input_type -> replication.HandshakeRequest
+	4,  // 28: replication.OxiaCoordination.GetInfo:input_type -> replication.GetInfoRequest
+	27, // 29: replication.OxiaCoordination.RemoveObserver:input_type -> replication.RemoveObserverRequest
+	29, // 30: replication.OxiaCoordination.FreezeShard:input_type -> replication.FreezeShardRequest
+	20, // 31: replication.OxiaLogReplication.Truncate:input_type -> replication.TruncateRequest
+	22, // 32: replication.OxiaLogReplication.Replicate:input_type -> replication.Append
+	11, // 33: replication.OxiaLogReplication.SendSnapshot:input_type -> replication.SnapshotChunk
+	8,  // 34: replication.OxiaCoordination.PushShardAssignments:output_type -> replication.CoordinationShardAssignmentsResponse
+	14, // 35: replication.OxiaCoordination.NewTerm:output_type -> replication.NewTermResponse
+	18, // 36: replication.OxiaCoordination.BecomeLeader:output_type -> replication.BecomeLeaderResponse
+	19, // 37: replication.OxiaCoordination.AddFollower:output_type -> replication.AddFollowerResponse
+	32, // 38: replication.OxiaCoordination.GetStatus:output_type -> replication.GetStatusResponse
+	26, // 39: replication.OxiaCoordination.DeleteShard:output_type -> replication.DeleteShardResponse
+	7,  // 40: replication.OxiaCoordination.Handshake:output_type -> replication.HandshakeResponse
+	5,  // 41: replication.OxiaCoordination.GetInfo:output_type -> replication.GetInfoResponse
+	28, // 42: replication.OxiaCoordination.RemoveObserver:output_type -> replication.RemoveObserverResponse
+	30, // 43: replication.OxiaCoordination.FreezeShard:output_type -> replication.FreezeShardResponse
+	21, // 44: replication.OxiaLogReplication.Truncate:output_type -> replication.TruncateResponse
+	23, // 45: replication.OxiaLogReplication.Replicate:output_type -> replication.Ack
+	24, // 46: replication.OxiaLogReplication.SendSnapshot:output_type -> replication.SnapshotResponse
+	34, // [34:47] is the sub-list for method output_type
+	21, // [21:34] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_replication_proto_init() }
@@ -2126,14 +2229,14 @@ func file_replication_proto_init() {
 	}
 	file_client_proto_init()
 	file_replication_proto_msgTypes[12].OneofWrappers = []any{}
-	file_replication_proto_msgTypes[17].OneofWrappers = []any{}
+	file_replication_proto_msgTypes[18].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_replication_proto_rawDesc), len(file_replication_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   30,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

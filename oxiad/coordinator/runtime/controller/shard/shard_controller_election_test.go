@@ -28,11 +28,7 @@ func testDataServer(id string) *proto.DataServerIdentity {
 	return &proto.DataServerIdentity{Internal: id, Public: id}
 }
 
-type electionResponse = struct {
-	DataServer *proto.DataServerIdentity
-	EntryID    *proto.EntryId
-	Err        error
-}
+type electionResponse = fenceResponse
 
 func TestNegotiate_EmptyInput(t *testing.T) {
 	result := negotiate(nil)
@@ -146,10 +142,10 @@ func TestWaitForMajority_Success(t *testing.T) {
 	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
-	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
+	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
+	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble)
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, totalResponses)
@@ -166,11 +162,11 @@ func TestWaitForMajority_FailureNoQuorum(t *testing.T) {
 	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
+	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
 	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
 	ch <- electionResponse{DataServer: server3, Err: errors.New("timeout")}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble)
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "election failed: quorum not reached")
@@ -186,11 +182,11 @@ func TestWaitForMajority_MixedSuccessAndFailure(t *testing.T) {
 	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
+	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
 	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
-	ch <- electionResponse{DataServer: server3, EntryID: &proto.EntryId{Term: 1, Offset: 90}}
+	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble)
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 3, totalResponses)
@@ -208,11 +204,11 @@ func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
 	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 4)
-	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
-	ch <- electionResponse{DataServer: removedServer, EntryID: &proto.EntryId{Term: 1, Offset: 110}}
-	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
+	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
+	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 110}}}
+	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble)
+	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 3, totalResponses)
@@ -230,10 +226,10 @@ func TestWaitForMajority_EarlyReturn(t *testing.T) {
 	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
 
 	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server1, EntryID: &proto.EntryId{Term: 1, Offset: 100}}
-	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
+	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
+	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble)
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, totalResponses, "should return early after reaching majority")
@@ -252,10 +248,10 @@ func TestWaitForGracePeriod_AllResponsesReceived(t *testing.T) {
 	}
 
 	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
-	ch <- electionResponse{DataServer: server3, EntryID: &proto.EntryId{Term: 1, Offset: 90}}
+	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
+	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
 
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse)
+	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[proto.Feature]bool))
 
 	assert.Len(t, candidatesResponse, 3, "all servers should be in the result")
 	assert.Equal(t, int64(100), candidatesResponse[server1].Offset)
@@ -276,7 +272,7 @@ func TestWaitForGracePeriod_Timeout(t *testing.T) {
 	ch := make(chan electionResponse, 3)
 
 	start := time.Now()
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse)
+	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[proto.Feature]bool))
 	elapsed := time.Since(start)
 
 	assert.Len(t, candidatesResponse, 1, "should only have initial server")
@@ -297,9 +293,9 @@ func TestWaitForGracePeriod_IgnoresErrors(t *testing.T) {
 
 	ch := make(chan electionResponse, 3)
 	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
-	ch <- electionResponse{DataServer: server3, EntryID: &proto.EntryId{Term: 1, Offset: 90}}
+	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
 
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse)
+	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[proto.Feature]bool))
 
 	assert.Len(t, candidatesResponse, 2, "should have initial server and successful response")
 	assert.Contains(t, candidatesResponse, server1)
@@ -319,10 +315,10 @@ func TestWaitForGracePeriod_ExcludesRemovedServers(t *testing.T) {
 	}
 
 	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: removedServer, EntryID: &proto.EntryId{Term: 1, Offset: 110}}
-	ch <- electionResponse{DataServer: server2, EntryID: &proto.EntryId{Term: 1, Offset: 95}}
+	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 110}}}
+	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse)
+	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[proto.Feature]bool))
 
 	assert.Len(t, candidatesResponse, 2)
 	assert.Contains(t, candidatesResponse, server1)
@@ -344,7 +340,7 @@ func TestWaitForGracePeriod_AlreadyComplete(t *testing.T) {
 	ch := make(chan electionResponse, 2)
 
 	start := time.Now()
-	e.waitForGracePeriod(ch, 2, ensemble, 2, candidatesResponse)
+	e.waitForGracePeriod(ch, 2, ensemble, 2, candidatesResponse, make(map[proto.Feature]bool))
 	elapsed := time.Since(start)
 
 	assert.Len(t, candidatesResponse, 2)

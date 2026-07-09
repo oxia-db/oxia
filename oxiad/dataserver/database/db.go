@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -78,6 +80,10 @@ type RangeScanIterator interface {
 type TermOptions struct {
 	NotificationsEnabled bool
 	KeySorting           proto.KeySortingType
+
+	// Features is the feature set negotiated for the term, pinned for its
+	// whole duration. Kept sorted so the persisted form is deterministic.
+	Features []proto.Feature
 }
 
 type Meta struct {
@@ -89,8 +95,9 @@ type DB interface {
 
 	EnableNotifications(enable bool)
 
-	EnableFeature(feature proto.Feature)
-	IsFeatureEnabled(feature proto.Feature) bool
+	EnableFeature(f proto.Feature)
+	IsFeatureEnabled(f proto.Feature) bool
+	EnabledFeatures() []proto.Feature
 	ReadChecksum() crc.Checksum
 	ResetChecksum()
 
@@ -315,17 +322,27 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	return notifications, res, nil
 }
 
-func (d *db) IsFeatureEnabled(feature proto.Feature) bool {
-	_, ok := d.enabledFeatures.Load(feature)
+func (d *db) IsFeatureEnabled(f proto.Feature) bool {
+	_, ok := d.enabledFeatures.Load(f)
 	return ok
 }
 
-func (d *db) EnableFeature(feature proto.Feature) {
-	d.enabledFeatures.Store(feature, true)
+func (d *db) EnableFeature(f proto.Feature) {
+	d.enabledFeatures.Store(f, true)
 }
 
-func featureFlagKey(feature proto.Feature) string {
-	return fmt.Sprintf("%s/%010d", featureFlagKeyPrefix, feature)
+func (d *db) EnabledFeatures() []proto.Feature {
+	var features []proto.Feature
+	d.enabledFeatures.Range(func(key, _ any) bool {
+		features = append(features, key.(proto.Feature))
+		return true
+	})
+	slices.Sort(features)
+	return features
+}
+
+func featureFlagKey(f proto.Feature) string {
+	return fmt.Sprintf("%s/%010d", featureFlagKeyPrefix, f)
 }
 
 func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64, timestamp uint64, _ UpdateOperationCallback) (*Meta, error) {
@@ -338,6 +355,12 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 	switch v := controlValue.(type) {
 	case *proto.ControlRequest_FeatureEnable:
 		featuresToEnable = v.FeatureEnable.GetFeatures()
+		if unsupported := feature.Unsupported(featuresToEnable); len(unsupported) > 0 {
+			// Applying entries after this one with the feature off would
+			// silently diverge from the replicas that do support it.
+			return nil, errors.Wrapf(constant.ErrUnsupportedFeatures,
+				"refusing to enable features %v not supported by this binary", unsupported)
+		}
 	case *proto.ControlRequest_RecordChecksum:
 		// Recognized no-op. Checksum is already in meta.
 	default:
@@ -350,8 +373,8 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 	if err := d.addASCIILong(commitOffsetKey, commitOffset, batch, timestamp); err != nil {
 		return nil, err
 	}
-	for _, feature := range featuresToEnable {
-		if err := d.addASCIILong(featureFlagKey(feature), int64(feature), batch, timestamp); err != nil {
+	for _, f := range featuresToEnable {
+		if err := d.addASCIILong(featureFlagKey(f), int64(f), batch, timestamp); err != nil {
 			return nil, err
 		}
 	}
@@ -359,8 +382,8 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 		return nil, err
 	}
 
-	for _, feature := range featuresToEnable {
-		d.enabledFeatures.Store(feature, true)
+	for _, f := range featuresToEnable {
+		d.enabledFeatures.Store(f, true)
 	}
 
 	return meta, nil
@@ -601,11 +624,19 @@ func (d *db) recoverFeatureFlags() error {
 			return errors.Errorf("invalid feature flag key %q", key)
 		}
 
-		feature := proto.Feature(featureValue)
-		if key != featureFlagKey(feature) {
+		f := proto.Feature(featureValue)
+		if key != featureFlagKey(f) {
 			return errors.Errorf("invalid feature flag key %q", key)
 		}
-		d.enabledFeatures.Store(feature, true)
+		if !feature.IsSupported(f) {
+			// This covers both a rolled-back binary reopening a database with
+			// newer features enabled and a snapshot carrying such flags:
+			// serving the shard would apply entries with the feature off and
+			// silently diverge from the rest of the ensemble.
+			return errors.Wrapf(constant.ErrUnsupportedFeatures,
+				"feature %s is enabled in the database but not supported by this binary; refusing to serve the shard", f)
+		}
+		d.enabledFeatures.Store(f, true)
 
 		it.Next()
 	}
@@ -1070,6 +1101,10 @@ func ToDbOption(opt *proto.NewTermOptions) TermOptions {
 	to := TermOptions{NotificationsEnabled: true}
 	if opt != nil {
 		to.NotificationsEnabled = opt.EnableNotifications
+		if len(opt.Features) > 0 {
+			to.Features = slices.Clone(opt.Features)
+			slices.Sort(to.Features)
+		}
 	}
 
 	return to
