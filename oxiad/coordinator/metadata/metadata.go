@@ -25,6 +25,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
+	gproto "google.golang.org/protobuf/proto"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	commonproto "github.com/oxia-db/oxia/common/proto"
@@ -336,6 +337,9 @@ func (m *coordinatorMetadata) GetShardStatus(namespace string, shard int64) (com
 }
 
 func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
+	if shardMetadata != nil {
+		shardMetadata = gproto.Clone(shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
+	}
 	_ = backoff.RetryNotify(func() error {
 		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
 			ns, exist := clusterStatus.Namespaces[namespace]

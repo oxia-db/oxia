@@ -21,9 +21,11 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	gproto "google.golang.org/protobuf/proto"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -32,6 +34,8 @@ import (
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/leader"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
+	"github.com/oxia-db/oxia/common"
+	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	oxiatime "github.com/oxia-db/oxia/common/time"
@@ -59,8 +63,6 @@ type Controller interface {
 
 	controllerapi.DataServerEventListener
 
-	Metadata() *Metadata
-
 	SyncServerAddress()
 
 	DeleteShard()
@@ -81,7 +83,6 @@ type controller struct {
 	shard           int64
 	namespaceConfig *proto.Namespace
 	rpc             rpc.Provider
-	metadata        Metadata
 
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 
@@ -97,6 +98,9 @@ type controller struct {
 	ctx                   context.Context
 	ctxCancel             context.CancelFunc
 	wg                    sync.WaitGroup
+	terminating           atomic.Bool
+	closeOnce             sync.Once
+	terminationMu         sync.RWMutex
 	periodicTasksInterval time.Duration
 	logger                *slog.Logger
 
@@ -109,12 +113,18 @@ type controller struct {
 	termGauge             metric.Gauge
 }
 
-func (s *controller) Metadata() *Metadata {
-	return &s.metadata
-}
-
 func (s *controller) BecameUnavailable(dataServer *proto.DataServerIdentity) {
-	s.dataServerFailureOp <- dataServer
+	s.terminationMu.RLock()
+	defer s.terminationMu.RUnlock()
+	if s.terminating.Load() {
+		return
+	}
+	if !channel.PushNoBlock(s.dataServerFailureOp, dataServer) {
+		s.logger.Debug(
+			"Discarding data server failure notification because queue is full",
+			slog.Any("data-server", dataServer),
+		)
+	}
 }
 
 //nolint:revive
@@ -133,7 +143,6 @@ func NewController(
 		namespace:                           namespace,
 		shard:                               shard,
 		namespaceConfig:                     nc,
-		metadata:                            NewMetadata(shardMetadata),
 		rpc:                                 rpcProvider,
 		metadataStore:                       metadataStore,
 		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
@@ -164,13 +173,16 @@ func NewController(
 
 	s.termGauge = metric.NewGauge("oxia_coordinator_term",
 		"The term of the shard", "count", labels, func() int64 {
-			return s.metadata.Term()
+			borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+			if !exists {
+				return constant.I64NegativeOne
+			}
+			return borrowedMeta.UnsafeBorrow().Term
 		})
 
 	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
 
-	shardMeta := s.metadata.Load()
-	s.logger.Info("Started shard controller", slog.Any("shard-metadata", shardMeta))
+	s.logger.Info("Started shard controller", slog.Any("shard-metadata", shardMetadata))
 
 	s.wg.Go(func() {
 		process.DoWithLabels(
@@ -180,7 +192,7 @@ func NewController(
 				"namespace": s.namespace,
 				"shard":     fmt.Sprintf("%d", s.shard),
 			}, func() {
-				s.run(shardMeta)
+				s.run()
 			},
 		)
 	})
@@ -189,30 +201,31 @@ func NewController(
 }
 
 func (s *controller) Election(electionAction *action.ElectionAction) string {
+	s.terminationMu.RLock()
+	if s.terminating.Load() {
+		s.terminationMu.RUnlock()
+		return ""
+	}
 	clonedAction := electionAction.Clone()
 	clonedAction.Waiter.Add(1)
-	select {
-	case s.electionOp <- clonedAction:
-	case <-s.ctx.Done():
+	if !channel.PushNoBlock(s.electionOp, clonedAction) {
+		s.terminationMu.RUnlock()
+		clonedAction.Waiter.Done()
+		s.logger.Debug("Discarding leader election because queue is full")
 		return ""
 	}
-	done := make(chan struct{})
-	go func() {
-		clonedAction.Waiter.Wait()
-		close(done)
-	}()
-	// The shard controller might be closed while the election operation is
-	// still queued: don't keep the caller blocked on an operation that will
-	// never be processed
-	select {
-	case <-done:
-		return clonedAction.NewLeader
-	case <-s.ctx.Done():
-		return ""
-	}
+	s.terminationMu.RUnlock()
+
+	clonedAction.Waiter.Wait()
+	return clonedAction.NewLeader
 }
 
-func (s *controller) run(initShardMeta *proto.ShardMetadata) {
+func (s *controller) run() {
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	initShardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while starting shard controller: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+
 	// Do initial check or leader election
 	switch {
 	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
@@ -248,11 +261,13 @@ func (s *controller) run(initShardMeta *proto.ShardMetadata) {
 	defer periodicTasksTimer.Stop()
 
 	for {
+		if s.terminating.Load() {
+			s.logger.Info("Shard controller is stopped, stopping event loop")
+			return
+		}
 		select {
 		case <-s.ctx.Done():
-			s.drainPendingOps()
 			return
-
 		case <-s.deleteOp:
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
@@ -269,27 +284,10 @@ func (s *controller) run(initShardMeta *proto.ShardMetadata) {
 	}
 }
 
-// drainPendingOps completes the queued operations that have a blocked waiter,
-// so that their callers don't hang on a controller that is shutting down.
-func (s *controller) drainPendingOps() {
-	for {
-		select {
-		case electionAction := <-s.electionOp:
-			electionAction.Done("")
-		case op := <-s.changeEnsembleOp:
-			op.Error(constant.ErrResourceUnavailable)
-		default:
-			return
-		}
-	}
-}
-
 // waitForSplitComplete blocks until the Split metadata is cleared from this
 // shard in the status resource, indicating the split controller has finished
 // and the shard can operate normally. This prevents the load balancer from
 // triggering elections that would interfere with the split controller.
-// We read from the status resource (not the shard controller's local metadata)
-// because the split controller updates the status resource directly.
 func (s *controller) waitForSplitComplete() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -308,8 +306,6 @@ func (s *controller) waitForSplitComplete() {
 				s.logger.Info("Split complete, child shard entering normal operation",
 					slog.Any("leader", meta.Leader),
 				)
-				// Update local metadata to match the status resource
-				s.metadata.Store(meta)
 				return
 			}
 		}
@@ -317,7 +313,10 @@ func (s *controller) waitForSplitComplete() {
 }
 
 func (s *controller) handleDataServerFailure(failedDataServer *proto.DataServerIdentity) {
-	shardMeta := s.metadata.Load()
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while handling data server failure: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
 	s.logger.Debug(
 		"Received notification of failed data server",
 		slog.Any("failed-data-server", failedDataServer.GetNameOrDefault()),
@@ -409,10 +408,15 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 		s.currentElection.Stop()
 		s.currentElection = nil
 	}
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+
 	termOptions := namespaceTermOptions(s.metadataStore, s.namespace)
 	s.currentElection = NewElection(s.ctx, s.logger, s.eventListener,
 		s.metadataStore, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
-		s.rpc, &s.metadata, s.namespace, s.shard, changeEnsembleAction,
+		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction,
 		termOptions,
 		s.leaderElectionLatency,
 		s.newTermQuorumLatency,
@@ -422,24 +426,65 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 	return leaderDataServer
 }
 
-func (s *controller) deleteShardRpc(ctx context.Context, dataServer *proto.DataServerIdentity) error {
-	_, err := s.rpc.DeleteShard(ctx, dataServer, &proto.DeleteShardRequest{
-		Namespace: s.namespace,
-		Shard:     s.shard,
-		Term:      s.metadata.Term(),
-	})
-
-	return err
-}
-
 func (s *controller) DeleteShard() {
-	s.deleteOp <- nil
+	s.terminationMu.RLock()
+	defer s.terminationMu.RUnlock()
+	if s.terminating.Load() {
+		return
+	}
+	select {
+	case s.deleteOp <- nil:
+	case <-s.ctx.Done():
+	}
 }
 
 func (s *controller) deleteShardWithRetries() {
 	s.logger.Info("Deleting shard")
 
-	_ = backoff.RetryNotify(s.deleteShard, oxiatime.NewBackOff(s.ctx),
+	_ = backoff.RetryNotify(func() error {
+		borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+		shardMeta := gproto.CloneOf(common.Must(borrowedMeta, exists,
+			"bug: shard metadata missing while deleting shard: namespace=", s.namespace, " shard=",
+			s.shard).UnsafeBorrow())
+		for _, server := range shardMeta.Ensemble {
+			// We need to save the address because it gets modified in the loop
+			if _, err := s.rpc.DeleteShard(s.ctx, server, &proto.DeleteShardRequest{
+				Namespace: s.namespace,
+				Shard:     s.shard,
+				Term:      shardMeta.Term,
+			}); err != nil {
+				s.logger.Warn(
+					"Failed to delete shard",
+					slog.Any("error", err),
+					slog.Any("data-server", server),
+				)
+				return err
+			}
+
+			s.logger.Info(
+				"Successfully deleted shard from data server",
+				slog.Any("server-address", server),
+			)
+		}
+
+		s.terminating.Store(true)
+		s.metadataStore.DeleteShardStatus(s.namespace, s.shard)
+		if s.eventListener != nil {
+			go func() {
+				process.DoWithLabels(
+					context.Background(),
+					map[string]string{
+						"oxia":      "shard-controller-deleted-callback",
+						"namespace": s.namespace,
+						"shard":     fmt.Sprintf("%d", s.shard),
+					}, func() {
+						s.eventListener.ShardDeleted(s.shard)
+					},
+				)
+			}()
+		}
+		return nil
+	}, oxiatime.NewBackOff(s.ctx),
 		func(err error, duration time.Duration) {
 			s.logger.Warn(
 				"Delete shard failed, retrying later",
@@ -447,54 +492,55 @@ func (s *controller) deleteShardWithRetries() {
 				slog.Any("error", err),
 			)
 		})
-
-	s.ctxCancel()
-}
-
-func (s *controller) deleteShard() error {
-	shardMeta := s.metadata.Load()
-	for _, server := range shardMeta.Ensemble {
-		// We need to save the address because it gets modified in the loop
-		if err := s.deleteShardRpc(s.ctx, server); err != nil {
-			s.logger.Warn(
-				"Failed to delete shard",
-				slog.Any("error", err),
-				slog.Any("data-server", server),
-			)
-			return err
-		}
-
-		s.logger.Info(
-			"Successfully deleted shard from data server",
-			slog.Any("server-address", server),
-		)
-	}
-
-	s.metadataStore.DeleteShardStatus(s.namespace, s.shard)
-	s.eventListener.ShardDeleted(s.shard)
-	return s.close()
 }
 
 func (s *controller) Close() error {
-	err := s.close()
-	if err != nil {
-		return err
-	}
+	s.closeOnce.Do(func() {
+		s.ctxCancel()
+		// Cancel first so any sender blocked while holding terminationMu.RLock can
+		// release it before Close waits for the enqueue barrier.
+		s.terminationMu.Lock()
+		s.terminating.Store(true)
+		s.terminationMu.Unlock()
 
-	// NOTE: we must wait the run goroutine to exit, otherwise
-	// the controller maybe running after close is returned.
-	s.wg.Wait()
-	return nil
-}
+		// NOTE: we must wait the run goroutine to exit, otherwise
+		// the controller maybe running after close is returned.
+		s.wg.Wait()
 
-func (s *controller) close() error {
-	s.ctxCancel()
-	s.termGauge.Unregister()
+	drainPendingOps:
+		for {
+			select {
+			case electionAction := <-s.electionOp:
+				electionAction.Done("")
+			case <-s.deleteOp:
+			case <-s.dataServerFailureOp:
+			case op := <-s.changeEnsembleOp:
+				op.Error(constant.ErrResourceUnavailable)
+			default:
+				break drainPendingOps
+			}
+		}
+
+		s.termGauge.Unregister()
+	})
 	return nil
 }
 
 func (s *controller) ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction) {
-	s.changeEnsembleOp <- changeEnsembleAction
+	s.terminationMu.RLock()
+	if s.terminating.Load() {
+		s.terminationMu.RUnlock()
+		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
+		return
+	}
+	select {
+	case s.changeEnsembleOp <- changeEnsembleAction:
+	case <-s.ctx.Done():
+		s.terminationMu.RUnlock()
+		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
+		return
+	}
+	s.terminationMu.RUnlock()
 }
 
 func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction) {
@@ -517,7 +563,20 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 	s.onElectLeader(changeEnsembleAction)
 }
 func (s *controller) SyncServerAddress() {
-	shardMeta := s.metadata.Load()
+	s.terminationMu.RLock()
+	defer s.terminationMu.RUnlock()
+	if s.terminating.Load() {
+		return
+	}
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	if !exists {
+		if s.terminating.Load() {
+			return
+		}
+	}
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while syncing server addresses: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
 		if borrowedDataServer, ok := s.metadataStore.GetDataServer(candidate.GetNameOrDefault()); ok {
@@ -535,58 +594,40 @@ func (s *controller) SyncServerAddress() {
 	s.logger.Info("server address changed, start a new leader election")
 	group := &sync.WaitGroup{}
 	group.Add(1)
-	s.electionOp <- &action.ElectionAction{
+	if !channel.PushNoBlock(s.electionOp, &action.ElectionAction{
 		Shard:  s.shard,
 		Waiter: group,
+	}) {
+		group.Done()
+		s.logger.Debug("Discarding sync-server-address election because queue is full")
 	}
 }
 
 func (s *controller) handlePeriodicTasks() {
-	mutShardMeta := s.metadata.Load()
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	mutShardMeta := gproto.CloneOf(common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow())
 
 	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
-		var err error
-		if err = s.handlePendingDeleteShard(mutShardMeta); err != nil {
-			s.logger.Warn("Failed to handle pending delete shard", "error", err)
-			return
-		}
-		// Clear the pending-delete nodes in the canonical view. Compute (not
-		// Store of the snapshot): the DeleteShard RPCs above leave a long
-		// window since Load(), and the split controller can store a term bump
-		// into this controller's metadata concurrently (SplitComplete) —
-		// writing the whole snapshot back would revert it.
-		mutShardMeta = s.metadata.Compute(func(m *proto.ShardMetadata) {
-			m.PendingDeleteShardNodes = nil
-		})
-	}
+		pendingDeleteShardNodes := append([]*proto.DataServerIdentity(nil), mutShardMeta.PendingDeleteShardNodes...)
+		term := mutShardMeta.Term
+		for _, ds := range pendingDeleteShardNodes {
+			s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
 
-	// Re-assert the shard status only when the status resource diverges from
-	// the local view: each UpdateShardStatus persists the full cluster status,
-	// so unconditionally writing it for every shard on every tick costs
-	// O(shards^2) bytes per interval on the metadata backend.
-	if borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard); exists &&
-		borrowedMeta.UnsafeBorrow().EqualVT(mutShardMeta) {
-		return
-	}
+			if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
+				Namespace: s.namespace,
+				Shard:     s.shard,
+				Term:      term,
+			}); err != nil {
+				s.logger.Warn("Failed to delete shard from removed data server", slog.Any("data-server", ds), slog.Any("error", err))
+				return
+			}
 
-	s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
-}
-
-func (s *controller) handlePendingDeleteShard(mutShardMeta *proto.ShardMetadata) error {
-	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
-		s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
-
-		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
-			Namespace: s.namespace,
-			Shard:     s.shard,
-			Term:      mutShardMeta.Term,
-		}); err != nil {
-			s.logger.Warn("Failed to delete shard from removed data server", slog.Any("data-server", ds), slog.Any("error", err))
-			return err
+			s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
 		}
 
-		s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
+		mutShardMeta.PendingDeleteShardNodes = nil
+		s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
 	}
-
-	return nil
 }
