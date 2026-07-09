@@ -28,6 +28,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -81,7 +82,7 @@ type FollowerController interface {
 	AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error
 	InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
 
-	IsFeatureEnabled(feature proto.Feature) bool
+	IsFeatureEnabled(f proto.Feature) bool
 	Checksum() crc.Checksum
 
 	// SetSplitHashRange marks this follower as a split child. After loading
@@ -341,6 +342,16 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		return nil, constant.ErrInvalidTerm
 	}
 
+	if unsupported := feature.Unsupported(newTermOptions.GetFeatures()); len(unsupported) > 0 {
+		fc.log.Error(
+			"Rejecting new term: it pins features not supported by this binary",
+			slog.Int64("new-term", newTerm),
+			slog.Any("unsupported-features", unsupported),
+		)
+		return nil, errors.Wrapf(constant.ErrUnsupportedFeatures,
+			"term %d pins features %v not supported by this binary", newTerm, unsupported)
+	}
+
 	if fc.logSynchronizer.IsValid() {
 		if err := fc.logSynchronizer.Close(); err != nil {
 			return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to close log synchronizer")
@@ -361,7 +372,10 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "get last entry from WAL failed")
 	}
 	fc.log.Info("Follower successfully initialized in new term", slog.Int64("term", fc.term.Load()), slog.Any("last-entry", lastEntryId))
-	return &proto.NewTermResponse{HeadEntryId: lastEntryId}, nil
+	return &proto.NewTermResponse{
+		HeadEntryId:     lastEntryId,
+		FeaturesEnabled: fc.db.EnabledFeatures(),
+	}, nil
 }
 
 func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
@@ -709,10 +723,10 @@ func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.
 	return &proto.DeleteShardResponse{}, nil
 }
 
-func (fc *followerController) IsFeatureEnabled(feature proto.Feature) bool {
+func (fc *followerController) IsFeatureEnabled(f proto.Feature) bool {
 	fc.rwMutex.RLock()
 	defer fc.rwMutex.RUnlock()
-	return fc.db.IsFeatureEnabled(feature)
+	return fc.db.IsFeatureEnabled(f)
 }
 
 func (fc *followerController) Checksum() crc.Checksum {

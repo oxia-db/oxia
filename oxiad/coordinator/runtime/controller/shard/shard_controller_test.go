@@ -1021,3 +1021,230 @@ func TestController_PendingDeleteDoesNotClobberConcurrentMetadataUpdate(t *testi
 	assert.EqualValues(t, 7, borrowed.UnsafeBorrow().Term)
 	assert.Empty(t, borrowed.UnsafeBorrow().PendingDeleteShardNodes)
 }
+
+// testFeaturesSupplier is a mutable DataServerSupportedFeaturesSupplier for
+// simulating nodes running different binary versions.
+type testFeaturesSupplier struct {
+	sync.Mutex
+	features map[string][]proto.Feature
+}
+
+func newTestFeaturesSupplier() *testFeaturesSupplier {
+	return &testFeaturesSupplier{features: make(map[string][]proto.Feature)}
+}
+
+func (s *testFeaturesSupplier) set(node *proto.DataServerIdentity, features ...proto.Feature) {
+	s.Lock()
+	defer s.Unlock()
+	s.features[node.GetNameOrDefault()] = features
+}
+
+func (s *testFeaturesSupplier) supply(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
+	s.Lock()
+	defer s.Unlock()
+	out := make(map[string][]proto.Feature, len(dataServers))
+	for _, ds := range dataServers {
+		out[ds.GetNameOrDefault()] = s.features[ds.GetNameOrDefault()]
+	}
+	return out
+}
+
+// An ensemble that contains a node not supporting a feature already enabled
+// on the shard must not be able to elect a leader: the old node would apply
+// entries with different semantics and silently diverge.
+func TestController_ElectionRejectsEnsembleMissingEnabledFeature(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	supplier := newTestFeaturesSupplier()
+	supplier.set(s1, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s2, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s3) // old binary: no features supported
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, metadata, supplier.supply, nil, rpc, DefaultPeriodicTasksInterval)
+
+	// s1 reports FEATURE_DB_CHECKSUM as already enabled in its database, but
+	// the negotiated set is empty because s3 does not support it. Enqueue the
+	// responses for the first attempt and its retry.
+	for i := 0; i < 2; i++ {
+		rpc.GetNode(s1).NewTermResponseWithFeatures(1, 0, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, nil)
+		rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+		rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	}
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+
+	// The election must abort before electing a leader...
+	rpc.GetNode(s1).ExpectNoBecomeLeaderRequest(t)
+	// ...and keep retrying (loudly) with a new term.
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 3, nil)
+
+	assert.NotEqual(t, proto.ShardStatusSteadyState, sc.Metadata().Status())
+	assert.NoError(t, sc.Close())
+}
+
+// When the whole ensemble supports the negotiated features, the election pins
+// them in the NewTerm options of every member and passes them to the leader.
+func TestController_ElectionPinsNegotiatedFeatures(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	supplier := newTestFeaturesSupplier()
+	supplier.set(s1, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s2, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s3, proto.Feature_FEATURE_DB_CHECKSUM)
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, metadata, supplier.supply, nil, rpc, DefaultPeriodicTasksInterval)
+
+	checksum := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+
+	rpc.GetNode(s1).NewTermResponseWithFeatures(1, 0, checksum, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, checksum)
+
+	assert.Eventually(t, func() bool {
+		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 2, sc.Metadata().Term())
+	assert.Equal(t, s1, sc.Metadata().Leader())
+
+	assert.NoError(t, sc.Close())
+}
+
+// A follower that failed the election fence rejoins later through
+// AddFollower: the coordinator must report the joiner's supported features so
+// the leader can validate them.
+func TestController_RejoiningFollowerFeaturesReported(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	supplier := newTestFeaturesSupplier()
+	supplier.set(s1, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s2, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s3, proto.Feature_FEATURE_DB_CHECKSUM)
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, metadata, supplier.supply, nil, rpc, DefaultPeriodicTasksInterval)
+
+	checksum := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+
+	// s3 fails the initial fence and rejoins through the retry path.
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("node not available"))
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).AddFollowerResponse(nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, checksum)
+
+	// Rejoin: NewTerm to s3 pins the same feature set, and the AddFollower
+	// to the leader carries s3's supported features.
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+	rpc.GetNode(s1).ExpectAddFollowerRequestWithFeatures(t, shard, 2, checksum)
+
+	assert.Eventually(t, func() bool {
+		return sc.Metadata().Status() == proto.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+
+	assert.NoError(t, sc.Close())
+}
+
+// A node swap whose target does not support the features enabled on the
+// shard must be rejected before fencing, so the current ensemble keeps
+// serving instead of getting stuck in a failing election loop.
+func TestController_ChangeEnsembleRejectsIncompatibleTarget(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	supplier := newTestFeaturesSupplier()
+	supplier.set(s1, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s2, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s3, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s4) // old binary: no features supported
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := NewController(constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     1,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, metadata, supplier.supply, nil, rpc, DefaultPeriodicTasksInterval)
+
+	// Initial verification of the steady-state ensemble
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s2).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
+
+	// The leader reports FEATURE_DB_CHECKSUM enabled: swapping s3 for the
+	// old-binary s4 must be rejected, without starting an election.
+	rpc.GetNode(s1).GetStatusResponseWithFeatures(1, proto.ServingStatus_LEADER, 0, 0,
+		[]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+
+	swap := action.NewChangeEnsembleAction(shard, s3, s4)
+	sc.ChangeEnsemble(swap)
+	_, err := swap.Wait()
+	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
+	rpc.GetNode(s4).ExpectNoMoreNewTermRequest(t)
+
+	assert.NoError(t, sc.Close())
+}

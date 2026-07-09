@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -26,6 +27,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
@@ -93,7 +95,7 @@ type LeaderController interface {
 	KeepAlive(sessionId int64) error
 	CloseSession(*proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
 
-	IsFeatureEnabled(feature proto.Feature) bool
+	IsFeatureEnabled(f proto.Feature) bool
 
 	ProposeRecordChecksum(ctx context.Context)
 }
@@ -251,13 +253,13 @@ func (lc *leaderController) Term() int64 {
 	return lc.term.Load()
 }
 
-func (lc *leaderController) IsFeatureEnabled(feature proto.Feature) bool {
+func (lc *leaderController) IsFeatureEnabled(f proto.Feature) bool {
 	lc.RLock()
 	defer lc.RUnlock()
 	if lc.db == nil {
 		return false
 	}
-	return lc.db.IsFeatureEnabled(feature)
+	return lc.db.IsFeatureEnabled(f)
 }
 
 // NewTerm
@@ -295,6 +297,16 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 			slog.Any("status", lc.status),
 		)
 		return nil, constant.ErrInvalidStatus
+	}
+
+	if unsupported := feature.Unsupported(req.GetOptions().GetFeatures()); len(unsupported) > 0 {
+		lc.log.Error(
+			"Rejecting new term: it pins features not supported by this binary",
+			slog.Int64("new-term", req.Term),
+			slog.Any("unsupported-features", unsupported),
+		)
+		return nil, errors.Wrapf(constant.ErrUnsupportedFeatures,
+			"term %d pins features %v not supported by this binary", req.Term, unsupported)
 	}
 
 	lc.termOptions = database.ToDbOption(req.Options)
@@ -355,25 +367,26 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	)
 
 	return &proto.NewTermResponse{
-		HeadEntryId: headEntryId,
+		HeadEntryId:     headEntryId,
+		FeaturesEnabled: lc.db.EnabledFeatures(),
 	}, nil
 }
 
-func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) ([]proto.Feature, error) {
+func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) error {
 	lc.Lock()
 	defer lc.Unlock()
 
 	if lc.closed {
-		return nil, constant.ErrResourceUnavailable
+		return constant.ErrResourceUnavailable
 	}
 
 	if lc.status != proto.ServingStatus_FENCED {
-		return nil, constant.ErrInvalidStatus
+		return constant.ErrInvalidStatus
 	}
 
 	term := lc.term.Load()
 	if req.Term != term {
-		return nil, constant.ErrInvalidTerm
+		return constant.ErrInvalidTerm
 	}
 
 	lc.replicationFactor = req.GetReplicationFactor()
@@ -383,12 +396,12 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	var err error
 	lc.leaderElectionHeadEntryId, err = getLastEntryIdInWal(lc.wal)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	leaderCommitOffset, err := lc.db.ReadCommitOffset()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
@@ -396,7 +409,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 
 	for follower, followerHeadEntryId := range req.FollowerMaps {
 		if err := lc.addFollower(follower, followerHeadEntryId); err != nil { //nolint:contextcheck
-			return nil, err
+			return err
 		}
 	}
 
@@ -405,11 +418,25 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	// by the moment we make the leader controller accepting new propose/read
 	// requests
 	if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, lc.leaderElectionHeadEntryId.Offset); err != nil {
-		return nil, err
+		return err
 	}
 
 	if err = lc.applyAllEntriesIntoDB(); err != nil {
-		return nil, err
+		return err
+	}
+
+	// A feature already enabled in the database must be supported by the
+	// whole new ensemble: a member that doesn't implement it would apply the
+	// following entries with different semantics and silently diverge.
+	if missing := feature.Missing(lc.db.EnabledFeatures(), req.FeaturesSupported); len(missing) > 0 {
+		lc.log.Error(
+			"Refusing to lead: the ensemble does not support features already enabled on the shard",
+			slog.Int64("term", term),
+			slog.Any("missing-features", missing),
+			slog.Any("negotiated-features", req.FeaturesSupported),
+		)
+		return errors.Wrapf(constant.ErrUnsupportedFeatures,
+			"cannot lead term %d: features %v are enabled in the database but not supported by the whole ensemble", term, missing)
 	}
 
 	lc.log.Info(
@@ -421,12 +448,19 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	lc.status = proto.ServingStatus_LEADER
 
 	proposeEnabledFeature := make([]proto.Feature, 0)
-	for _, feature := range req.FeaturesSupported {
-		if !lc.db.IsFeatureEnabled(feature) {
-			proposeEnabledFeature = append(proposeEnabledFeature, feature)
+	for _, f := range req.FeaturesSupported {
+		if !lc.db.IsFeatureEnabled(f) {
+			proposeEnabledFeature = append(proposeEnabledFeature, f)
 		}
 	}
-	return proposeEnabledFeature, nil
+	if len(proposeEnabledFeature) > 0 {
+		// The term's feature set is pinned before any write: the FeatureEnable
+		// entry is appended while still holding the leader lock, so it lands
+		// in the log ahead of every write of this term and the effective
+		// feature set never changes mid-term.
+		return lc.proposeFeaturesEnableLocked(ctx, proposeEnabledFeature)
+	}
+	return nil
 }
 
 // BecomeLeader : Node handles a Become Leader request
@@ -455,13 +489,8 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 //     possible that their head entry id is higher than the leader and
 //     therefore need truncating.
 func (lc *leaderController) BecomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
-	proposeEnabledFeature, err := lc.becomeLeader(ctx, req)
-	if err != nil {
+	if err := lc.becomeLeader(ctx, req); err != nil {
 		return nil, err
-	}
-	// post become leader without the lock
-	if len(proposeEnabledFeature) > 0 {
-		lc.proposeFeaturesEnable(ctx, proposeEnabledFeature)
 	}
 	return &proto.BecomeLeaderResponse{}, nil
 }
@@ -476,6 +505,28 @@ func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.A
 
 	if lc.status != proto.ServingStatus_LEADER {
 		return nil, errors.Wrap(constant.ErrNodeIsNotLeader, "Node is not leader")
+	}
+
+	// When the coordinator reports the joiner's supported features, refuse
+	// any follower whose binary does not cover the features required by the
+	// shard: it would apply the replicated entries with different semantics
+	// and silently diverge. The requirement is the term's pinned feature set
+	// plus what is already enabled in the database (the latter matters for
+	// terms created by a coordinator that predates feature pinning).
+	if req.FollowerFeatures != nil {
+		required := slices.Concat(lc.termOptions.Features, lc.db.EnabledFeatures())
+		slices.Sort(required)
+		required = slices.Compact(required)
+		if missing := feature.Missing(required, req.FollowerFeatures.GetSupported()); len(missing) > 0 {
+			lc.log.Error(
+				"Rejecting follower: it does not support features required by the shard",
+				slog.String("follower", req.FollowerName),
+				slog.Int64("term", req.Term),
+				slog.Any("missing-features", missing),
+			)
+			return nil, errors.Wrapf(constant.ErrUnsupportedFeatures,
+				"follower %s does not support features %v required by the shard", req.FollowerName, missing)
+		}
 	}
 
 	if req.Observer {
@@ -1007,20 +1058,22 @@ func (lc *leaderController) writeBlock(ctx context.Context, requestSupplier func
 	return response.T, response.Err
 }
 
-// proposeFeaturesEnable broadcasts a control command to all replicas to enable
-// specific protocol features.
+// proposeFeaturesEnableLocked broadcasts a control command to all replicas to
+// enable specific protocol features. The caller must hold the leader write
+// lock: by appending the entry under the same critical section that completes
+// the election, it is guaranteed to precede every write of the term.
 //
 // This proposal will be replicated to all the replicas, but we will not wait for log sync.
 // As a result, the underlying State Machine must handle these requests
 // idempotently to ensure consistency across retries or leader transitions.
-func (lc *leaderController) proposeFeaturesEnable(ctx context.Context, features []proto.Feature) {
+func (lc *leaderController) proposeFeaturesEnableLocked(ctx context.Context, features []proto.Feature) error {
 	term := lc.term.Load()
 	deferPropose := concurrent.NewOnce(func(statemachine.ApplyResponse) {
 		lc.log.Info("Proposed feature enable", slog.Int64("term", term), slog.Any("features", features))
 	}, func(err error) {
 		lc.log.Error("Failed to propose feature enable", slog.Int64("term", term), slog.Any("features", features), slog.Any("error", err))
 	})
-	lc.propose(ctx, func(offset int64) statemachine.Proposal {
+	return lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
 		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
 			Value: &proto.ControlRequest_FeatureEnable{
 				FeatureEnable: &proto.FeatureEnableRequest{
@@ -1048,20 +1101,27 @@ func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
 }
 
 func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
-	timer := lc.writeLatencyHisto.Timer()
 	lc.Lock()
-	if err := checkStatusIsLeader(lc.status); err != nil {
-		lc.Unlock()
+	err := lc.proposeLocked(ctx, proposalSupplier, cb)
+	lc.Unlock()
+	if err != nil {
 		cb.OnCompleteError(err)
-		return
+	}
+}
+
+// proposeLocked appends a proposal to the WAL. The caller must hold the
+// leader write lock. A non-nil return means the proposal was not appended
+// and the callback will not be invoked.
+func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) error {
+	timer := lc.writeLatencyHisto.Timer()
+	if err := checkStatusIsLeader(lc.status); err != nil {
+		return err
 	}
 	if lc.frozen.Load() {
 		// The shard is frozen for split cutover: reject new writes with a
 		// retryable error so clients re-resolve and route to the child shards
 		// once the cutover completes. Head must not advance while frozen.
-		lc.Unlock()
-		cb.OnCompleteError(constant.ErrNodeIsNotLeader)
-		return
+		return constant.ErrNodeIsNotLeader
 	}
 	newOffset := lc.quorumAckTracker.NextOffset()
 	walLog := lc.wal
@@ -1088,9 +1148,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 	// reference value: the database apply uses the proposal object.
 	marshalBuf, value, err := proto.MarshalToBuffer(lc.marshalBuf, entryValue)
 	if err != nil {
-		lc.Unlock()
-		cb.OnCompleteError(err)
-		return
+		return err
 	}
 	lc.marshalBuf = marshalBuf
 
@@ -1125,7 +1183,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 			}))
 	}
 	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: proposal.GetTimestamp()}, deferDbWrite)
-	lc.Unlock()
+	return nil
 }
 
 //nolint:revive
@@ -1314,16 +1372,19 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 	}
 
 	var shardStats *proto.ShardStats
+	var featuresEnabled []proto.Feature
 	if lc.db != nil {
 		shardStats = lc.db.Stats()
+		featuresEnabled = lc.db.EnabledFeatures()
 	}
 
 	return &proto.GetStatusResponse{
-		Term:         lc.term.Load(),
-		Status:       lc.status,
-		HeadOffset:   headOffset,
-		CommitOffset: commitOffset,
-		ShardStats:   shardStats,
+		Term:            lc.term.Load(),
+		Status:          lc.status,
+		HeadOffset:      headOffset,
+		CommitOffset:    commitOffset,
+		ShardStats:      shardStats,
+		FeaturesEnabled: featuresEnabled,
 	}, nil
 }
 

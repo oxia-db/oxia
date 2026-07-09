@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
@@ -504,8 +506,46 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			return
 		}
 	}
+	if err = s.validateChangeEnsembleFeatures(changeEnsembleAction); err != nil {
+		return
+	}
 	// todo: support optimized ensemble change to avoid start a new election
 	s.onElectLeader(changeEnsembleAction)
+}
+
+// validateChangeEnsembleFeatures rejects a swap whose target node does not
+// support the features already enabled on the shard: fencing such an ensemble
+// would leave the shard leaderless in an election loop, since the elected
+// leader refuses to serve with an incompatible member. Rejecting the action
+// keeps the current ensemble serving. When the enabled set cannot be fetched,
+// the change proceeds and the election-time guard is the backstop.
+func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action.ChangeEnsembleAction) error {
+	shardMeta := s.metadata.Load()
+	if shardMeta.Leader == nil {
+		return nil
+	}
+	leaderStatus, err := s.rpc.GetStatus(s.ctx, shardMeta.Leader, &proto.GetStatusRequest{Shard: s.shard})
+	if err != nil {
+		s.logger.Warn(
+			"Could not fetch the shard's enabled features; deferring the compatibility check to the election",
+			slog.Any("leader", shardMeta.Leader),
+			slog.Any("error", err),
+		)
+		return nil
+	}
+
+	to := changeEnsembleAction.To
+	toFeatures := s.dataServerSupportedFeaturesSupplier([]*proto.DataServerIdentity{to})[to.GetNameOrDefault()]
+	if missing := feature.Missing(leaderStatus.FeaturesEnabled, toFeatures); len(missing) > 0 {
+		s.logger.Error(
+			"Change ensemble rejected: the target node does not support features enabled on the shard",
+			slog.Any("to", to),
+			slog.Any("missing-features", missing),
+		)
+		return errors.Wrapf(constant.ErrUnsupportedFeatures,
+			"node %s does not support features %v enabled on shard %d", to.GetNameOrDefault(), missing, s.shard)
+	}
+	return nil
 }
 func (s *controller) SyncServerAddress() {
 	shardMeta := s.metadata.Load()

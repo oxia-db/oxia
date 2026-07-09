@@ -709,6 +709,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 		EnsembleSelector: func(ns string) ([]*proto.DataServerIdentity, error) {
 			return c.selectNewEnsemble(ns, 0, c.namespaceConfigForSplit(ns), c.metadata.ListNamespaceStatus())
 		},
+		SupportedFeaturesSupplier: c.findDataServerFeatures,
 	})
 	c.splitControllers[parentShardId] = sc
 
@@ -825,6 +826,7 @@ func (c *runtime) restartInProgressSplits(clusterStatus map[string]commonobject.
 				EnsembleSelector: func(namespace string) ([]*proto.DataServerIdentity, error) {
 					return c.selectNewEnsemble(namespace, 0, c.namespaceConfigForSplit(namespace), c.metadata.ListNamespaceStatus())
 				},
+				SupportedFeaturesSupplier: c.findDataServerFeatures,
 			})
 			c.splitControllers[shardId] = sc
 		}
