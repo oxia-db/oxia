@@ -28,6 +28,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/maps"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -65,10 +66,10 @@ type Election struct {
 	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener                       controllerapi.ShardEventListener
 	provider                            rpc.Provider
-	meta                                *Metadata
 	// owned status
 	namespace            string
 	shard                int64
+	mutableShardMetadata *proto.ShardMetadata
 	changeEnsembleAction *action.ChangeEnsembleAction
 	followerCaughtUp     atomic.Bool // If the followers caught up leader after election
 	termOptions          *proto.NewTermOptions
@@ -450,26 +451,30 @@ func (e *Election) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	)
 }
 
-func (e *Election) start() (*proto.DataServerIdentity, error) {
+func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	e.logger.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
 
-	mutShardMeta := e.meta.Compute(func(metadata *proto.ShardMetadata) {
-		metadata.Status = proto.ShardStatusElection
-		metadata.Leader = nil
-		metadata.Term++
-		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
-	})
-	e.metadataStore.UpdateShardStatus(e.namespace, e.shard, mutShardMeta)
+	e.mutableShardMetadata.Status = proto.ShardStatusElection
+	e.mutableShardMetadata.Leader = nil
+	e.mutableShardMetadata.Term++
+	e.mutableShardMetadata.Ensemble = e.refreshedEnsemble(e.mutableShardMetadata.Ensemble)
+	e.metadataStore.UpdateShardStatus(e.namespace, e.shard, e.mutableShardMetadata)
 
 	if e.changeEnsembleAction != nil {
-		e.prepareIfChangeEnsemble(mutShardMeta)
+		retryShardMetadata := gproto.CloneOf(e.mutableShardMetadata)
+		e.prepareIfChangeEnsemble(e.mutableShardMetadata)
+		defer func() {
+			if err != nil {
+				e.mutableShardMetadata = retryShardMetadata
+			}
+		}()
 	}
 
 	// Negotiate the feature set across the new ensemble before fencing, so it
 	// can be pinned in the term options: every member persists it with the
 	// term and rejects the fence if its binary does not support it.
-	features := e.dataServerSupportedFeaturesSupplier(mutShardMeta.Ensemble)
+	features := e.dataServerSupportedFeaturesSupplier(e.mutableShardMetadata.Ensemble)
 	negotiatedFeatures := negotiate(features)
 	termOptions := e.termOptions.CloneVT()
 	if termOptions == nil {
@@ -478,7 +483,11 @@ func (e *Election) start() (*proto.DataServerIdentity, error) {
 	termOptions.Features = negotiatedFeatures
 
 	// Send NewTerm to all the ensemble members
-	candidatesStatus, enabledFeatures, err := e.fenceNewTermQuorum(mutShardMeta.Term, termOptions, mutShardMeta.Ensemble, mutShardMeta.RemovedNodes)
+	candidatesStatus, enabledFeatures, err := e.fenceNewTermQuorum(
+		e.mutableShardMetadata.Term,
+		termOptions,
+		e.mutableShardMetadata.Ensemble,
+		e.mutableShardMetadata.RemovedNodes)
 	if err != nil {
 		return nil, err
 	}
@@ -490,7 +499,7 @@ func (e *Election) start() (*proto.DataServerIdentity, error) {
 	if missing := feature.Missing(enabledFeatures, negotiatedFeatures); len(missing) > 0 {
 		e.logger.Error(
 			"Election aborted: the ensemble does not support features already enabled on the shard",
-			slog.Int64("term", mutShardMeta.Term),
+			slog.Int64("term", e.mutableShardMetadata.Term),
 			slog.Any("missing-features", missing),
 			slog.Any("negotiated-features", negotiatedFeatures),
 			slog.Any("data-server-features", features),
@@ -515,36 +524,37 @@ func (e *Election) start() (*proto.DataServerIdentity, error) {
 		}
 		e.logger.Info(
 			"Successfully moved ensemble to a new term",
-			slog.Int64("term", mutShardMeta.Term),
+			slog.Int64("term", e.mutableShardMetadata.Term),
 			slog.Any("new-leader", newLeader),
 			slog.Any("followers", f),
 		)
 	}
-	if err = e.becomeLeader(mutShardMeta.Term, newLeader, followers,
-		uint32(len(mutShardMeta.Ensemble)), negotiatedFeatures); err != nil {
+	if err = e.becomeLeader(e.mutableShardMetadata.Term, newLeader, followers,
+		uint32(len(e.mutableShardMetadata.Ensemble)), negotiatedFeatures); err != nil {
 		return nil, err
 	}
-	mutShardMeta.Status = proto.ShardStatusSteadyState
-	mutShardMeta.PendingDeleteShardNodes = slices.Concat(mutShardMeta.PendingDeleteShardNodes, mutShardMeta.RemovedNodes)
-	mutShardMeta.RemovedNodes = nil
-	mutShardMeta.Leader = newLeader
+	e.mutableShardMetadata.Status = proto.ShardStatusSteadyState
+	e.mutableShardMetadata.PendingDeleteShardNodes = slices.Concat(
+		e.mutableShardMetadata.PendingDeleteShardNodes,
+		e.mutableShardMetadata.RemovedNodes)
+	e.mutableShardMetadata.RemovedNodes = nil
+	e.mutableShardMetadata.Leader = newLeader
 
-	term := mutShardMeta.Term
-	ensemble := mutShardMeta.Ensemble
-	leader := mutShardMeta.Leader
+	term := e.mutableShardMetadata.Term
+	ensemble := e.mutableShardMetadata.Ensemble
+	leader := e.mutableShardMetadata.Leader
 	leaderEntry := candidatesStatus[leader]
 
-	e.metadataStore.UpdateShardStatus(e.namespace, e.shard, mutShardMeta)
-	e.meta.Store(mutShardMeta)
+	e.metadataStore.UpdateShardStatus(e.namespace, e.shard, e.mutableShardMetadata)
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
 	}
 
 	e.logger.Info(
 		"Elected new leader",
-		slog.Int64("term", mutShardMeta.Term),
-		slog.Any("leader", mutShardMeta.Leader),
-		slog.Any("ensemble", mutShardMeta.Ensemble),
+		slog.Int64("term", e.mutableShardMetadata.Term),
+		slog.Any("leader", e.mutableShardMetadata.Leader),
+		slog.Any("ensemble", e.mutableShardMetadata.Ensemble),
 	)
 	timer.Done()
 
@@ -621,10 +631,11 @@ func (e *Election) Start() *proto.DataServerIdentity {
 		return e.start()
 	}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
 		e.leaderElectionsFailed.Inc()
+		term := e.mutableShardMetadata.GetTerm()
 		if errors.Is(err, constant.ErrNotInitialized) {
 			e.logger.Debug(
 				"Leader election is waiting for data server initialization",
-				slog.Int64("term", e.meta.Term()),
+				slog.Int64("term", term),
 				slog.Duration("retry-after", duration),
 			)
 			return
@@ -632,7 +643,7 @@ func (e *Election) Start() *proto.DataServerIdentity {
 
 		e.logger.Warn(
 			"Leader election has failed, retrying later",
-			slog.Int64("term", e.meta.Term()),
+			slog.Int64("term", term),
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
@@ -643,7 +654,7 @@ func (e *Election) Start() *proto.DataServerIdentity {
 func (e *Election) Stop() {
 	e.ctxCancel()
 	e.wg.Wait()
-	e.logger.Info("stopped the election", slog.Any("term", e.meta.Term()))
+	e.logger.Info("stopped the election", slog.Any("term", e.mutableShardMetadata.GetTerm()))
 }
 
 //nolint:revive
@@ -651,7 +662,8 @@ func NewElection(ctx context.Context, logger *slog.Logger, eventListener control
 	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
-	provider rpc.Provider, metadata *Metadata, namespace string, shard int64,
+	provider rpc.Provider, namespace string, shard int64,
+	shardMetadata *proto.ShardMetadata,
 	changeEnsembleAction *action.ChangeEnsembleAction, termOptions *proto.NewTermOptions,
 	leaderElectionLatency metric.LatencyHistogram, newTermQuorumLatency metric.LatencyHistogram,
 	becomeLeaderLatency metric.LatencyHistogram, leaderElectionsFailed metric.Counter) *Election {
@@ -665,10 +677,10 @@ func NewElection(ctx context.Context, logger *slog.Logger, eventListener control
 		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
 		eventListener:                       eventListener,
 		leaderSelector:                      leaderSelector,
-		meta:                                metadata,
 		provider:                            provider,
 		namespace:                           namespace,
 		shard:                               shard,
+		mutableShardMetadata:                gproto.CloneOf(shardMetadata),
 		termOptions:                         termOptions,
 		changeEnsembleAction:                changeEnsembleAction,
 		leaderElectionLatency:               leaderElectionLatency,
