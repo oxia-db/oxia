@@ -77,8 +77,9 @@ var (
 )
 
 // setupSplitTest creates a cluster status with a parent shard in SteadyState,
-// two child shards ready for split, and returns the test resources.
-func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
+// two child shards ready for split, and returns the test resources. Optional
+// nsMutators customize the namespace config (e.g. to disable notifications).
+func setupSplitTest(t *testing.T, phase proto.SplitPhase, nsMutators ...func(*proto.Namespace)) (
 	*mockutils.RpcProvider,
 	coordmetadata.Metadata,
 	*mockShardSplitEventListener,
@@ -87,13 +88,17 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase) (
 
 	rpcMock := mockutils.NewRpcProvider()
 	metaProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
+	nsConfig := &proto.Namespace{
+		Name:              constant.DefaultNamespace,
+		InitialShardCount: 1,
+		ReplicationFactor: 3,
+	}
+	for _, mutate := range nsMutators {
+		mutate(nsConfig)
+	}
 	clusterConfig := &proto.ClusterConfiguration{
-		Namespaces: []*proto.Namespace{{
-			Name:              constant.DefaultNamespace,
-			InitialShardCount: 1,
-			ReplicationFactor: 3,
-		}},
-		Servers: []*proto.DataServerIdentity{ps1, ps2, ps3},
+		Namespaces: []*proto.Namespace{nsConfig},
+		Servers:    []*proto.DataServerIdentity{ps1, ps2, ps3},
 	}
 	dir := t.TempDir()
 	statusData, err := metadatacodec.ClusterStatusCodec.MarshalYAML(metaProvider.Watch().Load().Value)
@@ -360,6 +365,70 @@ func TestSplitController_ChildrenFencedAtParentTerm(t *testing.T) {
 	case <-listener.completions:
 	case <-time.After(30 * time.Second):
 		t.Fatal("Split did not complete in time")
+	}
+}
+
+// drainNewTermRequests returns all NewTerm requests buffered for a node.
+// Non-blocking: it stops once the channel is momentarily empty, so it must be
+// called after the operation under test has finished sending.
+func drainNewTermRequests(node *mockutils.PerNodeChannels) []*proto.NewTermRequest {
+	var reqs []*proto.NewTermRequest
+	for {
+		select {
+		case r := <-node.NewTermRequests:
+			reqs = append(reqs, r)
+		default:
+			return reqs
+		}
+	}
+}
+
+// TestSplitController_ChildrenInheritNamespaceTermOptions verifies that child
+// shards are fenced with the namespace's term options rather than the
+// ToDbOption(nil) defaults. A namespace with notifications disabled (and a
+// non-default key sorting) must not have those settings silently reset on its
+// post-split children — every NewTerm sent to a child ensemble member, both at
+// Bootstrap and at the Cutover re-election, must carry the namespace options.
+func TestSplitController_ChildrenInheritNamespaceTermOptions(t *testing.T) {
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap,
+		func(ns *proto.Namespace) {
+			ns.NotificationsEnabled = gproto.Bool(false)
+			ns.SetKeySortingType(proto.KeySortingType_HIERARCHICAL)
+		})
+
+	queueBootstrapResponses(rpcMock)
+	queueCatchUpResponses(rpcMock)
+	queueCutoverResponses(rpcMock)
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      statusRes,
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+	})
+	defer sc.Close()
+
+	select {
+	case <-listener.completions:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Split did not complete in time")
+	}
+
+	// The split has completed, so every NewTerm the controller sent is buffered
+	// on the per-node channels. Each child ensemble member is fenced twice
+	// (Bootstrap + Cutover re-election); every one must carry the namespace's
+	// term options.
+	for _, node := range []*proto.DataServerIdentity{ls1, ls2, ls3, rs1, rs2, rs3} {
+		reqs := drainNewTermRequests(rpcMock.GetNode(node))
+		require.NotEmpty(t, reqs, "expected NewTerm requests for child node %s", node.Internal)
+		for _, r := range reqs {
+			require.NotNil(t, r.Options, "child NewTerm must carry term options (node %s)", node.Internal)
+			assert.False(t, r.Options.EnableNotifications,
+				"child NewTerm should inherit notifications-disabled (node %s)", node.Internal)
+			assert.Equal(t, proto.KeySortingType_HIERARCHICAL, r.Options.KeySorting,
+				"child NewTerm should inherit namespace key sorting (node %s)", node.Internal)
+		}
 	}
 }
 

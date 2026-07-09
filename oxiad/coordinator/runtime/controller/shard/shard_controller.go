@@ -384,6 +384,24 @@ func (s *controller) verifyCurrentEnsemble(initShardMeta *proto.ShardMetadata) b
 	return true
 }
 
+// namespaceTermOptions builds the NewTerm options (notifications + key sorting)
+// for a shard from its namespace config, falling back to defaults when the
+// namespace config is missing. Shared by the leader-election path and the
+// shard-split path so post-split children inherit the same term settings as a
+// normally-elected leader.
+func namespaceTermOptions(metadataStore coordmetadata.Metadata, namespace string) *proto.NewTermOptions {
+	termOptions := &proto.NewTermOptions{
+		EnableNotifications: true,
+		KeySorting:          proto.KeySortingType_UNKNOWN,
+	}
+	if borrowedNamespaceConfig, exist := metadataStore.GetNamespace(namespace); exist {
+		nsConfig := borrowedNamespaceConfig.UnsafeBorrow()
+		termOptions.EnableNotifications = nsConfig.NotificationsEnabledOrDefault()
+		termOptions.KeySorting, _ = nsConfig.GetKeySortingType()
+	}
+	return termOptions
+}
+
 func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServerIdentity {
 	// stop the current term election
 	if s.currentElection != nil {
@@ -395,16 +413,7 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	termOptions := &proto.NewTermOptions{
-		EnableNotifications: true,
-		KeySorting:          proto.KeySortingType_UNKNOWN,
-	}
-	borrowedNamespaceConfig, exist := s.metadataStore.GetNamespace(s.namespace)
-	if exist {
-		nsConfig := borrowedNamespaceConfig.UnsafeBorrow()
-		termOptions.EnableNotifications = nsConfig.NotificationsEnabledOrDefault()
-		termOptions.KeySorting, _ = nsConfig.GetKeySortingType()
-	}
+	termOptions := namespaceTermOptions(s.metadataStore, s.namespace)
 	s.currentElection = NewElection(s.ctx, s.logger, s.eventListener,
 		s.metadataStore, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
 		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction,
