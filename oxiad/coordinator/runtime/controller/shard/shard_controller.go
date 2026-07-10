@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -559,9 +560,64 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			return
 		}
 	}
+	if err = s.validateChangeEnsembleFeatures(changeEnsembleAction); err != nil {
+		return
+	}
 	// todo: support optimized ensemble change to avoid start a new election
 	s.onElectLeader(changeEnsembleAction)
 }
+
+func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action.ChangeEnsembleAction) error {
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	if !exists {
+		return nil
+	}
+	ensemble := borrowedMeta.UnsafeBorrow().Ensemble
+	ensembleFeatures := s.dataServerSupportedFeaturesSupplier(ensemble)
+	if len(ensembleFeatures) < len(ensemble) {
+		s.logger.Warn(
+			"Change ensemble feature validation skipped: current ensemble feature information is incomplete",
+			slog.Int("expected-nodes", len(ensemble)),
+			slog.Int("known-nodes", len(ensembleFeatures)),
+		)
+		return nil
+	}
+
+	requiredFeatures := negotiate(ensembleFeatures)
+	if len(requiredFeatures) == 0 {
+		return nil
+	}
+
+	to := changeEnsembleAction.To
+	targetFeatures := s.dataServerSupportedFeaturesSupplier([]*proto.DataServerIdentity{to})[to.GetNameOrDefault()]
+	if missing := featuresMissing(requiredFeatures, targetFeatures); len(missing) > 0 {
+		s.logger.Warn(
+			"Change ensemble rejected: target node does not support features required by the current ensemble",
+			slog.Any("to", to),
+			slog.Any("required-features", requiredFeatures),
+			slog.Any("missing-features", missing),
+		)
+		return errors.Wrapf(ErrIncompatibleChangeEnsemble,
+			"target node %s does not support features %v", to.GetNameOrDefault(), missing)
+	}
+	return nil
+}
+
+func featuresMissing(required []proto.Feature, available []proto.Feature) []proto.Feature {
+	availableSet := make(map[proto.Feature]struct{}, len(available))
+	for _, feature := range available {
+		availableSet[feature] = struct{}{}
+	}
+
+	var missing []proto.Feature
+	for _, feature := range required {
+		if _, ok := availableSet[feature]; !ok {
+			missing = append(missing, feature)
+		}
+	}
+	return missing
+}
+
 func (s *controller) SyncServerAddress() {
 	s.terminationMu.RLock()
 	defer s.terminationMu.RUnlock()

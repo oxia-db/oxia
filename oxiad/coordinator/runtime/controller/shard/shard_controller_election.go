@@ -45,8 +45,9 @@ import (
 )
 
 var (
-	ErrNotReadyForChangeEnsemble = errors.New("shard is not ready for change ensemble, please retry later")
-	ErrFollowerNotCaughtUp       = errors.New("follower not caught up yet")
+	ErrNotReadyForChangeEnsemble  = errors.New("shard is not ready for change ensemble, please retry later")
+	ErrIncompatibleChangeEnsemble = errors.New("change ensemble target does not support shard features")
+	ErrFollowerNotCaughtUp        = errors.New("follower not caught up yet")
 )
 
 type Election struct {

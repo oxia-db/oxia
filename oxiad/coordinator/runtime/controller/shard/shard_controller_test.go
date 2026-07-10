@@ -1015,6 +1015,61 @@ func TestController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	sc.Close()
 }
 
+func TestController_ChangeEnsembleRejectsTargetMissingCurrentFeatures(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	featuresByNode := map[string][]proto.Feature{
+		s1.GetNameOrDefault(): {proto.Feature_FEATURE_DB_CHECKSUM},
+		s2.GetNameOrDefault(): {proto.Feature_FEATURE_DB_CHECKSUM},
+		s3.GetNameOrDefault(): {proto.Feature_FEATURE_DB_CHECKSUM},
+		s4.GetNameOrDefault(): {},
+	}
+	featureSupplier := func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
+		result := make(map[string][]proto.Feature, len(servers))
+		for _, server := range servers {
+			result[server.GetNameOrDefault()] = featuresByNode[server.GetNameOrDefault()]
+		}
+		return result
+	}
+
+	metadata := newTestMetadata(
+		t,
+		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{},
+	)
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     2,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, featureSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).GetStatusResponse(2, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
+
+	swap := action.NewChangeEnsembleAction(shard, s3, s4)
+	sc.ChangeEnsemble(swap)
+	_, err := swap.Wait()
+	assert.ErrorIs(t, err, ErrIncompatibleChangeEnsemble)
+
+	rpc.GetNode(s4).ExpectNoMoreNewTermRequest(t)
+
+	assert.NoError(t, sc.Close())
+}
+
 // Each UpdateShardStatus persists the full cluster status, so re-writing it
 // for every shard on every periodic tick costs O(shards^2) bytes per interval
 // on the metadata backend. The periodic task must not persist when it has no
