@@ -223,7 +223,7 @@ func (sm *sessionManager) CloseSession(request *proto.CloseSessionRequest) (*pro
 	sm.removeSession(s.id)
 	sm.Unlock()
 
-	s.log.Info("Session closing")
+	s.log.Debug("Session closing")
 	s.Close()
 	err = s.delete()
 	if err != nil {

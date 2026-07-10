@@ -76,7 +76,7 @@ func startSession(sessionId SessionId, sessionMetadata *proto.SessionMetadata, s
 		"shard":           fmt.Sprintf("%d", sm.shardId),
 	}, s.waitForHeartbeats)
 
-	s.log.Info("Session started", slog.Duration("session-timeout", s.timeout))
+	s.log.Debug("Session started", slog.Duration("session-timeout", s.timeout))
 	return s
 }
 
