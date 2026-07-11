@@ -31,6 +31,7 @@ const (
 
 	DefaultPublicPort   = 6648
 	DefaultInternalPort = 6649
+	DefaultHealthPort   = 6650
 	DefaultAdminPort    = 6651
 
 	MaxSessionTimeout = 5 * time.Minute

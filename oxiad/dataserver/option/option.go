@@ -68,9 +68,19 @@ func (iso *InternalServerOptions) Validate() error {
 	)
 }
 
+// HealthServerOptions configures an optional dedicated listener for the gRPC
+// health service. The health service is always registered on the public and
+// internal servers; a dedicated listener additionally serves it on a port
+// that carries no data traffic, so health probes keep answering promptly
+// even when the data path is saturated.
+type HealthServerOptions struct {
+	BindAddress string `yaml:"bindAddress,omitempty" json:"bindAddress,omitempty" jsonschema:"description=Bind address for the dedicated health check server. The dedicated listener is disabled when empty,example=0.0.0.0:6650,format=hostname"`
+}
+
 type ServerOptions struct {
 	Public   PublicServerOptions   `yaml:"public" json:"public" jsonschema:"description=Public server configuration for client-facing API endpoints"`
 	Internal InternalServerOptions `yaml:"internal" json:"internal" jsonschema:"description=Internal server configuration for cluster communication"`
+	Health   HealthServerOptions   `yaml:"health,omitempty" json:"health,omitempty" jsonschema:"description=Optional dedicated health check listener configuration"`
 }
 
 func (so *ServerOptions) WithDefault() {

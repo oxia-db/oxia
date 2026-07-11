@@ -55,6 +55,8 @@ func init() {
 
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultPublicPort), "Public service bind address")
 	Cmd.Flags().StringVarP(&dataServerOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
+	Cmd.Flags().StringVar(&dataServerOptions.Server.Health.BindAddress, "health-addr", "",
+		fmt.Sprintf("Bind address for a dedicated health check service, isolated from the data path (e.g. 0.0.0.0:%d). Disabled when empty", constant.DefaultHealthPort))
 	observability := &dataServerOptions.Observability
 	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")
 
