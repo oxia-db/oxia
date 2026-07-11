@@ -29,6 +29,14 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/mockutils"
 )
 
+// testHealthPolicy keeps the probing cadence fast so the tests exercising the
+// consecutive-failure threshold complete quickly.
+var testHealthPolicy = healthCheckPolicy{
+	probeInterval:    20 * time.Millisecond,
+	probeTimeout:     1 * time.Second,
+	failureThreshold: 3,
+}
+
 func expectShardAssignmentsUpdate(t *testing.T, updates <-chan *proto.ShardAssignments, expected *proto.ShardAssignments) {
 	t.Helper()
 
@@ -50,7 +58,7 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 	sap := mockutils.NewShardAssignmentsProvider()
 	nal := mockutils.NewNodeAvailabilityListener()
 	rpc := mockutils.NewRpcProvider()
-	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
 
 	node := rpc.GetNode(addr)
 
@@ -82,6 +90,79 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 	assert.NoError(t, nc.Close())
 }
 
+func TestDataServerController_ToleratesTransientHealthCheckFailures(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
+
+	node := rpc.GetNode(addr)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Fail fewer consecutive probes than the threshold: a saturated node can
+	// miss individual probe deadlines while being perfectly healthy.
+	node.HealthClient.FailNextChecks(errors.New("context deadline exceeded"), testHealthPolicy.failureThreshold-1)
+
+	// Wait until all scheduled failures have been consumed, plus a few more
+	// successful probe rounds.
+	assert.Eventually(t, func() bool {
+		return node.HealthClient.PendingCheckFailures() == 0
+	}, 10*time.Second, 10*time.Millisecond)
+	time.Sleep(5 * testHealthPolicy.probeInterval)
+
+	select {
+	case <-nal.Events:
+		assert.Fail(t, "probe failures below the threshold must not mark the node unavailable")
+	default:
+	}
+	assert.Equal(t, Running, nc.Status())
+
+	assert.NoError(t, nc.Close())
+}
+
+func TestDataServerController_WatchFailureAloneDoesNotFence(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
+
+	node := rpc.GetNode(addr)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// A watch stream reset while the node keeps answering pings (e.g. an
+	// idle stream reset under load) must not fence the node.
+	node.HealthClient.FailWatches(errors.New("stream reset"))
+
+	time.Sleep(10 * testHealthPolicy.probeInterval)
+
+	select {
+	case <-nal.Events:
+		assert.Fail(t, "a watch stream failure alone must not mark the node unavailable")
+	default:
+	}
+	assert.Equal(t, Running, nc.Status())
+
+	assert.NoError(t, nc.Close())
+}
+
 func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
@@ -92,7 +173,7 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 	sap := mockutils.NewShardAssignmentsProvider()
 	nal := mockutils.NewNodeAvailabilityListener()
 	rpc := mockutils.NewRpcProvider()
-	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
 
 	node := rpc.GetNode(addr)
 
@@ -153,7 +234,7 @@ func TestDataServerController_ShardsAssignments(t *testing.T) {
 	sap := mockutils.NewShardAssignmentsProvider()
 	nal := mockutils.NewNodeAvailabilityListener()
 	rpc := mockutils.NewRpcProvider()
-	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second)
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
 
 	node := rpc.GetNode(addr)
 	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
@@ -226,7 +307,7 @@ func TestDataServerController_RetriesLatestAssignmentsAfterSendError(t *testing.
 
 	sap.Set(resp)
 
-	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond)
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond, testHealthPolicy)
 	defer func() {
 		assert.NoError(t, nc.Close())
 	}()
@@ -250,7 +331,7 @@ func TestDataServerController_ReestablishesStreamAfterServerEnd(t *testing.T) {
 	sap := mockutils.NewShardAssignmentsProvider()
 	nal := mockutils.NewNodeAvailabilityListener()
 	rpc := mockutils.NewRpcProvider()
-	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond)
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond, testHealthPolicy)
 	defer func() {
 		assert.NoError(t, nc.Close())
 	}()
@@ -310,7 +391,7 @@ func TestDataServerController_RecoversFromStreamEstablishmentRejection(t *testin
 	}
 	sap.Set(resp)
 
-	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond)
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 10*time.Millisecond, testHealthPolicy)
 	defer func() {
 		assert.NoError(t, nc.Close())
 	}()
