@@ -106,6 +106,30 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	return factory, nil
 }
 
+// SeedClusterConfig stores the given cluster configuration if none exists yet.
+// It is a no-op when a configuration is already present, and it tolerates
+// losing the seeding race to another coordinator.
+func (f *Factory) SeedClusterConfig(config *commonproto.ClusterConfiguration) error {
+	f.mu.Lock()
+	configProvider := f.configProvider
+	f.mu.Unlock()
+
+	if configProvider.Watch().Load().Version != metadatacommon.NotExists {
+		return nil
+	}
+	if _, err := configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
+		Value:   config,
+		Version: metadatacommon.NotExists,
+	}); err != nil {
+		if errors.Is(err, metadatacommon.ErrBadVersion) {
+			// Another coordinator stored a configuration first.
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func (f *Factory) CreateMetadata(ctx context.Context) (Metadata, error) {
 	f.mu.Lock()
 	statusProvider := f.statusProvider
