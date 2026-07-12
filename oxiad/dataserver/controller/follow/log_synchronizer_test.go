@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -114,4 +115,62 @@ func TestLogSynchronizer_DuplicateAckOnlySynced(t *testing.T) {
 	assert.EqualValues(t, 4, response.Offset)
 	assert.GreaterOrEqual(t, w.syncCalls.Load(), int64(1))
 	assert.EqualValues(t, 4, w.synced.Load())
+}
+
+// An entry-less Append is a commit-offset advertisement (sent by the leader to
+// an observer parked at the head of the wal): it must take the new commit
+// offset and wake up the applier chain, without appending anything to the wal
+// and without acking.
+func TestLogSynchronizer_CommitOffsetAdvertisement(t *testing.T) {
+	w := &stubWal{}
+	w.appended.Store(0)
+	w.synced.Store(0)
+
+	lastAppendedOffset := &atomic.Int64{}
+	lastAppendedOffset.Store(0)
+	advertisedCommitOffset := &atomic.Int64{}
+	advertisedCommitOffset.Store(wal.InvalidOffset)
+
+	stateApplierCond := make(chan struct{}, 1)
+	stream := rpc.NewMockServerReplicateStream()
+	ls := NewLogSynchronizer(LogSynchronizerParams{
+		Log:                    slog.Default(),
+		Namespace:              "test",
+		ShardId:                0,
+		Term:                   1,
+		Wal:                    w,
+		AdvertisedCommitOffset: advertisedCommitOffset,
+		LastAppendedOffset:     lastAppendedOffset,
+		WriteLatencyHisto: metric.NewLatencyHistogram("oxia_test_commit_advertisement",
+			"test", map[string]any{}),
+		StateApplierCond: stateApplierCond,
+		Stream:           stream,
+		OnAppend:         func() {},
+	})
+	defer func() {
+		// Unblock the appender goroutine's Recv before closing
+		stream.Cancel()
+		assert.NoError(t, ls.Close())
+	}()
+
+	stream.AddRequest(&proto.Append{
+		Term:                    1,
+		CommitOffset:            0,
+		CumulativeAcksSupported: true,
+	})
+
+	assert.Eventually(t, func() bool {
+		return advertisedCommitOffset.Load() == 0
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// The state applier gets woken up (through the syncer)
+	select {
+	case <-stateApplierCond:
+	case <-time.After(10 * time.Second):
+		t.Fatal("state applier was not woken up")
+	}
+
+	// Nothing was appended and no ack was sent
+	assert.EqualValues(t, 0, lastAppendedOffset.Load())
+	assert.Empty(t, stream.Responses)
 }
