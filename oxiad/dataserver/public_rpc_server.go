@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -299,15 +300,27 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 }
 
 // warnOnStreamError logs failures of streaming data operations, except the
-// expected ones: the client going away or its deadline expiring.
+// expected ones: the client going away or its deadline expiring. A send that
+// fails because the client connection is shutting down is also expected and
+// is only logged at debug level.
 func (s *publicRpcServer) warnOnStreamError(operation string, err error) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return
 	}
-	s.log.Warn(
-		"Failed to perform "+operation+" operation",
-		slog.Any("error", err),
-	)
+	msg := "Failed to perform " + operation + " operation"
+	if isTransportClosingError(err) {
+		s.log.Debug(msg, slog.Any("error", err))
+		return
+	}
+	s.log.Warn(msg, slog.Any("error", err))
+}
+
+// isTransportClosingError recognizes the status error that a stream send
+// returns when the client connection is shutting down. gRPC exposes no
+// sentinel for it, so match on code and message.
+func isTransportClosingError(err error) bool {
+	return status.Code(err) == codes.Unavailable &&
+		strings.Contains(status.Convert(err).Message(), "transport is closing")
 }
 
 func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClient_ReadServer) error {
