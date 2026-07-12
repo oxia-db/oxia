@@ -83,7 +83,9 @@ func newReadOnlySegment(basePath string, baseOffset int64) (ReadOnlySegment, err
 	}
 
 	if ms.txnMappedFile, err = mmap.MapRegion(ms.txnFile, -1, mmap.RDONLY, 0, 0); err != nil {
-		return nil, errors.Wrapf(err, "failed to map segment txn file %s", ms.c.txnPath)
+		return nil, multierr.Append(
+			errors.Wrapf(err, "failed to map segment txn file %s", ms.c.txnPath),
+			ms.txnFile.Close())
 	}
 
 	if ms.idx, err = ms.c.codec.ReadIndex(ms.c.idxPath); err != nil || len(ms.idx) == 0 {
