@@ -429,14 +429,18 @@ func TestWarnOnStreamErrorSkipsClientDisconnectErrors(t *testing.T) {
 		log: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	}
 
-	server.warnOnStreamError("read", errors.New("unexpected failure"))
+	server.warnOnStreamError(context.Background(), "read", errors.New("unexpected failure"))
 	assert.Contains(t, buf.String(), "level=WARN")
 
+	// When the client goes away mid-stream, the transport cancels the stream
+	// context before the send error reaches the handler.
+	doneCtx, cancel := context.WithCancel(context.Background())
+	cancel()
 	buf.Reset()
-	server.warnOnStreamError("read", grpcstatus.Error(codes.Unavailable, "transport is closing"))
+	server.warnOnStreamError(doneCtx, "read", grpcstatus.Error(codes.Unavailable, "transport is closing"))
 	assert.Empty(t, buf.String())
 
 	buf.Reset()
-	server.warnOnStreamError("read", context.Canceled)
+	server.warnOnStreamError(context.Background(), "read", context.Canceled)
 	assert.Empty(t, buf.String())
 }
