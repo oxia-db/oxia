@@ -299,15 +299,14 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 }
 
 // warnOnStreamError logs failures of streaming data operations, except the
-// expected ones: the client going away or its deadline expiring.
-func (s *publicRpcServer) warnOnStreamError(operation string, err error) {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+// expected ones. The stream context ends whenever the client goes away — it
+// cancels the RPC, its deadline expires, or its connection shuts down — so
+// failures with a done context are not worth a warning.
+func (s *publicRpcServer) warnOnStreamError(ctx context.Context, operation string, err error) {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return
 	}
-	s.log.Warn(
-		"Failed to perform "+operation+" operation",
-		slog.Any("error", err),
-	)
+	s.log.Warn("Failed to perform operation", slog.String("operation", operation), slog.Any("error", err))
 }
 
 func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClient_ReadServer) error {
@@ -333,7 +332,7 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 		err = batcher.Flush()
 	}
 	if err != nil {
-		s.warnOnStreamError("read", err)
+		s.warnOnStreamError(ctx, "read", err)
 		return constant.IntoGrpcStatusError(err)
 	}
 	return nil
@@ -360,7 +359,7 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 		err = batcher.Flush()
 	}
 	if err != nil {
-		s.warnOnStreamError("list", err)
+		s.warnOnStreamError(ctx, "list", err)
 		return constant.IntoGrpcStatusError(err)
 	}
 	return nil
@@ -392,7 +391,7 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 		err = batcher.Flush()
 	}
 	if err != nil {
-		s.warnOnStreamError("range-scan", err)
+		s.warnOnStreamError(ctx, "range-scan", err)
 		return constant.IntoGrpcStatusError(err)
 	}
 	return nil

@@ -15,7 +15,9 @@
 package dataserver
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -419,4 +421,26 @@ func TestResolveLeaderValidatesAuthorityBeforeLeaderLookup(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, grpcstatus.Code(err))
+}
+
+func TestWarnOnStreamErrorSkipsClientDisconnectErrors(t *testing.T) {
+	var buf bytes.Buffer
+	server := &publicRpcServer{
+		log: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	}
+
+	server.warnOnStreamError(context.Background(), "read", errors.New("unexpected failure"))
+	assert.Contains(t, buf.String(), "level=WARN")
+
+	// When the client goes away mid-stream, the transport cancels the stream
+	// context before the send error reaches the handler.
+	doneCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	buf.Reset()
+	server.warnOnStreamError(doneCtx, "read", grpcstatus.Error(codes.Unavailable, "transport is closing"))
+	assert.Empty(t, buf.String())
+
+	buf.Reset()
+	server.warnOnStreamError(context.Background(), "read", context.Canceled)
+	assert.Empty(t, buf.String())
 }
