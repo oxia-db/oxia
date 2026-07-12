@@ -156,7 +156,7 @@ func (*V2) WriteRecord(buf []byte, startOffset uint32, previousCrc uint32, paylo
 }
 
 func (v *V2) WriteIndex(path string, index []byte) error {
-	idxFile, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+	idxFile, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
 	if err != nil {
 		return errors.Wrapf(err, "failed to open index file %s", path)
 	}
@@ -165,7 +165,9 @@ func (v *V2) WriteIndex(path string, index []byte) error {
 	binary.BigEndian.PutUint32(buf[0:], indexCrc)
 	copy(buf[v.GetIndexHeaderSize():], index)
 	if _, err = idxFile.Write(buf); err != nil {
-		return errors.Wrapf(err, "failed write index file %s", path)
+		return multierr.Combine(
+			errors.Wrapf(err, "failed write index file %s", path),
+			idxFile.Close())
 	}
 	return idxFile.Close()
 }

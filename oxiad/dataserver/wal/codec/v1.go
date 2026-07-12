@@ -118,13 +118,15 @@ func (*V1) WriteRecord(buf []byte, startOffset uint32, _ uint32, payload []byte)
 }
 
 func (*V1) WriteIndex(path string, index []byte) error {
-	idxFile, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+	idxFile, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
 	if err != nil {
 		return errors.Wrapf(err, "failed to open index file %s", path)
 	}
 
 	if _, err = idxFile.Write(index); err != nil {
-		return errors.Wrapf(err, "failed write index file %s", path)
+		return multierr.Combine(
+			errors.Wrapf(err, "failed write index file %s", path),
+			idxFile.Close())
 	}
 	return idxFile.Close()
 }

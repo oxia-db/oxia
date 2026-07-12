@@ -17,6 +17,7 @@ package wal
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 	"runtime"
 	"testing"
 
@@ -374,6 +375,35 @@ func TestReadWriteSegment_ConcurrentAppendReadFlush(t *testing.T) {
 	}
 
 	assert.NoError(t, rw.Close())
+}
+
+// Reopening a segment for writes removes the index file left by its previous
+// incarnation: the index goes stale with the first new append, and a crash
+// before the Close that rewrites it would leave it next to newer txn data.
+func TestReadWriteSegment_ReopenRemovesStaleIndex(t *testing.T) {
+	path := t.TempDir()
+
+	rw, err := newReadWriteSegment(path, 0, 128*1024, 0, nil)
+	assert.NoError(t, err)
+	idxPath := rw.(*readWriteSegment).c.idxPath
+	assert.NoError(t, rw.Close())
+
+	_, err = os.Stat(idxPath)
+	assert.NoError(t, err)
+
+	rw, err = newReadWriteSegment(path, 0, 128*1024, 0, nil)
+	assert.NoError(t, err)
+	_, err = os.Stat(idxPath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	assert.NoError(t, rw.Append(0, []byte("entry-0")))
+	assert.NoError(t, rw.Close())
+
+	// The close wrote a fresh index for the appended entries
+	ro, err := newReadOnlySegment(path, 0)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 0, ro.LastOffset())
+	assert.NoError(t, ro.Close())
 }
 
 // Closing the segment must wait for an in-flight msync: the mapping cannot be

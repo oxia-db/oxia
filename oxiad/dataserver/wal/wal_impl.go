@@ -17,6 +17,7 @@ package wal
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -737,21 +738,29 @@ func (t *wal) recoverWal() error {
 	}
 
 	var firstSegment, lastSegment int64
-	var lastCrc uint32
-	if len(segments) > 0 {
+	lastCrc := constant.U32Zero
+	for len(segments) > 0 {
 		firstSegment = segments[0]
 		lastSegment = segments[len(segments)-1]
-		if firstSegment != lastSegment {
-			if lastCrc, err = t.readOnlySegments.GetLastCrc(lastSegment); err != nil {
-				return err
-			}
-		} else {
-			lastCrc = constant.U32Zero
+		if firstSegment == lastSegment {
+			break
 		}
-	} else {
-		firstSegment = 0
-		lastSegment = 0
-		lastCrc = constant.U32Zero
+		if lastCrc, err = t.readOnlySegments.GetLastCrc(lastSegment); err == nil {
+			break
+		}
+		if !errors.Is(err, ErrEmptySegment) {
+			return err
+		}
+		// The segment preceding lastSegment has no recoverable entries: its
+		// content was lost by a crash before being synced. The entries of
+		// lastSegment sit after that gap and were never acknowledged either,
+		// since the sync rounds close the rolled-over segments in order,
+		// before acknowledging: discard it and recover from one segment
+		// further back
+		if err = t.discardTrailingSegment(lastSegment); err != nil {
+			return err
+		}
+		segments = segments[:len(segments)-1]
 	}
 
 	if t.currentSegment, err = newReadWriteSegment(t.walPath, lastSegment, t.segmentSize,
@@ -773,6 +782,33 @@ func (t *wal) recoverWal() error {
 	}
 
 	return nil
+}
+
+// discardTrailingSegment removes the files of a trailing segment whose entries
+// cannot be recovered, and rebuilds the read-only group over the remaining
+// segments, so that the segment now becoming the last one is no longer served
+// as read-only: it gets reopened as the read-write segment instead.
+func (t *wal) discardTrailingSegment(baseOffset int64) error {
+	slog.Warn("Discarding trailing wal segment that follows a segment with no entries.",
+		slog.String("wal-path", t.walPath),
+		slog.Int64("base-offset", baseOffset))
+
+	c, err := newSegmentConfig(t.walPath, baseOffset)
+	if err != nil {
+		return err
+	}
+	if err = multierr.Combine(
+		codec.RemoveFileIfExists(c.idxPath),
+		codec.RemoveFileIfExists(c.txnPath),
+	); err != nil {
+		return err
+	}
+
+	if err = t.readOnlySegments.Close(); err != nil {
+		return err
+	}
+	t.readOnlySegments, err = newReadOnlySegmentsGroup(t.walPath)
+	return err
 }
 
 func listAllSegments(walPath string) (segments []int64, err error) {

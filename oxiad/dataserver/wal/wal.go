@@ -29,6 +29,7 @@ var (
 	ErrReaderClosed      = errors.New("oxia: reader already closed")
 	ErrInvalidNextOffset = errors.New("oxia: invalid next offset in wal")
 	ErrSegmentFull       = errors.New("oxia: current segment is full")
+	ErrEmptySegment      = errors.New("oxia: segment has no entries")
 
 	InvalidTerm   int64 = -1
 	InvalidOffset int64 = -1

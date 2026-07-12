@@ -102,6 +102,18 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 		ms.pendingFileSync.Store(true)
 	}
 
+	// An index file next to a segment reopened for writes belongs to a previous
+	// incarnation of the segment and goes stale with the first new append:
+	// remove it, so that a crash before the Close that rewrites it cannot
+	// leave it lying next to newer txn data. Close writes a fresh one.
+	if c.segmentExists {
+		if err = codec.RemoveFileIfExists(c.idxPath); err != nil {
+			return nil, multierr.Append(
+				errors.Wrapf(err, "failed to remove stale segment index file %s", c.idxPath),
+				ms.txnFile.Close())
+		}
+	}
+
 	if ms.txnMappedFile, err = mmap.MapRegion(ms.txnFile, int(segmentSize), mmap.RDWR, 0, 0); err != nil {
 		return nil, multierr.Append(
 			errors.Wrapf(err, "failed to map segment file %s", ms.c.txnPath),
