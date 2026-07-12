@@ -297,6 +297,7 @@ func (n *controller) healthPingWithRetries() {
 	_ = backoff.RetryNotify(func() error {
 		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
 		if err != nil {
+			failureEpoch = n.currentStatusEpoch()
 			return err
 		}
 
