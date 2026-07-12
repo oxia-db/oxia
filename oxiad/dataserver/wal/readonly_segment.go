@@ -94,7 +94,10 @@ func newReadOnlySegment(basePath string, baseOffset int64) (ReadOnlySegment, err
 		// the txn file. In both cases, rebuild the index from the txn file,
 		// like for a corrupted one
 		if err != nil && !errors.Is(err, codec.ErrDataCorrupted) && !errors.Is(err, os.ErrNotExist) {
-			return nil, errors.Wrapf(err, "failed to decode segment index file %s", ms.c.idxPath)
+			return nil, multierr.Combine(
+				errors.Wrapf(err, "failed to decode segment index file %s", ms.c.idxPath),
+				ms.txnMappedFile.Unmap(),
+				ms.txnFile.Close())
 		}
 		slog.Warn("The segment index file is missing, empty or corrupted and the index is being rebuilt.",
 			slog.String("path", ms.c.idxPath))
@@ -102,7 +105,10 @@ func newReadOnlySegment(basePath string, baseOffset int64) (ReadOnlySegment, err
 		if ms.idx, _, _, _, err = ms.c.codec.RecoverIndex(ms.txnMappedFile, 0,
 			ms.c.baseOffset, nil); err != nil {
 			slog.Error("The segment index file rebuild failed.", slog.String("path", ms.c.idxPath))
-			return nil, errors.Wrapf(err, "failed to rebuild segment index file %s", ms.c.idxPath)
+			return nil, multierr.Combine(
+				errors.Wrapf(err, "failed to rebuild segment index file %s", ms.c.idxPath),
+				ms.txnMappedFile.Unmap(),
+				ms.txnFile.Close())
 		}
 		if len(ms.idx) > 0 {
 			slog.Info("The segment index file has been rebuilt.", slog.String("path", ms.c.idxPath))
@@ -129,7 +135,7 @@ func newReadOnlySegment(basePath string, baseOffset int64) (ReadOnlySegment, err
 	// recover the last crc
 	fo := fileOffset(ms.idx, ms.c.baseOffset, ms.lastOffset)
 	if _, _, ms.lastCrc, err = ms.c.codec.ReadHeaderWithValidation(ms.txnMappedFile, fo); err != nil {
-		return nil, err
+		return nil, multierr.Combine(err, ms.txnMappedFile.Unmap(), ms.txnFile.Close())
 	}
 	return ms, nil
 }

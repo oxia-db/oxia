@@ -124,7 +124,9 @@ func (*V1) WriteIndex(path string, index []byte) error {
 	}
 
 	if _, err = idxFile.Write(index); err != nil {
-		return errors.Wrapf(err, "failed write index file %s", path)
+		return multierr.Combine(
+			errors.Wrapf(err, "failed write index file %s", path),
+			idxFile.Close())
 	}
 	return idxFile.Close()
 }
