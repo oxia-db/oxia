@@ -163,6 +163,47 @@ func TestDataServerController_WatchFailureAloneDoesNotFence(t *testing.T) {
 	assert.NoError(t, nc.Close())
 }
 
+func TestDataServerController_IsStablyRunning(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
+
+	node := rpc.GetNode(addr)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// A node that never failed a health check is stable regardless of the
+	// window (initial cluster startup must not delay leader balancing).
+	assert.True(t, nc.IsStablyRunning(time.Hour))
+
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	<-nal.Events
+	assert.False(t, nc.IsStablyRunning(0))
+
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// After a recovery the node is Running but not yet stable for a long
+	// window; it becomes stable once it stays Running past the window.
+	assert.False(t, nc.IsStablyRunning(time.Hour))
+	assert.Eventually(t, func() bool {
+		return nc.IsStablyRunning(100 * time.Millisecond)
+	}, 10*time.Second, 10*time.Millisecond)
+
+	assert.NoError(t, nc.Close())
+}
+
 func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",

@@ -99,6 +99,14 @@ type Controller interface {
 
 	Status() Status
 
+	// IsStablyRunning reports whether the data server is Running and, if it
+	// previously failed a health check, whether it has now been Running
+	// continuously for at least window. The load balancer uses it to keep a
+	// freshly recovered node out of leader rebalancing until it proves
+	// stable, so that a flapping node does not get leaders moved back onto
+	// it just to lose them again.
+	IsStablyRunning(window time.Duration) bool
+
 	SupportedFeatures() []proto.Feature
 
 	SetStatus(status Status)
@@ -120,6 +128,15 @@ type controller struct {
 	statusLock        sync.RWMutex
 	status            Status
 	supportedFeatures atomic.Value
+	// runningSince is when the node last transitioned to Running;
+	// everUnavailable records whether it ever failed a health check;
+	// statusEpoch increments on every status transition, so that a probe
+	// observation (a SERVING answer or a failure) obtained before a
+	// concurrent transition can be recognized as stale and discarded instead
+	// of flapping the status back. All are guarded by statusLock.
+	runningSince    time.Time
+	everUnavailable bool
+	statusEpoch     int64
 
 	healthPolicy               healthCheckPolicy
 	healthCheckBackoff         *commontime.ConcurrentBackOff
@@ -148,7 +165,30 @@ func (n *controller) SetStatus(status Status) {
 	defer n.statusLock.Unlock()
 	previous := n.status
 	n.status = status
+	if status != previous {
+		n.statusEpoch++
+	}
+	if status == Running && previous != Running {
+		n.runningSince = time.Now()
+	}
 	n.logger.Info("Changed status", slog.Any("from", previous), slog.Any("to", status))
+}
+
+func (n *controller) IsStablyRunning(window time.Duration) bool {
+	n.statusLock.RLock()
+	defer n.statusLock.RUnlock()
+	if n.status != Running {
+		return false
+	}
+	// A node that never failed a health check (e.g. it just joined, or the
+	// whole cluster just started) is considered stable right away.
+	return !n.everUnavailable || time.Since(n.runningSince) >= window
+}
+
+func (n *controller) currentStatusEpoch() int64 {
+	n.statusLock.RLock()
+	defer n.statusLock.RUnlock()
+	return n.statusEpoch
 }
 
 func (n *controller) Close() error {
@@ -236,11 +276,11 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 	})
 }
 
-func (n *controller) doHealthPing(healthClient grpc_health_v1.HealthClient) error {
+func (n *controller) doHealthPing(observedEpoch int64, healthClient grpc_health_v1.HealthClient) error {
 	pingCtx, pingCancel := context.WithTimeout(n.ctx, n.healthPolicy.probeTimeout)
 	response, err := healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 	pingCancel()
-	return n.healthCheckHandler(response, err)
+	return n.healthCheckHandler(observedEpoch, response, err)
 }
 
 func (n *controller) healthPingWithRetries() {
@@ -248,6 +288,11 @@ func (n *controller) healthPingWithRetries() {
 	// data server that keeps failing is re-declared unavailable on every
 	// backoff round instead of getting a fresh threshold each time.
 	consecutiveFailures := 0
+	lastObservedEpoch := int64(-1)
+	// The status epoch of the observation that crossed the failure threshold.
+	// The notify callback runs on this same goroutine right after the retry
+	// function returns.
+	var failureEpoch int64
 
 	_ = backoff.RetryNotify(func() error {
 		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
@@ -258,13 +303,26 @@ func (n *controller) healthPingWithRetries() {
 		ticker := time.NewTicker(n.healthPolicy.probeInterval)
 		defer ticker.Stop()
 		for {
+			// Capture the status epoch before probing: an answer produced
+			// before a concurrent status transition is stale and must not
+			// flap the status back.
+			epoch := n.currentStatusEpoch()
+			if epoch != lastObservedEpoch {
+				// The status changed (e.g. the watch path recovered the
+				// node): failures observed against the previous status must
+				// not count against the new one.
+				consecutiveFailures = 0
+				lastObservedEpoch = epoch
+			}
+
 			// Immediate check on startup instead of waiting for first tick
-			switch err := n.doHealthPing(healthClient); {
+			switch err := n.doHealthPing(epoch, healthClient); {
 			case err == nil:
 				consecutiveFailures = 0
 			case errors.Is(err, errNotServing):
 				// The data server deliberately reported NOT_SERVING (e.g. it
 				// is shutting down): fail it right away.
+				failureEpoch = epoch
 				return err
 			case errors.Is(err, context.Canceled) || grpcstatus.Code(err) == codes.Canceled:
 				// The controller is shutting down
@@ -274,6 +332,7 @@ func (n *controller) healthPingWithRetries() {
 				if consecutiveFailures >= n.healthPolicy.failureThreshold {
 					n.logger.Warn("Data server stopped responding to ping",
 						slog.Int("consecutive-failures", consecutiveFailures))
+					failureEpoch = epoch
 					return err
 				}
 				// A slow probe on a saturated node is not yet a failure:
@@ -296,7 +355,7 @@ func (n *controller) healthPingWithRetries() {
 			slog.Duration("retry-after", duration),
 			slog.Any("error", err),
 		)
-		n.becomeUnavailable()
+		n.becomeUnavailable(failureEpoch)
 	})
 }
 
@@ -317,14 +376,16 @@ func (n *controller) healthWatchWithRetries() {
 			case <-n.ctx.Done():
 				return nil
 			default:
-				err := n.healthCheckHandler(watchStream.Recv())
+				epoch := n.currentStatusEpoch()
+				response, recvErr := watchStream.Recv()
+				err := n.healthCheckHandler(epoch, response, recvErr)
 				switch {
 				case err == nil:
 				case errors.Is(err, errNotServing):
 					// The data server deliberately reported NOT_SERVING: fail
 					// it right away, and keep watching for it to come back.
 					n.logger.Warn("Data server reported it is not serving")
-					n.becomeUnavailable()
+					n.becomeUnavailable(epoch)
 				default:
 					// A broken watch stream on its own does not mean the data
 					// server is gone: under load the stream can get reset while
@@ -342,26 +403,37 @@ func (n *controller) healthWatchWithRetries() {
 	})
 }
 
-func (n *controller) becomeUnavailable() {
-	currentStatus := n.Status()
-	if currentStatus != Running && currentStatus != Draining {
+func (n *controller) becomeUnavailable(observedEpoch int64) {
+	n.statusLock.Lock()
+	if n.statusEpoch != observedEpoch {
+		// The status changed since the failing observation was made (e.g.
+		// the node already recovered through the watch path): the failure is
+		// stale and must not fence the node again. The next probe evaluates
+		// the fresh state.
+		n.statusLock.Unlock()
 		return
 	}
-	n.statusLock.Lock()
-	if n.status != Running && n.status != Draining { // double check
+	if n.status != Running && n.status != Draining {
 		n.statusLock.Unlock()
 		return
 	}
 	if n.status == Running {
 		n.status = NotRunning
 	}
+	n.everUnavailable = true
+	n.statusEpoch++
 	n.statusLock.Unlock()
 
 	n.failedHealthChecks.Inc()
 	n.BecameUnavailable(n.dataServer.GetIdentity())
 }
 
-func (n *controller) becomeAvailable() {
+func (n *controller) becomeAvailable(observedEpoch int64) {
+	if n.currentStatusEpoch() != observedEpoch {
+		// The node was fenced while the probe was in flight: the SERVING
+		// answer is stale. The next probe will re-evaluate.
+		return
+	}
 	if n.Status() != NotRunning {
 		return
 	}
@@ -398,13 +470,15 @@ func (n *controller) becomeAvailable() {
 	}
 
 	n.statusLock.Lock()
-	if n.status == NotRunning {
+	if n.status == NotRunning && n.statusEpoch == observedEpoch {
 		n.status = Running
+		n.runningSince = time.Now()
+		n.statusEpoch++
 	}
 	n.statusLock.Unlock()
 }
 
-func (n *controller) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
+func (n *controller) healthCheckHandler(observedEpoch int64, response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
 			n.logger.Warn("Data server health check failed", slog.Any("error", err))
@@ -414,7 +488,7 @@ func (n *controller) healthCheckHandler(response *grpc_health_v1.HealthCheckResp
 	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
 		return errNotServing
 	}
-	n.becomeAvailable()
+	n.becomeAvailable(observedEpoch)
 	return nil
 }
 
