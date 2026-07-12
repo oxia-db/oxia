@@ -61,6 +61,14 @@ func TestV1_WriteReadIndex(t *testing.T) {
 	}
 }
 
+func TestV1_ReadEmptyIndex(t *testing.T) {
+	p := path.Join(t.TempDir(), "empty-index"+v1.GetIdxExtension())
+	assert.NoError(t, v1.WriteIndex(p, nil))
+
+	_, err := v1.ReadIndex(p)
+	assert.ErrorIs(t, err, ErrDataCorrupted)
+}
+
 func TestV1_RecoverIndex(t *testing.T) {
 	elementsNum := 5
 

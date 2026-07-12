@@ -256,9 +256,10 @@ func (ms *readWriteSegment) Close() error {
 	err := multierr.Combine(
 		ms.txnMappedFile.Unmap(),
 		ms.txnFile.Close(),
-		// Write index file
-		ms.c.codec.WriteIndex(ms.c.idxPath, ms.writingIdx),
 	)
+	if len(ms.writingIdx) > 0 {
+		err = multierr.Append(err, ms.c.codec.WriteIndex(ms.c.idxPath, ms.writingIdx))
+	}
 	codec.ReturnIndexBuf(&ms.writingIdx)
 	return err
 }
@@ -266,7 +267,7 @@ func (ms *readWriteSegment) Close() error {
 func (ms *readWriteSegment) Delete() error {
 	return multierr.Combine(
 		ms.Close(),
-		os.Remove(ms.c.idxPath),
+		codec.RemoveFileIfExists(ms.c.idxPath),
 		os.Remove(ms.c.txnPath),
 	)
 }
