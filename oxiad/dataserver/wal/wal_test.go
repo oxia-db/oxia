@@ -887,6 +887,145 @@ func TestWal_ReadOnlySegmentMissingIndex(t *testing.T) {
 	assert.NoError(t, f.Close())
 }
 
+// A power loss can leave a rolled-over segment file with none of its content
+// on disk (all zeroes, no index): recovery must discard the trailing segments
+// sitting after the gap — their entries were never acknowledged — and resume
+// from the last segment with recoverable entries (it used to panic with a
+// slice out of bounds).
+func TestWal_RecoverAfterLostRolledOverSegment(t *testing.T) {
+	dir := t.TempDir()
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  dir,
+		Retention:   1 * time.Hour,
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})
+	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	payload := strings.Repeat("x", 1024)
+	var entries []string
+	for i := 0; i < 300; i++ {
+		value := fmt.Sprintf("%s-%d", payload, i)
+		entries = append(entries, value)
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: int64(i), Value: []byte(value)}))
+	}
+	assert.NoError(t, w.Close())
+
+	basePath := walPath(dir, constant.DefaultNamespace, shard)
+	segments, err := listAllSegments(basePath)
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(segments), 3)
+
+	// Simulate the power loss: the second-to-last segment never reached the
+	// disk (all zeroes, no index), while the last segment kept its content
+	lost := segments[len(segments)-2]
+	lostConfig, err := newSegmentConfig(basePath, lost)
+	assert.NoError(t, err)
+	info, err := os.Stat(lostConfig.txnPath)
+	assert.NoError(t, err)
+	assert.NoError(t, os.WriteFile(lostConfig.txnPath, make([]byte, info.Size()), 0644))
+	assert.NoError(t, os.Remove(lostConfig.idxPath))
+	lastConfig, err := newSegmentConfig(basePath, segments[len(segments)-1])
+	assert.NoError(t, err)
+	assert.NoError(t, os.Remove(lastConfig.idxPath))
+
+	// Reopen: everything before the lost segment is recovered, the trailing
+	// segment after the gap is discarded
+	w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 0, w.FirstOffset())
+	assert.EqualValues(t, lost-1, w.LastOffset())
+	_, err = os.Stat(lastConfig.txnPath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	// The wal accepts appends continuing right after the recovered offsets
+	entries = entries[:lost]
+	for i := lost; i < lost+10; i++ {
+		value := fmt.Sprintf("recovered-%d", i)
+		entries = append(entries, value)
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 2, Offset: i, Value: []byte(value)}))
+	}
+
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries)
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+
+	// And everything survives another reopen
+	w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	assert.EqualValues(t, lost+9, w.LastOffset())
+	r, err = w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries)
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// A power loss wiping the content of every segment leaves the wal with no
+// recoverable entries: it must reopen empty, positioned at its first segment.
+func TestWal_RecoverAfterAllSegmentsContentLost(t *testing.T) {
+	dir := t.TempDir()
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  dir,
+		Retention:   1 * time.Hour,
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})
+	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	payload := strings.Repeat("x", 1024)
+	for i := 0; i < 300; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: int64(i), Value: []byte(fmt.Sprintf("%s-%d", payload, i))}))
+	}
+	assert.NoError(t, w.Close())
+
+	basePath := walPath(dir, constant.DefaultNamespace, shard)
+	segments, err := listAllSegments(basePath)
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(segments), 3)
+	for _, segment := range segments {
+		c, err := newSegmentConfig(basePath, segment)
+		assert.NoError(t, err)
+		info, err := os.Stat(c.txnPath)
+		assert.NoError(t, err)
+		assert.NoError(t, os.WriteFile(c.txnPath, make([]byte, info.Size()), 0644))
+		assert.NoError(t, codec.RemoveFileIfExists(c.idxPath))
+	}
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, InvalidOffset, w.FirstOffset())
+	assert.Equal(t, InvalidOffset, w.LastOffset())
+
+	// Only the first segment file survives, and the wal is appendable from
+	// scratch
+	remaining, err := listAllSegments(basePath)
+	assert.NoError(t, err)
+	assert.Equal(t, []int64{0}, remaining)
+
+	var entries []string
+	for i := 0; i < 10; i++ {
+		value := fmt.Sprintf("entry-%d", i)
+		entries = append(entries, value)
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 2, Offset: int64(i), Value: []byte(value)}))
+	}
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, entries)
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
 // Truncating to an offset below all the retained segments clears the wal:
 // the clear used to re-acquire the wal lock already held by TruncateLog,
 // deadlocking the wal permanently (this test would time out).
