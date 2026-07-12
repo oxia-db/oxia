@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -431,8 +432,10 @@ func (n *controller) verifyAfterWatchFailure() {
 	case errors.Is(err, errNotServing):
 		n.logger.Warn("Data server reported it is not serving")
 		n.becomeUnavailable(epoch)
-	case errors.Is(err, context.Canceled) || grpcstatus.Code(err) == codes.Canceled:
-		// The controller is shutting down
+	case errors.Is(err, context.Canceled) || grpcstatus.Code(err) == codes.Canceled || isTransportClosing(err):
+		// The controller is shutting down, or the probe rode a connection
+		// that was itself being torn down: neither proves anything about the
+		// node's health
 	case grpcstatus.Code(err) == codes.DeadlineExceeded:
 		// The node is slow, not provably dead: tolerate, the ping loop's
 		// failure threshold decides
@@ -442,6 +445,14 @@ func (n *controller) verifyAfterWatchFailure() {
 			slog.Any("error", err))
 		n.becomeUnavailable(epoch)
 	}
+}
+
+// isTransportClosing matches the gRPC client error surfaced when the
+// underlying connection is being torn down (e.g. the client pool closing it,
+// or a server draining on shutdown): the RPC failed locally, proving nothing
+// about the peer's health.
+func isTransportClosing(err error) bool {
+	return err != nil && strings.Contains(grpcstatus.Convert(err).Message(), "transport is closing")
 }
 
 func (n *controller) becomeUnavailable(observedEpoch int64) {
@@ -521,7 +532,7 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 
 func (n *controller) healthCheckHandler(observedEpoch int64, response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
-		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
+		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled && !isTransportClosing(err) {
 			n.logger.Warn("Data server health check failed", slog.Any("error", err))
 		}
 		return err

@@ -243,6 +243,40 @@ func TestDataServerController_WatchFailureToleratesSlowNode(t *testing.T) {
 	assert.NoError(t, nc.Close())
 }
 
+func TestDataServerController_WatchFailureToleratesTransportClosing(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, slowPingHealthPolicy)
+
+	node := rpc.GetNode(addr)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// The connection carrying the watch is being torn down: the stream and
+	// the verification probe both fail with "transport is closing". That is a
+	// local teardown artifact, not evidence the node is dead: no fencing.
+	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.Unavailable, "transport is closing"), 1)
+	node.HealthClient.FailWatches(grpcstatus.Error(codes.Unavailable, "transport is closing"))
+
+	select {
+	case <-nal.Events:
+		assert.Fail(t, "a transport teardown must not fence the node")
+	case <-time.After(500 * time.Millisecond):
+	}
+	assert.Equal(t, Running, nc.Status())
+
+	assert.NoError(t, nc.Close())
+}
+
 func TestDataServerController_IsStablyRunning(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
