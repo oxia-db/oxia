@@ -27,7 +27,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/status"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 func TestClientPool_RemovesConnectionAfterHealthFailure(t *testing.T) {
@@ -227,7 +227,7 @@ func (f *flakyHealthServer) Check(
 	*grpc_health_v1.HealthCheckRequest,
 ) (*grpc_health_v1.HealthCheckResponse, error) {
 	if f.remainingFailures.Add(-1) >= 0 {
-		return nil, status.Error(codes.DeadlineExceeded, "health check too slow")
+		return nil, grpcstatus.Error(codes.DeadlineExceeded, "health check too slow")
 	}
 	return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING}, nil
 }

@@ -156,7 +156,7 @@ func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch
 		// The probe clients (kubernetes gRPC probes, `oxia health`) do not
 		// send credentials, so the dedicated listener is plaintext and
 		// unauthenticated: it only ever reports the serving status.
-		//nolint:contextcheck
+
 		s.healthRpcServer, err = provider.StartGrpcServer("health", healthBindAddress,
 			func(registrar grpc.ServiceRegistrar) {
 				grpc_health_v1.RegisterHealthServer(registrar, s.healthServer)
