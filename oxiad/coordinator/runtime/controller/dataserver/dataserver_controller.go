@@ -388,10 +388,13 @@ func (n *controller) healthWatchWithRetries() {
 					n.logger.Warn("Data server reported it is not serving")
 					n.becomeUnavailable(epoch)
 				default:
-					// A broken watch stream on its own does not mean the data
-					// server is gone: under load the stream can get reset while
-					// the node is healthy. The ping loop is the authority on
-					// liveness; just re-establish the watch.
+					// A broken watch stream is an ambiguous signal: it breaks
+					// right away when the process dies (the fast-detection
+					// path when a pod is deleted or restarted), but it can
+					// also get reset under load while the node is healthy.
+					// Disambiguate with an immediate probe instead of waiting
+					// for the ping cadence, then re-establish the watch.
+					n.verifyAfterWatchFailure()
 					return err
 				}
 			}
@@ -402,6 +405,43 @@ func (n *controller) healthWatchWithRetries() {
 			slog.Duration("retry-after", duration),
 		)
 	})
+}
+
+// verifyAfterWatchFailure probes the data server once, right after its health
+// watch stream broke, so that a dead node is fenced immediately instead of
+// waiting for the ping loop's cadence and failure threshold. A dead peer
+// fails the probe right away with a hard transport error (e.g. connection
+// refused after the pod was deleted) and is fenced on the spot. A probe that
+// merely times out is the saturation signature: the node stays up and the
+// ping loop's consecutive-failure threshold remains the authority.
+func (n *controller) verifyAfterWatchFailure() {
+	// Fetch the client anew: the watch usually breaks together with the
+	// underlying pooled connection, and a replacement connection fails fast
+	// while the peer is unreachable.
+	healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
+	if err != nil {
+		// Leave it to the ping loop, which fences on this same error
+		return
+	}
+
+	epoch := n.currentStatusEpoch()
+	switch err := n.doHealthPing(epoch, healthClient); {
+	case err == nil:
+		// The node is alive: the watch stream reset was transient
+	case errors.Is(err, errNotServing):
+		n.logger.Warn("Data server reported it is not serving")
+		n.becomeUnavailable(epoch)
+	case errors.Is(err, context.Canceled) || grpcstatus.Code(err) == codes.Canceled:
+		// The controller is shutting down
+	case grpcstatus.Code(err) == codes.DeadlineExceeded:
+		// The node is slow, not provably dead: tolerate, the ping loop's
+		// failure threshold decides
+		n.logger.Warn("Data server is slow to verify after its health watch failed")
+	default:
+		n.logger.Warn("Data server is gone after its health watch failed",
+			slog.Any("error", err))
+		n.becomeUnavailable(epoch)
+	}
 }
 
 func (n *controller) becomeUnavailable(observedEpoch int64) {

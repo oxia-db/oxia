@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	grpcstatus "google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -157,6 +159,84 @@ func TestDataServerController_WatchFailureAloneDoesNotFence(t *testing.T) {
 	case <-nal.Events:
 		assert.Fail(t, "a watch stream failure alone must not mark the node unavailable")
 	default:
+	}
+	assert.Equal(t, Running, nc.Status())
+
+	assert.NoError(t, nc.Close())
+}
+
+// slowPingHealthPolicy makes the ping cadence so slow that only the
+// watch-failure verification path can possibly fence the node, so the tests
+// below prove pod-death detection does not depend on the ping loop.
+var slowPingHealthPolicy = healthCheckPolicy{
+	probeInterval:    time.Hour,
+	probeTimeout:     1 * time.Second,
+	failureThreshold: 3,
+}
+
+func TestDataServerController_WatchFailureFencesDeadNode(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, slowPingHealthPolicy)
+
+	node := rpc.GetNode(addr)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Simulate a killed pod: the watch stream breaks and every probe fails
+	// fast with a hard transport error. The node must be fenced right away
+	// through the watch-failure verification, without waiting for the ping
+	// cadence (one hour in this test).
+	node.HealthClient.SetError(grpcstatus.Error(codes.Unavailable, "connection refused"))
+
+	select {
+	case unavailableNode := <-nal.Events:
+		assert.Equal(t, addr, unavailableNode)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "a dead node must be fenced when its watch stream breaks")
+	}
+	assert.Equal(t, NotRunning, nc.Status())
+
+	assert.NoError(t, nc.Close())
+}
+
+func TestDataServerController_WatchFailureToleratesSlowNode(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, slowPingHealthPolicy)
+
+	node := rpc.GetNode(addr)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// The watch stream breaks and the verification probe times out: that is
+	// the signature of a saturated node, not a dead one, so it must be left
+	// to the ping loop's failure threshold instead of being fenced.
+	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.DeadlineExceeded, "context deadline exceeded"), 1)
+	node.HealthClient.FailWatches(errors.New("stream reset"))
+
+	select {
+	case <-nal.Events:
+		assert.Fail(t, "a slow verification probe must not fence the node")
+	case <-time.After(500 * time.Millisecond):
 	}
 	assert.Equal(t, Running, nc.Status())
 
