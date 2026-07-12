@@ -20,12 +20,9 @@ import (
 	"sync"
 
 	"go.uber.org/multierr"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
-	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -45,11 +42,6 @@ import (
 type Server struct {
 	*internalRpcServer
 	*publicRpcServer
-
-	// Optional dedicated listener for the gRPC health service: it carries no
-	// data traffic, so probes stay responsive while the public and internal
-	// servers are saturated. Nil when server.health.bindAddress is not set.
-	healthRpcServer commonrpc.GrpcServer
 
 	// concurrent control
 	ctx          context.Context
@@ -152,20 +144,6 @@ func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch
 		return nil, err
 	}
 
-	if healthBindAddress := options.Server.Health.BindAddress; healthBindAddress != "" {
-		// The probe clients (kubernetes gRPC probes, `oxia health`) do not
-		// send credentials, so the dedicated listener is plaintext and
-		// unauthenticated: it only ever reports the serving status.
-
-		s.healthRpcServer, err = provider.StartGrpcServer("health", healthBindAddress,
-			func(registrar grpc.ServiceRegistrar) {
-				grpc_health_v1.RegisterHealthServer(registrar, s.healthServer)
-			}, nil, &auth.Disabled, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	observability := options.Observability
 	if observability.Metric.IsEnabled() {
 		metricTLS, err := observability.Metric.TLS.TryIntoServerTLSConf()
@@ -227,10 +205,6 @@ func (s *Server) Close() error {
 		s.walFactory.Close(),
 		s.replicationRpcProvider.Close(),
 	)
-
-	if s.healthRpcServer != nil {
-		err = multierr.Append(err, s.healthRpcServer.Close())
-	}
 
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())

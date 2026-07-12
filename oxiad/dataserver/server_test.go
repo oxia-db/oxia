@@ -24,7 +24,6 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/oxia-db/oxia/common/constant"
-	commonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -82,42 +81,6 @@ func TestNewServerClosableWithHealthWatch(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NoError(t, watchStream.CloseSend())
-}
-
-func TestNewServerDedicatedHealthListener(t *testing.T) {
-	options := option.NewDefaultOptions()
-	options.Server.Public.BindAddress = "localhost:0"
-	options.Server.Internal.BindAddress = "localhost:0"
-	options.Server.Health.BindAddress = "localhost:0"
-	options.Observability.Metric.Enabled = &constant.FlagFalse
-	options.Storage.Database.Dir = t.TempDir()
-	options.Storage.WAL.Dir = t.TempDir()
-
-	server, err := New(t.Context(), commonwatch.New(options))
-	assert.NoError(t, err)
-
-	healthPort := server.healthRpcServer.Port()
-	assert.NotEqual(t, server.InternalPort(), healthPort)
-	assert.NotEqual(t, server.PublicPort(), healthPort)
-
-	clientPool := rpc.NewClientPool(nil, nil)
-	defer clientPool.Close()
-
-	client, err := clientPool.GetHealthRpc(fmt.Sprintf("127.0.0.1:%d", healthPort))
-	assert.NoError(t, err)
-
-	res, err := client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: ""})
-	assert.NoError(t, err)
-	assert.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, res.Status)
-
-	// Named services (e.g. the readiness probe) are exposed on the dedicated
-	// listener too, since it serves the same health server instance
-	server.healthServer.SetServingStatus(commonrpc.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
-	res, err = client.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: commonrpc.ReadinessProbeService})
-	assert.NoError(t, err)
-	assert.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, res.Status)
-
-	assert.NoError(t, server.Close())
 }
 
 func TestNewServerAuthorityValidationFeatureFlag(t *testing.T) {
