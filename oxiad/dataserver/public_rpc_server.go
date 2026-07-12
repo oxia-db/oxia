@@ -300,19 +300,13 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 }
 
 // warnOnStreamError logs failures of streaming data operations, except the
-// expected ones: the client going away or its deadline expiring. A send that
-// fails because the client connection is shutting down is also expected and
-// is only logged at debug level.
+// expected ones: the client going away, its deadline expiring, or its
+// connection shutting down.
 func (s *publicRpcServer) warnOnStreamError(operation string, err error) {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || isTransportClosingError(err) {
 		return
 	}
-	msg := "Failed to perform " + operation + " operation"
-	if isTransportClosingError(err) {
-		s.log.Debug(msg, slog.Any("error", err))
-		return
-	}
-	s.log.Warn(msg, slog.Any("error", err))
+	s.log.Warn("Failed to perform operation", slog.String("operation", operation), slog.Any("error", err))
 }
 
 // isTransportClosingError recognizes the status error that a stream send
