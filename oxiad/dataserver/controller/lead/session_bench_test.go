@@ -15,13 +15,10 @@
 package lead
 
 import (
-	"context"
-	"log/slog"
 	"runtime"
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -32,13 +29,7 @@ import (
 //
 //	go test -bench BenchmarkSessionFootprint -benchtime=100000x -run NONE ./oxiad/dataserver/controller/lead/
 func BenchmarkSessionFootprint(b *testing.B) {
-	sm := &sessionManager{
-		sessions: make(map[SessionId]*session),
-		log:      slog.Default(),
-		activeSessions: metric.NewUpDownCounter("oxia_bench_active_sessions",
-			"bench", "count", map[string]any{}),
-	}
-	sm.ctx, sm.cancel = context.WithCancel(context.Background())
+	sm := newBareSessionManager()
 
 	metadata := &proto.SessionMetadata{
 		TimeoutMs: uint32((10 * time.Minute).Milliseconds()),

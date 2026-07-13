@@ -144,6 +144,9 @@ func (sm *sessionManager) expiryLoop() {
 			// flight: collect again before going back to sleep.
 			continue
 		}
+		// No Stop+drain dance before Reset: with go >= 1.23 Reset flushes a
+		// pending fire, and a spurious wake-up would only cost one empty
+		// collect pass anyway.
 		timer.Reset(next)
 		select {
 		case <-sm.ctx.Done():
