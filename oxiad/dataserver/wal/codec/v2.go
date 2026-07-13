@@ -190,6 +190,9 @@ func (v *V2) ReadIndex(path string) ([]byte, error) {
 	if len(indexBuf) < int(v.GetIndexHeaderSize()) {
 		return nil, errors.Wrapf(ErrDataCorrupted, "index file %s is too short: %d bytes", path, len(indexBuf))
 	}
+	if len(indexBuf) == int(v.GetIndexHeaderSize()) {
+		return nil, errors.Wrapf(ErrDataCorrupted, "index file %s has no entries", path)
+	}
 	expectedCrc := ReadInt(indexBuf, 0)
 	actualCrc := crc.Checksum(0).Update(indexBuf[v.GetIndexHeaderSize():]).Value()
 	if expectedCrc != actualCrc {
