@@ -386,6 +386,7 @@ func TestReadWriteSegment_ReopenRemovesStaleIndex(t *testing.T) {
 	rw, err := newReadWriteSegment(path, 0, 128*1024, 0, nil)
 	assert.NoError(t, err)
 	idxPath := rw.(*readWriteSegment).c.idxPath
+	assert.NoError(t, rw.Append(0, []byte("entry-0")))
 	assert.NoError(t, rw.Close())
 
 	_, err = os.Stat(idxPath)
@@ -396,13 +397,13 @@ func TestReadWriteSegment_ReopenRemovesStaleIndex(t *testing.T) {
 	_, err = os.Stat(idxPath)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 
-	assert.NoError(t, rw.Append(0, []byte("entry-0")))
+	assert.NoError(t, rw.Append(1, []byte("entry-1")))
 	assert.NoError(t, rw.Close())
 
 	// The close wrote a fresh index for the appended entries
 	ro, err := newReadOnlySegment(path, 0)
 	assert.NoError(t, err)
-	assert.EqualValues(t, 0, ro.LastOffset())
+	assert.EqualValues(t, 1, ro.LastOffset())
 	assert.NoError(t, ro.Close())
 }
 
