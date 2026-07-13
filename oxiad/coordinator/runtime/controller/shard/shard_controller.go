@@ -279,8 +279,11 @@ func (s *controller) run() {
 			s.handlePeriodicTasks()
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
 		case electionAction := <-s.electionOp:
-			newLeader := s.onElectLeader(nil)
-			electionAction.Done(newLeader.GetNameOrDefault())
+			s.onElectLeader(nil)
+			borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+			shardMeta := common.Must(borrowedMeta, exists,
+				"bug: shard metadata missing after election: namespace=", s.namespace, " shard=", s.shard).UnsafeBorrow()
+			electionAction.Done(shardMeta.Leader.GetNameOrDefault())
 		}
 	}
 }
@@ -403,7 +406,7 @@ func namespaceTermOptions(metadataStore coordmetadata.Metadata, namespace string
 	return termOptions
 }
 
-func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServerIdentity {
+func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) {
 	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
@@ -433,7 +436,7 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 					slog.Any("target-ensemble", targetEnsemble),
 				)
 				changeEnsembleAction.Error(fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing))
-				return nil
+				return
 			}
 		}
 	}
@@ -454,7 +457,14 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 		s.becomeLeaderLatency,
 		s.leaderElectionsFailed)
 	leaderDataServer := s.currentElection.Start()
-	return leaderDataServer
+	if changeEnsembleAction == nil {
+		return
+	}
+	if leaderDataServer == nil {
+		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
+		return
+	}
+	changeEnsembleAction.Done(nil)
 }
 
 func (s *controller) DeleteShard() {
@@ -583,10 +593,7 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		}
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	if s.onElectLeader(changeEnsembleAction) == nil {
-		return
-	}
-	changeEnsembleAction.Done(nil)
+	s.onElectLeader(changeEnsembleAction)
 }
 
 func (s *controller) SyncServerAddress() {
