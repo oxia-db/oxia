@@ -1015,6 +1015,69 @@ func TestController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	sc.Close()
 }
 
+func TestController_ChangeEnsembleRejectsFeatureSupportRegression(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	rpc.GetNode(s1).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	rpc.GetNode(s2).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	rpc.GetNode(s3).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	rpc.GetNode(s4).SetNodeFeatures([]proto.Feature{})
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	featureSupplier := func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
+		result := make(map[string][]proto.Feature)
+		for _, server := range servers {
+			info, err := rpc.GetInfo(context.Background(), server, &proto.GetInfoRequest{})
+			if err == nil {
+				result[server.GetNameOrDefault()] = info.FeaturesSupported
+			}
+		}
+		return result
+	}
+
+	rpc.GetNode(s1).GetStatusResponse(2, proto.ServingStatus_LEADER, 1, 1)
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
+	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     2,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, featureSupplier, rpc, DefaultPeriodicTasksInterval)
+	defer sc.Close()
+
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+
+	change := action.NewChangeEnsembleAction(shard, s1, s4)
+	sc.ChangeEnsemble(change)
+
+	waitResult := make(chan error, 1)
+	go func() {
+		_, err := change.Wait()
+		waitResult <- err
+	}()
+
+	select {
+	case err := <-waitResult:
+		assert.ErrorIs(t, err, ErrChangeEnsembleLosesFeatureSupport)
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for change ensemble to be rejected")
+	}
+
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
+}
+
 // Each UpdateShardStatus persists the full cluster status, so re-writing it
 // for every shard on every periodic tick costs O(shards^2) bytes per interval
 // on the metadata backend. The periodic task must not persist when it has no

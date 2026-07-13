@@ -116,6 +116,17 @@ func TestNegotiate_OldNodeWithNoFeatures(t *testing.T) {
 	assert.Empty(t, result, "should not enable features when old nodes are present")
 }
 
+func TestNegotiate_NilNodeFeatures(t *testing.T) {
+	nodeFeatures := map[string][]proto.Feature{
+		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"node3": nil,
+	}
+
+	result := negotiate(nodeFeatures)
+	assert.Empty(t, result, "nil feature info must not count as support")
+}
+
 func TestNoOpSupportedFeaturesSupplier(t *testing.T) {
 	result := NoOpSupportedFeaturesSupplier(nil)
 	assert.NotNil(t, result)

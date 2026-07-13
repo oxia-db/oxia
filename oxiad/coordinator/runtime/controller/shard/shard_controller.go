@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -403,15 +404,45 @@ func namespaceTermOptions(metadataStore coordmetadata.Metadata, namespace string
 }
 
 func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServerIdentity {
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+
+	if changeEnsembleAction != nil {
+		currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
+		requiredFeatures := negotiate(currentFeatures)
+		if len(requiredFeatures) > 0 {
+			targetEnsemble := append(slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
+				return dataServer.GetNameOrDefault() == changeEnsembleAction.From.GetNameOrDefault()
+			}), changeEnsembleAction.To)
+			targetFeatures := negotiate(s.dataServerSupportedFeaturesSupplier(targetEnsemble))
+			var missing []proto.Feature
+			for _, feature := range requiredFeatures {
+				if !slices.Contains(targetFeatures, feature) {
+					missing = append(missing, feature)
+				}
+			}
+			if len(missing) > 0 {
+				s.logger.Warn(
+					"Change ensemble rejected: target ensemble does not support negotiated shard features",
+					slog.Any("required-features", requiredFeatures),
+					slog.Any("target-features", targetFeatures),
+					slog.Any("missing-features", missing),
+					slog.Any("current-ensemble", shardMeta.Ensemble),
+					slog.Any("target-ensemble", targetEnsemble),
+				)
+				changeEnsembleAction.Error(fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing))
+				return nil
+			}
+		}
+	}
+
 	// stop the current term election
 	if s.currentElection != nil {
 		s.currentElection.Stop()
 		s.currentElection = nil
 	}
-	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
-	shardMeta := common.Must(borrowedMeta, exists,
-		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
-		s.shard).UnsafeBorrow()
 
 	termOptions := namespaceTermOptions(s.metadataStore, s.namespace)
 	s.currentElection = NewElection(s.ctx, s.logger, s.eventListener,
@@ -544,24 +575,20 @@ func (s *controller) ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleA
 }
 
 func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction) {
-	var err error
-	defer func() {
-		if err != nil {
-			changeEnsembleAction.Error(err)
-		} else {
-			changeEnsembleAction.Done(nil)
-		}
-	}()
 	if s.currentElection != nil {
 		if ready := s.currentElection.IsReadyForChangeEnsemble(); !ready {
 			s.logger.Warn("Change ensemble rejected: shard is not ready (follower catch-up still in progress)")
-			err = ErrNotReadyForChangeEnsemble
+			changeEnsembleAction.Error(ErrNotReadyForChangeEnsemble)
 			return
 		}
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	s.onElectLeader(changeEnsembleAction)
+	if s.onElectLeader(changeEnsembleAction) == nil {
+		return
+	}
+	changeEnsembleAction.Done(nil)
 }
+
 func (s *controller) SyncServerAddress() {
 	s.terminationMu.RLock()
 	defer s.terminationMu.RUnlock()
