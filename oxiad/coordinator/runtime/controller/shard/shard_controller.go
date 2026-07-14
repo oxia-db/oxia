@@ -416,27 +416,26 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 	}
 	source := changeEnsembleAction.From.GetNameOrDefault()
 	target := changeEnsembleAction.To.GetNameOrDefault()
-	sourceCount := len(shardMeta.Ensemble) - len(slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
+	ensembleSize := len(shardMeta.Ensemble)
+	targetEnsemble := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
 		return dataServer.GetNameOrDefault() == source
-	}))
-	targetCount := len(shardMeta.Ensemble) - len(slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
+	})
+	if len(targetEnsemble) != ensembleSize-1 {
+		return fmt.Errorf("%w: source data server %q must appear exactly once in the current ensemble", ErrInvalidChangeEnsemble, source)
+	}
+	ensembleWithoutTarget := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
 		return dataServer.GetNameOrDefault() == target
-	}))
-	if sourceCount != 1 {
-		return fmt.Errorf("%w: source data server %q appears %d times in the current ensemble", ErrInvalidChangeEnsemble, source, sourceCount)
+	})
+	if len(ensembleWithoutTarget) != ensembleSize {
+		return fmt.Errorf("%w: target data server %q is already in the current ensemble", ErrInvalidChangeEnsemble, target)
 	}
-	if targetCount != 0 {
-		return fmt.Errorf("%w: target data server %q appears %d times in the current ensemble", ErrInvalidChangeEnsemble, target, targetCount)
-	}
+	targetEnsemble = append(targetEnsemble, changeEnsembleAction.To)
 
 	currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
 	requiredFeatures := negotiate(currentFeatures)
 	if len(requiredFeatures) == 0 {
 		return nil
 	}
-	targetEnsemble := append(slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == changeEnsembleAction.From.GetNameOrDefault()
-	}), changeEnsembleAction.To)
 	targetFeatures := negotiate(s.dataServerSupportedFeaturesSupplier(targetEnsemble))
 	var missing []proto.Feature
 	for _, feature := range requiredFeatures {
