@@ -185,6 +185,18 @@ func (ls *LogSynchronizer) append0(syncCond chan struct{}, onAppend func(), req 
 		return nil
 	}
 
+	// A gap between the last known offset and the incoming entry means
+	// entries were lost in transit: reject the append and let the leader
+	// re-establish the stream from the last acked position. The WAL
+	// contiguity check cannot catch a gap when the WAL is empty (a follower
+	// bootstrapped from a snapshot legitimately starts at an arbitrary
+	// offset), and accepting it would let the follower ack entries it does
+	// not have.
+	if req.Entry.Offset != lastAppendedOffset+1 {
+		return fmt.Errorf("entry %d can not immediately follow %d: %w",
+			req.Entry.Offset, lastAppendedOffset, wal.ErrInvalidNextOffset)
+	}
+
 	// Append the entry asynchronously, passing the previous CRC from the leader.
 	// When the WAL is empty (e.g. after snapshot install), the CRC seeds the chain
 	// so that the follower's CRC matches the leader's.
