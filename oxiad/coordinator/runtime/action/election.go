@@ -20,17 +20,11 @@ type ElectionAction struct {
 	Shard int64
 
 	NewLeader string
-	Err       error
 	Waiter    *sync.WaitGroup
 }
 
 func (e *ElectionAction) Done(leader any) {
 	e.NewLeader = leader.(string) //nolint:revive
-	e.Waiter.Done()
-}
-
-func (e *ElectionAction) Error(err error) {
-	e.Err = err
 	e.Waiter.Done()
 }
 
