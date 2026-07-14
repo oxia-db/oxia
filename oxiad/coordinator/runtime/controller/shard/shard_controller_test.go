@@ -45,7 +45,9 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
+	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/leader"
 )
 
 var namespaceConfig = &proto.Namespace{
@@ -259,6 +261,54 @@ func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestController_OnElectLeaderReturnsNewLeader(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1},
+	})
+
+	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
+	s := &controller{
+		namespace:                           constant.DefaultNamespace,
+		shard:                               shard,
+		metadataStore:                       metadata,
+		dataServerSupportedFeaturesSupplier: NoOpSupportedFeaturesSupplier,
+		leaderSelector:                      leaderselector.NewSelector(),
+		rpc:                                 rpc,
+		logger:                              slog.Default(),
+		leaderElectionLatency: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
+			"The time it takes to elect a leader for the shard", labels),
+		leaderElectionsFailed: metric.NewCounter("oxia_coordinator_leader_election_failed",
+			"The number of failed leader elections", "count", labels),
+		newTermQuorumLatency: metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",
+			"The time it takes to take the ensemble of data servers to a new term", labels),
+		becomeLeaderLatency: metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
+			"The time it takes for the new elected leader to start", labels),
+	}
+	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
+	defer s.ctxCancel()
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	newLeader, err := s.onElectLeader(nil)
+	require.NoError(t, err)
+	require.NotNil(t, newLeader)
+	assert.True(t, gproto.Equal(s1, newLeader))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 1)
 }
 
 func TestController(t *testing.T) {

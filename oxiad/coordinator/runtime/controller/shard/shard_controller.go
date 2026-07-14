@@ -279,11 +279,12 @@ func (s *controller) run() {
 			s.handlePeriodicTasks()
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
 		case electionAction := <-s.electionOp:
-			s.onElectLeader(nil)
-			borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
-			shardMeta := common.Must(borrowedMeta, exists,
-				"bug: shard metadata missing after election: namespace=", s.namespace, " shard=", s.shard).UnsafeBorrow()
-			electionAction.Done(shardMeta.Leader.GetNameOrDefault())
+			newLeader, err := s.onElectLeader(nil)
+			if err != nil || newLeader == nil {
+				electionAction.Done("")
+				continue
+			}
+			electionAction.Done(newLeader.GetNameOrDefault())
 		}
 	}
 }
@@ -406,7 +407,7 @@ func namespaceTermOptions(metadataStore coordmetadata.Metadata, namespace string
 	return termOptions
 }
 
-func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) {
+func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) (*proto.DataServerIdentity, error) {
 	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
@@ -435,8 +436,9 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 					slog.Any("current-ensemble", shardMeta.Ensemble),
 					slog.Any("target-ensemble", targetEnsemble),
 				)
-				changeEnsembleAction.Error(fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing))
-				return
+				err := fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing)
+				changeEnsembleAction.Error(err)
+				return nil, err
 			}
 		}
 	}
@@ -456,15 +458,20 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 		s.newTermQuorumLatency,
 		s.becomeLeaderLatency,
 		s.leaderElectionsFailed)
-	leaderDataServer := s.currentElection.Start()
+	leaderDataServer, err := s.currentElection.Start()
 	if changeEnsembleAction == nil {
-		return
+		return leaderDataServer, err
+	}
+	if err != nil {
+		changeEnsembleAction.Error(err)
+		return nil, err
 	}
 	if leaderDataServer == nil {
 		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
-		return
+		return nil, constant.ErrResourceUnavailable
 	}
 	changeEnsembleAction.Done(nil)
+	return leaderDataServer, nil
 }
 
 func (s *controller) DeleteShard() {
