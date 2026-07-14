@@ -415,13 +415,7 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 		return fmt.Errorf("%w: to data server is nil", ErrInvalidChangeEnsemble)
 	}
 	fromName := changeEnsembleAction.From.GetNameOrDefault()
-	if fromName == "" {
-		return fmt.Errorf("%w: from data server has no name", ErrInvalidChangeEnsemble)
-	}
 	toName := changeEnsembleAction.To.GetNameOrDefault()
-	if toName == "" {
-		return fmt.Errorf("%w: to data server has no name", ErrInvalidChangeEnsemble)
-	}
 	fromFound := false
 	toFound := false
 	for _, dataServer := range shardMeta.Ensemble {
