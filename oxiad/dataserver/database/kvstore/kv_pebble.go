@@ -474,8 +474,8 @@ func (p *Pebble) getHigher(key []byte, itOpts IteratorOpts) (returnedKey string,
 		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 	}
 
-	// The lower bound is inclusive, so the iterator may be sitting exactly on
-	// the key. We want a strict `x > y`, so step over it.
+	// The lower bound is inclusive, so the iterator may be positioned exactly on
+	// the key. We are looking for a strict `x > y`, so step over it.
 	if bytes.Equal(it.Key(), key) {
 		if !it.Next() || !skipper.forward(it) {
 			return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)

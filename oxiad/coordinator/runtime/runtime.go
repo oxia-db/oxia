@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -63,6 +64,14 @@ type runtime struct {
 	wg        sync.WaitGroup
 	insID     string
 
+	// closed is set (under the write lock) when Close starts, so that late
+	// shard-controller callbacks become no-ops instead of racing with the
+	// teardown (metadata may be closed right after Close returns).
+	closed bool
+	// callbacksWg tracks in-flight ShardDeleted callbacks: they run on
+	// detached goroutines that no controller's Close waits for.
+	callbacksWg sync.WaitGroup
+
 	metadata coordmetadata.Metadata
 
 	shardControllers      map[int64]shardcontroller.Controller
@@ -90,6 +99,15 @@ func (c *runtime) LeaderElected(int64, *proto.DataServerIdentity, []*proto.DataS
 
 func (c *runtime) ShardDeleted(shard int64) {
 	c.Lock()
+	if c.closed {
+		// Close tears down all the controllers from its own snapshot of the
+		// maps, including this shard's.
+		c.Unlock()
+		return
+	}
+	c.callbacksWg.Add(1)
+	defer c.callbacksWg.Done()
+
 	sc, exists := c.shardControllers[shard]
 	if exists {
 		delete(c.shardControllers, shard)
@@ -367,24 +385,41 @@ func (c *runtime) Close() error {
 		c.autoSplitMonitor.Close()
 	}
 
+	// Snapshot the controller maps under the lock: shard-controller callbacks
+	// (e.g. ShardDeleted, running on a detached goroutine) mutate them
+	// concurrently. The controllers must still be closed outside the lock,
+	// because their callbacks acquire it.
+	c.Lock()
+	c.closed = true
+	splitControllers := maps.Clone(c.splitControllers)
+	shardControllers := maps.Clone(c.shardControllers)
+	dataServerControllers := maps.Clone(c.dataServerControllers)
+	drainingNodes := maps.Clone(c.drainingNodes)
+	c.Unlock()
+
 	// The shard controllers must be closed before waiting for the action
 	// worker: the worker blocks on in-flight election actions, which only
 	// complete once the shard controllers' retry loops get canceled
 	var err error
-	for _, sc := range c.splitControllers {
+	for _, sc := range splitControllers {
 		sc.Close()
 	}
-	for _, sc := range c.shardControllers {
+	for _, sc := range shardControllers {
 		err = multierr.Append(err, sc.Close())
 	}
 
+	// Wait for any in-flight ShardDeleted callback: it may still be closing
+	// the shard controller it removed from the map. Controller Close is
+	// idempotent, so overlapping with the loop above is safe.
+	c.callbacksWg.Wait()
+
 	c.wg.Wait()
 
-	for _, nc := range c.dataServerControllers {
+	for _, nc := range dataServerControllers {
 		err = multierr.Append(err, nc.Close())
 	}
 
-	for _, nc := range c.drainingNodes {
+	for _, nc := range drainingNodes {
 		err = multierr.Append(err, nc.Close())
 	}
 	err = multierr.Append(err, c.rpc.Close())
