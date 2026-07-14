@@ -471,16 +471,13 @@ func (p *Pebble) getHigher(key []byte, itOpts IteratorOpts) (returnedKey string,
 		return "", nil, nil, err
 	}
 
-	// The iterator might be positioned exactly on the key. Since we're looking for strict `x > y` comparison,
-	// we will have to skip to the next record
-	it.First()
 	if !it.First() {
 		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 	}
 
-	itKey := it.Key()
-	if bytes.Equal(itKey, key) {
-		// We found the same key, skip it
+	// The lower bound is inclusive, so the iterator may be positioned exactly on
+	// the key. We are looking for a strict `x > y`, so step over it.
+	if bytes.Equal(it.Key(), key) {
 		if !it.Next() {
 			return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 		}
