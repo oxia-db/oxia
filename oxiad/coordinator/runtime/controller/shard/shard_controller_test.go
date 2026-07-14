@@ -1127,6 +1127,52 @@ func TestController_ChangeEnsembleRejectsFeatureSupportRegression(t *testing.T) 
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
 }
 
+func TestController_ChangeEnsembleRejectsInvalidAction(t *testing.T) {
+	var shard int64 = 5
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+	s5 := &proto.DataServerIdentity{Public: "s5:9091", Internal: "s5:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     2,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	})
+
+	s := &controller{
+		namespace:                           constant.DefaultNamespace,
+		shard:                               shard,
+		metadataStore:                       metadata,
+		dataServerSupportedFeaturesSupplier: NoOpSupportedFeaturesSupplier,
+		logger:                              slog.Default(),
+	}
+
+	tests := []struct {
+		name string
+		from *proto.DataServerIdentity
+		to   *proto.DataServerIdentity
+	}{
+		{name: "nil from", from: nil, to: s4},
+		{name: "nil to", from: s1, to: nil},
+		{name: "missing from", from: s4, to: s5},
+		{name: "duplicate to", from: s1, to: s2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := s.validateChangeEnsembleFeatures(action.NewChangeEnsembleAction(shard, tt.from, tt.to))
+			assert.ErrorIs(t, err, ErrInvalidChangeEnsemble)
+		})
+	}
+
+	assert.NoError(t, s.validateChangeEnsembleFeatures(action.NewChangeEnsembleAction(shard, s1, s4)))
+}
+
 // Each UpdateShardStatus persists the full cluster status, so re-writing it
 // for every shard on every periodic tick costs O(shards^2) bytes per interval
 // on the metadata backend. The periodic task must not persist when it has no

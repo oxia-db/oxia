@@ -408,6 +408,38 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 		"bug: shard metadata missing while validating change ensemble: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
+	if changeEnsembleAction.From == nil {
+		return fmt.Errorf("%w: from data server is nil", ErrInvalidChangeEnsemble)
+	}
+	if changeEnsembleAction.To == nil {
+		return fmt.Errorf("%w: to data server is nil", ErrInvalidChangeEnsemble)
+	}
+	fromName := changeEnsembleAction.From.GetNameOrDefault()
+	if fromName == "" {
+		return fmt.Errorf("%w: from data server has no name", ErrInvalidChangeEnsemble)
+	}
+	toName := changeEnsembleAction.To.GetNameOrDefault()
+	if toName == "" {
+		return fmt.Errorf("%w: to data server has no name", ErrInvalidChangeEnsemble)
+	}
+	fromFound := false
+	toFound := false
+	for _, dataServer := range shardMeta.Ensemble {
+		dataServerName := dataServer.GetNameOrDefault()
+		if dataServerName == fromName {
+			fromFound = true
+		}
+		if dataServerName == toName {
+			toFound = true
+		}
+	}
+	if !fromFound {
+		return fmt.Errorf("%w: from data server %q is not in the current ensemble", ErrInvalidChangeEnsemble, fromName)
+	}
+	if toFound {
+		return fmt.Errorf("%w: to data server %q is already in the current ensemble", ErrInvalidChangeEnsemble, toName)
+	}
+
 	currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
 	requiredFeatures := negotiate(currentFeatures)
 	if len(requiredFeatures) == 0 {
