@@ -536,6 +536,10 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 	}
 	r.actionCh <- ac
 	latch.Wait()
+	if ac.Err != nil {
+		r.logger.Warn("failed to trigger new election", slog.Int64("shard", shard), slog.Any("error", ac.Err))
+		return
+	}
 	leader := ac.NewLeader
 	r.logger.Info("triggered new election", slog.Int64("shard", shard), slog.Any("old-leader", oldLeader), slog.Any("new-leader", leader))
 	if leader == oldLeader { // no changes

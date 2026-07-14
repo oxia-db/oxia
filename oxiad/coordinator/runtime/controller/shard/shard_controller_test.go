@@ -1179,18 +1179,53 @@ func TestController_ElectionDiscardsWhenQueueIsFull(t *testing.T) {
 		}
 	}
 
-	done := make(chan string)
+	done := make(chan struct {
+		newLeader string
+		err       error
+	})
 	go func() {
-		done <- s.Election(&action.ElectionAction{Shard: shard})
+		newLeader, err := s.Election(&action.ElectionAction{Shard: shard})
+		done <- struct {
+			newLeader string
+			err       error
+		}{newLeader: newLeader, err: err}
 	}()
 
 	select {
-	case newLeader := <-done:
-		assert.Empty(t, newLeader)
+	case result := <-done:
+		assert.Empty(t, result.newLeader)
+		assert.NoError(t, result.err)
 	case <-time.After(time.Second):
 		t.Fatal("Election blocked on a full election queue")
 	}
 	assert.Len(t, s.electionOp, chanBufferSize)
+}
+
+func TestController_ElectionReturnsActionError(t *testing.T) {
+	var shard int64 = 5
+	expectedErr := errors.New("election failed")
+	s := &controller{
+		shard:      shard,
+		electionOp: make(chan *action.ElectionAction, chanBufferSize),
+		logger:     slog.Default(),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		op := <-s.electionOp
+		op.Error(expectedErr)
+		close(done)
+	}()
+
+	newLeader, err := s.Election(&action.ElectionAction{Shard: shard})
+	assert.Empty(t, newLeader)
+	assert.ErrorIs(t, err, expectedErr)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Election action was not processed")
+	}
 }
 
 func TestController_SyncServerAddressDiscardsElectionWhenQueueIsFull(t *testing.T) {

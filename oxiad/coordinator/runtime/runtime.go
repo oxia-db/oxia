@@ -446,10 +446,15 @@ func (c *runtime) handleActionElection(ac action.Action) {
 	c.RUnlock()
 	if !ok {
 		c.logger.Warn("Shard controller not found", slog.Int64("shard", electionAc.Shard))
-		electionAc.Done("")
+		electionAc.Error(constant.ErrResourceUnavailable)
 		return
 	}
-	electionAc.Done(sc.Election(electionAc))
+	newLeader, err := sc.Election(electionAc)
+	if err != nil {
+		electionAc.Error(err)
+		return
+	}
+	electionAc.Done(newLeader)
 }
 
 func (c *runtime) handleActionChangeEnsemble(ac action.Action) {

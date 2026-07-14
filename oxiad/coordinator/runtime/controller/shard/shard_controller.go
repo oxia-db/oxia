@@ -68,7 +68,7 @@ type Controller interface {
 
 	DeleteShard()
 
-	Election(electionAction *action.ElectionAction) string
+	Election(electionAction *action.ElectionAction) (string, error)
 
 	ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction)
 }
@@ -201,11 +201,11 @@ func NewController(
 	return s
 }
 
-func (s *controller) Election(electionAction *action.ElectionAction) string {
+func (s *controller) Election(electionAction *action.ElectionAction) (string, error) {
 	s.terminationMu.RLock()
 	if s.terminating.Load() {
 		s.terminationMu.RUnlock()
-		return ""
+		return "", constant.ErrResourceUnavailable
 	}
 	clonedAction := electionAction.Clone()
 	clonedAction.Waiter.Add(1)
@@ -213,12 +213,12 @@ func (s *controller) Election(electionAction *action.ElectionAction) string {
 		s.terminationMu.RUnlock()
 		clonedAction.Waiter.Done()
 		s.logger.Debug("Discarding leader election because queue is full")
-		return ""
+		return "", nil
 	}
 	s.terminationMu.RUnlock()
 
 	clonedAction.Waiter.Wait()
-	return clonedAction.NewLeader
+	return clonedAction.NewLeader, clonedAction.Err
 }
 
 func (s *controller) run() {
@@ -280,8 +280,12 @@ func (s *controller) run() {
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
 		case electionAction := <-s.electionOp:
 			newLeader, err := s.onElectLeader(nil)
-			if err != nil || newLeader == nil {
-				electionAction.Done("")
+			if err != nil {
+				electionAction.Error(err)
+				continue
+			}
+			if newLeader == nil {
+				electionAction.Error(constant.ErrResourceUnavailable)
 				continue
 			}
 			electionAction.Done(newLeader.GetNameOrDefault())
@@ -436,9 +440,8 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 					slog.Any("current-ensemble", shardMeta.Ensemble),
 					slog.Any("target-ensemble", targetEnsemble),
 				)
-				err := fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing)
-				changeEnsembleAction.Error(err)
-				return nil, err
+				changeEnsembleAction.Error(fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing))
+				return nil, nil
 			}
 		}
 	}
@@ -464,13 +467,10 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 	}
 	if leaderDataServer == nil {
 		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
-		if err != nil {
-			return nil, err
-		}
-		return nil, constant.ErrResourceUnavailable
+		return nil, nil
 	}
 	changeEnsembleAction.Done(nil)
-	return leaderDataServer, nil
+	return nil, nil
 }
 
 func (s *controller) DeleteShard() {
