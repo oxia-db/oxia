@@ -22,7 +22,9 @@ import (
 	"os"
 	"sync"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -53,17 +55,36 @@ func (r *maelstromReplicationRpcProvider) GetReplicateStream(ctx context.Context
 		shard:     shard,
 		streamId:  msgIdGenerator.Add(1),
 		md:        make(metadata.MD),
-		responses: make(chan *proto.Ack),
+		responses: make(chan *proto.Ack, 1024),
+		failed:    make(chan error, 1),
 	}
 
 	r.Lock()
-	defer r.Unlock()
 	r.replicateStreams[s.streamId] = s
+	r.Unlock()
+
+	// When the follower cursor tears the stream down, tell the follower: its
+	// Replicate handler would otherwise stay parked on the stream forever
+	// (there is no transport to break), which in turn blocks the follower's
+	// NewTerm while it waits for the log synchronizer to close.
+	context.AfterFunc(ctx, func() {
+		r.removeStream(s.streamId)
+		sendStreamError(follower, s.streamId)
+	})
+
 	return s, nil
 }
 
+func (r *maelstromReplicationRpcProvider) removeStream(streamId int64) {
+	r.Lock()
+	defer r.Unlock()
+	delete(r.replicateStreams, streamId)
+}
+
 func (r *maelstromReplicationRpcProvider) HandleAck(streamId int64, res *proto.Ack) {
+	r.Lock()
 	s, ok := r.replicateStreams[streamId]
+	r.Unlock()
 	if !ok {
 		slog.Warn(
 			"Stream not found",
@@ -72,7 +93,34 @@ func (r *maelstromReplicationRpcProvider) HandleAck(streamId int64, res *proto.A
 		return
 	}
 
-	s.responses <- res
+	// Never block the dispatcher: acks are cumulative, so one dropped on
+	// overflow is covered by the next.
+	select {
+	case s.responses <- res:
+	default:
+		slog.Warn(
+			"Dropping ack on stream buffer overflow",
+			slog.Int64("stream-id", streamId),
+		)
+	}
+}
+
+// HandleStreamError fails the client side of a replicate stream after the
+// follower declared it dead: the cursor's Recv() returns an error and the
+// cursor reconnects from the last acked offset with a fresh stream.
+func (r *maelstromReplicationRpcProvider) HandleStreamError(streamId int64) {
+	r.Lock()
+	s, ok := r.replicateStreams[streamId]
+	delete(r.replicateStreams, streamId)
+	r.Unlock()
+	if !ok {
+		return
+	}
+
+	select {
+	case s.failed <- status.Error(codes.Unavailable, "replicate stream reset by peer"):
+	default:
+	}
 }
 
 func (r *maelstromReplicationRpcProvider) Truncate(follower string, req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
@@ -97,6 +145,7 @@ type maelstromReplicateClient struct {
 	streamId  int64
 	md        metadata.MD
 	responses chan *proto.Ack
+	failed    chan error
 }
 
 func (m *maelstromReplicateClient) Send(request *proto.Append) error {
@@ -124,6 +173,8 @@ func (m *maelstromReplicateClient) Recv() (*proto.Ack, error) {
 	select {
 	case r := <-m.responses:
 		return r, nil
+	case err := <-m.failed:
+		return nil, err
 	case <-m.ctx.Done():
 		return nil, m.ctx.Err()
 	}

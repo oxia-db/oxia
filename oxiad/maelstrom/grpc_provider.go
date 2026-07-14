@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sync"
@@ -45,12 +46,18 @@ type maelstromGrpcProvider struct {
 	services map[string]any
 
 	replicateStreams map[string]*maelstromReplicateServerStream
+
+	// Streams that already terminated: late messages for them are dropped
+	// instead of resurrecting the stream mid-sequence. Grows by one small
+	// entry per stream ever created, which is fine for a Maelstrom run.
+	deadStreams map[string]bool
 }
 
 func newMaelstromGrpcProvider() *maelstromGrpcProvider {
 	return &maelstromGrpcProvider{
 		services:         make(map[string]any),
 		replicateStreams: make(map[string]*maelstromReplicateServerStream),
+		deadStreams:      make(map[string]bool),
 	}
 }
 
@@ -127,29 +134,69 @@ func (m *maelstromGrpcProvider) HandleOxiaStreamRequest(msgType MsgType, msg *Me
 		key := fmt.Sprintf("%s-%d", msg.Src, msg.Body.StreamId)
 
 		m.Lock()
+		if m.deadStreams[key] {
+			m.Unlock()
+			// The stream already terminated on this side: remind the peer, in
+			// case the first notification was lost in a partition, so its
+			// cursor stops pushing into the void and reconnects.
+			sendStreamError(msg.Src, msg.Body.StreamId)
+			return
+		}
 		stream, alreadyCreated := m.replicateStreams[key]
 		if !alreadyCreated {
 			stream = newMaelstromReplicateServerStream(msg)
 			m.replicateStreams[key] = stream
 
-			go func() {
-				err := m.getService(oxiaLogReplication).(proto.OxiaLogReplicationServer).Replicate(stream)
-				if err != nil {
-					slog.Warn(
-						"failed to call replicate",
-						slog.Any("error", err),
-					)
-				}
-			}()
+			go m.runReplicateStream(key, stream)
 		}
 		m.Unlock()
 
-		stream.requests <- message.(*proto.Append)
+		stream.deliver(message.(*proto.Append))
 	default:
 		slog.Info(
 			"HandleOxiaStreamRequest with unsupported message",
 			slog.Any("msg-type", msgType),
 		)
+	}
+}
+
+// runReplicateStream runs the Replicate handler for one server-side stream
+// and, when the handler exits (error or graceful close), tears the stream
+// down: late messages are dropped and the peer is told so that its follower
+// cursor can reconnect. gRPC gives all of this for free at the transport
+// level; over Maelstrom's fire-and-forget messages it has to be explicit,
+// otherwise a failed stream leaves the leader pushing entries nobody reads.
+func (m *maelstromGrpcProvider) runReplicateStream(key string, stream *maelstromReplicateServerStream) {
+	err := m.getService(oxiaLogReplication).(proto.OxiaLogReplicationServer).Replicate(stream)
+	if err != nil {
+		slog.Warn(
+			"failed to call replicate",
+			slog.Any("error", err),
+		)
+	}
+
+	m.Lock()
+	delete(m.replicateStreams, key)
+	m.deadStreams[key] = true
+	m.Unlock()
+
+	stream.close()
+	sendStreamError(stream.client, stream.streamId)
+}
+
+// HandleStreamError closes the server side of a replicate stream after the
+// peer (the leader owning the client side) declared it dead.
+func (m *maelstromGrpcProvider) HandleStreamError(src string, streamId int64) {
+	key := fmt.Sprintf("%s-%d", src, streamId)
+
+	m.Lock()
+	stream, ok := m.replicateStreams[key]
+	m.Unlock()
+
+	if ok {
+		// Unblocks the handler's Recv(); runReplicateStream completes the
+		// teardown.
+		stream.close()
 	}
 }
 
@@ -361,9 +408,11 @@ func (m *maelstromGrpcServer) Port() int {
 type maelstromReplicateServerStream struct {
 	BaseStream
 
-	requests chan *proto.Append
-	streamId int64
-	client   string
+	requests  chan *proto.Append
+	done      chan struct{}
+	closeOnce sync.Once
+	streamId  int64
+	client    string
 }
 
 func (m *maelstromReplicateServerStream) SetHeader(metadata.MD) error {
@@ -371,6 +420,12 @@ func (m *maelstromReplicateServerStream) SetHeader(metadata.MD) error {
 }
 
 func (m *maelstromReplicateServerStream) Send(response *proto.Ack) error {
+	select {
+	case <-m.done:
+		return errors.New("replicate stream is closed")
+	default:
+	}
+
 	b, _ := json.Marshal(&Message[OxiaStreamMessage]{
 		Src:  thisNode,
 		Dest: m.client,
@@ -389,7 +444,50 @@ func (m *maelstromReplicateServerStream) Send(response *proto.Ack) error {
 }
 
 func (m *maelstromReplicateServerStream) Recv() (*proto.Append, error) {
-	return <-m.requests, nil
+	// Check the reset first: a plain select picks randomly among ready cases,
+	// which would keep draining buffered entries after a close. A stream
+	// reset discards what is still buffered, like a transport-level reset
+	// does, so once close is observed no entry is ever delivered.
+	select {
+	case <-m.done:
+		return nil, io.EOF
+	default:
+	}
+
+	select {
+	case req := <-m.requests:
+		return req, nil
+	case <-m.done:
+		return nil, io.EOF
+	}
+}
+
+// deliver hands an entry to the Replicate handler without ever blocking the
+// dispatcher: entries for a dead stream are dropped (best effort here — an
+// entry racing with a concurrent close may still be buffered, but Recv never
+// delivers past the close), and a stream whose handler stopped draining is
+// closed rather than piling up goroutines.
+func (m *maelstromReplicateServerStream) deliver(req *proto.Append) {
+	select {
+	case <-m.done:
+		return
+	default:
+	}
+
+	select {
+	case m.requests <- req:
+	case <-m.done:
+	default:
+		slog.Warn(
+			"Replicate stream buffer overflow, closing stream",
+			slog.Int64("stream-id", m.streamId),
+		)
+		m.close()
+	}
+}
+
+func (m *maelstromReplicateServerStream) close() {
+	m.closeOnce.Do(func() { close(m.done) })
 }
 
 func (m *maelstromReplicateServerStream) Context() context.Context {
@@ -404,6 +502,7 @@ func newMaelstromReplicateServerStream(msg *Message[OxiaStreamMessage]) *maelstr
 	return &maelstromReplicateServerStream{
 		client:   msg.Src,
 		streamId: msg.Body.StreamId,
-		requests: make(chan *proto.Append),
+		requests: make(chan *proto.Append, 1024),
+		done:     make(chan struct{}),
 	}
 }

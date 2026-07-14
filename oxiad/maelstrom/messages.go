@@ -52,6 +52,7 @@ const (
 	MsgTypeBecomeLeaderResponse MsgType = "leader-resp"
 	MsgTypeAppend               MsgType = "add-entry"
 	MsgTypeAck                  MsgType = "ack"
+	MsgTypeStreamError          MsgType = "stream-error"
 	MsgTypeAddFollowerRequest   MsgType = "add-follower-req"
 	MsgTypeAddFollowerResponse  MsgType = "add-follower-resp"
 	MsgTypeGetStatusRequest     MsgType = "get-status"
@@ -88,6 +89,7 @@ var (
 	oxiaStreamRequests = map[MsgType]bool{
 		MsgTypeAppend:                   true,
 		MsgTypeAck:                      true,
+		MsgTypeStreamError:              true,
 		MsgTypeShardAssignmentsResponse: true,
 	}
 )
@@ -183,6 +185,29 @@ func sendError(msgId int64, dest string, err error) {
 	sendErrorWithCode(msgId, dest, 1000, err.Error())
 }
 
+// sendStreamError notifies the peer that a replicate stream is dead, so it
+// can tear down its own end instead of staying parked on it forever. It plays
+// the role of the transport-level stream reset that gRPC provides and the
+// Maelstrom fire-and-forget messages don't.
+func sendStreamError(dest string, streamId int64) {
+	b, err := json.Marshal(&Message[OxiaStreamMessage]{
+		Src:  thisNode,
+		Dest: dest,
+		Body: OxiaStreamMessage{
+			BaseMessageBody: BaseMessageBody{
+				Type:  MsgTypeStreamError,
+				MsgId: msgIdGenerator.Add(1),
+			},
+			StreamId: streamId,
+		},
+	})
+	if err != nil {
+		panic("failed to serialize json")
+	}
+
+	fmt.Fprintln(os.Stdout, string(b))
+}
+
 func sendErrorWithCode(msgId int64, dest string, code int, text string) {
 	b, err := json.Marshal(&Message[ErrorResponse]{
 		Src:  thisNode,
@@ -217,7 +242,8 @@ var jsonMsgMapping = map[MsgType]any{
 	MsgTypeHealthCheck:   &Message[OxiaMessage]{},
 	MsgTypeHealthCheckOk: &Message[OxiaMessage]{},
 
-	MsgTypeAppend: &Message[OxiaStreamMessage]{},
+	MsgTypeAppend:      &Message[OxiaStreamMessage]{},
+	MsgTypeStreamError: &Message[OxiaStreamMessage]{},
 }
 
 var protoMsgMapping = map[MsgType]pb.Message{
