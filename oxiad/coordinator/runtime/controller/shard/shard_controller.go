@@ -402,41 +402,46 @@ func namespaceTermOptions(metadataStore coordmetadata.Metadata, namespace string
 	return termOptions
 }
 
+func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action.ChangeEnsembleAction) error {
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while validating change ensemble: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+
+	currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
+	requiredFeatures := negotiate(currentFeatures)
+	if len(requiredFeatures) == 0 {
+		return nil
+	}
+	targetEnsemble := append(slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
+		return dataServer.GetNameOrDefault() == changeEnsembleAction.From.GetNameOrDefault()
+	}), changeEnsembleAction.To)
+	targetFeatures := negotiate(s.dataServerSupportedFeaturesSupplier(targetEnsemble))
+	var missing []proto.Feature
+	for _, feature := range requiredFeatures {
+		if !slices.Contains(targetFeatures, feature) {
+			missing = append(missing, feature)
+		}
+	}
+	if len(missing) > 0 {
+		s.logger.Warn(
+			"Change ensemble rejected: target ensemble does not support negotiated shard features",
+			slog.Any("required-features", requiredFeatures),
+			slog.Any("target-features", targetFeatures),
+			slog.Any("missing-features", missing),
+			slog.Any("current-ensemble", shardMeta.Ensemble),
+			slog.Any("target-ensemble", targetEnsemble),
+		)
+		return fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing)
+	}
+	return nil
+}
+
 func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServerIdentity {
 	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
-
-	if changeEnsembleAction != nil {
-		currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
-		requiredFeatures := negotiate(currentFeatures)
-		if len(requiredFeatures) > 0 {
-			targetEnsemble := append(slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
-				return dataServer.GetNameOrDefault() == changeEnsembleAction.From.GetNameOrDefault()
-			}), changeEnsembleAction.To)
-			targetFeatures := negotiate(s.dataServerSupportedFeaturesSupplier(targetEnsemble))
-			var missing []proto.Feature
-			for _, feature := range requiredFeatures {
-				if !slices.Contains(targetFeatures, feature) {
-					missing = append(missing, feature)
-				}
-			}
-			if len(missing) > 0 {
-				s.logger.Warn(
-					"Change ensemble rejected: target ensemble does not support negotiated shard features",
-					slog.Any("required-features", requiredFeatures),
-					slog.Any("target-features", targetFeatures),
-					slog.Any("missing-features", missing),
-					slog.Any("current-ensemble", shardMeta.Ensemble),
-					slog.Any("target-ensemble", targetEnsemble),
-				)
-				err := fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing)
-				changeEnsembleAction.Error(err)
-				return nil
-			}
-		}
-	}
 
 	// stop the current term election
 	if s.currentElection != nil {
@@ -454,14 +459,6 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 		s.becomeLeaderLatency,
 		s.leaderElectionsFailed)
 	leaderDataServer := s.currentElection.Start()
-	if changeEnsembleAction == nil {
-		return leaderDataServer
-	}
-	if leaderDataServer == nil {
-		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
-		return nil
-	}
-	changeEnsembleAction.Done(nil)
 	return leaderDataServer
 }
 
@@ -590,8 +587,16 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			return
 		}
 	}
+	if err := s.validateChangeEnsembleFeatures(changeEnsembleAction); err != nil {
+		changeEnsembleAction.Error(err)
+		return
+	}
 	// todo: support optimized ensemble change to avoid start a new election
-	s.onElectLeader(changeEnsembleAction)
+	if leaderDataServer := s.onElectLeader(changeEnsembleAction); leaderDataServer == nil {
+		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
+	} else {
+		changeEnsembleAction.Done(nil)
+	}
 }
 
 func (s *controller) SyncServerAddress() {
