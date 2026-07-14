@@ -138,8 +138,13 @@ func (encoderHierarchical) IsInternalKey(encodedKey []byte) bool {
 // would need 32768 separators to reach that region) — the region runs to the
 // end of the keyspace.
 func (encoderHierarchical) InternalKeyRange() (start []byte, end []byte) {
-	return []byte{internalKeysBitMarker >> 8}, nil
+	return hierarchicalInternalKeyStart, nil
 }
+
+// The bounds returned by InternalKeyRange are constant and read-only, so build
+// them once. Callers use them as pebble iterator bounds and seek keys, never
+// mutating them (same contract as encodedInternalKeyPrefixBytes).
+var hierarchicalInternalKeyStart = []byte{internalKeysBitMarker >> 8}
 
 // EncoderHierarchical ensure that we can sort keys from same level together
 // and thus we can easily return the children of a given path
