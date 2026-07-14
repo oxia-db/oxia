@@ -90,6 +90,13 @@ type QuorumAckTracker interface {
 	// Waits until the specified entry is written on the wal
 	WaitForHeadOffset(ctx context.Context, offset int64) error
 
+	// WaitForHeadOffsetOrCommitAdvance
+	// Waits until the head offset reaches `headOffset` or the commit offset
+	// advances beyond `commitOffset`. Used by observer cursors parked at the
+	// head of the wal: with no new entries to piggyback it on, a commit
+	// advancement must be propagated to the follower on its own.
+	WaitForHeadOffsetOrCommitAdvance(ctx context.Context, headOffset int64, commitOffset int64) error
+
 	// NewCursorAcker creates a tracker for a new cursor
 	// The `ackOffset` is the previous last-acked position for the cursor
 	NewCursorAcker(ackOffset int64) (CursorAcker, error)
@@ -97,8 +104,11 @@ type QuorumAckTracker interface {
 
 type quorumAckTracker struct {
 	sync.Mutex
-	waitingRequests   []waitingRequest
-	waitForHeadOffset concurrent.ConditionContext
+	waitingRequests []waitingRequest
+
+	// Signaled whenever the head offset or the commit offset advances,
+	// and on close. Waiters re-check their own predicate.
+	progressCond concurrent.ConditionContext
 
 	replicationFactor uint32
 	requiredAcks      uint32
@@ -158,7 +168,7 @@ func NewQuorumAckTracker(replicationFactor uint32, headOffset int64, commitOffse
 		q.tracker[offset] = &BitSet{}
 	}
 
-	q.waitForHeadOffset = concurrent.NewConditionContext(q)
+	q.progressCond = concurrent.NewConditionContext(q)
 	q.commitSignal = make(chan struct{}, 1)
 	q.callbacksDone = make(chan struct{})
 	go q.runCallbacks()
@@ -227,11 +237,13 @@ func (q *quorumAckTracker) AdvanceHeadOffset(headOffset int64) {
 	}
 
 	q.headOffset.Store(headOffset)
-	q.waitForHeadOffset.Broadcast()
 
 	if q.requiredAcks == 0 {
+		// The commit offset advances together with the head offset:
+		// notifyCommitOffsetAdvanced broadcasts progressCond for both.
 		q.notifyCommitOffsetAdvanced(headOffset)
 	} else {
+		q.progressCond.Broadcast()
 		q.tracker[headOffset] = &BitSet{}
 	}
 }
@@ -253,7 +265,20 @@ func (q *quorumAckTracker) WaitForHeadOffset(ctx context.Context, offset int64) 
 	defer q.Unlock()
 
 	for !q.closed && q.headOffset.Load() < offset {
-		if err := q.waitForHeadOffset.Wait(ctx); err != nil {
+		if err := q.progressCond.Wait(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (q *quorumAckTracker) WaitForHeadOffsetOrCommitAdvance(ctx context.Context, headOffset int64, commitOffset int64) error {
+	q.Lock()
+	defer q.Unlock()
+
+	for !q.closed && q.headOffset.Load() < headOffset && q.commitOffset.Load() <= commitOffset {
+		if err := q.progressCond.Wait(ctx); err != nil {
 			return err
 		}
 	}
@@ -311,6 +336,7 @@ func (q *quorumAckTracker) insertWaitingRequest(r waitingRequest) {
 
 func (q *quorumAckTracker) notifyCommitOffsetAdvanced(commitOffset int64) {
 	q.commitOffset.Store(commitOffset)
+	q.progressCond.Broadcast()
 
 	if len(q.waitingRequests) > 0 {
 		channel.PushNoBlock(q.commitSignal, struct{}{})
@@ -321,7 +347,7 @@ func (q *quorumAckTracker) Close() error {
 	q.Lock()
 	alreadyClosed := q.closed
 	q.closed = true
-	q.waitForHeadOffset.Broadcast()
+	q.progressCond.Broadcast()
 	q.Unlock()
 
 	if !alreadyClosed {

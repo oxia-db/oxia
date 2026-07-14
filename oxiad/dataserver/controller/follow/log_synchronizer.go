@@ -133,6 +133,24 @@ func (ls *LogSynchronizer) append0(syncCond chan struct{}, onAppend func(), req 
 	// This runs once per replicated entry: skip the attribute boxing entirely
 	// when debug logging is off, and check the level once for both call sites.
 	debugEnabled := ls.log.Enabled(context.Background(), slog.LevelDebug)
+
+	if req.Entry == nil {
+		// Entry-less commit-offset advertisement: the leader sends it to an
+		// observer parked at the head of the wal when the commit offset
+		// advances with no new entries to piggyback it on. Nothing to append:
+		// take the new commit offset and wake up the syncer, which in turn
+		// nudges the state applier.
+		if debugEnabled {
+			ls.log.Debug(
+				"Received commit-offset advertisement",
+				slog.Int64("commit-offset", req.CommitOffset),
+			)
+		}
+		ls.advertisedCommitOffset.Store(req.CommitOffset)
+		channel.PushNoBlock(syncCond, struct{}{})
+		return nil
+	}
+
 	if debugEnabled {
 		ls.log.Debug(
 			"Add entry",
