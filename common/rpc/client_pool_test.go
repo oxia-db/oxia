@@ -17,14 +17,17 @@ package rpc
 import (
 	"context"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 func TestClientPool_RemovesConnectionAfterHealthFailure(t *testing.T) {
@@ -51,6 +54,51 @@ func TestClientPool_RemovesConnectionAfterHealthFailure(t *testing.T) {
 
 func TestClientPool_RemovesConnectionWhenHealthPingHangs(t *testing.T) {
 	_, target := newTestBlockingHealthServer(t)
+
+	pool := NewClientPool(nil, nil).(*clientPool)
+	defer pool.Close()
+
+	conn, err := newTestConnectionWithHealthConfig(pool, target,
+		10*time.Millisecond, 10*time.Millisecond)
+	require.NoError(t, err)
+
+	pool.Lock()
+	pool.connections[target] = conn
+	pool.Unlock()
+
+	require.Eventually(t, func() bool {
+		pool.RLock()
+		defer pool.RUnlock()
+		_, ok := pool.connections[target]
+		return !ok
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestClientPool_KeepsConnectionOnTransientHealthFailures(t *testing.T) {
+	_, target := newTestFlakyHealthServer(t, connectionHealthFailureThreshold-1)
+
+	pool := NewClientPool(nil, nil).(*clientPool)
+	defer pool.Close()
+
+	conn, err := newTestConnectionWithHealthConfig(pool, target,
+		10*time.Millisecond, 10*time.Millisecond)
+	require.NoError(t, err)
+
+	pool.Lock()
+	pool.connections[target] = conn
+	pool.Unlock()
+
+	// Fewer consecutive failures than the threshold must not tear the
+	// connection down
+	require.Never(t, func() bool {
+		pool.RLock()
+		defer pool.RUnlock()
+		return pool.connections[target] != conn
+	}, 300*time.Millisecond, 10*time.Millisecond)
+}
+
+func TestClientPool_RemovesConnectionAfterConsecutiveHealthFailures(t *testing.T) {
+	_, target := newTestFlakyHealthServer(t, 1000)
 
 	pool := NewClientPool(nil, nil).(*clientPool)
 	defer pool.Close()
@@ -165,6 +213,46 @@ func newTestHealthServer(
 	require.NoError(t, conn.Close())
 
 	return server, healthServer, listener.Addr().String()
+}
+
+// flakyHealthServer fails the first remainingFailures Check calls and then
+// answers SERVING, modeling probes that fail transiently on a busy server.
+type flakyHealthServer struct {
+	grpc_health_v1.UnimplementedHealthServer
+	remainingFailures atomic.Int32
+}
+
+func (f *flakyHealthServer) Check(
+	context.Context,
+	*grpc_health_v1.HealthCheckRequest,
+) (*grpc_health_v1.HealthCheckResponse, error) {
+	if f.remainingFailures.Add(-1) >= 0 {
+		return nil, grpcstatus.Error(codes.DeadlineExceeded, "health check too slow")
+	}
+	return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING}, nil
+}
+
+func newTestFlakyHealthServer(t *testing.T, failures int32) (*grpc.Server, string) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	healthServer := &flakyHealthServer{}
+	healthServer.remainingFailures.Store(failures)
+
+	server := grpc.NewServer()
+	grpc_health_v1.RegisterHealthServer(server, healthServer)
+
+	go func() {
+		_ = server.Serve(listener)
+	}()
+
+	t.Cleanup(func() {
+		server.Stop()
+	})
+
+	return server, listener.Addr().String()
 }
 
 type blockingHealthServer struct {

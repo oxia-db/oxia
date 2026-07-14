@@ -752,6 +752,9 @@ type HealthClient struct {
 	status  grpc_health_v1.HealthCheckResponse_ServingStatus
 	err     error
 	watches []*healthWatchClient
+
+	failNextChecks int
+	failCheckErr   error
 }
 
 func (*HealthClient) Close() error {
@@ -786,9 +789,47 @@ func (m *HealthClient) SetError(err error) {
 	}
 }
 
+// FailNextChecks makes the next count Check calls fail with err, without
+// affecting the watch streams. It models transient unary probe failures,
+// e.g. a deadline exceeded on a saturated node.
+func (m *HealthClient) FailNextChecks(err error, count int) {
+	m.Lock()
+	defer m.Unlock()
+
+	m.failCheckErr = err
+	m.failNextChecks = count
+}
+
+// PendingCheckFailures returns how many Check calls are still scheduled to
+// fail after a FailNextChecks call.
+func (m *HealthClient) PendingCheckFailures() int {
+	m.Lock()
+	defer m.Unlock()
+
+	return m.failNextChecks
+}
+
+// FailWatches delivers err on all currently active watch streams, without
+// affecting Check. It models a watch stream reset while the node is healthy.
+func (m *HealthClient) FailWatches(err error) {
+	m.Lock()
+	defer m.Unlock()
+
+	for _, w := range m.watches {
+		w.responses <- struct {
+			*grpc_health_v1.HealthCheckResponse
+			error
+		}{nil, err}
+	}
+}
+
 func (m *HealthClient) Check(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
 	m.Lock()
 	defer m.Unlock()
+	if m.failNextChecks > 0 {
+		m.failNextChecks--
+		return nil, m.failCheckErr
+	}
 	if m.err != nil {
 		return nil, m.err
 	}

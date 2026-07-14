@@ -42,6 +42,19 @@ const (
 	defaultGrpcClientKeepAliveTime       = 10 * time.Second
 	defaultGrpcClientKeepAliveTimeout    = 3 * time.Second
 	defaultGrpcClientPermitWithoutStream = true
+
+	// Cadence and per-ping timeout of the application-level connection health
+	// loop. The ping timeout is deliberately generous: it shares the
+	// connection with the data traffic, so on a saturated server a slow ping
+	// does not mean the connection is dead.
+	defaultConnectionHealthInterval    = 10 * time.Second
+	defaultConnectionHealthPingTimeout = 10 * time.Second
+
+	// connectionHealthFailureThreshold is the number of consecutive failed
+	// health pings after which the connection is considered broken. Closing a
+	// pooled connection kills every stream multiplexed on it, so a single
+	// missed ping on a saturated-but-healthy server must not tear it down.
+	connectionHealthFailureThreshold = 3
 )
 
 type connectionFailureCallback func(target string)
@@ -79,8 +92,8 @@ func newConnection(
 		authentication,
 		dialOptions,
 		onFailure,
-		defaultGrpcClientKeepAliveTime,
-		defaultGrpcClientKeepAliveTimeout,
+		defaultConnectionHealthInterval,
+		defaultConnectionHealthPingTimeout,
 	)
 }
 
@@ -155,6 +168,7 @@ func (c *connection) healthCheckLoop() {
 	ticker := time.NewTicker(c.healthInterval)
 	defer ticker.Stop()
 
+	consecutiveFailures := 0
 	for {
 		ctx, cancel := context.WithTimeout(c.ctx, c.healthPingTimeout)
 		response, err := c.healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
@@ -164,17 +178,33 @@ func (c *connection) healthCheckLoop() {
 			c.log.Debug("Connection health ping is unsupported")
 			return
 		}
+		if c.ctx.Err() != nil {
+			// The connection is being closed
+			return
+		}
 
-		if err != nil || response.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
-			if err != nil {
-				c.log.Warn("Connection health ping failed", slog.Any("error", err))
-			} else {
-				c.log.Warn("Connection health ping returned unhealthy status", slog.Any("status", response.GetStatus()))
-			}
-			if c.disconnected.CompareAndSwap(false, true) {
-				c.notifyDisconnect()
-				return
-			}
+		shouldDisconnect := false
+		switch {
+		case err == nil && response.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING:
+			consecutiveFailures = 0
+		case err == nil:
+			// The server deliberately reported it is not serving: give up on
+			// the connection right away
+			c.log.Warn("Connection health ping returned unhealthy status", slog.Any("status", response.GetStatus()))
+			shouldDisconnect = true
+		default:
+			// A failed ping can just mean the server is saturated: only give
+			// up after several consecutive failures
+			consecutiveFailures++
+			c.log.Warn("Connection health ping failed",
+				slog.Int("consecutive-failures", consecutiveFailures),
+				slog.Any("error", err))
+			shouldDisconnect = consecutiveFailures >= connectionHealthFailureThreshold
+		}
+
+		if shouldDisconnect && c.disconnected.CompareAndSwap(false, true) {
+			c.notifyDisconnect()
+			return
 		}
 
 		select {

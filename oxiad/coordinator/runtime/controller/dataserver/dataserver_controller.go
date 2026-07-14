@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,11 +63,33 @@ func (s Status) ToProto() proto.DataServerState {
 	}
 }
 
-const (
-	healthCheckProbeInterval   = 2 * time.Second
-	healthCheckProbeTimeout    = 2 * time.Second
-	defaultInitialRetryBackoff = 10 * time.Second
-)
+const defaultInitialRetryBackoff = 10 * time.Second
+
+// errNotServing marks a health response where the data server deliberately
+// reported NOT_SERVING (e.g. it is shutting down), as opposed to a probe that
+// failed at the transport level.
+var errNotServing = errors.New("data server is not actively serving")
+
+// healthCheckPolicy controls how the controller distinguishes a dead data
+// server from one that is merely slow. A node that is saturated but healthy
+// can miss individual probe deadlines; declaring it unavailable fences its
+// shard leaders, moves the load elsewhere and makes the next node miss its
+// probes in turn. Requiring several consecutive probe failures keeps that
+// feedback loop from starting, while a deliberate NOT_SERVING report still
+// fails the node immediately.
+type healthCheckPolicy struct {
+	probeInterval time.Duration
+	probeTimeout  time.Duration
+	// failureThreshold is the number of consecutive failed probes after which
+	// the data server is declared unavailable.
+	failureThreshold int
+}
+
+var defaultHealthCheckPolicy = healthCheckPolicy{
+	probeInterval:    2 * time.Second,
+	probeTimeout:     5 * time.Second,
+	failureThreshold: 3,
+}
 
 // The Controller takes care of checking the health-status of each dataServer
 // and to push all the service discovery updates.
@@ -76,6 +99,14 @@ type Controller interface {
 	GetDataServer() commonobject.Borrowed[*proto.DataServer]
 
 	Status() Status
+
+	// IsStablyRunning reports whether the data server is Running and, if it
+	// previously failed a health check, whether it has now been Running
+	// continuously for at least window. The load balancer uses it to keep a
+	// freshly recovered node out of leader rebalancing until it proves
+	// stable, so that a flapping node does not get leaders moved back onto
+	// it just to lose them again.
+	IsStablyRunning(window time.Duration) bool
 
 	SupportedFeatures() []proto.Feature
 
@@ -98,7 +129,17 @@ type controller struct {
 	statusLock        sync.RWMutex
 	status            Status
 	supportedFeatures atomic.Value
+	// runningSince is when the node last transitioned to Running;
+	// everUnavailable records whether it ever failed a health check;
+	// statusEpoch increments on every status transition, so that a probe
+	// observation (a SERVING answer or a failure) obtained before a
+	// concurrent transition can be recognized as stale and discarded instead
+	// of flapping the status back. All are guarded by statusLock.
+	runningSince    time.Time
+	everUnavailable bool
+	statusEpoch     int64
 
+	healthPolicy               healthCheckPolicy
 	healthCheckBackoff         *commontime.ConcurrentBackOff
 	dispatchAssignmentsBackoff backoff.BackOff
 
@@ -125,7 +166,30 @@ func (n *controller) SetStatus(status Status) {
 	defer n.statusLock.Unlock()
 	previous := n.status
 	n.status = status
+	if status != previous {
+		n.statusEpoch++
+	}
+	if status == Running && previous != Running {
+		n.runningSince = time.Now()
+	}
 	n.logger.Info("Changed status", slog.Any("from", previous), slog.Any("to", status))
+}
+
+func (n *controller) IsStablyRunning(window time.Duration) bool {
+	n.statusLock.RLock()
+	defer n.statusLock.RUnlock()
+	if n.status != Running {
+		return false
+	}
+	// A node that never failed a health check (e.g. it just joined, or the
+	// whole cluster just started) is considered stable right away.
+	return !n.everUnavailable || time.Since(n.runningSince) >= window
+}
+
+func (n *controller) currentStatusEpoch() int64 {
+	n.statusLock.RLock()
+	defer n.statusLock.RUnlock()
+	return n.statusEpoch
 }
 
 func (n *controller) Close() error {
@@ -213,35 +277,78 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 	})
 }
 
-func (n *controller) doHealthPing(healthClient grpc_health_v1.HealthClient) error {
-	pingCtx, pingCancel := context.WithTimeout(n.ctx, healthCheckProbeTimeout)
+func (n *controller) doHealthPing(observedEpoch int64, healthClient grpc_health_v1.HealthClient) error {
+	pingCtx, pingCancel := context.WithTimeout(n.ctx, n.healthPolicy.probeTimeout)
 	response, err := healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 	pingCancel()
-	return n.healthCheckHandler(response, err)
+	return n.healthCheckHandler(observedEpoch, response, err)
 }
 
 func (n *controller) healthPingWithRetries() {
+	// Consecutive probe failures, preserved across the retry cycles so that a
+	// data server that keeps failing is re-declared unavailable on every
+	// backoff round instead of getting a fresh threshold each time.
+	consecutiveFailures := 0
+	lastObservedEpoch := int64(-1)
+	// The status epoch of the observation that crossed the failure threshold.
+	// The notify callback runs on this same goroutine right after the retry
+	// function returns.
+	var failureEpoch int64
+
 	_ = backoff.RetryNotify(func() error {
 		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
 		if err != nil {
+			failureEpoch = n.currentStatusEpoch()
 			return err
 		}
 
-		// Immediate check on startup instead of waiting for first tick
-		if err := n.doHealthPing(healthClient); err != nil {
-			return err
-		}
-		ticker := time.NewTicker(healthCheckProbeInterval)
+		ticker := time.NewTicker(n.healthPolicy.probeInterval)
 		defer ticker.Stop()
 		for {
+			// Capture the status epoch before probing: an answer produced
+			// before a concurrent status transition is stale and must not
+			// flap the status back.
+			epoch := n.currentStatusEpoch()
+			if epoch != lastObservedEpoch {
+				// The status changed (e.g. the watch path recovered the
+				// node): failures observed against the previous status must
+				// not count against the new one.
+				consecutiveFailures = 0
+				lastObservedEpoch = epoch
+			}
+
+			// Immediate check on startup instead of waiting for first tick
+			switch err := n.doHealthPing(epoch, healthClient); {
+			case err == nil:
+				consecutiveFailures = 0
+			case errors.Is(err, errNotServing):
+				// The data server deliberately reported NOT_SERVING (e.g. it
+				// is shutting down): fail it right away.
+				failureEpoch = epoch
+				return err
+			case errors.Is(err, context.Canceled) || grpcstatus.Code(err) == codes.Canceled:
+				// The controller is shutting down
+				return nil
+			default:
+				consecutiveFailures++
+				if consecutiveFailures >= n.healthPolicy.failureThreshold {
+					n.logger.Warn("Data server stopped responding to ping",
+						slog.Int("consecutive-failures", consecutiveFailures))
+					failureEpoch = epoch
+					return err
+				}
+				// A slow probe on a saturated node is not yet a failure:
+				// keep probing at the regular cadence
+				n.logger.Warn("Data server health ping failed, tolerating below failure threshold",
+					slog.Int("consecutive-failures", consecutiveFailures),
+					slog.Int("failure-threshold", n.healthPolicy.failureThreshold),
+					slog.Any("error", err))
+			}
+
 			select {
 			case <-n.ctx.Done():
 				return nil
 			case <-ticker.C:
-				if err := n.doHealthPing(healthClient); err != nil {
-					n.logger.Warn("Data server stopped responding to ping")
-					return err
-				}
 			}
 		}
 	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
@@ -250,7 +357,7 @@ func (n *controller) healthPingWithRetries() {
 			slog.Duration("retry-after", duration),
 			slog.Any("error", err),
 		)
-		n.becomeUnavailable()
+		n.becomeUnavailable(failureEpoch)
 	})
 }
 
@@ -271,7 +378,24 @@ func (n *controller) healthWatchWithRetries() {
 			case <-n.ctx.Done():
 				return nil
 			default:
-				if err := n.healthCheckHandler(watchStream.Recv()); err != nil {
+				epoch := n.currentStatusEpoch()
+				response, recvErr := watchStream.Recv()
+				err := n.healthCheckHandler(epoch, response, recvErr)
+				switch {
+				case err == nil:
+				case errors.Is(err, errNotServing):
+					// The data server deliberately reported NOT_SERVING: fail
+					// it right away, and keep watching for it to come back.
+					n.logger.Warn("Data server reported it is not serving")
+					n.becomeUnavailable(epoch)
+				default:
+					// A broken watch stream is an ambiguous signal: it breaks
+					// right away when the process dies (the fast-detection
+					// path when a pod is deleted or restarted), but it can
+					// also get reset under load while the node is healthy.
+					// Disambiguate with an immediate probe instead of waiting
+					// for the ping cadence, then re-establish the watch.
+					n.verifyAfterWatchFailure()
 					return err
 				}
 			}
@@ -281,30 +405,87 @@ func (n *controller) healthWatchWithRetries() {
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
-		n.becomeUnavailable()
 	})
 }
 
-func (n *controller) becomeUnavailable() {
-	currentStatus := n.Status()
-	if currentStatus != Running && currentStatus != Draining {
+// verifyAfterWatchFailure probes the data server once, right after its health
+// watch stream broke, so that a dead node is fenced immediately instead of
+// waiting for the ping loop's cadence and failure threshold. A dead peer
+// fails the probe right away with a hard transport error (e.g. connection
+// refused after the pod was deleted) and is fenced on the spot. A probe that
+// merely times out is the saturation signature: the node stays up and the
+// ping loop's consecutive-failure threshold remains the authority.
+func (n *controller) verifyAfterWatchFailure() {
+	// Fetch the client anew: the watch usually breaks together with the
+	// underlying pooled connection, and a replacement connection fails fast
+	// while the peer is unreachable.
+	healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
+	if err != nil {
+		// Leave it to the ping loop, which fences on this same error
 		return
 	}
+
+	epoch := n.currentStatusEpoch()
+	switch err := n.doHealthPing(epoch, healthClient); {
+	case err == nil:
+		// The node is alive: the watch stream reset was transient
+	case errors.Is(err, errNotServing):
+		n.logger.Warn("Data server reported it is not serving")
+		n.becomeUnavailable(epoch)
+	case errors.Is(err, context.Canceled) || grpcstatus.Code(err) == codes.Canceled || isTransportClosing(err):
+		// The controller is shutting down, or the probe rode a connection
+		// that was itself being torn down: neither proves anything about the
+		// node's health
+	case grpcstatus.Code(err) == codes.DeadlineExceeded:
+		// The node is slow, not provably dead: tolerate, the ping loop's
+		// failure threshold decides
+		n.logger.Warn("Data server is slow to verify after its health watch failed")
+	default:
+		n.logger.Warn("Data server is gone after its health watch failed",
+			slog.Any("error", err))
+		n.becomeUnavailable(epoch)
+	}
+}
+
+// isTransportClosing matches the gRPC client error surfaced when the
+// underlying connection is being torn down (e.g. the client pool closing it,
+// or a server draining on shutdown): the RPC failed locally, proving nothing
+// about the peer's health.
+func isTransportClosing(err error) bool {
+	return err != nil && strings.Contains(grpcstatus.Convert(err).Message(), "transport is closing")
+}
+
+func (n *controller) becomeUnavailable(observedEpoch int64) {
 	n.statusLock.Lock()
-	if n.status != Running && n.status != Draining { // double check
+	if n.statusEpoch != observedEpoch {
+		// The status changed since the failing observation was made (e.g.
+		// the node already recovered through the watch path): the failure is
+		// stale and must not fence the node again. The next probe evaluates
+		// the fresh state.
+		n.statusLock.Unlock()
+		return
+	}
+	if n.status != Running && n.status != Draining {
 		n.statusLock.Unlock()
 		return
 	}
 	if n.status == Running {
 		n.status = NotRunning
 	}
+	n.everUnavailable = true
+	n.statusEpoch++
 	n.statusLock.Unlock()
 
 	n.failedHealthChecks.Inc()
 	n.BecameUnavailable(n.dataServer.GetIdentity())
 }
 
-func (n *controller) becomeAvailable() {
+func (n *controller) becomeAvailable(observedEpoch int64) {
+	if n.currentStatusEpoch() != observedEpoch {
+		// The node was fenced while the probe was in flight: the SERVING
+		// answer is stale. The next probe will re-evaluate.
+		return
+	}
 	if n.Status() != NotRunning {
 		return
 	}
@@ -341,23 +522,25 @@ func (n *controller) becomeAvailable() {
 	}
 
 	n.statusLock.Lock()
-	if n.status == NotRunning {
+	if n.status == NotRunning && n.statusEpoch == observedEpoch {
 		n.status = Running
+		n.runningSince = time.Now()
+		n.statusEpoch++
 	}
 	n.statusLock.Unlock()
 }
 
-func (n *controller) healthCheckHandler(response *grpc_health_v1.HealthCheckResponse, err error) error {
+func (n *controller) healthCheckHandler(observedEpoch int64, response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
-		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled {
+		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled && !isTransportClosing(err) {
 			n.logger.Warn("Data server health check failed", slog.Any("error", err))
 		}
 		return err
 	}
 	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
-		return errors.New("Data server is not actively serving")
+		return errNotServing
 	}
-	n.becomeAvailable()
+	n.becomeAvailable(observedEpoch)
 	return nil
 }
 
@@ -366,7 +549,8 @@ func NewController(ctx context.Context, dataServer *proto.DataServer,
 	dataServerEventListener controllerapi.DataServerEventListener,
 	rpcProvider rpc.Provider,
 	insID string) Controller {
-	return newController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, insID, defaultInitialRetryBackoff)
+	return newController(ctx, dataServer, shardAssignmentsProvider, dataServerEventListener, rpcProvider, insID,
+		defaultInitialRetryBackoff, defaultHealthCheckPolicy)
 }
 
 func newController(ctx context.Context, dataServer *proto.DataServer,
@@ -374,7 +558,8 @@ func newController(ctx context.Context, dataServer *proto.DataServer,
 	dataServerEventListener controllerapi.DataServerEventListener,
 	rpcProvider rpc.Provider,
 	insID string,
-	initialRetryBackoff time.Duration) Controller {
+	initialRetryBackoff time.Duration,
+	healthPolicy healthCheckPolicy) Controller {
 	dataServerCtx, cancel := context.WithCancel(ctx)
 	dataServerID := dataServer.GetIdentity().GetNameOrDefault()
 	labels := map[string]any{"data-server": dataServerID}
@@ -398,6 +583,7 @@ func newController(ctx context.Context, dataServer *proto.DataServer,
 		status:                     NotRunning,
 		supportedFeatures:          supportedFeatures,
 		logger:                     logger,
+		healthPolicy:               healthPolicy,
 		healthCheckBackoff:         commontime.NewConcurrentBackOff(commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff)),
 		dispatchAssignmentsBackoff: commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff),
 		failedHealthChecks: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
