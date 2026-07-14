@@ -301,8 +301,7 @@ func TestController_OnElectLeaderReturnsNewLeader(t *testing.T) {
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 
-	newLeader, err := s.onElectLeader(nil)
-	require.NoError(t, err)
+	newLeader := s.onElectLeader(nil)
 	require.NotNil(t, newLeader)
 	assert.True(t, gproto.Equal(s1, newLeader))
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)

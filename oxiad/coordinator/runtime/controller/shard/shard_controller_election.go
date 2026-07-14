@@ -592,11 +592,11 @@ func (e *Election) IsReadyForChangeEnsemble() bool {
 	return e.followerCaughtUp.Load()
 }
 
-func (e *Election) Start() (*proto.DataServerIdentity, error) {
+func (e *Election) Start() *proto.DataServerIdentity {
 	if swapped := e.started.CompareAndSwap(false, true); !swapped {
 		panic("bug! the election has been started")
 	}
-	newLeader, err := backoff.RetryNotifyWithData[*proto.DataServerIdentity](func() (*proto.DataServerIdentity, error) {
+	newLeader, _ := backoff.RetryNotifyWithData[*proto.DataServerIdentity](func() (*proto.DataServerIdentity, error) {
 		return e.start()
 	}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
 		e.leaderElectionsFailed.Inc()
@@ -617,7 +617,7 @@ func (e *Election) Start() (*proto.DataServerIdentity, error) {
 			slog.Duration("retry-after", duration),
 		)
 	})
-	return newLeader, err
+	return newLeader
 }
 
 func (e *Election) Stop() {

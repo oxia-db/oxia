@@ -279,12 +279,7 @@ func (s *controller) run() {
 			s.handlePeriodicTasks()
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
 		case electionAction := <-s.electionOp:
-			newLeader, err := s.onElectLeader(nil)
-			if err != nil || newLeader == nil {
-				electionAction.Done("")
-				continue
-			}
-			electionAction.Done(newLeader.GetNameOrDefault())
+			electionAction.Done(s.onElectLeader(nil).GetNameOrDefault())
 		}
 	}
 }
@@ -407,7 +402,7 @@ func namespaceTermOptions(metadataStore coordmetadata.Metadata, namespace string
 	return termOptions
 }
 
-func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) (*proto.DataServerIdentity, error) {
+func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServerIdentity {
 	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
@@ -438,7 +433,7 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 				)
 				err := fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing)
 				changeEnsembleAction.Error(err)
-				return nil, err
+				return nil
 			}
 		}
 	}
@@ -458,19 +453,16 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 		s.newTermQuorumLatency,
 		s.becomeLeaderLatency,
 		s.leaderElectionsFailed)
-	leaderDataServer, err := s.currentElection.Start()
+	leaderDataServer := s.currentElection.Start()
 	if changeEnsembleAction == nil {
-		return leaderDataServer, err
+		return leaderDataServer
 	}
 	if leaderDataServer == nil {
 		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
-		if err != nil {
-			return nil, err
-		}
-		return nil, constant.ErrResourceUnavailable
+		return nil
 	}
 	changeEnsembleAction.Done(nil)
-	return leaderDataServer, nil
+	return leaderDataServer
 }
 
 func (s *controller) DeleteShard() {
