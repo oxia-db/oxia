@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
@@ -175,15 +176,16 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		// Any other node will be a storage node
-		dataDir, err := os.MkdirTemp("", "oxia-maelstrom")
-		if err != nil {
-			slog.Error(
-				"failed to create data dir",
-				slog.Any("error", err),
-			)
-			os.Exit(1)
-		}
+		// Any other node will be a storage node.
+		// One subdirectory per Maelstrom run (os.Getppid() is the Maelstrom process
+		// that spawned every node) and per node id: a node restarted by the kill
+		// nemesis reopens its own data, while separate runs don't share state.
+		dataDir := filepath.Join(os.TempDir(), "oxia-maelstrom", strconv.Itoa(os.Getppid()))
+		slog.Info(
+			"Using data dir",
+			slog.String("data-dir", dataDir),
+			slog.String("node-id", thisNode),
+		)
 
 		dataServerOption := option.NewDefaultOptions()
 		dataServerOption.FeatureFlags.AuthorityValidation = new(bool)
