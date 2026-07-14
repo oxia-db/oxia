@@ -462,12 +462,11 @@ func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAc
 	if changeEnsembleAction == nil {
 		return leaderDataServer, err
 	}
-	if err != nil {
-		changeEnsembleAction.Error(err)
-		return nil, err
-	}
 	if leaderDataServer == nil {
 		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
+		if err != nil {
+			return nil, err
+		}
 		return nil, constant.ErrResourceUnavailable
 	}
 	changeEnsembleAction.Done(nil)
