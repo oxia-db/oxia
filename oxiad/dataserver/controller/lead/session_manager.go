@@ -15,6 +15,7 @@
 package lead
 
 import (
+	"container/heap"
 	"context"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
+	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -94,6 +96,17 @@ type sessionManager struct {
 	sessions         map[SessionId]*session
 	log              *slog.Logger
 
+	// expiryHeap orders the live sessions by expiry deadline; it is consumed
+	// by the expiry scheduler (expiryLoop) and guarded by the manager's lock.
+	expiryHeap sessionHeap
+	// wakeCh nudges the expiry scheduler when a deadline earlier than every
+	// queued one gets added.
+	wakeCh chan struct{}
+	// epoch is the base of the manager's monotonic clock: deadlines are
+	// nanoseconds since epoch, see now().
+	epoch time.Time
+	latch sync.WaitGroup
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -107,6 +120,8 @@ func NewSessionManager(ctx context.Context, namespace string, shardId int64, con
 	labels := metric.LabelsForShard(namespace, shardId)
 	sm := &sessionManager{
 		sessions:         make(map[SessionId]*session),
+		wakeCh:           make(chan struct{}, 1),
+		epoch:            time.Now(),
 		namespace:        namespace,
 		shardId:          shardId,
 		leaderController: controller,
@@ -129,7 +144,29 @@ func NewSessionManager(ctx context.Context, namespace string, shardId int64, con
 
 	sm.ctx, sm.cancel = context.WithCancel(ctx)
 
+	sm.latch.Add(1)
+	go process.DoWithLabels(sm.ctx, map[string]string{
+		"oxia":      "session-expiry",
+		"namespace": namespace,
+		"shard":     fmt.Sprintf("%d", shardId),
+	}, sm.expiryLoop)
+
 	return sm
+}
+
+// now returns the manager's monotonic clock reading, in nanoseconds since the
+// manager was created. Session deadlines are instants on this clock, so they
+// are immune to wall-clock jumps, like the per-session timers they replace.
+func (sm *sessionManager) now() int64 {
+	return int64(time.Since(sm.epoch))
+}
+
+// wake nudges the expiry scheduler to re-evaluate the earliest deadline.
+func (sm *sessionManager) wake() {
+	select {
+	case sm.wakeCh <- struct{}{}:
+	default:
+	}
 }
 
 func (sm *sessionManager) CreateSession(request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
@@ -177,17 +214,39 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 	return &proto.CreateSessionResponse{SessionId: int64(s.id)}, nil
 }
 
-// removeSession takes the session out of the map and decrements the
-// active-sessions counter. It must be called while holding the manager's write
-// lock. Removing an id that is no longer present is a no-op: the expiry path
-// and CloseSession can race on the same session, and the loser must not
-// decrement the counter a second time.
+// removeSession takes the session out of the map and the expiry heap, and
+// decrements the active-sessions counter. It must be called while holding the
+// manager's write lock. Removing an id that is no longer present is a no-op:
+// the expiry path and CloseSession can race on the same session, and the
+// loser must not decrement the counter a second time.
 func (sm *sessionManager) removeSession(id SessionId) {
-	if _, found := sm.sessions[id]; !found {
+	s, found := sm.sessions[id]
+	if !found {
 		return
 	}
 	delete(sm.sessions, id)
+	if s.heapIdx >= 0 {
+		// The expiry scheduler pops sessions before expiring them, so a
+		// session mid-expiry is already off the heap.
+		heap.Remove(&sm.expiryHeap, s.heapIdx)
+	}
 	sm.activeSessions.Dec()
+}
+
+// deleteSessions removes the session records from the database. Deleting a
+// session record cascades, through the storage update callback, to the
+// session's ephemeral keys and their shadows. Deleting an already-deleted
+// session is harmless: expiry and CloseSession may race on the same session.
+func (sm *sessionManager) deleteSessions(ids []SessionId) error {
+	deletes := make([]*proto.DeleteRequest, len(ids))
+	for i, id := range ids {
+		deletes[i] = &proto.DeleteRequest{Key: SessionKey(id)}
+	}
+	_, err := sm.leaderController.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard:   &sm.shardId,
+		Deletes: deletes,
+	})
+	return err
 }
 
 func (sm *sessionManager) getSession(sessionId int64) (*session, error) {
@@ -209,7 +268,7 @@ func (sm *sessionManager) KeepAlive(sessionId int64) error {
 	if err != nil {
 		return err
 	}
-	s.heartbeat()
+	s.heartbeat(sm.now())
 	return nil
 }
 
@@ -223,10 +282,12 @@ func (sm *sessionManager) CloseSession(request *proto.CloseSessionRequest) (*pro
 	sm.removeSession(s.id)
 	sm.Unlock()
 
-	s.log.Debug("Session closing")
-	s.Close()
-	err = s.delete()
-	if err != nil {
+	sm.log.Debug(
+		"Session closing",
+		slog.Int64("session-id", int64(s.id)),
+		slog.String("client-identity", s.clientIdentity),
+	)
+	if err = sm.deleteSessions([]SessionId{s.id}); err != nil {
 		return nil, err
 	}
 
@@ -310,22 +371,15 @@ func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, 
 func (sm *sessionManager) Close() error {
 	sm.Lock()
 	sm.cancel()
-	sessions := make([]*session, 0, len(sm.sessions))
-	for _, s := range sm.sessions {
-		sessions = append(sessions, s)
-	}
-	for _, s := range sessions {
-		sm.removeSession(s.id)
+	for id := range sm.sessions {
+		sm.removeSession(id)
 	}
 	sm.Unlock()
 
-	// Close the sessions outside the manager lock: closing a session waits
-	// for its goroutine, and the expiry path of that goroutine acquires the
-	// manager lock — closing under the lock can deadlock with an in-flight
-	// expiry (same ordering as CloseSession above).
-	for _, s := range sessions {
-		s.Close()
-	}
+	// Wait for the expiry scheduler outside the manager lock: it acquires
+	// the lock to finish an in-flight expiry cycle — waiting under the lock
+	// would deadlock.
+	sm.latch.Wait()
 
 	return nil
 }
