@@ -237,11 +237,13 @@ func (q *quorumAckTracker) AdvanceHeadOffset(headOffset int64) {
 	}
 
 	q.headOffset.Store(headOffset)
-	q.progressCond.Broadcast()
 
 	if q.requiredAcks == 0 {
+		// The commit offset advances together with the head offset:
+		// notifyCommitOffsetAdvanced broadcasts progressCond for both.
 		q.notifyCommitOffsetAdvanced(headOffset)
 	} else {
+		q.progressCond.Broadcast()
 		q.tracker[headOffset] = &BitSet{}
 	}
 }
