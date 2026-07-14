@@ -30,11 +30,39 @@ type Encoder interface {
 	Decode(encodedKey []byte) string
 
 	IsInternalKey(encodedKey []byte) bool
+
+	// InternalKeyRange returns the encoded half-open range [start, end) that
+	// contains every internal key. The region is always contiguous, so an
+	// iterator can seek past it in one jump instead of stepping through it.
+	//
+	// end is nil when the region runs to the end of the keyspace — no user key
+	// can sort after it — which lets the region be pruned with an upper bound
+	// instead. That is the case for the hierarchical encoder, but NOT for the
+	// natural one, where a user key is stored raw and can therefore sort after
+	// the internal keys.
+	InternalKeyRange() (start []byte, end []byte)
+}
+
+// keyRegionSuccessor returns the smallest key that sorts after every key with
+// the given prefix, or nil when no such key exists (an all-0xff prefix).
+func keyRegionSuccessor(prefix []byte) []byte {
+	end := bytes.Clone(prefix)
+	for i := len(end) - 1; i >= 0; i-- {
+		if end[i] != maxByteValue {
+			end[i]++
+			return end[:i+1]
+		}
+	}
+	return nil
 }
 
 const (
 	encodedSeparator      = 0xff
 	internalKeysBitMarker = 1 << 15
+
+	// maxByteValue is the largest byte value; a prefix made only of these has
+	// no successor.
+	maxByteValue = 0xff
 )
 
 var (
@@ -105,6 +133,19 @@ func (encoderHierarchical) IsInternalKey(encodedKey []byte) bool {
 	return encodedKey[0]&(1<<7) != 0
 }
 
+// InternalKeyRange: the internal-key marker is the top bit of the 2-byte
+// prefix, so every internal key sorts after every regular one (a regular key
+// would need 32768 separators to reach that region) — the region runs to the
+// end of the keyspace.
+func (encoderHierarchical) InternalKeyRange() (start []byte, end []byte) {
+	return hierarchicalInternalKeyStart, nil
+}
+
+// The bounds returned by InternalKeyRange are constant and read-only, so build
+// them once. Callers use them as pebble iterator bounds and seek keys, never
+// mutating them (same contract as encodedInternalKeyPrefixBytes).
+var hierarchicalInternalKeyStart = []byte{internalKeysBitMarker >> 8}
+
 // EncoderHierarchical ensure that we can sort keys from same level together
 // and thus we can easily return the children of a given path
 // The encoding is done by prepending 2 bytes with the count of
@@ -162,6 +203,16 @@ func (encoderNatural) Decode(encoded []byte) string {
 func (encoderNatural) IsInternalKey(encodedKey []byte) bool {
 	return bytes.HasPrefix(encodedKey, encodedInternalKeyPrefixBytes)
 }
+
+// InternalKeyRange: internal keys are the "\xff\xffoxia/" prefix region. A
+// regular key is stored raw, so one whose bytes sort after that prefix (e.g.
+// "\xff\xffz") lives *after* the internal keys — the region has a real upper
+// end and cannot be pruned away with an upper bound.
+func (encoderNatural) InternalKeyRange() (start []byte, end []byte) {
+	return encodedInternalKeyPrefixBytes, encodedInternalKeyPrefixSuccessor
+}
+
+var encodedInternalKeyPrefixSuccessor = keyRegionSuccessor(encodedInternalKeyPrefixBytes)
 
 var EncoderNatural Encoder = &encoderNatural{}
 
