@@ -414,24 +414,19 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 	if changeEnsembleAction.To == nil {
 		return fmt.Errorf("%w: to data server is nil", ErrInvalidChangeEnsemble)
 	}
-	fromName := changeEnsembleAction.From.GetNameOrDefault()
-	toName := changeEnsembleAction.To.GetNameOrDefault()
-	fromFound := false
-	toFound := false
-	for _, dataServer := range shardMeta.Ensemble {
-		dataServerName := dataServer.GetNameOrDefault()
-		if dataServerName == fromName {
-			fromFound = true
-		}
-		if dataServerName == toName {
-			toFound = true
-		}
+	source := changeEnsembleAction.From.GetNameOrDefault()
+	target := changeEnsembleAction.To.GetNameOrDefault()
+	sourceCount := len(shardMeta.Ensemble) - len(slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
+		return dataServer.GetNameOrDefault() == source
+	}))
+	targetCount := len(shardMeta.Ensemble) - len(slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
+		return dataServer.GetNameOrDefault() == target
+	}))
+	if sourceCount != 1 {
+		return fmt.Errorf("%w: source data server %q appears %d times in the current ensemble", ErrInvalidChangeEnsemble, source, sourceCount)
 	}
-	if !fromFound {
-		return fmt.Errorf("%w: from data server %q is not in the current ensemble", ErrInvalidChangeEnsemble, fromName)
-	}
-	if toFound {
-		return fmt.Errorf("%w: to data server %q is already in the current ensemble", ErrInvalidChangeEnsemble, toName)
+	if targetCount != 0 {
+		return fmt.Errorf("%w: target data server %q appears %d times in the current ensemble", ErrInvalidChangeEnsemble, target, targetCount)
 	}
 
 	currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
