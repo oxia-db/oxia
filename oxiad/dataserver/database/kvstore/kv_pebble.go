@@ -430,14 +430,13 @@ func (p *Pebble) getFloor(key []byte, itOpts IteratorOpts) (returnedKey string, 
 }
 
 func (p *Pebble) getCeiling(key []byte, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
-	opts := newIterOptions(p.keyEncoder, itOpts)
-	opts.LowerBound = key
-	it, err := p.db.NewIter(opts)
+	it, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, key, nil))
 	if err != nil {
 		return "", nil, nil, err
 	}
+	skipper := newInternalRegionSkipper(p.keyEncoder, itOpts)
 
-	if !it.First() {
+	if !it.First() || !skipper.forward(it) {
 		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 	}
 
@@ -447,14 +446,15 @@ func (p *Pebble) getCeiling(key []byte, itOpts IteratorOpts) (returnedKey string
 }
 
 func (p *Pebble) getLower(key []byte, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
-	opts := newIterOptions(p.keyEncoder, itOpts)
-	opts.UpperBound = key
-	it, err := p.db.NewIter(opts)
+	it, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, nil, key))
 	if err != nil {
 		return "", nil, nil, err
 	}
+	skipper := newInternalRegionSkipper(p.keyEncoder, itOpts)
 
-	if !it.Last() {
+	// Backwards, the internal region is just as costly to step through: a floor
+	// probe above it would walk the whole backlog in reverse.
+	if !it.Last() || !skipper.backward(it) {
 		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 	}
 
@@ -464,21 +464,20 @@ func (p *Pebble) getLower(key []byte, itOpts IteratorOpts) (returnedKey string, 
 }
 
 func (p *Pebble) getHigher(key []byte, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
-	opts := newIterOptions(p.keyEncoder, itOpts)
-	opts.LowerBound = key
-	it, err := p.db.NewIter(opts)
+	it, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, key, nil))
 	if err != nil {
 		return "", nil, nil, err
 	}
+	skipper := newInternalRegionSkipper(p.keyEncoder, itOpts)
 
-	if !it.First() {
+	if !it.First() || !skipper.forward(it) {
 		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 	}
 
-	// The lower bound is inclusive, so the iterator may be positioned exactly on
-	// the key. We are looking for a strict `x > y`, so step over it.
+	// The lower bound is inclusive, so the iterator may be sitting exactly on
+	// the key. We want a strict `x > y`, so step over it.
 	if bytes.Equal(it.Key(), key) {
-		if !it.Next() {
+		if !it.Next() || !skipper.forward(it) {
 			return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
 		}
 	}
@@ -521,62 +520,52 @@ func (p *Pebble) KeyRangeScan(lowerBound, upperBound string, opts IteratorOpts) 
 }
 
 func (p *Pebble) KeyIterator(itOpts IteratorOpts) (KeyIterator, error) {
-	opts := &pebble.IterOptions{}
-	if !itOpts.IncludeInternalKeys {
-		opts.SkipPoint = func(encodedKey []byte) bool {
-			return p.keyEncoder.IsInternalKey(encodedKey)
-		}
-	}
-	pbit, err := p.db.NewIter(opts)
+	pbit, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, nil, nil))
 	if err != nil {
 		return nil, err
 	}
 
-	return &PebbleIterator{p, pbit}, nil
+	return &PebbleIterator{p, pbit, newInternalRegionSkipper(p.keyEncoder, itOpts)}, nil
 }
 
 func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string, itOpts IteratorOpts) (ReverseKeyIterator, error) {
-	opts := &pebble.IterOptions{}
-	if !itOpts.IncludeInternalKeys {
-		opts.SkipPoint = func(encodedKey []byte) bool {
-			return p.keyEncoder.IsInternalKey(encodedKey)
-		}
-	}
+	var lb, ub []byte
 	if lowerBound != "" {
-		opts.LowerBound = p.keyEncoder.Encode(lowerBound)
+		lb = p.keyEncoder.Encode(lowerBound)
 	}
 	if upperBound != "" {
-		opts.UpperBound = p.keyEncoder.Encode(upperBound)
+		ub = p.keyEncoder.Encode(upperBound)
 	}
-	pbit, err := p.db.NewIter(opts)
+	pbit, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, lb, ub))
 	if err != nil {
 		return nil, err
 	}
-	pbit.Last()
-	return &PebbleReverseIterator{p, pbit}, nil
+	skipper := newInternalRegionSkipper(p.keyEncoder, itOpts)
+	if pbit.Last() {
+		skipper.backward(pbit)
+	}
+	return &PebbleReverseIterator{p, pbit, skipper}, nil
 }
 
 func (p *Pebble) RangeScan(lowerBound, upperBound string, itOpts IteratorOpts) (KeyValueIterator, error) {
-	opts := &pebble.IterOptions{}
-	if !itOpts.IncludeInternalKeys {
-		opts.SkipPoint = func(encodedKey []byte) bool {
-			return p.keyEncoder.IsInternalKey(encodedKey)
-		}
-	}
+	var lb, ub []byte
 	if lowerBound != "" {
-		opts.LowerBound = p.keyEncoder.Encode(lowerBound)
+		lb = p.keyEncoder.Encode(lowerBound)
 	}
 	if upperBound != "" {
-		opts.UpperBound = p.keyEncoder.Encode(upperBound)
+		ub = p.keyEncoder.Encode(upperBound)
 	}
 
-	pbit, err := p.db.NewIter(opts)
+	pbit, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, lb, ub))
 	if err != nil {
 		return nil, err
 	}
 
-	pbit.First()
-	return &PebbleIterator{p, pbit}, nil
+	skipper := newInternalRegionSkipper(p.keyEncoder, itOpts)
+	if pbit.First() {
+		skipper.forward(pbit)
+	}
+	return &PebbleIterator{p, pbit, skipper}, nil
 }
 
 func (p *Pebble) Snapshot() (Snapshot, error) {
@@ -620,7 +609,7 @@ func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator
 		return nil, err
 	}
 	pbit.SeekGE(lb)
-	return &PebbleIterator{b.p, pbit}, nil
+	return &PebbleIterator{b.p, pbit, internalRegionSkipper{}}, nil
 }
 
 func (b *PebbleBatch) Close() error {
@@ -714,8 +703,9 @@ func (b *PebbleBatch) Commit() error {
 // Iterator wrapper methods
 
 type PebbleIterator struct {
-	p  *Pebble
-	pi *pebble.Iterator
+	p       *Pebble
+	pi      *pebble.Iterator
+	skipper internalRegionSkipper
 }
 
 func (p *PebbleIterator) Close() error {
@@ -731,19 +721,19 @@ func (p *PebbleIterator) Key() string {
 }
 
 func (p *PebbleIterator) Next() bool {
-	return p.pi.Next()
+	return p.pi.Next() && p.skipper.forward(p.pi)
 }
 
 func (p *PebbleIterator) Prev() bool {
-	return p.pi.Prev()
+	return p.pi.Prev() && p.skipper.backward(p.pi)
 }
 
 func (p *PebbleIterator) SeekGE(key string) bool {
-	return p.pi.SeekGE(p.p.keyEncoder.Encode(key))
+	return p.pi.SeekGE(p.p.keyEncoder.Encode(key)) && p.skipper.forward(p.pi)
 }
 
 func (p *PebbleIterator) SeekLT(key string) bool {
-	return p.pi.SeekLT(p.p.keyEncoder.Encode(key))
+	return p.pi.SeekLT(p.p.keyEncoder.Encode(key)) && p.skipper.backward(p.pi)
 }
 
 func (p *PebbleIterator) Value() ([]byte, error) {
@@ -757,8 +747,9 @@ func (p *PebbleIterator) Value() ([]byte, error) {
 // Iterator wrapper methods
 
 type PebbleReverseIterator struct {
-	p  *Pebble
-	pi *pebble.Iterator
+	p       *Pebble
+	pi      *pebble.Iterator
+	skipper internalRegionSkipper
 }
 
 func (p *PebbleReverseIterator) Close() error {
@@ -774,7 +765,7 @@ func (p *PebbleReverseIterator) Key() string {
 }
 
 func (p *PebbleReverseIterator) Prev() bool {
-	return p.pi.Prev()
+	return p.pi.Prev() && p.skipper.backward(p.pi)
 }
 
 func (p *PebbleReverseIterator) Value() ([]byte, error) {
@@ -855,12 +846,70 @@ func (sl *pebbleSnapshotLoader) Complete() {
 	sl.complete = true
 }
 
-func newIterOptions(keyEncoder compare.Encoder, itOpts IteratorOpts) *pebble.IterOptions {
-	opts := &pebble.IterOptions{}
-	if !itOpts.IncludeInternalKeys {
-		opts.SkipPoint = func(encodedKey []byte) bool {
-			return keyEncoder.IsInternalKey(encodedKey)
+// newIterOptions builds the Pebble iterator options for a scan that may have to
+// exclude the internal-key region.
+//
+// It deliberately does not use pebble's SkipPoint. SkipPoint is a *filter*: the
+// iterator still steps through — and loads the blocks of — every internal key it
+// passes, so a ceiling/higher lookup past the last user key, or a scan with no
+// upper bound, walks the entire live notification backlog before returning. It
+// also hides those keys from us, so we could not detect the region to seek past
+// it. Instead: when the internal region runs to the end of the keyspace it is
+// pruned outright with an upper bound, and otherwise internalRegionSkipper
+// jumps over it with a single seek.
+func newIterOptions(enc compare.Encoder, itOpts IteratorOpts, lowerBound, upperBound []byte) *pebble.IterOptions {
+	opts := &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound}
+	if itOpts.IncludeInternalKeys {
+		return opts
+	}
+	if start, end := enc.InternalKeyRange(); end == nil {
+		// No user key can sort after the internal keys: bound them away.
+		if opts.UpperBound == nil || bytes.Compare(start, opts.UpperBound) < 0 {
+			opts.UpperBound = start
 		}
 	}
 	return opts
+}
+
+// internalRegionSkipper keeps an iterator out of the contiguous internal-key
+// region, jumping over it in a single seek rather than stepping through it.
+//
+// It is a no-op when internal keys are wanted, and when newIterOptions already
+// pruned the region with an upper bound (hierarchical). It carries its weight
+// for the natural encoder, where a user key is stored raw and can sort *after*
+// the internal keys, so the region cannot be bounded away.
+type internalRegionSkipper struct {
+	enc        compare.Encoder
+	start, end []byte
+}
+
+func newInternalRegionSkipper(enc compare.Encoder, itOpts IteratorOpts) internalRegionSkipper {
+	if itOpts.IncludeInternalKeys {
+		return internalRegionSkipper{}
+	}
+	start, end := enc.InternalKeyRange()
+	if end == nil {
+		// Already pruned by the upper bound in newIterOptions.
+		return internalRegionSkipper{}
+	}
+	return internalRegionSkipper{enc: enc, start: start, end: end}
+}
+
+// forward moves the iterator past the internal region when it is positioned
+// inside it, and reports whether it is still valid. A single seek suffices: the
+// region is contiguous, so nothing at or after end is an internal key.
+func (s internalRegionSkipper) forward(it *pebble.Iterator) bool {
+	if s.end == nil || !it.Valid() || !s.enc.IsInternalKey(it.Key()) {
+		return it.Valid()
+	}
+	return it.SeekGE(s.end)
+}
+
+// backward moves the iterator before the internal region when it is positioned
+// inside it, and reports whether it is still valid.
+func (s internalRegionSkipper) backward(it *pebble.Iterator) bool {
+	if s.end == nil || !it.Valid() || !s.enc.IsInternalKey(it.Key()) {
+		return it.Valid()
+	}
+	return it.SeekLT(s.start)
 }
