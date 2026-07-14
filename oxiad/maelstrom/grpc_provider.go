@@ -444,6 +444,16 @@ func (m *maelstromReplicateServerStream) Send(response *proto.Ack) error {
 }
 
 func (m *maelstromReplicateServerStream) Recv() (*proto.Append, error) {
+	// Check the reset first: a plain select picks randomly among ready cases,
+	// which would keep draining buffered entries after a close. A stream
+	// reset discards what is still buffered, like a transport-level reset
+	// does, so once close is observed no entry is ever delivered.
+	select {
+	case <-m.done:
+		return nil, io.EOF
+	default:
+	}
+
 	select {
 	case req := <-m.requests:
 		return req, nil
@@ -453,9 +463,17 @@ func (m *maelstromReplicateServerStream) Recv() (*proto.Append, error) {
 }
 
 // deliver hands an entry to the Replicate handler without ever blocking the
-// dispatcher: entries for a dead stream are dropped, and a stream whose
-// handler stopped draining is closed rather than piling up goroutines.
+// dispatcher: entries for a dead stream are dropped (best effort here — an
+// entry racing with a concurrent close may still be buffered, but Recv never
+// delivers past the close), and a stream whose handler stopped draining is
+// closed rather than piling up goroutines.
 func (m *maelstromReplicateServerStream) deliver(req *proto.Append) {
+	select {
+	case <-m.done:
+		return
+	default:
+	}
+
 	select {
 	case m.requests <- req:
 	case <-m.done:
