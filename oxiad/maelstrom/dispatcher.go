@@ -97,12 +97,23 @@ func (d *dispatcher) onOxiaStreamRequestMessage(msgType MsgType, m any, message 
 		}
 
 	case MsgTypeAppend:
+		// Deliver inline, not on a per-message goroutine: goroutine scheduling
+		// would reorder entries within a stream, which gRPC never does. The
+		// stream delivery never blocks (buffered channel, drops on overflow).
 		msg := m.(*Message[OxiaStreamMessage])
-		go d.grpcProvider.HandleOxiaStreamRequest(msgType, msg, message)
+		d.grpcProvider.HandleOxiaStreamRequest(msgType, msg, message)
 
 	case MsgTypeAck:
 		streamId := m.(*Message[OxiaStreamMessage]).Body.StreamId
-		go d.replicationProvider.HandleAck(streamId, message.(*proto.Ack))
+		d.replicationProvider.HandleAck(streamId, message.(*proto.Ack))
+
+	case MsgTypeStreamError:
+		// A peer declared one of our streams dead. The stream id alone doesn't
+		// say which side of it we hold, so try both: each side ignores unknown
+		// ids.
+		msg := m.(*Message[OxiaStreamMessage])
+		d.replicationProvider.HandleStreamError(msg.Body.StreamId)
+		d.grpcProvider.HandleStreamError(msg.Src, msg.Body.StreamId)
 
 	default:
 		panic(fmt.Sprintf("Unknown message type: %v", msgType))
