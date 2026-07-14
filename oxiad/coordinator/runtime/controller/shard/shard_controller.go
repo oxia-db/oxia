@@ -592,11 +592,8 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	if leaderDataServer := s.onElectLeader(changeEnsembleAction); leaderDataServer == nil {
-		changeEnsembleAction.Error(constant.ErrResourceUnavailable)
-	} else {
-		changeEnsembleAction.Done(nil)
-	}
+	s.onElectLeader(changeEnsembleAction)
+	changeEnsembleAction.Done(nil)
 }
 
 func (s *controller) SyncServerAddress() {
