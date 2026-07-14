@@ -117,6 +117,54 @@ func TestLogSynchronizer_DuplicateAckOnlySynced(t *testing.T) {
 	assert.EqualValues(t, 4, w.synced.Load())
 }
 
+// A follower with an empty wal (lastAppendedOffset = InvalidOffset) that
+// receives its first append at a non-zero offset must reject it: entries were
+// lost in transit. The wal cannot catch this gap itself (an empty wal accepts
+// any first offset, for the post-snapshot case), and accepting it would let
+// the follower ack entries it does not have — which the leader then counts,
+// cumulatively, towards the commit quorum.
+func TestLogSynchronizer_RejectGapOnEmptyWal(t *testing.T) {
+	w := &stubWal{}
+	w.appended.Store(wal.InvalidOffset)
+	w.synced.Store(wal.InvalidOffset)
+
+	lastAppendedOffset := &atomic.Int64{}
+	lastAppendedOffset.Store(wal.InvalidOffset)
+	advertisedCommitOffset := &atomic.Int64{}
+	advertisedCommitOffset.Store(wal.InvalidOffset)
+
+	stream := rpc.NewMockServerReplicateStream()
+	ls := NewLogSynchronizer(LogSynchronizerParams{
+		Log:                    slog.Default(),
+		Namespace:              "test",
+		ShardId:                0,
+		Term:                   1,
+		Wal:                    w,
+		AdvertisedCommitOffset: advertisedCommitOffset,
+		LastAppendedOffset:     lastAppendedOffset,
+		WriteLatencyHisto: metric.NewLatencyHistogram("oxia_test_reject_gap",
+			"test", map[string]any{}),
+		StateApplierCond: make(chan struct{}, 1),
+		Stream:           stream,
+		OnAppend:         func() {},
+	})
+
+	stream.AddRequest(&proto.Append{
+		Term:                    1,
+		Entry:                   &proto.LogEntry{Term: 1, Offset: 5},
+		CommitOffset:            wal.InvalidOffset,
+		CumulativeAcksSupported: true,
+	})
+
+	assert.ErrorIs(t, ls.Sync(), wal.ErrInvalidNextOffset)
+	assert.NoError(t, ls.Close())
+
+	// Nothing was appended and no ack was sent
+	assert.EqualValues(t, wal.InvalidOffset, w.appended.Load())
+	assert.EqualValues(t, wal.InvalidOffset, lastAppendedOffset.Load())
+	assert.Empty(t, stream.Responses)
+}
+
 // An entry-less Append is a commit-offset advertisement (sent by the leader to
 // an observer parked at the head of the wal): it must take the new commit
 // offset and wake up the applier chain, without appending anything to the wal
