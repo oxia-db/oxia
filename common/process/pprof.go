@@ -99,5 +99,17 @@ func RunProfiling() io.Closer {
 			}
 		})
 
-	return s
+	return &profilingServer{s}
+}
+
+// profilingServer scopes the contention-profiling rates to the pprof server
+// lifetime: closing it restores the runtime defaults.
+type profilingServer struct {
+	*http.Server
+}
+
+func (p *profilingServer) Close() error {
+	runtime.SetMutexProfileFraction(0)
+	runtime.SetBlockProfileRate(0)
+	return p.Server.Close()
 }

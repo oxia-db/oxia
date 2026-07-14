@@ -31,9 +31,12 @@ func TestRunProfilingEnablesContentionProfiles(t *testing.T) {
 	})
 
 	closer := RunProfiling()
-	defer closer.Close()
 
 	// SetMutexProfileFraction with a negative value only reads the current
 	// setting. There is no equivalent getter for the block profile rate.
 	assert.Equal(t, mutexProfileFraction, runtime.SetMutexProfileFraction(-1))
+
+	// Closing the profiling server restores the runtime defaults
+	assert.NoError(t, closer.Close())
+	assert.Equal(t, 0, runtime.SetMutexProfileFraction(-1))
 }
