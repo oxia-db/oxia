@@ -277,7 +277,6 @@ func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity
 	features := make(map[string][]proto.Feature)
 	for _, dataServer := range dataServers {
 		dataServerID := dataServer.GetNameOrDefault()
-		features[dataServerID] = []proto.Feature{}
 		if serverController, exist := c.dataServerControllers[dataServerID]; exist {
 			features[dataServerID] = serverController.SupportedFeatures()
 			continue

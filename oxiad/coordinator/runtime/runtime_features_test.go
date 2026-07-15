@@ -23,7 +23,7 @@ import (
 	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/dataserver"
 )
 
-func TestFindDataServerFeaturesIncludesUnknownNodes(t *testing.T) {
+func TestFindDataServerFeaturesOmitsUnknownNodes(t *testing.T) {
 	c := &runtime{
 		dataServerControllers: map[string]dataservercontroller.Controller{},
 		drainingNodes:         map[string]dataservercontroller.Controller{},
@@ -33,6 +33,5 @@ func TestFindDataServerFeaturesIncludesUnknownNodes(t *testing.T) {
 
 	features := c.findDataServerFeatures([]*proto.DataServerIdentity{dataServer})
 
-	assert.Contains(t, features, dataServer.GetNameOrDefault())
-	assert.Empty(t, features[dataServer.GetNameOrDefault()])
+	assert.NotContains(t, features, dataServer.GetNameOrDefault())
 }

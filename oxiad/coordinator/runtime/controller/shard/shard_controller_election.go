@@ -497,7 +497,7 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 		)
 	}
 	features := e.dataServerSupportedFeaturesSupplier(e.mutableShardMetadata.Ensemble)
-	negotiatedFeatures := negotiate(features)
+	negotiatedFeatures := negotiate(features, len(e.mutableShardMetadata.Ensemble))
 
 	if err = e.becomeLeader(e.mutableShardMetadata.Term, newLeader, followers,
 		uint32(len(e.mutableShardMetadata.Ensemble)), negotiatedFeatures); err != nil {
@@ -555,14 +555,13 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	return newLeader, nil
 }
 
-func negotiate(nodeFeatures map[string][]proto.Feature) []proto.Feature {
-	if len(nodeFeatures) == 0 {
+func negotiate(nodeFeatures map[string][]proto.Feature, expectedNodeCount int) []proto.Feature {
+	if expectedNodeCount == 0 || len(nodeFeatures) == 0 {
 		return nil
 	}
 
 	// Start with all supported features
 	featureCount := make(map[proto.Feature]int)
-	nodeCount := len(nodeFeatures)
 
 	for _, features := range nodeFeatures {
 		// Track unique features per node to handle duplicates
@@ -581,7 +580,7 @@ func negotiate(nodeFeatures map[string][]proto.Feature) []proto.Feature {
 	// Only include features supported by ALL nodes
 	var negotiated []proto.Feature
 	for feature, count := range featureCount {
-		if count == nodeCount {
+		if count == expectedNodeCount {
 			negotiated = append(negotiated, feature)
 		}
 	}

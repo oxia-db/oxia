@@ -1127,6 +1127,55 @@ func TestController_ChangeEnsembleRejectsFeatureSupportRegression(t *testing.T) 
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
 }
 
+func TestController_ChangeEnsembleRejectsMissingFeatureInfo(t *testing.T) {
+	var shard int64 = 5
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     2,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	})
+
+	tests := []struct {
+		name    string
+		missing string
+	}{
+		{name: "current ensemble member", missing: s3.GetNameOrDefault()},
+		{name: "target ensemble member", missing: s4.GetNameOrDefault()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &controller{
+				namespace:     constant.DefaultNamespace,
+				shard:         shard,
+				metadataStore: metadata,
+				dataServerSupportedFeaturesSupplier: func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
+					result := make(map[string][]proto.Feature)
+					for _, server := range servers {
+						if server.GetNameOrDefault() == tt.missing {
+							continue
+						}
+						result[server.GetNameOrDefault()] = []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+					}
+					return result
+				},
+				logger: slog.Default(),
+			}
+
+			err := s.validateChangeEnsembleFeatures(action.NewChangeEnsembleAction(shard, s1, s4))
+			assert.ErrorIs(t, err, ErrNotReadyForChangeEnsemble)
+		})
+	}
+}
+
 func TestController_ChangeEnsembleRejectsInvalidAction(t *testing.T) {
 	var shard int64 = 5
 

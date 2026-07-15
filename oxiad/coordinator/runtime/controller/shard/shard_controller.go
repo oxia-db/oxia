@@ -75,8 +75,12 @@ type Controller interface {
 
 type DataServerSupportedFeaturesSupplier = func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature
 
-func NoOpSupportedFeaturesSupplier([]*proto.DataServerIdentity) map[string][]proto.Feature {
-	return map[string][]proto.Feature{}
+func NoOpSupportedFeaturesSupplier(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
+	features := make(map[string][]proto.Feature, len(dataServers))
+	for _, dataServer := range dataServers {
+		features[dataServer.GetNameOrDefault()] = []proto.Feature{}
+	}
+	return features
 }
 
 type controller struct {
@@ -432,11 +436,20 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 	targetEnsemble = append(targetEnsemble, changeEnsembleAction.To)
 
 	currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
-	requiredFeatures := negotiate(currentFeatures)
+	if len(currentFeatures) != ensembleSize {
+		return fmt.Errorf("%w: found feature info for %d of %d current ensemble data servers",
+			ErrNotReadyForChangeEnsemble, len(currentFeatures), ensembleSize)
+	}
+	requiredFeatures := negotiate(currentFeatures, ensembleSize)
 	if len(requiredFeatures) == 0 {
 		return nil
 	}
-	targetFeatures := negotiate(s.dataServerSupportedFeaturesSupplier(targetEnsemble))
+	targetFeatureInfo := s.dataServerSupportedFeaturesSupplier(targetEnsemble)
+	if len(targetFeatureInfo) != len(targetEnsemble) {
+		return fmt.Errorf("%w: found feature info for %d of %d target ensemble data servers",
+			ErrNotReadyForChangeEnsemble, len(targetFeatureInfo), len(targetEnsemble))
+	}
+	targetFeatures := negotiate(targetFeatureInfo, len(targetEnsemble))
 	var missing []proto.Feature
 	for _, feature := range requiredFeatures {
 		if !slices.Contains(targetFeatures, feature) {
