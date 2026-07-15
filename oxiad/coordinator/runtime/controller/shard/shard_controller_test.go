@@ -1144,11 +1144,13 @@ func TestController_ChangeEnsembleRejectsMissingFeatureInfo(t *testing.T) {
 	})
 
 	tests := []struct {
-		name    string
-		missing string
+		name     string
+		missing  string
+		features []proto.Feature
 	}{
-		{name: "current ensemble member", missing: s3.GetNameOrDefault()},
-		{name: "target ensemble member", missing: s4.GetNameOrDefault()},
+		{name: "current ensemble member", missing: s3.GetNameOrDefault(), features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
+		{name: "target ensemble member", missing: s4.GetNameOrDefault(), features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
+		{name: "target ensemble member with no negotiated features", missing: s4.GetNameOrDefault(), features: []proto.Feature{}},
 	}
 
 	for _, tt := range tests {
@@ -1163,7 +1165,7 @@ func TestController_ChangeEnsembleRejectsMissingFeatureInfo(t *testing.T) {
 						if server.GetNameOrDefault() == tt.missing {
 							continue
 						}
-						result[server.GetNameOrDefault()] = []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+						result[server.GetNameOrDefault()] = tt.features
 					}
 					return result
 				},

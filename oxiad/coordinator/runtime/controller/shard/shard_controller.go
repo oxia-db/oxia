@@ -441,13 +441,13 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 			ErrNotReadyForChangeEnsemble, len(currentFeatures), ensembleSize)
 	}
 	requiredFeatures := negotiate(currentFeatures, ensembleSize)
-	if len(requiredFeatures) == 0 {
-		return nil
-	}
 	targetFeatureInfo := s.dataServerSupportedFeaturesSupplier(targetEnsemble)
 	if len(targetFeatureInfo) != len(targetEnsemble) {
 		return fmt.Errorf("%w: found feature info for %d of %d target ensemble data servers",
 			ErrNotReadyForChangeEnsemble, len(targetFeatureInfo), len(targetEnsemble))
+	}
+	if len(requiredFeatures) == 0 {
+		return nil
 	}
 	targetFeatures := negotiate(targetFeatureInfo, len(targetEnsemble))
 	var missing []proto.Feature
