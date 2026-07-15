@@ -45,7 +45,9 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
+	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/leader"
 )
 
 var namespaceConfig = &proto.Namespace{
@@ -259,6 +261,53 @@ func TestLeaderElection_ShouldChooseHighestTerm(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestController_OnElectLeaderReturnsNewLeader(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1},
+	})
+
+	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
+	s := &controller{
+		namespace:                           constant.DefaultNamespace,
+		shard:                               shard,
+		metadataStore:                       metadata,
+		dataServerSupportedFeaturesSupplier: NoOpSupportedFeaturesSupplier,
+		leaderSelector:                      leaderselector.NewSelector(),
+		rpc:                                 rpc,
+		logger:                              slog.Default(),
+		leaderElectionLatency: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
+			"The time it takes to elect a leader for the shard", labels),
+		leaderElectionsFailed: metric.NewCounter("oxia_coordinator_leader_election_failed",
+			"The number of failed leader elections", "count", labels),
+		newTermQuorumLatency: metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",
+			"The time it takes to take the ensemble of data servers to a new term", labels),
+		becomeLeaderLatency: metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
+			"The time it takes for the new elected leader to start", labels),
+	}
+	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
+	defer s.ctxCancel()
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	newLeader := s.onElectLeader(nil)
+	require.NotNil(t, newLeader)
+	assert.True(t, gproto.Equal(s1, newLeader))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 1)
 }
 
 func TestController(t *testing.T) {
@@ -1013,6 +1062,166 @@ func TestController_FeatureNegotiation_MixedVersions(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 
 	sc.Close()
+}
+
+func TestController_ChangeEnsembleRejectsFeatureSupportRegression(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	rpc.GetNode(s1).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	rpc.GetNode(s2).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	rpc.GetNode(s3).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	rpc.GetNode(s4).SetNodeFeatures([]proto.Feature{})
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	featureSupplier := func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
+		result := make(map[string][]proto.Feature)
+		for _, server := range servers {
+			info, err := rpc.GetInfo(context.Background(), server, &proto.GetInfoRequest{})
+			if err == nil {
+				result[server.GetNameOrDefault()] = info.FeaturesSupported
+			}
+		}
+		return result
+	}
+
+	rpc.GetNode(s1).GetStatusResponse(2, proto.ServingStatus_LEADER, 1, 1)
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
+	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     2,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, featureSupplier, rpc, DefaultPeriodicTasksInterval)
+	defer sc.Close()
+
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+
+	change := action.NewChangeEnsembleAction(shard, s1, s4)
+	sc.ChangeEnsemble(change)
+
+	waitResult := make(chan error, 1)
+	go func() {
+		_, err := change.Wait()
+		waitResult <- err
+	}()
+
+	select {
+	case err := <-waitResult:
+		assert.ErrorIs(t, err, ErrChangeEnsembleLosesFeatureSupport)
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for change ensemble to be rejected")
+	}
+
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
+}
+
+func TestController_ChangeEnsembleRejectsMissingFeatureInfo(t *testing.T) {
+	var shard int64 = 5
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     2,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	})
+
+	tests := []struct {
+		name     string
+		missing  string
+		features []proto.Feature
+	}{
+		{name: "current ensemble member", missing: s3.GetNameOrDefault(), features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
+		{name: "target ensemble member", missing: s4.GetNameOrDefault(), features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
+		{name: "target ensemble member with no negotiated features", missing: s4.GetNameOrDefault(), features: []proto.Feature{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &controller{
+				namespace:     constant.DefaultNamespace,
+				shard:         shard,
+				metadataStore: metadata,
+				dataServerSupportedFeaturesSupplier: func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
+					result := make(map[string][]proto.Feature)
+					for _, server := range servers {
+						if server.GetNameOrDefault() == tt.missing {
+							continue
+						}
+						result[server.GetNameOrDefault()] = tt.features
+					}
+					return result
+				},
+				logger: slog.Default(),
+			}
+
+			err := s.validateChangeEnsembleFeatures(action.NewChangeEnsembleAction(shard, s1, s4))
+			assert.ErrorIs(t, err, ErrNotReadyForChangeEnsemble)
+		})
+	}
+}
+
+func TestController_ChangeEnsembleRejectsInvalidAction(t *testing.T) {
+	var shard int64 = 5
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+	s5 := &proto.DataServerIdentity{Public: "s5:9091", Internal: "s5:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     2,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	})
+
+	s := &controller{
+		namespace:                           constant.DefaultNamespace,
+		shard:                               shard,
+		metadataStore:                       metadata,
+		dataServerSupportedFeaturesSupplier: NoOpSupportedFeaturesSupplier,
+		logger:                              slog.Default(),
+	}
+
+	tests := []struct {
+		name string
+		from *proto.DataServerIdentity
+		to   *proto.DataServerIdentity
+	}{
+		{name: "nil from", from: nil, to: s4},
+		{name: "nil to", from: s1, to: nil},
+		{name: "missing from", from: s4, to: s5},
+		{name: "duplicate to", from: s1, to: s2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := s.validateChangeEnsembleFeatures(action.NewChangeEnsembleAction(shard, tt.from, tt.to))
+			assert.ErrorIs(t, err, ErrInvalidChangeEnsemble)
+		})
+	}
+
+	assert.NoError(t, s.validateChangeEnsembleFeatures(action.NewChangeEnsembleAction(shard, s1, s4)))
 }
 
 // Each UpdateShardStatus persists the full cluster status, so re-writing it
