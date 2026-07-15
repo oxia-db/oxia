@@ -555,8 +555,8 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	return newLeader, nil
 }
 
-func negotiate(nodeFeatures map[string][]proto.Feature, expectedNodeCount int) []proto.Feature {
-	if expectedNodeCount == 0 || len(nodeFeatures) == 0 {
+func negotiate(nodeFeatures map[string][]proto.Feature, candidates int) []proto.Feature {
+	if candidates == 0 || len(nodeFeatures) == 0 {
 		return nil
 	}
 
@@ -580,7 +580,7 @@ func negotiate(nodeFeatures map[string][]proto.Feature, expectedNodeCount int) [
 	// Only include features supported by ALL nodes
 	var negotiated []proto.Feature
 	for feature, count := range featureCount {
-		if count == expectedNodeCount {
+		if count == candidates {
 			negotiated = append(negotiated, feature)
 		}
 	}
