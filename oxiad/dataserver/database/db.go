@@ -744,7 +744,12 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
 	}
 
-	// No version conflict
+	// No version conflict.
+	// The closure returns whichever entry is current on exit: se is nil for a
+	// new key and replaced with a pooled entry below, and the callback paths
+	// can return early before that happens.
+	defer func() { se.ReturnToVTPool() }()
+
 	versionId := wal.InvalidOffset
 	if !internal {
 		status, err := updateOperationCallback.OnPut(batch, notifications, putReq, se)
@@ -788,8 +793,6 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	}
 
 	se.SecondaryIndexes = putReq.SecondaryIndexes
-
-	defer se.ReturnToVTPool()
 
 	// Marshal the entry directly into the batch arena: marshal-then-Put would
 	// allocate an intermediate buffer and copy the entry twice

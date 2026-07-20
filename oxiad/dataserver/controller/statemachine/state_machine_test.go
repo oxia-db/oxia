@@ -301,10 +301,11 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 func TestApplyLogEntry_DeleteRangeDoesNotCorruptAliasedEntry(t *testing.T) {
 	db := newTestDB(t)
 
-	// A few rounds, with distinct keys and offsets: the overwrite needs the
+	// Several rounds, with distinct keys and offsets: the overwrite needs the
 	// delete-range's pool Get to return the object the last put just
-	// recycled, which holds on the same P absent a badly timed preemption.
-	for i := int64(0); i < 3; i++ {
+	// recycled, which holds on the same P but is not guaranteed by sync.Pool
+	// (preemption or a GC can break the chain in any single round).
+	for i := int64(0); i < 10; i++ {
 		p := fmt.Sprintf("it-%d-", i)
 		v2 := []byte(p + "marker-value-2")
 
