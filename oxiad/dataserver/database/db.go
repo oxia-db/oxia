@@ -744,7 +744,12 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
 	}
 
-	// No version conflict
+	// No version conflict.
+	// The closure returns whichever entry is current on exit: se is nil for a
+	// new key and replaced with a pooled entry below, and the callback paths
+	// can return early before that happens.
+	defer func() { se.ReturnToVTPool() }()
+
 	versionId := wal.InvalidOffset
 	if !internal {
 		status, err := updateOperationCallback.OnPut(batch, notifications, putReq, se)
@@ -789,11 +794,19 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 
 	se.SecondaryIndexes = putReq.SecondaryIndexes
 
-	defer se.ReturnToVTPool()
-
 	// Marshal the entry directly into the batch arena: marshal-then-Put would
 	// allocate an intermediate buffer and copy the entry twice
-	if err = batch.PutMarshalable(putReq.Key, se); err != nil {
+	err = batch.PutMarshalable(putReq.Key, se)
+	// The entry borrowed the request's buffers (Value, SecondaryIndexes), and
+	// the marshal above was their last reader. Detach them before the pool
+	// return: ResetVT keeps the Value capacity and the SecondaryIndexes slice
+	// for reuse, and a later Deserialize into this pooled entry appends into
+	// that capacity — the apply path decodes requests with UnmarshalVTUnsafe,
+	// so the borrowed buffer is the WAL entry payload, still aliased by every
+	// other operation of the same entry.
+	se.Value = nil
+	se.SecondaryIndexes = nil
+	if err != nil {
 		return nil, err
 	}
 
