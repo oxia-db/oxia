@@ -15,7 +15,11 @@
 package statemachine
 
 import (
+	"bytes"
+	"context"
+	"fmt"
 	"testing"
+	stdtime "time"
 
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
@@ -281,6 +285,105 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, getY.Status)
 	assert.Equal(t, []byte("2"), getY.Value)
+}
+
+// TestApplyLogEntry_DeleteRangeDoesNotCorruptAliasedEntry guards the lifetime
+// contract of the zero-copy decode in ApplyLogEntry: applyPut must detach the
+// request-owned buffers from the pooled StorageEntry before returning it, or
+// the pooled Deserialize in applyDeleteRange appends the deleted entry's
+// stored value over the WAL entry payload that the remaining operations of
+// the same entry still alias.
+//
+// The entry holds two puts followed by two delete-ranges, and the first range
+// deletes a key whose stored value is sized to fill the donated capacity
+// exactly: without the detach, that Deserialize overwrites the second
+// delete-range's keys and the captured notification keys in place.
+func TestApplyLogEntry_DeleteRangeDoesNotCorruptAliasedEntry(t *testing.T) {
+	db := newTestDB(t)
+
+	// A few rounds, with distinct keys and offsets: the overwrite needs the
+	// delete-range's pool Get to return the object the last put just
+	// recycled, which holds on the same P absent a badly timed preemption.
+	for i := int64(0); i < 3; i++ {
+		p := fmt.Sprintf("it-%d-", i)
+		v2 := []byte(p + "marker-value-2")
+
+		proposal := NewWriteProposal(2*i+1, &proto.WriteRequest{
+			Puts: []*proto.PutRequest{
+				{Key: p + "put-1", Value: []byte(p + "value-1")},
+				{Key: p + "put-2", Value: v2},
+			},
+			DeleteRanges: []*proto.DeleteRangeRequest{
+				{StartInclusive: p + "range-a", EndExclusive: p + "range-b"},
+				{StartInclusive: p + "range-m", EndExclusive: p + "range-n"},
+			},
+		})
+		entryValue := marshalProposal(t, proposal)
+
+		// The pooled StorageEntry recycled by the last put keeps, as spare
+		// capacity, a slice of the entry payload running from v2 to the end
+		// of the buffer. A stored value of exactly that size makes a pooled
+		// append overwrite everything after v2, delete-range keys included.
+		v2Off := bytes.Index(entryValue, v2)
+		assert.Greater(t, v2Off, 0)
+		storedValue := bytes.Repeat([]byte("Z"), len(entryValue)-v2Off)
+
+		_, err := ApplyLogEntry(db, &proto.LogEntry{
+			Term:   1,
+			Offset: 2 * i,
+			Value: marshalProposal(t, NewWriteProposal(2*i, &proto.WriteRequest{
+				Puts: []*proto.PutRequest{
+					{Key: p + "range-a-key", Value: storedValue},
+					{Key: p + "range-m-key", Value: []byte(p + "m-value")},
+				},
+			})),
+			Timestamp: 1,
+		}, database.NoOpCallback)
+		assert.NoError(t, err)
+
+		_, err = ApplyLogEntry(db, &proto.LogEntry{
+			Term:      1,
+			Offset:    2*i + 1,
+			Value:     entryValue,
+			Timestamp: 2,
+		}, database.NoOpCallback)
+		assert.NoError(t, err)
+
+		// Both ranges must have been deleted under their original keys.
+		for _, key := range []string{p + "range-a-key", p + "range-m-key"} {
+			resp, err := db.Get(&proto.GetRequest{Key: key})
+			assert.NoError(t, err)
+			assert.Equal(t, proto.Status_KEY_NOT_FOUND, resp.Status, key)
+		}
+		for key, expected := range map[string][]byte{
+			p + "put-1": []byte(p + "value-1"),
+			p + "put-2": v2,
+		} {
+			resp, err := db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+			assert.NoError(t, err)
+			assert.Equal(t, proto.Status_OK, resp.Status, key)
+			assert.Equal(t, expected, resp.Value, key)
+		}
+
+		// The notification batch must carry the original keys, not bytes of
+		// the deleted entry's stored value.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*stdtime.Second)
+		batches, err := db.ReadNextNotifications(ctx, 2*i+1)
+		cancel()
+		assert.NoError(t, err)
+		if assert.NotEmpty(t, batches) {
+			keys := make(map[string]proto.NotificationType)
+			for _, n := range batches[0].Notifications {
+				keys[n.GetKey()] = n.Value.Type
+			}
+			assert.Equal(t, map[string]proto.NotificationType{
+				p + "put-1":   proto.NotificationType_KEY_CREATED,
+				p + "put-2":   proto.NotificationType_KEY_CREATED,
+				p + "range-a": proto.NotificationType_KEY_RANGE_DELETED,
+				p + "range-m": proto.NotificationType_KEY_RANGE_DELETED,
+			}, keys)
+		}
+	}
 }
 
 func TestApplyLogEntry_ControlRequestPersistsCommitOffsetForWalReplay(t *testing.T) {
