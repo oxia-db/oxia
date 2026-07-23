@@ -339,6 +339,100 @@ func TestSecondaryIndices_MultipleKeysForSameIdx(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+func TestSecondaryIndices_GetBoundedToRequestedIndex(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+
+	lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+
+	// Three indexes whose regions are adjacent in the key space:
+	// "id" < "md5" < "schemaId". The "md5" index only contains "m", so gets
+	// around its edges must not return entries of the neighboring indexes.
+	_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{
+			{Key: "/id-aa", Value: []byte("0"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "id", SecondaryKey: "aa"}}},
+			{Key: "/md5-m", Value: []byte("1"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "md5", SecondaryKey: "m"}}},
+			{Key: "/schema-zz", Value: []byte("2"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "schemaId", SecondaryKey: "zz"}}},
+		},
+	})
+	assert.NoError(t, err)
+
+	tests := []struct {
+		name           string
+		comparison     proto.KeyComparisonType
+		index          string
+		key            string
+		expectedKey    string // "" means KEY_NOT_FOUND expected
+		expectedSecKey string
+	}{
+		// Same-index matches around the "md5" entry.
+		{"equal-match", proto.KeyComparisonType_EQUAL, "md5", "m", "/md5-m", "m"},
+		{"ceiling-from-below", proto.KeyComparisonType_CEILING, "md5", "b", "/md5-m", "m"},
+		{"higher-from-below", proto.KeyComparisonType_HIGHER, "md5", "b", "/md5-m", "m"},
+		{"floor-from-above", proto.KeyComparisonType_FLOOR, "md5", "x", "/md5-m", "m"},
+		{"lower-from-above", proto.KeyComparisonType_LOWER, "md5", "x", "/md5-m", "m"},
+
+		// Below the lowest "md5" entry: must not return entries of the
+		// preceding "id" index.
+		{"floor-below-all", proto.KeyComparisonType_FLOOR, "md5", "b", "", ""},
+		{"lower-below-all", proto.KeyComparisonType_LOWER, "md5", "b", "", ""},
+		{"equal-of-preceding-index", proto.KeyComparisonType_EQUAL, "md5", "aa", "", ""},
+
+		// Above the highest "md5" entry: must not return entries of the
+		// following "schemaId" index.
+		{"ceiling-above-all", proto.KeyComparisonType_CEILING, "md5", "x", "", ""},
+		{"higher-above-all", proto.KeyComparisonType_HIGHER, "md5", "x", "", ""},
+		{"higher-at-max", proto.KeyComparisonType_HIGHER, "md5", "m", "", ""},
+		{"equal-of-following-index", proto.KeyComparisonType_EQUAL, "md5", "zz", "", ""},
+
+		// Index with no entries at all: the neighboring indexes must stay
+		// invisible.
+		{"floor-missing-index", proto.KeyComparisonType_FLOOR, "missing", "x", "", ""},
+		{"ceiling-missing-index", proto.KeyComparisonType_CEILING, "missing", "b", "", ""},
+		{"lower-missing-index", proto.KeyComparisonType_LOWER, "missing", "x", "", ""},
+		{"higher-missing-index", proto.KeyComparisonType_HIGHER, "missing", "b", "", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resps, err := readAll(context.Background(), lc, &proto.ReadRequest{
+				Shard: &shard,
+				Gets: []*proto.GetRequest{{
+					Key:                tc.key,
+					ComparisonType:     tc.comparison,
+					SecondaryIndexName: pb.String(tc.index),
+				}},
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, 1, len(resps))
+
+			res := resps[0]
+			if tc.expectedKey == "" {
+				assert.Equal(t, proto.Status_KEY_NOT_FOUND, res.Status)
+				assert.Nil(t, res.Key)
+			} else {
+				assert.Equal(t, proto.Status_OK, res.Status)
+				assert.Equal(t, tc.expectedKey, *res.Key)
+				assert.Equal(t, tc.expectedSecKey, *res.SecondaryIndexKey)
+			}
+		})
+	}
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestDoSecondaryGet_UnsupportedComparisonType(t *testing.T) {
 	var shard int64 = 1
 

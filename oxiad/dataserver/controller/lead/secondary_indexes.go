@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -335,7 +336,8 @@ func secondaryIndexGet(req *proto.GetRequest, db database.DB) (*proto.GetRespons
 //nolint:revive
 func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, secondaryKey string, err error) {
 	indexName := *req.SecondaryIndexName
-	searchKey := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.Key)
+	indexPrefix := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, "")
+	searchKey := indexPrefix + req.Key
 	it, err := db.KeyIterator(true)
 	if err != nil {
 		return "", "", err
@@ -348,17 +350,23 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 	} else {
 		// For all the other cases, we set the iterator on >=
 		it.SeekGE(searchKey)
-	}
 
-	if !it.Valid() && (req.ComparisonType == proto.KeyComparisonType_FLOOR ||
-		req.ComparisonType == proto.KeyComparisonType_CEILING) {
-		// There might be more keys in the db. Let's try to compare it
-		// to the highest one
-		it.Prev()
+		if req.ComparisonType == proto.KeyComparisonType_FLOOR &&
+			(!it.Valid() || !strings.HasPrefix(it.Key(), indexPrefix)) {
+			// There is no entry of this index at or after the search key: the
+			// floor candidate, if any, is the last index entry before it.
+			it.SeekLT(searchKey)
+		}
 	}
 
 	for it.Valid() {
 		itKey := it.Key()
+		if !strings.HasPrefix(itKey, indexPrefix) {
+			// We stepped out of the region of the requested index: entries of
+			// other indexes (or other keyspaces) must not be considered.
+			break
+		}
+
 		primaryKey, secondaryKey, err = secondaryIndexPrimaryAndSecondaryKey(itKey)
 		if err != nil && !errors.Is(err, errFailedToParseSecondaryKey) {
 			return "", "", err
@@ -406,9 +414,6 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		}
 	}
 
-	if !it.Valid() {
-		primaryKey = ""
-	}
-
-	return primaryKey, secondaryKey, err
+	// The walk ran out of entries of the requested index without finding a match
+	return "", "", nil
 }
