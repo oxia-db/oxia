@@ -685,6 +685,34 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 	assert.NoError(t, factory2.Close())
 }
 
+func TestPebbleSnapshotLoader_RejectsPathTraversal(t *testing.T) {
+	dataDir := t.TempDir()
+	factory, err := NewPebbleKVFactory(&FactoryOptions{
+		DataDir:     dataDir,
+		CacheSizeMB: 1,
+	})
+	assert.NoError(t, err)
+
+	loader, err := factory.NewSnapshotLoader(constant.DefaultNamespace, 1)
+	assert.NoError(t, err)
+
+	dbPath := filepath.Join(dataDir, constant.DefaultNamespace, "shard-1")
+	// Point the chunk name above the data dir; the sender only ever emits plain
+	// file names, so a name carrying ".." can only come from a hostile peer.
+	outside := filepath.Join(filepath.Dir(dataDir), "escape-marker.txt")
+	rel, err := filepath.Rel(dbPath, outside)
+	assert.NoError(t, err)
+
+	err = loader.AddChunk(rel, 0, 1, []byte("payload"))
+	assert.Error(t, err)
+
+	_, statErr := os.Stat(outside)
+	assert.True(t, os.IsNotExist(statErr))
+
+	assert.NoError(t, loader.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestPebbleRangeScanNoLimits(t *testing.T) {
 	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
