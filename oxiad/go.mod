@@ -20,7 +20,7 @@ require (
 	github.com/magodo/slog2hclog v0.0.0-20240614031327-090ebd72a033
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
 	github.com/oxia-db/oxia/cmd v0.0.0-20251121170122-7c84f6e6bbc3
-	github.com/oxia-db/oxia/common v0.16.1
+	github.com/oxia-db/oxia/common v0.17.1
 	github.com/oxia-db/oxia/oxia v0.0.0-00010101000000-000000000000
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.23.2
