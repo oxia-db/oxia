@@ -211,7 +211,9 @@ type db struct {
 
 	// Last sequence values per prefix key, maintained by
 	// generateUniqueKeyFromSequences. Only touched from ProcessWrite, which is
-	// single-threaded per shard, so it needs no locking.
+	// single-threaded per shard, so it needs no locking. Bounded at
+	// maxSequenceCacheEntries prefixes (dropped wholesale when full), so the
+	// worst-case footprint is that many prefix strings plus a few words each.
 	sequenceCache map[string][]uint64
 
 	putCounter                metric.Counter
