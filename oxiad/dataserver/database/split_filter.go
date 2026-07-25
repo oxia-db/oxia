@@ -111,31 +111,19 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 				keptKeys++
 			}
 		} else {
-			// User data key
-			value, err := it.Value()
+			deleted, err := filterUserKey(it, batch, key, hashRange)
 			if err != nil {
-				return errors.Wrapf(err, "failed to read value for key %q", key)
+				return err
 			}
-
-			if !isUserKeyInRange(key, value, hashRange) {
-				if err := batch.Delete(key); err != nil {
-					return err
-				}
+			if deleted {
 				deletedKeys++
 			} else {
 				keptKeys++
 			}
 		}
 
-		if batch.Count() >= splitFilterMaxBatchCount || batch.Size() >= splitFilterMaxBatchBytes {
-			if err := batch.Commit(); err != nil {
-				return errors.Wrap(err, "failed to commit split filter chunk")
-			}
-			if err := batch.Close(); err != nil {
-				return errors.Wrap(err, "failed to close split filter chunk")
-			}
-			batch = kv.NewWriteBatch()
-			chunks++
+		if batch, err = rotateSplitBatchIfFull(kv, batch, &chunks); err != nil {
+			return err
 		}
 
 		it.Next()
@@ -151,6 +139,39 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 	)
 
 	return batch.Commit()
+}
+
+// filterUserKey deletes the user key when it falls outside the child's hash
+// range, reporting whether it did.
+func filterUserKey(it kvstore.KeyValueIterator, batch kvstore.WriteBatch, key string, hashRange *proto.HashRange) (bool, error) {
+	value, err := it.Value()
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to read value for key %q", key)
+	}
+
+	if isUserKeyInRange(key, value, hashRange) {
+		return false, nil
+	}
+	if err := batch.Delete(key); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// rotateSplitBatchIfFull commits and closes the batch once it reaches the
+// chunk thresholds, returning a fresh batch to continue with.
+func rotateSplitBatchIfFull(kv kvstore.KV, batch kvstore.WriteBatch, chunks *int64) (kvstore.WriteBatch, error) {
+	if batch.Count() < splitFilterMaxBatchCount && batch.Size() < splitFilterMaxBatchBytes {
+		return batch, nil
+	}
+	if err := batch.Commit(); err != nil {
+		return batch, errors.Wrap(err, "failed to commit split filter chunk")
+	}
+	if err := batch.Close(); err != nil {
+		return batch, errors.Wrap(err, "failed to close split filter chunk")
+	}
+	*chunks++
+	return kv.NewWriteBatch(), nil
 }
 
 type splitAction int
