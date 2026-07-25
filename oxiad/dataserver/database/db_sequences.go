@@ -37,7 +37,11 @@ const (
 	// maxSequenceCacheEntries bounds the per-shard cache of last sequence
 	// values. When exceeded, the cache is simply dropped: entries are
 	// re-established from storage on the next put for their prefix.
-	maxSequenceCacheEntries = 1024
+	// Measured footprint at this bound: ~9-24MB per shard for realistic
+	// prefix lengths (~140-380B per entry: map slot + prefix bytes + values),
+	// and only for shards that actually use sequences — an empty map costs
+	// nothing.
+	maxSequenceCacheEntries = 64 * 1024
 )
 
 // generateUniqueKeyFromSequences computes the key for a sequential put by
