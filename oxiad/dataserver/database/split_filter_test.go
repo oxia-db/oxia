@@ -340,7 +340,6 @@ func TestFilterWriteRequestForSplit_Puts(t *testing.T) {
 			break
 		}
 	}
-
 	req := &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
 			{Key: leftKey, Value: []byte("v1")},
@@ -428,6 +427,8 @@ func TestFilterWriteRequestForSplit_DeletesWithPartitionKey(t *testing.T) {
 			break
 		}
 	}
+	assert.NotEmpty(t, leftPK)
+	assert.NotEmpty(t, rightPK)
 
 	req := &proto.WriteRequest{
 		Deletes: []*proto.DeleteRequest{
@@ -440,6 +441,30 @@ func TestFilterWriteRequestForSplit_DeletesWithPartitionKey(t *testing.T) {
 	assert.NotNil(t, filtered)
 	assert.Len(t, filtered.Deletes, 1)
 	assert.Equal(t, "left", filtered.Deletes[0].Key)
+}
+
+func TestFilterWriteRequestForSplit_DeleteWithEmptyPartitionKey(t *testing.T) {
+	emptyPartitionKey := ""
+	emptyPartitionKeyHash := hash.Xxh332(emptyPartitionKey)
+	matchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash,
+		Max: emptyPartitionKeyHash,
+	}
+	req := &proto.WriteRequest{
+		Deletes: []*proto.DeleteRequest{
+			{Key: "key", PartitionKey: &emptyPartitionKey},
+		},
+	}
+
+	filtered := FilterWriteRequestForSplit(req, matchingRange)
+	assert.NotNil(t, filtered)
+	assert.Len(t, filtered.Deletes, 1)
+
+	nonMatchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash + 1,
+		Max: emptyPartitionKeyHash + 1,
+	}
+	assert.Nil(t, FilterWriteRequestForSplit(req, nonMatchingRange))
 }
 
 func TestFilterWriteRequestForSplit_DeleteKeptForPartitionKeyedRecord(t *testing.T) {
