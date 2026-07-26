@@ -402,10 +402,59 @@ func TestFilterWriteRequestForSplit_Deletes(t *testing.T) {
 		},
 	}
 
+	// Deletes are kept for every child regardless of the key hash: a delete for
+	// a key the child does not hold is a harmless no-op, and dropping it would
+	// resurrect a partition-keyed record (see the test below).
 	filtered := FilterWriteRequestForSplit(req, leftRange)
 	assert.NotNil(t, filtered)
-	assert.Equal(t, 1, len(filtered.Deletes))
+	assert.Equal(t, 2, len(filtered.Deletes))
 	assert.Equal(t, leftKey, filtered.Deletes[0].Key)
+	assert.Equal(t, rightKey, filtered.Deletes[1].Key)
+}
+
+func TestFilterWriteRequestForSplit_DeleteKeptForPartitionKeyedRecord(t *testing.T) {
+	leftRange, _ := splitRanges()
+
+	// A partition key that places the record in the left child.
+	var leftPK string
+	for i := 0; i < 1000; i++ {
+		pk := fmt.Sprintf("pk-%d", i)
+		if isHashInRange(hash.Xxh332(pk), leftRange) {
+			leftPK = pk
+			break
+		}
+	}
+	assert.NotEmpty(t, leftPK)
+
+	// A key whose own hash falls outside the left child's range.
+	var outsideKey string
+	for i := 0; i < 1000; i++ {
+		k := fmt.Sprintf("outside-%d", i)
+		if !isHashInRange(hash.Xxh332(k), leftRange) {
+			outsideKey = k
+			break
+		}
+	}
+	assert.NotEmpty(t, outsideKey)
+
+	// The record is placed in the left child by its partition key, and the
+	// matching delete lands on the same child. The delete's key hashes outside
+	// the range, so filtering deletes by key hash would drop it and leave the
+	// record behind after the split.
+	req := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{Key: outsideKey, Value: []byte("v"), PartitionKey: &leftPK},
+		},
+		Deletes: []*proto.DeleteRequest{
+			{Key: outsideKey},
+		},
+	}
+
+	filtered := FilterWriteRequestForSplit(req, leftRange)
+	assert.NotNil(t, filtered)
+	assert.Equal(t, 1, len(filtered.Puts))
+	assert.Equal(t, 1, len(filtered.Deletes))
+	assert.Equal(t, outsideKey, filtered.Deletes[0].Key)
 }
 
 func TestFilterWriteRequestForSplit_AllFiltered(t *testing.T) {
