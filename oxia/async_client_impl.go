@@ -123,7 +123,7 @@ func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteC
 		c.writeBatchManager.Get(shardId).Add(put)
 	}
 	for _, del := range deletes {
-		shardId := c.shardManager.Get(del.Key)
+		shardId := c.shardManager.Get(del.PartitionKeyOrKey())
 		c.writeBatchManager.Get(shardId).Add(del)
 	}
 	for _, dr := range deleteRanges {
@@ -212,6 +212,7 @@ func (c *clientImpl) Delete(key string, options ...DeleteOption) <-chan error {
 	c.writeBatchManager.Get(shardId).Add(model.DeleteCall{
 		Key:               key,
 		ExpectedVersionId: opts.expectedVersion,
+		PartitionKey:      opts.partitionKey,
 		Callback:          callback,
 	})
 	return ch

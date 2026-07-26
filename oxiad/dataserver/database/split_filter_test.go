@@ -412,6 +412,36 @@ func TestFilterWriteRequestForSplit_Deletes(t *testing.T) {
 	assert.Equal(t, rightKey, filtered.Deletes[1].Key)
 }
 
+func TestFilterWriteRequestForSplit_DeletesWithPartitionKey(t *testing.T) {
+	leftRange, _ := splitRanges()
+
+	var leftPK, rightPK string
+	for i := 0; i < 1000; i++ {
+		pk := fmt.Sprintf("delete-pk-%d", i)
+		if leftPK == "" && isHashInRange(hash.Xxh332(pk), leftRange) {
+			leftPK = pk
+		}
+		if rightPK == "" && !isHashInRange(hash.Xxh332(pk), leftRange) {
+			rightPK = pk
+		}
+		if leftPK != "" && rightPK != "" {
+			break
+		}
+	}
+
+	req := &proto.WriteRequest{
+		Deletes: []*proto.DeleteRequest{
+			{Key: "left", PartitionKey: &leftPK},
+			{Key: "right", PartitionKey: &rightPK},
+		},
+	}
+
+	filtered := FilterWriteRequestForSplit(req, leftRange)
+	assert.NotNil(t, filtered)
+	assert.Len(t, filtered.Deletes, 1)
+	assert.Equal(t, "left", filtered.Deletes[0].Key)
+}
+
 func TestFilterWriteRequestForSplit_DeleteKeptForPartitionKeyedRecord(t *testing.T) {
 	leftRange, _ := splitRanges()
 
@@ -446,7 +476,7 @@ func TestFilterWriteRequestForSplit_DeleteKeptForPartitionKeyedRecord(t *testing
 			{Key: outsideKey, Value: []byte("v"), PartitionKey: &leftPK},
 		},
 		Deletes: []*proto.DeleteRequest{
-			{Key: outsideKey},
+			{Key: outsideKey, PartitionKey: &leftPK},
 		},
 	}
 
