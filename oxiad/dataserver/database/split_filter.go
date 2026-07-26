@@ -334,9 +334,11 @@ func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange *proto.HashRa
 	var deletes []*proto.DeleteRequest
 	for _, d := range req.Deletes {
 		if d.PartitionKey == nil {
-			// Deletes written by older clients do not carry their partition key.
-			// Keep them in both children because filtering by the record key could
-			// resurrect a partition-keyed record.
+			// For backward compatibility, a missing partition key cannot be
+			// treated like it is for puts. Older clients used the partition key
+			// to route a delete but did not serialize it into DeleteRequest, so
+			// nil does not prove that the delete was routed by its record key.
+			// Keep it in both children to avoid resurrecting deleted records.
 			deletes = append(deletes, d)
 			continue
 		}
