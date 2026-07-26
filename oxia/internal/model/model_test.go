@@ -28,7 +28,9 @@ func TestDeleteCallPartitionKey(t *testing.T) {
 	}
 
 	assert.Equal(t, partitionKey, call.PartitionKeyOrKey())
-	assert.Equal(t, &partitionKey, call.ToProto().PartitionKey)
+	req := call.ToProto()
+	assert.NotNil(t, req.PartitionKey)
+	assert.Equal(t, partitionKey, req.GetPartitionKey())
 }
 
 func TestDeleteCallPartitionKeyOrKeyFallback(t *testing.T) {
@@ -46,5 +48,7 @@ func TestDeleteCallEmptyPartitionKey(t *testing.T) {
 	}
 
 	assert.Equal(t, partitionKey, call.PartitionKeyOrKey())
-	assert.Equal(t, &partitionKey, call.ToProto().PartitionKey)
+	req := call.ToProto()
+	assert.NotNil(t, req.PartitionKey)
+	assert.Equal(t, partitionKey, req.GetPartitionKey())
 }
