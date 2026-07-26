@@ -296,7 +296,7 @@ func isUserKeyInRange(key string, value []byte, hashRange *proto.HashRange) bool
 	}
 
 	var h uint32
-	if se.PartitionKey != nil && *se.PartitionKey != "" {
+	if se.PartitionKey != nil {
 		h = hash.Xxh332(*se.PartitionKey)
 	} else {
 		h = hash.Xxh332(key)
@@ -321,7 +321,7 @@ func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange *proto.HashRa
 	var puts []*proto.PutRequest
 	for _, p := range req.Puts {
 		var h uint32
-		if p.PartitionKey != nil && *p.PartitionKey != "" {
+		if p.PartitionKey != nil {
 			h = hash.Xxh332(*p.PartitionKey)
 		} else {
 			h = hash.Xxh332(p.Key)
