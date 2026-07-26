@@ -331,13 +331,14 @@ func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange *proto.HashRa
 		}
 	}
 
-	var deletes []*proto.DeleteRequest
-	for _, d := range req.Deletes {
-		h := hash.Xxh332(d.Key)
-		if isHashInRange(h, hashRange) {
-			deletes = append(deletes, d)
-		}
-	}
+	// A DeleteRequest carries no partition key, so it can only be hashed by its
+	// key. But a partition-keyed record is placed by hash(partition key) (see
+	// the puts above), so filtering deletes by the key hash drops them from the
+	// child that actually holds the record and resurrects data that was already
+	// deleted. Deleting a key a child does not hold is a no-op, so keep every
+	// delete, the same as the delete ranges below.
+	deletes := make([]*proto.DeleteRequest, 0, len(req.Deletes))
+	deletes = append(deletes, req.Deletes...)
 
 	deleteRanges := make([]*proto.DeleteRangeRequest, 0, len(req.DeleteRanges))
 	deleteRanges = append(deleteRanges, req.DeleteRanges...)
