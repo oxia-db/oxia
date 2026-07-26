@@ -1077,6 +1077,7 @@ type DeleteRequest struct {
 	ExpectedVersionId *int64 `protobuf:"varint,2,opt,name=expected_version_id,json=expectedVersionId,proto3,oneof" json:"expected_version_id,omitempty"`
 	// If a partition key is present, it supersedes the regular record key in determining the routing
 	// of the delete to a particular shard.
+	// An explicitly present empty string is a valid partition key and is hashed normally.
 	PartitionKey  *string `protobuf:"bytes,3,opt,name=partition_key,json=partitionKey,proto3,oneof" json:"partition_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

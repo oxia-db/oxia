@@ -333,18 +333,18 @@ func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange *proto.HashRa
 
 	var deletes []*proto.DeleteRequest
 	for _, d := range req.Deletes {
-		if d.PartitionKey == nil || *d.PartitionKey == "" {
+		if d.PartitionKey == nil {
 			// For backward compatibility, a missing partition key cannot be
 			// treated like it is for puts. Older clients used the partition key
 			// to route a delete but did not serialize it into DeleteRequest, so
 			// nil does not prove that the delete was routed by its record key.
-			// An empty partition key follows the existing put/snapshot behavior
-			// and is also treated as unspecified. Keep either form in both
-			// children to avoid resurrecting deleted records.
+			// Keep it in both children to avoid resurrecting deleted records.
 			deletes = append(deletes, d)
 			continue
 		}
 
+		// An explicitly empty partition key is still present: existing clients
+		// accept it and route the request using hash("").
 		if isHashInRange(hash.Xxh332(*d.PartitionKey), hashRange) {
 			deletes = append(deletes, d)
 		}

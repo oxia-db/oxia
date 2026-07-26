@@ -297,6 +297,7 @@ message DeleteRequest {
   optional int64 expected_version_id = 2;
   // If a partition key is present, it supersedes the regular record key in determining the routing
   // of the delete to a particular shard.
+  // An explicitly present empty string is a valid partition key and is hashed normally.
   optional string partition_key = 3;
 }
 
