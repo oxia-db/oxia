@@ -258,6 +258,7 @@ message PutRequest {
   // If a partition key is present, it supersedes the regular record key in determining the routing of
   // a record to a particular shard. It is passed to the server because it needs to be persisted as
   // part of the record. We would need the partition_key if we're going to do a split of the shards.
+  // An explicitly present empty string is a valid partition key and is hashed normally.
   optional string partition_key = 6;
 
   // If one or more sequence key are specified. The key will get added suffixes
