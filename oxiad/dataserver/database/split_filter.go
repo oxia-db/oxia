@@ -170,7 +170,7 @@ func rotateSplitBatchIfFull(kv kvstore.KV, batch kvstore.WriteBatch, chunks *int
 	if err := batch.Close(); err != nil {
 		return batch, errors.Wrap(err, "failed to close split filter chunk")
 	}
-	*chunks++
+	(*chunks)++
 	return kv.NewWriteBatch(), nil
 }
 

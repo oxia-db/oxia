@@ -461,20 +461,27 @@ func TestFilterDBForSplit_ChunkedCommits(t *testing.T) {
 		inRange[k] = h >= leftRange.Min && h <= leftRange.Max
 	}
 
-	// A couple of notification batches spanning both sides, and one fully
-	// out-of-range (must be deleted)
-	putNotificationBatch(t, kv, 0, map[string]*proto.Notification{
-		"chunked-key-0000": {Type: proto.NotificationType_KEY_CREATED},
-		"chunked-key-0001": {Type: proto.NotificationType_KEY_CREATED},
-	})
-	var outOfRangeKey string
+	// Pick one key from each side of the range, so the mixed notification
+	// batch below is filtered — not kept whole, not deleted whole — by
+	// construction rather than by luck of the hardcoded hashes
+	var inRangeKey, outOfRangeKey string
 	for k, in := range inRange {
-		if !in {
+		if in && inRangeKey == "" {
+			inRangeKey = k
+		}
+		if !in && outOfRangeKey == "" {
 			outOfRangeKey = k
-			break
 		}
 	}
+	assert.NotEmpty(t, inRangeKey)
 	assert.NotEmpty(t, outOfRangeKey)
+
+	// One mixed batch (must be filtered down to the in-range entry) and one
+	// fully out-of-range batch (must be deleted)
+	putNotificationBatch(t, kv, 0, map[string]*proto.Notification{
+		inRangeKey:    {Type: proto.NotificationType_KEY_CREATED},
+		outOfRangeKey: {Type: proto.NotificationType_KEY_CREATED},
+	})
 	putNotificationBatch(t, kv, 1, map[string]*proto.Notification{
 		outOfRangeKey: {Type: proto.NotificationType_KEY_CREATED},
 	})
@@ -492,11 +499,10 @@ func TestFilterDBForSplit_ChunkedCommits(t *testing.T) {
 	assert.Greater(t, deleted, 3*splitFilterMaxBatchCount)
 
 	// The out-of-range-only notification batch is gone; the mixed one is
-	// filtered down to its in-range entries
+	// filtered down to exactly its in-range entry
 	assert.Nil(t, readNotificationBatch(t, kv, 1))
 	nb := readNotificationBatch(t, kv, 0)
 	assert.NotNil(t, nb)
-	for _, entry := range nb.Notifications {
-		assert.True(t, inRange[entry.GetKey()])
-	}
+	assert.Equal(t, 1, len(nb.Notifications))
+	assert.Equal(t, inRangeKey, nb.Notifications[0].GetKey())
 }
