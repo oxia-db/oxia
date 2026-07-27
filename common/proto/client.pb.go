@@ -887,6 +887,7 @@ type PutRequest struct {
 	// If a partition key is present, it supersedes the regular record key in determining the routing of
 	// a record to a particular shard. It is passed to the server because it needs to be persisted as
 	// part of the record. We would need the partition_key if we're going to do a split of the shards.
+	// An explicitly present empty string is a valid partition key and is hashed normally.
 	PartitionKey *string `protobuf:"bytes,6,opt,name=partition_key,json=partitionKey,proto3,oneof" json:"partition_key,omitempty"`
 	// If one or more sequence key are specified. The key will get added suffixes
 	// based on adding the delta to the current highest key with the same prefix

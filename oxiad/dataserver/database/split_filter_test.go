@@ -165,6 +165,31 @@ func TestFilterDBForSplit_PartitionKey(t *testing.T) {
 	assert.True(t, keyExists(t, kv, "some-key"), "key with left partition_key should survive")
 }
 
+func TestFilterDBForSplit_EmptyPartitionKey(t *testing.T) {
+	kv := newTestKV(t)
+	emptyPartitionKey := ""
+	emptyPartitionKeyHash := hash.Xxh332(emptyPartitionKey)
+	matchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash,
+		Max: emptyPartitionKeyHash,
+	}
+
+	var key string
+	for i := 0; i < 1000; i++ {
+		candidate := fmt.Sprintf("empty-pk-key-%d", i)
+		if hash.Xxh332(candidate) != emptyPartitionKeyHash {
+			key = candidate
+			break
+		}
+	}
+	assert.NotEmpty(t, key)
+
+	putStorageEntry(t, kv, key, &emptyPartitionKey)
+
+	assert.NoError(t, FilterDBForSplit(kv, matchingRange))
+	assert.True(t, keyExists(t, kv, key), "explicit empty partition key should determine placement")
+}
+
 func TestFilterDBForSplit_MetadataKeys(t *testing.T) {
 	kv := newTestKV(t)
 
@@ -374,6 +399,30 @@ func TestFilterWriteRequestForSplit_PartitionKey(t *testing.T) {
 	filtered := FilterWriteRequestForSplit(req, leftRange)
 	assert.NotNil(t, filtered)
 	assert.Equal(t, 1, len(filtered.Puts))
+}
+
+func TestFilterWriteRequestForSplit_EmptyPartitionKey(t *testing.T) {
+	emptyPartitionKey := ""
+	emptyPartitionKeyHash := hash.Xxh332(emptyPartitionKey)
+	matchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash,
+		Max: emptyPartitionKeyHash,
+	}
+	req := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{Key: "key", PartitionKey: &emptyPartitionKey},
+		},
+	}
+
+	filtered := FilterWriteRequestForSplit(req, matchingRange)
+	assert.NotNil(t, filtered)
+	assert.Len(t, filtered.Puts, 1)
+
+	nonMatchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash ^ 1,
+		Max: emptyPartitionKeyHash ^ 1,
+	}
+	assert.Nil(t, FilterWriteRequestForSplit(req, nonMatchingRange))
 }
 
 func TestFilterWriteRequestForSplit_Deletes(t *testing.T) {
