@@ -1075,8 +1075,12 @@ type DeleteRequest struct {
 	// An optional expected version_id. The delete will fail if the server's current version_id
 	// does not match
 	ExpectedVersionId *int64 `protobuf:"varint,2,opt,name=expected_version_id,json=expectedVersionId,proto3,oneof" json:"expected_version_id,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// If a partition key is present, it supersedes the regular record key in determining the routing
+	// of the delete to a particular shard.
+	// An explicitly present empty string is a valid partition key and is hashed normally.
+	PartitionKey  *string `protobuf:"bytes,3,opt,name=partition_key,json=partitionKey,proto3,oneof" json:"partition_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeleteRequest) Reset() {
@@ -1121,6 +1125,13 @@ func (x *DeleteRequest) GetExpectedVersionId() int64 {
 		return *x.ExpectedVersionId
 	}
 	return 0
+}
+
+func (x *DeleteRequest) GetPartitionKey() string {
+	if x != nil && x.PartitionKey != nil {
+		return *x.PartitionKey
+	}
+	return ""
 }
 
 // *
@@ -2466,11 +2477,13 @@ const file_client_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\x0e2\x18.io.oxia.proto.v1.StatusR\x06status\x123\n" +
 	"\aversion\x18\x02 \x01(\v2\x19.io.oxia.proto.v1.VersionR\aversion\x12\x15\n" +
 	"\x03key\x18\x03 \x01(\tH\x00R\x03key\x88\x01\x01B\x06\n" +
-	"\x04_key\"n\n" +
+	"\x04_key\"\xaa\x01\n" +
 	"\rDeleteRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
-	"\x13expected_version_id\x18\x02 \x01(\x03H\x00R\x11expectedVersionId\x88\x01\x01B\x16\n" +
-	"\x14_expected_version_id\"B\n" +
+	"\x13expected_version_id\x18\x02 \x01(\x03H\x00R\x11expectedVersionId\x88\x01\x01\x12(\n" +
+	"\rpartition_key\x18\x03 \x01(\tH\x01R\fpartitionKey\x88\x01\x01B\x16\n" +
+	"\x14_expected_version_idB\x10\n" +
+	"\x0e_partition_key\"B\n" +
 	"\x0eDeleteResponse\x120\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x18.io.oxia.proto.v1.StatusR\x06status\"\xe1\x01\n" +
 	"\n" +
