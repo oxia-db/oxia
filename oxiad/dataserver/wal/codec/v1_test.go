@@ -16,6 +16,7 @@ package codec
 
 import (
 	"encoding/binary"
+	"math"
 	"os"
 	"path"
 	"testing"
@@ -40,6 +41,44 @@ func TestV1_Codec(t *testing.T) {
 	getPayload, _, _, err := v1.ReadRecordWithValidation(buf, 0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, payload, getPayload)
+}
+
+func TestV1_BreakingPoint_SizeOverflow(t *testing.T) {
+	buf := make([]byte, 100)
+
+	v1.WriteRecord(buf, 0, 0, []byte{1})
+	// a size this close to the uint32 max wraps once the header size is added to it
+	binary.BigEndian.PutUint32(buf, math.MaxUint32)
+
+	_, _, _, err := v1.ReadHeaderWithValidation(buf, 0)
+	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+
+	_, err = v1.GetRecordSize(buf, 0)
+	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+}
+
+func TestV1_BreakingPoint_PartialHeader(t *testing.T) {
+	buf := make([]byte, 100)
+
+	v1.WriteRecord(buf, 0, 0, []byte{1})
+
+	// an offset with fewer than HeaderSize bytes behind it has no readable header
+	_, _, _, err := v1.ReadHeaderWithValidation(buf, uint32(len(buf))-1)
+	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+}
+
+func TestV1_RecoverIndexWithSizeOverflow(t *testing.T) {
+	buf := make([]byte, 100)
+
+	v1.WriteRecord(buf, 0, 0, []byte{1})
+	// HeaderSize + payloadSize wraps to exactly 0, so recovery must not advance by nothing
+	binary.BigEndian.PutUint32(buf, math.MaxUint32-v1.HeaderSize+1)
+
+	index, _, newFileOffset, lastEntryOffset, err := v1.RecoverIndex(buf, 0, 0, nil)
+	assert.NoError(t, err)
+	assert.Empty(t, index)
+	assert.EqualValues(t, 0, newFileOffset)
+	assert.EqualValues(t, -1, lastEntryOffset)
 }
 
 func TestV1_WriteReadIndex(t *testing.T) {
