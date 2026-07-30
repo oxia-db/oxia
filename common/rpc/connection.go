@@ -170,6 +170,12 @@ func (c *connection) healthCheckLoop() {
 
 	consecutiveFailures := 0
 	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
 		ctx, cancel := context.WithTimeout(c.ctx, c.healthPingTimeout)
 		response, err := c.healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 		cancel()
@@ -205,12 +211,6 @@ func (c *connection) healthCheckLoop() {
 		if shouldDisconnect && c.disconnected.CompareAndSwap(false, true) {
 			c.notifyDisconnect()
 			return
-		}
-
-		select {
-		case <-c.ctx.Done():
-			return
-		case <-ticker.C:
 		}
 	}
 }
