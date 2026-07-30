@@ -91,3 +91,9 @@ func TestClientCmd(t *testing.T) {
 	}
 	_ = standaloneServer.Close()
 }
+
+func TestClientCmdDoesNotIncludeShell(t *testing.T) {
+	for _, command := range Cmd.Commands() {
+		assert.NotEqual(t, "shell", command.Name())
+	}
+}
