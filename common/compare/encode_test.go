@@ -17,9 +17,12 @@ package compare
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/common/constant"
 )
 
 func TestEncodeDecode(t *testing.T) {
@@ -109,6 +112,47 @@ func TestEncodeInternalKeys(t *testing.T) {
 			assert.Equal(t, k, encoder.Decode(encoder.Encode(k)))
 		})
 	}
+}
+
+// A key carries its own separator count in the 2-byte prefix, and that count
+// shares the prefix with the internal-key marker. Keys with more separators
+// than the prefix can hold must not reach into the marker, nor wrap around and
+// come back as a different key.
+func TestEncodeDeeplyNestedKeys(t *testing.T) {
+	enc := EncoderHierarchical
+
+	for _, test := range []struct {
+		name     string
+		sepCount int
+	}{
+		{"below the marker", maxSeparatorCount - 1},
+		{"at the marker", internalKeysBitMarker},
+		{"past the marker", internalKeysBitMarker + 1},
+		{"wrapping the prefix", 1 << 16},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// The trailing "a" keeps the last two bytes from being separators,
+			// which would otherwise drop the count by one
+			key := strings.Repeat("/", test.sepCount) + "a"
+
+			encoded := enc.Encode(key)
+			assert.False(t, enc.IsInternalKey(encoded))
+			assert.Equal(t, key, enc.Decode(encoded))
+
+			// and it still sorts before the internal keys
+			assert.Equal(t, -1, bytes.Compare(encoded, enc.Encode("__oxia/xyz")))
+		})
+	}
+}
+
+func TestEncodeDeeplyNestedInternalKeys(t *testing.T) {
+	enc := EncoderHierarchical
+
+	key := constant.InternalKeyPrefix + strings.Repeat("/", 1<<16) + "a"
+	encoded := enc.Encode(key)
+
+	assert.True(t, enc.IsInternalKey(encoded))
+	assert.Equal(t, key, enc.Decode(encoded))
 }
 
 // The buffer passed to Decode is Pebble memory, handed out under an explicit

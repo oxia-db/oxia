@@ -60,6 +60,11 @@ const (
 	encodedSeparator      = 0xff
 	internalKeysBitMarker = 1 << 15
 
+	// maxSeparatorCount is the deepest level the 2-byte prefix can record. The
+	// count shares those bytes with the internal-key marker, so it has to stay
+	// below it.
+	maxSeparatorCount = internalKeysBitMarker - 1
+
 	// maxByteValue is the largest byte value; a prefix made only of these has
 	// no successor.
 	maxByteValue = 0xff
@@ -95,6 +100,12 @@ func (encoderHierarchical) Encode(key string) []byte {
 		if l >= 2 && key[l-1] == '/' && key[l-2] == '/' {
 			// Ignore the trailing separator as it doesn't create a new level
 			sepCount--
+		}
+
+		if sepCount > maxSeparatorCount {
+			// Keys deeper than the prefix can count all share the deepest
+			// level, rather than wrapping into the internal-key region
+			sepCount = maxSeparatorCount
 		}
 
 		if strings.HasPrefix(key, constant.InternalKeyPrefix) {
