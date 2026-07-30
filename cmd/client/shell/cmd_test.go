@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	admincommons "github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/common/proto"
@@ -113,6 +115,39 @@ func TestShellRejectsClientPrefix(t *testing.T) {
 	assert.Empty(t, stdout)
 	assert.Equal(t, "Error: unknown client command \"client\"\n", stderr)
 	common.MockedClient.AssertExpectations(t)
+}
+
+func TestShellClosesClientAfterConnectionError(t *testing.T) {
+	common.MockedClient = common.NewMockClient()
+	t.Cleanup(func() { common.MockedClient = nil })
+
+	var emptyGetOptions []oxia.GetOption
+	common.MockedClient.On("Get", "k", emptyGetOptions).Return("", []byte(nil), oxia.Version{}, status.Error(codes.Unavailable, "connection refused"))
+	common.MockedClient.On("Close").Return(nil).Once()
+
+	stdout, stderr, err := runShell(t, "get k\n")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection refused")
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "connection refused")
+	common.MockedClient.AssertExpectations(t)
+}
+
+func TestShellClosesAdminClientAfterConnectionError(t *testing.T) {
+	admincommons.MockedAdminClient = admincommons.NewMockAdminClient()
+	t.Cleanup(func() { admincommons.MockedAdminClient = nil })
+
+	admincommons.MockedAdminClient.On("ListNamespaces").Return([]*proto.NamespaceView(nil), status.Error(codes.Unavailable, "connection refused"))
+	admincommons.MockedAdminClient.On("Close").Return(nil).Once()
+
+	stdout, stderr, err := runShell(t, "admin namespace list\n")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection refused")
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "connection refused")
+	admincommons.MockedAdminClient.AssertExpectations(t)
 }
 
 func TestInteractiveShellContinuesAfterCommandError(t *testing.T) {

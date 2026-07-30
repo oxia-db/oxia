@@ -24,6 +24,8 @@ import (
 
 	"github.com/kballard/go-shellquote"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	admincommons "github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/cmd/client/common"
@@ -175,6 +177,18 @@ func (r *repl) clientForCommand() (oxia.SyncClient, error) {
 	return syncClient, nil
 }
 
+func isConnectionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded:
+		return true
+	default:
+		return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF)
+	}
+}
+
 func (r *repl) runBuffered() error {
 	reader := bufio.NewReader(r.in)
 	for {
@@ -242,8 +256,16 @@ func (r *repl) executeLine(line string) error {
 			Out:          r.out,
 			OutputFormat: r.outputFormat,
 		}.Execute(args[1:])
+		if isConnectionFailure(err) && r.admin != nil {
+			_ = r.admin.Close()
+			r.admin = nil
+		}
 	default:
 		err = clientExecutor.Execute(args)
+		if isConnectionFailure(err) && r.client != nil {
+			_ = r.client.Close()
+			r.client = nil
+		}
 	}
 
 	if errors.Is(err, errExit) {
