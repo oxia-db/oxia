@@ -589,3 +589,73 @@ func TestFilterWriteRequestForSplit_Nil(t *testing.T) {
 	leftRange, _ := splitRanges()
 	assert.Nil(t, FilterWriteRequestForSplit(nil, leftRange))
 }
+
+// The filter commits in bounded chunks so half-shard deletions do not
+// accumulate into one GB-scale indexed batch. With the thresholds shrunk,
+// the rotation runs many times mid-iteration: every key must still end up on
+// the right side, which also pins that the range-scan iterator keeps its
+// consistent view across the interleaved commits.
+func TestFilterDBForSplit_ChunkedCommits(t *testing.T) {
+	oldCount, oldBytes := splitFilterMaxBatchCount, splitFilterMaxBatchBytes
+	splitFilterMaxBatchCount, splitFilterMaxBatchBytes = 7, 1<<20
+	defer func() {
+		splitFilterMaxBatchCount, splitFilterMaxBatchBytes = oldCount, oldBytes
+	}()
+
+	kv := newTestKV(t)
+	leftRange, _ := splitRanges()
+
+	const numKeys = 200
+	inRange := map[string]bool{}
+	for i := 0; i < numKeys; i++ {
+		k := fmt.Sprintf("chunked-key-%04d", i)
+		putStorageEntry(t, kv, k, nil)
+		h := hash.Xxh332(k)
+		inRange[k] = h >= leftRange.Min && h <= leftRange.Max
+	}
+
+	// Pick one key from each side of the range, so the mixed notification
+	// batch below is filtered — not kept whole, not deleted whole — by
+	// construction rather than by luck of the hardcoded hashes
+	var inRangeKey, outOfRangeKey string
+	for k, in := range inRange {
+		if in && inRangeKey == "" {
+			inRangeKey = k
+		}
+		if !in && outOfRangeKey == "" {
+			outOfRangeKey = k
+		}
+	}
+	assert.NotEmpty(t, inRangeKey)
+	assert.NotEmpty(t, outOfRangeKey)
+
+	// One mixed batch (must be filtered down to the in-range entry) and one
+	// fully out-of-range batch (must be deleted)
+	putNotificationBatch(t, kv, 0, map[string]*proto.Notification{
+		inRangeKey:    {Type: proto.NotificationType_KEY_CREATED},
+		outOfRangeKey: {Type: proto.NotificationType_KEY_CREATED},
+	})
+	putNotificationBatch(t, kv, 1, map[string]*proto.Notification{
+		outOfRangeKey: {Type: proto.NotificationType_KEY_CREATED},
+	})
+
+	assert.NoError(t, FilterDBForSplit(kv, leftRange))
+
+	deleted := 0
+	for k, in := range inRange {
+		assert.Equal(t, in, keyExists(t, kv, k), "key %s (in-range=%v)", k, in)
+		if !in {
+			deleted++
+		}
+	}
+	// Sanity: the dataset actually forced multiple chunk rotations
+	assert.Greater(t, deleted, 3*splitFilterMaxBatchCount)
+
+	// The out-of-range-only notification batch is gone; the mixed one is
+	// filtered down to exactly its in-range entry
+	assert.Nil(t, readNotificationBatch(t, kv, 1))
+	nb := readNotificationBatch(t, kv, 0)
+	assert.NotNil(t, nb)
+	assert.Equal(t, 1, len(nb.Notifications))
+	assert.Equal(t, inRangeKey, nb.Notifications[0].GetKey())
+}

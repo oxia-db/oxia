@@ -34,6 +34,22 @@ const (
 	idxKeyPrefix     = constant.InternalKeyPrefix + "idx"
 	idxSeparator     = "\x01"
 	sessionKeyLength = len(sessionKeyPrefix) + 1 + 16 // __oxia/session/ + 16 hex digits
+
+	// Filtering deletes about half the shard: accumulated in a single indexed
+	// batch, that grows to GB scale (batch arena plus the batch skiplist).
+	// Committing in bounded chunks keeps the memory flat. This is safe here:
+	// nothing reads through the batch (every classification reads the
+	// iterator, which keeps the consistent view it was created with across
+	// commits), the child is not serving yet so there are no concurrent
+	// writers, and the filter is idempotent — on a failed snapshot load it
+	// either re-runs or the snapshot is re-sent wholesale.
+)
+
+// Vars, not consts, so tests can shrink them to exercise the chunk rotation
+// with small datasets.
+var (
+	splitFilterMaxBatchCount = 100_000
+	splitFilterMaxBatchBytes = 8 * 1024 * 1024
 )
 
 var secondaryIdxRegex = regexp.MustCompile(
@@ -59,7 +75,9 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 	)
 
 	batch := kv.NewWriteBatch()
-	defer batch.Close()
+	// Closes whichever batch is current when returning; rotated chunks are
+	// closed at rotation
+	defer func() { _ = batch.Close() }()
 
 	it, err := kv.RangeScan("", "", kvstore.ShowInternalKeys)
 	if err != nil {
@@ -68,6 +86,7 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 	defer it.Close()
 
 	var deletedKeys, keptKeys, filteredNotifications, deletedNotifications int64
+	chunks := int64(1)
 
 	for it.Valid() {
 		key := it.Key()
@@ -92,20 +111,19 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 				keptKeys++
 			}
 		} else {
-			// User data key
-			value, err := it.Value()
+			deleted, err := filterUserKey(it, batch, key, hashRange)
 			if err != nil {
-				return errors.Wrapf(err, "failed to read value for key %q", key)
+				return err
 			}
-
-			if !isUserKeyInRange(key, value, hashRange) {
-				if err := batch.Delete(key); err != nil {
-					return err
-				}
+			if deleted {
 				deletedKeys++
 			} else {
 				keptKeys++
 			}
+		}
+
+		if batch, err = rotateSplitBatchIfFull(kv, batch, &chunks); err != nil {
+			return err
 		}
 
 		it.Next()
@@ -117,9 +135,43 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 		slog.Int64("kept-keys", keptKeys),
 		slog.Int64("filtered-notifications", filteredNotifications),
 		slog.Int64("deleted-notifications", deletedNotifications),
+		slog.Int64("chunks", chunks),
 	)
 
 	return batch.Commit()
+}
+
+// filterUserKey deletes the user key when it falls outside the child's hash
+// range, reporting whether it did.
+func filterUserKey(it kvstore.KeyValueIterator, batch kvstore.WriteBatch, key string, hashRange *proto.HashRange) (bool, error) {
+	value, err := it.Value()
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to read value for key %q", key)
+	}
+
+	if isUserKeyInRange(key, value, hashRange) {
+		return false, nil
+	}
+	if err := batch.Delete(key); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// rotateSplitBatchIfFull commits and closes the batch once it reaches the
+// chunk thresholds, returning a fresh batch to continue with.
+func rotateSplitBatchIfFull(kv kvstore.KV, batch kvstore.WriteBatch, chunks *int64) (kvstore.WriteBatch, error) {
+	if batch.Count() < splitFilterMaxBatchCount && batch.Size() < splitFilterMaxBatchBytes {
+		return batch, nil
+	}
+	if err := batch.Commit(); err != nil {
+		return batch, errors.Wrap(err, "failed to commit split filter chunk")
+	}
+	if err := batch.Close(); err != nil {
+		return batch, errors.Wrap(err, "failed to close split filter chunk")
+	}
+	(*chunks)++
+	return kv.NewWriteBatch(), nil
 }
 
 type splitAction int
