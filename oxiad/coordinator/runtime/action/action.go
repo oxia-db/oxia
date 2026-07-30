@@ -19,6 +19,7 @@ type Type string
 const (
 	SwapNode Type = "swap-node"
 	Election Type = "election"
+	Split    Type = "split"
 )
 
 type Action interface {

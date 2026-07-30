@@ -123,6 +123,7 @@ func newTestController( //nolint:revive // Test helper mirrors NewController and
 		metadata,
 		dataServerSupportedFeaturesSupplier,
 		nil,
+		SplitterConfig{},
 		rpcProvider,
 		periodicTasksInterval,
 	)
