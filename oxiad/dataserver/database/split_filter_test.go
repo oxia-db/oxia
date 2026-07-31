@@ -348,6 +348,50 @@ func TestFilterDBForSplit_SecondaryIndexKeys(t *testing.T) {
 	assert.False(t, keyExists(t, kv, rightIdxKey))
 }
 
+func TestFilterDBForSplit_SecondaryIndexKeysWithSeparator(t *testing.T) {
+	kv := newTestKV(t)
+
+	leftRange, _ := splitRanges()
+
+	// Find primary keys for each side
+	var leftPrimaryKey, rightPrimaryKey string
+	for i := 0; i < 1000; i++ {
+		k := fmt.Sprintf("pri-%d", i)
+		h := hash.Xxh332(k)
+		if leftPrimaryKey == "" && isHashInRange(h, leftRange) {
+			leftPrimaryKey = k
+		}
+		if rightPrimaryKey == "" && !isHashInRange(h, leftRange) {
+			rightPrimaryKey = k
+		}
+		if leftPrimaryKey != "" && rightPrimaryKey != "" {
+			break
+		}
+	}
+
+	// The secondary key is stored as the client supplied it, so it may be empty
+	// or contain the separator. The primary key still decides the side.
+	idxKey := func(secondary, primary string) string {
+		return fmt.Sprintf("%s/myidx/%s%s%s", idxKeyPrefix, secondary, idxSeparator, url.PathEscape(primary))
+	}
+	sneaky := "sec" + idxSeparator + url.PathEscape(rightPrimaryKey)
+
+	leftSneaky := idxKey(sneaky, leftPrimaryKey)
+	rightSneaky := idxKey(sneaky, rightPrimaryKey)
+	leftEmpty := idxKey("", leftPrimaryKey)
+	rightEmpty := idxKey("", rightPrimaryKey)
+	for _, k := range []string{leftSneaky, rightSneaky, leftEmpty, rightEmpty} {
+		putRawKey(t, kv, k, []byte{})
+	}
+
+	assert.NoError(t, FilterDBForSplit(kv, leftRange))
+
+	assert.True(t, keyExists(t, kv, leftSneaky))
+	assert.False(t, keyExists(t, kv, rightSneaky))
+	assert.True(t, keyExists(t, kv, leftEmpty))
+	assert.False(t, keyExists(t, kv, rightEmpty))
+}
+
 func TestFilterWriteRequestForSplit_Puts(t *testing.T) {
 	leftRange, _ := splitRanges()
 
