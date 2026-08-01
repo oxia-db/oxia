@@ -119,13 +119,17 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	return true
 }
 
-func (m *mockNamespaceMetadata) UpdateNamespaceStatus(name string, status *proto.NamespaceStatus) {
+func (m *mockNamespaceMetadata) UpdateNamespaceStatus(
+	name string,
+	update func(*proto.NamespaceStatus) bool,
+) bool {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
-	if _, exists := cloned.Namespaces[name]; !exists {
-		return
+	status, exists := cloned.Namespaces[name]
+	if !exists || !update(status) {
+		return false
 	}
-	cloned.Namespaces[name] = gproto.Clone(status).(*proto.NamespaceStatus)
 	m.status = cloned
+	return true
 }
 
 func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {

@@ -89,14 +89,15 @@ type splitTestController struct {
 func newSplitTestController(cfg splitTestControllerConfig) *splitTestController {
 	ctx, cancel := context.WithCancel(context.Background())
 	sc := &controller{
-		namespace:       cfg.Namespace,
-		shard:           cfg.ParentShardId,
-		metadataStore:   cfg.Metadata,
-		rpc:             cfg.RpcProvider,
-		splittingConfig: SplitterConfig{EventListener: cfg.EventListener, SplitTimeout: cfg.SplitTimeout},
-		ctx:             ctx,
-		ctxCancel:       cancel,
-		logger:          slog.Default(),
+		namespace:                  cfg.Namespace,
+		shard:                      cfg.ParentShardId,
+		metadataStore:              cfg.Metadata,
+		rpc:                        cfg.RpcProvider,
+		splittingConfig:            SplitterConfig{EventListener: cfg.EventListener, SplitTimeout: cfg.SplitTimeout},
+		executeSplitMetadataUpdate: func(update func()) { update() },
+		ctx:                        ctx,
+		ctxCancel:                  cancel,
+		logger:                     slog.Default(),
 	}
 	sc.startSplitting()
 	return &splitTestController{controller: sc}

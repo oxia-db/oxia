@@ -47,10 +47,11 @@ type Splitting struct {
 	started   atomic.Bool
 
 	// borrowed resources
-	metadataStore coordmetadata.Metadata
-	rpc           rpc.Provider
-	eventListener controllerapi.ShardSplitEventListener
-	splitter      *Splitter
+	metadataStore         coordmetadata.Metadata
+	rpc                   rpc.Provider
+	eventListener         controllerapi.ShardSplitEventListener
+	splitter              *Splitter
+	executeMetadataUpdate func(func())
 
 	// owned state
 	namespace  string
@@ -67,6 +68,7 @@ func NewSplitting(
 	shard int64,
 	metadataStore coordmetadata.Metadata,
 	rpcProvider rpc.Provider,
+	executeMetadataUpdate func(func()),
 	config SplitterConfig,
 ) *Splitting {
 	timeout := config.SplitTimeout
@@ -75,15 +77,16 @@ func NewSplitting(
 	}
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	return &Splitting{
-		logger:        logger,
-		ctx:           ctx,
-		ctxCancel:     cancel,
-		metadataStore: metadataStore,
-		rpc:           rpcProvider,
-		eventListener: config.EventListener,
-		splitter:      NewSplitter(namespace, shard, metadataStore, config),
-		namespace:     namespace,
-		shard:         shard,
+		logger:                logger,
+		ctx:                   ctx,
+		ctxCancel:             cancel,
+		metadataStore:         metadataStore,
+		rpc:                   rpcProvider,
+		eventListener:         config.EventListener,
+		splitter:              NewSplitter(namespace, shard, metadataStore, config),
+		executeMetadataUpdate: executeMetadataUpdate,
+		namespace:             namespace,
+		shard:                 shard,
 	}
 }
 
@@ -132,10 +135,6 @@ func (s *Splitting) Stop() {
 		slog.Int64("left-child", s.leftChild),
 		slog.Int64("right-child", s.rightChild),
 	)
-}
-
-func (s *Splitting) executeMetadataUpdate(update func()) {
-	update()
 }
 
 func (s *Splitting) runSplitStateMachine() {
@@ -216,26 +215,18 @@ func (s *Splitting) currentPhase() (proto.SplitPhase, bool) {
 // updatePhase atomically updates the split phase on both parent and children.
 func (s *Splitting) updatePhase(newPhase proto.SplitPhase) {
 	s.executeMetadataUpdate(func() {
-		currentNS, exists := s.metadataStore.GetNamespaceStatus(s.namespace)
-		if !exists {
-			s.logger.Warn("namespace status not found while updating split phase",
-				slog.String("namespace", s.namespace),
-				slog.String("phase", newPhase.String()))
-			return
-		}
-		ns := gproto.Clone(currentNS.UnsafeBorrow()).(*proto.NamespaceStatus) //nolint:revive
-		changed := false
-		for _, shardId := range []int64{s.shard, s.leftChild, s.rightChild} {
-			meta, exists := ns.Shards[shardId]
-			if !exists || meta.Split == nil {
-				continue
+		s.metadataStore.UpdateNamespaceStatus(s.namespace, func(ns *proto.NamespaceStatus) bool {
+			changed := false
+			for _, shardId := range []int64{s.shard, s.leftChild, s.rightChild} {
+				meta, exists := ns.Shards[shardId]
+				if !exists || meta.Split == nil {
+					continue
+				}
+				meta.Split.Phase = newPhase
+				changed = true
 			}
-			meta.Split.Phase = newPhase
-			changed = true
-		}
-		if changed {
-			s.metadataStore.UpdateNamespaceStatus(s.namespace, ns)
-		}
+			return changed
+		})
 	})
 }
 
