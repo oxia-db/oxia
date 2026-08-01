@@ -48,7 +48,10 @@ type Metadata interface {
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
 	ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
-	UpdateNamespaceStatus(name string, status *commonproto.NamespaceStatus)
+	// UpdateNamespaceStatus applies update to the latest namespace status while
+	// holding the metadata write lock. The callback must not call Metadata methods
+	// and returns whether it changed the status.
+	UpdateNamespaceStatus(name string, update func(*commonproto.NamespaceStatus) bool) bool
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 
 	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool)
@@ -272,16 +275,21 @@ func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject
 	return commonobject.Borrow(namespaceStatus), true
 }
 
-func (m *coordinatorMetadata) UpdateNamespaceStatus(name string, namespaceStatus *commonproto.NamespaceStatus) {
+func (m *coordinatorMetadata) UpdateNamespaceStatus(
+	name string,
+	update func(*commonproto.NamespaceStatus) bool,
+) bool {
 	namespaceExists := true
+	updated := false
 	_ = backoff.RetryNotify(func() error {
 		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
-			if _, exists := clusterStatus.Namespaces[name]; !exists {
+			namespaceStatus, exists := clusterStatus.Namespaces[name]
+			if !exists {
 				namespaceExists = false
 				return clusterStatus, false
 			}
-			clusterStatus.Namespaces[name] = namespaceStatus
-			return clusterStatus, true
+			updated = update(namespaceStatus)
+			return clusterStatus, updated
 		})
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
@@ -293,6 +301,7 @@ func (m *coordinatorMetadata) UpdateNamespaceStatus(name string, namespaceStatus
 	if !namespaceExists {
 		m.logger.Warn("failed to update namespace status: namespace does not exist", slog.String("namespace", name))
 	}
+	return updated
 }
 
 func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus] {

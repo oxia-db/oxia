@@ -151,19 +151,19 @@ func (s *Splitter) Split(splitPoint *uint32) (leftChildID int64, rightChildID in
 		return 0, 0, errors.Wrap(err, "failed to select ensemble for right child")
 	}
 
-	parentMeta.Split = &proto.SplitMetadata{
+	splitMetadata := &proto.SplitMetadata{
 		Phase:         proto.SplitPhaseBootstrap,
 		ChildShardIds: []int64{leftChildID, rightChildID},
 		SplitPoint:    sp,
 	}
-	ns.Shards[leftChildID] = childShardMetadata(
+	leftChildMetadata := childShardMetadata(
 		s.parentShardID,
 		parentMeta.GetInt32HashRange().GetMin(),
 		sp,
 		sp,
 		leftEnsemble,
 	)
-	ns.Shards[rightChildID] = childShardMetadata(
+	rightChildMetadata := childShardMetadata(
 		s.parentShardID,
 		sp+1,
 		parentMeta.GetInt32HashRange().GetMax(),
@@ -171,7 +171,24 @@ func (s *Splitter) Split(splitPoint *uint32) (leftChildID int64, rightChildID in
 		rightEnsemble,
 	)
 
-	s.metadata.UpdateNamespaceStatus(s.namespace, ns)
+	parentExists := true
+	updated := s.metadata.UpdateNamespaceStatus(s.namespace, func(current *proto.NamespaceStatus) bool {
+		currentParent, exists := current.Shards[s.parentShardID]
+		if !exists {
+			parentExists = false
+			return false
+		}
+		currentParent.Split = splitMetadata
+		current.Shards[leftChildID] = leftChildMetadata
+		current.Shards[rightChildID] = rightChildMetadata
+		return true
+	})
+	if !updated {
+		if !parentExists {
+			return 0, 0, errors.Errorf("shard %d not found in namespace %q", s.parentShardID, s.namespace)
+		}
+		return 0, 0, errors.Errorf("namespace %q not found", s.namespace)
+	}
 	s.logger.Info(
 		"Split initiated",
 		slog.Int64("left-child", leftChildID),

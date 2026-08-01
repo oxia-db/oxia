@@ -41,7 +41,7 @@ func splitParentMetadata() *proto.ShardMetadata {
 	}
 }
 
-func TestSplitterPersistsChildrenBeforeSelectingSecondEnsemble(t *testing.T) {
+func TestSplitterMergesChildrenIntoLatestNamespaceStatus(t *testing.T) {
 	metadata := newTestMetadata(
 		t,
 		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
@@ -56,6 +56,12 @@ func TestSplitterPersistsChildrenBeforeSelectingSecondEnsemble(t *testing.T) {
 		namespaceConfig,
 		splitParentMetadata(),
 	)
+	unrelatedShardID := metadata.ReserveShardIDs(1)
+	metadata.UpdateShardStatus(constant.DefaultNamespace, unrelatedShardID, &proto.ShardMetadata{
+		Status:         proto.ShardStatusSteadyState,
+		Term:           1,
+		Int32HashRange: &proto.HashRange{Min: 100, Max: 199},
+	})
 
 	listener := newMockShardSplitEventListener()
 	selectorCalls := 0
@@ -66,7 +72,10 @@ func TestSplitterPersistsChildrenBeforeSelectingSecondEnsemble(t *testing.T) {
 	) ([]*proto.DataServerIdentity, error) {
 		selectorCalls++
 		if selectorCalls == 2 {
-			assert.Len(t, status[namespace].UnsafeBorrow().Shards, 2, "left child must affect right-child placement")
+			assert.Len(t, status[namespace].UnsafeBorrow().Shards, 3, "left child must affect right-child placement")
+			unrelated := requireShardMetadata(t, metadata, constant.DefaultNamespace, unrelatedShardID)
+			unrelated.Term = 2
+			metadata.UpdateShardStatus(constant.DefaultNamespace, unrelatedShardID, unrelated)
 			return []*proto.DataServerIdentity{rs1, rs2, rs3}, nil
 		}
 		return []*proto.DataServerIdentity{ls1, ls2, ls3}, nil
@@ -98,6 +107,7 @@ func TestSplitterPersistsChildrenBeforeSelectingSecondEnsemble(t *testing.T) {
 	right := requireShardMetadata(t, metadata, constant.DefaultNamespace, rightChild)
 	assert.Equal(t, &proto.HashRange{Min: 50, Max: 99}, right.Int32HashRange)
 	assert.Equal(t, []*proto.DataServerIdentity{rs1, rs2, rs3}, right.Ensemble)
+	assert.Equal(t, int64(2), requireShardMetadata(t, metadata, constant.DefaultNamespace, unrelatedShardID).Term)
 
 	select {
 	case event := <-listener.starts:
@@ -180,4 +190,85 @@ func TestControllerSerializesSplitActionsOnEventLoop(t *testing.T) {
 	close(releaseSelector)
 	require.NoError(t, <-firstDone)
 	assert.ErrorContains(t, <-secondDone, "already has an active split")
+}
+
+func TestControllerSerializesSplitMetadataUpdatesOnEventLoop(t *testing.T) {
+	metadata := newTestMetadata(
+		t,
+		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		nil,
+	)
+	parentShardID := metadata.ReserveShardIDs(1)
+	parent := splitParentMetadata()
+	parent.Ensemble = nil
+	storeTestShardMetadata(
+		t,
+		metadata,
+		constant.DefaultNamespace,
+		parentShardID,
+		namespaceConfig,
+		parent,
+	)
+
+	shardController := NewController(
+		constant.DefaultNamespace,
+		parentShardID,
+		namespaceConfig,
+		parent,
+		metadata,
+		NoOpSupportedFeaturesSupplier,
+		nil,
+		SplitterConfig{},
+		mockutils.NewRpcProvider(),
+		time.Hour,
+	).(*controller)
+	t.Cleanup(func() { assert.NoError(t, shardController.Close()) })
+	splitting := shardController.newSplitting()
+	t.Cleanup(splitting.Stop)
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-releaseFirst:
+		default:
+			close(releaseFirst)
+		}
+	})
+	firstDone := make(chan struct{})
+	go func() {
+		splitting.executeMetadataUpdate(func() {
+			close(firstEntered)
+			<-releaseFirst
+		})
+		close(firstDone)
+	}()
+	<-firstEntered
+
+	secondEntered := make(chan struct{})
+	secondDone := make(chan struct{})
+	go func() {
+		splitting.executeMetadataUpdate(func() {
+			close(secondEntered)
+		})
+		close(secondDone)
+	}()
+
+	select {
+	case <-secondEntered:
+		t.Fatal("second metadata update bypassed the shard controller event loop")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseFirst)
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("first metadata update did not complete")
+	}
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("second metadata update did not complete")
+	}
 }

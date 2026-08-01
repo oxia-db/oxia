@@ -85,6 +85,11 @@ func NoOpSupportedFeaturesSupplier(dataServers []*proto.DataServerIdentity) map[
 	return features
 }
 
+type splitMetadataUpdate struct {
+	update func()
+	done   chan struct{}
+}
+
 type controller struct {
 	namespace       string
 	shard           int64
@@ -100,6 +105,7 @@ type controller struct {
 
 	electionOp          chan *action.ElectionAction
 	splitOp             chan *action.SplitAction
+	splitMetadataOp     chan splitMetadataUpdate
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
@@ -113,8 +119,9 @@ type controller struct {
 	periodicTasksInterval time.Duration
 	logger                *slog.Logger
 
-	currentElection  *Election
-	currentSplitting *Splitting
+	currentElection            *Election
+	currentSplitting           *Splitting
+	executeSplitMetadataUpdate func(func())
 
 	leaderElectionLatency metric.LatencyHistogram
 	newTermQuorumLatency  metric.LatencyHistogram
@@ -162,6 +169,7 @@ func NewController(
 		leaderSelector:                      leaderselector.NewSelector(),
 		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
 		splitOp:                             make(chan *action.SplitAction, chanBufferSize),
+		splitMetadataOp:                     make(chan splitMetadataUpdate, chanBufferSize),
 		deleteOp:                            make(chan any, chanBufferSize),
 		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
@@ -193,6 +201,7 @@ func NewController(
 		})
 
 	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
+	s.executeSplitMetadataUpdate = s.enqueueSplitMetadataUpdate
 
 	s.logger.Info("Started shard controller", slog.Any("shard-metadata", shardMetadata))
 
@@ -249,6 +258,23 @@ func (s *controller) Split(splitAction *action.SplitAction) (action.SplitResult,
 	return splitAction.Wait()
 }
 
+func (s *controller) enqueueSplitMetadataUpdate(update func()) {
+	op := splitMetadataUpdate{
+		update: update,
+		done:   make(chan struct{}),
+	}
+	select {
+	case <-s.ctx.Done():
+		return
+	case s.splitMetadataOp <- op:
+	}
+
+	select {
+	case <-s.ctx.Done():
+	case <-op.done:
+	}
+}
+
 func (s *controller) newSplitting() *Splitting {
 	return NewSplitting(
 		s.ctx,
@@ -257,6 +283,7 @@ func (s *controller) newSplitting() *Splitting {
 		s.shard,
 		s.metadataStore,
 		s.rpc,
+		s.executeSplitMetadataUpdate,
 		s.splittingConfig,
 	)
 }
@@ -337,6 +364,9 @@ func (s *controller) run() {
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
 		case electionAction := <-s.electionOp:
 			electionAction.Done(s.onElectLeader(nil).GetNameOrDefault())
+		case op := <-s.splitMetadataOp:
+			op.update()
+			close(op.done)
 		case splitAction := <-s.splitOp:
 			splitting := s.newSplitting()
 			leftChild, rightChild, err := splitting.Initialize(splitAction.SplitPoint)
@@ -654,6 +684,8 @@ func (s *controller) Close() error {
 				electionAction.Done("")
 			case splitAction := <-s.splitOp:
 				splitAction.Error(constant.ErrResourceUnavailable)
+			case op := <-s.splitMetadataOp:
+				close(op.done)
 			case <-s.deleteOp:
 			case <-s.dataServerFailureOp:
 			case op := <-s.changeEnsembleOp:
