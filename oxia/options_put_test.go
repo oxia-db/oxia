@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func TestSecondaryIndexNameValidation(t *testing.T) {
@@ -29,4 +31,9 @@ func TestSecondaryIndexNameValidation(t *testing.T) {
 
 	_, err = newPutOptions([]PutOption{SecondaryIndex("tenant", "users/email")})
 	assert.NoError(t, err)
+}
+
+func TestInvalidArgumentStatus(t *testing.T) {
+	result := toPutResult("key", &proto.PutResponse{Status: proto.Status_INVALID_ARGUMENT})
+	assert.ErrorIs(t, result.Err, ErrInvalidOptions)
 }

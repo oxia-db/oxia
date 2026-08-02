@@ -723,6 +723,14 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, notifications *Notifications,
 	putReq *proto.PutRequest, timestamp uint64,
 	updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) {
+	if !internal && d.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION) {
+		for _, secondaryIndex := range putReq.SecondaryIndexes {
+			if strings.IndexByte(secondaryIndex.GetIndexName(), '/') >= 0 {
+				return &proto.PutResponse{Status: proto.Status_INVALID_ARGUMENT}, nil
+			}
+		}
+	}
+
 	var se *proto.StorageEntry
 	var err error
 	var newKey string

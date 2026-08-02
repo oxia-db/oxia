@@ -455,31 +455,120 @@ func TestDB_ReadCommitOffset(t *testing.T) {
 func TestDB_EnabledFeaturePersistence(t *testing.T) {
 	const commitOffset = int64(7)
 
+	for _, enabledFeature := range []proto.Feature{
+		proto.Feature_FEATURE_DB_CHECKSUM,
+		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+	} {
+		t.Run(enabledFeature.String(), func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+			assert.NoError(t, err)
+
+			assert.False(t, db.IsFeatureEnabled(enabledFeature))
+
+			_, err = db.ProcessControlRequest(&proto.ControlRequest{
+				Value: &proto.ControlRequest_FeatureEnable{
+					FeatureEnable: &proto.FeatureEnableRequest{
+						Features: []proto.Feature{enabledFeature},
+					},
+				},
+			}, commitOffset, 0, NoOpCallback)
+			assert.NoError(t, err)
+			assert.True(t, db.IsFeatureEnabled(enabledFeature))
+			assert.NoError(t, db.Close())
+
+			db, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+			assert.NoError(t, err)
+			assert.True(t, db.IsFeatureEnabled(enabledFeature))
+
+			restoredCommitOffset, err := db.ReadCommitOffset()
+			assert.NoError(t, err)
+			assert.Equal(t, commitOffset, restoredCommitOffset)
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+func TestDB_SecondaryIndexNameValidation(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
 
-	assert.False(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+	legacyPut := &proto.PutRequest{
+		Key:   "legacy",
+		Value: []byte("legacy"),
+		SecondaryIndexes: []*proto.SecondaryIndex{{
+			IndexName:    "tenant/users",
+			SecondaryKey: "email",
+		}},
+	}
+	response, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{legacyPut}}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, response.GetPuts()[0].GetStatus())
 
 	_, err = db.ProcessControlRequest(&proto.ControlRequest{
 		Value: &proto.ControlRequest_FeatureEnable{
 			FeatureEnable: &proto.FeatureEnableRequest{
-				Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+				Features: []proto.Feature{proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION},
 			},
 		},
-	}, commitOffset, 0, NoOpCallback)
+	}, 1, 0, NoOpCallback)
 	assert.NoError(t, err)
-	assert.True(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
-	assert.NoError(t, db.Close())
 
-	db, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	callbackPut := &proto.PutRequest{
+		Key:   FailureCallbackKey,
+		Value: []byte("invalid"),
+		SecondaryIndexes: []*proto.SecondaryIndex{{
+			IndexName:    "tenant/users",
+			SecondaryKey: "email",
+		}},
+	}
+	sequencePut := &proto.PutRequest{
+		Key:              "sequence",
+		Value:            []byte("invalid"),
+		PartitionKey:     pb.String("sequence"),
+		SequenceKeyDelta: []uint64{1},
+		SecondaryIndexes: []*proto.SecondaryIndex{
+			{IndexName: "valid", SecondaryKey: "key"},
+			{IndexName: "invalid/name", SecondaryKey: "key"},
+		},
+	}
+	validPut := &proto.PutRequest{
+		Key:   "valid",
+		Value: []byte("valid"),
+		SecondaryIndexes: []*proto.SecondaryIndex{{
+			IndexName:    "tenant",
+			SecondaryKey: "users/email",
+		}},
+	}
+	response, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{callbackPut, sequencePut, validPut},
+	}, 2, 0, FailureCallback{})
 	assert.NoError(t, err)
-	assert.True(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[0].GetStatus())
+	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[1].GetStatus())
+	assert.Equal(t, proto.Status_OK, response.GetPuts()[2].GetStatus())
+	assert.Equal(t, "sequence", sequencePut.GetKey())
+	assert.EqualValues(t, 1, response.GetPuts()[2].GetVersion().GetVersionId())
 
-	restoredCommitOffset, err := db.ReadCommitOffset()
+	for _, key := range []string{FailureCallbackKey, "sequence"} {
+		getResponse, getErr := db.Get(&proto.GetRequest{Key: key})
+		assert.NoError(t, getErr)
+		assert.Equal(t, proto.Status_KEY_NOT_FOUND, getResponse.GetStatus())
+	}
+	for _, key := range []string{"legacy", "valid"} {
+		getResponse, getErr := db.Get(&proto.GetRequest{Key: key})
+		assert.NoError(t, getErr)
+		assert.Equal(t, proto.Status_OK, getResponse.GetStatus())
+	}
+
+	commitOffset, err := db.ReadCommitOffset()
 	assert.NoError(t, err)
-	assert.Equal(t, commitOffset, restoredCommitOffset)
+	assert.EqualValues(t, 2, commitOffset)
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
