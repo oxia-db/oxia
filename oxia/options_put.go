@@ -14,7 +14,11 @@
 
 package oxia
 
-import "github.com/pkg/errors"
+import (
+	"strings"
+
+	"github.com/pkg/errors"
+)
 
 type putOptions struct {
 	baseOptions
@@ -26,13 +30,15 @@ type putOptions struct {
 
 // PutOption represents an option for the [SyncClient.Put] operation.
 type PutOption interface {
-	applyPut(opts *putOptions)
+	applyPut(opts *putOptions) error
 }
 
 func newPutOptions(opts []PutOption) (*putOptions, error) {
 	putOpts := &putOptions{}
 	for _, opt := range opts {
-		opt.applyPut(putOpts)
+		if err := opt.applyPut(putOpts); err != nil {
+			return nil, err
+		}
 	}
 
 	if len(putOpts.sequenceKeysDeltas) > 0 {
@@ -62,8 +68,9 @@ type ephemeral struct{}
 
 var ephemeralFlag = &ephemeral{}
 
-func (*ephemeral) applyPut(opts *putOptions) {
+func (*ephemeral) applyPut(opts *putOptions) error {
 	opts.ephemeral = true
+	return nil
 }
 
 // Ephemeral marks the record to be created as an ephemeral record.
@@ -82,8 +89,9 @@ type sequenceKeysDeltas struct {
 	sequenceKeysDeltas []uint64
 }
 
-func (s *sequenceKeysDeltas) applyPut(opts *putOptions) {
+func (s *sequenceKeysDeltas) applyPut(opts *putOptions) error {
 	opts.sequenceKeysDeltas = s.sequenceKeysDeltas
+	return nil
 }
 
 // SequenceKeysDeltas will request that the final record key to be
@@ -102,13 +110,17 @@ type secondaryIdxOption struct {
 	secondaryKey string
 }
 
-func (s *secondaryIdxOption) applyPut(opts *putOptions) {
+func (s *secondaryIdxOption) applyPut(opts *putOptions) error {
+	if strings.IndexByte(s.indexName, '/') >= 0 {
+		return errors.Wrapf(ErrInvalidOptions,
+			"secondary index name %q must not contain '/'", s.indexName)
+	}
 	opts.secondaryIndexes = append(opts.secondaryIndexes, s)
+	return nil
 }
 
-// SecondaryIndex let the users specify additional keys to index the record
-// Index names are arbitrary strings and can be used in `List` and
-// `RangeScan` requests.
+// SecondaryIndex lets users specify additional keys to index the record.
+// Index names must not contain '/' and can be used in [UseIndex] options.
 // Secondary keys are not required to be unique.
 // Multiple secondary indexes can be passed on the same record, even
 // reusing multiple times the same indexName.

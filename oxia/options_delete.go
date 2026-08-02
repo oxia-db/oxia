@@ -43,8 +43,9 @@ type expectedVersionId struct {
 	versionId int64
 }
 
-func (e *expectedVersionId) applyPut(opts *putOptions) {
+func (e *expectedVersionId) applyPut(opts *putOptions) error {
 	opts.expectedVersion = &e.versionId
+	return nil
 }
 
 func (e *expectedVersionId) applyDelete(opts *deleteOptions) {
