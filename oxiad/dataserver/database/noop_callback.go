@@ -16,12 +16,13 @@ package database
 
 import (
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 )
 
 type noopCallback struct{}
 
-func (*noopCallback) ValidatePut(*proto.PutRequest, FeatureChecker) proto.Status {
+func (*noopCallback) ValidatePut(*proto.PutRequest, feature.Checker) proto.Status {
 	return proto.Status_OK
 }
 

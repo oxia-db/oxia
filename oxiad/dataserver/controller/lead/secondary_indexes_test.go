@@ -25,7 +25,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
-	"github.com/oxia-db/oxia/oxiad/dataserver/database"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -90,11 +90,11 @@ type testFeatureChecker struct {
 	secondaryIndexNameValidation bool
 }
 
-func (f testFeatureChecker) IsFeatureEnabled(feature proto.Feature) bool {
-	return f.secondaryIndexNameValidation && feature == proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION
+func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
+	return f.secondaryIndexNameValidation && candidate == proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION
 }
 
-var _ database.FeatureChecker = testFeatureChecker{}
+var _ feature.Checker = testFeatureChecker{}
 
 func TestSecondaryIndices_List(t *testing.T) {
 	var shard int64 = 1

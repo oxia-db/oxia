@@ -31,6 +31,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -60,13 +61,9 @@ const (
 	termOptionsKey         = termKey + "-options"
 )
 
-type FeatureChecker interface {
-	IsFeatureEnabled(feature proto.Feature) bool
-}
-
 type UpdateOperationCallback interface {
 	// ValidatePut must not mutate the request or database state.
-	ValidatePut(req *proto.PutRequest, features FeatureChecker) proto.Status
+	ValidatePut(req *proto.PutRequest, features featurepkg.Checker) proto.Status
 	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
 	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string) error
 	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry) error

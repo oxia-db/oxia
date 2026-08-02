@@ -27,6 +27,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -388,7 +389,7 @@ type sessionManagerUpdateOperationCallbackS struct{}
 
 var sessionManagerUpdateOperationCallback database.UpdateOperationCallback = &sessionManagerUpdateOperationCallbackS{}
 
-func (*sessionManagerUpdateOperationCallbackS) ValidatePut(*proto.PutRequest, database.FeatureChecker) proto.Status {
+func (*sessionManagerUpdateOperationCallbackS) ValidatePut(*proto.PutRequest, feature.Checker) proto.Status {
 	return proto.Status_OK
 }
 

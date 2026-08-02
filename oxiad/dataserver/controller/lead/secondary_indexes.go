@@ -24,6 +24,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -34,7 +35,7 @@ const secondaryIdxKeyPrefix = constant.InternalKeyPrefix + "idx"
 
 type wrapperUpdateCallback struct{}
 
-func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest, features database.FeatureChecker) proto.Status {
+func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest, features feature.Checker) proto.Status {
 	return secondaryIndexesUpdateCallback.ValidatePut(req, features)
 }
 
@@ -85,7 +86,7 @@ type secondaryIndexesUpdateCallbackS struct{}
 
 var secondaryIndexesUpdateCallback database.UpdateOperationCallback = &secondaryIndexesUpdateCallbackS{}
 
-func (secondaryIndexesUpdateCallbackS) ValidatePut(request *proto.PutRequest, features database.FeatureChecker) proto.Status {
+func (secondaryIndexesUpdateCallbackS) ValidatePut(request *proto.PutRequest, features feature.Checker) proto.Status {
 	if !features.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION) {
 		return proto.Status_OK
 	}

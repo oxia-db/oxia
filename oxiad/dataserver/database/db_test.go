@@ -24,6 +24,7 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -1071,7 +1072,7 @@ type FailureCallback struct{}
 
 const FailureCallbackKey = "failure"
 
-func (FailureCallback) ValidatePut(req *proto.PutRequest, features FeatureChecker) proto.Status {
+func (FailureCallback) ValidatePut(req *proto.PutRequest, features feature.Checker) proto.Status {
 	if !features.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION) {
 		return proto.Status_OK
 	}
