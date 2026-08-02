@@ -388,7 +388,7 @@ type sessionManagerUpdateOperationCallbackS struct{}
 
 var sessionManagerUpdateOperationCallback database.UpdateOperationCallback = &sessionManagerUpdateOperationCallbackS{}
 
-func (*sessionManagerUpdateOperationCallbackS) ValidatePut(*proto.PutRequest) proto.Status {
+func (*sessionManagerUpdateOperationCallbackS) ValidatePut(*proto.PutRequest, database.FeatureChecker) proto.Status {
 	return proto.Status_OK
 }
 

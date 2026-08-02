@@ -507,7 +507,7 @@ func TestDB_SecondaryIndexNameValidation(t *testing.T) {
 			SecondaryKey: "email",
 		}},
 	}
-	response, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{legacyPut}}, 0, 0, NoOpCallback)
+	response, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{legacyPut}}, 0, 0, FailureCallback{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, response.GetPuts()[0].GetStatus())
 
@@ -1071,7 +1071,11 @@ type FailureCallback struct{}
 
 const FailureCallbackKey = "failure"
 
-func (FailureCallback) ValidatePut(req *proto.PutRequest) proto.Status {
+func (FailureCallback) ValidatePut(req *proto.PutRequest, features FeatureChecker) proto.Status {
+	if !features.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION) {
+		return proto.Status_OK
+	}
+
 	for _, secondaryIndex := range req.SecondaryIndexes {
 		if strings.IndexByte(secondaryIndex.GetIndexName(), '/') >= 0 {
 			return proto.Status_INVALID_ARGUMENT

@@ -34,8 +34,8 @@ const secondaryIdxKeyPrefix = constant.InternalKeyPrefix + "idx"
 
 type wrapperUpdateCallback struct{}
 
-func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest) proto.Status {
-	return secondaryIndexesUpdateCallback.ValidatePut(req)
+func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest, features database.FeatureChecker) proto.Status {
+	return secondaryIndexesUpdateCallback.ValidatePut(req, features)
 }
 
 func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry) error {
@@ -85,7 +85,11 @@ type secondaryIndexesUpdateCallbackS struct{}
 
 var secondaryIndexesUpdateCallback database.UpdateOperationCallback = &secondaryIndexesUpdateCallbackS{}
 
-func (secondaryIndexesUpdateCallbackS) ValidatePut(request *proto.PutRequest) proto.Status {
+func (secondaryIndexesUpdateCallbackS) ValidatePut(request *proto.PutRequest, features database.FeatureChecker) proto.Status {
+	if !features.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION) {
+		return proto.Status_OK
+	}
+
 	for _, secondaryIndex := range request.SecondaryIndexes {
 		if strings.IndexByte(secondaryIndex.GetIndexName(), '/') >= 0 {
 			return proto.Status_INVALID_ARGUMENT

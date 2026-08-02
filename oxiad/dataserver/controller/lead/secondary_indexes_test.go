@@ -25,6 +25,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -34,13 +35,22 @@ import (
 
 func TestSecondaryIndexNameValidation(t *testing.T) {
 	tests := []struct {
-		name             string
-		secondaryIndexes []*proto.SecondaryIndex
-		expected         proto.Status
+		name              string
+		validationEnabled bool
+		secondaryIndexes  []*proto.SecondaryIndex
+		expected          proto.Status
 	}{
-		{name: "no indexes", expected: proto.Status_OK},
 		{
-			name: "valid index name",
+			name: "validation disabled",
+			secondaryIndexes: []*proto.SecondaryIndex{{
+				IndexName: "tenant/users",
+			}},
+			expected: proto.Status_OK,
+		},
+		{name: "no indexes", validationEnabled: true, expected: proto.Status_OK},
+		{
+			name:              "valid index name",
+			validationEnabled: true,
 			secondaryIndexes: []*proto.SecondaryIndex{{
 				IndexName:    "tenant",
 				SecondaryKey: "users/email",
@@ -48,7 +58,8 @@ func TestSecondaryIndexNameValidation(t *testing.T) {
 			expected: proto.Status_OK,
 		},
 		{
-			name: "invalid index name",
+			name:              "invalid index name",
+			validationEnabled: true,
 			secondaryIndexes: []*proto.SecondaryIndex{{
 				IndexName:    "tenant/users",
 				SecondaryKey: "email",
@@ -56,7 +67,8 @@ func TestSecondaryIndexNameValidation(t *testing.T) {
 			expected: proto.Status_INVALID_ARGUMENT,
 		},
 		{
-			name: "invalid later index name",
+			name:              "invalid later index name",
+			validationEnabled: true,
 			secondaryIndexes: []*proto.SecondaryIndex{
 				{IndexName: "tenant", SecondaryKey: "email"},
 				{IndexName: "tenant/users", SecondaryKey: "email"},
@@ -68,10 +80,21 @@ func TestSecondaryIndexNameValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			request := &proto.PutRequest{SecondaryIndexes: tt.secondaryIndexes}
-			assert.Equal(t, tt.expected, WrapperUpdateOperationCallback.ValidatePut(request))
+			features := testFeatureChecker{secondaryIndexNameValidation: tt.validationEnabled}
+			assert.Equal(t, tt.expected, WrapperUpdateOperationCallback.ValidatePut(request, features))
 		})
 	}
 }
+
+type testFeatureChecker struct {
+	secondaryIndexNameValidation bool
+}
+
+func (f testFeatureChecker) IsFeatureEnabled(feature proto.Feature) bool {
+	return f.secondaryIndexNameValidation && feature == proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION
+}
+
+var _ database.FeatureChecker = testFeatureChecker{}
 
 func TestSecondaryIndices_List(t *testing.T) {
 	var shard int64 = 1

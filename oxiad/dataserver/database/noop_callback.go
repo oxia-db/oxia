@@ -21,7 +21,7 @@ import (
 
 type noopCallback struct{}
 
-func (*noopCallback) ValidatePut(*proto.PutRequest) proto.Status {
+func (*noopCallback) ValidatePut(*proto.PutRequest, FeatureChecker) proto.Status {
 	return proto.Status_OK
 }
 
