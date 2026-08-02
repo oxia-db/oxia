@@ -52,8 +52,11 @@ var (
 	splitFilterMaxBatchBytes = 8 * 1024 * 1024
 )
 
+// Anchored on the last separator, like the index writer's own parser: the index
+// name and the secondary key are stored as the client supplied them, while the
+// url-escaped primary key never contains a separator.
 var secondaryIdxRegex = regexp.MustCompile(
-	"^" + idxKeyPrefix + "/[^/]+/([^" + idxSeparator + "]+)" + idxSeparator + "(.+)$",
+	"(?s)^" + idxKeyPrefix + "/[^/]*/(.*)" + idxSeparator + "([^" + idxSeparator + "]*)$",
 )
 
 // FilterDBForSplit removes keys that do not belong to the specified hash range.

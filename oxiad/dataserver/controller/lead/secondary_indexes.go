@@ -146,7 +146,12 @@ const secondaryIdxSeparator = "\x01"
 const secondaryIdxRangePrefixFormat = secondaryIdxKeyPrefix + "/%s/%s"
 const secondaryIdxFormat = secondaryIdxRangePrefixFormat + secondaryIdxSeparator + "%s"
 
-const regex = "^" + secondaryIdxKeyPrefix + "/[^/]+/([^" + secondaryIdxSeparator + "]+)" + secondaryIdxSeparator + "(.+)$"
+// The index name and the secondary key are stored as the client supplied them,
+// so both can be empty and the secondary key can contain the separator. Only
+// the primary key is url-escaped, and that escaping never emits a separator, so
+// the last one is the field boundary.
+const regex = "(?s)^" + secondaryIdxKeyPrefix + "/[^/]*/(.*)" + secondaryIdxSeparator +
+	"([^" + secondaryIdxSeparator + "]*)$"
 
 var secondaryIdxFormatRegex = regexp.MustCompile(regex)
 

@@ -16,6 +16,7 @@ package lead
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -426,6 +427,70 @@ func TestSecondaryIndices_GetBoundedToRequestedIndex(t *testing.T) {
 				assert.Equal(t, tc.expectedSecKey, *res.SecondaryIndexKey)
 			}
 		})
+	}
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+
+	lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+
+	// The secondary key is stored as the client supplied it, so it can be empty
+	// or carry the byte that separates it from the primary key. Neither may
+	// change which record an index entry points back to.
+	sneaky := "k1" + secondaryIdxSeparator + url.PathEscape("/not-a-real-key")
+	_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{
+			{Key: "/a", Value: []byte("0"), SecondaryIndexes: []*proto.SecondaryIndex{
+				{IndexName: "my-idx", SecondaryKey: sneaky}}},
+			{Key: "/b", Value: []byte("1"), SecondaryIndexes: []*proto.SecondaryIndex{
+				{IndexName: "my-idx", SecondaryKey: ""}}},
+		},
+	})
+	assert.NoError(t, err)
+
+	keys, err := lc.ListBlock(context.Background(), &proto.ListRequest{
+		Shard:              &shard,
+		StartInclusive:     "",
+		EndExclusive:       "\xff",
+		SecondaryIndexName: pb.String("my-idx"),
+	})
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, []string{"/a", "/b"}, keys)
+
+	// The same keys have to come back through a get on the index.
+	for _, tc := range []struct{ secondaryKey, expectedKey string }{
+		{sneaky, "/a"},
+		{"", "/b"},
+	} {
+		resps, err := readAll(context.Background(), lc, &proto.ReadRequest{
+			Shard: &shard,
+			Gets: []*proto.GetRequest{{
+				Key:                tc.secondaryKey,
+				ComparisonType:     proto.KeyComparisonType_EQUAL,
+				SecondaryIndexName: pb.String("my-idx"),
+			}},
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, len(resps))
+		assert.Equal(t, proto.Status_OK, resps[0].Status)
+		assert.Equal(t, tc.expectedKey, *resps[0].Key)
+		assert.Equal(t, tc.secondaryKey, *resps[0].SecondaryIndexKey)
 	}
 
 	assert.NoError(t, lc.Close())
