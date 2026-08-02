@@ -67,8 +67,8 @@ type runtime struct {
 	// shard-controller callbacks become no-ops instead of racing with the
 	// teardown (metadata may be closed right after Close returns).
 	closed bool
-	// callbacksWg tracks in-flight ShardDeleted callbacks: they run on
-	// detached goroutines that no controller's Close waits for.
+	// callbacksWg tracks in-flight callbacks that close shard controllers
+	// outside the runtime lock.
 	callbacksWg sync.WaitGroup
 
 	metadata coordmetadata.Metadata
@@ -405,9 +405,9 @@ func (c *runtime) Close() error {
 		err = multierr.Append(err, sc.Close())
 	}
 
-	// Wait for any in-flight ShardDeleted callback: it may still be closing
-	// the shard controller it removed from the map. Controller Close is
-	// idempotent, so overlapping with the loop above is safe.
+	// Wait for callbacks that are still closing shard controllers removed from
+	// the map. Controller Close is idempotent, so overlapping with the loop
+	// above is safe.
 	c.callbacksWg.Wait()
 
 	c.wg.Wait()
@@ -714,10 +714,12 @@ func (c *runtime) SplitComplete(parentShard int64, leftChild int64, rightChild i
 // cleared the parent's split metadata.
 func (c *runtime) SplitAborted(parentShard int64, leftChild int64, rightChild int64) {
 	c.Lock()
-	defer c.Unlock()
 	if c.closed {
+		c.Unlock()
 		return
 	}
+	c.callbacksWg.Add(1)
+	defer c.callbacksWg.Done()
 
 	c.logger.Warn("Split aborted",
 		slog.Int64("parent-shard", parentShard),
@@ -725,15 +727,22 @@ func (c *runtime) SplitAborted(parentShard int64, leftChild int64, rightChild in
 		slog.Int64("right-child", rightChild),
 	)
 
-	// Close child shard controllers.
+	childControllers := make([]shardcontroller.Controller, 0, 2)
 	for _, childId := range []int64{leftChild, rightChild} {
 		if sc, exists := c.shardControllers[childId]; exists {
-			_ = sc.Close()
+			childControllers = append(childControllers, sc)
 			delete(c.shardControllers, childId)
 		}
 	}
 
 	c.computeNewAssignments()
+	c.Unlock()
+
+	// Controller shutdown can invoke runtime callbacks, so it must not run
+	// while holding the runtime lock.
+	for _, sc := range childControllers {
+		_ = sc.Close()
+	}
 }
 
 func (c *runtime) namespaceConfigForSplit(namespace string) *proto.Namespace {
