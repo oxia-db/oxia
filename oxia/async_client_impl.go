@@ -275,7 +275,7 @@ func (c *clientImpl) doSingleShardDeleteRange(shardId int64, minKeyInclusive str
 }
 
 func (c *clientImpl) Get(key string, options ...GetOption) <-chan GetResult {
-	ch := make(chan GetResult)
+	ch := make(chan GetResult, 1)
 
 	opts := newGetOptions(options)
 	if opts.partitionKey == nil && //
