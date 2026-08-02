@@ -17,7 +17,6 @@ package database
 import (
 	"log/slog"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -31,8 +30,6 @@ import (
 
 const (
 	sessionKeyPrefix = constant.InternalKeyPrefix + "session"
-	idxKeyPrefix     = constant.InternalKeyPrefix + "idx"
-	idxSeparator     = "\x01"
 	sessionKeyLength = len(sessionKeyPrefix) + 1 + 16 // __oxia/session/ + 16 hex digits
 
 	// Filtering deletes about half the shard: accumulated in a single indexed
@@ -50,13 +47,6 @@ const (
 var (
 	splitFilterMaxBatchCount = 100_000
 	splitFilterMaxBatchBytes = 8 * 1024 * 1024
-)
-
-// Anchored on the last separator, like the index writer's own parser: the index
-// name and the secondary key are stored as the client supplied them, while the
-// url-escaped primary key never contains a separator.
-var secondaryIdxRegex = regexp.MustCompile(
-	"(?s)^" + idxKeyPrefix + "/[^/]*/(.*)" + idxSeparator + "([^" + idxSeparator + "]*)$",
 )
 
 // FilterDBForSplit removes keys that do not belong to the specified hash range.
@@ -320,14 +310,9 @@ func classifySessionShadowKey(key string, hashRange *proto.HashRange) splitActio
 // and checks if it belongs to this child's hash range.
 // Format: __oxia/idx/{name}/{secondary}\x01{url_escaped_primary}.
 func classifySecondaryIndexKey(key string, hashRange *proto.HashRange) splitAction {
-	matches := secondaryIdxRegex.FindStringSubmatch(key)
-	if len(matches) != 3 {
-		// Can't parse: keep to be safe
-		return splitActionKeep
-	}
-
-	primaryKey, err := url.PathUnescape(matches[2])
+	primaryKey, _, err := ParseSecondaryIndexKey(key)
 	if err != nil {
+		// Can't parse: keep to be safe
 		return splitActionKeep
 	}
 

@@ -17,7 +17,6 @@ package lead
 import (
 	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -146,39 +145,8 @@ const secondaryIdxSeparator = "\x01"
 const secondaryIdxRangePrefixFormat = secondaryIdxKeyPrefix + "/%s/%s"
 const secondaryIdxFormat = secondaryIdxRangePrefixFormat + secondaryIdxSeparator + "%s"
 
-// The index name and the secondary key are stored as the client supplied them,
-// so both can be empty and the secondary key can contain the separator. Only
-// the primary key is url-escaped, and that escaping never emits a separator, so
-// the last one is the field boundary.
-const regex = "(?s)^" + secondaryIdxKeyPrefix + "/[^/]*/(.*)" + secondaryIdxSeparator +
-	"([^" + secondaryIdxSeparator + "]*)$"
-
-var secondaryIdxFormatRegex = regexp.MustCompile(regex)
-
-var errFailedToParseSecondaryKey = errors.New("oxia db: failed to parse secondary index key")
-
 func secondaryIndexKey(primaryKey string, si *proto.SecondaryIndex) string {
 	return fmt.Sprintf(secondaryIdxFormat, si.IndexName, si.SecondaryKey, url.PathEscape(primaryKey))
-}
-
-func secondaryIndexPrimaryKey(completeKey string) (string, error) {
-	matches := secondaryIdxFormatRegex.FindStringSubmatch(completeKey)
-	if len(matches) != 3 {
-		return "", errFailedToParseSecondaryKey
-	}
-
-	return url.PathUnescape(matches[2])
-}
-
-func secondaryIndexPrimaryAndSecondaryKey(completeKey string) (primaryKey string, secondaryKey string, err error) {
-	matches := secondaryIdxFormatRegex.FindStringSubmatch(completeKey)
-	if len(matches) != 3 {
-		return "", "", errFailedToParseSecondaryKey
-	}
-
-	secondaryKey = matches[1]
-	primaryKey, err = url.PathUnescape(matches[2])
-	return primaryKey, secondaryKey, err
 }
 
 func deleteSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, existingEntry *proto.StorageEntry) error {
@@ -231,7 +199,7 @@ func (it *secondaryIndexListIterator) Valid() bool {
 
 func (it *secondaryIndexListIterator) Key() string {
 	idxKey := it.it.Key()
-	primaryKey, err := secondaryIndexPrimaryKey(idxKey)
+	primaryKey, _, err := database.ParseSecondaryIndexKey(idxKey)
 	if err != nil {
 		// This should never happen since we control the key format
 		panic(errors.Wrap(err, "Failed to parse secondary index key"))
@@ -317,7 +285,7 @@ func (it *secondaryIndexRangeIterator) Value() (*proto.GetResponse, error) {
 
 func secondaryIndexGet(req *proto.GetRequest, db database.DB) (*proto.GetResponse, error) {
 	primaryKey, secondaryKey, err := doSecondaryGet(db, req)
-	if err != nil && !errors.Is(err, errFailedToParseSecondaryKey) {
+	if err != nil && !errors.Is(err, database.ErrInvalidSecondaryIndexKey) {
 		return nil, err
 	}
 
@@ -372,8 +340,8 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 			break
 		}
 
-		primaryKey, secondaryKey, err = secondaryIndexPrimaryAndSecondaryKey(itKey)
-		if err != nil && !errors.Is(err, errFailedToParseSecondaryKey) {
+		primaryKey, secondaryKey, err = database.ParseSecondaryIndexKey(itKey)
+		if err != nil && !errors.Is(err, database.ErrInvalidSecondaryIndexKey) {
 			return "", "", err
 		}
 
