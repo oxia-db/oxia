@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/shard"
@@ -37,6 +39,14 @@ func (c *blockingCloseShardController) Close() error {
 	close(c.closeStarted)
 	<-c.closeRelease
 	return nil
+}
+
+func TestInitiateSplitFailsAfterRuntimeClose(t *testing.T) {
+	rt := &runtime{closed: true}
+
+	_, _, err := rt.InitiateSplit("default", 0, nil)
+
+	require.ErrorIs(t, err, constant.ErrResourceUnavailable)
 }
 
 func TestSplitAbortedClosesChildControllersOutsideRuntimeLock(t *testing.T) {

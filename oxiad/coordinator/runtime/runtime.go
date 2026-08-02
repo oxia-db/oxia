@@ -622,11 +622,16 @@ func dataServersFromStatus(status map[string]commonobject.Borrowed[*proto.Namesp
 // controller executes the action on its event-loop thread, serialized with
 // elections and other shard metadata transitions.
 func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoint *uint32) (leftChild, rightChild int64, err error) {
+	c.RLock()
+	if c.closed {
+		c.RUnlock()
+		return 0, 0, constant.ErrResourceUnavailable
+	}
 	if _, exists := c.metadata.GetShardStatus(namespace, parentShardId); !exists {
+		c.RUnlock()
 		return 0, 0, errors.Errorf("shard %d not found in namespace %q", parentShardId, namespace)
 	}
 
-	c.RLock()
 	sc, exists := c.shardControllers[parentShardId]
 	c.RUnlock()
 	if !exists {
