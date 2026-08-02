@@ -1059,26 +1059,6 @@ func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*p
 	return d.notificationsTracker.ReadNextNotifications(ctx, startOffset)
 }
 
-type noopCallback struct{}
-
-func (*noopCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry) error {
-	return nil
-}
-
-func (*noopCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, _ *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
-	return proto.Status_OK, nil
-}
-
-func (*noopCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, _ string) error {
-	return nil
-}
-
-func (*noopCallback) OnDeleteRange(_ kvstore.WriteBatch, _ *Notifications, _ string, _ string) error {
-	return nil
-}
-
-var NoOpCallback UpdateOperationCallback = &noopCallback{}
-
 func ToDbOption(opt *proto.NewTermOptions) TermOptions {
 	to := TermOptions{NotificationsEnabled: true}
 	if opt != nil {
