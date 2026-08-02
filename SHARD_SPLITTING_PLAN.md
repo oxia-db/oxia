@@ -32,7 +32,9 @@ protocol, or public split command.
    deletion on the parent controller event loop.
 3. Metadata writes modify the latest cluster status and never replace an
    unrelated shard update with a stale namespace snapshot.
-4. The parent and both children have consistent persisted split phases.
+4. The parent split metadata is the single persisted source of lifecycle phase;
+   child split metadata only identifies the parent and keeps child controllers
+   inactive.
 5. Child controllers do not begin normal balancing or elections until their
    split metadata is cleared.
 6. A split can roll back before the parent is fenced.
@@ -63,7 +65,7 @@ It does not own a separate split state machine.
 - Fence and elect leaders for both child shards.
 - Add each child leader as an observer of the parent.
 - Persist the parent term and child leader identities used by the observers.
-- Atomically advance the parent and both children to `CatchUp`.
+- Persist `CatchUp` on the parent.
 - Return to `Bootstrap` if a parent or child election invalidates an observer.
 
 ### CatchUp
@@ -71,7 +73,7 @@ It does not own a separate split state machine.
 - Read the parent's committed offset.
 - Wait for both children to commit through that offset.
 - Repeat in bounded rounds while the parent continues receiving writes.
-- Atomically advance all split records to `Cutover` when both children catch up.
+- Persist `Cutover` on the parent when both children catch up.
 
 ### Cutover
 
@@ -90,17 +92,17 @@ restore the parent as writable.
 
 ## Metadata Operations
 
-`UpdateNamespaceStatus` keeps its existing API. Split-specific atomic changes
-use narrow metadata operations:
+`UpdateNamespaceStatus` keeps its existing API. Split creation uses a narrow
+metadata operation:
 
 | Operation | Responsibility |
 | --- | --- |
 | `ShardSplit` | Compare the expected parent with the latest parent, attach split metadata, and create both children in one store update. |
-| `UpdateShardSplitPhase` | Validate the parent and both children, then update all three phases in one store update. |
 
-Both operations must be idempotent because the metadata provider can retry a
-store operation. An identical already-persisted split is success; conflicting
-metadata is an error.
+`ShardSplit` must be idempotent because the metadata provider can retry a store
+operation. An identical already-persisted split is success; conflicting
+metadata is an error. Later lifecycle phases use the normal single-shard status
+update to change the parent split metadata.
 
 ## Work Plan
 
@@ -108,7 +110,7 @@ metadata is an error.
 | --- | --- | --- |
 | 1 | Route split requests through the parent shard controller event loop. | Implemented in PR #1271 |
 | 2 | Move split context and lifecycle ownership into the parent controller. | Implemented in PR #1271 |
-| 3 | Add atomic `ShardSplit` and `UpdateShardSplitPhase` metadata operations. | Implemented in PR #1271 |
+| 3 | Add an atomic `ShardSplit` metadata operation and use normal single-shard updates for the parent phase. | Implemented in PR #1271 |
 | 4 | Reject stale parent snapshots and incomplete split metadata. | Implemented in PR #1271 |
 | 5 | Make controller and runtime shutdown ordering race-free. | Implemented in PR #1271 |
 | 6 | Verify restart behavior in every pre-fence phase. | Pending fault-injection coverage |
@@ -127,7 +129,7 @@ metadata is an error.
 | Cutover after parent fence | Resume forward; never abort to the parent. |
 | Coordinator restart | Recreate controllers from persisted metadata and resume the parent-owned state machine. |
 | Runtime shutdown | Cancel the split, stop the event loop, then release the final split state. |
-| Missing or conflicting metadata | Stop the transition and return a specific error without a partial phase update. |
+| Missing or conflicting metadata | Stop the transition and return a specific error without advancing the parent phase. |
 
 ## Verification Plan
 
@@ -144,7 +146,7 @@ metadata is an error.
 - a parent term, leader, ensemble, status, or range change rejects split creation
 - two split requests for one parent are serialized
 - a split action for the wrong shard is rejected
-- missing parent or child split metadata cannot produce a partial phase update
+- missing parent split metadata cannot advance the phase
 - shutdown during split initialization does not race or retain `currentSplitting`
 - a persisted split without configured dependencies does not start
 - a parent or child election during CatchUp returns the split to Bootstrap

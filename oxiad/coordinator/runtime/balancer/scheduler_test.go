@@ -128,10 +128,6 @@ func (*mockMetadata) ShardSplit(
 	return nil
 }
 
-func (*mockMetadata) UpdateShardSplitPhase(string, int64, proto.SplitPhase) error {
-	return nil
-}
-
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
 func (*mockMetadata) CreateNamespace(*proto.Namespace) error {

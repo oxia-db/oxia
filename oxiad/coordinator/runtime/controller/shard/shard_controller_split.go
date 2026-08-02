@@ -218,13 +218,26 @@ func (s *Splitting) currentPhase() (proto.SplitPhase, bool) {
 	return parentMeta.UnsafeBorrow().Split.GetPhaseOrDefault(), true
 }
 
-// updatePhase atomically updates the split phase on both parent and children.
+// updatePhase persists the state machine phase on the parent shard. Child
+// controllers only use the presence of split metadata to remain inactive.
 func (s *Splitting) updatePhase(newPhase proto.SplitPhase) error {
 	executed := false
 	var updateErr error
 	s.executeMetadataUpdate(func() {
 		executed = true
-		updateErr = s.metadataStore.UpdateShardSplitPhase(s.namespace, s.shard, newPhase)
+		parentMeta := s.loadParentMeta()
+		if parentMeta == nil || parentMeta.Split == nil {
+			updateErr = errors.Errorf(
+				"split metadata for shard %d not found while updating split phase",
+				s.shard,
+			)
+			return
+		}
+		if parentMeta.Split.Phase == newPhase {
+			return
+		}
+		parentMeta.Split.Phase = newPhase
+		s.metadataStore.UpdateShardStatus(s.namespace, s.shard, parentMeta)
 	})
 	if !executed {
 		if err := s.ctx.Err(); err != nil {

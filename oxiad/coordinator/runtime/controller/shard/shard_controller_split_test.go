@@ -157,7 +157,7 @@ func TestSplittingStartCancelsContextWhenNotConfigured(t *testing.T) {
 	assert.ErrorIs(t, splitting.ctx.Err(), context.Canceled)
 }
 
-func TestSplittingUpdatePhaseRequiresAllShardMetadata(t *testing.T) {
+func TestSplittingUpdatePhaseOnlyUpdatesParent(t *testing.T) {
 	metadata := newTestMetadata(
 		t,
 		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
@@ -200,11 +200,44 @@ func TestSplittingUpdatePhaseRequiresAllShardMetadata(t *testing.T) {
 
 	err := splitting.updatePhase(proto.SplitPhaseCatchUp)
 
-	require.ErrorContains(t, err, "split metadata for shard")
-	assert.Equal(t, proto.SplitPhaseBootstrap,
+	require.NoError(t, err)
+	assert.Equal(t, proto.SplitPhaseCatchUp,
 		requireShardMetadata(t, metadata, namespaceConfig.Name, parentShard).Split.Phase)
 	assert.Equal(t, proto.SplitPhaseBootstrap,
 		requireShardMetadata(t, metadata, namespaceConfig.Name, leftChild).Split.Phase)
+}
+
+func TestSplittingUpdatePhaseRequiresParentSplitMetadata(t *testing.T) {
+	metadata := newTestMetadata(
+		t,
+		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		nil,
+	)
+	parentShard := metadata.ReserveShardIDs(1)
+	storeTestShardMetadata(
+		t,
+		metadata,
+		namespaceConfig.Name,
+		parentShard,
+		namespaceConfig,
+		splitParentMetadata(),
+	)
+
+	splitting := NewSplitting(
+		t.Context(),
+		slog.Default(),
+		namespaceConfig.Name,
+		parentShard,
+		metadata,
+		mockutils.NewRpcProvider(),
+		func(update func()) { update() },
+		SplitterConfig{},
+	)
+	t.Cleanup(splitting.Stop)
+
+	err := splitting.updatePhase(proto.SplitPhaseCatchUp)
+
+	require.ErrorContains(t, err, "split metadata for shard")
 }
 
 func (sc *splitTestController) Close() {

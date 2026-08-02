@@ -193,10 +193,6 @@ func (*mockNamespaceMetadata) ShardSplit(
 	return nil
 }
 
-func (*mockNamespaceMetadata) UpdateShardSplitPhase(string, int64, proto.SplitPhase) error {
-	return nil
-}
-
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {
 	return nil
 }
