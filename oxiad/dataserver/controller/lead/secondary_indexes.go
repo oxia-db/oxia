@@ -36,6 +36,10 @@ const secondaryIdxKeyPrefix = constant.InternalKeyPrefix + "idx"
 type wrapperUpdateCallback struct{}
 
 func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest, features feature.Checker) proto.Status {
+	if status := sessionManagerUpdateOperationCallback.ValidatePut(req, features); status != proto.Status_OK {
+		return status
+	}
+
 	return secondaryIndexesUpdateCallback.ValidatePut(req, features)
 }
 

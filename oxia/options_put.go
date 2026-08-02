@@ -30,14 +30,19 @@ type putOptions struct {
 
 // PutOption represents an option for the [SyncClient.Put] operation.
 type PutOption interface {
-	applyPut(opts *putOptions) error
+	applyPut(opts *putOptions)
 }
 
 func newPutOptions(opts []PutOption) (*putOptions, error) {
 	putOpts := &putOptions{}
 	for _, opt := range opts {
-		if err := opt.applyPut(putOpts); err != nil {
-			return nil, err
+		opt.applyPut(putOpts)
+	}
+
+	for _, secondaryIndex := range putOpts.secondaryIndexes {
+		if strings.IndexByte(secondaryIndex.indexName, '/') >= 0 {
+			return nil, errors.Wrapf(ErrInvalidOptions,
+				"secondary index name %q must not contain '/'", secondaryIndex.indexName)
 		}
 	}
 
@@ -68,9 +73,8 @@ type ephemeral struct{}
 
 var ephemeralFlag = &ephemeral{}
 
-func (*ephemeral) applyPut(opts *putOptions) error {
+func (*ephemeral) applyPut(opts *putOptions) {
 	opts.ephemeral = true
-	return nil
 }
 
 // Ephemeral marks the record to be created as an ephemeral record.
@@ -89,9 +93,8 @@ type sequenceKeysDeltas struct {
 	sequenceKeysDeltas []uint64
 }
 
-func (s *sequenceKeysDeltas) applyPut(opts *putOptions) error {
+func (s *sequenceKeysDeltas) applyPut(opts *putOptions) {
 	opts.sequenceKeysDeltas = s.sequenceKeysDeltas
-	return nil
 }
 
 // SequenceKeysDeltas will request that the final record key to be
@@ -110,13 +113,8 @@ type secondaryIdxOption struct {
 	secondaryKey string
 }
 
-func (s *secondaryIdxOption) applyPut(opts *putOptions) error {
-	if strings.IndexByte(s.indexName, '/') >= 0 {
-		return errors.Wrapf(ErrInvalidOptions,
-			"secondary index name %q must not contain '/'", s.indexName)
-	}
+func (s *secondaryIdxOption) applyPut(opts *putOptions) {
 	opts.secondaryIndexes = append(opts.secondaryIndexes, s)
-	return nil
 }
 
 // SecondaryIndex lets users specify additional keys to index the record.

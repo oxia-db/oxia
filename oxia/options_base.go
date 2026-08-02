@@ -43,9 +43,8 @@ type partitionKeyOpt struct {
 	partitionKey *string
 }
 
-func (o *partitionKeyOpt) applyPut(opts *putOptions) error {
+func (o *partitionKeyOpt) applyPut(opts *putOptions) {
 	opts.partitionKey = o.partitionKey
-	return nil
 }
 
 func (o *partitionKeyOpt) applyDelete(opts *deleteOptions) {
