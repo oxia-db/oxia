@@ -729,10 +729,8 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, notifications *Notifications,
 	putReq *proto.PutRequest, timestamp uint64,
 	updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) {
-	if !internal {
-		if status := updateOperationCallback.ValidatePut(putReq, d); status != proto.Status_OK {
-			return &proto.PutResponse{Status: status}, nil
-		}
+	if status := updateOperationCallback.ValidatePut(putReq, d); status != proto.Status_OK {
+		return &proto.PutResponse{Status: status}, nil
 	}
 
 	var se *proto.StorageEntry
