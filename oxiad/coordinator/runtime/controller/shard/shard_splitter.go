@@ -171,7 +171,7 @@ func (s *Splitter) Split(splitPoint *uint32) (leftChildID int64, rightChildID in
 		rightEnsemble,
 	)
 
-	if err := s.metadata.CreateShardSplit(
+	if err := s.metadata.ShardSplit(
 		s.namespace,
 		s.parentShardID,
 		parentMeta,
