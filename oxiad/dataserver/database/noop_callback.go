@@ -21,6 +21,10 @@ import (
 
 type noopCallback struct{}
 
+func (*noopCallback) ValidatePut(*proto.PutRequest) proto.Status {
+	return proto.Status_OK
+}
+
 func (*noopCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry) error {
 	return nil
 }

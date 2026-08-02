@@ -34,6 +34,10 @@ const secondaryIdxKeyPrefix = constant.InternalKeyPrefix + "idx"
 
 type wrapperUpdateCallback struct{}
 
+func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest) proto.Status {
+	return secondaryIndexesUpdateCallback.ValidatePut(req)
+}
+
 func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry) error {
 	// First update the session
 	if err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(batch, notifications, key, value); err != nil {
@@ -80,6 +84,15 @@ var WrapperUpdateOperationCallback database.UpdateOperationCallback = &wrapperUp
 type secondaryIndexesUpdateCallbackS struct{}
 
 var secondaryIndexesUpdateCallback database.UpdateOperationCallback = &secondaryIndexesUpdateCallbackS{}
+
+func (secondaryIndexesUpdateCallbackS) ValidatePut(request *proto.PutRequest) proto.Status {
+	for _, secondaryIndex := range request.SecondaryIndexes {
+		if strings.IndexByte(secondaryIndex.GetIndexName(), '/') >= 0 {
+			return proto.Status_INVALID_ARGUMENT
+		}
+	}
+	return proto.Status_OK
+}
 
 func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	if existingEntry != nil {

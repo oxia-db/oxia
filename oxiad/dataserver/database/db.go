@@ -61,6 +61,8 @@ const (
 )
 
 type UpdateOperationCallback interface {
+	// ValidatePut must not mutate the request or database state.
+	ValidatePut(req *proto.PutRequest) proto.Status
 	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
 	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string) error
 	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry) error
@@ -724,10 +726,8 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	putReq *proto.PutRequest, timestamp uint64,
 	updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) {
 	if !internal && d.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION) {
-		for _, secondaryIndex := range putReq.SecondaryIndexes {
-			if strings.IndexByte(secondaryIndex.GetIndexName(), '/') >= 0 {
-				return &proto.PutResponse{Status: proto.Status_INVALID_ARGUMENT}, nil
-			}
+		if status := updateOperationCallback.ValidatePut(putReq); status != proto.Status_OK {
+			return &proto.PutResponse{Status: status}, nil
 		}
 	}
 

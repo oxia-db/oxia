@@ -388,6 +388,10 @@ type sessionManagerUpdateOperationCallbackS struct{}
 
 var sessionManagerUpdateOperationCallback database.UpdateOperationCallback = &sessionManagerUpdateOperationCallbackS{}
 
+func (*sessionManagerUpdateOperationCallbackS) ValidatePut(*proto.PutRequest) proto.Status {
+	return proto.Status_OK
+}
+
 func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.WriteBatch, notification *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	var _, closer, err = batch.Get(SessionKey(SessionId(*request.SessionId)))
 	if err != nil {

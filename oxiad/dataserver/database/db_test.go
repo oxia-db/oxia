@@ -16,6 +16,7 @@ package database
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -1069,6 +1070,15 @@ var _ UpdateOperationCallback = &FailureCallback{}
 type FailureCallback struct{}
 
 const FailureCallbackKey = "failure"
+
+func (FailureCallback) ValidatePut(req *proto.PutRequest) proto.Status {
+	for _, secondaryIndex := range req.SecondaryIndexes {
+		if strings.IndexByte(secondaryIndex.GetIndexName(), '/') >= 0 {
+			return proto.Status_INVALID_ARGUMENT
+		}
+	}
+	return proto.Status_OK
+}
 
 func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
 	if req.Key == FailureCallbackKey {

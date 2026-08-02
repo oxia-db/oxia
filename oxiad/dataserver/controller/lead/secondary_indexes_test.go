@@ -32,6 +32,47 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+func TestSecondaryIndexNameValidation(t *testing.T) {
+	tests := []struct {
+		name             string
+		secondaryIndexes []*proto.SecondaryIndex
+		expected         proto.Status
+	}{
+		{name: "no indexes", expected: proto.Status_OK},
+		{
+			name: "valid index name",
+			secondaryIndexes: []*proto.SecondaryIndex{{
+				IndexName:    "tenant",
+				SecondaryKey: "users/email",
+			}},
+			expected: proto.Status_OK,
+		},
+		{
+			name: "invalid index name",
+			secondaryIndexes: []*proto.SecondaryIndex{{
+				IndexName:    "tenant/users",
+				SecondaryKey: "email",
+			}},
+			expected: proto.Status_INVALID_ARGUMENT,
+		},
+		{
+			name: "invalid later index name",
+			secondaryIndexes: []*proto.SecondaryIndex{
+				{IndexName: "tenant", SecondaryKey: "email"},
+				{IndexName: "tenant/users", SecondaryKey: "email"},
+			},
+			expected: proto.Status_INVALID_ARGUMENT,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := &proto.PutRequest{SecondaryIndexes: tt.secondaryIndexes}
+			assert.Equal(t, tt.expected, WrapperUpdateOperationCallback.ValidatePut(request))
+		})
+	}
+}
+
 func TestSecondaryIndices_List(t *testing.T) {
 	var shard int64 = 1
 
