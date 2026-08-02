@@ -140,6 +140,7 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		notificationsEnabled:  true,
 		enabledFeatures:       sync.Map{},
 		sequenceWaiterTracker: NewSequencesWaitTracker(),
+		sequenceCache:         map[string][]uint64{},
 		log: slog.With(
 			slog.String("component", "db"),
 			slog.String("namespace", namespace),
@@ -207,6 +208,13 @@ type db struct {
 	notificationsEnabled  bool
 	enabledFeatures       sync.Map
 	sequenceWaiterTracker SequenceWaiterTracker
+
+	// Last sequence values per prefix key, maintained by
+	// generateUniqueKeyFromSequences. Only touched from ProcessWrite, which is
+	// single-threaded per shard, so it needs no locking. Bounded at
+	// maxSequenceCacheEntries prefixes (dropped wholesale when full), so the
+	// worst-case footprint is that many prefix strings plus a few words each.
+	sequenceCache map[string][]uint64
 
 	putCounter                metric.Counter
 	deleteCounter             metric.Counter
@@ -728,11 +736,16 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	var newKey string
 	if len(putReq.GetSequenceKeyDelta()) > 0 {
 		prefixKey := putReq.Key
-		newKey, err = generateUniqueKeyFromSequences(batch, putReq)
+		newKey, err = d.generateUniqueKeyFromSequences(batch, putReq)
 		putReq.Key = newKey
 		d.sequenceWaiterTracker.SequenceUpdated(prefixKey, newKey)
-	} else if !internal {
-		se, err = checkExpectedVersionId(batch, putReq.Key, putReq.ExpectedVersionId)
+	} else {
+		// A direct put of a sequence-shaped key moves the sequence tail
+		// without going through the cache
+		d.invalidateSequenceCache(putReq.Key)
+		if !internal {
+			se, err = checkExpectedVersionId(batch, putReq.Key, putReq.ExpectedVersionId)
+		}
 	}
 
 	switch {
@@ -837,6 +850,10 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 }
 
 func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications, delReq *proto.DeleteRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteResponse, error) {
+	// Deleting the last key of a sequence moves its tail backwards: the next
+	// sequential put must re-read storage
+	d.invalidateSequenceCache(delReq.Key)
+
 	se, err := checkExpectedVersionId(batch, delReq.Key, delReq.ExpectedVersionId)
 	if se != nil {
 		defer se.ReturnToVTPool()
@@ -874,6 +891,12 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 const DeleteRangeThreshold = 100
 
 func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, delReq *proto.DeleteRangeRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteRangeResponse, error) {
+	// A range delete can cover any sequence tail: drop the whole cache rather
+	// than intersecting ranges with prefixes
+	if len(d.sequenceCache) > 0 {
+		clear(d.sequenceCache)
+	}
+
 	if notifications != nil {
 		notifications.DeletedRange(delReq.StartInclusive, delReq.EndExclusive)
 	}
