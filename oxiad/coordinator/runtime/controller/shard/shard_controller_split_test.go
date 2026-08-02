@@ -103,6 +103,79 @@ func newSplitTestController(cfg splitTestControllerConfig) *splitTestController 
 	return &splitTestController{controller: sc}
 }
 
+func TestSplittingStartCancelsContextWhenMetadataIsMissing(t *testing.T) {
+	metadata := newTestMetadata(
+		t,
+		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		nil,
+	)
+	splitting := NewSplitting(
+		t.Context(),
+		slog.Default(),
+		namespaceConfig.Name,
+		1,
+		metadata,
+		mockutils.NewRpcProvider(),
+		func(update func()) { update() },
+		SplitterConfig{},
+	)
+	t.Cleanup(splitting.Stop)
+
+	splitting.Start()
+
+	assert.ErrorIs(t, splitting.ctx.Err(), context.Canceled)
+}
+
+func TestSplittingUpdatePhaseRequiresAllShardMetadata(t *testing.T) {
+	metadata := newTestMetadata(
+		t,
+		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		nil,
+	)
+	parentShard := metadata.ReserveShardIDs(3)
+	leftChild := parentShard + 1
+	rightChild := parentShard + 2
+	split := &proto.SplitMetadata{
+		Phase:         proto.SplitPhaseBootstrap,
+		ChildShardIds: []int64{leftChild, rightChild},
+	}
+	parentMeta := splitParentMetadata()
+	parentMeta.Split = gproto.CloneOf(split)
+	storeTestShardMetadata(t, metadata, namespaceConfig.Name, parentShard, namespaceConfig, parentMeta)
+	for _, child := range []int64{leftChild, rightChild} {
+		metadata.UpdateShardStatus(namespaceConfig.Name, child, &proto.ShardMetadata{
+			Status: proto.ShardStatusSteadyState,
+			Split: &proto.SplitMetadata{
+				Phase:         proto.SplitPhaseBootstrap,
+				ParentShardId: parentShard,
+			},
+		})
+	}
+	metadata.DeleteShardStatus(namespaceConfig.Name, rightChild)
+
+	splitting := NewSplitting(
+		t.Context(),
+		slog.Default(),
+		namespaceConfig.Name,
+		parentShard,
+		metadata,
+		mockutils.NewRpcProvider(),
+		func(update func()) { update() },
+		SplitterConfig{},
+	)
+	splitting.leftChild = leftChild
+	splitting.rightChild = rightChild
+	t.Cleanup(splitting.Stop)
+
+	err := splitting.updatePhase(proto.SplitPhaseCatchUp)
+
+	require.ErrorContains(t, err, "split metadata for shard")
+	assert.Equal(t, proto.SplitPhaseBootstrap,
+		requireShardMetadata(t, metadata, namespaceConfig.Name, parentShard).Split.Phase)
+	assert.Equal(t, proto.SplitPhaseBootstrap,
+		requireShardMetadata(t, metadata, namespaceConfig.Name, leftChild).Split.Phase)
+}
+
 func (sc *splitTestController) Close() {
 	sc.ctxCancel()
 	sc.currentSplitting.Stop()

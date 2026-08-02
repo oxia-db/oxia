@@ -77,7 +77,7 @@ func cloneNamespaceStatuses(
 	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(namespaces))
 	for namespace, status := range namespaces {
 		statuses[namespace] = commonobject.Borrow(
-			gproto.Clone(status.UnsafeBorrow()).(*proto.NamespaceStatus), //nolint:revive
+			gproto.Clone(status.UnsafeBorrow()).(*proto.NamespaceStatus),
 		)
 	}
 	return statuses

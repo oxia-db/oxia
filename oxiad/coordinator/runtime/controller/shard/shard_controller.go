@@ -242,6 +242,15 @@ func (s *controller) Election(electionAction *action.ElectionAction) string {
 }
 
 func (s *controller) Split(splitAction *action.SplitAction) (action.SplitResult, error) {
+	if splitAction.Shard != s.shard {
+		splitAction.Error(fmt.Errorf(
+			"split action for shard %d sent to controller for shard %d",
+			splitAction.Shard,
+			s.shard,
+		))
+		return splitAction.Wait()
+	}
+
 	s.terminationMu.RLock()
 	if s.terminating.Load() {
 		s.terminationMu.RUnlock()
@@ -301,13 +310,7 @@ func (s *controller) startSplitting() {
 	splitting.Start()
 }
 
-func (s *controller) run() {
-	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
-	initShardMeta := common.Must(borrowedMeta, exists,
-		"bug: shard metadata missing while starting shard controller: namespace=", s.namespace, " shard=",
-		s.shard).UnsafeBorrow()
-
-	// Do initial check or leader election
+func (s *controller) initializeShard(initShardMeta *proto.ShardMetadata) {
 	switch {
 	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
 		s.DeleteShard()
@@ -338,6 +341,14 @@ func (s *controller) run() {
 		s.logger.Info("Resuming in-progress shard split")
 		s.startSplitting()
 	}
+}
+
+func (s *controller) run() {
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	initShardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while starting shard controller: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+	s.initializeShard(initShardMeta)
 
 	// All the shard controllers start together at coordinator startup: spread
 	// the first periodic tick over the interval so the periodic tasks don't
@@ -663,10 +674,6 @@ func (s *controller) deleteShardWithRetries() {
 func (s *controller) Close() error {
 	s.closeOnce.Do(func() {
 		s.ctxCancel()
-		if s.currentSplitting != nil {
-			s.currentSplitting.Stop()
-			s.currentSplitting = nil
-		}
 		// Cancel first so any sender blocked while holding terminationMu.RLock can
 		// release it before Close waits for the enqueue barrier.
 		s.terminationMu.Lock()
@@ -676,6 +683,13 @@ func (s *controller) Close() error {
 		// NOTE: we must wait the run goroutine to exit, otherwise
 		// the controller maybe running after close is returned.
 		s.wg.Wait()
+
+		// The event loop owns currentSplitting. Wait for it to stop mutating the
+		// pointer before closing the last split state machine.
+		if s.currentSplitting != nil {
+			s.currentSplitting.Stop()
+			s.currentSplitting = nil
+		}
 
 	drainPendingOps:
 		for {

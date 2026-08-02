@@ -49,8 +49,10 @@ type Metadata interface {
 	ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
 	// UpdateNamespaceStatus applies update to the latest namespace status while
-	// holding the metadata write lock. The callback must not call Metadata methods
-	// and returns whether it changed the status.
+	// holding the metadata write lock. The callback can run multiple times while
+	// the store write is retried, so it must be idempotent, have no external side
+	// effects, and must not call Metadata methods. It returns whether it changed
+	// the status.
 	UpdateNamespaceStatus(name string, update func(*commonproto.NamespaceStatus) bool) bool
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 
@@ -281,7 +283,9 @@ func (m *coordinatorMetadata) UpdateNamespaceStatus(
 ) bool {
 	namespaceExists := true
 	updated := false
-	_ = backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
+		namespaceExists = true
+		updated = false
 		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
 			namespaceStatus, exists := clusterStatus.Namespaces[name]
 			if !exists {
@@ -298,6 +302,9 @@ func (m *coordinatorMetadata) UpdateNamespaceStatus(
 			slog.Duration("retry-after", duration),
 		)
 	})
+	if err != nil {
+		return false
+	}
 	if !namespaceExists {
 		m.logger.Warn("failed to update namespace status: namespace does not exist", slog.String("namespace", name))
 	}

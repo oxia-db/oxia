@@ -646,6 +646,9 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 func (c *runtime) SplitStarted(namespace string, parentShard int64, leftChild int64, rightChild int64) {
 	c.Lock()
 	defer c.Unlock()
+	if c.closed {
+		return
+	}
 
 	if _, parentExists := c.shardControllers[parentShard]; !parentExists {
 		c.logger.Error("Split parent controller not found", slog.Int64("parent-shard", parentShard))
@@ -675,7 +678,6 @@ func (c *runtime) SplitStarted(namespace string, parentShard int64, leftChild in
 			shardcontroller.DefaultPeriodicTasksInterval,
 		)
 	}
-
 }
 
 // SplitComplete is called by the parent shard controller at the end of Cutover
@@ -686,6 +688,9 @@ func (c *runtime) SplitStarted(namespace string, parentShard int64, leftChild in
 func (c *runtime) SplitComplete(parentShard int64, leftChild int64, rightChild int64) {
 	c.Lock()
 	defer c.Unlock()
+	if c.closed {
+		return
+	}
 
 	c.logger.Info("Split complete, triggering parent shard deletion",
 		slog.Int64("parent-shard", parentShard),
@@ -710,6 +715,9 @@ func (c *runtime) SplitComplete(parentShard int64, leftChild int64, rightChild i
 func (c *runtime) SplitAborted(parentShard int64, leftChild int64, rightChild int64) {
 	c.Lock()
 	defer c.Unlock()
+	if c.closed {
+		return
+	}
 
 	c.logger.Warn("Split aborted",
 		slog.Int64("parent-shard", parentShard),

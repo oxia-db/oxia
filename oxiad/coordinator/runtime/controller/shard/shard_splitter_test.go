@@ -192,6 +192,92 @@ func TestControllerSerializesSplitActionsOnEventLoop(t *testing.T) {
 	assert.ErrorContains(t, <-secondDone, "already has an active split")
 }
 
+func TestControllerRejectsSplitActionForDifferentShard(t *testing.T) {
+	shardController := &controller{shard: 1}
+
+	_, err := shardController.Split(action.NewSplitAction(2, nil))
+
+	assert.EqualError(t, err, "split action for shard 2 sent to controller for shard 1")
+}
+
+func TestControllerCloseDuringSplitInitialization(t *testing.T) {
+	metadata := newTestMetadata(
+		t,
+		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		nil,
+	)
+	parentShardID := metadata.ReserveShardIDs(1)
+	parent := splitParentMetadata()
+	parent.Ensemble = nil
+	storeTestShardMetadata(
+		t,
+		metadata,
+		constant.DefaultNamespace,
+		parentShardID,
+		namespaceConfig,
+		parent,
+	)
+
+	selectorEntered := make(chan struct{})
+	releaseSelector := make(chan struct{})
+	selectorCalls := 0
+	selector := func(
+		_ string,
+		_ int64,
+		_ map[string]commonobject.Borrowed[*proto.NamespaceStatus],
+	) ([]*proto.DataServerIdentity, error) {
+		selectorCalls++
+		if selectorCalls == 1 {
+			close(selectorEntered)
+			<-releaseSelector
+		}
+		return []*proto.DataServerIdentity{ls1, ls2, ls3}, nil
+	}
+	shardController := NewController(
+		constant.DefaultNamespace,
+		parentShardID,
+		namespaceConfig,
+		parent,
+		metadata,
+		NoOpSupportedFeaturesSupplier,
+		nil,
+		SplitterConfig{
+			EnsembleSelector: selector,
+			EventListener:    newMockShardSplitEventListener(),
+		},
+		mockutils.NewRpcProvider(),
+		time.Hour,
+	).(*controller)
+
+	splitDone := make(chan error, 1)
+	go func() {
+		_, err := shardController.Split(action.NewSplitAction(parentShardID, nil))
+		splitDone <- err
+	}()
+	<-selectorEntered
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- shardController.Close()
+	}()
+	<-shardController.ctx.Done()
+	close(releaseSelector)
+
+	select {
+	case err := <-splitDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("split did not finish during controller close")
+	}
+	select {
+	case err := <-closeDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("controller close did not finish")
+	}
+	assert.Nil(t, shardController.currentSplitting)
+}
+
 func TestControllerSerializesSplitMetadataUpdatesOnEventLoop(t *testing.T) {
 	metadata := newTestMetadata(
 		t,

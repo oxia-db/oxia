@@ -105,6 +105,7 @@ func (s *Splitting) Start() {
 	parentMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if !exists || parentMeta.UnsafeBorrow().Split == nil ||
 		len(parentMeta.UnsafeBorrow().Split.ChildShardIds) != 2 {
+		s.ctxCancel()
 		return
 	}
 
@@ -213,13 +214,26 @@ func (s *Splitting) currentPhase() (proto.SplitPhase, bool) {
 }
 
 // updatePhase atomically updates the split phase on both parent and children.
-func (s *Splitting) updatePhase(newPhase proto.SplitPhase) {
+func (s *Splitting) updatePhase(newPhase proto.SplitPhase) error {
+	namespaceFound := false
+	missingShard := int64(-1)
 	s.executeMetadataUpdate(func() {
 		s.metadataStore.UpdateNamespaceStatus(s.namespace, func(ns *proto.NamespaceStatus) bool {
-			changed := false
+			namespaceFound = true
+			missingShard = -1
+			metas := make([]*proto.ShardMetadata, 0, 3)
 			for _, shardId := range []int64{s.shard, s.leftChild, s.rightChild} {
 				meta, exists := ns.Shards[shardId]
 				if !exists || meta.Split == nil {
+					missingShard = shardId
+					return false
+				}
+				metas = append(metas, meta)
+			}
+
+			changed := false
+			for _, meta := range metas {
+				if meta.Split.Phase == newPhase {
 					continue
 				}
 				meta.Split.Phase = newPhase
@@ -228,6 +242,14 @@ func (s *Splitting) updatePhase(newPhase proto.SplitPhase) {
 			return changed
 		})
 	})
+
+	if !namespaceFound {
+		return errors.Errorf("namespace %q not found while updating split phase", s.namespace)
+	}
+	if missingShard >= 0 {
+		return errors.Errorf("split metadata for shard %d not found while updating split phase", missingShard)
+	}
+	return nil
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects
@@ -278,8 +300,7 @@ func (s *Splitting) runBootstrap() error {
 		meta.Split.ChildLeadersAtBootstrap = childLeaders
 	})
 
-	s.updatePhase(proto.SplitPhaseCatchUp)
-	return nil
+	return s.updatePhase(proto.SplitPhaseCatchUp)
 }
 
 // fenceAndElectChild fences a child shard's ensemble and elects a leader.
@@ -414,8 +435,7 @@ func (s *Splitting) runCatchUp() error {
 		}
 		if caughtUp {
 			s.logger.Info("All children caught up")
-			s.updatePhase(proto.SplitPhaseCutover)
-			return nil
+			return s.updatePhase(proto.SplitPhaseCutover)
 		}
 	}
 }
@@ -436,14 +456,18 @@ func (s *Splitting) checkObserverCursorsStale() (bool, error) {
 			slog.Int64("bootstrap-term", parentMeta.Split.ParentTermAtBootstrap),
 			slog.Int64("current-term", parentMeta.Term),
 		)
-		s.updatePhase(proto.SplitPhaseBootstrap)
+		if err := s.updatePhase(proto.SplitPhaseBootstrap); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 
 	// Child leader election: the observer cursor targets the old (dead) leader.
 	// Remove the stale cursor and fall back to Bootstrap to re-add.
 	if s.removeStaleChildObservers(parentMeta) {
-		s.updatePhase(proto.SplitPhaseBootstrap)
+		if err := s.updatePhase(proto.SplitPhaseBootstrap); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 
