@@ -99,7 +99,17 @@ func newSplitTestController(cfg splitTestControllerConfig) *splitTestController 
 		ctxCancel:                  cancel,
 		logger:                     slog.Default(),
 	}
-	sc.startSplitting()
+	sc.currentSplitting = NewSplitting(
+		sc.ctx,
+		sc.logger,
+		sc.namespace,
+		sc.shard,
+		sc.metadataStore,
+		sc.rpc,
+		sc.executeSplitMetadataUpdate,
+		sc.splittingConfig,
+	)
+	sc.currentSplitting.Start()
 	return &splitTestController{controller: sc}
 }
 

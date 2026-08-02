@@ -360,7 +360,16 @@ func TestControllerSerializesSplitMetadataUpdatesOnEventLoop(t *testing.T) {
 		time.Hour,
 	).(*controller)
 	t.Cleanup(func() { assert.NoError(t, shardController.Close()) })
-	splitting := shardController.newSplitting()
+	splitting := NewSplitting(
+		shardController.ctx,
+		shardController.logger,
+		shardController.namespace,
+		shardController.shard,
+		shardController.metadataStore,
+		shardController.rpc,
+		shardController.executeSplitMetadataUpdate,
+		shardController.splittingConfig,
+	)
 	t.Cleanup(splitting.Stop)
 
 	firstEntered := make(chan struct{})

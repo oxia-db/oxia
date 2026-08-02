@@ -196,7 +196,22 @@ func NewController(
 		})
 
 	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
-	s.executeSplitMetadataUpdate = s.enqueueSplitMetadataUpdate
+	s.executeSplitMetadataUpdate = func(update func()) {
+		done := make(chan struct{})
+		select {
+		case <-s.ctx.Done():
+			return
+		case s.splitMetadataOp <- func() {
+			update()
+			close(done)
+		}:
+		}
+
+		select {
+		case <-s.ctx.Done():
+		case <-done:
+		}
+	}
 
 	s.logger.Info("Started shard controller", slog.Any("shard-metadata", shardMetadata))
 
@@ -262,49 +277,6 @@ func (s *controller) Split(splitAction *action.SplitAction) (action.SplitResult,
 	return splitAction.Wait()
 }
 
-func (s *controller) enqueueSplitMetadataUpdate(update func()) {
-	done := make(chan struct{})
-	select {
-	case <-s.ctx.Done():
-		return
-	case s.splitMetadataOp <- func() {
-		update()
-		close(done)
-	}:
-	}
-
-	select {
-	case <-s.ctx.Done():
-	case <-done:
-	}
-}
-
-func (s *controller) newSplitting() *Splitting {
-	return NewSplitting(
-		s.ctx,
-		s.logger,
-		s.namespace,
-		s.shard,
-		s.metadataStore,
-		s.rpc,
-		s.executeSplitMetadataUpdate,
-		s.splittingConfig,
-	)
-}
-
-func (s *controller) replaceCurrentSplitting(splitting *Splitting) {
-	if s.currentSplitting != nil {
-		s.currentSplitting.Stop()
-	}
-	s.currentSplitting = splitting
-}
-
-func (s *controller) startSplitting() {
-	splitting := s.newSplitting()
-	s.replaceCurrentSplitting(splitting)
-	splitting.Start()
-}
-
 func (s *controller) initializeShard(initShardMeta *proto.ShardMetadata) {
 	switch {
 	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
@@ -334,7 +306,17 @@ func (s *controller) initializeShard(initShardMeta *proto.ShardMetadata) {
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
 	if initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIds) == 2 {
 		s.logger.Info("Resuming in-progress shard split")
-		s.startSplitting()
+		s.currentSplitting = NewSplitting(
+			s.ctx,
+			s.logger,
+			s.namespace,
+			s.shard,
+			s.metadataStore,
+			s.rpc,
+			s.executeSplitMetadataUpdate,
+			s.splittingConfig,
+		)
+		s.currentSplitting.Start()
 	}
 }
 
@@ -373,14 +355,26 @@ func (s *controller) run() {
 		case update := <-s.splitMetadataOp:
 			update()
 		case splitAction := <-s.splitOp:
-			splitting := s.newSplitting()
+			splitting := NewSplitting(
+				s.ctx,
+				s.logger,
+				s.namespace,
+				s.shard,
+				s.metadataStore,
+				s.rpc,
+				s.executeSplitMetadataUpdate,
+				s.splittingConfig,
+			)
 			leftChild, rightChild, err := splitting.Initialize(splitAction.SplitPoint)
 			if err != nil {
 				splitting.Stop()
 				splitAction.Error(err)
 				continue
 			}
-			s.replaceCurrentSplitting(splitting)
+			if s.currentSplitting != nil {
+				s.currentSplitting.Stop()
+			}
+			s.currentSplitting = splitting
 			splitting.Start()
 			splitAction.Done(action.SplitResult{
 				LeftChild:  leftChild,
