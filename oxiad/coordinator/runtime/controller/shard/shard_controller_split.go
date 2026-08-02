@@ -154,26 +154,29 @@ func (s *Splitting) runSplitStateMachine() {
 		)
 	})
 
-	// If we exited due to timeout/cancellation and the split isn't done,
-	// abort and clean up.
-	if s.ctx.Err() != nil {
-		phase, exists := s.currentPhase()
-		if !exists {
-			return
-		}
-		switch phase {
-		case proto.SplitPhaseBootstrap, proto.SplitPhaseCatchUp:
+	// A split timeout is an operation failure and can roll back before the
+	// parent fence. Parent-context cancellation means controller shutdown; keep
+	// the persisted state intact so the next controller can resume it.
+	if !errors.Is(s.ctx.Err(), context.DeadlineExceeded) {
+		return
+	}
+
+	phase, exists := s.currentPhase()
+	if !exists {
+		return
+	}
+	switch phase {
+	case proto.SplitPhaseBootstrap, proto.SplitPhaseCatchUp:
+		s.abort()
+	case proto.SplitPhaseCutover:
+		// Cutover is abortable only before the parent is fenced. After the
+		// fence (the point of no return) it is forward-only and is resumed
+		// from the persisted phase, so we must not roll it back here.
+		if !s.parentFenced() {
 			s.abort()
-		case proto.SplitPhaseCutover:
-			// Cutover is abortable only before the parent is fenced. After the
-			// fence (the point of no return) it is forward-only and is resumed
-			// from the persisted phase, so we must not roll it back here.
-			if !s.parentFenced() {
-				s.abort()
-			}
-		default:
-			// No cleanup needed for any other phase.
 		}
+	default:
+		// No cleanup needed for any other phase.
 	}
 }
 
@@ -731,12 +734,12 @@ func (s *Splitting) parentFenced() bool {
 	return parentMeta.Term > parentMeta.Split.ParentTermAtBootstrap
 }
 
-// abort cleans up a failed/timed-out split that has not yet fenced the parent.
+// abort cleans up a timed-out split that has not yet fenced the parent.
 // It unfreezes the parent (if cutover had frozen it), removes observer cursors
 // from the parent, deletes child shards from status, clears the parent's split
 // metadata, and notifies the coordinator.
 func (s *Splitting) abort() {
-	s.logger.Warn("Aborting split due to timeout or cancellation")
+	s.logger.Warn("Aborting split after timeout")
 
 	// Use a fresh context since the split context is cancelled.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

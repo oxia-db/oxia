@@ -128,7 +128,7 @@ update to change the parent split metadata.
 | Cutover before parent fence | Unfreeze the parent, then retry or abort safely. |
 | Cutover after parent fence | Resume forward; never abort to the parent. |
 | Coordinator restart | Recreate controllers from persisted metadata and resume the parent-owned state machine. |
-| Runtime shutdown | Cancel the split, stop the event loop, then release the final split state. |
+| Runtime shutdown | Cancel in-memory work without aborting persisted metadata, stop the event loop, and resume from metadata after restart. |
 | Missing or conflicting metadata | Stop the transition and return a specific error without advancing the parent phase. |
 
 ## Verification Plan
@@ -150,7 +150,8 @@ update to change the parent split metadata.
 - shutdown during split initialization does not race or retain `currentSplitting`
 - a persisted split without configured dependencies does not start
 - a parent or child election during CatchUp returns the split to Bootstrap
-- cancellation before the parent fence removes observers and child metadata
+- a split timeout before the parent fence removes observers and child metadata
+- controller shutdown preserves parent and child split metadata for recovery
 
 ### Fault-Injection Matrix
 

@@ -718,6 +718,32 @@ func TestShardControllerSplit_PhaseTransitions(t *testing.T) {
 
 // --- Abort / Timeout Tests ---
 
+func TestShardControllerSplit_ShutdownPreservesSplitMetadata(t *testing.T) {
+	_, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
+
+	sc := newSplitTestController(splitTestControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      statusRes,
+		RpcProvider:   mockutils.NewRpcProvider(),
+		EventListener: listener,
+		SplitTimeout:  time.Hour,
+	})
+
+	sc.Close()
+
+	status := loadTestStatus(t, statusRes)
+	ns := status.Namespaces[constant.DefaultNamespace]
+	require.NotNil(t, ns.Shards[0].Split)
+	assert.Contains(t, ns.Shards, int64(1))
+	assert.Contains(t, ns.Shards, int64(2))
+	select {
+	case <-listener.aborts:
+		t.Fatal("controller shutdown must not abort the persisted split")
+	default:
+	}
+}
+
 func TestShardControllerSplit_TimeoutDuringBootstrap(t *testing.T) {
 	// Don't queue any RPC responses -- bootstrap will hang on fenceEnsemble.
 	_, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
