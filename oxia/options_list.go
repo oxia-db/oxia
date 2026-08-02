@@ -52,8 +52,9 @@ func (u *useIndex) applyGet(opts *getOptions) {
 	opts.secondaryIndexName = &u.indexName
 }
 
-// UseIndex let the users specify a different index to follow for the
-// Note: The returned list will contain they primary keys of the records.
+// UseIndex selects the secondary index used to interpret keys and key ranges
+// in Get, List, and RangeScan operations. Index names must not contain '/'.
+// Returned record keys remain the corresponding primary keys.
 func UseIndex(indexName string) ListOption {
 	return &useIndex{indexName}
 }
