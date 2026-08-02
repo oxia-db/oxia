@@ -23,7 +23,6 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
-	gproto "google.golang.org/protobuf/proto"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
@@ -75,18 +74,7 @@ func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool 
 	return false
 }
 
-func (m *mockMetadata) UpdateNamespaceStatus(
-	namespace string,
-	update func(*proto.NamespaceStatus) bool,
-) bool {
-	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
-	status, exists := cloned.Namespaces[namespace]
-	if !exists || !update(status) {
-		return false
-	}
-	m.status = cloned
-	return true
-}
+func (*mockMetadata) UpdateNamespaceStatus(string, *proto.NamespaceStatus) {}
 
 func (m *mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
 	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
@@ -129,6 +117,20 @@ func (m *mockMetadata) UpdateShardStatus(namespace string, shard int64, shardMet
 }
 
 func (*mockMetadata) DeleteShardStatus(string, int64) {}
+
+func (*mockMetadata) CreateShardSplit(
+	string,
+	int64,
+	*proto.ShardMetadata,
+	*proto.SplitMetadata,
+	map[int64]*proto.ShardMetadata,
+) error {
+	return nil
+}
+
+func (*mockMetadata) UpdateShardSplitPhase(string, int64, proto.SplitPhase) error {
+	return nil
+}
 
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 

@@ -117,6 +117,37 @@ func TestSplittingStartCancelsContextWhenMetadataIsMissing(t *testing.T) {
 		metadata,
 		mockutils.NewRpcProvider(),
 		func(update func()) { update() },
+		SplitterConfig{EventListener: newMockShardSplitEventListener()},
+	)
+	t.Cleanup(splitting.Stop)
+
+	splitting.Start()
+
+	assert.ErrorIs(t, splitting.ctx.Err(), context.Canceled)
+}
+
+func TestSplittingStartCancelsContextWhenNotConfigured(t *testing.T) {
+	metadata := newTestMetadata(
+		t,
+		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		nil,
+	)
+	parentShard := metadata.ReserveShardIDs(3)
+	parentMeta := splitParentMetadata()
+	parentMeta.Split = &proto.SplitMetadata{
+		Phase:         proto.SplitPhaseBootstrap,
+		ChildShardIds: []int64{parentShard + 1, parentShard + 2},
+	}
+	storeTestShardMetadata(t, metadata, namespaceConfig.Name, parentShard, namespaceConfig, parentMeta)
+
+	splitting := NewSplitting(
+		t.Context(),
+		slog.Default(),
+		namespaceConfig.Name,
+		parentShard,
+		metadata,
+		mockutils.NewRpcProvider(),
+		func(update func()) { update() },
 		SplitterConfig{},
 	)
 	t.Cleanup(splitting.Stop)

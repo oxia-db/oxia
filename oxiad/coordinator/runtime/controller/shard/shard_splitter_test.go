@@ -117,6 +117,57 @@ func TestSplitterMergesChildrenIntoLatestNamespaceStatus(t *testing.T) {
 	}
 }
 
+func TestSplitterRejectsParentChangedBeforeMetadataCommit(t *testing.T) {
+	metadata := newTestMetadata(
+		t,
+		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		nil,
+	)
+	parentShardID := metadata.ReserveShardIDs(1)
+	storeTestShardMetadata(
+		t,
+		metadata,
+		constant.DefaultNamespace,
+		parentShardID,
+		namespaceConfig,
+		splitParentMetadata(),
+	)
+
+	selectorCalls := 0
+	selector := func(
+		_ string,
+		_ int64,
+		_ map[string]commonobject.Borrowed[*proto.NamespaceStatus],
+	) ([]*proto.DataServerIdentity, error) {
+		selectorCalls++
+		if selectorCalls == 2 {
+			parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, parentShardID)
+			parent.Term++
+			metadata.UpdateShardStatus(constant.DefaultNamespace, parentShardID, parent)
+		}
+		return []*proto.DataServerIdentity{ls1, ls2, ls3}, nil
+	}
+	splitter := NewSplitter(
+		constant.DefaultNamespace,
+		parentShardID,
+		metadata,
+		SplitterConfig{
+			EnsembleSelector: selector,
+			EventListener:    newMockShardSplitEventListener(),
+		},
+	)
+
+	_, _, err := splitter.Split(nil)
+
+	require.ErrorContains(t, err, "changed while preparing the split")
+	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, parentShardID)
+	assert.Equal(t, int64(2), parent.Term)
+	assert.Nil(t, parent.Split)
+	namespace, exists := metadata.GetNamespaceStatus(constant.DefaultNamespace)
+	require.True(t, exists)
+	assert.Len(t, namespace.UnsafeBorrow().Shards, 1)
+}
+
 func TestControllerSerializesSplitActionsOnEventLoop(t *testing.T) {
 	metadata := newTestMetadata(
 		t,

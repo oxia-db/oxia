@@ -103,7 +103,7 @@ func (s *Splitter) Split(splitPoint *uint32) (leftChildID int64, rightChildID in
 		return 0, 0, errors.Errorf(
 			"shard %d is not in steady state (status=%s)",
 			s.parentShardID,
-			parentMeta.GetStatus(),
+			parentMeta.GetStatusOrDefault().String(),
 		)
 	}
 	if parentMeta.Split != nil {
@@ -171,23 +171,17 @@ func (s *Splitter) Split(splitPoint *uint32) (leftChildID int64, rightChildID in
 		rightEnsemble,
 	)
 
-	parentExists := true
-	updated := s.metadata.UpdateNamespaceStatus(s.namespace, func(current *proto.NamespaceStatus) bool {
-		currentParent, exists := current.Shards[s.parentShardID]
-		if !exists {
-			parentExists = false
-			return false
-		}
-		currentParent.Split = splitMetadata
-		current.Shards[leftChildID] = leftChildMetadata
-		current.Shards[rightChildID] = rightChildMetadata
-		return true
-	})
-	if !updated {
-		if !parentExists {
-			return 0, 0, errors.Errorf("shard %d not found in namespace %q", s.parentShardID, s.namespace)
-		}
-		return 0, 0, errors.Errorf("namespace %q not found", s.namespace)
+	if err := s.metadata.CreateShardSplit(
+		s.namespace,
+		s.parentShardID,
+		parentMeta,
+		splitMetadata,
+		map[int64]*proto.ShardMetadata{
+			leftChildID:  leftChildMetadata,
+			rightChildID: rightChildMetadata,
+		},
+	); err != nil {
+		return 0, 0, err
 	}
 	s.logger.Info(
 		"Split initiated",

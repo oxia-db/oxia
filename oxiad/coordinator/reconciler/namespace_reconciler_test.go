@@ -119,17 +119,13 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	return true
 }
 
-func (m *mockNamespaceMetadata) UpdateNamespaceStatus(
-	name string,
-	update func(*proto.NamespaceStatus) bool,
-) bool {
+func (m *mockNamespaceMetadata) UpdateNamespaceStatus(name string, status *proto.NamespaceStatus) {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
-	status, exists := cloned.Namespaces[name]
-	if !exists || !update(status) {
-		return false
+	if _, exists := cloned.Namespaces[name]; !exists {
+		return
 	}
+	cloned.Namespaces[name] = gproto.Clone(status).(*proto.NamespaceStatus)
 	m.status = cloned
-	return true
 }
 
 func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
@@ -186,6 +182,20 @@ func (m *mockNamespaceMetadata) UpdateShardStatus(namespace string, shard int64,
 }
 
 func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) {}
+
+func (*mockNamespaceMetadata) CreateShardSplit(
+	string,
+	int64,
+	*proto.ShardMetadata,
+	*proto.SplitMetadata,
+	map[int64]*proto.ShardMetadata,
+) error {
+	return nil
+}
+
+func (*mockNamespaceMetadata) UpdateShardSplitPhase(string, int64, proto.SplitPhase) error {
+	return nil
+}
 
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {
 	return nil

@@ -101,6 +101,11 @@ func (s *Splitting) Start() {
 	if !s.started.CompareAndSwap(false, true) {
 		panic("bug! the splitting has been started")
 	}
+	if s.executeMetadataUpdate == nil || s.eventListener == nil {
+		s.logger.Error("Shard splitting is not configured")
+		s.ctxCancel()
+		return
+	}
 
 	parentMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if !exists || parentMeta.UnsafeBorrow().Split == nil ||
@@ -215,41 +220,19 @@ func (s *Splitting) currentPhase() (proto.SplitPhase, bool) {
 
 // updatePhase atomically updates the split phase on both parent and children.
 func (s *Splitting) updatePhase(newPhase proto.SplitPhase) error {
-	namespaceFound := false
-	missingShard := int64(-1)
+	executed := false
+	var updateErr error
 	s.executeMetadataUpdate(func() {
-		s.metadataStore.UpdateNamespaceStatus(s.namespace, func(ns *proto.NamespaceStatus) bool {
-			namespaceFound = true
-			missingShard = -1
-			metas := make([]*proto.ShardMetadata, 0, 3)
-			for _, shardId := range []int64{s.shard, s.leftChild, s.rightChild} {
-				meta, exists := ns.Shards[shardId]
-				if !exists || meta.Split == nil {
-					missingShard = shardId
-					return false
-				}
-				metas = append(metas, meta)
-			}
-
-			changed := false
-			for _, meta := range metas {
-				if meta.Split.Phase == newPhase {
-					continue
-				}
-				meta.Split.Phase = newPhase
-				changed = true
-			}
-			return changed
-		})
+		executed = true
+		updateErr = s.metadataStore.UpdateShardSplitPhase(s.namespace, s.shard, newPhase)
 	})
-
-	if !namespaceFound {
-		return errors.Errorf("namespace %q not found while updating split phase", s.namespace)
+	if !executed {
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
+		return errors.New("split phase metadata update was not executed")
 	}
-	if missingShard >= 0 {
-		return errors.Errorf("split metadata for shard %d not found while updating split phase", missingShard)
-	}
-	return nil
+	return updateErr
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects

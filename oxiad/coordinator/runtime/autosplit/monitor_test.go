@@ -558,9 +558,10 @@ func TestMonitor_LeaderChangeResetsThroughput(t *testing.T) {
 
 	// Leader moves to B, whose cumulative counters are much higher. Age the
 	// sample so elapsed > 0.
-	metadata.UpdateNamespaceStatus("default", func(status *proto.NamespaceStatus) bool {
-		status.Shards[0] = steadyShard(leaderB, 0, 4294967295)
-		return true
+	metadata.UpdateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leaderB, 0, 4294967295),
+		},
 	})
 	m.mu.Lock()
 	m.trackers[shardKey{namespace: "default", shardId: 0}].lastSampleTime = time.Now().Add(-time.Second)

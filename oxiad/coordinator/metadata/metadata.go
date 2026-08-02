@@ -48,17 +48,20 @@ type Metadata interface {
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
 	ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
-	// UpdateNamespaceStatus applies update to the latest namespace status while
-	// holding the metadata write lock. The callback can run multiple times while
-	// the store write is retried, so it must be idempotent, have no external side
-	// effects, and must not call Metadata methods. It returns whether it changed
-	// the status.
-	UpdateNamespaceStatus(name string, update func(*commonproto.NamespaceStatus) bool) bool
+	UpdateNamespaceStatus(name string, status *commonproto.NamespaceStatus)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 
 	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool)
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
 	DeleteShardStatus(namespace string, shard int64)
+	CreateShardSplit(
+		namespace string,
+		parentShard int64,
+		expectedParent *commonproto.ShardMetadata,
+		split *commonproto.SplitMetadata,
+		children map[int64]*commonproto.ShardMetadata,
+	) error
+	UpdateShardSplitPhase(namespace string, parentShard int64, phase commonproto.SplitPhase) error
 
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
 	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]]
@@ -277,23 +280,16 @@ func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject
 	return commonobject.Borrow(namespaceStatus), true
 }
 
-func (m *coordinatorMetadata) UpdateNamespaceStatus(
-	name string,
-	update func(*commonproto.NamespaceStatus) bool,
-) bool {
+func (m *coordinatorMetadata) UpdateNamespaceStatus(name string, namespaceStatus *commonproto.NamespaceStatus) {
 	namespaceExists := true
-	updated := false
-	err := backoff.RetryNotify(func() error {
-		namespaceExists = true
-		updated = false
+	_ = backoff.RetryNotify(func() error {
 		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
-			namespaceStatus, exists := clusterStatus.Namespaces[name]
-			if !exists {
+			if _, exists := clusterStatus.Namespaces[name]; !exists {
 				namespaceExists = false
 				return clusterStatus, false
 			}
-			updated = update(namespaceStatus)
-			return clusterStatus, updated
+			clusterStatus.Namespaces[name] = namespaceStatus
+			return clusterStatus, true
 		})
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
@@ -302,13 +298,9 @@ func (m *coordinatorMetadata) UpdateNamespaceStatus(
 			slog.Duration("retry-after", duration),
 		)
 	})
-	if err != nil {
-		return false
-	}
 	if !namespaceExists {
 		m.logger.Warn("failed to update namespace status: namespace does not exist", slog.String("namespace", name))
 	}
-	return updated
 }
 
 func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus] {
@@ -350,6 +342,195 @@ func (m *coordinatorMetadata) GetShardStatus(namespace string, shard int64) (com
 		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false
 	}
 	return commonobject.Borrow(shardStatus), true
+}
+
+func (m *coordinatorMetadata) CreateShardSplit(
+	namespace string,
+	parentShard int64,
+	expectedParent *commonproto.ShardMetadata,
+	split *commonproto.SplitMetadata,
+	children map[int64]*commonproto.ShardMetadata,
+) error {
+	if expectedParent == nil {
+		return errors.New("expected parent shard metadata is required")
+	}
+	clonedParent := gproto.Clone(expectedParent).(*commonproto.ShardMetadata) //nolint:revive
+	clonedSplit, clonedChildren, err := cloneShardSplit(split, children)
+	if err != nil {
+		return err
+	}
+
+	var updateErr error
+	err = backoff.RetryNotify(func() error {
+		updateErr = nil
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			var changed bool
+			changed, updateErr = applyShardSplit(
+				clusterStatus,
+				namespace,
+				parentShard,
+				clonedParent,
+				clonedSplit,
+				clonedChildren,
+			)
+			return clusterStatus, changed
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to create shard split",
+			slog.Any("error", err),
+			slog.String("namespace", namespace),
+			slog.Int64("parent-shard", parentShard),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return err
+	}
+	return updateErr
+}
+
+func cloneShardSplit(
+	split *commonproto.SplitMetadata,
+	children map[int64]*commonproto.ShardMetadata,
+) (*commonproto.SplitMetadata, map[int64]*commonproto.ShardMetadata, error) {
+	if split == nil {
+		return nil, nil, errors.New("split metadata is required")
+	}
+
+	expectedChildren := make(map[int64]struct{}, len(split.ChildShardIds))
+	for _, childShard := range split.ChildShardIds {
+		expectedChildren[childShard] = struct{}{}
+	}
+	if len(expectedChildren) != 2 || len(children) != 2 {
+		return nil, nil, errors.New("a shard split requires two distinct children")
+	}
+
+	clonedChildren := make(map[int64]*commonproto.ShardMetadata, len(children))
+	for childShard, childMetadata := range children {
+		if _, expected := expectedChildren[childShard]; !expected {
+			return nil, nil, fmt.Errorf("shard %d is not listed in the split metadata", childShard)
+		}
+		if childMetadata == nil {
+			return nil, nil, fmt.Errorf("metadata for child shard %d is required", childShard)
+		}
+		clonedChildren[childShard] = gproto.Clone(childMetadata).(*commonproto.ShardMetadata) //nolint:revive
+	}
+	clonedSplit := gproto.Clone(split).(*commonproto.SplitMetadata) //nolint:revive
+	return clonedSplit, clonedChildren, nil
+}
+
+func applyShardSplit(
+	clusterStatus *commonproto.ClusterStatus,
+	namespace string,
+	parentShard int64,
+	expectedParent *commonproto.ShardMetadata,
+	split *commonproto.SplitMetadata,
+	children map[int64]*commonproto.ShardMetadata,
+) (bool, error) {
+	namespaceStatus, exists := clusterStatus.Namespaces[namespace]
+	if !exists {
+		return false, fmt.Errorf("namespace %q not found", namespace)
+	}
+
+	parentMetadata, exists := namespaceStatus.Shards[parentShard]
+	if !exists {
+		return false, fmt.Errorf("parent shard %d not found in namespace %q", parentShard, namespace)
+	}
+	if parentMetadata.Split != nil {
+		if !gproto.Equal(parentMetadata.Split, split) {
+			return false, fmt.Errorf("shard %d already has an active split", parentShard)
+		}
+		for childShard, childMetadata := range children {
+			persistedChild, exists := namespaceStatus.Shards[childShard]
+			if !exists || !gproto.Equal(persistedChild, childMetadata) {
+				return false, fmt.Errorf("persisted metadata for child shard %d does not match the split", childShard)
+			}
+		}
+		return false, nil
+	}
+	if !gproto.Equal(parentMetadata, expectedParent) {
+		return false, fmt.Errorf("parent shard %d changed while preparing the split", parentShard)
+	}
+	for childShard := range children {
+		if _, exists := namespaceStatus.Shards[childShard]; exists {
+			return false, fmt.Errorf("child shard %d already exists in namespace %q", childShard, namespace)
+		}
+	}
+
+	parentMetadata.Split = gproto.Clone(split).(*commonproto.SplitMetadata) //nolint:revive
+	for childShard, childMetadata := range children {
+		namespaceStatus.Shards[childShard] = gproto.Clone(childMetadata).(*commonproto.ShardMetadata) //nolint:revive
+	}
+	return true, nil
+}
+
+func (m *coordinatorMetadata) UpdateShardSplitPhase(
+	namespace string,
+	parentShard int64,
+	phase commonproto.SplitPhase,
+) error {
+	var updateErr error
+	err := backoff.RetryNotify(func() error {
+		updateErr = nil
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			var changed bool
+			changed, updateErr = applyShardSplitPhase(clusterStatus, namespace, parentShard, phase)
+			return clusterStatus, changed
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to update shard split phase",
+			slog.Any("error", err),
+			slog.String("namespace", namespace),
+			slog.Int64("parent-shard", parentShard),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return err
+	}
+	return updateErr
+}
+
+func applyShardSplitPhase(
+	clusterStatus *commonproto.ClusterStatus,
+	namespace string,
+	parentShard int64,
+	phase commonproto.SplitPhase,
+) (bool, error) {
+	namespaceStatus, exists := clusterStatus.Namespaces[namespace]
+	if !exists {
+		return false, fmt.Errorf("namespace %q not found while updating split phase", namespace)
+	}
+
+	parentMetadata, exists := namespaceStatus.Shards[parentShard]
+	if !exists || parentMetadata.Split == nil {
+		return false, fmt.Errorf("split metadata for shard %d not found while updating split phase", parentShard)
+	}
+	childShards := parentMetadata.Split.ChildShardIds
+	if len(childShards) != 2 || childShards[0] == childShards[1] {
+		return false, fmt.Errorf("split metadata for shard %d does not contain two distinct children", parentShard)
+	}
+
+	shardMetadata := []*commonproto.ShardMetadata{parentMetadata}
+	for _, childShard := range childShards {
+		childMetadata, exists := namespaceStatus.Shards[childShard]
+		if !exists || childMetadata.Split == nil {
+			return false, fmt.Errorf("split metadata for shard %d not found while updating split phase", childShard)
+		}
+		shardMetadata = append(shardMetadata, childMetadata)
+	}
+
+	changed := false
+	for _, metadata := range shardMetadata {
+		if metadata.Split.Phase == phase {
+			continue
+		}
+		metadata.Split.Phase = phase
+		changed = true
+	}
+	return changed, nil
 }
 
 func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
