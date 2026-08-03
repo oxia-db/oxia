@@ -86,18 +86,33 @@ type splitTestController struct {
 	*controller
 }
 
+func newTestSplitMetadataOp(ctx context.Context) chan func() {
+	op := make(chan func(), chanBufferSize)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case update := <-op:
+				update()
+			}
+		}
+	}()
+	return op
+}
+
 func newSplitTestController(cfg splitTestControllerConfig) *splitTestController {
 	ctx, cancel := context.WithCancel(context.Background())
 	sc := &controller{
-		namespace:                  cfg.Namespace,
-		shard:                      cfg.ParentShardId,
-		metadataStore:              cfg.Metadata,
-		rpc:                        cfg.RpcProvider,
-		splittingConfig:            SplitterConfig{EventListener: cfg.EventListener, SplitTimeout: cfg.SplitTimeout},
-		executeSplitMetadataUpdate: func(update func()) { update() },
-		ctx:                        ctx,
-		ctxCancel:                  cancel,
-		logger:                     slog.Default(),
+		namespace:       cfg.Namespace,
+		shard:           cfg.ParentShardId,
+		metadataStore:   cfg.Metadata,
+		rpc:             cfg.RpcProvider,
+		splittingConfig: SplitterConfig{EventListener: cfg.EventListener, SplitTimeout: cfg.SplitTimeout},
+		splitMetadataOp: newTestSplitMetadataOp(ctx),
+		ctx:             ctx,
+		ctxCancel:       cancel,
+		logger:          slog.Default(),
 	}
 	sc.currentSplitting = NewSplitting(
 		sc.ctx,
@@ -106,7 +121,7 @@ func newSplitTestController(cfg splitTestControllerConfig) *splitTestController 
 		sc.shard,
 		sc.metadataStore,
 		sc.rpc,
-		sc.executeSplitMetadataUpdate,
+		sc.splitMetadataOp,
 		sc.splittingConfig,
 	)
 	sc.currentSplitting.Start()
@@ -126,7 +141,7 @@ func TestSplittingStartCancelsContextWhenMetadataIsMissing(t *testing.T) {
 		1,
 		metadata,
 		mockutils.NewRpcProvider(),
-		func(update func()) { update() },
+		newTestSplitMetadataOp(t.Context()),
 		SplitterConfig{EventListener: newMockShardSplitEventListener()},
 	)
 	t.Cleanup(splitting.Stop)
@@ -157,7 +172,7 @@ func TestSplittingStartCancelsContextWhenNotConfigured(t *testing.T) {
 		parentShard,
 		metadata,
 		mockutils.NewRpcProvider(),
-		func(update func()) { update() },
+		newTestSplitMetadataOp(t.Context()),
 		SplitterConfig{},
 	)
 	t.Cleanup(splitting.Stop)
@@ -201,7 +216,7 @@ func TestSplittingUpdatePhaseOnlyUpdatesParent(t *testing.T) {
 		parentShard,
 		metadata,
 		mockutils.NewRpcProvider(),
-		func(update func()) { update() },
+		newTestSplitMetadataOp(t.Context()),
 		SplitterConfig{},
 	)
 	splitting.leftChild = leftChild
@@ -240,7 +255,7 @@ func TestSplittingUpdatePhaseRequiresParentSplitMetadata(t *testing.T) {
 		parentShard,
 		metadata,
 		mockutils.NewRpcProvider(),
-		func(update func()) { update() },
+		newTestSplitMetadataOp(t.Context()),
 		SplitterConfig{},
 	)
 	t.Cleanup(splitting.Stop)

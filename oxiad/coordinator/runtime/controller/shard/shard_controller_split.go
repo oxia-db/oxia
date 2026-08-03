@@ -47,11 +47,12 @@ type Splitting struct {
 	started   atomic.Bool
 
 	// borrowed resources
-	metadataStore         coordmetadata.Metadata
-	rpc                   rpc.Provider
-	eventListener         controllerapi.ShardSplitEventListener
-	splitter              *Splitter
-	executeMetadataUpdate func(func())
+	metadataStore    coordmetadata.Metadata
+	rpc              rpc.Provider
+	eventListener    controllerapi.ShardSplitEventListener
+	splitter         *Splitter
+	metadataUpdateOp chan<- func()
+	eventLoopCtx     context.Context
 
 	// owned state
 	namespace  string
@@ -68,7 +69,7 @@ func NewSplitting(
 	shard int64,
 	metadataStore coordmetadata.Metadata,
 	rpcProvider rpc.Provider,
-	executeMetadataUpdate func(func()),
+	metadataUpdateOp chan<- func(),
 	config SplitterConfig,
 ) *Splitting {
 	timeout := config.SplitTimeout
@@ -77,16 +78,17 @@ func NewSplitting(
 	}
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	return &Splitting{
-		logger:                logger,
-		ctx:                   ctx,
-		ctxCancel:             cancel,
-		metadataStore:         metadataStore,
-		rpc:                   rpcProvider,
-		eventListener:         config.EventListener,
-		splitter:              NewSplitter(namespace, shard, metadataStore, config),
-		executeMetadataUpdate: executeMetadataUpdate,
-		namespace:             namespace,
-		shard:                 shard,
+		logger:           logger,
+		ctx:              ctx,
+		ctxCancel:        cancel,
+		metadataStore:    metadataStore,
+		rpc:              rpcProvider,
+		eventListener:    config.EventListener,
+		splitter:         NewSplitter(namespace, shard, metadataStore, config),
+		metadataUpdateOp: metadataUpdateOp,
+		eventLoopCtx:     parentCtx,
+		namespace:        namespace,
+		shard:            shard,
 	}
 }
 
@@ -95,13 +97,13 @@ func (s *Splitting) Initialize(splitPoint *uint32) (leftChild int64, rightChild 
 	return s.splitter.Split(splitPoint)
 }
 
-// Start resumes the split from its persisted phase. RPC work and split metadata
-// mutations run asynchronously in the split state machine goroutine.
+// Start resumes the split from its persisted phase. RPC work runs in the split
+// state machine goroutine; metadata mutations are submitted to the owner event loop.
 func (s *Splitting) Start() {
 	if !s.started.CompareAndSwap(false, true) {
 		panic("bug! the splitting has been started")
 	}
-	if s.executeMetadataUpdate == nil || s.eventListener == nil {
+	if s.metadataUpdateOp == nil || s.eventListener == nil {
 		s.logger.Error("Shard splitting is not configured")
 		s.ctxCancel()
 		return
@@ -224,31 +226,35 @@ func (s *Splitting) currentPhase() (proto.SplitPhase, bool) {
 // updatePhase persists the state machine phase on the parent shard. Child
 // controllers only use the presence of split metadata to remain inactive.
 func (s *Splitting) updatePhase(newPhase proto.SplitPhase) error {
-	executed := false
-	var updateErr error
-	s.executeMetadataUpdate(func() {
-		executed = true
+	result := make(chan error, 1)
+	select {
+	case <-s.eventLoopCtx.Done():
+		return s.eventLoopCtx.Err()
+	case s.metadataUpdateOp <- func() {
 		parentMeta := s.loadParentMeta()
 		if parentMeta == nil || parentMeta.Split == nil {
-			updateErr = errors.Errorf(
+			result <- errors.Errorf(
 				"split metadata for shard %d not found while updating split phase",
 				s.shard,
 			)
 			return
 		}
 		if parentMeta.Split.Phase == newPhase {
+			result <- nil
 			return
 		}
 		parentMeta.Split.Phase = newPhase
 		s.metadataStore.UpdateShardStatus(s.namespace, s.shard, parentMeta)
-	})
-	if !executed {
-		if err := s.ctx.Err(); err != nil {
-			return err
-		}
-		return errors.New("split phase metadata update was not executed")
+		result <- nil
+	}:
 	}
-	return updateErr
+
+	select {
+	case <-s.eventLoopCtx.Done():
+		return s.eventLoopCtx.Err()
+	case err := <-result:
+		return err
+	}
 }
 
 // runBootstrap validates preconditions, fences child ensemble members, elects
@@ -778,11 +784,22 @@ func (s *Splitting) abort() {
 	s.unfreezeParentBestEffort()
 
 	// Delete child shards from status.
-	s.executeMetadataUpdate(func() {
+	childrenDeleted := make(chan struct{})
+	select {
+	case <-s.eventLoopCtx.Done():
+		return
+	case s.metadataUpdateOp <- func() {
 		for _, childId := range []int64{s.leftChild, s.rightChild} {
 			s.metadataStore.DeleteShardStatus(s.namespace, childId)
 		}
-	})
+		close(childrenDeleted)
+	}:
+	}
+	select {
+	case <-s.eventLoopCtx.Done():
+		return
+	case <-childrenDeleted:
+	}
 
 	// Clear parent split metadata.
 	s.updateParentMeta(func(meta *proto.ShardMetadata) {
@@ -818,7 +835,12 @@ func (s *Splitting) updateChildMeta(childId int64, fn func(meta *proto.ShardMeta
 }
 
 func (s *Splitting) updateShardMeta(shardId int64, fn func(meta *proto.ShardMetadata)) {
-	s.executeMetadataUpdate(func() {
+	done := make(chan struct{})
+	select {
+	case <-s.eventLoopCtx.Done():
+		return
+	case s.metadataUpdateOp <- func() {
+		defer close(done)
 		ns, exists := s.metadataStore.GetNamespaceStatus(s.namespace)
 		if !exists {
 			s.logger.Warn("namespace status not found while updating shard metadata",
@@ -836,7 +858,12 @@ func (s *Splitting) updateShardMeta(shardId int64, fn func(meta *proto.ShardMeta
 		cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
 		fn(cloned)
 		s.metadataStore.UpdateShardStatus(s.namespace, shardId, cloned)
-	})
+	}:
+	}
+	select {
+	case <-s.eventLoopCtx.Done():
+	case <-done:
+	}
 }
 
 // fenceEnsemble sends NewTerm to all ensemble members and returns the

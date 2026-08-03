@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/constant"
 	commonobject "github.com/oxia-db/oxia/common/object"
@@ -367,7 +368,7 @@ func TestControllerSerializesSplitMetadataUpdatesOnEventLoop(t *testing.T) {
 		shardController.shard,
 		shardController.metadataStore,
 		shardController.rpc,
-		shardController.executeSplitMetadataUpdate,
+		shardController.splitMetadataOp,
 		shardController.splittingConfig,
 	)
 	t.Cleanup(splitting.Stop)
@@ -382,29 +383,32 @@ func TestControllerSerializesSplitMetadataUpdatesOnEventLoop(t *testing.T) {
 		}
 	})
 	firstDone := make(chan struct{})
-	go func() {
-		splitting.executeMetadataUpdate(func() {
-			close(firstEntered)
-			<-releaseFirst
-		})
+	shardController.splitMetadataOp <- func() {
+		borrowedParent, exists := metadata.GetShardStatus(constant.DefaultNamespace, parentShardID)
+		if !exists {
+			panic("parent shard metadata is missing")
+		}
+		parentMeta := gproto.Clone(borrowedParent.UnsafeBorrow()).(*proto.ShardMetadata)
+		parentMeta.Split = &proto.SplitMetadata{Phase: proto.SplitPhaseBootstrap}
+		metadata.UpdateShardStatus(constant.DefaultNamespace, parentShardID, parentMeta)
+		close(firstEntered)
+		<-releaseFirst
 		close(firstDone)
-	}()
+	}
 	<-firstEntered
 
-	secondEntered := make(chan struct{})
-	secondDone := make(chan struct{})
+	phaseUpdated := make(chan error, 1)
 	go func() {
-		splitting.executeMetadataUpdate(func() {
-			close(secondEntered)
-		})
-		close(secondDone)
+		phaseUpdated <- splitting.updatePhase(proto.SplitPhaseCatchUp)
 	}()
 
 	select {
-	case <-secondEntered:
-		t.Fatal("second metadata update bypassed the shard controller event loop")
+	case err := <-phaseUpdated:
+		t.Fatalf("split phase update bypassed the shard controller event loop: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
+	assert.Equal(t, proto.SplitPhaseBootstrap,
+		requireShardMetadata(t, metadata, constant.DefaultNamespace, parentShardID).Split.Phase)
 
 	close(releaseFirst)
 	select {
@@ -413,8 +417,11 @@ func TestControllerSerializesSplitMetadataUpdatesOnEventLoop(t *testing.T) {
 		t.Fatal("first metadata update did not complete")
 	}
 	select {
-	case <-secondDone:
+	case err := <-phaseUpdated:
+		require.NoError(t, err)
 	case <-time.After(time.Second):
-		t.Fatal("second metadata update did not complete")
+		t.Fatal("split phase update did not complete")
 	}
+	assert.Equal(t, proto.SplitPhaseCatchUp,
+		requireShardMetadata(t, metadata, constant.DefaultNamespace, parentShardID).Split.Phase)
 }

@@ -114,9 +114,8 @@ type controller struct {
 	periodicTasksInterval time.Duration
 	logger                *slog.Logger
 
-	currentElection            *Election
-	currentSplitting           *Splitting
-	executeSplitMetadataUpdate func(func())
+	currentElection  *Election
+	currentSplitting *Splitting
 
 	leaderElectionLatency metric.LatencyHistogram
 	newTermQuorumLatency  metric.LatencyHistogram
@@ -196,22 +195,6 @@ func NewController(
 		})
 
 	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
-	s.executeSplitMetadataUpdate = func(update func()) {
-		done := make(chan struct{})
-		select {
-		case <-s.ctx.Done():
-			return
-		case s.splitMetadataOp <- func() {
-			update()
-			close(done)
-		}:
-		}
-
-		select {
-		case <-s.ctx.Done():
-		case <-done:
-		}
-	}
 
 	s.logger.Info("Started shard controller", slog.Any("shard-metadata", shardMetadata))
 
@@ -313,7 +296,7 @@ func (s *controller) initializeShard(initShardMeta *proto.ShardMetadata) {
 			s.shard,
 			s.metadataStore,
 			s.rpc,
-			s.executeSplitMetadataUpdate,
+			s.splitMetadataOp,
 			s.splittingConfig,
 		)
 		s.currentSplitting.Start()
@@ -362,7 +345,7 @@ func (s *controller) run() {
 				s.shard,
 				s.metadataStore,
 				s.rpc,
-				s.executeSplitMetadataUpdate,
+				s.splitMetadataOp,
 				s.splittingConfig,
 			)
 			leftChild, rightChild, err := splitting.Initialize(splitAction.SplitPoint)
