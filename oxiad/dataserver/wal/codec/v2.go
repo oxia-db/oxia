@@ -102,7 +102,7 @@ func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 	headerEndOffset := uint64(startFileOffset) + uint64(v.HeaderSize)
 	if headerEndOffset > bufSize {
 		return payloadSize, previousCrc, payloadCrc,
-			errors.Wrapf(ErrOffsetOutOfBounds, "expected payload size: %d. actual buf size: %d ",
+			errors.Wrapf(ErrOffsetOutOfBounds, "expected header end offset: %d. actual buf size: %d ",
 				headerEndOffset, bufSize)
 	}
 
@@ -120,7 +120,8 @@ func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 	actualBufSize := bufSize - uint64(startFileOffset)
 	if expectSize > actualBufSize {
 		return payloadSize, previousCrc, payloadCrc,
-			errors.Wrapf(ErrOffsetOutOfBounds, "expected payload size: %d. actual buf size: %d ", expectSize, bufSize)
+			errors.Wrapf(ErrOffsetOutOfBounds,
+				"expected record size: %d. actual remaining buf size: %d ", expectSize, actualBufSize)
 	}
 
 	previousCrc = ReadInt(buf, startFileOffset+headerOffset)
