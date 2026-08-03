@@ -70,6 +70,8 @@ type Controller interface {
 
 	Election(electionAction *action.ElectionAction) string
 
+	Split(splitAction *action.SplitAction) (action.SplitResult, error)
+
 	ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction)
 }
 
@@ -94,8 +96,11 @@ type controller struct {
 	eventListener                       controllerapi.ShardEventListener
 	metadataStore                       coordmetadata.Metadata
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
+	splittingConfig                     SplitterConfig
 
 	electionOp          chan *action.ElectionAction
+	splitOp             chan *action.SplitAction
+	splitMetadataOp     chan func()
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
@@ -109,7 +114,8 @@ type controller struct {
 	periodicTasksInterval time.Duration
 	logger                *slog.Logger
 
-	currentElection *Election
+	currentElection  *Election
+	currentSplitting *Splitting
 
 	leaderElectionLatency metric.LatencyHistogram
 	newTermQuorumLatency  metric.LatencyHistogram
@@ -141,6 +147,7 @@ func NewController(
 	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	eventListener controllerapi.ShardEventListener,
+	splitterConfig SplitterConfig,
 	rpcProvider rpc.Provider,
 	periodTasksInterval time.Duration) Controller {
 	labels := metric.LabelsForShard(namespace, shard)
@@ -152,8 +159,11 @@ func NewController(
 		metadataStore:                       metadataStore,
 		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
 		eventListener:                       eventListener,
+		splittingConfig:                     splitterConfig,
 		leaderSelector:                      leaderselector.NewSelector(),
 		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
+		splitOp:                             make(chan *action.SplitAction, chanBufferSize),
+		splitMetadataOp:                     make(chan func(), chanBufferSize),
 		deleteOp:                            make(chan any, chanBufferSize),
 		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
@@ -175,7 +185,6 @@ func NewController(
 		becomeLeaderLatency: metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
 			"The time it takes for the new elected leader to start", labels),
 	}
-
 	s.termGauge = metric.NewGauge("oxia_coordinator_term",
 		"The term of the shard", "count", labels, func() int64 {
 			borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
@@ -225,21 +234,41 @@ func (s *controller) Election(electionAction *action.ElectionAction) string {
 	return clonedAction.NewLeader
 }
 
-func (s *controller) run() {
-	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
-	initShardMeta := common.Must(borrowedMeta, exists,
-		"bug: shard metadata missing while starting shard controller: namespace=", s.namespace, " shard=",
-		s.shard).UnsafeBorrow()
+func (s *controller) Split(splitAction *action.SplitAction) (action.SplitResult, error) {
+	if splitAction.Shard != s.shard {
+		splitAction.Error(fmt.Errorf(
+			"split action for shard %d sent to controller for shard %d",
+			splitAction.Shard,
+			s.shard,
+		))
+		return splitAction.Wait()
+	}
 
-	// Do initial check or leader election
+	s.terminationMu.RLock()
+	if s.terminating.Load() {
+		s.terminationMu.RUnlock()
+		splitAction.Error(constant.ErrResourceUnavailable)
+		return splitAction.Wait()
+	}
+	if !channel.PushNoBlock(s.splitOp, splitAction) {
+		s.terminationMu.RUnlock()
+		splitAction.Error(constant.ErrResourceUnavailable)
+		s.logger.Debug("Discarding shard split because queue is full")
+		return splitAction.Wait()
+	}
+	s.terminationMu.RUnlock()
+	return splitAction.Wait()
+}
+
+func (s *controller) initializeShard(initShardMeta *proto.ShardMetadata) {
 	switch {
 	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
 		s.DeleteShard()
 	case initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIds) == 0:
-		// Child shard during a split: the SplitController manages its lifecycle.
+		// Child shard during a split: the parent shard controller manages its lifecycle.
 		// Wait until the split is complete (Split metadata cleared) before
 		// entering the normal event loop, to prevent the load balancer from
-		// triggering elections that would interfere with the split controller.
+		// triggering elections that would interfere with the split state machine.
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
@@ -258,6 +287,28 @@ func (s *controller) run() {
 	}
 
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
+	if initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIds) == 2 {
+		s.logger.Info("Resuming in-progress shard split")
+		s.currentSplitting = NewSplitting(
+			s.ctx,
+			s.logger,
+			s.namespace,
+			s.shard,
+			s.metadataStore,
+			s.rpc,
+			s.splitMetadataOp,
+			s.splittingConfig,
+		)
+		s.currentSplitting.Start()
+	}
+}
+
+func (s *controller) run() {
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	initShardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while starting shard controller: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+	s.initializeShard(initShardMeta)
 
 	// All the shard controllers start together at coordinator startup: spread
 	// the first periodic tick over the interval so the periodic tasks don't
@@ -284,14 +335,42 @@ func (s *controller) run() {
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
 		case electionAction := <-s.electionOp:
 			electionAction.Done(s.onElectLeader(nil).GetNameOrDefault())
+		case update := <-s.splitMetadataOp:
+			update()
+		case splitAction := <-s.splitOp:
+			splitting := NewSplitting(
+				s.ctx,
+				s.logger,
+				s.namespace,
+				s.shard,
+				s.metadataStore,
+				s.rpc,
+				s.splitMetadataOp,
+				s.splittingConfig,
+			)
+			leftChild, rightChild, err := splitting.Initialize(splitAction.SplitPoint)
+			if err != nil {
+				splitting.Stop()
+				splitAction.Error(err)
+				continue
+			}
+			if s.currentSplitting != nil {
+				s.currentSplitting.Stop()
+			}
+			s.currentSplitting = splitting
+			splitting.Start()
+			splitAction.Done(action.SplitResult{
+				LeftChild:  leftChild,
+				RightChild: rightChild,
+			})
 		}
 	}
 }
 
 // waitForSplitComplete blocks until the Split metadata is cleared from this
-// shard in the status resource, indicating the split controller has finished
+// shard in the status resource, indicating the parent controller has finished
 // and the shard can operate normally. This prevents the load balancer from
-// triggering elections that would interfere with the split controller.
+// triggering elections that would interfere with the split state machine.
 func (s *controller) waitForSplitComplete() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -576,11 +655,21 @@ func (s *controller) Close() error {
 		// the controller maybe running after close is returned.
 		s.wg.Wait()
 
+		// The event loop owns currentSplitting. Wait for it to stop mutating the
+		// pointer before closing the last split state machine.
+		if s.currentSplitting != nil {
+			s.currentSplitting.Stop()
+			s.currentSplitting = nil
+		}
+
 	drainPendingOps:
 		for {
 			select {
 			case electionAction := <-s.electionOp:
 				electionAction.Done("")
+			case splitAction := <-s.splitOp:
+				splitAction.Error(constant.ErrResourceUnavailable)
+			case <-s.splitMetadataOp:
 			case <-s.deleteOp:
 			case <-s.dataServerFailureOp:
 			case op := <-s.changeEnsembleOp:
