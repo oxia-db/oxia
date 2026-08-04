@@ -819,10 +819,11 @@ func (sl *pebbleSnapshotLoader) AddChunk(fileName string, chunkIndex int32, chun
 		if sl.file != nil {
 			return errors.Errorf("Inconsistent snapshot: previous file not finished")
 		}
-		// fileName arrives from the snapshot sender over the network. Reject any
-		// name that isn't confined to the loader directory so a peer can't use
-		// path components like "../" to write outside of it.
-		if !filepath.IsLocal(fileName) {
+		// fileName arrives from the snapshot sender over the network. The sender
+		// only ever emits the base names of the regular files sitting directly in
+		// the checkpoint dir, so require exactly that: no traversal, no absolute
+		// path, no nested path, and not the loader dir itself.
+		if fileName != filepath.Base(fileName) || fileName == "." || !filepath.IsLocal(fileName) {
 			return errors.Errorf("invalid snapshot chunk file name: %q", fileName)
 		}
 		sl.file, err = os.OpenFile(filepath.Join(sl.dbPath, fileName), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
