@@ -63,6 +63,12 @@ func generateUniqueKeyFromSequences(batch kvstore.WriteBatch, req *proto.PutRequ
 			lastValue = 0
 		}
 
+		if delta > maxSequence-lastValue {
+			// The cumulative value would wrap past uint64: the generated key
+			// would sort below the current tail and could collide with an
+			// earlier entry, so reject the delta instead of overflowing.
+			return "", ErrSequenceOverflow
+		}
 		newKey = fmt.Sprintf("%s-%020d", newKey, lastValue+delta)
 	}
 

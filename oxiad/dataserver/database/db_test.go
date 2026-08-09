@@ -853,6 +853,75 @@ func TestDB_SequentialKeys(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 20, 18, 15), resp.GetPuts()[0].GetKey())
 }
 
+func TestDB_SequentialKeysOverflow(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	// A delta that lands exactly on the max sequence value is still fine.
+	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "a",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{maxSequence},
+	}}}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
+	assert.Equal(t, fmt.Sprintf("a-%020d", maxSequence), resp.GetPuts()[0].GetKey())
+
+	// Seed a small sequence, then a huge delta that would wrap uint64 back onto
+	// an earlier key must be rejected instead of silently overwriting it.
+	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "b",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{5},
+	}}}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("b-%020d", 5), resp.GetPuts()[0].GetKey())
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "b",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{maxSequence},
+	}}}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, ErrSequenceOverflow)
+
+	// The rejected put left the tail untouched: a normal delta keeps advancing
+	// from 5, so no earlier entry was clobbered.
+	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "b",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{3},
+	}}}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("b-%020d", 8), resp.GetPuts()[0].GetKey())
+
+	// Overflow at a non-leading sequence position is rejected too.
+	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "c",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{2, 4},
+	}}}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("c-%020d-%020d", 2, 4), resp.GetPuts()[0].GetKey())
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "c",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{1, maxSequence},
+	}}}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, ErrSequenceOverflow)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func rangeScanIteratorToSlice(it RangeScanIterator, err error) []string {
 	assert.NoError(nil, err)
 	var keys []string
