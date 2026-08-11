@@ -48,6 +48,7 @@ var (
 	ErrMissingPartitionKey   = errors.New("oxia: sequential key operation requires partition key")
 	ErrMissingSequenceDeltas = errors.New("oxia: sequential key operation missing some sequence deltas")
 	ErrSequenceDeltaIsZero   = errors.New("oxia: sequential key operation requires first delta do be > 0")
+	ErrSequenceOverflow      = errors.New("oxia: sequential key operation overflows the sequence")
 	ErrNotificationsDisabled = errors.New("oxia: notifications disabled")
 )
 
