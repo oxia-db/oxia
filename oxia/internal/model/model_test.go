@@ -52,3 +52,29 @@ func TestDeleteCallEmptyPartitionKey(t *testing.T) {
 	assert.NotNil(t, req.PartitionKey)
 	assert.Equal(t, partitionKey, req.GetPartitionKey())
 }
+
+func TestGetCallPartitionKey(t *testing.T) {
+	partitionKey := "partition-key"
+	call := GetCall{
+		Key:          "key",
+		PartitionKey: &partitionKey,
+	}
+
+	assert.Equal(t, partitionKey, call.PartitionKeyOrKey())
+}
+
+func TestGetCallPartitionKeyOrKeyFallback(t *testing.T) {
+	call := GetCall{Key: "key"}
+
+	assert.Equal(t, "key", call.PartitionKeyOrKey())
+}
+
+func TestGetCallEmptyPartitionKey(t *testing.T) {
+	partitionKey := ""
+	call := GetCall{
+		Key:          "key",
+		PartitionKey: &partitionKey,
+	}
+
+	assert.Equal(t, partitionKey, call.PartitionKeyOrKey())
+}
