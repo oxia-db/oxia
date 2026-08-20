@@ -135,7 +135,7 @@ func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteC
 
 func (c *clientImpl) rerouteReads(gets []model.GetCall) {
 	for _, get := range gets {
-		shardId := c.shardManager.Get(get.Key)
+		shardId := c.shardManager.Get(get.PartitionKeyOrKey())
 		c.readBatchManager.Get(shardId).Add(get)
 	}
 }
@@ -296,6 +296,7 @@ func (c *clientImpl) doSingleShardGet(key string, opts *getOptions, ch chan GetR
 		ComparisonType:     opts.comparisonType,
 		IncludeValue:       opts.includeValue,
 		SecondaryIndexName: opts.secondaryIndexName,
+		PartitionKey:       opts.partitionKey,
 		Callback: func(response *proto.GetResponse, err error) {
 			ch <- toGetResult(response, key, err)
 			close(ch)
