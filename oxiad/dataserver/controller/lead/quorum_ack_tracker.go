@@ -412,6 +412,16 @@ func (c *cursorAcker) Ack(offset int64) {
 		return
 	}
 
+	// A follower can only ack entries the leader has actually written, so an
+	// offset past the head is a malformed or hostile ack. Acting on it would
+	// run the cumulative loop below up to an arbitrary value while holding the
+	// lock, and would move lastAckedOffset ahead of the head so later acks for
+	// the real entries get skipped. Drop it, the same out-of-range offset that
+	// NewCursorAcker already rejects.
+	if offset > q.headOffset.Load() {
+		return
+	}
+
 	// Entries at or below the commit offset have already reached the quorum
 	start := max(c.lastAckedOffset, q.commitOffset.Load()) + 1
 	for o := start; o <= offset; o++ {

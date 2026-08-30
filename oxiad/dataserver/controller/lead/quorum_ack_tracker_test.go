@@ -66,6 +66,26 @@ func TestQuorumAckTrackerRF2(t *testing.T) {
 	assert.EqualValues(t, 2, at.CommitOffset())
 }
 
+func TestQuorumAckTrackerAckBeyondHead(t *testing.T) {
+	at := NewQuorumAckTracker(2, 1, wal.InvalidOffset)
+	at.AdvanceHeadOffset(2)
+
+	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+
+	// An ack for an offset the leader never wrote must be ignored: it must not
+	// commit the entries that do exist, and it must not push the cursor past
+	// the head.
+	c1.Ack(100)
+	assert.EqualValues(t, 2, at.HeadOffset())
+	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+
+	// A later ack for the real head still commits, proving the out-of-range
+	// ack did not poison the cursor's tracked offset.
+	c1.Ack(2)
+	assert.EqualValues(t, 2, at.CommitOffset())
+}
+
 func TestQuorumAckTrackerRF3(t *testing.T) {
 	at := NewQuorumAckTracker(3, 1, wal.InvalidOffset)
 
