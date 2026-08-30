@@ -26,9 +26,8 @@ concurrency:
 # Override these defaults with repository variables when a channel moves to a
 # new release line or branch.
 env:
-  NIGHTLY_STABLE_REF: ${{ vars.NIGHTLY_STABLE_REF || 'v0.16.8' }}
-  NIGHTLY_BETA_REF: ${{ vars.NIGHTLY_BETA_REF || 'v0.17.1' }}
-  NIGHTLY_ALPHA_REF: ${{ vars.NIGHTLY_ALPHA_REF || 'main' }}
+  NIGHTLY_STABLE_REF: ${{ vars.NIGHTLY_STABLE_REF || 'release-0.16' }}
+  NIGHTLY_BETA_REF: ${{ vars.NIGHTLY_BETA_REF || 'main' }}
 
 jobs:
   publish:
@@ -42,7 +41,6 @@ jobs:
         channel:
           - stable
           - beta
-          - alpha
     steps:
       - name: Resolve channel
         id: channel
@@ -55,9 +53,6 @@ jobs:
               ;;
             beta)
               SOURCE_REF="${NIGHTLY_BETA_REF}"
-              ;;
-            alpha)
-              SOURCE_REF="${NIGHTLY_ALPHA_REF}"
               ;;
             *)
               echo "Unsupported nightly channel: ${CHANNEL}" >&2
@@ -102,7 +97,6 @@ jobs:
           push: true
           tags: |
             oxia/oxia:${{ steps.channel.outputs.image-tag }}
-            ${{ matrix.channel == 'alpha' && 'oxia/oxia:main' || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/oxia-db/oxia
             org.opencontainers.image.revision=${{ steps.source.outputs.revision }}
