@@ -19,10 +19,6 @@ on:
     tags:
       - 'v*'
   
-  # Publish nightly builds
-  schedule:
-    - cron: '0 0 * * *' # run at midnight UTC
-
   workflow_dispatch:
 
 concurrency:
