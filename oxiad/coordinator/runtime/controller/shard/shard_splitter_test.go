@@ -118,7 +118,7 @@ func TestSplitterMergesChildrenIntoLatestNamespaceStatus(t *testing.T) {
 	}
 }
 
-func TestSplitterRejectsParentChangedBeforeMetadataCommit(t *testing.T) {
+func TestSplitterMergesSplitIntoLatestParentStatus(t *testing.T) {
 	metadata := newTestMetadata(
 		t,
 		memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
@@ -158,15 +158,16 @@ func TestSplitterRejectsParentChangedBeforeMetadataCommit(t *testing.T) {
 		},
 	)
 
-	_, _, err := splitter.Split(nil)
+	leftChild, rightChild, err := splitter.Split(nil)
 
-	require.ErrorContains(t, err, "changed while preparing the split")
+	require.NoError(t, err)
 	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, parentShardID)
 	assert.Equal(t, int64(2), parent.Term)
-	assert.Nil(t, parent.Split)
+	require.NotNil(t, parent.Split)
+	assert.Equal(t, []int64{leftChild, rightChild}, parent.Split.ChildShardIds)
 	namespace, exists := metadata.GetNamespaceStatus(constant.DefaultNamespace)
 	require.True(t, exists)
-	assert.Len(t, namespace.UnsafeBorrow().Shards, 1)
+	assert.Len(t, namespace.UnsafeBorrow().Shards, 3)
 }
 
 func TestControllerSerializesSplitActionsOnEventLoop(t *testing.T) {

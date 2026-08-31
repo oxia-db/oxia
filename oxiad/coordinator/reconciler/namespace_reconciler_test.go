@@ -183,10 +183,9 @@ func (m *mockNamespaceMetadata) UpdateShardStatus(namespace string, shard int64,
 
 func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) {}
 
-func (*mockNamespaceMetadata) SplitShardStatus(
+func (*mockNamespaceMetadata) UpdateSplitShardStatus(
 	string,
 	int64,
-	*proto.ShardMetadata,
 	*proto.SplitMetadata,
 	map[int64]*proto.ShardMetadata,
 ) error {
