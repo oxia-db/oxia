@@ -61,6 +61,7 @@ service OxiaLogReplication {
 enum Feature {
   FEATURE_UNKNOWN = 0;
   FEATURE_DB_CHECKSUM = 1;
+  FEATURE_SECONDARY_INDEX_NAME_VALIDATION = 2;
 }
 
 message GetInfoRequest {

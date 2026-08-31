@@ -12,22 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package feature provides feature negotiation capabilities for Oxia.
-// It enables safe rolling upgrades where new and old nodes can coexist
-// by negotiating which features are supported by all members of a quorum.
-package feature
+package oxia
 
 import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-type Checker interface {
-	IsFeatureEnabled(feature proto.Feature) bool
+func TestSecondaryIndexNameValidation(t *testing.T) {
+	_, err := newPutOptions([]PutOption{SecondaryIndex("tenant/users", "email")})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidOptions)
+	assert.ErrorContains(t, err, "must not contain '/'")
+
+	_, err = newPutOptions([]PutOption{SecondaryIndex("tenant", "users/email")})
+	assert.NoError(t, err)
 }
 
-func SupportedFeatures() []proto.Feature {
-	return []proto.Feature{
-		proto.Feature_FEATURE_DB_CHECKSUM,
-		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
-	}
+func TestInvalidArgumentStatus(t *testing.T) {
+	result := toPutResult("key", &proto.PutResponse{Status: proto.Status_INVALID_ARGUMENT})
+	assert.ErrorIs(t, result.Err, ErrInvalidOptions)
 }

@@ -999,8 +999,8 @@ func TestController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
 	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 2, true)
 
-	// Verify BecomeLeader includes the DB Checksum feature
-	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	// Verify BecomeLeader includes all features supported by the ensemble.
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, feature.SupportedFeatures())
 
 	assert.Eventually(t, func() bool {
 		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState

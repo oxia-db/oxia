@@ -159,6 +159,8 @@ const (
 	Status_UNEXPECTED_VERSION_ID Status = 2
 	// The session that the put request referred to is not alive
 	Status_SESSION_DOES_NOT_EXIST Status = 3
+	// The request contains an invalid argument
+	Status_INVALID_ARGUMENT Status = 4
 )
 
 // Enum value maps for Status.
@@ -168,12 +170,14 @@ var (
 		1: "KEY_NOT_FOUND",
 		2: "UNEXPECTED_VERSION_ID",
 		3: "SESSION_DOES_NOT_EXIST",
+		4: "INVALID_ARGUMENT",
 	}
 	Status_value = map[string]int32{
 		"OK":                     0,
 		"KEY_NOT_FOUND":          1,
 		"UNEXPECTED_VERSION_ID":  2,
 		"SESSION_DOES_NOT_EXIST": 3,
+		"INVALID_ARGUMENT":       4,
 	}
 )
 
@@ -2590,12 +2594,13 @@ const file_client_proto_rawDesc = "" +
 	"\aCEILING\x10\x02\x12\t\n" +
 	"\x05LOWER\x10\x03\x12\n" +
 	"\n" +
-	"\x06HIGHER\x10\x04*Z\n" +
+	"\x06HIGHER\x10\x04*p\n" +
 	"\x06Status\x12\x06\n" +
 	"\x02OK\x10\x00\x12\x11\n" +
 	"\rKEY_NOT_FOUND\x10\x01\x12\x19\n" +
 	"\x15UNEXPECTED_VERSION_ID\x10\x02\x12\x1a\n" +
-	"\x16SESSION_DOES_NOT_EXIST\x10\x03*]\n" +
+	"\x16SESSION_DOES_NOT_EXIST\x10\x03\x12\x14\n" +
+	"\x10INVALID_ARGUMENT\x10\x04*]\n" +
 	"\x10NotificationType\x12\x0f\n" +
 	"\vKEY_CREATED\x10\x00\x12\x10\n" +
 	"\fKEY_MODIFIED\x10\x01\x12\x0f\n" +
