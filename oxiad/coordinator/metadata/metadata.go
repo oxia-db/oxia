@@ -54,7 +54,7 @@ type Metadata interface {
 	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool)
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
 	DeleteShardStatus(namespace string, shard int64)
-	ShardSplit(
+	SplitShardStatus(
 		namespace string,
 		parentShard int64,
 		expectedParent *commonproto.ShardMetadata,
@@ -343,7 +343,7 @@ func (m *coordinatorMetadata) GetShardStatus(namespace string, shard int64) (com
 	return commonobject.Borrow(shardStatus), true
 }
 
-func (m *coordinatorMetadata) ShardSplit( //nolint:revive // Keep validation and the atomic transition colocated.
+func (m *coordinatorMetadata) SplitShardStatus( //nolint:revive // Keep validation and the atomic transition colocated.
 	namespace string,
 	parentShard int64,
 	expectedParent *commonproto.ShardMetadata,
