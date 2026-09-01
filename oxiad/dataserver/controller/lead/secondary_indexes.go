@@ -198,14 +198,20 @@ func (it *secondaryIndexListIterator) Valid() bool {
 }
 
 func (it *secondaryIndexListIterator) Key() string {
-	idxKey := it.it.Key()
-	primaryKey, _, err := database.ParseSecondaryIndexKey(idxKey)
+	primaryKey, _ := it.keys()
+	return primaryKey
+}
+
+// keys splits the current index entry into the record's key and its key in
+// the index.
+func (it *secondaryIndexListIterator) keys() (primaryKey string, secondaryKey string) {
+	primaryKey, secondaryKey, err := database.ParseSecondaryIndexKey(it.it.Key())
 	if err != nil {
 		// This should never happen since we control the key format
 		panic(errors.Wrap(err, "Failed to parse secondary index key"))
 	}
 
-	return primaryKey
+	return primaryKey, secondaryKey
 }
 
 func (*secondaryIndexListIterator) Prev() bool {
@@ -267,7 +273,7 @@ func (it *secondaryIndexRangeIterator) Next() bool {
 }
 
 func (it *secondaryIndexRangeIterator) Value() (*proto.GetResponse, error) {
-	primaryKey := it.Key()
+	primaryKey, secondaryKey := it.listIt.keys()
 	gr, err := it.db.Get(&proto.GetRequest{
 		Key:            primaryKey,
 		IncludeValue:   true,
@@ -276,6 +282,7 @@ func (it *secondaryIndexRangeIterator) Value() (*proto.GetResponse, error) {
 
 	if gr != nil {
 		gr.Key = &primaryKey
+		gr.SecondaryIndexKey = &secondaryKey
 	}
 
 	return gr, err

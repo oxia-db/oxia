@@ -535,3 +535,45 @@ func TestDoSecondaryGet_UnsupportedComparisonType(t *testing.T) {
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
+
+// A range scan through a secondary index reports each record's secondary
+// key alongside it — the key the scan is ordered by, which a client merging
+// several shards' scans needs to keep that order.
+func TestSecondaryIndices_RangeScanReturnsSecondaryKey(t *testing.T) {
+	var shard int64 = 1
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+	lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+
+	_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{
+			{Key: "/a", Value: []byte("0"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "my-idx", SecondaryKey: "k2"}}},
+			{Key: "/b", Value: []byte("1"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "my-idx", SecondaryKey: "k1"}}},
+		},
+	})
+	assert.NoError(t, err)
+
+	results, err := scanAll(context.Background(), lc, &proto.RangeScanRequest{
+		Shard:              &shard,
+		StartInclusive:     "k",
+		EndExclusive:       "l",
+		SecondaryIndexName: pb.String("my-idx"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(results))
+	assert.Equal(t, "/b", results[0].GetKey())
+	assert.Equal(t, "k1", results[0].GetSecondaryIndexKey())
+	assert.Equal(t, "/a", results[1].GetKey())
+	assert.Equal(t, "k2", results[1].GetSecondaryIndexKey())
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+}
