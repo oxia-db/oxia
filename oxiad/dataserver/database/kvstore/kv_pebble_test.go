@@ -1273,3 +1273,45 @@ func TestCompareWithDataset(t *testing.T) {
 		})
 	}
 }
+
+// An inverted range — lower bound at or past the upper bound — scans
+// nothing, on the store and inside a batch, in both directions. Pebble
+// leaves an iterator with inverted bounds undefined and asserts on it in
+// invariant builds (the race detector enables them), so the range must
+// be judged before pebble sees it.
+func TestPebbleRangeScanInvertedBoundsIsEmpty(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_HIERARCHICAL)
+	assert.NoError(t, err)
+
+	wb := kv.NewWriteBatch()
+	assert.NoError(t, wb.Put("/root/a", []byte("a")))
+	assert.NoError(t, wb.Put("/root/b", []byte("b")))
+	assert.NoError(t, wb.Put("/root/c", []byte("c")))
+	assert.NoError(t, wb.Commit())
+	assert.NoError(t, wb.Close())
+
+	for _, bounds := range [][2]string{{"/root/c", "/root/a"}, {"/root/b", "/root/b"}} {
+		it, err := kv.RangeScan(bounds[0], bounds[1], NoInternalKeys)
+		assert.NoError(t, err)
+		assert.False(t, it.Valid(), "store range scan %v", bounds)
+		assert.NoError(t, it.Close())
+
+		rit, err := kv.KeyRangeScanReverse(bounds[0], bounds[1], NoInternalKeys)
+		assert.NoError(t, err)
+		assert.False(t, rit.Valid(), "store reverse range scan %v", bounds)
+		assert.NoError(t, rit.Close())
+
+		wb = kv.NewWriteBatch()
+		assert.NoError(t, wb.Put("/root/d", []byte("d")))
+		bit, err := wb.RangeScan(bounds[0], bounds[1])
+		assert.NoError(t, err)
+		assert.False(t, bit.Valid(), "batch range scan %v", bounds)
+		assert.NoError(t, bit.Close())
+		assert.NoError(t, wb.Close())
+	}
+
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
