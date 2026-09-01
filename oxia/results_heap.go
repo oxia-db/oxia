@@ -27,8 +27,17 @@ func (h ResultHeap) Len() int {
 	return len(h)
 }
 
+// Less follows the order the shards themselves produced: a scan through a
+// secondary index is ordered by secondary key, ties by record key; a plain
+// scan by record key.
 func (h ResultHeap) Less(i, j int) bool {
-	return compare.CompareWithSlash([]byte(h[i].gr.Key), []byte(h[j].gr.Key)) < 0
+	a, b := h[i].gr, h[j].gr
+	if a.SecondaryIndexKey != "" && b.SecondaryIndexKey != "" {
+		if c := compare.CompareWithSlash([]byte(a.SecondaryIndexKey), []byte(b.SecondaryIndexKey)); c != 0 {
+			return c < 0
+		}
+	}
+	return compare.CompareWithSlash([]byte(a.Key), []byte(b.Key)) < 0
 }
 
 func (h ResultHeap) Swap(i, j int) {
