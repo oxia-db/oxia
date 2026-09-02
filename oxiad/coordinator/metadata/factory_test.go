@@ -61,6 +61,13 @@ func TestSeedClusterConfig(t *testing.T) {
 	assert.Equal(t, "test-namespace", seeded.Value.Namespaces[0].Name)
 }
 
+func TestSeedClusterConfigRejectsNil(t *testing.T) {
+	factory := newMemoryFactory(t)
+
+	require.Error(t, factory.SeedClusterConfig(nil))
+	assert.Equal(t, metadatacommon.NotExists, factory.configProvider.Watch().Load().Version)
+}
+
 func TestSeedClusterConfigDoesNotOverwrite(t *testing.T) {
 	factory := newMemoryFactory(t)
 

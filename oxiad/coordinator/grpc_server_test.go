@@ -38,3 +38,11 @@ func TestServerOptions(t *testing.T) {
 	assert.True(t, called)
 	assert.Same(t, config, so.initialClusterConfig)
 }
+
+// A nil option is ignored and a nil leadership-loss handler keeps the
+// fail-safe default: neither can leave the coordinator with a nil to call.
+func TestServerOptionsNilSafe(t *testing.T) {
+	so := newServerOptions([]ServerOption{nil, WithOnLeadershipLost(nil)})
+	assert.NotNil(t, so.onLeadershipLost)
+	assert.Nil(t, so.initialClusterConfig)
+}

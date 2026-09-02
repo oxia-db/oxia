@@ -110,6 +110,9 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 // It is a no-op when a configuration is already present, and it tolerates
 // losing the seeding race to another coordinator.
 func (f *Factory) SeedClusterConfig(config *commonproto.ClusterConfiguration) error {
+	if config == nil {
+		return errors.New("cluster configuration to seed must not be nil")
+	}
 	f.mu.Lock()
 	configProvider := f.configProvider
 	f.mu.Unlock()

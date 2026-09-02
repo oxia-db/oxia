@@ -54,7 +54,9 @@ type serverOptions struct {
 func newServerOptions(serverOpts []ServerOption) serverOptions {
 	so := serverOptions{onLeadershipLost: onLeadershipLost}
 	for _, opt := range serverOpts {
-		opt(&so)
+		if opt != nil {
+			opt(&so)
+		}
 	}
 	return so
 }
@@ -77,6 +79,11 @@ func (so *serverOptions) seedClusterConfig(metadataFactory *coordmetadata.Factor
 // synchronously; spawn a goroutine instead.
 func WithOnLeadershipLost(handler func()) ServerOption {
 	return func(so *serverOptions) {
+		if handler == nil {
+			// A nil handler would panic at the worst moment; keep the
+			// fail-safe default instead.
+			handler = onLeadershipLost
+		}
 		so.onLeadershipLost = handler
 	}
 }
