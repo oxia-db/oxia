@@ -1224,13 +1224,13 @@ func TestController_ChangeEnsembleRejectsInvalidAction(t *testing.T) {
 	assert.NoError(t, s.validateChangeEnsembleFeatures(action.NewChangeEnsembleAction(shard, s1, s4)))
 }
 
-// Each UpdateShardStatus persists the full cluster status, so re-writing it
-// for every shard on every periodic tick costs O(shards^2) bytes per interval
-// on the metadata backend. The periodic task must not persist when it has no
-// pending-delete bookkeeping to apply.
-func TestController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
+// Each UpdateShardStatus persists the full cluster status. A periodic tick
+// should only persist after it changes shard state.
+func TestController_PeriodicTasksPersistOnlyDirtyState(t *testing.T) {
 	var shard int64 = 5
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	rpc := mockutils.NewRpcProvider()
+	pendingDeleteNode := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
 
 	shardMeta := &proto.ShardMetadata{
 		Status: proto.ShardStatusSteadyState,
@@ -1247,6 +1247,8 @@ func TestController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 		namespace:     constant.DefaultNamespace,
 		shard:         shard,
 		metadataStore: metadata,
+		rpc:           rpc,
+		ctx:           t.Context(),
 		logger:        slog.Default(),
 	}
 
@@ -1256,6 +1258,24 @@ func TestController_PeriodicTasksSkipUnchangedPersist(t *testing.T) {
 	// Steady state without pending-delete nodes: no persist
 	s.handlePeriodicTasks()
 	borrowedAfter, _ := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
+
+	updatedShardMeta := gproto.CloneOf(shardMeta)
+	updatedShardMeta.PendingDeleteShardNodes = []*proto.DataServerIdentity{pendingDeleteNode}
+	metadata.UpdateShardStatus(constant.DefaultNamespace, shard, updatedShardMeta)
+	borrowedBefore, _ = metadata.GetShardStatus(constant.DefaultNamespace, shard)
+
+	rpc.GetNode(pendingDeleteNode).DeleteShardResponse(nil)
+	s.handlePeriodicTasks()
+	rpc.GetNode(pendingDeleteNode).ExpectDeleteShardRequest(t, shard, shardMeta.Term)
+
+	borrowedAfter, _ = metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	assert.NotSame(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
+	assert.Empty(t, borrowedAfter.UnsafeBorrow().PendingDeleteShardNodes)
+
+	borrowedBefore = borrowedAfter
+	s.handlePeriodicTasks()
+	borrowedAfter, _ = metadata.GetShardStatus(constant.DefaultNamespace, shard)
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
 }
 
