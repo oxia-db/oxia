@@ -29,6 +29,27 @@ With Oxia, you get a scalable, robust, and flexible solution for managing metada
 
 <br>
 
+### Embedding Oxia
+
+Besides running as dedicated `oxia server` / `oxia coordinator` processes, Oxia can be embedded as a library inside a Go application, so that each application node hosts an Oxia data server (and, on some nodes, the coordinator) in the same binary:
+
+```go
+import (
+    "github.com/oxia-db/oxia/oxiad/dataserver"
+    "github.com/oxia-db/oxia/oxiad/dataserver/option"
+)
+
+options := option.NewDefaultOptions()
+options.Storage.Database.Dir = "./data/db"
+options.Storage.WAL.Dir = "./data/wal"
+
+server, err := dataserver.New(ctx, options)
+```
+
+These are the same entry points the `oxia` binary itself is built on. See the [`dataserver`](oxiad/dataserver/doc.go) package documentation for embedding a data server or a standalone single-node server, and the [`coordinator`](oxiad/coordinator/doc.go) package documentation for bootstrapping a whole cluster in-process with `coordinator.New`.
+
+<br>
+
 ### Contributing to Oxia
 
 Please 🌟 star the project if you like it. 

@@ -16,6 +16,7 @@ package dataserver
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -60,7 +61,28 @@ type Server struct {
 	healthServer commonrpc.HealthServer
 }
 
-func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*Server, error) {
+// New starts a data server with the given options. Unset option values are
+// filled with their defaults, and the options are validated before the server
+// starts. If options is nil, the default options are used.
+//
+// The server keeps a reference to options: the caller must not mutate them
+// after this call and should use UpdateOptions instead.
+func New(parent context.Context, options *option.Options) (*Server, error) {
+	if options == nil {
+		options = option.NewDefaultOptions()
+	}
+	options.WithDefault()
+	if err := options.Validate(); err != nil {
+		return nil, err
+	}
+	return NewWithOptionsWatch(parent, commonwatch.New(options))
+}
+
+// NewWithOptionsWatch starts a data server whose options are supplied through
+// a watch, allowing the caller to publish configuration updates at runtime
+// (e.g. from a configuration file watcher). Most callers should use New
+// instead.
+func NewWithOptionsWatch(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*Server, error) {
 	options := optionsWatch.Load()
 	manifest, err := manifestpkg.NewManifest(options.Storage.Database.Dir)
 	if err != nil {
@@ -168,6 +190,21 @@ func (s *Server) PublicPort() int {
 
 func (s *Server) InternalPort() int {
 	return s.internalRpcServer.grpcServer.Port()
+}
+
+// UpdateOptions publishes a new configuration to the running server. Only the
+// dynamic settings (currently the log options) take effect at runtime; the
+// remaining settings require a restart.
+func (s *Server) UpdateOptions(options *option.Options) error {
+	if options == nil {
+		return errors.New("options must not be nil")
+	}
+	options.WithDefault()
+	if err := options.Validate(); err != nil {
+		return err
+	}
+	s.optionsWatch.Publish(options)
+	return nil
 }
 
 func (s *Server) backgroundHandleConfChange() {

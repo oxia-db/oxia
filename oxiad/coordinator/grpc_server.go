@@ -16,6 +16,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -42,6 +43,62 @@ import (
 	commonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 )
 
+// ServerOption configures optional behavior of the coordinator server.
+type ServerOption func(*serverOptions)
+
+type serverOptions struct {
+	onLeadershipLost     func()
+	initialClusterConfig *proto.ClusterConfiguration
+}
+
+func newServerOptions(serverOpts []ServerOption) serverOptions {
+	so := serverOptions{onLeadershipLost: onLeadershipLost}
+	for _, opt := range serverOpts {
+		if opt != nil {
+			opt(&so)
+		}
+	}
+	return so
+}
+
+func (so *serverOptions) seedClusterConfig(metadataFactory *coordmetadata.Factory) error {
+	if so.initialClusterConfig == nil {
+		return nil
+	}
+	return metadataFactory.SeedClusterConfig(so.initialClusterConfig)
+}
+
+// WithOnLeadershipLost overrides what happens when this coordinator loses the
+// metadata leadership. The default handler terminates the process, which is
+// the right behavior for a dedicated coordinator process but not when the
+// coordinator is embedded in a larger application.
+//
+// A coordinator that lost the leadership must stop coordinating: the handler
+// is expected to arrange for the server to be closed. It is invoked from an
+// internal goroutine that Close waits on, so the handler must not call Close
+// synchronously; spawn a goroutine instead.
+func WithOnLeadershipLost(handler func()) ServerOption {
+	return func(so *serverOptions) {
+		if handler == nil {
+			// A nil handler would panic at the worst moment; keep the
+			// fail-safe default instead.
+			handler = onLeadershipLost
+		}
+		so.onLeadershipLost = handler
+	}
+}
+
+// WithInitialClusterConfiguration seeds the metadata store with the given
+// cluster configuration when none exists yet. It allows bootstrapping a
+// cluster programmatically, without a cluster configuration file or a
+// separate admin call. If a configuration is already present it is left
+// untouched.
+func WithInitialClusterConfiguration(config *proto.ClusterConfiguration) ServerOption {
+	return func(so *serverOptions) {
+		so.initialClusterConfig = config
+	}
+}
+
 type GrpcServer struct {
 	// concurrent control
 	ctx          context.Context
@@ -60,7 +117,32 @@ type GrpcServer struct {
 	metrics          *metric.PrometheusMetrics
 }
 
-func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (_ *GrpcServer, err error) {
+// New starts a coordinator with the given options. Unset option values are
+// filled with their defaults, and the options are validated before the
+// coordinator starts. If options is nil, the default options are used.
+//
+// The coordinator keeps a reference to options: the caller must not mutate
+// them after this call and should use UpdateOptions instead.
+//
+// With a multi-coordinator metadata provider (file, configmap or raft), this
+// call blocks until the coordinator acquires the metadata leadership.
+func New(parent context.Context, options *option.Options, serverOpts ...ServerOption) (*GrpcServer, error) {
+	if options == nil {
+		options = option.NewDefaultOptions()
+	}
+	options.WithDefault()
+	if err := options.Validate(); err != nil {
+		return nil, err
+	}
+	return NewGrpcServer(parent, commonwatch.New(options), serverOpts...)
+}
+
+// NewGrpcServer starts a coordinator whose options are supplied through a
+// watch, allowing the caller to publish configuration updates at runtime
+// (e.g. from a configuration file watcher). Most callers should use New
+// instead.
+func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options], serverOpts ...ServerOption) (_ *GrpcServer, err error) {
+	so := newServerOptions(serverOpts)
 	options := optionsWatch.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
 
@@ -133,6 +215,9 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	if err != nil {
 		return nil, err
 	}
+	if err = so.seedClusterConfig(metadataFactory); err != nil {
+		return nil, err
+	}
 	runtime, err = coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err != nil {
 		return nil, err
@@ -173,7 +258,7 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 				select {
 				case <-leadershipLost:
 					server.logger.Error("Coordination leadership lost: terminating to avoid a split brain")
-					onLeadershipLost()
+					so.onLeadershipLost()
 				case <-ctx.Done():
 				}
 			})
@@ -183,12 +268,40 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	return &server, nil
 }
 
-// onLeadershipLost terminates the process: a coordinator that lost the
-// leadership must stop coordinating immediately, before it can run elections
-// or move ensembles alongside the new leader, and a restart rejoins the
-// election from a clean state. Overridable in tests.
+// onLeadershipLost is the default WithOnLeadershipLost handler. It terminates
+// the process: a coordinator that lost the leadership must stop coordinating
+// immediately, before it can run elections or move ensembles alongside the
+// new leader, and a restart rejoins the election from a clean state.
+// Overridable in tests.
 var onLeadershipLost = func() {
 	os.Exit(1)
+}
+
+// InternalPort returns the port of the internal gRPC server used for
+// coordinator-to-coordinator communication.
+func (s *GrpcServer) InternalPort() int {
+	return s.grpcServer.Port()
+}
+
+// PublicPort returns the port of the public gRPC server exposing the
+// management (admin) API.
+func (s *GrpcServer) PublicPort() int {
+	return s.managementServer.Port()
+}
+
+// UpdateOptions publishes a new configuration to the running coordinator.
+// Only the dynamic settings (currently the log options) take effect at
+// runtime; the remaining settings require a restart.
+func (s *GrpcServer) UpdateOptions(options *option.Options) error {
+	if options == nil {
+		return errors.New("options must not be nil")
+	}
+	options.WithDefault()
+	if err := options.Validate(); err != nil {
+		return err
+	}
+	s.optionsWatch.Publish(options)
+	return nil
 }
 
 func startMetricsServer(metrics commonoption.MetricOptions) (*metric.PrometheusMetrics, error) {

@@ -150,6 +150,14 @@ func (co *ControllerOptions) Validate() error {
 	return co.TLS.Validate()
 }
 
+// Valid MetadataOptions.ProviderName values.
+const (
+	ProviderMemory    = metadataconstant.NameMemory
+	ProviderFile      = metadataconstant.NameFile
+	ProviderConfigMap = metadataconstant.NameConfigMap
+	ProviderRaft      = metadataconstant.NameRaft
+)
+
 type ProviderOptions struct {
 	ProviderName string       `yaml:"providerName" json:"providerName" jsonschema:"description=Metadata provider type. Valid values: memory/configmap/file/raft,example=configmap"`
 	Kubernetes   K8sMetadata  `yaml:"kubernetes,omitempty" json:"kubernetes,omitempty" jsonschema:"description=Kubernetes ConfigMap metadata configuration"`
