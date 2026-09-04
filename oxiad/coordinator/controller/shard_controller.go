@@ -503,7 +503,7 @@ func (s *shardController) handlePeriodicTasks() {
 	stateDirty := false
 
 	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
-		if err := s.handlePendingDeleteShard(&mutShardMeta); err != nil {
+		if err := s.handlePendingDeleteShard(mutShardMeta); err != nil {
 			s.log.Warn("Failed to handle pending delete shard", "error", err)
 		} else {
 			// Clear the pending-delete nodes in the canonical local view. The RPCs
@@ -521,14 +521,14 @@ func (s *shardController) handlePeriodicTasks() {
 	}
 }
 
-func (s *shardController) handlePendingDeleteShard(mutShardMeta *model.ShardMetadata) error {
-	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
+func (s *shardController) handlePendingDeleteShard(shardMeta model.ShardMetadata) error {
+	for _, ds := range shardMeta.PendingDeleteShardNodes {
 		s.log.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
 
 		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
-			Term:      mutShardMeta.Term,
+			Term:      shardMeta.Term,
 		}); err != nil {
 			s.log.Warn("Failed to delete shard from removed data server", slog.Any("data-server", ds), slog.Any("error", err))
 			return err
@@ -537,6 +537,5 @@ func (s *shardController) handlePendingDeleteShard(mutShardMeta *model.ShardMeta
 		s.log.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
 	}
 
-	mutShardMeta.PendingDeleteShardNodes = nil
 	return nil
 }
