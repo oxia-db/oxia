@@ -30,6 +30,8 @@ type ShardEventListener interface {
 }
 
 type ShardSplitEventListener interface {
+	SplitStarted(namespace string, parentShard int64, leftChild int64, rightChild int64)
+
 	SplitComplete(parentShard int64, leftChild int64, rightChild int64)
 
 	SplitAborted(parentShard int64, leftChild int64, rightChild int64)

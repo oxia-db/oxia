@@ -42,7 +42,7 @@ func TestGroupingShardsIncludesNonSteadyShards(t *testing.T) {
 				2: {Status: proto.ShardStatusElection, Ensemble: ensemble},
 				// Being deleted: must not be counted
 				3: {Status: proto.ShardStatusDeleting, Leader: server("server1"), Ensemble: ensemble},
-				// Mid-split: managed by the split controller, must not be counted
+				// Mid-split: managed by the parent shard controller, must not be counted
 				4: {Status: proto.ShardStatusSteadyState, Leader: server("server1"), Ensemble: ensemble,
 					Split: &proto.SplitMetadata{ChildShardIds: []int64{5, 6}}},
 			},
