@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"log/slog"
 	"math/rand"
 	"sync"
 	"testing"
@@ -179,6 +180,59 @@ func TestShardController(t *testing.T) {
 
 	rpc.GetNode(s1).expectNewTermRequest(t, shard, 4, true)
 	assert.NoError(t, sc.Close())
+}
+
+// Each UpdateShardMetadata persists the full cluster status. A periodic tick
+// should only persist after it finishes pending shard deletes.
+func TestShardController_PeriodicTasksPersistPendingDeleteChanges(t *testing.T) {
+	const shard int64 = 5
+	pendingDeleteNode := model.Server{Public: "s1:9091", Internal: "s1:8191"}
+	shardMetadata := model.ShardMetadata{
+		Status: model.ShardStatusSteadyState,
+		Term:   1,
+	}
+
+	meta := metadata.NewMetadataProviderMemory()
+	defer meta.Close()
+	statusResource := resource.NewStatusResource(meta)
+	status := model.NewClusterStatus()
+	status.Namespaces[constant.DefaultNamespace] = model.NamespaceStatus{
+		Shards: map[int64]model.ShardMetadata{shard: shardMetadata},
+	}
+	statusResource.Update(status)
+	rpc := newMockRpcProvider()
+
+	controller := &shardController{
+		namespace:      constant.DefaultNamespace,
+		shard:          shard,
+		metadata:       NewMetadata(shardMetadata),
+		statusResource: statusResource,
+		rpc:            rpc,
+		ctx:            t.Context(),
+		log:            slog.Default(),
+	}
+
+	before := statusResource.Load()
+	controller.handlePeriodicTasks()
+	assert.Same(t, before, statusResource.Load())
+
+	updatedMetadata := controller.metadata.Compute(func(metadata *model.ShardMetadata) {
+		metadata.PendingDeleteShardNodes = []model.Server{pendingDeleteNode}
+	})
+	statusResource.UpdateShardMetadata(constant.DefaultNamespace, shard, updatedMetadata)
+	before = statusResource.Load()
+	rpc.GetNode(pendingDeleteNode).DeleteShardResponse(nil)
+	controller.handlePeriodicTasks()
+	rpc.GetNode(pendingDeleteNode).expectDeleteShardRequest(t, shard, shardMetadata.Term)
+
+	after := statusResource.Load()
+	assert.NotSame(t, before, after)
+	assert.Empty(t, after.Namespaces[constant.DefaultNamespace].Shards[shard].PendingDeleteShardNodes)
+	assert.Empty(t, controller.metadata.Load().PendingDeleteShardNodes)
+
+	before = after
+	controller.handlePeriodicTasks()
+	assert.Same(t, before, statusResource.Load())
 }
 
 func TestShardController_StartingWithLeaderAlreadyPresent(t *testing.T) {
