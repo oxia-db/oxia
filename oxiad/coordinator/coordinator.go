@@ -795,6 +795,13 @@ func NewCoordinator(meta metadata.Provider,
 		c.Info("Checking cluster config", slog.Any("clusterConfig", clusterConfig))
 	}
 	clusterStatus, _, _ = c.statusResource.ApplyChanges(clusterConfig, c.selectNewEnsemble)
+	if len(clusterStatus.Namespaces) == 0 {
+		// No shard controllers will run leader election and publish assignments,
+		// so send the empty assignment set now to make data servers ready.
+		c.Lock()
+		c.computeNewAssignments()
+		c.Unlock()
+	}
 
 	// init shard controller
 	for ns, shards := range clusterStatus.Namespaces {
