@@ -1399,3 +1399,24 @@ func TestController_DeleteShardAllowsNilEventListener(t *testing.T) {
 	assert.False(t, exists)
 	assert.True(t, s.terminating.Load())
 }
+
+func TestSelectNewLeaderByNamespace(t *testing.T) {
+	a, b := &proto.DataServerIdentity{Internal: "a"}, &proto.DataServerIdentity{Internal: "b"}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), nil)
+	for i, name := range []string{"hot", "cold"} {
+		status := &proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{}}
+		for j := range 1 + i*2 {
+			status.Shards[int64(i*10+j)] = &proto.ShardMetadata{
+				Status: proto.ShardStatusSteadyState, Leader: []*proto.DataServerIdentity{a, b}[i],
+				Ensemble: []*proto.DataServerIdentity{a, b},
+			}
+		}
+		metadata.CreateNamespaceStatus(name, status)
+	}
+	election := &Election{namespace: "hot", metadataStore: metadata, leaderSelector: leaderselector.NewSelector()}
+	leader, _, err := election.selectNewLeader(map[*proto.DataServerIdentity]*proto.EntryId{
+		a: {Term: 1, Offset: 1}, b: {Term: 1, Offset: 1},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "b", leader.Internal, "hot namespace has no leaders on b, even though b has more globally")
+}
