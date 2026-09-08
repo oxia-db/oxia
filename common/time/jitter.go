@@ -12,22 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package feature provides feature negotiation capabilities for Oxia.
-// It enables safe rolling upgrades where new and old nodes can coexist
-// by negotiating which features are supported by all members of a quorum.
-package feature
+package time
 
 import (
-	"github.com/oxia-db/oxia/common/proto"
+	"math/rand/v2"
+	"time"
 )
 
-type Checker interface {
-	IsFeatureEnabled(feature proto.Feature) bool
-}
-
-func SupportedFeatures() []proto.Feature {
-	return []proto.Feature{
-		proto.Feature_FEATURE_DB_CHECKSUM,
-		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+// Jitter returns a duration uniformly distributed in
+// [interval-maxDeviation, interval+maxDeviation). If maxDeviation is not
+// positive, it returns interval unchanged.
+func Jitter(interval time.Duration, maxDeviation time.Duration) time.Duration {
+	if maxDeviation <= 0 {
+		return interval
 	}
+	return interval - maxDeviation + rand.N(2*maxDeviation) //nolint:gosec
 }

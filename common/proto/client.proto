@@ -468,6 +468,8 @@ enum Status {
   UNEXPECTED_VERSION_ID = 2;
   // The session that the put request referred to is not alive
   SESSION_DOES_NOT_EXIST = 3;
+  // The request contains an invalid argument
+  INVALID_ARGUMENT = 4;
 }
 
 message CreateSessionRequest {

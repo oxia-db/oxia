@@ -27,6 +27,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -387,6 +388,10 @@ func (sm *sessionManager) Close() error {
 type sessionManagerUpdateOperationCallbackS struct{}
 
 var sessionManagerUpdateOperationCallback database.UpdateOperationCallback = &sessionManagerUpdateOperationCallbackS{}
+
+func (*sessionManagerUpdateOperationCallbackS) ValidatePut(*proto.PutRequest, feature.Checker) proto.Status {
+	return proto.Status_OK
+}
 
 func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.WriteBatch, notification *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	var _, closer, err = batch.Get(SessionKey(SessionId(*request.SessionId)))

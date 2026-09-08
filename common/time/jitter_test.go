@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package feature provides feature negotiation capabilities for Oxia.
-// It enables safe rolling upgrades where new and old nodes can coexist
-// by negotiating which features are supported by all members of a quorum.
-package feature
+package time
 
 import (
-	"github.com/oxia-db/oxia/common/proto"
+	"testing"
+	stdtime "time"
+
+	"github.com/stretchr/testify/assert"
 )
 
-type Checker interface {
-	IsFeatureEnabled(feature proto.Feature) bool
-}
+func TestJitter(t *testing.T) {
+	assert.Equal(t, stdtime.Nanosecond, Jitter(stdtime.Nanosecond, 0))
+	assert.Equal(t, stdtime.Nanosecond, Jitter(stdtime.Nanosecond, -stdtime.Nanosecond))
 
-func SupportedFeatures() []proto.Feature {
-	return []proto.Feature{
-		proto.Feature_FEATURE_DB_CHECKSUM,
-		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+	for range 100 {
+		interval := Jitter(stdtime.Minute, stdtime.Minute/4)
+		assert.GreaterOrEqual(t, interval, 45*stdtime.Second)
+		assert.Less(t, interval, 75*stdtime.Second)
 	}
 }

@@ -16,10 +16,15 @@ package database
 
 import (
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 )
 
 type noopCallback struct{}
+
+func (*noopCallback) ValidatePut(*proto.PutRequest, feature.Checker) proto.Status {
+	return proto.Status_OK
+}
 
 func (*noopCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry) error {
 	return nil

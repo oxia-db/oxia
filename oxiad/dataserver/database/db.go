@@ -31,6 +31,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -62,6 +63,8 @@ const (
 )
 
 type UpdateOperationCallback interface {
+	// ValidatePut must not mutate the request or database state.
+	ValidatePut(req *proto.PutRequest, features featurepkg.Checker) proto.Status
 	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
 	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string) error
 	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry) error
@@ -724,6 +727,10 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, notifications *Notifications,
 	putReq *proto.PutRequest, timestamp uint64,
 	updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) {
+	if status := updateOperationCallback.ValidatePut(putReq, d); status != proto.Status_OK {
+		return &proto.PutResponse{Status: status}, nil
+	}
+
 	var se *proto.StorageEntry
 	var err error
 	var newKey string

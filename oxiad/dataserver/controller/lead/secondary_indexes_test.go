@@ -25,12 +25,76 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/constant"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
+
+func TestSecondaryIndexNameValidation(t *testing.T) {
+	tests := []struct {
+		name              string
+		validationEnabled bool
+		secondaryIndexes  []*proto.SecondaryIndex
+		expected          proto.Status
+	}{
+		{
+			name: "validation disabled",
+			secondaryIndexes: []*proto.SecondaryIndex{{
+				IndexName: "tenant/users",
+			}},
+			expected: proto.Status_OK,
+		},
+		{name: "no indexes", validationEnabled: true, expected: proto.Status_OK},
+		{
+			name:              "valid index name",
+			validationEnabled: true,
+			secondaryIndexes: []*proto.SecondaryIndex{{
+				IndexName:    "tenant",
+				SecondaryKey: "users/email",
+			}},
+			expected: proto.Status_OK,
+		},
+		{
+			name:              "invalid index name",
+			validationEnabled: true,
+			secondaryIndexes: []*proto.SecondaryIndex{{
+				IndexName:    "tenant/users",
+				SecondaryKey: "email",
+			}},
+			expected: proto.Status_INVALID_ARGUMENT,
+		},
+		{
+			name:              "invalid later index name",
+			validationEnabled: true,
+			secondaryIndexes: []*proto.SecondaryIndex{
+				{IndexName: "tenant", SecondaryKey: "email"},
+				{IndexName: "tenant/users", SecondaryKey: "email"},
+			},
+			expected: proto.Status_INVALID_ARGUMENT,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := &proto.PutRequest{SecondaryIndexes: tt.secondaryIndexes}
+			features := testFeatureChecker{secondaryIndexNameValidation: tt.validationEnabled}
+			assert.Equal(t, tt.expected, WrapperUpdateOperationCallback.ValidatePut(request, features))
+		})
+	}
+}
+
+type testFeatureChecker struct {
+	secondaryIndexNameValidation bool
+}
+
+func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
+	return f.secondaryIndexNameValidation && candidate == proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION
+}
+
+var _ feature.Checker = testFeatureChecker{}
 
 func TestSecondaryIndices_List(t *testing.T) {
 	var shard int64 = 1

@@ -164,6 +164,26 @@ func TestNegotiate_MixedVersions_RollingUpgrade(t *testing.T) {
 	assert.Contains(t, result, proto.Feature_FEATURE_DB_CHECKSUM, "feature should be enabled after all nodes are upgraded")
 }
 
+func TestNegotiate_SecondaryIndexValidationRequiresFullUpgrade(t *testing.T) {
+	currentFeatures := []proto.Feature{
+		proto.Feature_FEATURE_DB_CHECKSUM,
+		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+	}
+	nodeFeatures := map[string][]proto.Feature{
+		"new-node-1": currentFeatures,
+		"new-node-2": currentFeatures,
+		"old-node":   {proto.Feature_FEATURE_DB_CHECKSUM},
+	}
+
+	result := negotiate(nodeFeatures, 3)
+	assert.Contains(t, result, proto.Feature_FEATURE_DB_CHECKSUM)
+	assert.NotContains(t, result, proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION)
+
+	nodeFeatures["old-node"] = currentFeatures
+	result = negotiate(nodeFeatures, 3)
+	assert.Contains(t, result, proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION)
+}
+
 func TestWaitForMajority_Success(t *testing.T) {
 	e := &Election{}
 	server1 := testDataServer("server1")

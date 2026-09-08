@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -158,7 +157,7 @@ func NewController(
 		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
 
-		periodicTasksInterval: periodTasksInterval,
+		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
 			slog.String("component", "shard-controller"),
 			slog.String("namespace", namespace),
@@ -259,10 +258,7 @@ func (s *controller) run() {
 
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
 
-	// All the shard controllers start together at coordinator startup: spread
-	// the first periodic tick over the interval so the periodic tasks don't
-	// fire as a herd.
-	periodicTasksTimer := time.NewTimer(rand.N(s.periodicTasksInterval)) //nolint:gosec
+	periodicTasksTimer := time.NewTimer(s.periodicTasksInterval)
 	defer periodicTasksTimer.Stop()
 
 	for {
@@ -675,26 +671,36 @@ func (s *controller) handlePeriodicTasks() {
 	mutShardMeta := gproto.CloneOf(common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow())
+	stateDirty := false
 
 	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
-		pendingDeleteShardNodes := append([]*proto.DataServerIdentity(nil), mutShardMeta.PendingDeleteShardNodes...)
-		term := mutShardMeta.Term
-		for _, ds := range pendingDeleteShardNodes {
-			s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
-
-			if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
-				Namespace: s.namespace,
-				Shard:     s.shard,
-				Term:      term,
-			}); err != nil {
-				s.logger.Warn("Failed to delete shard from removed data server", slog.Any("data-server", ds), slog.Any("error", err))
-				return
-			}
-
-			s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
+		if err := s.handlePendingDeleteShard(mutShardMeta); err != nil {
+			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
+		} else {
+			stateDirty = true
 		}
+	}
 
-		mutShardMeta.PendingDeleteShardNodes = nil
+	if stateDirty {
 		s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
 	}
+}
+
+func (s *controller) handlePendingDeleteShard(mutShardMeta *proto.ShardMetadata) error {
+	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
+		s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
+
+		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
+			Namespace: s.namespace,
+			Shard:     s.shard,
+			Term:      mutShardMeta.Term,
+		}); err != nil {
+			return fmt.Errorf("delete shard from removed data server %s: %w", ds.GetNameOrDefault(), err)
+		}
+
+		s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
+	}
+
+	mutShardMeta.PendingDeleteShardNodes = nil
+	return nil
 }

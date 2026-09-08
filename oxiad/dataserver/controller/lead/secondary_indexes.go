@@ -24,6 +24,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -33,6 +34,14 @@ import (
 const secondaryIdxKeyPrefix = constant.InternalKeyPrefix + "idx"
 
 type wrapperUpdateCallback struct{}
+
+func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest, features feature.Checker) proto.Status {
+	if status := sessionManagerUpdateOperationCallback.ValidatePut(req, features); status != proto.Status_OK {
+		return status
+	}
+
+	return secondaryIndexesUpdateCallback.ValidatePut(req, features)
+}
 
 func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry) error {
 	// First update the session
@@ -80,6 +89,19 @@ var WrapperUpdateOperationCallback database.UpdateOperationCallback = &wrapperUp
 type secondaryIndexesUpdateCallbackS struct{}
 
 var secondaryIndexesUpdateCallback database.UpdateOperationCallback = &secondaryIndexesUpdateCallbackS{}
+
+func (secondaryIndexesUpdateCallbackS) ValidatePut(request *proto.PutRequest, features feature.Checker) proto.Status {
+	if !features.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION) {
+		return proto.Status_OK
+	}
+
+	for _, secondaryIndex := range request.SecondaryIndexes {
+		if strings.IndexByte(secondaryIndex.GetIndexName(), '/') >= 0 {
+			return proto.Status_INVALID_ARGUMENT
+		}
+	}
+	return proto.Status_OK
+}
 
 func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	if existingEntry != nil {
