@@ -31,6 +31,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -48,6 +49,7 @@ var (
 	ErrMissingPartitionKey   = errors.New("oxia: sequential key operation requires partition key")
 	ErrMissingSequenceDeltas = errors.New("oxia: sequential key operation missing some sequence deltas")
 	ErrSequenceDeltaIsZero   = errors.New("oxia: sequential key operation requires first delta do be > 0")
+	ErrSequenceOverflow      = errors.New("oxia: sequential key operation overflows the sequence")
 	ErrNotificationsDisabled = errors.New("oxia: notifications disabled")
 )
 
@@ -61,6 +63,8 @@ const (
 )
 
 type UpdateOperationCallback interface {
+	// ValidatePut must not mutate the request or database state.
+	ValidatePut(req *proto.PutRequest, features featurepkg.Checker) proto.Status
 	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
 	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string) error
 	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry) error
@@ -723,6 +727,10 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, notifications *Notifications,
 	putReq *proto.PutRequest, timestamp uint64,
 	updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) {
+	if status := updateOperationCallback.ValidatePut(putReq, d); status != proto.Status_OK {
+		return &proto.PutResponse{Status: status}, nil
+	}
+
 	var se *proto.StorageEntry
 	var err error
 	var newKey string
@@ -744,7 +752,12 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
 	}
 
-	// No version conflict
+	// No version conflict.
+	// The closure returns whichever entry is current on exit: se is nil for a
+	// new key and replaced with a pooled entry below, and the callback paths
+	// can return early before that happens.
+	defer func() { se.ReturnToVTPool() }()
+
 	versionId := wal.InvalidOffset
 	if !internal {
 		status, err := updateOperationCallback.OnPut(batch, notifications, putReq, se)
@@ -789,11 +802,19 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 
 	se.SecondaryIndexes = putReq.SecondaryIndexes
 
-	defer se.ReturnToVTPool()
-
 	// Marshal the entry directly into the batch arena: marshal-then-Put would
 	// allocate an intermediate buffer and copy the entry twice
-	if err = batch.PutMarshalable(putReq.Key, se); err != nil {
+	err = batch.PutMarshalable(putReq.Key, se)
+	// The entry borrowed the request's buffers (Value, SecondaryIndexes), and
+	// the marshal above was their last reader. Detach them before the pool
+	// return: ResetVT keeps the Value capacity and the SecondaryIndexes slice
+	// for reuse, and a later Deserialize into this pooled entry appends into
+	// that capacity — the apply path decodes requests with UnmarshalVTUnsafe,
+	// so the borrowed buffer is the WAL entry payload, still aliased by every
+	// other operation of the same entry.
+	se.Value = nil
+	se.SecondaryIndexes = nil
+	if err != nil {
 		return nil, err
 	}
 
@@ -1045,26 +1066,6 @@ func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*p
 	}
 	return d.notificationsTracker.ReadNextNotifications(ctx, startOffset)
 }
-
-type noopCallback struct{}
-
-func (*noopCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry) error {
-	return nil
-}
-
-func (*noopCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, _ *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
-	return proto.Status_OK, nil
-}
-
-func (*noopCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, _ string) error {
-	return nil
-}
-
-func (*noopCallback) OnDeleteRange(_ kvstore.WriteBatch, _ *Notifications, _ string, _ string) error {
-	return nil
-}
-
-var NoOpCallback UpdateOperationCallback = &noopCallback{}
 
 func ToDbOption(opt *proto.NewTermOptions) TermOptions {
 	to := TermOptions{NotificationsEnabled: true}

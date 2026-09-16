@@ -17,7 +17,6 @@ package database
 import (
 	"log/slog"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -31,13 +30,23 @@ import (
 
 const (
 	sessionKeyPrefix = constant.InternalKeyPrefix + "session"
-	idxKeyPrefix     = constant.InternalKeyPrefix + "idx"
-	idxSeparator     = "\x01"
 	sessionKeyLength = len(sessionKeyPrefix) + 1 + 16 // __oxia/session/ + 16 hex digits
+
+	// Filtering deletes about half the shard: accumulated in a single indexed
+	// batch, that grows to GB scale (batch arena plus the batch skiplist).
+	// Committing in bounded chunks keeps the memory flat. This is safe here:
+	// nothing reads through the batch (every classification reads the
+	// iterator, which keeps the consistent view it was created with across
+	// commits), the child is not serving yet so there are no concurrent
+	// writers, and the filter is idempotent — on a failed snapshot load it
+	// either re-runs or the snapshot is re-sent wholesale.
 )
 
-var secondaryIdxRegex = regexp.MustCompile(
-	"^" + idxKeyPrefix + "/[^/]+/([^" + idxSeparator + "]+)" + idxSeparator + "(.+)$",
+// Vars, not consts, so tests can shrink them to exercise the chunk rotation
+// with small datasets.
+var (
+	splitFilterMaxBatchCount = 100_000
+	splitFilterMaxBatchBytes = 8 * 1024 * 1024
 )
 
 // FilterDBForSplit removes keys that do not belong to the specified hash range.
@@ -59,7 +68,9 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 	)
 
 	batch := kv.NewWriteBatch()
-	defer batch.Close()
+	// Closes whichever batch is current when returning; rotated chunks are
+	// closed at rotation
+	defer func() { _ = batch.Close() }()
 
 	it, err := kv.RangeScan("", "", kvstore.ShowInternalKeys)
 	if err != nil {
@@ -68,6 +79,7 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 	defer it.Close()
 
 	var deletedKeys, keptKeys, filteredNotifications, deletedNotifications int64
+	chunks := int64(1)
 
 	for it.Valid() {
 		key := it.Key()
@@ -92,20 +104,19 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 				keptKeys++
 			}
 		} else {
-			// User data key
-			value, err := it.Value()
+			deleted, err := filterUserKey(it, batch, key, hashRange)
 			if err != nil {
-				return errors.Wrapf(err, "failed to read value for key %q", key)
+				return err
 			}
-
-			if !isUserKeyInRange(key, value, hashRange) {
-				if err := batch.Delete(key); err != nil {
-					return err
-				}
+			if deleted {
 				deletedKeys++
 			} else {
 				keptKeys++
 			}
+		}
+
+		if batch, err = rotateSplitBatchIfFull(kv, batch, &chunks); err != nil {
+			return err
 		}
 
 		it.Next()
@@ -117,9 +128,43 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 		slog.Int64("kept-keys", keptKeys),
 		slog.Int64("filtered-notifications", filteredNotifications),
 		slog.Int64("deleted-notifications", deletedNotifications),
+		slog.Int64("chunks", chunks),
 	)
 
 	return batch.Commit()
+}
+
+// filterUserKey deletes the user key when it falls outside the child's hash
+// range, reporting whether it did.
+func filterUserKey(it kvstore.KeyValueIterator, batch kvstore.WriteBatch, key string, hashRange *proto.HashRange) (bool, error) {
+	value, err := it.Value()
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to read value for key %q", key)
+	}
+
+	if isUserKeyInRange(key, value, hashRange) {
+		return false, nil
+	}
+	if err := batch.Delete(key); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// rotateSplitBatchIfFull commits and closes the batch once it reaches the
+// chunk thresholds, returning a fresh batch to continue with.
+func rotateSplitBatchIfFull(kv kvstore.KV, batch kvstore.WriteBatch, chunks *int64) (kvstore.WriteBatch, error) {
+	if batch.Count() < splitFilterMaxBatchCount && batch.Size() < splitFilterMaxBatchBytes {
+		return batch, nil
+	}
+	if err := batch.Commit(); err != nil {
+		return batch, errors.Wrap(err, "failed to commit split filter chunk")
+	}
+	if err := batch.Close(); err != nil {
+		return batch, errors.Wrap(err, "failed to close split filter chunk")
+	}
+	(*chunks)++
+	return kv.NewWriteBatch(), nil
 }
 
 type splitAction int
@@ -265,14 +310,9 @@ func classifySessionShadowKey(key string, hashRange *proto.HashRange) splitActio
 // and checks if it belongs to this child's hash range.
 // Format: __oxia/idx/{name}/{secondary}\x01{url_escaped_primary}.
 func classifySecondaryIndexKey(key string, hashRange *proto.HashRange) splitAction {
-	matches := secondaryIdxRegex.FindStringSubmatch(key)
-	if len(matches) != 3 {
-		// Can't parse: keep to be safe
-		return splitActionKeep
-	}
-
-	primaryKey, err := url.PathUnescape(matches[2])
+	primaryKey, _, err := ParseSecondaryIndexKey(key)
 	if err != nil {
+		// Can't parse: keep to be safe
 		return splitActionKeep
 	}
 
@@ -296,7 +336,7 @@ func isUserKeyInRange(key string, value []byte, hashRange *proto.HashRange) bool
 	}
 
 	var h uint32
-	if se.PartitionKey != nil && *se.PartitionKey != "" {
+	if se.PartitionKey != nil {
 		h = hash.Xxh332(*se.PartitionKey)
 	} else {
 		h = hash.Xxh332(key)
@@ -321,7 +361,7 @@ func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange *proto.HashRa
 	var puts []*proto.PutRequest
 	for _, p := range req.Puts {
 		var h uint32
-		if p.PartitionKey != nil && *p.PartitionKey != "" {
+		if p.PartitionKey != nil {
 			h = hash.Xxh332(*p.PartitionKey)
 		} else {
 			h = hash.Xxh332(p.Key)
@@ -333,8 +373,19 @@ func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange *proto.HashRa
 
 	var deletes []*proto.DeleteRequest
 	for _, d := range req.Deletes {
-		h := hash.Xxh332(d.Key)
-		if isHashInRange(h, hashRange) {
+		if d.PartitionKey == nil {
+			// For backward compatibility, a missing partition key cannot be
+			// treated like it is for puts. Older clients used the partition key
+			// to route a delete but did not serialize it into DeleteRequest, so
+			// nil does not prove that the delete was routed by its record key.
+			// Keep it in both children to avoid resurrecting deleted records.
+			deletes = append(deletes, d)
+			continue
+		}
+
+		// An explicitly empty partition key is still present: existing clients
+		// accept it and route the request using hash("").
+		if isHashInRange(hash.Xxh332(*d.PartitionKey), hashRange) {
 			deletes = append(deletes, d)
 		}
 	}

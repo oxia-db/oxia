@@ -159,6 +159,8 @@ const (
 	Status_UNEXPECTED_VERSION_ID Status = 2
 	// The session that the put request referred to is not alive
 	Status_SESSION_DOES_NOT_EXIST Status = 3
+	// The request contains an invalid argument
+	Status_INVALID_ARGUMENT Status = 4
 )
 
 // Enum value maps for Status.
@@ -168,12 +170,14 @@ var (
 		1: "KEY_NOT_FOUND",
 		2: "UNEXPECTED_VERSION_ID",
 		3: "SESSION_DOES_NOT_EXIST",
+		4: "INVALID_ARGUMENT",
 	}
 	Status_value = map[string]int32{
 		"OK":                     0,
 		"KEY_NOT_FOUND":          1,
 		"UNEXPECTED_VERSION_ID":  2,
 		"SESSION_DOES_NOT_EXIST": 3,
+		"INVALID_ARGUMENT":       4,
 	}
 )
 
@@ -887,6 +891,7 @@ type PutRequest struct {
 	// If a partition key is present, it supersedes the regular record key in determining the routing of
 	// a record to a particular shard. It is passed to the server because it needs to be persisted as
 	// part of the record. We would need the partition_key if we're going to do a split of the shards.
+	// An explicitly present empty string is a valid partition key and is hashed normally.
 	PartitionKey *string `protobuf:"bytes,6,opt,name=partition_key,json=partitionKey,proto3,oneof" json:"partition_key,omitempty"`
 	// If one or more sequence key are specified. The key will get added suffixes
 	// based on adding the delta to the current highest key with the same prefix
@@ -1075,8 +1080,12 @@ type DeleteRequest struct {
 	// An optional expected version_id. The delete will fail if the server's current version_id
 	// does not match
 	ExpectedVersionId *int64 `protobuf:"varint,2,opt,name=expected_version_id,json=expectedVersionId,proto3,oneof" json:"expected_version_id,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// If a partition key is present, it supersedes the regular record key in determining the routing
+	// of the delete to a particular shard.
+	// An explicitly present empty string is a valid partition key and is hashed normally.
+	PartitionKey  *string `protobuf:"bytes,3,opt,name=partition_key,json=partitionKey,proto3,oneof" json:"partition_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeleteRequest) Reset() {
@@ -1121,6 +1130,13 @@ func (x *DeleteRequest) GetExpectedVersionId() int64 {
 		return *x.ExpectedVersionId
 	}
 	return 0
+}
+
+func (x *DeleteRequest) GetPartitionKey() string {
+	if x != nil && x.PartitionKey != nil {
+		return *x.PartitionKey
+	}
+	return ""
 }
 
 // *
@@ -2466,11 +2482,13 @@ const file_client_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\x0e2\x18.io.oxia.proto.v1.StatusR\x06status\x123\n" +
 	"\aversion\x18\x02 \x01(\v2\x19.io.oxia.proto.v1.VersionR\aversion\x12\x15\n" +
 	"\x03key\x18\x03 \x01(\tH\x00R\x03key\x88\x01\x01B\x06\n" +
-	"\x04_key\"n\n" +
+	"\x04_key\"\xaa\x01\n" +
 	"\rDeleteRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
-	"\x13expected_version_id\x18\x02 \x01(\x03H\x00R\x11expectedVersionId\x88\x01\x01B\x16\n" +
-	"\x14_expected_version_id\"B\n" +
+	"\x13expected_version_id\x18\x02 \x01(\x03H\x00R\x11expectedVersionId\x88\x01\x01\x12(\n" +
+	"\rpartition_key\x18\x03 \x01(\tH\x01R\fpartitionKey\x88\x01\x01B\x16\n" +
+	"\x14_expected_version_idB\x10\n" +
+	"\x0e_partition_key\"B\n" +
 	"\x0eDeleteResponse\x120\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x18.io.oxia.proto.v1.StatusR\x06status\"\xe1\x01\n" +
 	"\n" +
@@ -2576,12 +2594,13 @@ const file_client_proto_rawDesc = "" +
 	"\aCEILING\x10\x02\x12\t\n" +
 	"\x05LOWER\x10\x03\x12\n" +
 	"\n" +
-	"\x06HIGHER\x10\x04*Z\n" +
+	"\x06HIGHER\x10\x04*p\n" +
 	"\x06Status\x12\x06\n" +
 	"\x02OK\x10\x00\x12\x11\n" +
 	"\rKEY_NOT_FOUND\x10\x01\x12\x19\n" +
 	"\x15UNEXPECTED_VERSION_ID\x10\x02\x12\x1a\n" +
-	"\x16SESSION_DOES_NOT_EXIST\x10\x03*]\n" +
+	"\x16SESSION_DOES_NOT_EXIST\x10\x03\x12\x14\n" +
+	"\x10INVALID_ARGUMENT\x10\x04*]\n" +
 	"\x10NotificationType\x12\x0f\n" +
 	"\vKEY_CREATED\x10\x00\x12\x10\n" +
 	"\fKEY_MODIFIED\x10\x01\x12\x0f\n" +

@@ -146,6 +146,9 @@ func (*V1) ReadIndex(path string) ([]byte, error) {
 	if err = idFile.Close(); err != nil {
 		return nil, errors.Wrapf(err, "failed to close segment index file %s", path)
 	}
+	if len(indexBuf) == 0 {
+		return nil, errors.Wrapf(ErrDataCorrupted, "index file %s has no entries", path)
+	}
 	return indexBuf, nil
 }
 

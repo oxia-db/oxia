@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand/v2"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -74,8 +74,12 @@ type Controller interface {
 
 type DataServerSupportedFeaturesSupplier = func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature
 
-func NoOpSupportedFeaturesSupplier([]*proto.DataServerIdentity) map[string][]proto.Feature {
-	return map[string][]proto.Feature{}
+func NoOpSupportedFeaturesSupplier(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
+	features := make(map[string][]proto.Feature, len(dataServers))
+	for _, dataServer := range dataServers {
+		features[dataServer.GetNameOrDefault()] = []proto.Feature{}
+	}
+	return features
 }
 
 type controller struct {
@@ -153,7 +157,7 @@ func NewController(
 		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
 
-		periodicTasksInterval: periodTasksInterval,
+		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
 			slog.String("component", "shard-controller"),
 			slog.String("namespace", namespace),
@@ -254,10 +258,7 @@ func (s *controller) run() {
 
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
 
-	// All the shard controllers start together at coordinator startup: spread
-	// the first periodic tick over the interval so the periodic tasks don't
-	// fire as a herd.
-	periodicTasksTimer := time.NewTimer(rand.N(s.periodicTasksInterval)) //nolint:gosec
+	periodicTasksTimer := time.NewTimer(s.periodicTasksInterval)
 	defer periodicTasksTimer.Stop()
 
 	for {
@@ -278,8 +279,7 @@ func (s *controller) run() {
 			s.handlePeriodicTasks()
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
 		case electionAction := <-s.electionOp:
-			newLeader := s.onElectLeader(nil)
-			electionAction.Done(newLeader.GetNameOrDefault())
+			electionAction.Done(s.onElectLeader(nil).GetNameOrDefault())
 		}
 	}
 }
@@ -402,16 +402,81 @@ func namespaceTermOptions(metadataStore coordmetadata.Metadata, namespace string
 	return termOptions
 }
 
+func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action.ChangeEnsembleAction) error {
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while validating change ensemble: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+
+	if changeEnsembleAction.From == nil {
+		return fmt.Errorf("%w: from data server is nil", ErrInvalidChangeEnsemble)
+	}
+	if changeEnsembleAction.To == nil {
+		return fmt.Errorf("%w: to data server is nil", ErrInvalidChangeEnsemble)
+	}
+	source := changeEnsembleAction.From.GetNameOrDefault()
+	target := changeEnsembleAction.To.GetNameOrDefault()
+	ensembleSize := len(shardMeta.Ensemble)
+	targetEnsemble := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
+		return dataServer.GetNameOrDefault() == source
+	})
+	if len(targetEnsemble) != ensembleSize-1 {
+		return fmt.Errorf("%w: source data server %q must appear exactly once in the current ensemble", ErrInvalidChangeEnsemble, source)
+	}
+	ensembleWithoutTarget := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
+		return dataServer.GetNameOrDefault() == target
+	})
+	if len(ensembleWithoutTarget) != ensembleSize {
+		return fmt.Errorf("%w: target data server %q is already in the current ensemble", ErrInvalidChangeEnsemble, target)
+	}
+	targetEnsemble = append(targetEnsemble, changeEnsembleAction.To)
+
+	currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
+	if len(currentFeatures) != ensembleSize {
+		return fmt.Errorf("%w: found feature info for %d of %d current ensemble data servers",
+			ErrNotReadyForChangeEnsemble, len(currentFeatures), ensembleSize)
+	}
+	requiredFeatures := negotiate(currentFeatures, ensembleSize)
+	targetFeatureInfo := s.dataServerSupportedFeaturesSupplier(targetEnsemble)
+	if len(targetFeatureInfo) != len(targetEnsemble) {
+		return fmt.Errorf("%w: found feature info for %d of %d target ensemble data servers",
+			ErrNotReadyForChangeEnsemble, len(targetFeatureInfo), len(targetEnsemble))
+	}
+	if len(requiredFeatures) == 0 {
+		return nil
+	}
+	targetFeatures := negotiate(targetFeatureInfo, len(targetEnsemble))
+	var missing []proto.Feature
+	for _, feature := range requiredFeatures {
+		if !slices.Contains(targetFeatures, feature) {
+			missing = append(missing, feature)
+		}
+	}
+	if len(missing) > 0 {
+		s.logger.Warn(
+			"Change ensemble rejected: target ensemble does not support negotiated shard features",
+			slog.Any("required-features", requiredFeatures),
+			slog.Any("target-features", targetFeatures),
+			slog.Any("missing-features", missing),
+			slog.Any("current-ensemble", shardMeta.Ensemble),
+			slog.Any("target-ensemble", targetEnsemble),
+		)
+		return fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing)
+	}
+	return nil
+}
+
 func (s *controller) onElectLeader(changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServerIdentity {
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+
 	// stop the current term election
 	if s.currentElection != nil {
 		s.currentElection.Stop()
 		s.currentElection = nil
 	}
-	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
-	shardMeta := common.Must(borrowedMeta, exists,
-		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
-		s.shard).UnsafeBorrow()
 
 	termOptions := namespaceTermOptions(s.metadataStore, s.namespace)
 	s.currentElection = NewElection(s.ctx, s.logger, s.eventListener,
@@ -544,24 +609,22 @@ func (s *controller) ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleA
 }
 
 func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction) {
-	var err error
-	defer func() {
-		if err != nil {
-			changeEnsembleAction.Error(err)
-		} else {
-			changeEnsembleAction.Done(nil)
-		}
-	}()
 	if s.currentElection != nil {
 		if ready := s.currentElection.IsReadyForChangeEnsemble(); !ready {
 			s.logger.Warn("Change ensemble rejected: shard is not ready (follower catch-up still in progress)")
-			err = ErrNotReadyForChangeEnsemble
+			changeEnsembleAction.Error(ErrNotReadyForChangeEnsemble)
 			return
 		}
 	}
+	if err := s.validateChangeEnsembleFeatures(changeEnsembleAction); err != nil {
+		changeEnsembleAction.Error(err)
+		return
+	}
 	// todo: support optimized ensemble change to avoid start a new election
 	s.onElectLeader(changeEnsembleAction)
+	changeEnsembleAction.Done(nil)
 }
+
 func (s *controller) SyncServerAddress() {
 	s.terminationMu.RLock()
 	defer s.terminationMu.RUnlock()
@@ -608,26 +671,36 @@ func (s *controller) handlePeriodicTasks() {
 	mutShardMeta := gproto.CloneOf(common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow())
+	stateDirty := false
 
 	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
-		pendingDeleteShardNodes := append([]*proto.DataServerIdentity(nil), mutShardMeta.PendingDeleteShardNodes...)
-		term := mutShardMeta.Term
-		for _, ds := range pendingDeleteShardNodes {
-			s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
-
-			if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
-				Namespace: s.namespace,
-				Shard:     s.shard,
-				Term:      term,
-			}); err != nil {
-				s.logger.Warn("Failed to delete shard from removed data server", slog.Any("data-server", ds), slog.Any("error", err))
-				return
-			}
-
-			s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
+		if err := s.handlePendingDeleteShard(mutShardMeta); err != nil {
+			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
+		} else {
+			stateDirty = true
 		}
+	}
 
-		mutShardMeta.PendingDeleteShardNodes = nil
+	if stateDirty {
 		s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
 	}
+}
+
+func (s *controller) handlePendingDeleteShard(mutShardMeta *proto.ShardMetadata) error {
+	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
+		s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
+
+		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
+			Namespace: s.namespace,
+			Shard:     s.shard,
+			Term:      mutShardMeta.Term,
+		}); err != nil {
+			return fmt.Errorf("delete shard from removed data server %s: %w", ds.GetNameOrDefault(), err)
+		}
+
+		s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
+	}
+
+	mutShardMeta.PendingDeleteShardNodes = nil
+	return nil
 }

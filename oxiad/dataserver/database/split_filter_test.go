@@ -165,6 +165,31 @@ func TestFilterDBForSplit_PartitionKey(t *testing.T) {
 	assert.True(t, keyExists(t, kv, "some-key"), "key with left partition_key should survive")
 }
 
+func TestFilterDBForSplit_EmptyPartitionKey(t *testing.T) {
+	kv := newTestKV(t)
+	emptyPartitionKey := ""
+	emptyPartitionKeyHash := hash.Xxh332(emptyPartitionKey)
+	matchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash,
+		Max: emptyPartitionKeyHash,
+	}
+
+	var key string
+	for i := 0; i < 1000; i++ {
+		candidate := fmt.Sprintf("empty-pk-key-%d", i)
+		if hash.Xxh332(candidate) != emptyPartitionKeyHash {
+			key = candidate
+			break
+		}
+	}
+	assert.NotEmpty(t, key)
+
+	putStorageEntry(t, kv, key, &emptyPartitionKey)
+
+	assert.NoError(t, FilterDBForSplit(kv, matchingRange))
+	assert.True(t, keyExists(t, kv, key), "explicit empty partition key should determine placement")
+}
+
 func TestFilterDBForSplit_MetadataKeys(t *testing.T) {
 	kv := newTestKV(t)
 
@@ -323,6 +348,50 @@ func TestFilterDBForSplit_SecondaryIndexKeys(t *testing.T) {
 	assert.False(t, keyExists(t, kv, rightIdxKey))
 }
 
+func TestFilterDBForSplit_SecondaryIndexKeysWithSeparator(t *testing.T) {
+	kv := newTestKV(t)
+
+	leftRange, _ := splitRanges()
+
+	// Find primary keys for each side
+	var leftPrimaryKey, rightPrimaryKey string
+	for i := 0; i < 1000; i++ {
+		k := fmt.Sprintf("pri-%d", i)
+		h := hash.Xxh332(k)
+		if leftPrimaryKey == "" && isHashInRange(h, leftRange) {
+			leftPrimaryKey = k
+		}
+		if rightPrimaryKey == "" && !isHashInRange(h, leftRange) {
+			rightPrimaryKey = k
+		}
+		if leftPrimaryKey != "" && rightPrimaryKey != "" {
+			break
+		}
+	}
+
+	// The secondary key is stored as the client supplied it, so it may be empty
+	// or contain the separator. The primary key still decides the side.
+	idxKey := func(secondary, primary string) string {
+		return fmt.Sprintf("%s/myidx/%s%s%s", idxKeyPrefix, secondary, idxSeparator, url.PathEscape(primary))
+	}
+	sneaky := "sec" + idxSeparator + url.PathEscape(rightPrimaryKey)
+
+	leftSneaky := idxKey(sneaky, leftPrimaryKey)
+	rightSneaky := idxKey(sneaky, rightPrimaryKey)
+	leftEmpty := idxKey("", leftPrimaryKey)
+	rightEmpty := idxKey("", rightPrimaryKey)
+	for _, k := range []string{leftSneaky, rightSneaky, leftEmpty, rightEmpty} {
+		putRawKey(t, kv, k, []byte{})
+	}
+
+	assert.NoError(t, FilterDBForSplit(kv, leftRange))
+
+	assert.True(t, keyExists(t, kv, leftSneaky))
+	assert.False(t, keyExists(t, kv, rightSneaky))
+	assert.True(t, keyExists(t, kv, leftEmpty))
+	assert.False(t, keyExists(t, kv, rightEmpty))
+}
+
 func TestFilterWriteRequestForSplit_Puts(t *testing.T) {
 	leftRange, _ := splitRanges()
 
@@ -340,7 +409,6 @@ func TestFilterWriteRequestForSplit_Puts(t *testing.T) {
 			break
 		}
 	}
-
 	req := &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
 			{Key: leftKey, Value: []byte("v1")},
@@ -377,6 +445,30 @@ func TestFilterWriteRequestForSplit_PartitionKey(t *testing.T) {
 	assert.Equal(t, 1, len(filtered.Puts))
 }
 
+func TestFilterWriteRequestForSplit_EmptyPartitionKey(t *testing.T) {
+	emptyPartitionKey := ""
+	emptyPartitionKeyHash := hash.Xxh332(emptyPartitionKey)
+	matchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash,
+		Max: emptyPartitionKeyHash,
+	}
+	req := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{Key: "key", PartitionKey: &emptyPartitionKey},
+		},
+	}
+
+	filtered := FilterWriteRequestForSplit(req, matchingRange)
+	assert.NotNil(t, filtered)
+	assert.Len(t, filtered.Puts, 1)
+
+	nonMatchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash ^ 1,
+		Max: emptyPartitionKeyHash ^ 1,
+	}
+	assert.Nil(t, FilterWriteRequestForSplit(req, nonMatchingRange))
+}
+
 func TestFilterWriteRequestForSplit_Deletes(t *testing.T) {
 	leftRange, _ := splitRanges()
 
@@ -402,10 +494,115 @@ func TestFilterWriteRequestForSplit_Deletes(t *testing.T) {
 		},
 	}
 
+	// Deletes are kept for every child regardless of the key hash: a delete for
+	// a key the child does not hold is a harmless no-op, and dropping it would
+	// resurrect a partition-keyed record (see the test below).
 	filtered := FilterWriteRequestForSplit(req, leftRange)
 	assert.NotNil(t, filtered)
-	assert.Equal(t, 1, len(filtered.Deletes))
+	assert.Equal(t, 2, len(filtered.Deletes))
 	assert.Equal(t, leftKey, filtered.Deletes[0].Key)
+	assert.Equal(t, rightKey, filtered.Deletes[1].Key)
+}
+
+func TestFilterWriteRequestForSplit_DeletesWithPartitionKey(t *testing.T) {
+	leftRange, _ := splitRanges()
+
+	var leftPK, rightPK string
+	for i := 0; i < 1000; i++ {
+		pk := fmt.Sprintf("delete-pk-%d", i)
+		if leftPK == "" && isHashInRange(hash.Xxh332(pk), leftRange) {
+			leftPK = pk
+		}
+		if rightPK == "" && !isHashInRange(hash.Xxh332(pk), leftRange) {
+			rightPK = pk
+		}
+		if leftPK != "" && rightPK != "" {
+			break
+		}
+	}
+	assert.NotEmpty(t, leftPK)
+	assert.NotEmpty(t, rightPK)
+
+	req := &proto.WriteRequest{
+		Deletes: []*proto.DeleteRequest{
+			{Key: "left", PartitionKey: &leftPK},
+			{Key: "right", PartitionKey: &rightPK},
+		},
+	}
+
+	filtered := FilterWriteRequestForSplit(req, leftRange)
+	assert.NotNil(t, filtered)
+	assert.Len(t, filtered.Deletes, 1)
+	assert.Equal(t, "left", filtered.Deletes[0].Key)
+}
+
+func TestFilterWriteRequestForSplit_DeleteWithEmptyPartitionKey(t *testing.T) {
+	emptyPartitionKey := ""
+	emptyPartitionKeyHash := hash.Xxh332(emptyPartitionKey)
+	matchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash,
+		Max: emptyPartitionKeyHash,
+	}
+	req := &proto.WriteRequest{
+		Deletes: []*proto.DeleteRequest{
+			{Key: "key", PartitionKey: &emptyPartitionKey},
+		},
+	}
+
+	filtered := FilterWriteRequestForSplit(req, matchingRange)
+	assert.NotNil(t, filtered)
+	assert.Len(t, filtered.Deletes, 1)
+
+	nonMatchingRange := &proto.HashRange{
+		Min: emptyPartitionKeyHash ^ 1,
+		Max: emptyPartitionKeyHash ^ 1,
+	}
+	assert.Nil(t, FilterWriteRequestForSplit(req, nonMatchingRange))
+}
+
+func TestFilterWriteRequestForSplit_DeleteKeptForPartitionKeyedRecord(t *testing.T) {
+	leftRange, _ := splitRanges()
+
+	// A partition key that places the record in the left child.
+	var leftPK string
+	for i := 0; i < 1000; i++ {
+		pk := fmt.Sprintf("pk-%d", i)
+		if isHashInRange(hash.Xxh332(pk), leftRange) {
+			leftPK = pk
+			break
+		}
+	}
+	assert.NotEmpty(t, leftPK)
+
+	// A key whose own hash falls outside the left child's range.
+	var outsideKey string
+	for i := 0; i < 1000; i++ {
+		k := fmt.Sprintf("outside-%d", i)
+		if !isHashInRange(hash.Xxh332(k), leftRange) {
+			outsideKey = k
+			break
+		}
+	}
+	assert.NotEmpty(t, outsideKey)
+
+	// The record is placed in the left child by its partition key, and the
+	// matching delete lands on the same child. The delete's key hashes outside
+	// the range, so filtering deletes by key hash would drop it and leave the
+	// record behind after the split.
+	req := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{Key: outsideKey, Value: []byte("v"), PartitionKey: &leftPK},
+		},
+		Deletes: []*proto.DeleteRequest{
+			{Key: outsideKey, PartitionKey: &leftPK},
+		},
+	}
+
+	filtered := FilterWriteRequestForSplit(req, leftRange)
+	assert.NotNil(t, filtered)
+	assert.Equal(t, 1, len(filtered.Puts))
+	assert.Equal(t, 1, len(filtered.Deletes))
+	assert.Equal(t, outsideKey, filtered.Deletes[0].Key)
 }
 
 func TestFilterWriteRequestForSplit_AllFiltered(t *testing.T) {
@@ -435,4 +632,74 @@ func TestFilterWriteRequestForSplit_AllFiltered(t *testing.T) {
 func TestFilterWriteRequestForSplit_Nil(t *testing.T) {
 	leftRange, _ := splitRanges()
 	assert.Nil(t, FilterWriteRequestForSplit(nil, leftRange))
+}
+
+// The filter commits in bounded chunks so half-shard deletions do not
+// accumulate into one GB-scale indexed batch. With the thresholds shrunk,
+// the rotation runs many times mid-iteration: every key must still end up on
+// the right side, which also pins that the range-scan iterator keeps its
+// consistent view across the interleaved commits.
+func TestFilterDBForSplit_ChunkedCommits(t *testing.T) {
+	oldCount, oldBytes := splitFilterMaxBatchCount, splitFilterMaxBatchBytes
+	splitFilterMaxBatchCount, splitFilterMaxBatchBytes = 7, 1<<20
+	defer func() {
+		splitFilterMaxBatchCount, splitFilterMaxBatchBytes = oldCount, oldBytes
+	}()
+
+	kv := newTestKV(t)
+	leftRange, _ := splitRanges()
+
+	const numKeys = 200
+	inRange := map[string]bool{}
+	for i := 0; i < numKeys; i++ {
+		k := fmt.Sprintf("chunked-key-%04d", i)
+		putStorageEntry(t, kv, k, nil)
+		h := hash.Xxh332(k)
+		inRange[k] = h >= leftRange.Min && h <= leftRange.Max
+	}
+
+	// Pick one key from each side of the range, so the mixed notification
+	// batch below is filtered — not kept whole, not deleted whole — by
+	// construction rather than by luck of the hardcoded hashes
+	var inRangeKey, outOfRangeKey string
+	for k, in := range inRange {
+		if in && inRangeKey == "" {
+			inRangeKey = k
+		}
+		if !in && outOfRangeKey == "" {
+			outOfRangeKey = k
+		}
+	}
+	assert.NotEmpty(t, inRangeKey)
+	assert.NotEmpty(t, outOfRangeKey)
+
+	// One mixed batch (must be filtered down to the in-range entry) and one
+	// fully out-of-range batch (must be deleted)
+	putNotificationBatch(t, kv, 0, map[string]*proto.Notification{
+		inRangeKey:    {Type: proto.NotificationType_KEY_CREATED},
+		outOfRangeKey: {Type: proto.NotificationType_KEY_CREATED},
+	})
+	putNotificationBatch(t, kv, 1, map[string]*proto.Notification{
+		outOfRangeKey: {Type: proto.NotificationType_KEY_CREATED},
+	})
+
+	assert.NoError(t, FilterDBForSplit(kv, leftRange))
+
+	deleted := 0
+	for k, in := range inRange {
+		assert.Equal(t, in, keyExists(t, kv, k), "key %s (in-range=%v)", k, in)
+		if !in {
+			deleted++
+		}
+	}
+	// Sanity: the dataset actually forced multiple chunk rotations
+	assert.Greater(t, deleted, 3*splitFilterMaxBatchCount)
+
+	// The out-of-range-only notification batch is gone; the mixed one is
+	// filtered down to exactly its in-range entry
+	assert.Nil(t, readNotificationBatch(t, kv, 1))
+	nb := readNotificationBatch(t, kv, 0)
+	assert.NotNil(t, nb)
+	assert.Equal(t, 1, len(nb.Notifications))
+	assert.Equal(t, inRangeKey, nb.Notifications[0].GetKey())
 }

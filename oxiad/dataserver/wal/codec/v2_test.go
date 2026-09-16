@@ -311,12 +311,18 @@ func TestV2_IndexBroken(t *testing.T) {
 }
 
 func TestV2_ReadEmptyIndex(t *testing.T) {
-	dir := os.TempDir()
-	fileName := "empty-index"
-	p := path.Join(dir, fileName+v2.GetIdxExtension())
+	p := path.Join(t.TempDir(), "empty-index"+v2.GetIdxExtension())
+	assert.NoError(t, v2.WriteIndex(p, nil))
+
+	_, err := v2.ReadIndex(p)
+	assert.ErrorIs(t, err, ErrDataCorrupted)
+}
+
+func TestV2_ReadEmptyIndexFile(t *testing.T) {
+	p := path.Join(t.TempDir(), "empty-index-file"+v2.GetIdxExtension())
 
 	// Create empty file
-	err := os.WriteFile(p, []byte{}, 0644)
+	err := os.WriteFile(p, nil, 0644)
 	assert.NoError(t, err)
 
 	_, err = v2.ReadIndex(p)

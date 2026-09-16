@@ -22,6 +22,7 @@ import (
 	"net/http"
 	_ "net/http/pprof" //nolint:gosec
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"time"
 )
@@ -29,6 +30,16 @@ import (
 var (
 	PprofEnable      bool
 	PprofBindAddress string
+)
+
+const (
+	// mutexProfileFraction samples 1 in N mutex contention events, and
+	// blockProfileRate samples roughly one blocking event per N nanoseconds
+	// spent blocked. Both profiles are disabled by default in the Go runtime,
+	// which would leave /debug/pprof/mutex and /debug/pprof/block always
+	// empty; these sampling rates are cheap enough for a debugging session.
+	mutexProfileFraction = 100
+	blockProfileRate     = 100_000
 )
 
 // DoWithLabels attaches the labels to the current go-routine Pprof context,
@@ -59,6 +70,10 @@ func RunProfiling() io.Closer {
 		return s
 	}
 
+	// Enable sampled contention profiling while the pprof server is on
+	runtime.SetMutexProfileFraction(mutexProfileFraction)
+	runtime.SetBlockProfileRate(blockProfileRate)
+
 	slog.Info(
 		"Starting pprof server",
 		slog.String("address", s.Addr),
@@ -84,5 +99,17 @@ func RunProfiling() io.Closer {
 			}
 		})
 
-	return s
+	return &profilingServer{s}
+}
+
+// profilingServer scopes the contention-profiling rates to the pprof server
+// lifetime: closing it restores the runtime defaults.
+type profilingServer struct {
+	*http.Server
+}
+
+func (p *profilingServer) Close() error {
+	runtime.SetMutexProfileFraction(0)
+	runtime.SetBlockProfileRate(0)
+	return p.Server.Close()
 }

@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
+	"time"
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
@@ -47,6 +49,12 @@ import (
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 )
 
+// dataServerRecoveryStabilizationWindow is how long a data server must stay
+// Running after recovering from a health-check failure before the load
+// balancer considers it for leader rebalancing again. Failure handling (the
+// re-election of leaders away from a dead node) is not affected.
+const dataServerRecoveryStabilizationWindow = 5 * time.Minute
+
 type runtime struct {
 	sync.RWMutex
 
@@ -55,6 +63,14 @@ type runtime struct {
 	ctxCancel context.CancelFunc
 	wg        sync.WaitGroup
 	insID     string
+
+	// closed is set (under the write lock) when Close starts, so that late
+	// shard-controller callbacks become no-ops instead of racing with the
+	// teardown (metadata may be closed right after Close returns).
+	closed bool
+	// callbacksWg tracks in-flight ShardDeleted callbacks: they run on
+	// detached goroutines that no controller's Close waits for.
+	callbacksWg sync.WaitGroup
 
 	metadata coordmetadata.Metadata
 
@@ -83,6 +99,15 @@ func (c *runtime) LeaderElected(int64, *proto.DataServerIdentity, []*proto.DataS
 
 func (c *runtime) ShardDeleted(shard int64) {
 	c.Lock()
+	if c.closed {
+		// Close tears down all the controllers from its own snapshot of the
+		// maps, including this shard's.
+		c.Unlock()
+		return
+	}
+	c.callbacksWg.Add(1)
+	defer c.callbacksWg.Done()
+
 	sc, exists := c.shardControllers[shard]
 	if exists {
 		delete(c.shardControllers, shard)
@@ -360,24 +385,41 @@ func (c *runtime) Close() error {
 		c.autoSplitMonitor.Close()
 	}
 
+	// Snapshot the controller maps under the lock: shard-controller callbacks
+	// (e.g. ShardDeleted, running on a detached goroutine) mutate them
+	// concurrently. The controllers must still be closed outside the lock,
+	// because their callbacks acquire it.
+	c.Lock()
+	c.closed = true
+	splitControllers := maps.Clone(c.splitControllers)
+	shardControllers := maps.Clone(c.shardControllers)
+	dataServerControllers := maps.Clone(c.dataServerControllers)
+	drainingNodes := maps.Clone(c.drainingNodes)
+	c.Unlock()
+
 	// The shard controllers must be closed before waiting for the action
 	// worker: the worker blocks on in-flight election actions, which only
 	// complete once the shard controllers' retry loops get canceled
 	var err error
-	for _, sc := range c.splitControllers {
+	for _, sc := range splitControllers {
 		sc.Close()
 	}
-	for _, sc := range c.shardControllers {
+	for _, sc := range shardControllers {
 		err = multierr.Append(err, sc.Close())
 	}
 
+	// Wait for any in-flight ShardDeleted callback: it may still be closing
+	// the shard controller it removed from the map. Controller Close is
+	// idempotent, so overlapping with the loop above is safe.
+	c.callbacksWg.Wait()
+
 	c.wg.Wait()
 
-	for _, nc := range c.dataServerControllers {
+	for _, nc := range dataServerControllers {
 		err = multierr.Append(err, nc.Close())
 	}
 
-	for _, nc := range c.drainingNodes {
+	for _, nc := range drainingNodes {
 		err = multierr.Append(err, nc.Close())
 	}
 	err = multierr.Append(err, c.rpc.Close())
@@ -863,7 +905,11 @@ func New(
 				// data server that was just registered
 				return false
 			}
-			return nc.Status() == dataservercontroller.Running
+			// A node that just recovered from a health-check failure is left
+			// out of leader rebalancing until it has been stable for a while:
+			// moving leaders straight back onto it is what turns one flap
+			// into a rebalancing loop.
+			return nc.IsStablyRunning(dataServerRecoveryStabilizationWindow)
 		},
 	})
 

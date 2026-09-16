@@ -1104,6 +1104,53 @@ func TestFollower_DupEntries(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// A fresh follower (empty wal and db) whose first entries were lost in
+// transit receives its first append at a non-zero offset: the append must be
+// rejected and the stream must fail, so that the leader reconnects and
+// resends from the beginning. Accepting the gap would let the follower ack
+// entries it does not have, and the leader would count those acks towards the
+// commit quorum.
+func TestFollower_RejectGapOnEmptyWal(t *testing.T) {
+	var shardId int64
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+
+	fc, _ := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	_, _ = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+
+	stream1 := rpc.NewMockServerReplicateStream()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- fc.AppendEntries(stream1)
+		stream1.Cancel()
+	}()
+
+	// First-ever entry arrives at offset 5: entries 0..4 were lost
+	stream1.AddRequest(createAddRequest(t, 1, 5, map[string]string{"a": "0"}, wal.InvalidOffset))
+	assert.ErrorIs(t, <-errCh, wal.ErrInvalidNextOffset)
+
+	// The leader reconnects and resends from the beginning: the follower
+	// accepts and acks the contiguous entries
+	stream2 := rpc.NewMockServerReplicateStream()
+	go func() {
+		// cancelled due to fc.Close() below
+		assert.ErrorIs(t, fc.AppendEntries(stream2), context.Canceled)
+		stream2.Cancel()
+	}()
+
+	stream2.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0"}, wal.InvalidOffset))
+	r1 := stream2.GetResponse()
+	assert.EqualValues(t, 0, r1.Offset)
+
+	stream2.AddRequest(createAddRequest(t, 1, 1, map[string]string{"a": "1"}, wal.InvalidOffset))
+	r2 := stream2.GetResponse()
+	assert.EqualValues(t, 1, r2.Offset)
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestFollowerController_DeleteShard(t *testing.T) {
 	var shardId int64
 	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))

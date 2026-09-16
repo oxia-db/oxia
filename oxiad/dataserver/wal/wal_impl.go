@@ -215,6 +215,9 @@ func (t *wal) readAtIndex(index int64) (entry *proto.LogEntry, previousCrc uint3
 	}
 
 	entry = &proto.LogEntry{}
+	// Keep the copying unmarshal: entry.Value must be a private heap buffer,
+	// because ApplyLogEntry decodes it zero-copy and the aliases must survive
+	// segment unmap/close. (The codec also copies records out of the mmap.)
 	if err = entry.UnmarshalVT(val); err != nil {
 		t.readErrors.Inc()
 		return nil, 0, 0, err

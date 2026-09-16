@@ -57,10 +57,8 @@ func TestReadOnlySegment(t *testing.T) {
 	assert.NoError(t, ro.Close())
 }
 
-// A valid but empty index file — the stale leftover of a close that ran while
-// the segment had no entries, before a later reopen appended entries to the
-// txn file — must trigger an index rebuild, not be trusted (it used to panic
-// with a slice out of bounds).
+// An empty index file must trigger an index rebuild, not be trusted (it used
+// to panic with a slice out of bounds).
 func TestRO_auto_recover_empty_index(t *testing.T) {
 	path := t.TempDir()
 
@@ -102,14 +100,10 @@ func TestRO_EmptySegment(t *testing.T) {
 	rwSegment := rw.(*readWriteSegment)
 	assert.NoError(t, rw.Close())
 
-	// The close of the empty segment wrote an empty index file
-	ro, err := newReadOnlySegment(path, 0)
-	assert.Nil(t, ro)
-	assert.ErrorIs(t, err, ErrEmptySegment)
+	_, err = os.Stat(rwSegment.c.idxPath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
 
-	// Same without the index file
-	assert.NoError(t, os.Remove(rwSegment.c.idxPath))
-	ro, err = newReadOnlySegment(path, 0)
+	ro, err := newReadOnlySegment(path, 0)
 	assert.Nil(t, ro)
 	assert.ErrorIs(t, err, ErrEmptySegment)
 }
