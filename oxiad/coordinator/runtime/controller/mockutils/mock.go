@@ -129,8 +129,11 @@ type PerNodeChannels struct {
 	handshakeStatus   proto.HandshakeStatus
 	handshakeErr      error
 	HandshakeCount    atomic.Int64
-	getInfoErr        error
-	getInfoCount      atomic.Int64
+	// handshakeGate, when set by BlockHandshakes, holds every Handshake call
+	// (after it has been counted) until ReleaseHandshakes closes it.
+	handshakeGate chan struct{}
+	getInfoErr    error
+	getInfoCount  atomic.Int64
 }
 
 const defaultTimeout = 10 * time.Second
@@ -365,6 +368,19 @@ func (m *PerNodeChannels) SetOldNode() {
 	m.supportedFeatures = nil
 }
 
+// BlockHandshakes holds every Handshake call in flight, after counting it,
+// until ReleaseHandshakes is called, so a test can observe the controller
+// while a handshake has not completed yet. Call it before the controller
+// starts.
+func (m *PerNodeChannels) BlockHandshakes() {
+	m.handshakeGate = make(chan struct{})
+}
+
+// ReleaseHandshakes lets the Handshake calls held by BlockHandshakes complete.
+func (m *PerNodeChannels) ReleaseHandshakes() {
+	close(m.handshakeGate)
+}
+
 type RpcProvider struct {
 	sync.Mutex
 	channels map[string]*PerNodeChannels
@@ -401,19 +417,28 @@ func (r *RpcProvider) GetInfo(_ context.Context, node *proto.DataServerIdentity,
 	}, nil
 }
 
-func (r *RpcProvider) Handshake(_ context.Context, node *proto.DataServerIdentity, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+func (r *RpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdentity, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 	r.Lock()
-	defer r.Unlock()
-
 	n := r.getNode(node)
 	n.HandshakeCount.Add(1)
-	if n.handshakeErr != nil {
-		return nil, n.handshakeErr
-	}
-	return &proto.HandshakeResponse{
+	gate, err := n.handshakeGate, n.handshakeErr
+	response := &proto.HandshakeResponse{
 		Status:            n.handshakeStatus,
 		FeaturesSupported: n.supportedFeatures,
-	}, nil
+	}
+	r.Unlock()
+
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
 }
 
 func (r *RpcProvider) RecoverNode(node *proto.DataServerIdentity) {
