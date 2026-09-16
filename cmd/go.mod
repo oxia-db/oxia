@@ -1,6 +1,6 @@
 module github.com/oxia-db/oxia/cmd
 
-go 1.26
+go 1.27
 
 require (
 	github.com/bmizerany/perks v0.0.0-20230307044200-03f9df79da1e

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common //nolint:revive // Existing shared package name.
+package common
 
 import "fmt"
 

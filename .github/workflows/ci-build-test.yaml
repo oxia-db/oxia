@@ -27,7 +27,7 @@ concurrency:
 env:
   MAELSTROM_VERSION: "0.2.4"
   GO_LICENSE_VERSION: "latest"
-  GOLANGCI_LINT_VERSION: "v2.6.2"
+  GOLANGCI_LINT_VERSION: "v2.13.2"
 
 jobs:
 
