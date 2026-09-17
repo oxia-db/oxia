@@ -18,7 +18,7 @@ import (
 	"bytes"
 )
 
-func CompareWithSlash(a, b []byte) int {
+func CompareWithSlash(a, b []byte) int { //nolint:revive
 	for len(a) > 0 && len(b) > 0 {
 		idxA, idxB := bytes.IndexByte(a, '/'), bytes.IndexByte(b, '/')
 		switch {
