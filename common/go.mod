@@ -1,6 +1,6 @@
 module github.com/oxia-db/oxia/common
 
-go 1.26
+go 1.27
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0

@@ -50,10 +50,18 @@ linters:
   settings:
     goconst:
       ignore-string-values: "localhost:0"
+      exclude-types:
+        - Call
+        - CompositeLit
     gosec:
       excludes:
         - G115
+        - G118
+        - G602
         - G703
+    govet:
+      disable:
+        - inline
     revive:
       enable-all-rules: true
       rules:
@@ -119,6 +127,15 @@ linters:
         - name: bare-return
           severity: warning
           disabled: false
+        - name: package-naming
+          severity: warning
+          disabled: true
+        - name: use-slices-sort
+          severity: warning
+          disabled: true
+        - name: epoch-naming
+          severity: warning
+          disabled: true
     gomoddirectives:
       replace-local: true
   exclusions:
@@ -133,6 +150,7 @@ linters:
           - contextcheck
           - gosec
           - noctx
+          - prealloc
           - unparam
         path: _test\.go
       - linters:
@@ -165,13 +183,6 @@ linters:
           - revive
         path: _grpc\.go
         text: blank-imports
-      - linters:
-          - revive
-        path: oxiad/coordinator/metadata/common/
-        text: avoid meaningless package names
-      - linters:
-          - revive
-        text: "avoid package names that conflict with Go standard library"
       - linters:
           - goconst
         path: (.+)_test\.go
