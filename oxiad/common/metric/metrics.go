@@ -98,8 +98,11 @@ func init() {
 	// Default view to keep all instruments
 	defaultView := metric.NewView(metric.Instrument{Name: "*"}, metric.Stream{})
 
+	// Since v1.44.0 the SDK caps each instrument at 2000 attribute sets, collapsing the excess into a single
+	// `otel.metric.overflow` series. Per-shard labels can exceed that in large clusters, so disable the limit.
 	provider := metric.NewMeterProvider(metric.WithReader(exporter),
-		metric.WithView(latencyHistogramView, sizeHistogramView, countHistogramView, defaultView))
+		metric.WithView(latencyHistogramView, sizeHistogramView, countHistogramView, defaultView),
+		metric.WithCardinalityLimit(0))
 
 	// Set as the default provider
 	otel.SetMeterProvider(provider)
