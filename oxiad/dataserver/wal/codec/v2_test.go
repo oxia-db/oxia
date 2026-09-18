@@ -17,6 +17,7 @@ package codec
 import (
 	"bytes"
 	"encoding/binary"
+	"math"
 	"os"
 	"path"
 	"testing"
@@ -196,6 +197,35 @@ func TestV2_BreakingPoint_Size(t *testing.T) {
 
 	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
 	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+}
+
+func TestV2_BreakingPoint_SizeOverflow(t *testing.T) {
+	buf := make([]byte, 100)
+
+	v2.WriteRecord(buf, 0, 0, []byte{1})
+	// a size this close to the uint32 max wraps once the header size is added to it
+	binary.BigEndian.PutUint32(buf, math.MaxUint32)
+
+	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
+	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+
+	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
+	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+
+	_, err = v2.GetRecordSize(buf, 0)
+	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+}
+
+func TestV2_BreakingPoint_PartialHeader(t *testing.T) {
+	buf := make([]byte, 100)
+
+	v2.WriteRecord(buf, 0, 0, []byte{1})
+
+	// an offset with fewer than HeaderSize bytes behind it has no readable header
+	for _, startFileOffset := range []uint32{uint32(len(buf)) - 1, uint32(len(buf)) - v2.HeaderSize + 1} {
+		_, _, _, err := v2.ReadHeaderWithValidation(buf, startFileOffset)
+		assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+	}
 }
 
 func TestV2_BreakingPoint_PreviousCrc(t *testing.T) {
