@@ -147,6 +147,6 @@ func exec(cmd *cobra.Command, _ []string) {
 			}
 		}
 
-		return dataserver.New(context.Background(), optionsWatch)
+		return dataserver.NewWithOptionsWatch(context.Background(), optionsWatch)
 	})
 }

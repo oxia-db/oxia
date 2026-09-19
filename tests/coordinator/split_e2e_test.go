@@ -32,7 +32,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -962,7 +961,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 			dataServerOption.Storage.Database.Dir = t.TempDir()
 			dataServerOption.Storage.WAL.Dir = t.TempDir()
-			s1, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption))
+			s1, err := dataserver.New(t.Context(), dataServerOption)
 			assert.NoError(t, err)
 
 			sa1 := &proto.DataServerIdentity{
