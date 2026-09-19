@@ -24,7 +24,6 @@ import (
 	"time"
 
 	hashicorpraft "github.com/hashicorp/raft"
-	"github.com/magodo/slog2hclog"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 )
@@ -79,7 +78,7 @@ func New(
 	config.LogLevel = "INFO"
 	levelVar := &slog.LevelVar{}
 	levelVar.Set(slog.LevelInfo)
-	config.Logger = slog2hclog.New(metadataRaft.logger, levelVar)
+	config.Logger = newHclogAdapter(metadataRaft.logger, levelVar)
 
 	addr, err := net.ResolveTCPAddr("tcp", raftAddress)
 	if err != nil {
