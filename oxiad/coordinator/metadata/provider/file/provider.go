@@ -24,7 +24,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/fsnotify/fsnotify"
-	"github.com/juju/fslock"
+	"github.com/gofrs/flock"
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 
@@ -46,7 +46,7 @@ type Provider[T gproto.Message] struct {
 	mu           sync.Mutex
 	path         string
 	codec        metadatacodec.Codec[T]
-	fileLock     *fslock.Lock
+	fileLock     *flock.Flock
 	lockAcquired bool
 	watchEnabled metadatacommon.WatchMode
 	version      metadatacommon.Version
@@ -70,7 +70,7 @@ func NewProvider[T gproto.Message](
 	p := &Provider[T]{
 		path:         path,
 		codec:        codec,
-		fileLock:     fslock.New(path),
+		fileLock:     flock.New(path),
 		watchEnabled: watchEnabled,
 		version:      metadatacommon.NotExists,
 		name:         name,

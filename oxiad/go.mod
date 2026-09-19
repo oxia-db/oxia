@@ -11,12 +11,12 @@ require (
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/go-logr/logr v1.4.4
+	github.com/gofrs/flock v0.13.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/hashicorp/raft v1.7.3
 	github.com/invopop/jsonschema v0.13.0
-	github.com/juju/fslock v0.0.0-20160525022230-4d5c94c67b4b
 	github.com/magodo/slog2hclog v0.0.0-20240614031327-090ebd72a033
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
 	github.com/oxia-db/oxia/cmd v0.0.0-20251121170122-7c84f6e6bbc3
