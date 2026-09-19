@@ -28,10 +28,10 @@ If you have questions regarding Oxia, feel free to start a new discussion: https
 
 ## Submitting changes
 
-<!--
-1. CLA: Upon submitting a Pull Request (PR), contributors will be prompted to
-   sign a CLA. Please sign the CLA :slightly_smiling_face:
-   -->
+1. DCO: All commits must be signed off to certify the
+   [Developer Certificate of Origin](https://developercertificate.org/). Use
+   `git commit -s` to add the `Signed-off-by` trailer to your commits. The
+   DCO check on the Pull Request (PR) will fail if any commit is missing it.
 1. Tests: If you are submitting code, please ensure you have adequate tests
    for the feature. Tests can be run via `make test`.
 1. Since this is golang project, ensure the new code is properly formatted to
@@ -44,6 +44,6 @@ If you have questions regarding Oxia, feel free to start a new discussion: https
 1. Create your feature branch (`git checkout -b my-new-feature`)
 1. Make changes and run tests (`make test`)
 1. Add them to staging (`git add .`)
-1. Commit your changes (`git commit -m 'Add some feature'`)
+1. Commit your changes (`git commit -s -m 'Add some feature'`)
 1. Push to the branch (`git push origin my-new-feature`)
 1. Create new pull request
