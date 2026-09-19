@@ -30,6 +30,8 @@ import (
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/ensemble"
 )
 
 func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
@@ -173,4 +175,30 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		},
 		assignments.AllowedAuthorities,
 	)
+}
+
+func TestSelectNewEnsembleByNamespace(t *testing.T) {
+	a, b := &proto.DataServerIdentity{Internal: "a"}, &proto.DataServerIdentity{Internal: "b"}
+	ns := &proto.Namespace{Name: "hot", ReplicationFactor: 1}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{ns, {Name: "cold", ReplicationFactor: 1}},
+		Servers:    []*proto.DataServerIdentity{a, b},
+	})
+	for i, name := range []string{"hot", "cold"} {
+		status := &proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{}}
+		for j := range 1 + i*2 {
+			status.Shards[int64(i*10+j)] = &proto.ShardMetadata{
+				Status:   proto.ShardStatusSteadyState,
+				Ensemble: []*proto.DataServerIdentity{[]*proto.DataServerIdentity{a, b}[i]},
+			}
+		}
+		metadata.CreateNamespaceStatus(name, status)
+	}
+	lb := balancer.NewLoadBalancer(balancer.Options{Context: t.Context(), Metadata: metadata})
+	t.Cleanup(func() { require.NoError(t, lb.Close()) })
+	c := &runtime{metadata: metadata, loadBalancer: lb, ensembleSelector: ensemble.NewSelector()}
+	selected, err := c.selectNewEnsemble("hot", 99, ns, metadata.ListNamespaceStatus())
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.Equal(t, "b", selected[0].Internal, "other namespaces must not hide the unused node")
 }
