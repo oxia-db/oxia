@@ -116,6 +116,9 @@ actions, which require a two-thirds majority of all the current maintainers:
 * Removing a maintainer
 * Modifying this governance document
 
+A maintainer whose removal is being voted on does not take part in the vote, and is not counted among
+the current maintainers for that vote.
+
 ## Code of Conduct
 
 Oxia follows the [CNCF Code of Conduct](CODE_OF_CONDUCT.md). Violations can be reported privately to any
