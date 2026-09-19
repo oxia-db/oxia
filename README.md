@@ -11,11 +11,15 @@ a robust, scalable metadata store and coordination system designed for large-sca
 <p align="center">
   <a href="https://github.com/oxia-db/oxia/releases"><img src="https://img.shields.io/github/v/release/oxia-db/oxia" alt="Latest Release"></a>
   <a href="https://github.com/oxia-db/oxia/actions/workflows/ci-build-test.yaml/badge.svg"><img src="https://github.com/oxia-db/oxia/actions/workflows/ci-build-test.yaml/badge.svg" alt="CI"></a>
+<a href="https://app.fossa.com/projects/git%2Bgithub.com%2Foxia-db%2Foxia?ref=badge_shield" alt="FOSSA Status"><img src="https://app.fossa.com/api/projects/git%2Bgithub.com%2Foxia-db%2Foxia.svg?type=shield"/></a>
   <a href="https://github.com/oxia-db/oxia/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-white.svg" alt="License"></a>
   <a href="https://github.com/oxia-db/oxia/discussions/new/choose"><img src="https://img.shields.io/badge/Github-Discussion-blue.svg?logo=refinedgithub" alt="Github Discussion"></a>
 </p>
 
 <br><br><br>
+
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Foxia-db%2Foxia.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Foxia-db%2Foxia?ref=badge_large)
 
 ### Why Oxia
 
