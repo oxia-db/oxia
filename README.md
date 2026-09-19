@@ -43,6 +43,7 @@ Oxia follows the [CNCF Code of Conduct](CODE_OF_CONDUCT.md).
 - [Governance](GOVERNANCE.md): how the project is run and how decisions are made
 - [Maintainers](MAINTAINERS.md): the current maintainers of the project
 - [Security](SECURITY.md): how to report a security vulnerability
+- [Adopters](ADOPTERS.md): the organizations and the projects that are using Oxia
 
 ### License
 
