@@ -61,7 +61,7 @@ Any contributor can become a maintainer. Candidates are expected to have demonst
 * The ability to collaborate with the community, in line with the [Code of Conduct](#code-of-conduct)
 
 A new maintainer is nominated by an existing maintainer on the private maintainers mailing list
-(`cncf-oxia-maintainers@lists.cncf.io`), and the nomination is approved by a two-thirds majority
+(`cncf-oxia-maintainers@lists.cncf.io`), and the nomination is approved by a simple majority
 [vote](#voting) of the current maintainers. Nominations are evaluated without prejudice to employer or
 demographics, and should consider the organizational diversity of the maintainer group.
 
@@ -113,7 +113,7 @@ maintainers) are instead voted on the private maintainers mailing list.
 Votes require a simple majority of all the current maintainers to succeed, except for the following
 actions, which require a two-thirds majority of all the current maintainers:
 
-* Adding or removing a maintainer
+* Removing a maintainer
 * Modifying this governance document
 
 ## Code of Conduct
