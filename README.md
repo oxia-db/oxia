@@ -18,9 +18,6 @@ a robust, scalable metadata store and coordination system designed for large-sca
 
 <br><br><br>
 
-
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Foxia-db%2Foxia.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Foxia-db%2Foxia?ref=badge_large)
-
 ### Why Oxia
 
 <img src="docs/banner.svg" width="600"/>
@@ -53,3 +50,5 @@ Oxia follows the [CNCF Code of Conduct](CODE_OF_CONDUCT.md).
 Copyright 2023-2026 The Oxia Authors
 
 Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Foxia-db%2Foxia.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Foxia-db%2Foxia?ref=badge_large)
