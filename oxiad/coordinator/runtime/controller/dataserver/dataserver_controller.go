@@ -138,6 +138,10 @@ type controller struct {
 	runningSince    time.Time
 	everUnavailable bool
 	statusEpoch     int64
+	// handshaking is set while the NotRunning -> Running handshake is in
+	// flight: the watch and ping paths can both observe SERVING for the same
+	// status epoch (e.g. at startup), and only the first one binds the node.
+	handshaking bool
 
 	healthPolicy               healthCheckPolicy
 	healthCheckBackoff         *commontime.ConcurrentBackOff
@@ -481,14 +485,21 @@ func (n *controller) becomeUnavailable(observedEpoch int64) {
 }
 
 func (n *controller) becomeAvailable(observedEpoch int64) {
-	if n.currentStatusEpoch() != observedEpoch {
+	n.statusLock.Lock()
+	if n.statusEpoch != observedEpoch {
 		// The node was fenced while the probe was in flight: the SERVING
 		// answer is stale. The next probe will re-evaluate.
+		n.statusLock.Unlock()
 		return
 	}
-	if n.Status() != NotRunning {
+	if n.status != NotRunning || n.handshaking {
+		// Nothing to do: the node is Running or Draining, or the other health
+		// path is already binding it for this same observation.
+		n.statusLock.Unlock()
 		return
 	}
+	n.handshaking = true
+	n.statusLock.Unlock()
 
 	n.logger.Info("Storage data server is back online")
 
@@ -496,7 +507,7 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 
 	// Bind the node before it can receive other internal traffic.
 	bo := commontime.NewBackOffWithInitialInterval(n.ctx, defaultInitialRetryBackoff)
-	if err := backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		handshake, err := n.rpc.Handshake(n.ctx, n.dataServer.GetIdentity(), &proto.HandshakeRequest{
 			InstanceId: n.insID,
 		})
@@ -517,17 +528,21 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
-	}); err != nil {
-		return
-	}
+	})
 
 	n.statusLock.Lock()
+	defer n.statusLock.Unlock()
+	n.handshaking = false
+	if err != nil {
+		// The retries only stop when the controller is closing; a later
+		// observation may bind the node again.
+		return
+	}
 	if n.status == NotRunning && n.statusEpoch == observedEpoch {
 		n.status = Running
 		n.runningSince = time.Now()
 		n.statusEpoch++
 	}
-	n.statusLock.Unlock()
 }
 
 func (n *controller) healthCheckHandler(observedEpoch int64, response *grpc_health_v1.HealthCheckResponse, err error) error {

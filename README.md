@@ -11,6 +11,7 @@ a robust, scalable metadata store and coordination system designed for large-sca
 <p align="center">
   <a href="https://github.com/oxia-db/oxia/releases"><img src="https://img.shields.io/github/v/release/oxia-db/oxia" alt="Latest Release"></a>
   <a href="https://github.com/oxia-db/oxia/actions/workflows/ci-build-test.yaml/badge.svg"><img src="https://github.com/oxia-db/oxia/actions/workflows/ci-build-test.yaml/badge.svg" alt="CI"></a>
+<a href="https://app.fossa.com/projects/git%2Bgithub.com%2Foxia-db%2Foxia?ref=badge_shield" alt="FOSSA Status"><img src="https://app.fossa.com/api/projects/git%2Bgithub.com%2Foxia-db%2Foxia.svg?type=shield"/></a>
   <a href="https://github.com/oxia-db/oxia/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-white.svg" alt="License"></a>
   <a href="https://github.com/oxia-db/oxia/discussions/new/choose"><img src="https://img.shields.io/badge/Github-Discussion-blue.svg?logo=refinedgithub" alt="Github Discussion"></a>
 </p>
@@ -56,8 +57,20 @@ Please 🌟 star the project if you like it.
 
 Feel free to open an [issue](https://github.com/oxia-db/oxia/issues/new) or start a [discussion](https://github.com/oxia-db/oxia/discussions/new/choose). You can also follow the development [guide]() to contribute and build on it.
 
+### Community
+
+Oxia follows the [CNCF Code of Conduct](CODE_OF_CONDUCT.md).
+
+- [Contributing](CONTRIBUTING.md): how to report issues and submit changes
+- [Governance](GOVERNANCE.md): how the project is run and how decisions are made
+- [Maintainers](MAINTAINERS.md): the current maintainers of the project
+- [Security](SECURITY.md): how to report a security vulnerability
+- [Adopters](ADOPTERS.md): the organizations and the projects that are using Oxia
+
 ### License
 
 Copyright 2023-2026 The Oxia Authors
 
 Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Foxia-db%2Foxia.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Foxia-db%2Foxia?ref=badge_large)
