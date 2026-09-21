@@ -575,6 +575,9 @@ func readSplitHashRange(md metadata.MD) (*proto.HashRange, bool, error) {
 	if _, err := fmt.Sscan(maxArr[0], &maxVal); err != nil {
 		return nil, false, fmt.Errorf("invalid split hash range max %q: %w", maxArr[0], err)
 	}
+	if minVal > maxVal {
+		return nil, false, fmt.Errorf("invalid split hash range: min %d is greater than max %d", minVal, maxVal)
+	}
 
 	return &proto.HashRange{
 		Min: minVal,
