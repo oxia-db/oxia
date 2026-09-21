@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -212,4 +213,46 @@ func TestInternalHandshakeReturnsMismatchForDifferentInstanceID(t *testing.T) {
 	response, err := client.Handshake(context.Background(), &proto.HandshakeRequest{InstanceId: "cluster-b"})
 	require.NoError(t, err)
 	assert.Equal(t, proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH, response.Status)
+}
+
+func TestReadSplitHashRange(t *testing.T) {
+	splitMD := func(lo, hi string) metadata.MD {
+		return metadata.New(map[string]string{
+			constant.MetadataSplitHashRangeMin: lo,
+			constant.MetadataSplitHashRangeMax: hi,
+		})
+	}
+
+	t.Run("absent", func(t *testing.T) {
+		hr, ok, err := readSplitHashRange(metadata.New(nil))
+		require.NoError(t, err)
+		assert.False(t, ok)
+		assert.Nil(t, hr)
+	})
+
+	t.Run("valid", func(t *testing.T) {
+		hr, ok, err := readSplitHashRange(splitMD("100", "200"))
+		require.NoError(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, uint32(100), hr.GetMin())
+		assert.Equal(t, uint32(200), hr.GetMax())
+	})
+
+	t.Run("single-value range", func(t *testing.T) {
+		hr, ok, err := readSplitHashRange(splitMD("42", "42"))
+		require.NoError(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, uint32(42), hr.GetMin())
+		assert.Equal(t, uint32(42), hr.GetMax())
+	})
+
+	// A reversed range makes isHashInRange false for every hash, so the split
+	// filter would delete the child's entire dataset. Reject it at the parse
+	// boundary instead.
+	t.Run("reversed range rejected", func(t *testing.T) {
+		hr, ok, err := readSplitHashRange(splitMD("200", "100"))
+		require.Error(t, err)
+		assert.False(t, ok)
+		assert.Nil(t, hr)
+	})
 }

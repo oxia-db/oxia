@@ -332,22 +332,21 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 
 	node := rpc.GetNode(addr)
 
-	// Wait for the initial Handshake call that happens when the controller starts
-	// (the controller starts in Running state, transitions through health check)
+	// The controller starts as NotRunning and binds the node with a single
+	// Handshake on the transition to Running, even though the watch and ping
+	// paths both observe SERVING at startup.
 	assert.Eventually(t, func() bool {
-		return node.HandshakeCount.Load() >= 1
+		return nc.Status() == Running
 	}, 10*time.Second, 100*time.Millisecond)
+	assert.Equal(t, int64(1), node.HandshakeCount.Load(),
+		"Handshake should be called exactly once on the initial transition to Running")
 
-	// Record the count after initial startup
-	initialCount := node.HandshakeCount.Load()
-
-	// Wait for several health check cycles (health check runs every 2s)
-	// If Handshake were called on every health check, we'd see the count increase
+	// Wait for several health check cycles. If Handshake were called on every
+	// health check, we'd see the count increase
 	time.Sleep(5 * time.Second)
 
 	// The count should NOT have increased while the server stayed Running
-	countAfterWait := node.HandshakeCount.Load()
-	assert.Equal(t, initialCount, countAfterWait,
+	assert.Equal(t, int64(1), node.HandshakeCount.Load(),
 		"Handshake should not be called repeatedly while server is already Running")
 
 	// Now simulate the server going down and coming back
@@ -360,21 +359,63 @@ func TestDataServerController_HandshakeOnlyCalledOnStateTransition(t *testing.T)
 	// Bring the server back online
 	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
 
-	// Handshake should have been called again for the NotRunning -> Running transition
+	// Handshake should be called again, once, for the NotRunning -> Running transition
 	assert.Eventually(t, func() bool {
-		return node.HandshakeCount.Load() > countAfterWait
+		return nc.Status() == Running
 	}, 10*time.Second, 100*time.Millisecond,
-		"Handshake should be called on state transition from NotRunning to Running")
-
-	assert.Equal(t, Running, nc.Status())
-	countAfterRecovery := node.HandshakeCount.Load()
+		"the server should be Running again after it reports SERVING")
+	assert.Equal(t, int64(2), node.HandshakeCount.Load(),
+		"Handshake should be called exactly once on state transition from NotRunning to Running")
 
 	// Wait again to confirm no further redundant calls
 	time.Sleep(5 * time.Second)
 
-	countAfterSecondWait := node.HandshakeCount.Load()
-	assert.Equal(t, countAfterRecovery, countAfterSecondWait,
+	assert.Equal(t, int64(2), node.HandshakeCount.Load(),
 		"Handshake should not be called repeatedly after recovery")
+
+	assert.NoError(t, nc.Close())
+}
+
+// TestDataServerController_ConcurrentServingObservationsHandshakeOnce reproduces
+// the double handshake at startup: the watch stream delivers SERVING right away
+// on subscribe and the ping loop probes immediately too, so both paths observe
+// SERVING for the same status epoch while the node is still NotRunning. The
+// node must be bound with a single Handshake.
+func TestDataServerController_ConcurrentServingObservationsHandshakeOnce(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	node := rpc.GetNode(addr)
+	// Hold the first handshake in flight, so that the second SERVING
+	// observation is guaranteed to arrive before the node is Running.
+	node.BlockHandshakes()
+
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
+
+	assert.Eventually(t, func() bool {
+		return node.HandshakeCount.Load() >= 1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Let the ping loop observe SERVING a few more times while the handshake
+	// is still in flight: none of them may start another handshake.
+	time.Sleep(10 * testHealthPolicy.probeInterval)
+	assert.Equal(t, int64(1), node.HandshakeCount.Load(),
+		"concurrent SERVING observations must not handshake the node more than once")
+	assert.Equal(t, NotRunning, nc.Status())
+
+	node.ReleaseHandshakes()
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+	assert.Equal(t, int64(1), node.HandshakeCount.Load(),
+		"the node must be bound by a single Handshake")
 
 	assert.NoError(t, nc.Close())
 }
