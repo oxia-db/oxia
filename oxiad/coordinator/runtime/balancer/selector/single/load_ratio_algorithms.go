@@ -27,7 +27,7 @@ func DefaultShardsRank(params *model.RatioParams) *model.Ratio {
 	for _, shards := range params.NodeShardsInfos {
 		totalShards += len(shards)
 	}
-	fTotalShards := float64(totalShards)
+	fTotalShards := float64(max(totalShards, 1))
 
 	// the 1 means we are using count as a ratio.
 	shardLoadRatio := 1 / fTotalShards

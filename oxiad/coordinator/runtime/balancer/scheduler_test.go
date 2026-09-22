@@ -647,3 +647,154 @@ func TestBalanceHighestNodeDoesNotHangOnSelectorError(t *testing.T) {
 		t.Fatal("rebalanceEnsemble hung due to infinite loop on selector error")
 	}
 }
+
+// Globally every node has two replicas, but each namespace occupies only
+// half the nodes. Global counts must not hide namespace-local imbalance.
+func TestRebalanceEnsembleByNamespace(t *testing.T) {
+	nodes := []*proto.DataServerIdentity{dataServer("a"), dataServer("b"), dataServer("c"), dataServer("d")}
+	metadata := &mockMetadata{
+		status:    &proto.ClusterStatus{Namespaces: map[string]*proto.NamespaceStatus{}},
+		nodes:     linkedhashset.New("a", "b", "c", "d"),
+		nsConfigs: map[string]*proto.Namespace{},
+		nodeMap:   map[string]*proto.DataServerIdentity{},
+	}
+	for _, node := range nodes {
+		metadata.nodeMap[node.Internal] = node
+	}
+	for i, name := range []string{"hot", "cold"} {
+		metadata.nsConfigs[name] = &proto.Namespace{Name: name, ReplicationFactor: 2}
+		metadata.status.Namespaces[name] = &proto.NamespaceStatus{ReplicationFactor: 2, Shards: map[int64]*proto.ShardMetadata{}}
+		for j := range 2 {
+			metadata.status.Namespaces[name].Shards[int64(i*2+j)] = &proto.ShardMetadata{
+				Status:   proto.ShardStatusSteadyState,
+				Leader:   nodes[i*2+j],
+				Ensemble: append([]*proto.DataServerIdentity(nil), nodes[i*2:i*2+2]...),
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	b := newTestBalancer(ctx, cancel, metadata, single.NewSelector())
+	assert.False(t, b.IsBalanced())
+
+	for range 4 {
+		done := make(chan bool, 1)
+		go func() { done <- b.rebalanceEnsemble() }()
+		var moves []*action.ChangeEnsembleAction
+	collect:
+		for {
+			select {
+			case ac := <-b.Action():
+				move := ac.(*action.ChangeEnsembleAction)
+				moves = append(moves, move)
+				move.Done(nil)
+			case <-done:
+				break collect
+			case <-time.After(5 * time.Second):
+				t.Fatal("ensemble rebalance did not finish")
+			}
+		}
+		for _, move := range moves {
+			for _, ns := range metadata.status.Namespaces {
+				if shard, ok := ns.Shards[move.Shard]; ok {
+					for i, node := range shard.Ensemble {
+						if node.GetNameOrDefault() == move.From.GetNameOrDefault() {
+							shard.Ensemble[i] = move.To
+						}
+					}
+				}
+			}
+		}
+	}
+	for name, ns := range metadata.status.Namespaces {
+		counts := map[string]int{}
+		for _, shard := range ns.Shards {
+			assert.NotEqual(t, shard.Ensemble[0].Internal, shard.Ensemble[1].Internal)
+			for _, node := range shard.Ensemble {
+				counts[node.Internal]++
+			}
+		}
+		assert.Equal(t, map[string]int{"a": 1, "b": 1, "c": 1, "d": 1}, counts, name)
+	}
+}
+
+func TestLeaderBalanceByNamespace(t *testing.T) {
+	a, b := dataServer("a"), dataServer("b")
+	metadata := &mockMetadata{
+		status:    &proto.ClusterStatus{Namespaces: map[string]*proto.NamespaceStatus{}},
+		nodes:     linkedhashset.New("a", "b"),
+		nsConfigs: map[string]*proto.Namespace{},
+	}
+	for i, name := range []string{"hot", "cold"} {
+		metadata.nsConfigs[name] = &proto.Namespace{Name: name, ReplicationFactor: 2}
+		metadata.status.Namespaces[name] = &proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{}}
+		for j := range 2 {
+			metadata.status.Namespaces[name].Shards[int64(i*2+j)] = &proto.ShardMetadata{
+				Status: proto.ShardStatusSteadyState, Leader: []*proto.DataServerIdentity{a, b}[i],
+				Ensemble: []*proto.DataServerIdentity{a, b},
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	balancer := newTestBalancer(ctx, cancel, metadata, single.NewSelector())
+	assert.False(t, balancer.IsBalanced(), "global leader counts hide namespace skew")
+	_, found := balancer.bestLeaderMove(metadata.nodes, metadata.ListNamespaceStatus(), nil)
+	assert.True(t, found, "must find a move despite globally equal leader counts")
+	metadata.status.Namespaces["hot"].Shards[1].Leader = b
+	metadata.status.Namespaces["cold"].Shards[3].Leader = a
+	assert.True(t, balancer.IsBalanced())
+	_, found = balancer.bestLeaderMove(metadata.nodes, metadata.ListNamespaceStatus(), nil)
+	assert.False(t, found, "balanced namespaces must not oscillate")
+}
+
+func TestImmovableNamespaceDoesNotBlockLeaderBalance(t *testing.T) {
+	a, b, c := dataServer("a"), dataServer("b"), dataServer("c")
+	metadata := &mockMetadata{
+		status:    &proto.ClusterStatus{Namespaces: map[string]*proto.NamespaceStatus{}},
+		nodes:     linkedhashset.New("a", "b", "c"),
+		nsConfigs: map[string]*proto.Namespace{},
+		nodeMap:   map[string]*proto.DataServerIdentity{"a": a, "b": b, "c": c},
+	}
+	// RF1 namespace skews cancel globally, while the RF3 namespace needs a
+	// leader move. Neither RF1 namespace can safely move its replicas.
+	placements := map[string][]*proto.DataServerIdentity{
+		"rf1-a": {a, a, a}, "rf1-b": {b, b, b, c, c, c}, "rf3": {a, a, a},
+	}
+	var shardID int64
+	for name, leaders := range placements {
+		rf := uint32(1)
+		if name == "rf3" {
+			rf = 3
+		}
+		metadata.nsConfigs[name] = &proto.Namespace{Name: name, ReplicationFactor: rf}
+		ns := &proto.NamespaceStatus{ReplicationFactor: rf, Shards: map[int64]*proto.ShardMetadata{}}
+		for _, leader := range leaders {
+			ensemble := []*proto.DataServerIdentity{leader}
+			if rf == 3 {
+				ensemble = []*proto.DataServerIdentity{a, b, c}
+			}
+			ns.Shards[shardID] = &proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Leader: leader, Ensemble: ensemble}
+			shardID++
+		}
+		metadata.status.Namespaces[name] = ns
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	balancer := newTestBalancer(ctx, cancel, metadata, single.NewSelector())
+	balancer.Start()
+	defer balancer.Close()
+	balancer.Trigger()
+	select {
+	case ac := <-balancer.Action():
+		election, ok := ac.(*action.ElectionAction)
+		if !ok {
+			t.Fatalf("unexpected action: %T", ac)
+		}
+		_, isRF3 := metadata.status.Namespaces["rf3"].Shards[election.Shard]
+		assert.True(t, isRF3)
+		election.Done("b")
+	case <-time.After(3 * time.Second):
+		t.Fatal("immovable RF1 namespaces blocked RF3 leader balancing")
+	}
+}

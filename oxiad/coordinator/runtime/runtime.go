@@ -354,7 +354,7 @@ func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Nam
 		Shard:              shard,
 		Replicas:           int(ns.GetReplicationFactor()),
 		LoadRatioSupplier: func() *model.Ratio {
-			groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(nodes, editingStatus)
+			groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(nodes, state.ForNamespace(editingStatus, namespace))
 			return c.loadBalancer.LoadRatioAlgorithm()(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 		},
 	}
