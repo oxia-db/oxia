@@ -138,6 +138,10 @@ type controller struct {
 	runningSince    time.Time
 	everUnavailable bool
 	statusEpoch     int64
+	// statusChanged is closed, and replaced, every time statusEpoch
+	// increments, to wake up the goroutines waiting for a status transition.
+	// Guarded by statusLock.
+	statusChanged chan struct{}
 	// handshaking is set while the NotRunning -> Running handshake is in
 	// flight: the watch and ping paths can both observe SERVING for the same
 	// status epoch (e.g. at startup), and only the first one binds the node.
@@ -171,7 +175,7 @@ func (n *controller) SetStatus(status Status) {
 	previous := n.status
 	n.status = status
 	if status != previous {
-		n.statusEpoch++
+		n.advanceStatusEpochLocked()
 	}
 	if status == Running && previous != Running {
 		n.runningSince = time.Now()
@@ -196,6 +200,14 @@ func (n *controller) currentStatusEpoch() int64 {
 	return n.statusEpoch
 }
 
+// advanceStatusEpochLocked records a status transition and wakes up the
+// goroutines waiting for one. It must be called with statusLock held.
+func (n *controller) advanceStatusEpochLocked() {
+	n.statusEpoch++
+	close(n.statusChanged)
+	n.statusChanged = make(chan struct{})
+}
+
 func (n *controller) Close() error {
 	if !n.closed.CompareAndSwap(false, true) {
 		return nil
@@ -208,13 +220,34 @@ func (n *controller) Close() error {
 	return nil
 }
 
+// openAssignmentsStream opens the assignments stream once the data server is
+// Running or Draining. The data server rejects the stream until the handshake
+// binds it to this coordinator, and a rejected stream is only retried after
+// the full backoff: waiting for the handshake instead delivers the first
+// assignments right after it.
+func (n *controller) openAssignmentsStream() (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
+	for {
+		n.statusLock.RLock()
+		status, statusChanged := n.status, n.statusChanged
+		n.statusLock.RUnlock()
+		if status == Running || status == Draining {
+			n.logger.Debug("Ready to send assignments")
+			return n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
+		}
+
+		select {
+		case <-n.ctx.Done():
+			return nil, n.ctx.Err()
+		case <-statusChanged:
+		}
+	}
+}
+
 func (n *controller) sendAssignmentsDispatchWithRetries() {
 	receiver := n.SubscribeShardAssignments()
 
 	_ = backoff.RetryNotify(func() error {
-		n.logger.Debug("Ready to send assignments")
-
-		stream, err := n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
+		stream, err := n.openAssignmentsStream()
 		if err != nil {
 			n.logger.Debug("Failed to create shard assignments stream", slog.Any("error", err))
 			return err
@@ -477,7 +510,7 @@ func (n *controller) becomeUnavailable(observedEpoch int64) {
 		n.status = NotRunning
 	}
 	n.everUnavailable = true
-	n.statusEpoch++
+	n.advanceStatusEpochLocked()
 	n.statusLock.Unlock()
 
 	n.failedHealthChecks.Inc()
@@ -541,7 +574,7 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 	if n.status == NotRunning && n.statusEpoch == observedEpoch {
 		n.status = Running
 		n.runningSince = time.Now()
-		n.statusEpoch++
+		n.advanceStatusEpochLocked()
 	}
 }
 
@@ -596,6 +629,7 @@ func newController(ctx context.Context, dataServer *proto.DataServer,
 		insID:                      insID,
 		statusLock:                 sync.RWMutex{},
 		status:                     NotRunning,
+		statusChanged:              make(chan struct{}),
 		supportedFeatures:          supportedFeatures,
 		logger:                     logger,
 		healthPolicy:               healthPolicy,
