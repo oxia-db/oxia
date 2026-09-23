@@ -15,9 +15,11 @@
 package internal
 
 import (
+	"cmp"
 	"context"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -220,6 +222,20 @@ func (s *shardManagerImpl) update(updates []Shard) {
 	s.Lock()
 	defer s.Unlock()
 
+	// Older coordinators can publish a snapshot where a split child overlaps
+	// its parent while the split completes. Applied shard by shard, it can
+	// leave hashes without a shard. Every snapshot lists all the shards, so
+	// skip it: the next one replaces it.
+	if shard, overlapping, found := findOverlap(updates); found {
+		s.logger.Warn(
+			"Ignoring shard assignments with overlapping shards",
+			slog.Any("shard", shard),
+			slog.Any("overlapping-shard", overlapping),
+			slog.Any("assignments", updates),
+		)
+		return
+	}
+
 	for _, update := range updates {
 		if _, ok := s.shards[update.Id]; !ok {
 			// delete overlaps
@@ -242,4 +258,17 @@ func (s *shardManagerImpl) update(updates []Shard) {
 
 func overlap(a HashRange, b HashRange) bool {
 	return a.MinInclusive <= b.MaxInclusive && a.MaxInclusive >= b.MinInclusive
+}
+
+// findOverlap returns two of the shards that overlap, if any.
+func findOverlap(shards []Shard) (shard Shard, overlapping Shard, found bool) {
+	sorted := slices.SortedFunc(slices.Values(shards), func(a, b Shard) int {
+		return cmp.Compare(a.HashRange.MinInclusive, b.HashRange.MinInclusive)
+	})
+	for i := 1; i < len(sorted); i++ {
+		if overlap(sorted[i-1].HashRange, sorted[i].HashRange) {
+			return sorted[i-1], sorted[i], true
+		}
+	}
+	return Shard{}, Shard{}, false
 }
