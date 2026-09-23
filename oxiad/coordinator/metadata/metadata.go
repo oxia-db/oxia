@@ -53,6 +53,9 @@ type Metadata interface {
 
 	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool)
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
+	// UpdateShardStatuses updates several shards of a namespace in a single
+	// status write, so that no reader sees some of the updates without the others.
+	UpdateShardStatuses(namespace string, shardsMetadata map[int64]*commonproto.ShardMetadata)
 	DeleteShardStatus(namespace string, shard int64)
 
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
@@ -352,6 +355,31 @@ func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, s
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
 			"failed to update shard metadata",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+}
+
+func (m *coordinatorMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*commonproto.ShardMetadata) {
+	cloned := make(map[int64]*commonproto.ShardMetadata, len(shardsMetadata))
+	for shard, shardMetadata := range shardsMetadata {
+		cloned[shard] = gproto.Clone(shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
+	}
+	_ = backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			ns, exist := clusterStatus.Namespaces[namespace]
+			if !exist {
+				return clusterStatus, false
+			}
+			for shard, shardMetadata := range cloned {
+				ns.Shards[shard] = shardMetadata
+			}
+			return clusterStatus, true
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to update shards metadata",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)

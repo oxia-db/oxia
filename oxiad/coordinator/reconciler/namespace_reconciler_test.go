@@ -181,6 +181,12 @@ func (m *mockNamespaceMetadata) UpdateShardStatus(namespace string, shard int64,
 	m.status = cloned
 }
 
+func (m *mockNamespaceMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) {
+	for shard, shardMetadata := range shardsMetadata {
+		m.UpdateShardStatus(namespace, shard, shardMetadata)
+	}
+}
+
 func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) {}
 
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {

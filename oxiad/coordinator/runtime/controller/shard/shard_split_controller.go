@@ -646,21 +646,23 @@ func (sc *SplitController) runCutover() error {
 	}
 
 	// Step 5: Clear split metadata from children and mark parent for deletion.
-	// Children are now independent shards.
-	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		sc.updateChildMeta(childId, func(meta *proto.ShardMetadata) {
+	// Children are now independent shards. The parent's split metadata is
+	// cleared as well — the split controller's job is done, and the parent
+	// shard controller handles the actual deletion.
+	// All of it is a single status update: the shard assignments can be
+	// recomputed at any time, and must show either the parent or both
+	// children, never a mix.
+	sc.updateShardsMeta(map[int64]func(meta *proto.ShardMetadata){
+		sc.leftChildId: func(meta *proto.ShardMetadata) {
 			meta.Split = nil
-		})
-	}
-
-	sc.updateParentMeta(func(meta *proto.ShardMetadata) {
-		meta.Status = proto.ShardStatusDeleting
-	})
-
-	// Clear split metadata from parent — the split controller's job is done.
-	// The parent shard controller handles the actual deletion.
-	sc.updateParentMeta(func(meta *proto.ShardMetadata) {
-		meta.Split = nil
+		},
+		sc.rightChildId: func(meta *proto.ShardMetadata) {
+			meta.Split = nil
+		},
+		sc.parentShardId: func(meta *proto.ShardMetadata) {
+			meta.Status = proto.ShardStatusDeleting
+			meta.Split = nil
+		},
 	})
 
 	// Step 6: Notify the coordinator. This triggers the parent shard
@@ -827,6 +829,31 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 	cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
 	fn(cloned)
 	sc.metadata.UpdateShardStatus(sc.namespace, shardId, cloned)
+}
+
+// updateShardsMeta applies the updates to several shards in a single status
+// update.
+func (sc *SplitController) updateShardsMeta(updates map[int64]func(meta *proto.ShardMetadata)) {
+	ns, exists := sc.metadata.GetNamespaceStatus(sc.namespace)
+	if !exists {
+		sc.logger.Warn("namespace status not found while updating shards metadata",
+			slog.String("namespace", sc.namespace))
+		return
+	}
+	shardsMetadata := make(map[int64]*proto.ShardMetadata, len(updates))
+	for shardId, fn := range updates {
+		meta, exists := ns.UnsafeBorrow().Shards[shardId]
+		if !exists {
+			sc.logger.Warn("shard metadata not found while updating shards metadata",
+				slog.String("namespace", sc.namespace),
+				slog.Int64("shard", shardId))
+			continue
+		}
+		cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
+		fn(cloned)
+		shardsMetadata[shardId] = cloned
+	}
+	sc.metadata.UpdateShardStatuses(sc.namespace, shardsMetadata)
 }
 
 // fenceEnsemble sends NewTerm to all ensemble members and returns the
