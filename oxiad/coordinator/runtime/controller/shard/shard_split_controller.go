@@ -316,7 +316,7 @@ func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) e
 	}
 
 	childTerm := parentTerm
-	headEntries, err := sc.fenceEnsemble(childId, childTerm, nil, childMeta.Ensemble)
+	headEntries, err := sc.fenceEnsemble(childId, childTerm, childMeta.Ensemble, namespaceTermOptions(sc.metadata, sc.namespace))
 	if err != nil {
 		return errors.Wrapf(err, "failed to fence child shard %d", childId)
 	}
@@ -624,7 +624,9 @@ func (sc *SplitController) runCutover() error {
 	// for good and kills the (now fully-drained) observer cursors. The children
 	// already hold everything up to parentFinalOffset, so no data is lost.
 	newParentTerm := parentTerm + 1
-	if _, err := sc.fenceEnsemble(sc.parentShardId, newParentTerm, nil, parentMeta.Ensemble); err != nil {
+	// Parent is being torn down (Deleting) after this fence, so its term
+	// options are irrelevant — pass nil.
+	if _, err := sc.fenceEnsemble(sc.parentShardId, newParentTerm, parentMeta.Ensemble, nil); err != nil {
 		return errors.Wrap(err, "failed to fence parent during cutover")
 	}
 
@@ -828,12 +830,15 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 }
 
 // fenceEnsemble sends NewTerm to all ensemble members and returns the
-// head entry IDs for nodes that responded successfully.
+// head entry IDs for nodes that responded successfully. options carries the
+// namespace's term settings (notifications + key sorting) so a freshly fenced
+// child inherits them; pass nil when fencing a shard that is being torn down
+// (e.g. the parent during cutover), where the settings are irrelevant.
 func (sc *SplitController) fenceEnsemble(
 	shardId int64,
 	term int64,
-	options *proto.NewTermOptions,
 	ensemble []*proto.DataServerIdentity,
+	options *proto.NewTermOptions,
 ) (map[*proto.DataServerIdentity]*proto.EntryId, error) {
 	type fenceResult struct {
 		server *proto.DataServerIdentity
@@ -998,13 +1003,12 @@ func (sc *SplitController) reelectChild(childId int64) error {
 	// The child database inherited the parent's enabled features through the
 	// snapshot, so the clean term must carry a negotiated feature set that
 	// covers them: the child leader refuses to lead otherwise.
-	negotiatedFeatures := negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble))
+	negotiatedFeatures := negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble))
 
 	newTerm := childMeta.Term + 1
-	headEntries, err := sc.fenceEnsemble(childId, newTerm, &proto.NewTermOptions{
-		EnableNotifications: true,
-		Features:            negotiatedFeatures,
-	}, childMeta.Ensemble)
+	termOptions := namespaceTermOptions(sc.metadata, sc.namespace)
+	termOptions.Features = negotiatedFeatures
+	headEntries, err := sc.fenceEnsemble(childId, newTerm, childMeta.Ensemble, termOptions)
 	if err != nil {
 		return err
 	}

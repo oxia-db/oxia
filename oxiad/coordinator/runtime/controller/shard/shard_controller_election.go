@@ -46,8 +46,11 @@ import (
 )
 
 var (
-	ErrNotReadyForChangeEnsemble = errors.New("shard is not ready for change ensemble, please retry later")
-	ErrFollowerNotCaughtUp       = errors.New("follower not caught up yet")
+	ErrNotReadyForChangeEnsemble         = errors.New("shard is not ready for change ensemble, please retry later")
+	ErrInvalidChangeEnsemble             = errors.New("invalid change ensemble")
+	ErrFollowerNotCaughtUp               = errors.New("follower not caught up yet")
+	ErrChangeEnsembleLosesFeatureSupport = errors.New(
+		"change ensemble would remove support for negotiated shard features")
 )
 
 type Election struct {
@@ -475,7 +478,7 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	// can be pinned in the term options: every member persists it with the
 	// term and rejects the fence if its binary does not support it.
 	features := e.dataServerSupportedFeaturesSupplier(e.mutableShardMetadata.Ensemble)
-	negotiatedFeatures := negotiate(features)
+	negotiatedFeatures := negotiate(features, len(e.mutableShardMetadata.Ensemble))
 	termOptions := e.termOptions.CloneVT()
 	if termOptions == nil {
 		termOptions = &proto.NewTermOptions{}
@@ -585,14 +588,13 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	return newLeader, nil
 }
 
-func negotiate(nodeFeatures map[string][]proto.Feature) []proto.Feature {
-	if len(nodeFeatures) == 0 {
+func negotiate(nodeFeatures map[string][]proto.Feature, candidates int) []proto.Feature {
+	if candidates == 0 || len(nodeFeatures) == 0 {
 		return nil
 	}
 
 	// Start with all supported features
 	featureCount := make(map[proto.Feature]int)
-	nodeCount := len(nodeFeatures)
 
 	for _, features := range nodeFeatures {
 		// Track unique features per node to handle duplicates
@@ -611,7 +613,7 @@ func negotiate(nodeFeatures map[string][]proto.Feature) []proto.Feature {
 	// Only include features supported by ALL nodes
 	var negotiated []proto.Feature
 	for f, count := range featureCount {
-		if count == nodeCount {
+		if count == candidates {
 			negotiated = append(negotiated, f)
 		}
 	}

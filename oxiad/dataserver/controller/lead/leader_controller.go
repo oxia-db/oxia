@@ -1372,19 +1372,16 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 	}
 
 	var shardStats *proto.ShardStats
-	var featuresEnabled []proto.Feature
 	if lc.db != nil {
 		shardStats = lc.db.Stats()
-		featuresEnabled = lc.db.EnabledFeatures()
 	}
 
 	return &proto.GetStatusResponse{
-		Term:            lc.term.Load(),
-		Status:          lc.status,
-		HeadOffset:      headOffset,
-		CommitOffset:    commitOffset,
-		ShardStats:      shardStats,
-		FeaturesEnabled: featuresEnabled,
+		Term:         lc.term.Load(),
+		Status:       lc.status,
+		HeadOffset:   headOffset,
+		CommitOffset: commitOffset,
+		ShardStats:   shardStats,
 	}, nil
 }
 

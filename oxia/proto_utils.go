@@ -93,6 +93,8 @@ func toError(status proto.Status) error {
 		return ErrUnexpectedVersionId
 	case proto.Status_KEY_NOT_FOUND:
 		return ErrKeyNotFound
+	case proto.Status_INVALID_ARGUMENT:
+		return ErrInvalidOptions
 	default:
 		return ErrUnknownStatus
 	}

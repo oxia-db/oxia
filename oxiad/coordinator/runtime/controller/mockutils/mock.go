@@ -129,8 +129,11 @@ type PerNodeChannels struct {
 	handshakeStatus   proto.HandshakeStatus
 	handshakeErr      error
 	HandshakeCount    atomic.Int64
-	getInfoErr        error
-	getInfoCount      atomic.Int64
+	// handshakeGate, when set by BlockHandshakes, holds every Handshake call
+	// (after it has been counted) until ReleaseHandshakes closes it.
+	handshakeGate chan struct{}
+	getInfoErr    error
+	getInfoCount  atomic.Int64
 }
 
 const defaultTimeout = 10 * time.Second
@@ -330,21 +333,6 @@ func (m *PerNodeChannels) GetStatusResponse(term int64, status proto.ServingStat
 	}, nil}
 }
 
-//nolint:revive
-func (m *PerNodeChannels) GetStatusResponseWithFeatures(term int64, status proto.ServingStatus,
-	headOffset int64, commitOffset int64, featuresEnabled []proto.Feature) {
-	m.getStatusResponses <- struct {
-		*proto.GetStatusResponse
-		error
-	}{&proto.GetStatusResponse{
-		Term:            term,
-		Status:          status,
-		HeadOffset:      headOffset,
-		CommitOffset:    commitOffset,
-		FeaturesEnabled: featuresEnabled,
-	}, nil}
-}
-
 func (m *PerNodeChannels) EnqueueGetStatusError(err error) {
 	m.getStatusResponses <- struct {
 		*proto.GetStatusResponse
@@ -443,6 +431,19 @@ func (m *PerNodeChannels) SetOldNode() {
 	m.supportedFeatures = nil
 }
 
+// BlockHandshakes holds every Handshake call in flight, after counting it,
+// until ReleaseHandshakes is called, so a test can observe the controller
+// while a handshake has not completed yet. Call it before the controller
+// starts.
+func (m *PerNodeChannels) BlockHandshakes() {
+	m.handshakeGate = make(chan struct{})
+}
+
+// ReleaseHandshakes lets the Handshake calls held by BlockHandshakes complete.
+func (m *PerNodeChannels) ReleaseHandshakes() {
+	close(m.handshakeGate)
+}
+
 type RpcProvider struct {
 	sync.Mutex
 	channels map[string]*PerNodeChannels
@@ -479,19 +480,28 @@ func (r *RpcProvider) GetInfo(_ context.Context, node *proto.DataServerIdentity,
 	}, nil
 }
 
-func (r *RpcProvider) Handshake(_ context.Context, node *proto.DataServerIdentity, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+func (r *RpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdentity, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 	r.Lock()
-	defer r.Unlock()
-
 	n := r.getNode(node)
 	n.HandshakeCount.Add(1)
-	if n.handshakeErr != nil {
-		return nil, n.handshakeErr
-	}
-	return &proto.HandshakeResponse{
+	gate, err := n.handshakeGate, n.handshakeErr
+	response := &proto.HandshakeResponse{
 		Status:            n.handshakeStatus,
 		FeaturesSupported: n.supportedFeatures,
-	}, nil
+	}
+	r.Unlock()
+
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
 }
 
 func (r *RpcProvider) RecoverNode(node *proto.DataServerIdentity) {
@@ -830,6 +840,9 @@ type HealthClient struct {
 	status  grpc_health_v1.HealthCheckResponse_ServingStatus
 	err     error
 	watches []*healthWatchClient
+
+	failNextChecks int
+	failCheckErr   error
 }
 
 func (*HealthClient) Close() error {
@@ -864,9 +877,47 @@ func (m *HealthClient) SetError(err error) {
 	}
 }
 
+// FailNextChecks makes the next count Check calls fail with err, without
+// affecting the watch streams. It models transient unary probe failures,
+// e.g. a deadline exceeded on a saturated node.
+func (m *HealthClient) FailNextChecks(err error, count int) {
+	m.Lock()
+	defer m.Unlock()
+
+	m.failCheckErr = err
+	m.failNextChecks = count
+}
+
+// PendingCheckFailures returns how many Check calls are still scheduled to
+// fail after a FailNextChecks call.
+func (m *HealthClient) PendingCheckFailures() int {
+	m.Lock()
+	defer m.Unlock()
+
+	return m.failNextChecks
+}
+
+// FailWatches delivers err on all currently active watch streams, without
+// affecting Check. It models a watch stream reset while the node is healthy.
+func (m *HealthClient) FailWatches(err error) {
+	m.Lock()
+	defer m.Unlock()
+
+	for _, w := range m.watches {
+		w.responses <- struct {
+			*grpc_health_v1.HealthCheckResponse
+			error
+		}{nil, err}
+	}
+}
+
 func (m *HealthClient) Check(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
 	m.Lock()
 	defer m.Unlock()
+	if m.failNextChecks > 0 {
+		m.failNextChecks--
+		return nil, m.failCheckErr
+	}
 	if m.err != nil {
 		return nil, m.err
 	}

@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -481,6 +480,83 @@ func TestMultipleSessionsExpiry(t *testing.T) {
 	assert.NoError(t, walf.Close())
 }
 
+// A batch of sessions larger than expiryBatchSize expiring together must be
+// fully cleaned up, ephemeral keys included, through the chunked deletes of
+// the expiry scheduler.
+func TestSessionManager_MassExpiry(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, sManager, lc := createSessionManager(t)
+
+	const numSessions = 2*expiryBatchSize + 10
+	sessionIDs := make([]int64, 0, numSessions)
+	for i := 0; i < numSessions; i++ {
+		createResp, err := sManager.createSession(&proto.CreateSessionRequest{
+			Shard:            shardId,
+			SessionTimeoutMs: uint32(2000),
+			ClientIdentity:   fmt.Sprintf("session-%d", i),
+		}, 0)
+		assert.NoError(t, err)
+		sessionIDs = append(sessionIDs, createResp.SessionId)
+	}
+
+	sessionId := sessionIDs[0]
+	_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shardId,
+		Puts: []*proto.PutRequest{{
+			Key:       "/mass-expiry-ephemeral",
+			Value:     []byte("hello"),
+			SessionId: &sessionId,
+		}},
+	})
+	assert.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		for _, id := range sessionIDs {
+			if getSessionMetadata(t, lc, id) != nil {
+				return false
+			}
+		}
+		return getData(t, lc, "/mass-expiry-ephemeral") == ""
+	}, 30*time.Second, 50*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
+}
+
+// Closing the leader controller while sessions are in the middle of expiring
+// must not deadlock or panic.
+func TestSessionManager_CloseDuringExpiry(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, sManager, lc := createSessionManager(t)
+
+	for i := 0; i < 100; i++ {
+		_, err := sManager.createSession(&proto.CreateSessionRequest{
+			Shard:            shardId,
+			SessionTimeoutMs: uint32(20),
+			ClientIdentity:   fmt.Sprintf("session-%d", i),
+		}, 0)
+		assert.NoError(t, err)
+	}
+
+	// Let some expirations get in flight, then close concurrently
+	time.Sleep(30 * time.Millisecond)
+
+	closeDone := make(chan struct{})
+	go func() {
+		assert.NoError(t, lc.Close())
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("leader controller close timed out during session expiry")
+	}
+
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
+}
+
 func TestSessionManagerReopening(t *testing.T) {
 	shardId := int64(1)
 	// Invalid session timeout
@@ -736,38 +812,25 @@ func TestIsSessionKey(t *testing.T) {
 }
 
 // Closing the manager must not hold the manager lock while waiting for the
-// session goroutines: the expiry path of a session goroutine acquires the
-// manager lock, and a session in the middle of expiring would deadlock the
-// close.
+// expiry scheduler: the scheduler acquires the manager lock to finish an
+// in-flight expiry cycle, and waiting for it under the lock would deadlock
+// the close.
 func TestSessionManager_CloseWithInFlightExpiry(t *testing.T) {
-	sm := &sessionManager{
-		sessions: make(map[SessionId]*session),
-		activeSessions: metric.NewUpDownCounter("oxia_test_close_expiry_sessions", "test", "count",
-			map[string]any{}),
-	}
-	sm.ctx, sm.cancel = context.WithCancel(context.Background())
+	sm := newBareSessionManager()
+	newTestSession(sm, 1, 10*time.Minute)
 
-	s := &session{
-		id:  1,
-		sm:  sm,
-		log: slog.Default(),
-	}
-	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
-
-	// Mimics the tail of the session expiry path (waitForHeartbeats), which
-	// acquires the manager lock from the session goroutine. The session
-	// context is canceled by close(): with the close happening under the
-	// manager lock, this deterministically deadlocks.
-	s.latch.Add(1)
+	// Mimics the tail of the expiry scheduler mid-cycle: once the manager
+	// context is canceled by Close, it still needs the manager lock to
+	// finish. With Close waiting for the scheduler under the manager lock,
+	// this deterministically deadlocks.
+	sm.latch.Add(1)
 	go func() {
-		defer s.latch.Done()
-		<-s.ctx.Done()
+		defer sm.latch.Done()
+		<-sm.ctx.Done()
 		sm.Lock()
-		sm.removeSession(s.id)
+		sm.removeSession(1)
 		sm.Unlock()
 	}()
-	sm.sessions[s.id] = s
-	sm.activeSessions.Inc()
 
 	closeDone := make(chan struct{})
 	go func() {
@@ -816,12 +879,8 @@ func TestSessionManager_ActiveSessionsMetric(t *testing.T) {
 		return 0
 	}
 
-	sm := &sessionManager{
-		sessions:        make(map[SessionId]*session),
-		activeSessions:  metric.NewUpDownCounter(counterName, "test", "count", map[string]any{}),
-		expiredSessions: metric.NewCounter("oxia_test_expired_sessions", "test", "count", map[string]any{}),
-	}
-	sm.ctx, sm.cancel = context.WithCancel(context.Background())
+	sm := newBareSessionManager()
+	sm.activeSessions = metric.NewUpDownCounter(counterName, "test", "count", map[string]any{})
 
 	meta := &proto.SessionMetadata{TimeoutMs: uint32(10 * time.Minute / time.Millisecond)}
 	sm.Lock()
@@ -841,7 +900,6 @@ func TestSessionManager_ActiveSessionsMetric(t *testing.T) {
 	sm.Unlock()
 	assert.EqualValues(t, 1, readCounter())
 
-	s1.Close()
 	assert.NoError(t, sm.Close())
 	assert.EqualValues(t, 0, readCounter())
 }

@@ -66,6 +66,26 @@ func TestQuorumAckTrackerRF2(t *testing.T) {
 	assert.EqualValues(t, 2, at.CommitOffset())
 }
 
+func TestQuorumAckTrackerAckBeyondHead(t *testing.T) {
+	at := NewQuorumAckTracker(2, 1, wal.InvalidOffset)
+	at.AdvanceHeadOffset(2)
+
+	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+
+	// An ack for an offset the leader never wrote must be ignored: it must not
+	// commit the entries that do exist, and it must not push the cursor past
+	// the head.
+	c1.Ack(100)
+	assert.EqualValues(t, 2, at.HeadOffset())
+	assert.Equal(t, wal.InvalidOffset, at.CommitOffset())
+
+	// A later ack for the real head still commits, proving the out-of-range
+	// ack did not poison the cursor's tracked offset.
+	c1.Ack(2)
+	assert.EqualValues(t, 2, at.CommitOffset())
+}
+
 func TestQuorumAckTrackerRF3(t *testing.T) {
 	at := NewQuorumAckTracker(3, 1, wal.InvalidOffset)
 
@@ -537,4 +557,67 @@ func TestQuorumAckTracker_CumulativeAckQuorum(t *testing.T) {
 
 	c2.Ack(5)
 	assert.EqualValues(t, 5, at.CommitOffset())
+}
+
+// A waiter parked at the head of the wal must also wake up when the commit
+// offset advances, even though no new entry gets written.
+func TestQuorumAckTracker_WaitForHeadOffsetOrCommitAdvance(t *testing.T) {
+	at := NewQuorumAckTracker(3, 0, wal.InvalidOffset)
+
+	ch := make(chan error)
+	go func() {
+		ch <- at.WaitForHeadOffsetOrCommitAdvance(context.Background(), 1, wal.InvalidOffset)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-ch:
+		assert.Fail(t, "should not be ready")
+	default:
+		// Expected. There should be nothing in the channel
+	}
+
+	// The quorum ack on entry 0 advances the commit offset with no new entry:
+	// the waiter must wake up
+	c1, err := at.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+	c1.Ack(0)
+	assert.EqualValues(t, 0, at.CommitOffset())
+
+	assert.Eventually(t, func() bool {
+		select {
+		case err := <-ch:
+			assert.NoError(t, err)
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// An already-advanced commit offset satisfies the wait immediately
+	assert.NoError(t, at.WaitForHeadOffsetOrCommitAdvance(context.Background(), 1, wal.InvalidOffset))
+
+	// A new entry keeps waking it up as well
+	go func() {
+		ch <- at.WaitForHeadOffsetOrCommitAdvance(context.Background(), 1, 0)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-ch:
+		assert.Fail(t, "should not be ready")
+	default:
+		// Expected. There should be nothing in the channel
+	}
+
+	at.AdvanceHeadOffset(1)
+	assert.Eventually(t, func() bool {
+		select {
+		case err := <-ch:
+			assert.NoError(t, err)
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond)
 }

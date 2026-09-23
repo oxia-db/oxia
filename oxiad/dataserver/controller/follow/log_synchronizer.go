@@ -133,6 +133,24 @@ func (ls *LogSynchronizer) append0(syncCond chan struct{}, onAppend func(), req 
 	// This runs once per replicated entry: skip the attribute boxing entirely
 	// when debug logging is off, and check the level once for both call sites.
 	debugEnabled := ls.log.Enabled(context.Background(), slog.LevelDebug)
+
+	if req.Entry == nil {
+		// Entry-less commit-offset advertisement: the leader sends it to an
+		// observer parked at the head of the wal when the commit offset
+		// advances with no new entries to piggyback it on. Nothing to append:
+		// take the new commit offset and wake up the syncer, which in turn
+		// nudges the state applier.
+		if debugEnabled {
+			ls.log.Debug(
+				"Received commit-offset advertisement",
+				slog.Int64("commit-offset", req.CommitOffset),
+			)
+		}
+		ls.advertisedCommitOffset.Store(req.CommitOffset)
+		channel.PushNoBlock(syncCond, struct{}{})
+		return nil
+	}
+
 	if debugEnabled {
 		ls.log.Debug(
 			"Add entry",
@@ -165,6 +183,18 @@ func (ls *LogSynchronizer) append0(syncCond chan struct{}, onAppend func(), req 
 		}
 		channel.PushNoBlock(syncCond, struct{}{})
 		return nil
+	}
+
+	// A gap between the last known offset and the incoming entry means
+	// entries were lost in transit: reject the append and let the leader
+	// re-establish the stream from the last acked position. The WAL
+	// contiguity check cannot catch a gap when the WAL is empty (a follower
+	// bootstrapped from a snapshot legitimately starts at an arbitrary
+	// offset), and accepting it would let the follower ack entries it does
+	// not have.
+	if req.Entry.Offset != lastAppendedOffset+1 {
+		return fmt.Errorf("entry %d can not immediately follow %d: %w",
+			req.Entry.Offset, lastAppendedOffset, wal.ErrInvalidNextOffset)
 	}
 
 	// Append the entry asynchronously, passing the previous CRC from the leader.

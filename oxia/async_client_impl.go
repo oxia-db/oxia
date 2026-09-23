@@ -123,7 +123,7 @@ func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteC
 		c.writeBatchManager.Get(shardId).Add(put)
 	}
 	for _, del := range deletes {
-		shardId := c.shardManager.Get(del.Key)
+		shardId := c.shardManager.Get(del.PartitionKeyOrKey())
 		c.writeBatchManager.Get(shardId).Add(del)
 	}
 	for _, dr := range deleteRanges {
@@ -135,7 +135,7 @@ func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteC
 
 func (c *clientImpl) rerouteReads(gets []model.GetCall) {
 	for _, get := range gets {
-		shardId := c.shardManager.Get(get.Key)
+		shardId := c.shardManager.Get(get.PartitionKeyOrKey())
 		c.readBatchManager.Get(shardId).Add(get)
 	}
 }
@@ -212,6 +212,7 @@ func (c *clientImpl) Delete(key string, options ...DeleteOption) <-chan error {
 	c.writeBatchManager.Get(shardId).Add(model.DeleteCall{
 		Key:               key,
 		ExpectedVersionId: opts.expectedVersion,
+		PartitionKey:      opts.partitionKey,
 		Callback:          callback,
 	})
 	return ch
@@ -274,7 +275,7 @@ func (c *clientImpl) doSingleShardDeleteRange(shardId int64, minKeyInclusive str
 }
 
 func (c *clientImpl) Get(key string, options ...GetOption) <-chan GetResult {
-	ch := make(chan GetResult)
+	ch := make(chan GetResult, 1)
 
 	opts := newGetOptions(options)
 	if opts.partitionKey == nil && //
@@ -295,6 +296,7 @@ func (c *clientImpl) doSingleShardGet(key string, opts *getOptions, ch chan GetR
 		ComparisonType:     opts.comparisonType,
 		IncludeValue:       opts.includeValue,
 		SecondaryIndexName: opts.secondaryIndexName,
+		PartitionKey:       opts.partitionKey,
 		Callback: func(response *proto.GetResponse, err error) {
 			ch <- toGetResult(response, key, err)
 			close(ch)

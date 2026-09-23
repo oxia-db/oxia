@@ -33,6 +33,7 @@ type PutCall struct {
 type DeleteCall struct {
 	Key               string
 	ExpectedVersionId *int64
+	PartitionKey      *string
 	Callback          func(*proto.DeleteResponse, error)
 }
 
@@ -47,12 +48,31 @@ type GetCall struct {
 	ComparisonType     proto.KeyComparisonType
 	IncludeValue       bool
 	SecondaryIndexName *string
+	PartitionKey       *string
 	Callback           func(*proto.GetResponse, error)
 }
 
 // PartitionKeyOrKey returns the partition key if set, otherwise the record key.
 // Used for shard routing when re-routing operations after a shard split.
+func (r GetCall) PartitionKeyOrKey() string {
+	if r.PartitionKey != nil {
+		return *r.PartitionKey
+	}
+	return r.Key
+}
+
+// PartitionKeyOrKey returns the partition key if set, otherwise the record key.
+// Used for shard routing when re-routing operations after a shard split.
 func (r PutCall) PartitionKeyOrKey() string {
+	if r.PartitionKey != nil {
+		return *r.PartitionKey
+	}
+	return r.Key
+}
+
+// PartitionKeyOrKey returns the partition key if set, otherwise the record key.
+// Used for shard routing when re-routing operations after a shard split.
+func (r DeleteCall) PartitionKeyOrKey() string {
 	if r.PartitionKey != nil {
 		return *r.PartitionKey
 	}
@@ -76,6 +96,7 @@ func (r DeleteCall) ToProto() *proto.DeleteRequest {
 	return &proto.DeleteRequest{
 		Key:               r.Key,
 		ExpectedVersionId: r.ExpectedVersionId,
+		PartitionKey:      r.PartitionKey,
 	}
 }
 

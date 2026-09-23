@@ -57,6 +57,57 @@ func TestReadOnlySegment(t *testing.T) {
 	assert.NoError(t, ro.Close())
 }
 
+// An empty index file must trigger an index rebuild, not be trusted (it used
+// to panic with a slice out of bounds).
+func TestRO_auto_recover_empty_index(t *testing.T) {
+	path := t.TempDir()
+
+	rw, err := newReadWriteSegment(path, 0, 128*1024, 0, nil)
+	assert.NoError(t, err)
+	for i := int64(0); i < 10; i++ {
+		assert.NoError(t, rw.Append(i, []byte(fmt.Sprintf("entry-%d", i))))
+	}
+	rwSegment := rw.(*readWriteSegment)
+	assert.NoError(t, rw.Close())
+
+	// Replace the index with a valid empty one, as written by the close of a
+	// previous, then-empty incarnation of the segment
+	assert.NoError(t, os.Remove(rwSegment.c.idxPath))
+	assert.NoError(t, rwSegment.c.codec.WriteIndex(rwSegment.c.idxPath, nil))
+
+	ro, err := newReadOnlySegment(path, 0)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 0, ro.BaseOffset())
+	assert.EqualValues(t, 9, ro.LastOffset())
+
+	for i := int64(0); i < 10; i++ {
+		data, _, _, err := ro.Read(i)
+		assert.NoError(t, err)
+		assert.Equal(t, fmt.Sprintf("entry-%d", i), string(data))
+	}
+
+	assert.NoError(t, ro.Close())
+}
+
+// A segment whose txn file holds no entries cannot be opened for reads: it
+// must fail with ErrEmptySegment (it used to panic with a slice out of
+// bounds), regardless of whether an index file is present.
+func TestRO_EmptySegment(t *testing.T) {
+	path := t.TempDir()
+
+	rw, err := newReadWriteSegment(path, 0, 128*1024, 0, nil)
+	assert.NoError(t, err)
+	rwSegment := rw.(*readWriteSegment)
+	assert.NoError(t, rw.Close())
+
+	_, err = os.Stat(rwSegment.c.idxPath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	ro, err := newReadOnlySegment(path, 0)
+	assert.Nil(t, ro)
+	assert.ErrorIs(t, err, ErrEmptySegment)
+}
+
 func TestRO_auto_recover_broken_index(t *testing.T) {
 	path := t.TempDir()
 

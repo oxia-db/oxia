@@ -21,9 +21,14 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+type Checker interface {
+	IsFeatureEnabled(feature proto.Feature) bool
+}
+
 func SupportedFeatures() []proto.Feature {
 	return []proto.Feature{
 		proto.Feature_FEATURE_DB_CHECKSUM,
+		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
 	}
 }
 

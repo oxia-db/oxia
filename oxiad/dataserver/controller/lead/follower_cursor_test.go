@@ -456,3 +456,68 @@ func (*blockingSnapshotStream) SendMsg(any) error {
 func (*blockingSnapshotStream) RecvMsg(any) error {
 	return io.EOF
 }
+
+// An observer cursor parked at the head of the wal must advertise a commit
+// offset advancement with an entry-less Append: with no more writes arriving,
+// the observer (split child) would otherwise never learn the commit offset and
+// the split catch-up phase would stall.
+func TestObserverFollowerCursor_AdvertisesCommitOffsetAtHead(t *testing.T) {
+	var term int64 = 1
+	var shard int64 = 2
+
+	stream := rpc.NewMockRpcClient()
+	ackTracker := NewQuorumAckTracker(3, wal.InvalidOffset, wal.InvalidOffset)
+	kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	assert.NoError(t, err)
+	wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	assert.NoError(t, w.Append(&proto.LogEntry{
+		Term:   1,
+		Offset: 0,
+		Value:  []byte("v1"),
+	}))
+
+	// A regular follower acking through the quorum tracker
+	regular, err := ackTracker.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+
+	fc, err := NewObserverFollowerCursor("child-1", term, constant.DefaultNamespace, shard, stream, ackTracker,
+		w, db, wal.InvalidOffset, &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100})
+	assert.NoError(t, err)
+
+	// The observer streams entry 0 with the commit offset of that moment (-1)
+	// and parks at the head of the wal
+	req := <-stream.AppendReqs
+	assert.EqualValues(t, 0, req.Entry.Offset)
+	assert.Equal(t, wal.InvalidOffset, req.CommitOffset)
+
+	// The quorum ack advances the commit offset with no new writes
+	ackTracker.AdvanceHeadOffset(0)
+	regular.Ack(0)
+	assert.EqualValues(t, 0, ackTracker.CommitOffset())
+
+	// The parked observer sends the advertisement on its own
+	req = <-stream.AppendReqs
+	assert.Nil(t, req.Entry)
+	assert.EqualValues(t, 0, req.CommitOffset)
+	assert.EqualValues(t, term, req.Term)
+
+	// No repeated advertisement while nothing advances
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case req = <-stream.AppendReqs:
+		t.Fatalf("unexpected append: %+v", req)
+	default:
+		// Expected. There should be nothing in the channel
+	}
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, wf.Close())
+	assert.NoError(t, db.Close())
+	assert.NoError(t, kvf.Close())
+}

@@ -424,6 +424,9 @@ func (fc *followerCursor) sendSnapshot() error {
 }
 
 func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Reader, currentOffset int64) error {
+	// The commit offset last advertised to the follower on this stream,
+	// piggybacked on the entries sent so far
+	lastSentCommitOffset := wal.InvalidOffset
 	for {
 		if fc.closed.Load() {
 			return nil
@@ -432,7 +435,8 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 		if !reader.HasNext() {
 			// We have reached the head of the wal
 			// Wait for more entries to be written
-			if err := fc.ackTracker.WaitForHeadOffset(ctx, currentOffset+1); err != nil {
+			var err error
+			if lastSentCommitOffset, err = fc.waitAtHead(ctx, reader, currentOffset, lastSentCommitOffset); err != nil {
 				if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 					return nil
 				}
@@ -454,10 +458,11 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 			)
 		}
 
+		commitOffset := fc.ackTracker.CommitOffset()
 		if err = fc.stream.Send(&proto.Append{
 			Term:             fc.term,
 			Entry:            le,
-			CommitOffset:     fc.ackTracker.CommitOffset(),
+			CommitOffset:     commitOffset,
 			PreviousEntryCrc: &previousCrc,
 			// This leader accounts acks cumulatively: the follower can
 			// coalesce the acks of a whole sync round into one message
@@ -471,7 +476,47 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 
 		fc.lastPushed.Store(le.Offset)
 		currentOffset = le.Offset
+		lastSentCommitOffset = commitOffset
 	}
+}
+
+// waitAtHead parks the cursor once it has reached the head of the wal, until
+// an entry past currentOffset is written. An observer cursor additionally
+// wakes up when the commit offset advances beyond lastSentCommitOffset and
+// advertises it to the follower with an entry-less Append: the observer
+// (split child) commit offset is capped at what was advertised, and the split
+// catch-up depends on it reaching the leader's commit offset even when no
+// more writes arrive to piggyback it on. Regular followers don't get the
+// advertisement: they only use the commit offset to reduce apply lag, and
+// older-version followers don't handle an Append without an entry. An
+// observer is never on an older version: it only exists for shard splits,
+// where both ends run split-capable servers.
+// It returns the commit offset last advertised to the follower.
+func (fc *followerCursor) waitAtHead(ctx context.Context, reader wal.Reader, currentOffset int64,
+	lastSentCommitOffset int64) (int64, error) {
+	if !fc.observer {
+		return lastSentCommitOffset, fc.ackTracker.WaitForHeadOffset(ctx, currentOffset+1)
+	}
+
+	if err := fc.ackTracker.WaitForHeadOffsetOrCommitAdvance(ctx, currentOffset+1, lastSentCommitOffset); err != nil {
+		return lastSentCommitOffset, err
+	}
+
+	commitOffset := fc.ackTracker.CommitOffset()
+	if commitOffset <= lastSentCommitOffset || reader.HasNext() {
+		// Nothing to advertise, or a new entry is available and will carry
+		// the commit offset itself
+		return lastSentCommitOffset, nil
+	}
+
+	if err := fc.stream.Send(&proto.Append{
+		Term:                    fc.term,
+		CommitOffset:            commitOffset,
+		CumulativeAcksSupported: true,
+	}); err != nil {
+		return lastSentCommitOffset, err
+	}
+	return commitOffset, nil
 }
 
 func (fc *followerCursor) streamEntries() error {

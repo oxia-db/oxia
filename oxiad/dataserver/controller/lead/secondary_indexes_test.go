@@ -16,6 +16,7 @@ package lead
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,12 +25,76 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/constant"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
+
+func TestSecondaryIndexNameValidation(t *testing.T) {
+	tests := []struct {
+		name              string
+		validationEnabled bool
+		secondaryIndexes  []*proto.SecondaryIndex
+		expected          proto.Status
+	}{
+		{
+			name: "validation disabled",
+			secondaryIndexes: []*proto.SecondaryIndex{{
+				IndexName: "tenant/users",
+			}},
+			expected: proto.Status_OK,
+		},
+		{name: "no indexes", validationEnabled: true, expected: proto.Status_OK},
+		{
+			name:              "valid index name",
+			validationEnabled: true,
+			secondaryIndexes: []*proto.SecondaryIndex{{
+				IndexName:    "tenant",
+				SecondaryKey: "users/email",
+			}},
+			expected: proto.Status_OK,
+		},
+		{
+			name:              "invalid index name",
+			validationEnabled: true,
+			secondaryIndexes: []*proto.SecondaryIndex{{
+				IndexName:    "tenant/users",
+				SecondaryKey: "email",
+			}},
+			expected: proto.Status_INVALID_ARGUMENT,
+		},
+		{
+			name:              "invalid later index name",
+			validationEnabled: true,
+			secondaryIndexes: []*proto.SecondaryIndex{
+				{IndexName: "tenant", SecondaryKey: "email"},
+				{IndexName: "tenant/users", SecondaryKey: "email"},
+			},
+			expected: proto.Status_INVALID_ARGUMENT,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := &proto.PutRequest{SecondaryIndexes: tt.secondaryIndexes}
+			features := testFeatureChecker{secondaryIndexNameValidation: tt.validationEnabled}
+			assert.Equal(t, tt.expected, WrapperUpdateOperationCallback.ValidatePut(request, features))
+		})
+	}
+}
+
+type testFeatureChecker struct {
+	secondaryIndexNameValidation bool
+}
+
+func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
+	return f.secondaryIndexNameValidation && candidate == proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION
+}
+
+var _ feature.Checker = testFeatureChecker{}
 
 func TestSecondaryIndices_List(t *testing.T) {
 	var shard int64 = 1
@@ -333,6 +398,164 @@ func TestSecondaryIndices_MultipleKeysForSameIdx(t *testing.T) {
 	assert.Contains(t, keys, "/c")
 	assert.Contains(t, keys, "/d")
 	assert.Contains(t, keys, "/e")
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestSecondaryIndices_GetBoundedToRequestedIndex(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+
+	lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+
+	// Three indexes whose regions are adjacent in the key space:
+	// "id" < "md5" < "schemaId". The "md5" index only contains "m", so gets
+	// around its edges must not return entries of the neighboring indexes.
+	_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{
+			{Key: "/id-aa", Value: []byte("0"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "id", SecondaryKey: "aa"}}},
+			{Key: "/md5-m", Value: []byte("1"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "md5", SecondaryKey: "m"}}},
+			{Key: "/schema-zz", Value: []byte("2"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "schemaId", SecondaryKey: "zz"}}},
+		},
+	})
+	assert.NoError(t, err)
+
+	tests := []struct {
+		name           string
+		comparison     proto.KeyComparisonType
+		index          string
+		key            string
+		expectedKey    string // "" means KEY_NOT_FOUND expected
+		expectedSecKey string
+	}{
+		// Same-index matches around the "md5" entry.
+		{"equal-match", proto.KeyComparisonType_EQUAL, "md5", "m", "/md5-m", "m"},
+		{"ceiling-from-below", proto.KeyComparisonType_CEILING, "md5", "b", "/md5-m", "m"},
+		{"higher-from-below", proto.KeyComparisonType_HIGHER, "md5", "b", "/md5-m", "m"},
+		{"floor-from-above", proto.KeyComparisonType_FLOOR, "md5", "x", "/md5-m", "m"},
+		{"lower-from-above", proto.KeyComparisonType_LOWER, "md5", "x", "/md5-m", "m"},
+
+		// Below the lowest "md5" entry: must not return entries of the
+		// preceding "id" index.
+		{"floor-below-all", proto.KeyComparisonType_FLOOR, "md5", "b", "", ""},
+		{"lower-below-all", proto.KeyComparisonType_LOWER, "md5", "b", "", ""},
+		{"equal-of-preceding-index", proto.KeyComparisonType_EQUAL, "md5", "aa", "", ""},
+
+		// Above the highest "md5" entry: must not return entries of the
+		// following "schemaId" index.
+		{"ceiling-above-all", proto.KeyComparisonType_CEILING, "md5", "x", "", ""},
+		{"higher-above-all", proto.KeyComparisonType_HIGHER, "md5", "x", "", ""},
+		{"higher-at-max", proto.KeyComparisonType_HIGHER, "md5", "m", "", ""},
+		{"equal-of-following-index", proto.KeyComparisonType_EQUAL, "md5", "zz", "", ""},
+
+		// Index with no entries at all: the neighboring indexes must stay
+		// invisible.
+		{"floor-missing-index", proto.KeyComparisonType_FLOOR, "missing", "x", "", ""},
+		{"ceiling-missing-index", proto.KeyComparisonType_CEILING, "missing", "b", "", ""},
+		{"lower-missing-index", proto.KeyComparisonType_LOWER, "missing", "x", "", ""},
+		{"higher-missing-index", proto.KeyComparisonType_HIGHER, "missing", "b", "", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resps, err := readAll(context.Background(), lc, &proto.ReadRequest{
+				Shard: &shard,
+				Gets: []*proto.GetRequest{{
+					Key:                tc.key,
+					ComparisonType:     tc.comparison,
+					SecondaryIndexName: pb.String(tc.index),
+				}},
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, 1, len(resps))
+
+			res := resps[0]
+			if tc.expectedKey == "" {
+				assert.Equal(t, proto.Status_KEY_NOT_FOUND, res.Status)
+				assert.Nil(t, res.Key)
+			} else {
+				assert.Equal(t, proto.Status_OK, res.Status)
+				assert.Equal(t, tc.expectedKey, *res.Key)
+				assert.Equal(t, tc.expectedSecKey, *res.SecondaryIndexKey)
+			}
+		})
+	}
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+
+	lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+
+	// The secondary key is stored as the client supplied it, so it can be empty
+	// or carry the byte that separates it from the primary key. Neither may
+	// change which record an index entry points back to.
+	sneaky := "k1" + secondaryIdxSeparator + url.PathEscape("/not-a-real-key")
+	_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{
+			{Key: "/a", Value: []byte("0"), SecondaryIndexes: []*proto.SecondaryIndex{
+				{IndexName: "my-idx", SecondaryKey: sneaky}}},
+			{Key: "/b", Value: []byte("1"), SecondaryIndexes: []*proto.SecondaryIndex{
+				{IndexName: "my-idx", SecondaryKey: ""}}},
+		},
+	})
+	assert.NoError(t, err)
+
+	keys, err := lc.ListBlock(context.Background(), &proto.ListRequest{
+		Shard:              &shard,
+		StartInclusive:     "",
+		EndExclusive:       "\xff",
+		SecondaryIndexName: pb.String("my-idx"),
+	})
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, []string{"/a", "/b"}, keys)
+
+	// The same keys have to come back through a get on the index.
+	for _, tc := range []struct{ secondaryKey, expectedKey string }{
+		{sneaky, "/a"},
+		{"", "/b"},
+	} {
+		resps, err := readAll(context.Background(), lc, &proto.ReadRequest{
+			Shard: &shard,
+			Gets: []*proto.GetRequest{{
+				Key:                tc.secondaryKey,
+				ComparisonType:     proto.KeyComparisonType_EQUAL,
+				SecondaryIndexName: pb.String("my-idx"),
+			}},
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, len(resps))
+		assert.Equal(t, proto.Status_OK, resps[0].Status)
+		assert.Equal(t, tc.expectedKey, *resps[0].Key)
+		assert.Equal(t, tc.secondaryKey, *resps[0].SecondaryIndexKey)
+	}
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())

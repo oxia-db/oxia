@@ -31,10 +31,10 @@ func testDataServer(id string) *proto.DataServerIdentity {
 type electionResponse = fenceResponse
 
 func TestNegotiate_EmptyInput(t *testing.T) {
-	result := negotiate(nil)
+	result := negotiate(nil, 0)
 	assert.Nil(t, result)
 
-	result = negotiate(map[string][]proto.Feature{})
+	result = negotiate(map[string][]proto.Feature{}, 0)
 	assert.Nil(t, result)
 }
 
@@ -43,7 +43,7 @@ func TestNegotiate_SingleNode(t *testing.T) {
 		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
-	result := negotiate(nodeFeatures)
+	result := negotiate(nodeFeatures, 1)
 	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
 }
 
@@ -54,7 +54,7 @@ func TestNegotiate_AllNodesSupport(t *testing.T) {
 		"node3": {proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
-	result := negotiate(nodeFeatures)
+	result := negotiate(nodeFeatures, 3)
 	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
 }
 
@@ -65,7 +65,7 @@ func TestNegotiate_PartialSupport(t *testing.T) {
 		"node3": {},
 	}
 
-	result := negotiate(nodeFeatures)
+	result := negotiate(nodeFeatures, 3)
 	assert.Empty(t, result)
 }
 
@@ -75,7 +75,7 @@ func TestNegotiate_IgnoresUnknownFeature(t *testing.T) {
 		"node2": {proto.Feature_FEATURE_UNKNOWN, proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
-	result := negotiate(nodeFeatures)
+	result := negotiate(nodeFeatures, 2)
 	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
 	assert.NotContains(t, result, proto.Feature_FEATURE_UNKNOWN)
 }
@@ -86,7 +86,7 @@ func TestNegotiate_HandlesDuplicates(t *testing.T) {
 		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
-	result := negotiate(nodeFeatures)
+	result := negotiate(nodeFeatures, 2)
 	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
 }
 
@@ -97,7 +97,7 @@ func TestNegotiate_NoCommonFeatures(t *testing.T) {
 		"node3": {},
 	}
 
-	result := negotiate(nodeFeatures)
+	result := negotiate(nodeFeatures, 3)
 	assert.Empty(t, result)
 }
 
@@ -108,14 +108,40 @@ func TestNegotiate_OldNodeWithNoFeatures(t *testing.T) {
 		"old-node":   nil,
 	}
 
-	result := negotiate(nodeFeatures)
+	result := negotiate(nodeFeatures, 3)
 	assert.Empty(t, result, "should not enable features when old nodes are present")
+}
+
+func TestNegotiate_NilNodeFeatures(t *testing.T) {
+	nodeFeatures := map[string][]proto.Feature{
+		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"node3": nil,
+	}
+
+	result := negotiate(nodeFeatures, 3)
+	assert.Empty(t, result, "nil feature info must not count as support")
+}
+
+func TestNegotiate_MissingFeatureInfo(t *testing.T) {
+	nodeFeatures := map[string][]proto.Feature{
+		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
+		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
+	}
+
+	result := negotiate(nodeFeatures, 3)
+	assert.Empty(t, result, "missing feature info must not count as support")
 }
 
 func TestNoOpSupportedFeaturesSupplier(t *testing.T) {
 	result := NoOpSupportedFeaturesSupplier(nil)
 	assert.NotNil(t, result)
 	assert.Empty(t, result)
+
+	server := testDataServer("node1")
+	result = NoOpSupportedFeaturesSupplier([]*proto.DataServerIdentity{server})
+	assert.Contains(t, result, server.GetNameOrDefault())
+	assert.Empty(t, result[server.GetNameOrDefault()])
 }
 
 func TestNegotiate_MixedVersions_RollingUpgrade(t *testing.T) {
@@ -125,13 +151,33 @@ func TestNegotiate_MixedVersions_RollingUpgrade(t *testing.T) {
 		"old-node":   {},
 	}
 
-	result := negotiate(nodeFeatures)
+	result := negotiate(nodeFeatures, 3)
 	assert.Empty(t, result, "features should not be enabled until all nodes are upgraded")
 
 	nodeFeatures["old-node"] = []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
 
-	result = negotiate(nodeFeatures)
+	result = negotiate(nodeFeatures, 3)
 	assert.Contains(t, result, proto.Feature_FEATURE_DB_CHECKSUM, "feature should be enabled after all nodes are upgraded")
+}
+
+func TestNegotiate_SecondaryIndexValidationRequiresFullUpgrade(t *testing.T) {
+	currentFeatures := []proto.Feature{
+		proto.Feature_FEATURE_DB_CHECKSUM,
+		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+	}
+	nodeFeatures := map[string][]proto.Feature{
+		"new-node-1": currentFeatures,
+		"new-node-2": currentFeatures,
+		"old-node":   {proto.Feature_FEATURE_DB_CHECKSUM},
+	}
+
+	result := negotiate(nodeFeatures, 3)
+	assert.Contains(t, result, proto.Feature_FEATURE_DB_CHECKSUM)
+	assert.NotContains(t, result, proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION)
+
+	nodeFeatures["old-node"] = currentFeatures
+	result = negotiate(nodeFeatures, 3)
+	assert.Contains(t, result, proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION)
 }
 
 func TestWaitForMajority_Success(t *testing.T) {

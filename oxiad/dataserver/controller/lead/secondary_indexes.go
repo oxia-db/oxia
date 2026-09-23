@@ -17,13 +17,14 @@ package lead
 import (
 	"fmt"
 	"net/url"
-	"regexp"
+	"strings"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -33,6 +34,14 @@ import (
 const secondaryIdxKeyPrefix = constant.InternalKeyPrefix + "idx"
 
 type wrapperUpdateCallback struct{}
+
+func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest, features feature.Checker) proto.Status {
+	if status := sessionManagerUpdateOperationCallback.ValidatePut(req, features); status != proto.Status_OK {
+		return status
+	}
+
+	return secondaryIndexesUpdateCallback.ValidatePut(req, features)
+}
 
 func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry) error {
 	// First update the session
@@ -80,6 +89,19 @@ var WrapperUpdateOperationCallback database.UpdateOperationCallback = &wrapperUp
 type secondaryIndexesUpdateCallbackS struct{}
 
 var secondaryIndexesUpdateCallback database.UpdateOperationCallback = &secondaryIndexesUpdateCallbackS{}
+
+func (secondaryIndexesUpdateCallbackS) ValidatePut(request *proto.PutRequest, features feature.Checker) proto.Status {
+	if !features.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION) {
+		return proto.Status_OK
+	}
+
+	for _, secondaryIndex := range request.SecondaryIndexes {
+		if strings.IndexByte(secondaryIndex.GetIndexName(), '/') >= 0 {
+			return proto.Status_INVALID_ARGUMENT
+		}
+	}
+	return proto.Status_OK
+}
 
 func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	if existingEntry != nil {
@@ -145,34 +167,8 @@ const secondaryIdxSeparator = "\x01"
 const secondaryIdxRangePrefixFormat = secondaryIdxKeyPrefix + "/%s/%s"
 const secondaryIdxFormat = secondaryIdxRangePrefixFormat + secondaryIdxSeparator + "%s"
 
-const regex = "^" + secondaryIdxKeyPrefix + "/[^/]+/([^" + secondaryIdxSeparator + "]+)" + secondaryIdxSeparator + "(.+)$"
-
-var secondaryIdxFormatRegex = regexp.MustCompile(regex)
-
-var errFailedToParseSecondaryKey = errors.New("oxia db: failed to parse secondary index key")
-
 func secondaryIndexKey(primaryKey string, si *proto.SecondaryIndex) string {
 	return fmt.Sprintf(secondaryIdxFormat, si.IndexName, si.SecondaryKey, url.PathEscape(primaryKey))
-}
-
-func secondaryIndexPrimaryKey(completeKey string) (string, error) {
-	matches := secondaryIdxFormatRegex.FindStringSubmatch(completeKey)
-	if len(matches) != 3 {
-		return "", errFailedToParseSecondaryKey
-	}
-
-	return url.PathUnescape(matches[2])
-}
-
-func secondaryIndexPrimaryAndSecondaryKey(completeKey string) (primaryKey string, secondaryKey string, err error) {
-	matches := secondaryIdxFormatRegex.FindStringSubmatch(completeKey)
-	if len(matches) != 3 {
-		return "", "", errFailedToParseSecondaryKey
-	}
-
-	secondaryKey = matches[1]
-	primaryKey, err = url.PathUnescape(matches[2])
-	return primaryKey, secondaryKey, err
 }
 
 func deleteSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, existingEntry *proto.StorageEntry) error {
@@ -225,7 +221,7 @@ func (it *secondaryIndexListIterator) Valid() bool {
 
 func (it *secondaryIndexListIterator) Key() string {
 	idxKey := it.it.Key()
-	primaryKey, err := secondaryIndexPrimaryKey(idxKey)
+	primaryKey, _, err := database.ParseSecondaryIndexKey(idxKey)
 	if err != nil {
 		// This should never happen since we control the key format
 		panic(errors.Wrap(err, "Failed to parse secondary index key"))
@@ -311,7 +307,7 @@ func (it *secondaryIndexRangeIterator) Value() (*proto.GetResponse, error) {
 
 func secondaryIndexGet(req *proto.GetRequest, db database.DB) (*proto.GetResponse, error) {
 	primaryKey, secondaryKey, err := doSecondaryGet(db, req)
-	if err != nil && !errors.Is(err, errFailedToParseSecondaryKey) {
+	if err != nil && !errors.Is(err, database.ErrInvalidSecondaryIndexKey) {
 		return nil, err
 	}
 
@@ -335,7 +331,8 @@ func secondaryIndexGet(req *proto.GetRequest, db database.DB) (*proto.GetRespons
 //nolint:revive
 func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, secondaryKey string, err error) {
 	indexName := *req.SecondaryIndexName
-	searchKey := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.Key)
+	indexPrefix := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, "")
+	searchKey := indexPrefix + req.Key
 	it, err := db.KeyIterator(true)
 	if err != nil {
 		return "", "", err
@@ -348,19 +345,25 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 	} else {
 		// For all the other cases, we set the iterator on >=
 		it.SeekGE(searchKey)
-	}
 
-	if !it.Valid() && (req.ComparisonType == proto.KeyComparisonType_FLOOR ||
-		req.ComparisonType == proto.KeyComparisonType_CEILING) {
-		// There might be more keys in the db. Let's try to compare it
-		// to the highest one
-		it.Prev()
+		if req.ComparisonType == proto.KeyComparisonType_FLOOR &&
+			(!it.Valid() || !strings.HasPrefix(it.Key(), indexPrefix)) {
+			// There is no entry of this index at or after the search key: the
+			// floor candidate, if any, is the last index entry before it.
+			it.SeekLT(searchKey)
+		}
 	}
 
 	for it.Valid() {
 		itKey := it.Key()
-		primaryKey, secondaryKey, err = secondaryIndexPrimaryAndSecondaryKey(itKey)
-		if err != nil && !errors.Is(err, errFailedToParseSecondaryKey) {
+		if !strings.HasPrefix(itKey, indexPrefix) {
+			// We stepped out of the region of the requested index: entries of
+			// other indexes (or other keyspaces) must not be considered.
+			break
+		}
+
+		primaryKey, secondaryKey, err = database.ParseSecondaryIndexKey(itKey)
+		if err != nil && !errors.Is(err, database.ErrInvalidSecondaryIndexKey) {
 			return "", "", err
 		}
 
@@ -406,9 +409,6 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		}
 	}
 
-	if !it.Valid() {
-		primaryKey = ""
-	}
-
-	return primaryKey, secondaryKey, err
+	// The walk ran out of entries of the requested index without finding a match
+	return "", "", nil
 }
