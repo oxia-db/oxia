@@ -242,7 +242,7 @@ func (p *rpcProvider) ExecuteRangeScan(ctx context.Context, request *proto.Range
 }
 
 func (p *rpcProvider) GetShardAssignments(ctx context.Context, target string, request *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	return executeOnce(func() (proto.OxiaClient_GetShardAssignmentsClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -266,7 +266,7 @@ func (p *rpcProvider) getWriteStream(ctx context.Context, target string) (proto.
 }
 
 func (p *rpcProvider) GetSequenceUpdates(ctx context.Context, target string, request *proto.GetSequenceUpdatesRequest) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
+	return executeOnce(func() (proto.OxiaClient_GetSequenceUpdatesClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -282,7 +282,7 @@ func (p *rpcProvider) GetSequenceUpdates(ctx context.Context, target string, req
 }
 
 func (p *rpcProvider) GetNotifications(ctx context.Context, target string, request *proto.NotificationsRequest) (proto.OxiaClient_GetNotificationsClient, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetNotificationsClient, error) {
+	return executeOnce(func() (proto.OxiaClient_GetNotificationsClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -298,7 +298,7 @@ func (p *rpcProvider) GetNotifications(ctx context.Context, target string, reque
 }
 
 func (p *rpcProvider) CreateSession(ctx context.Context, target string, request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CreateSessionResponse, error) {
+	return executeOnce(func() (*proto.CreateSessionResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -309,7 +309,7 @@ func (p *rpcProvider) CreateSession(ctx context.Context, target string, request 
 }
 
 func (p *rpcProvider) KeepAlive(ctx context.Context, target string, request *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.KeepAliveResponse, error) {
+	return executeOnce(func() (*proto.KeepAliveResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -320,7 +320,7 @@ func (p *rpcProvider) KeepAlive(ctx context.Context, target string, request *pro
 }
 
 func (p *rpcProvider) CloseSession(ctx context.Context, target string, request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CloseSessionResponse, error) {
+	return executeOnce(func() (*proto.CloseSessionResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -353,5 +353,14 @@ func executeWithRetry[T any](ctx context.Context, operation func(constant.ErrorM
 		}
 		return err
 	}, commontime.NewBackOff(ctx))
+	return result, err
+}
+
+// executeOnce performs a request against a fixed target, without retrying it. After the shard leader
+// moves, a retryable error such as ErrNodeIsNotLeader would keep failing against the same target: the
+// callers retry instead, after looking up the target again.
+func executeOnce[T any](operation func() (T, error)) (T, error) {
+	result, err := operation()
+	err, _ = constant.FromGrpcError(err)
 	return result, err
 }
