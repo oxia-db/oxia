@@ -90,7 +90,8 @@ func (su *sequenceUpdates) getSequenceUpdates() error {
 	leader := su.shardManager.Leader(shard)
 
 	updates, err := su.rpcProvider.GetSequenceUpdates(su.ctx, leader, &proto.GetSequenceUpdatesRequest{
-		Key: su.prefixKey,
+		Shard: shard,
+		Key:   su.prefixKey,
 	})
 	if err != nil {
 		if su.ctx.Err() != nil {
