@@ -29,6 +29,12 @@ import (
 	"github.com/oxia-db/oxia/oxia/internal"
 )
 
+// A server rejects a subscription (eg. the node is not the leader) as soon as
+// it receives it, while an accepted subscription gets no response until a
+// sequence key exists: a stream that stayed open for longer than this was
+// accepted.
+const sequenceUpdatesAcceptedAfter = 1 * time.Second
+
 type sequenceUpdates struct {
 	prefixKey    string
 	partitionKey string
@@ -100,11 +106,17 @@ func (su *sequenceUpdates) getSequenceUpdates() error {
 		return err
 	}
 
-	su.backoff.Reset()
-
+	openedAt := time.Now()
 	for {
 		res, err2 := updates.Recv()
 		if err2 != nil {
+			// The stream gets created even if the server rejects the
+			// subscription. Reset the backoff only when an accepted one fails
+			// (eg. on a leader change), so a persistent rejection keeps
+			// escalating the retry delay.
+			if time.Since(openedAt) >= sequenceUpdatesAcceptedAfter {
+				su.backoff.Reset()
+			}
 			return err2
 		}
 
