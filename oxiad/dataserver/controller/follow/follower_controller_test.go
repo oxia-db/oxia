@@ -16,7 +16,10 @@ package follow
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -24,6 +27,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
 
@@ -1678,6 +1682,53 @@ func TestFollower_NewTermRejectsUnsupportedFeature(t *testing.T) {
 	assert.Empty(t, res.FeaturesEnabled)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 1, fc.Term())
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestFollower_InvalidNamespaceDoesNotEscapeDataDir(t *testing.T) {
+	kvOptions := kvstore.NewFactoryOptionsForTest(t)
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvOptions)
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, "../escaped-ns", 7, walFactory, kvFactory, nil)
+	assert.ErrorContains(t, err, "invalid path traversal sequence")
+	assert.Nil(t, fc)
+
+	// The data dir is a t.TempDir(), so its parent is the per-test temp root
+	_, err = os.Stat(filepath.Join(filepath.Dir(kvOptions.DataDir), "escaped-ns"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+type failingWalFactory struct{}
+
+func (failingWalFactory) NewWal(string, int64, wal.CommitOffsetProvider) (wal.Wal, error) {
+	return nil, errors.New("wal creation failed")
+}
+
+func (failingWalFactory) Close() error {
+	return nil
+}
+
+func TestFollower_ClosesDatabaseOnWalFailure(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, failingWalFactory{}, kvFactory, nil)
+	assert.ErrorContains(t, err, "wal creation failed")
+	assert.Nil(t, fc)
+
+	// A leaked database would still hold the Pebble lock and fail the re-open
+	walFactory := newTestWalFactory(t)
+	fc, err = NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
 
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())

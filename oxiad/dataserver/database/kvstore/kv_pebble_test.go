@@ -1254,6 +1254,24 @@ func TestPebbleBatchChecksumChaining(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestPebbleRejectsInvalidNamespace(t *testing.T) {
+	options := NewFactoryOptionsForTest(t)
+	factory, err := NewPebbleKVFactory(options)
+	assert.NoError(t, err)
+
+	_, err = factory.NewKV("../escaped-ns", 7, proto.KeySortingType_HIERARCHICAL)
+	assert.ErrorContains(t, err, "invalid path traversal sequence")
+
+	_, err = factory.NewSnapshotLoader("../escaped-ns", 7)
+	assert.ErrorContains(t, err, "invalid path traversal sequence")
+
+	// The data dir is a t.TempDir(), so its parent is the per-test temp root
+	_, err = os.Stat(filepath.Join(filepath.Dir(options.DataDir), "escaped-ns"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	assert.NoError(t, factory.Close())
+}
+
 func TestCompareWithDataset(t *testing.T) {
 	for _, test := range []struct {
 		leftKey  string
