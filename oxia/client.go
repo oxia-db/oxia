@@ -107,6 +107,7 @@ type AsyncClient interface {
 	// The channel will report the current latest sequence for a given key.
 	// Multiple updates can be collapsed into one single event with the
 	// highest sequence.
+	// The channel is closed once the context is done or the client is closed.
 	GetSequenceUpdates(ctx context.Context, prefixKey string, options ...GetSequenceUpdatesOption) (<-chan string, error)
 
 	// GetNotifications creates a new subscription to receive the notifications
@@ -174,6 +175,7 @@ type SyncClient interface {
 	// The channel will report the current latest sequence for a given key.
 	// Multiple updates can be collapsed into one single event with the
 	// highest sequence.
+	// The channel is closed once the context is done or the client is closed.
 	GetSequenceUpdates(ctx context.Context, prefixKey string, options ...GetSequenceUpdatesOption) (<-chan string, error)
 
 	// GetNotifications creates a new subscription to receive the notifications

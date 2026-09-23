@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/process"
 	time2 "github.com/oxia-db/oxia/common/time"
@@ -47,8 +49,13 @@ type sequenceUpdates struct {
 	log     *slog.Logger
 }
 
-func newSequenceUpdates(ctx context.Context, prefixKey string, partitionKey string,
+func newSequenceUpdates(ctx context.Context, clientCtx context.Context, prefixKey string, partitionKey string,
 	rpcProvider internal.RpcProvider, shardManager internal.ShardManager) <-chan string {
+	// The subscription ends when either the caller's context is done or the
+	// client is closed
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(clientCtx, cancel)
+
 	su := &sequenceUpdates{
 		prefixKey:    prefixKey,
 		partitionKey: partitionKey,
@@ -70,7 +77,10 @@ func newSequenceUpdates(ctx context.Context, prefixKey string, partitionKey stri
 			"oxia":      "sequence-updates",
 			"prefixKey": prefixKey,
 		},
-		su.getSequenceUpdatesWithRetries,
+		func() {
+			defer stop()
+			su.getSequenceUpdatesWithRetries()
+		},
 	)
 
 	return su.ch
@@ -79,7 +89,9 @@ func newSequenceUpdates(ctx context.Context, prefixKey string, partitionKey stri
 func (su *sequenceUpdates) getSequenceUpdatesWithRetries() { //nolint:revive
 	_ = backoff.RetryNotify(su.getSequenceUpdates,
 		su.backoff, func(err error, duration time.Duration) {
-			if !errors.Is(err, context.Canceled) {
+			// The stream fails with Canceled when the client connection is
+			// closing, eg. while the client itself is being closed
+			if !errors.Is(err, context.Canceled) && status.Code(err) != codes.Canceled {
 				su.log.Error(
 					"Error while getting sequence updates",
 					slog.Any("error", err),

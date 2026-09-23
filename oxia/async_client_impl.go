@@ -527,7 +527,7 @@ func (c *clientImpl) GetSequenceUpdates(ctx context.Context, prefixKey string, o
 		return nil, errors.Wrap(ErrInvalidOptions, "partitionKey is required")
 	}
 
-	return newSequenceUpdates(ctx, prefixKey, *opts.partitionKey, c.rpcProvider, c.shardManager), nil
+	return newSequenceUpdates(ctx, c.ctx, prefixKey, *opts.partitionKey, c.rpcProvider, c.shardManager), nil
 }
 
 // We do range scan on all the shards, and we need to always pick the lowest key
