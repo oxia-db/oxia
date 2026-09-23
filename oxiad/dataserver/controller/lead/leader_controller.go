@@ -458,7 +458,12 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 		// entry is appended while still holding the leader lock, so it lands
 		// in the log ahead of every write of this term and the effective
 		// feature set never changes mid-term.
-		return lc.proposeFeaturesEnableLocked(ctx, proposeEnabledFeature)
+		if err := lc.proposeFeaturesEnableLocked(ctx, proposeEnabledFeature); err != nil {
+			// Nothing was appended: fall back to the fenced state so the
+			// failed BecomeLeader leaves the controller where it found it.
+			lc.status = proto.ServingStatus_FENCED
+			return err
+		}
 	}
 	return nil
 }

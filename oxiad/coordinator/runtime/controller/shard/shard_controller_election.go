@@ -171,7 +171,9 @@ func (e *Election) fenceNewTermQuorum(term int64, options *proto.NewTermOptions,
 		return nil, nil, err
 	}
 	e.waitForGracePeriod(ch, fencingQuorumSize, ensemble, totalResponses, candidatesResponse, enabledFeatures)
-	return candidatesResponse, maps.Keys(enabledFeatures), nil
+	enabled := maps.Keys(enabledFeatures)
+	slices.Sort(enabled)
+	return candidatesResponse, enabled, nil
 }
 
 func (*Election) waitForGracePeriod(ch chan fenceResponse, fencingQuorumSize int, ensemble []*proto.DataServerIdentity,
