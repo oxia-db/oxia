@@ -63,6 +63,7 @@ func TestIntoGrpcStatusError(t *testing.T) {
 		{ErrNotInitialized, codes.Unavailable},
 		{ErrResourceConflict, codes.FailedPrecondition},
 		{ErrResourceUnavailable, codes.Unavailable},
+		{ErrUnsupportedFeatures, codes.FailedPrecondition},
 	}
 
 	for _, tt := range tests {

@@ -1900,3 +1900,275 @@ func TestLeaderController_CloseWaitsForInflightRead(t *testing.T) {
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
+
+func TestLeaderController_NewTermRejectsUnsupportedFeature(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// A term pinning a feature this binary does not implement must be refused
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  1,
+		Options: &proto.NewTermOptions{
+			EnableNotifications: true,
+			Features:            []proto.Feature{proto.Feature(999)},
+		},
+	})
+	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+	assert.Equal(t, proto.ServingStatus_NOT_MEMBER, lc.Status())
+
+	// The controller is still usable for a term with supported features
+	res, err := lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  1,
+		Options: &proto.NewTermOptions{
+			EnableNotifications: true,
+			Features:            []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, res.FeaturesEnabled)
+	assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestLeaderController_BecomeLeaderRejectsMissingEnabledFeature(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// Term 1 negotiates and enables the checksum feature
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  1,
+		Options: &proto.NewTermOptions{
+			EnableNotifications: true,
+			Features:            []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+		},
+	})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+	})
+	assert.NoError(t, err)
+	assert.Eventually(t, func() bool {
+		return lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
+	}, 5*time.Second, 50*time.Millisecond)
+
+	// Term 2's negotiated set misses the enabled feature (e.g. a node that
+	// does not support it joined the ensemble): the fenced node reports the
+	// enabled feature, and refuses to lead with the incompatible ensemble.
+	res, err := lc.NewTerm(&proto.NewTermRequest{
+		Shard:   shard,
+		Term:    2,
+		Options: &proto.NewTermOptions{EnableNotifications: true},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, res.FeaturesEnabled)
+
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              2,
+		ReplicationFactor: 1,
+		FeaturesSupported: nil,
+	})
+	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+
+	// A new term whose set covers the enabled feature recovers the shard
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  3,
+		Options: &proto.NewTermOptions{
+			EnableNotifications: true,
+			Features:            []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+		},
+	})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              3,
+		ReplicationFactor: 1,
+		FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.ServingStatus_LEADER, lc.Status())
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestLeaderController_AddFollowerRejectsUnsupportedFeatures(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  5,
+		Options: &proto.NewTermOptions{
+			EnableNotifications: true,
+			Features:            []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+		},
+	})
+	assert.NoError(t, err)
+
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              5,
+		ReplicationFactor: 4,
+		FollowerMaps: map[string]*proto.EntryId{
+			"f1": constant2.InvalidEntryId,
+		},
+		FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+	})
+	assert.NoError(t, err)
+
+	// A joiner that does not support the term's pinned features is refused
+	_, err = lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "f2",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+		FollowerFeatures:    &proto.FollowerFeatures{},
+	})
+	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+
+	// Without the follower features (a coordinator that predates the
+	// validation), the join is accepted as before
+	_, err = lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "f2",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+	})
+	assert.NoError(t, err)
+
+	// A joiner that covers the pinned features is accepted
+	_, err = lc.AddFollower(&proto.AddFollowerRequest{
+		Shard:               shard,
+		Term:                5,
+		FollowerName:        "f3",
+		FollowerHeadEntryId: constant2.InvalidEntryId,
+		FollowerFeatures:    &proto.FollowerFeatures{Supported: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
+	})
+	assert.NoError(t, err)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func readWalLogEntries(t *testing.T, w wal.Wal) []*proto.LogEntry {
+	t.Helper()
+
+	reader, err := w.NewReader(wal.InvalidOffset)
+	assert.NoError(t, err)
+	defer reader.Close()
+
+	var entries []*proto.LogEntry
+	for reader.HasNext() {
+		entry, _, _, err := reader.ReadNext()
+		assert.NoError(t, err)
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func decodeLogEntry(t *testing.T, entry *proto.LogEntry) *proto.LogEntryValue {
+	t.Helper()
+
+	v := &proto.LogEntryValue{}
+	assert.NoError(t, v.UnmarshalVT(entry.Value))
+	return v
+}
+
+// The term's feature set is pinned at election time: the FeatureEnable entry
+// must be the first entry of the term that changes the set, before any write,
+// and a failover with the same negotiated set must not produce a new one.
+func TestLeaderController_FeatureEnableIsFirstEntryOfTerm(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	write := func(key string) {
+		_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte(key)}},
+		})
+		assert.NoError(t, err)
+	}
+
+	// Term 1: no features negotiated
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1, Options: &proto.NewTermOptions{EnableNotifications: true}})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 1, ReplicationFactor: 1})
+	assert.NoError(t, err)
+	write("k1")
+
+	// Term 2: the checksum feature enters the negotiated set
+	checksum := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2, Options: &proto.NewTermOptions{EnableNotifications: true, Features: checksum}})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 2, ReplicationFactor: 1, FeaturesSupported: checksum})
+	assert.NoError(t, err)
+	write("k2")
+
+	// Term 3: failover with the same feature set
+	res, err := lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 3, Options: &proto.NewTermOptions{EnableNotifications: true, Features: checksum}})
+	assert.NoError(t, err)
+	assert.Equal(t, checksum, res.FeaturesEnabled)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 3, ReplicationFactor: 1, FeaturesSupported: checksum})
+	assert.NoError(t, err)
+	write("k3")
+
+	entries := readWalLogEntries(t, lc.(*leaderController).wal)
+	assert.Len(t, entries, 4)
+
+	// Term 1: only the write
+	assert.EqualValues(t, 1, entries[0].Term)
+	assert.NotNil(t, decodeLogEntry(t, entries[0]).GetRequests())
+
+	// Term 2: the FeatureEnable entry precedes the first write of the term
+	assert.EqualValues(t, 2, entries[1].Term)
+	featureEnable := decodeLogEntry(t, entries[1]).GetControlRequest().GetFeatureEnable()
+	assert.NotNil(t, featureEnable)
+	assert.Equal(t, checksum, featureEnable.Features)
+	assert.EqualValues(t, 2, entries[2].Term)
+	assert.NotNil(t, decodeLogEntry(t, entries[2]).GetRequests())
+
+	// Term 3: the set did not change, so no new FeatureEnable entry
+	assert.EqualValues(t, 3, entries[3].Term)
+	assert.NotNil(t, decodeLogEntry(t, entries[3]).GetRequests())
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
