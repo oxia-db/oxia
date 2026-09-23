@@ -16,6 +16,7 @@ package database
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
@@ -217,6 +219,98 @@ func TestDB_NotificationsCancelWait(t *testing.T) {
 	}
 
 	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+// hookedCondition runs beforeWait on the first Wait, while the waiter still
+// holds the tracker lock: after it has checked its condition, but before it is
+// parked on the condition.
+type hookedCondition struct {
+	concurrent.ConditionContext
+	once       sync.Once
+	beforeWait func()
+}
+
+func (c *hookedCondition) Wait(ctx context.Context) error {
+	c.once.Do(c.beforeWait)
+	return c.ConditionContext.Wait(ctx)
+}
+
+// runBeforeFirstWait makes action run concurrently with the first waiter of
+// the tracker, between its condition check and its parking. The waiter gives
+// action a grace period to complete, which it can only do if it does not need
+// the tracker lock. The returned channel is closed once action has completed.
+func runBeforeFirstWait(nt *notificationsTracker, action func()) <-chan struct{} {
+	done := make(chan struct{})
+	nt.cond = &hookedCondition{
+		ConditionContext: nt.cond,
+		beforeWait: func() {
+			go func() {
+				action()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(100 * time.Millisecond):
+			}
+		},
+	}
+	return done
+}
+
+func TestDB_NotificationsCommitBeforeWaiterParks(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	d, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+
+	_, err = d.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
+	}, 0, now(), NoOpCallback)
+	require.NoError(t, err)
+
+	// The batch at offset 1 gets committed after the reader found it missing,
+	// but before the reader parks: the commit must still wake it up
+	writeDone := runBeforeFirstWait(d.(*db).notificationsTracker, func() {
+		_, err := d.ProcessWrite(&proto.WriteRequest{
+			Puts: []*proto.PutRequest{{Key: "b", Value: []byte("0")}},
+		}, 1, now(), NoOpCallback)
+		assert.NoError(t, err)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	notifications, err := d.ReadNextNotifications(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, notifications, 1)
+	assert.EqualValues(t, 1, notifications[0].Offset)
+
+	<-writeDone
+	assert.NoError(t, d.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_NotificationsCloseBeforeWaiterParks(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	d, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+
+	// The tracker gets closed after the reader checked it, but before the
+	// reader parks: the close must still wake it up
+	nt := d.(*db).notificationsTracker
+	closeDone := runBeforeFirstWait(nt, func() {
+		assert.NoError(t, nt.Close())
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	notifications, err := d.ReadNextNotifications(ctx, 0)
+	require.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	assert.Nil(t, notifications)
+
+	<-closeDone
+	assert.NoError(t, d.Close())
 	assert.NoError(t, factory.Close())
 }
 
