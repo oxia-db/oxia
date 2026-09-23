@@ -118,17 +118,21 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 }
 
 func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
-	for _, put := range puts {
-		shardId := c.shardManager.Get(put.PartitionKeyOrKey())
-		c.writeBatchManager.Get(shardId).Add(put)
-	}
-	for _, del := range deletes {
-		shardId := c.shardManager.Get(del.PartitionKeyOrKey())
-		c.writeBatchManager.Get(shardId).Add(del)
-	}
-	for _, dr := range deleteRanges {
-		for _, shardId := range c.shardManager.GetAll() {
-			c.writeBatchManager.Get(shardId).Add(dr)
+	// Re-add the calls in their original order, so the new batches keep it
+	for _, call := range model.InOpIndexOrder(puts, deletes, deleteRanges) {
+		switch call := call.(type) {
+		case model.PutCall:
+			shardId := c.shardManager.Get(call.PartitionKeyOrKey())
+			c.writeBatchManager.Get(shardId).Add(call)
+		case model.DeleteCall:
+			shardId := c.shardManager.Get(call.PartitionKeyOrKey())
+			c.writeBatchManager.Get(shardId).Add(call)
+		case model.DeleteRangeCall:
+			for _, shardId := range c.shardManager.GetAll() {
+				c.writeBatchManager.Get(shardId).Add(call)
+			}
+		default:
+			panic("invalid call")
 		}
 	}
 }

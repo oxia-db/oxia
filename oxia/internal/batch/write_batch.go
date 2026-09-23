@@ -77,12 +77,16 @@ func (b *writeBatch) CanAdd(call any) bool {
 }
 
 func (b *writeBatch) Add(call any) {
+	opIndex := uint32(b.Size())
 	switch c := call.(type) {
 	case model.PutCall:
+		c.OpIndex = opIndex
 		b.puts = append(b.puts, b.metrics.DecoratePut(c))
 	case model.DeleteCall:
+		c.OpIndex = opIndex
 		b.deletes = append(b.deletes, b.metrics.DecorateDelete(c))
 	case model.DeleteRangeCall:
+		c.OpIndex = opIndex
 		b.deleteRanges = append(b.deleteRanges, b.metrics.DecorateDeleteRange(c))
 	default:
 		panic("invalid call")

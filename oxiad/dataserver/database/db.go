@@ -292,37 +292,83 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	}
 
 	d.putCounter.Add(len(b.Puts))
-	for _, putReq := range b.Puts {
-		pr, err := d.applyPut(batch, baseVersionId, notifications, putReq, timestamp, updateOperationCallback, false)
-		if err != nil {
-			return nil, nil, err
-		}
-		res.Puts = append(res.Puts, pr)
-	}
-
 	d.deleteCounter.Add(len(b.Deletes))
-	for _, delReq := range b.Deletes {
-		dr, err := d.applyDelete(batch, notifications, delReq, updateOperationCallback)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		res.Deletes = append(res.Deletes, dr)
-	}
-
 	d.deleteRangesCounter.Add(len(b.DeleteRanges))
-	for _, delRangeReq := range b.DeleteRanges {
-		dr, err := d.applyDeleteRange(batch, notifications, delRangeReq, updateOperationCallback)
-		if err != nil {
-			return nil, nil, err
-		}
 
-		res.DeleteRanges = append(res.DeleteRanges, dr)
+	nextWriteOp := nextWriteOpByType
+	if d.IsFeatureEnabled(proto.Feature_FEATURE_ORDERED_WRITES) {
+		nextWriteOp = nextWriteOpByOpIndex
+	}
+	var p, dl, dr int
+	for p < len(b.Puts) || dl < len(b.Deletes) || dr < len(b.DeleteRanges) {
+		switch nextWriteOp(b, p, dl, dr) {
+		case writeOpPut:
+			pr, err := d.applyPut(batch, baseVersionId, notifications, b.Puts[p], timestamp, updateOperationCallback, false)
+			if err != nil {
+				return nil, nil, err
+			}
+			res.Puts = append(res.Puts, pr)
+			p++
+		case writeOpDelete:
+			delRes, err := d.applyDelete(batch, notifications, b.Deletes[dl], updateOperationCallback)
+			if err != nil {
+				return nil, nil, err
+			}
+			res.Deletes = append(res.Deletes, delRes)
+			dl++
+		default: // writeOpDeleteRange
+			delRangeRes, err := d.applyDeleteRange(batch, notifications, b.DeleteRanges[dr], updateOperationCallback)
+			if err != nil {
+				return nil, nil, err
+			}
+			res.DeleteRanges = append(res.DeleteRanges, delRangeRes)
+			dr++
+		}
 	}
 
 	d.writeOpsTotal.Add(uint64(len(b.Puts) + len(b.Deletes) + len(b.DeleteRanges)))
 
 	return notifications, res, nil
+}
+
+type writeOp int
+
+const (
+	writeOpPut writeOp = iota
+	writeOpDelete
+	writeOpDeleteRange
+)
+
+// nextWriteOpByType returns the batch that holds the next request to apply,
+// given the position reached in each batch, in the legacy order: all the
+// puts, then the deletes, then the delete ranges.
+func nextWriteOpByType(b *proto.WriteRequest, p, d, _ int) writeOp {
+	switch {
+	case p < len(b.Puts):
+		return writeOpPut
+	case d < len(b.Deletes):
+		return writeOpDelete
+	default:
+		return writeOpDeleteRange
+	}
+}
+
+// nextWriteOpByOpIndex returns the batch that holds the next request to
+// apply, given the position reached in each batch: the one whose next request
+// has the lowest op_index, with ties going to puts, then deletes, then delete
+// ranges. Requests without op_index all tie, so they keep the legacy order.
+func nextWriteOpByOpIndex(b *proto.WriteRequest, p, d, r int) writeOp {
+	next, found, opIndex := writeOpPut, false, uint32(0)
+	if p < len(b.Puts) {
+		next, found, opIndex = writeOpPut, true, b.Puts[p].OpIndex
+	}
+	if d < len(b.Deletes) && (!found || b.Deletes[d].OpIndex < opIndex) {
+		next, found, opIndex = writeOpDelete, true, b.Deletes[d].OpIndex
+	}
+	if r < len(b.DeleteRanges) && (!found || b.DeleteRanges[r].OpIndex < opIndex) {
+		next = writeOpDeleteRange
+	}
+	return next
 }
 
 func (d *db) IsFeatureEnabled(f proto.Feature) bool {
