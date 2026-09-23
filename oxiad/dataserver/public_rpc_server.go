@@ -293,8 +293,11 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	case <-streamCtx.Done():
 		return streamCtx.Err()
 	// Monitor the leader context to make sure the gRPC server can be gracefully shut down.
+	// The leader controller is closed: this node no longer leads the shard. Reply with a
+	// retryable error, as the plain context error would reach the client as a
+	// non-retryable Canceled status, failing the in-flight writes.
 	case <-leaderCtx.Done():
-		return leaderCtx.Err()
+		return constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader)
 	}
 }
 

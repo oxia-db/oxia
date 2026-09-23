@@ -143,6 +143,50 @@ func TestWriteClientClose(t *testing.T) {
 	assert.ErrorIs(t, err, io.EOF)
 }
 
+// Closing the leader controller (the leadership moved, the shard was deleted
+// after a split, or the server is shutting down) ends the write streams open on
+// it: the client must see a retryable error, so that it retries the in-flight
+// writes (on the new leader, or on the children of a split shard) instead of
+// failing them.
+func TestWriteStreamLeaderControllerClosed(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := proto.NewOxiaClientClient(conn)
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(map[string]string{
+		"shard-id":  "0",
+		"namespace": "default",
+	}))
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	stream, err := client.WriteStream(ctx)
+	require.NoError(t, err)
+
+	// Complete a write first, so the stream is established on the leader controller
+	require.NoError(t, stream.Send(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: "test-key", Value: []byte("test-value")}},
+	}))
+	resp, err := stream.Recv()
+	require.NoError(t, err)
+	require.Len(t, resp.Puts, 1)
+	assert.Equal(t, proto.Status_OK, resp.Puts[0].Status)
+
+	lc, err := standaloneServer.shardsDirector.GetLeader(0)
+	require.NoError(t, err)
+	require.NoError(t, lc.Close())
+
+	_, err = stream.Recv()
+	oxiaErr, _ := constant.FromGrpcError(err)
+	assert.ErrorIs(t, oxiaErr, constant.ErrNodeIsNotLeader)
+	assert.True(t, constant.IsRetryable(oxiaErr), "the client does not retry on: %v", err)
+}
+
 type mockWriteStream struct {
 	proto.OxiaClient_WriteStreamServer
 	requests chan *proto.WriteRequest
