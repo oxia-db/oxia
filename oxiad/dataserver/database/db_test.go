@@ -460,6 +460,7 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 	for _, enabledFeature := range []proto.Feature{
 		proto.Feature_FEATURE_DB_CHECKSUM,
 		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+		proto.Feature_FEATURE_ORDERED_WRITES,
 	} {
 		t.Run(enabledFeature.String(), func(t *testing.T) {
 			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -487,6 +488,85 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 			restoredCommitOffset, err := db.ReadCommitOffset()
 			assert.NoError(t, err)
 			assert.Equal(t, commitOffset, restoredCommitOffset)
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+func TestDB_OrderedWrites(t *testing.T) {
+	// The client issued: put(k, v1), delete(k), put(k, v2) expecting k to
+	// not exist, put(r/1), delete-range(r/), put(r/2)
+	newRequest := func(withOpIndex bool) *proto.WriteRequest {
+		opIndex := func(i uint32) uint32 {
+			if withOpIndex {
+				return i
+			}
+			return 0
+		}
+		return &proto.WriteRequest{
+			Puts: []*proto.PutRequest{
+				{Key: "k", Value: []byte("v1"), OpIndex: opIndex(0)},
+				{Key: "k", Value: []byte("v2"), ExpectedVersionId: pb.Int64(-1), OpIndex: opIndex(2)},
+				{Key: "r/1", Value: []byte("r1"), OpIndex: opIndex(3)},
+				{Key: "r/2", Value: []byte("r2"), OpIndex: opIndex(5)},
+			},
+			Deletes: []*proto.DeleteRequest{
+				{Key: "k", OpIndex: opIndex(1)},
+			},
+			DeleteRanges: []*proto.DeleteRangeRequest{
+				{StartInclusive: "r/", EndExclusive: "r/~", OpIndex: opIndex(4)},
+			},
+		}
+	}
+
+	legacyPutStatuses := []proto.Status{proto.Status_OK, proto.Status_UNEXPECTED_VERSION_ID, proto.Status_OK, proto.Status_OK}
+	for _, test := range []struct {
+		name              string
+		enabled           bool
+		withOpIndex       bool
+		expectPutStatuses []proto.Status
+		expectValues      map[string]string // Keys not listed must not exist
+	}{
+		{"feature disabled", false, true, legacyPutStatuses, map[string]string{}},
+		{"no op index", true, false, legacyPutStatuses, map[string]string{}},
+		{"ordered", true, true,
+			[]proto.Status{proto.Status_OK, proto.Status_OK, proto.Status_OK, proto.Status_OK},
+			map[string]string{"k": "v2", "r/2": "r2"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+			assert.NoError(t, err)
+			if test.enabled {
+				db.EnableFeature(proto.Feature_FEATURE_ORDERED_WRITES)
+			}
+
+			res, err := db.ProcessWrite(newRequest(test.withOpIndex), 0, 0, NoOpCallback)
+			assert.NoError(t, err)
+
+			// The responses stay grouped by type, in the order of the requests
+			assert.Len(t, res.Puts, len(test.expectPutStatuses))
+			for i, status := range test.expectPutStatuses {
+				assert.Equal(t, status, res.Puts[i].Status, "put %d", i)
+			}
+			assert.Len(t, res.Deletes, 1)
+			assert.Equal(t, proto.Status_OK, res.Deletes[0].Status)
+			assert.Len(t, res.DeleteRanges, 1)
+			assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+
+			for _, key := range []string{"k", "r/1", "r/2"} {
+				getRes, err := db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+				assert.NoError(t, err)
+				if value, ok := test.expectValues[key]; ok {
+					assert.Equal(t, proto.Status_OK, getRes.Status, key)
+					assert.Equal(t, value, string(getRes.Value), key)
+				} else {
+					assert.Equal(t, proto.Status_KEY_NOT_FOUND, getRes.Status, key)
+				}
+			}
 
 			assert.NoError(t, db.Close())
 			assert.NoError(t, factory.Close())

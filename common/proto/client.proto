@@ -184,6 +184,13 @@ message Int32HashRange {
  * A batch write request. Applies the batches of requests. Requests are
  * processed in positional order within batches and the batch types are
  * processed in the following order: puts, deletes, delete_ranges.
+ *
+ * When the shard has FEATURE_ORDERED_WRITES enabled, the three batches are
+ * instead merged by op_index, so that the requests are processed in the
+ * order the client issued them. Clients must assign op_index values in
+ * ascending order within each batch. Requests with the same op_index keep
+ * the order above, so a client that does not set op_index gets the same
+ * behavior as without the feature.
  */
 message WriteRequest {
   // The shard id. This is optional allow for support for server-side hashing
@@ -271,6 +278,10 @@ message PutRequest {
   // When set, the server will use these values instead of auto-generating them.
   optional int64 override_version_id = 9;
   optional int64 override_modifications_count = 10;
+
+  // The position of this request among all the requests of the
+  // WriteRequest, in the order the client issued them. See WriteRequest.
+  uint32 op_index = 11;
 }
 
 /**
@@ -300,6 +311,10 @@ message DeleteRequest {
   // of the delete to a particular shard.
   // An explicitly present empty string is a valid partition key and is hashed normally.
   optional string partition_key = 3;
+
+  // The position of this request among all the requests of the
+  // WriteRequest, in the order the client issued them. See WriteRequest.
+  uint32 op_index = 4;
 }
 
 /**
@@ -365,6 +380,10 @@ message DeleteRangeRequest {
   string start_inclusive = 1;
   // The end of the range, exclusive
   string end_exclusive = 2;
+
+  // The position of this request among all the requests of the
+  // WriteRequest, in the order the client issued them. See WriteRequest.
+  uint32 op_index = 3;
 }
 
 /**

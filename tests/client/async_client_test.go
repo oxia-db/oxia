@@ -96,6 +96,30 @@ func TestAsyncClientImpl(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// https://github.com/oxia-db/oxia/issues/834
+func TestAsyncClientImpl_PutDeletePutOrder(t *testing.T) {
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+
+	// A long linger makes the operations below go in the same write batch
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(1*time.Second))
+	assert.NoError(t, err)
+
+	putResult1 := client.Put("/k", []byte("v1"))
+	deleteResult := client.Delete("/k")
+	putResult2 := client.Put("/k", []byte("v2"))
+	assert.NoError(t, (<-putResult1).Err)
+	assert.NoError(t, <-deleteResult)
+	assert.NoError(t, (<-putResult2).Err)
+
+	getResult := <-client.Get("/k")
+	assert.NoError(t, getResult.Err)
+	assert.Equal(t, []byte("v2"), getResult.Value)
+
+	assert.NoError(t, client.Close())
+	assert.NoError(t, standaloneServer.Close())
+}
+
 func TestSyncClientImpl_Notifications(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)

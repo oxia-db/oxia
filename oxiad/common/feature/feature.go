@@ -29,6 +29,7 @@ func SupportedFeatures() []proto.Feature {
 	return []proto.Feature{
 		proto.Feature_FEATURE_DB_CHECKSUM,
 		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+		proto.Feature_FEATURE_ORDERED_WRITES,
 	}
 }
 
