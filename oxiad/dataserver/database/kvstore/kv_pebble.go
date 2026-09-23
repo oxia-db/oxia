@@ -41,6 +41,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/metric"
+	"github.com/oxia-db/oxia/common/validation"
 )
 
 func AbbreviatedKeyDisableSlash(key []byte) uint64 {
@@ -176,6 +177,10 @@ type Pebble struct {
 }
 
 func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySorting proto.KeySortingType, trap *KvTrap) (KV, error) {
+	if err := validation.ValidateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	labels := metric.LabelsForShard(namespace, shardId)
 	pb := &Pebble{
@@ -786,6 +791,10 @@ type pebbleSnapshotLoader struct {
 }
 
 func newPebbleSnapshotLoader(pf *PebbleFactory, namespace string, shard int64) (SnapshotLoader, error) {
+	if err := validation.ValidateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
 	sl := &pebbleSnapshotLoader{
 		pf:        pf,
 		namespace: namespace,
