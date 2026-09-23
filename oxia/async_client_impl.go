@@ -28,6 +28,7 @@ import (
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
 
 	"github.com/oxia-db/oxia/common/compare"
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/batch"
@@ -117,7 +118,8 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 	return c, nil
 }
 
-func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
+func (c *clientImpl) rerouteWrites(removedShardId int64, puts []model.PutCall, deletes []model.DeleteCall,
+	deleteRanges []model.DeleteRangeCall) {
 	// Re-add the calls in their original order, so the new batches keep it.
 	// Calls issued after the shard map changed may already be queued or sent
 	// to the new shards, so the order against those is not guaranteed.
@@ -130,11 +132,60 @@ func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteC
 			shardId := c.shardManager.Get(call.PartitionKeyOrKey())
 			c.writeBatchManager.Get(shardId).Add(call)
 		case model.DeleteRangeCall:
-			for _, shardId := range c.shardManager.GetAll() {
-				c.writeBatchManager.Get(shardId).Add(call)
-			}
+			c.rerouteDeleteRange(removedShardId, call)
 		default:
 			panic("invalid call")
+		}
+	}
+}
+
+// rerouteDeleteRange re-adds a delete range that was sent to a removed shard.
+// Without a partition key, the other shards got their own copy of the delete
+// range when it was issued, so it only goes to the shards that took over the
+// hash range of the removed one.
+func (c *clientImpl) rerouteDeleteRange(removedShardId int64, call model.DeleteRangeCall) {
+	if call.PartitionKey != nil {
+		shardId := c.shardManager.Get(*call.PartitionKey)
+		c.writeBatchManager.Get(shardId).Add(call)
+		return
+	}
+
+	successors := c.shardManager.GetSuccessors(removedShardId)
+	if len(successors) == 0 {
+		call.Callback(nil, constant.ErrShardNotFound)
+		return
+	}
+	call.Callback = multiShardDeleteRangeCallback(len(successors), call.Callback)
+	for _, shardId := range successors {
+		c.writeBatchManager.Get(shardId).Add(call)
+	}
+}
+
+// multiShardDeleteRangeCallback invokes the callback once for a delete range
+// sent to multiple shards: with the first failure, discarding the remaining
+// responses, or otherwise with the OK response once every shard has responded.
+func multiShardDeleteRangeCallback(numShards int,
+	callback func(*proto.DeleteRangeResponse, error)) func(*proto.DeleteRangeResponse, error) {
+	m := sync.Mutex{}
+	counter := numShards
+
+	return func(response *proto.DeleteRangeResponse, err error) {
+		m.Lock()
+		if counter == 0 {
+			// Response already sent, nothing to do
+			m.Unlock()
+			return
+		}
+		if err != nil || response.Status != proto.Status_OK {
+			counter = 0
+		} else {
+			counter--
+		}
+		done := counter == 0
+		m.Unlock()
+
+		if done {
+			callback(response, err)
 		}
 	}
 }
@@ -229,7 +280,7 @@ func (c *clientImpl) DeleteRange(minKeyInclusive string, maxKeyExclusive string,
 	opts := newDeleteRangeOptions(options)
 	if opts.partitionKey != nil {
 		shardId := c.getShardForKey("", opts)
-		c.doSingleShardDeleteRange(shardId, minKeyInclusive, maxKeyExclusive, ch)
+		c.doSingleShardDeleteRange(shardId, minKeyInclusive, maxKeyExclusive, opts.partitionKey, ch)
 		return ch
 	}
 
@@ -264,10 +315,12 @@ func (c *clientImpl) DeleteRange(minKeyInclusive string, maxKeyExclusive string,
 	return ch
 }
 
-func (c *clientImpl) doSingleShardDeleteRange(shardId int64, minKeyInclusive string, maxKeyExclusive string, ch chan error) {
+func (c *clientImpl) doSingleShardDeleteRange(shardId int64, minKeyInclusive string, maxKeyExclusive string,
+	partitionKey *string, ch chan error) {
 	c.writeBatchManager.Get(shardId).Add(model.DeleteRangeCall{
 		MinKeyInclusive: minKeyInclusive,
 		MaxKeyExclusive: maxKeyExclusive,
+		PartitionKey:    partitionKey,
 		Callback: func(response *proto.DeleteRangeResponse, err error) {
 			if err != nil {
 				ch <- err
