@@ -15,6 +15,9 @@
 package model
 
 import (
+	"cmp"
+	"slices"
+
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -27,6 +30,7 @@ type PutCall struct {
 	ClientIdentity     *string
 	PartitionKey       *string
 	SecondaryIndexes   []*proto.SecondaryIndex
+	OpIndex            uint32 // Position in the write batch, set when added to it
 	Callback           func(*proto.PutResponse, error)
 }
 
@@ -34,12 +38,14 @@ type DeleteCall struct {
 	Key               string
 	ExpectedVersionId *int64
 	PartitionKey      *string
+	OpIndex           uint32 // Position in the write batch, set when added to it
 	Callback          func(*proto.DeleteResponse, error)
 }
 
 type DeleteRangeCall struct {
 	MinKeyInclusive string
 	MaxKeyExclusive string
+	OpIndex         uint32 // Position in the write batch, set when added to it
 	Callback        func(*proto.DeleteRangeResponse, error)
 }
 
@@ -89,6 +95,7 @@ func (r PutCall) ToProto() *proto.PutRequest {
 		PartitionKey:      r.PartitionKey,
 		SequenceKeyDelta:  r.SequenceKeysDeltas,
 		SecondaryIndexes:  r.SecondaryIndexes,
+		OpIndex:           r.OpIndex,
 	}
 }
 
@@ -97,6 +104,7 @@ func (r DeleteCall) ToProto() *proto.DeleteRequest {
 		Key:               r.Key,
 		ExpectedVersionId: r.ExpectedVersionId,
 		PartitionKey:      r.PartitionKey,
+		OpIndex:           r.OpIndex,
 	}
 }
 
@@ -104,7 +112,36 @@ func (r DeleteRangeCall) ToProto() *proto.DeleteRangeRequest {
 	return &proto.DeleteRangeRequest{
 		StartInclusive: r.MinKeyInclusive,
 		EndExclusive:   r.MaxKeyExclusive,
+		OpIndex:        r.OpIndex,
 	}
+}
+
+// InOpIndexOrder returns the calls of a write batch in the order they were
+// added to it.
+func InOpIndexOrder(puts []PutCall, deletes []DeleteCall, deleteRanges []DeleteRangeCall) []any {
+	type indexedCall struct {
+		opIndex uint32
+		call    any
+	}
+	calls := make([]indexedCall, 0, len(puts)+len(deletes)+len(deleteRanges))
+	for _, put := range puts {
+		calls = append(calls, indexedCall{put.OpIndex, put})
+	}
+	for _, del := range deletes {
+		calls = append(calls, indexedCall{del.OpIndex, del})
+	}
+	for _, deleteRange := range deleteRanges {
+		calls = append(calls, indexedCall{deleteRange.OpIndex, deleteRange})
+	}
+	slices.SortStableFunc(calls, func(a, b indexedCall) int {
+		return cmp.Compare(a.opIndex, b.opIndex)
+	})
+
+	ordered := make([]any, len(calls))
+	for i, c := range calls {
+		ordered[i] = c.call
+	}
+	return ordered
 }
 
 func (r GetCall) ToProto() *proto.GetRequest {

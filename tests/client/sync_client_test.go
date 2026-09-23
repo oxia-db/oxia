@@ -25,7 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/hash"
 	"github.com/oxia-db/oxia/oxia"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
@@ -372,6 +374,38 @@ func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 	assert.NoError(t, client.Close())
 
 	assert.NoError(t, standaloneServer.Close())
+}
+
+func TestSyncClientImpl_GetSequenceUpdates_MultipleShards(t *testing.T) {
+	config := dataserver.NewTestConfig(t.TempDir())
+	config.NumShards = 10
+	standaloneServer, err := dataserver.NewStandalone(config)
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
+	require.NoError(t, err)
+	defer client.Close()
+
+	// The updates must come from the shard owning the partition key, so pick
+	// a key that does not route to shard 0
+	partitionKey := "x"
+	require.Greater(t, hash.Xxh332(partitionKey), sharding.GenerateShards(0, config.NumShards)[0].Max)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	updates, err := client.GetSequenceUpdates(ctx, "a", oxia.PartitionKey(partitionKey))
+	require.NoError(t, err)
+
+	key, _, err := client.Put(ctx, "a", []byte("0"), oxia.PartitionKey(partitionKey), oxia.SequenceKeysDeltas(1))
+	require.NoError(t, err)
+
+	select {
+	case recvKey := <-updates:
+		assert.Equal(t, key, recvKey)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "sequence update not received")
+	}
 }
 
 func TestSyncClientImpl_InternalKeys(t *testing.T) {

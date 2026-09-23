@@ -43,6 +43,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	commontime "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/common/validation"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
@@ -146,7 +147,7 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 	}
 	term, dbTermOptions, err := db.ReadTerm()
 	if err != nil {
-		return constant.I64NegativeOne, constant.I64NegativeOne, db, err
+		return constant.I64NegativeOne, constant.I64NegativeOne, nil, multierr.Append(err, db.Close())
 	}
 	if newTermOptions == nil {
 		to = &dbTermOptions
@@ -155,7 +156,7 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 
 	commitOffset, err = db.ReadCommitOffset()
 	if err != nil {
-		return constant.I64NegativeOne, constant.I64NegativeOne, db, err
+		return constant.I64NegativeOne, constant.I64NegativeOne, nil, multierr.Append(err, db.Close())
 	}
 	return term, commitOffset, db, nil
 }
@@ -163,6 +164,10 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 func NewFollowerController(storageOptions *option.StorageOptions, namespace string, shardId int64, wf wal.Factory, kvFactory kvstore.Factory,
 	newTermOptions *proto.NewTermOptions,
 ) (FollowerController, error) {
+	if err := validation.ValidateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
 	rawTerm, rawCommitOffset, db, err := initDatabase(namespace, shardId, newTermOptions, storageOptions, kvFactory)
 	if err != nil {
 		return nil, err
@@ -172,7 +177,7 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 
 	writeAheadLog, err := wf.NewWal(namespace, shardId, wal.NewCommitOffsetObserver(commitOffset))
 	if err != nil {
-		return nil, err
+		return nil, multierr.Append(err, db.Close())
 	}
 	lastAppendedOffset := &atomic.Int64{}
 	lastAppendedOffset.Store(writeAheadLog.LastOffset())

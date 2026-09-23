@@ -17,11 +17,13 @@ package lead
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
 
@@ -2167,6 +2169,51 @@ func TestLeaderController_FeatureEnableIsFirstEntryOfTerm(t *testing.T) {
 	// Term 3: the set did not change, so no new FeatureEnable entry
 	assert.EqualValues(t, 3, entries[3].Term)
 	assert.NotNil(t, decodeLogEntry(t, entries[3]).GetRequests())
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// failingTermKVFactory opens real Pebble stores whose term read fails, so that
+// NewLeaderController fails after having opened both the WAL and the database.
+type failingTermKVFactory struct {
+	kvstore.Factory
+}
+
+func (f failingTermKVFactory) NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (kvstore.KV, error) {
+	kv, err := f.Factory.NewKV(namespace, shardId, keySorting)
+	if err != nil {
+		return nil, err
+	}
+	return failingTermKV{kv}, nil
+}
+
+type failingTermKV struct {
+	kvstore.KV
+}
+
+func (kv failingTermKV) Get(key string, comparisonType kvstore.ComparisonType, opts kvstore.IteratorOpts) (string, []byte, io.Closer, error) {
+	if key == constant.InternalKeyPrefix+"term" {
+		return "", nil, nil, io.ErrUnexpectedEOF
+	}
+	return kv.KV.Get(key, comparisonType, opts)
+}
+
+func TestLeaderController_ClosesDatabaseOnReadTermFailure(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, failingTermKVFactory{kvFactory}, nil)
+	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	assert.Nil(t, lc)
+
+	// A leaked database would still hold the Pebble lock and fail the re-open
+	lc, err = NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	require.NoError(t, err)
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())

@@ -168,9 +168,12 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 			ReplicationFactor: 1,
 			FollowerMaps:      make(map[string]*proto.EntryId),
 			// Standalone has no coordinator to negotiate features. Enable the
-			// locally safe validation feature explicitly without also enabling
+			// locally safe features explicitly without also enabling
 			// cluster-specific features such as DB checksums.
-			FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION},
+			FeaturesSupported: []proto.Feature{
+				proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+				proto.Feature_FEATURE_ORDERED_WRITES,
+			},
 		}); err != nil {
 			return err
 		}

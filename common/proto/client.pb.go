@@ -574,6 +574,13 @@ func (x *Int32HashRange) GetMaxHashInclusive() uint32 {
 // A batch write request. Applies the batches of requests. Requests are
 // processed in positional order within batches and the batch types are
 // processed in the following order: puts, deletes, delete_ranges.
+//
+// When the shard has FEATURE_ORDERED_WRITES enabled, the three batches are
+// instead merged by op_index, so that the requests are processed in the
+// order the client issued them. Clients must assign op_index values in
+// ascending order within each batch. Requests with the same op_index keep
+// the order above, so a client that does not set op_index gets the same
+// behavior as without the feature.
 type WriteRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The shard id. This is optional allow for support for server-side hashing
@@ -901,8 +908,11 @@ type PutRequest struct {
 	// When set, the server will use these values instead of auto-generating them.
 	OverrideVersionId          *int64 `protobuf:"varint,9,opt,name=override_version_id,json=overrideVersionId,proto3,oneof" json:"override_version_id,omitempty"`
 	OverrideModificationsCount *int64 `protobuf:"varint,10,opt,name=override_modifications_count,json=overrideModificationsCount,proto3,oneof" json:"override_modifications_count,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// The position of this request among all the requests of the
+	// WriteRequest, in the order the client issued them. See WriteRequest.
+	OpIndex       uint32 `protobuf:"varint,11,opt,name=op_index,json=opIndex,proto3" json:"op_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PutRequest) Reset() {
@@ -1005,6 +1015,13 @@ func (x *PutRequest) GetOverrideModificationsCount() int64 {
 	return 0
 }
 
+func (x *PutRequest) GetOpIndex() uint32 {
+	if x != nil {
+		return x.OpIndex
+	}
+	return 0
+}
+
 // *
 // The response to a put request.
 type PutResponse struct {
@@ -1083,7 +1100,10 @@ type DeleteRequest struct {
 	// If a partition key is present, it supersedes the regular record key in determining the routing
 	// of the delete to a particular shard.
 	// An explicitly present empty string is a valid partition key and is hashed normally.
-	PartitionKey  *string `protobuf:"bytes,3,opt,name=partition_key,json=partitionKey,proto3,oneof" json:"partition_key,omitempty"`
+	PartitionKey *string `protobuf:"bytes,3,opt,name=partition_key,json=partitionKey,proto3,oneof" json:"partition_key,omitempty"`
+	// The position of this request among all the requests of the
+	// WriteRequest, in the order the client issued them. See WriteRequest.
+	OpIndex       uint32 `protobuf:"varint,4,opt,name=op_index,json=opIndex,proto3" json:"op_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1137,6 +1157,13 @@ func (x *DeleteRequest) GetPartitionKey() string {
 		return *x.PartitionKey
 	}
 	return ""
+}
+
+func (x *DeleteRequest) GetOpIndex() uint32 {
+	if x != nil {
+		return x.OpIndex
+	}
+	return 0
 }
 
 // *
@@ -1350,7 +1377,10 @@ type DeleteRangeRequest struct {
 	// The start of the range, inclusive
 	StartInclusive string `protobuf:"bytes,1,opt,name=start_inclusive,json=startInclusive,proto3" json:"start_inclusive,omitempty"`
 	// The end of the range, exclusive
-	EndExclusive  string `protobuf:"bytes,2,opt,name=end_exclusive,json=endExclusive,proto3" json:"end_exclusive,omitempty"`
+	EndExclusive string `protobuf:"bytes,2,opt,name=end_exclusive,json=endExclusive,proto3" json:"end_exclusive,omitempty"`
+	// The position of this request among all the requests of the
+	// WriteRequest, in the order the client issued them. See WriteRequest.
+	OpIndex       uint32 `protobuf:"varint,3,opt,name=op_index,json=opIndex,proto3" json:"op_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1397,6 +1427,13 @@ func (x *DeleteRangeRequest) GetEndExclusive() string {
 		return x.EndExclusive
 	}
 	return ""
+}
+
+func (x *DeleteRangeRequest) GetOpIndex() uint32 {
+	if x != nil {
+		return x.OpIndex
+	}
+	return 0
 }
 
 // *
@@ -2457,7 +2494,7 @@ const file_client_proto_rawDesc = "" +
 	"\x0eSecondaryIndex\x12\x1d\n" +
 	"\n" +
 	"index_name\x18\x01 \x01(\tR\tindexName\x12#\n" +
-	"\rsecondary_key\x18\x02 \x01(\tR\fsecondaryKey\"\xe4\x04\n" +
+	"\rsecondary_key\x18\x02 \x01(\tR\fsecondaryKey\"\xff\x04\n" +
 	"\n" +
 	"PutRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
@@ -2471,7 +2508,8 @@ const file_client_proto_rawDesc = "" +
 	"\x11secondary_indexes\x18\b \x03(\v2 .io.oxia.proto.v1.SecondaryIndexR\x10secondaryIndexes\x123\n" +
 	"\x13override_version_id\x18\t \x01(\x03H\x04R\x11overrideVersionId\x88\x01\x01\x12E\n" +
 	"\x1coverride_modifications_count\x18\n" +
-	" \x01(\x03H\x05R\x1aoverrideModificationsCount\x88\x01\x01B\x16\n" +
+	" \x01(\x03H\x05R\x1aoverrideModificationsCount\x88\x01\x01\x12\x19\n" +
+	"\bop_index\x18\v \x01(\rR\aopIndexB\x16\n" +
 	"\x14_expected_version_idB\r\n" +
 	"\v_session_idB\x12\n" +
 	"\x10_client_identityB\x10\n" +
@@ -2482,11 +2520,12 @@ const file_client_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\x0e2\x18.io.oxia.proto.v1.StatusR\x06status\x123\n" +
 	"\aversion\x18\x02 \x01(\v2\x19.io.oxia.proto.v1.VersionR\aversion\x12\x15\n" +
 	"\x03key\x18\x03 \x01(\tH\x00R\x03key\x88\x01\x01B\x06\n" +
-	"\x04_key\"\xaa\x01\n" +
+	"\x04_key\"\xc5\x01\n" +
 	"\rDeleteRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
 	"\x13expected_version_id\x18\x02 \x01(\x03H\x00R\x11expectedVersionId\x88\x01\x01\x12(\n" +
-	"\rpartition_key\x18\x03 \x01(\tH\x01R\fpartitionKey\x88\x01\x01B\x16\n" +
+	"\rpartition_key\x18\x03 \x01(\tH\x01R\fpartitionKey\x88\x01\x01\x12\x19\n" +
+	"\bop_index\x18\x04 \x01(\rR\aopIndexB\x16\n" +
 	"\x14_expected_version_idB\x10\n" +
 	"\x0e_partition_key\"B\n" +
 	"\x0eDeleteResponse\x120\n" +
@@ -2506,10 +2545,11 @@ const file_client_proto_rawDesc = "" +
 	"\x13secondary_index_key\x18\x05 \x01(\tH\x02R\x11secondaryIndexKey\x88\x01\x01B\b\n" +
 	"\x06_valueB\x06\n" +
 	"\x04_keyB\x16\n" +
-	"\x14_secondary_index_key\"b\n" +
+	"\x14_secondary_index_key\"}\n" +
 	"\x12DeleteRangeRequest\x12'\n" +
 	"\x0fstart_inclusive\x18\x01 \x01(\tR\x0estartInclusive\x12#\n" +
-	"\rend_exclusive\x18\x02 \x01(\tR\fendExclusive\"G\n" +
+	"\rend_exclusive\x18\x02 \x01(\tR\fendExclusive\x12\x19\n" +
+	"\bop_index\x18\x03 \x01(\rR\aopIndex\"G\n" +
 	"\x13DeleteRangeResponse\x120\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x18.io.oxia.proto.v1.StatusR\x06status\"\x84\x02\n" +
 	"\vListRequest\x12\x19\n" +
