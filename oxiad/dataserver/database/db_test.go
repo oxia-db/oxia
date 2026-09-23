@@ -21,6 +21,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
@@ -616,6 +617,12 @@ func TestDB_RecoverFeatureFlagsRejectsUnsupportedFeature(t *testing.T) {
 	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.Nil(t, testDB)
 	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+
+	// A store leaked by the failed open would still hold the Pebble lock and
+	// fail the re-open.
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	assert.NoError(t, kv.Close())
 
 	assert.NoError(t, factory.Close())
 }
