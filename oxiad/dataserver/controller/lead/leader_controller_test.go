@@ -17,6 +17,7 @@ package lead
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -1190,6 +1191,55 @@ func TestLeaderController_Notifications(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		return adaptor.IsCompleted()
 	}, 10*time.Second, 100*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+func TestLeaderController_NotificationsStartOffsetOverflow(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+
+	lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+
+	// Create a notification at offset 0.
+	_, _ = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "a", Value: []byte("value-a")}},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// A start offset of math.MaxInt64 asks for notifications strictly after the
+	// largest possible offset, so none exist and the handler must wait. Before
+	// the offset+1 overflow was guarded, the increment wrapped to a negative
+	// value, the range scan started below the first entry, and the whole
+	// notification history was replayed to the client.
+	maxOffset := int64(math.MaxInt64)
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &maxOffset}, adaptor)
+
+	select {
+	case nb := <-adaptor.Ch():
+		t.Fatalf("expected no notifications past math.MaxInt64, got batch at offset %d with %d entries",
+			nb.Offset, len(nb.Notifications))
+	case <-time.After(2 * time.Second):
+	}
+	assert.False(t, adaptor.IsCompleted())
+
+	cancel()
+	assert.Eventually(t, adaptor.IsCompleted, 10*time.Second, 100*time.Millisecond)
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())

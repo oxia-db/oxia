@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -1195,7 +1196,17 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 						cb.OnComplete(nil)
 						return
 					default:
-						notifications, err := lc.db.ReadNextNotifications(ctx, offset+1)
+						// The start offset comes from the client's StartOffsetExclusive on
+						// the first pass. offset+1 wraps negative when a client sends
+						// math.MaxInt64, and a negative start makes the notification range
+						// scan begin below the first entry and replay the whole log. No
+						// notification can sit past math.MaxInt64, so keep the start there
+						// and wait for new entries instead of wrapping around.
+						startOffset := offset
+						if offset < math.MaxInt64 {
+							startOffset = offset + 1
+						}
+						notifications, err := lc.db.ReadNextNotifications(ctx, startOffset)
 						if err != nil {
 							cb.OnComplete(err)
 							return
