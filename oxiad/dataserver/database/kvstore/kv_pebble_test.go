@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
@@ -683,6 +684,43 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 
 	assert.NoError(t, kv2.Close())
 	assert.NoError(t, factory2.Close())
+}
+
+func TestPebbleSnapshotLoader_RejectsPathTraversal(t *testing.T) {
+	dataDir := t.TempDir()
+	factory, err := NewPebbleKVFactory(&FactoryOptions{
+		DataDir:     dataDir,
+		CacheSizeMB: 1,
+	})
+	require.NoError(t, err)
+
+	loader, err := factory.NewSnapshotLoader(constant.DefaultNamespace, 1)
+	require.NoError(t, err)
+
+	dbPath := filepath.Join(dataDir, constant.DefaultNamespace, "shard-1")
+	// Point the chunk name above the data dir; the sender only ever emits plain
+	// file names, so a name carrying ".." can only come from a hostile peer.
+	outside := filepath.Join(filepath.Dir(dataDir), "escape-marker.txt")
+	rel, err := filepath.Rel(dbPath, outside)
+	require.NoError(t, err)
+
+	err = loader.AddChunk(rel, 0, 1, []byte("payload"))
+	assert.Error(t, err)
+
+	_, statErr := os.Stat(outside)
+	assert.True(t, os.IsNotExist(statErr))
+
+	// Anything else that isn't a plain file name is rejected too, so a peer can't
+	// reach into a nested path or name the loader dir itself.
+	for _, fileName := range []string{"", ".", "..", "sub/dir/file", "./MANIFEST-000001", outside} {
+		assert.Error(t, loader.AddChunk(fileName, 0, 1, []byte("payload")), "expected %q to be rejected", fileName)
+	}
+
+	// A name the sender actually emits still goes through.
+	assert.NoError(t, loader.AddChunk(markerFileName, 0, 1, []byte("payload")))
+
+	assert.NoError(t, loader.Close())
+	assert.NoError(t, factory.Close())
 }
 
 func TestPebbleRangeScanNoLimits(t *testing.T) {
