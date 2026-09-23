@@ -53,7 +53,8 @@ func newSequenceUpdates(ctx context.Context, prefixKey string, partitionKey stri
 		backoff:      time2.NewBackOffWithInitialInterval(ctx, 1*time.Second),
 		log: slog.With(
 			slog.String("component", "oxia-get-sequence-updates"),
-			slog.String("key", "key"),
+			slog.String("prefix-key", prefixKey),
+			slog.String("partition-key", partitionKey),
 		),
 	}
 
