@@ -28,6 +28,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -249,6 +250,76 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 
 	assert.NoError(t, coordinatorInstance.Close())
 
+	for _, serverObj := range servers {
+		assert.NoError(t, serverObj.Close())
+	}
+}
+
+// A client that stays open across a leader failover keeps sending the
+// requests for the shard to the old leader until it receives the updated
+// shard assignments: these attempts must be retried, not failed.
+func TestCoordinator_LeaderFailoverWithOpenClient(t *testing.T) {
+	s1, sa1 := newServer(t)
+	s2, sa2 := newServer(t)
+	s3, sa3 := newServer(t)
+	servers := map[string]*dataserver.Server{
+		sa1.GetNameOrDefault(): s1,
+		sa2.GetNameOrDefault(): s2,
+		sa3.GetNameOrDefault(): s3,
+	}
+
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
+	clusterConfig := newClusterConfig([]*proto.Namespace{{
+		Name:              constant.DefaultNamespace,
+		ReplicationFactor: 3,
+		InitialShardCount: 1,
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value:   clusterConfig,
+		Version: metadatacommon.NotExists,
+	})
+	require.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	metadata := coordinatorInstance.Metadata()
+
+	require.Eventually(t, func() bool {
+		shard := mock.StatusSnapshot(t, metadata).Namespaces[constant.DefaultNamespace].Shards[0]
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
+	}, 10*time.Second, 10*time.Millisecond)
+
+	leader := mock.StatusSnapshot(t, metadata).Namespaces[constant.DefaultNamespace].Shards[0].Leader
+	var follower *proto.DataServerIdentity
+	for _, addr := range []*proto.DataServerIdentity{sa1, sa2, sa3} {
+		if addr.GetNameOrDefault() != leader.GetNameOrDefault() {
+			follower = addr
+			break
+		}
+	}
+
+	// The follower serves the shard assignments to the client after the leader is stopped
+	client, err := oxia.NewSyncClient(follower.Public)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, _, err = client.Put(ctx, "my-key", []byte("my-value"))
+	require.NoError(t, err)
+
+	// Stop the leader: the client still sees it as the shard leader until
+	// the coordinator elects a new one
+	require.NoError(t, servers[leader.GetNameOrDefault()].Close())
+	delete(servers, leader.GetNameOrDefault())
+
+	_, _, err = client.Put(ctx, "my-key", []byte("my-value-2"))
+	assert.NoError(t, err)
+
+	_, value, _, err := client.Get(ctx, "my-key")
+	assert.NoError(t, err)
+	assert.Equal(t, []byte("my-value-2"), value)
+
+	assert.NoError(t, client.Close())
+	assert.NoError(t, coordinatorInstance.Close())
 	for _, serverObj := range servers {
 		assert.NoError(t, serverObj.Close())
 	}
