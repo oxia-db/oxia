@@ -74,8 +74,6 @@ func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool 
 	return false
 }
 
-func (*mockMetadata) UpdateNamespaceStatus(string, *proto.NamespaceStatus) error { return nil }
-
 func (m *mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
 	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
@@ -117,11 +115,9 @@ func (m *mockMetadata) UpdateShardStatus(namespace string, shard int64, shardMet
 	return nil
 }
 
-func (m *mockMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) error {
-	for shard, shardMetadata := range shardsMetadata {
-		if err := m.UpdateShardStatus(namespace, shard, shardMetadata); err != nil {
-			return err
-		}
+func (m *mockMetadata) UpdateShardStatuses(namespace string, update func(map[int64]*proto.ShardMetadata) bool) error {
+	if ns, exists := m.status.GetNamespaces()[namespace]; exists {
+		update(ns.Shards)
 	}
 	return nil
 }
