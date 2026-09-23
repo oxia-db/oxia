@@ -25,7 +25,9 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/auth"
 	"github.com/oxia-db/oxia/common/constant"
@@ -144,7 +146,7 @@ func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequ
 		}
 		p.writeStreams[*shardId] = sw
 		return sw.Send(ctx, request)
-	})
+	}, isRetryableShardRequest)
 }
 
 func (p *rpcProvider) ExecuteRead(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error) {
@@ -172,7 +174,7 @@ func (p *rpcProvider) ExecuteRead(ctx context.Context, request *proto.ReadReques
 			}
 			response.Gets = append(response.Gets, recv.Gets...)
 		}
-	})
+	}, isRetryableShardRequest)
 }
 
 func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListRequest, listResponseConsumer func(*proto.ListResponse)) error {
@@ -203,7 +205,7 @@ func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListReques
 			verified = true
 		}
 	}, func(err error) bool {
-		return !verified && constant.IsRetryable(err)
+		return !verified && isRetryableShardRequest(err)
 	})
 	return err
 }
@@ -236,7 +238,7 @@ func (p *rpcProvider) ExecuteRangeScan(ctx context.Context, request *proto.Range
 			verified = true
 		}
 	}, func(err error) bool {
-		return !verified && constant.IsRetryable(err)
+		return !verified && isRetryableShardRequest(err)
 	})
 	return err
 }
@@ -328,6 +330,15 @@ func (p *rpcProvider) CloseSession(ctx context.Context, target string, request *
 		response, err := client.CloseSession(ctx, request)
 		return response, err
 	})
+}
+
+// isRetryableShardRequest also retries the Unavailable statuses that do not map to an Oxia error, such as
+// the transport failures to reach a shard leader that went away (e.g. connection refused). Shard requests
+// look up the leader on every attempt, so the retry reaches the new leader once the client receives the
+// updated shard assignments. Requests to a fixed target must fail fast instead, so that their callers can
+// look up a new target.
+func isRetryableShardRequest(err error) bool {
+	return constant.IsRetryable(err) || status.Code(err) == codes.Unavailable
 }
 
 func executeWithRetry[T any](ctx context.Context, operation func(constant.ErrorMetadata) (T, error), isRetryable ...func(error) bool) (T, error) {

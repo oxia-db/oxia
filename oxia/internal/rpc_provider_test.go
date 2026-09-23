@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
@@ -161,4 +163,59 @@ func TestRpcProvider_RetryWhenShardLeaderIsUnreachable(t *testing.T) {
 			assert.NoError(t, tt.execute(ctx, provider))
 		})
 	}
+}
+
+func TestExecuteWithRetry_ShardRequestErrors(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		err       error
+		retryable bool
+	}{
+		{"connection refused", status.Error(codes.Unavailable,
+			`connection error: desc = "transport: Error while dialing: dial tcp 127.0.0.1:6648: connect: connection refused"`), true},
+		{"transport closing", status.Error(codes.Unavailable, "transport is closing"), true},
+		{"stream closed", io.EOF, true},
+		{"node is not leader", constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader), true},
+		{"server not initialized", constant.IntoGrpcStatusError(constant.ErrNotInitialized), true},
+		{"context canceled", status.FromContextError(context.Canceled).Err(), false},
+		{"context deadline exceeded", status.FromContextError(context.DeadlineExceeded).Err(), false},
+		{"client connection closing", status.Error(codes.Canceled, "grpc: the client connection is closing"), false},
+		{"invalid term", constant.IntoGrpcStatusError(constant.ErrInvalidTerm), false},
+		{"unknown", status.Error(codes.Unknown, "unknown"), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			attempts := 0
+			_, err := executeWithRetry(t.Context(), func(constant.ErrorMetadata) (struct{}, error) {
+				attempts++
+				if attempts == 1 {
+					return struct{}{}, tt.err
+				}
+				return struct{}{}, nil
+			}, isRetryableShardRequest)
+
+			if tt.retryable {
+				assert.NoError(t, err)
+				assert.Equal(t, 2, attempts)
+			} else {
+				assert.Error(t, err)
+				assert.Equal(t, 1, attempts)
+			}
+		})
+	}
+}
+
+// Session requests go to a fixed target, so they must not retry an
+// unreachable one: the session looks up the shard leader again before its
+// next attempt.
+func TestRpcProvider_KeepAliveFailsFastWhenTargetIsUnreachable(t *testing.T) {
+	provider := NewRpcProvider(t.Context(), constant.DefaultNamespace, nil, nil, "",
+		func() ShardManager { return nil })
+	defer func() {
+		assert.NoError(t, provider.Close())
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, err := provider.KeepAlive(ctx, unreachableAddress(t), &proto.SessionHeartbeat{})
+	assert.Equal(t, codes.Unavailable, status.Code(err), "unexpected error: %v", err)
 }
