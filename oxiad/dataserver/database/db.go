@@ -178,16 +178,18 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 			"The total number of range-scan operations", "count", labels),
 	}
 
+	// Close the kv on any failure from here on: a leaked store would keep
+	// the Pebble lock and fail every later open of the shard
 	lastVersionId, err := db.readLastVersionId()
 	if err != nil {
-		return nil, err
+		return nil, multierr.Append(err, kv.Close())
 	}
 	db.committedVersionId.Store(lastVersionId)
 
 	// init the DB checksum
 	lastChecksum, err := db.readLastChecksum()
 	if err != nil {
-		return nil, err
+		return nil, multierr.Append(err, kv.Close())
 	}
 	if !lastChecksum.IsZero() {
 		db.enabledFeatures.Store(proto.Feature_FEATURE_DB_CHECKSUM, true)
@@ -195,12 +197,12 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	db.committedChecksum.Store(&lastChecksum)
 
 	if err := db.recoverFeatureFlags(); err != nil {
-		return nil, err
+		return nil, multierr.Append(err, kv.Close())
 	}
 
 	lastNotificationOffset, err := db.readLastNotificationOffset()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to read last notification offset")
+		return nil, multierr.Append(errors.Wrap(err, "failed to read last notification offset"), kv.Close())
 	}
 
 	db.notificationsTracker = newNotificationsTracker(namespace, shardId, lastNotificationOffset, kv, notificationRetentionTime, clock)

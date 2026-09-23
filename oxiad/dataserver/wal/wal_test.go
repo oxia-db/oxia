@@ -25,10 +25,13 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/metric"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -1023,6 +1026,58 @@ func TestWal_RecoverAfterAllSegmentsContentLost(t *testing.T) {
 	assertReaderReads(t, r, entries)
 	assert.NoError(t, r.Close())
 	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// A failed recovery must release what the wal set up before it: a leaked
+// entries gauge would keep reporting the shard, and pin the wal in memory.
+func TestWal_RecoveryFailureUnregistersGauge(t *testing.T) {
+	// Swap in an SDK meter so the registered gauges can be read back.
+	previous := metric.GetMeter()
+	reader := sdkmetric.NewManualReader()
+	metric.SetMeter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
+	defer metric.SetMeter(previous)
+
+	dir := t.TempDir()
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  dir,
+		Retention:   1 * time.Hour,
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})
+	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	payload := strings.Repeat("x", 1024)
+	for i := 0; i < 300; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: int64(i), Value: []byte(fmt.Sprintf("%s-%d", payload, i))}))
+	}
+	assert.NoError(t, w.Close())
+
+	// Fail the recovery after it opened a read-only segment for the last
+	// crc: the last segment is reopened for writes, and its stale index
+	// cannot be removed
+	basePath := walPath(dir, constant.DefaultNamespace, shard)
+	segments, err := listAllSegments(basePath)
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(segments), 2)
+	lastConfig, err := newSegmentConfig(basePath, segments[len(segments)-1])
+	assert.NoError(t, err)
+	assert.NoError(t, codec.RemoveFileIfExists(lastConfig.idxPath))
+	assert.NoError(t, os.MkdirAll(filepath.Join(lastConfig.idxPath, "not-empty"), 0755))
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.ErrorContains(t, err, "failed to remove stale segment index file")
+	assert.Nil(t, w)
+
+	var rm metricdata.ResourceMetrics
+	assert.NoError(t, reader.Collect(context.Background(), &rm))
+	for _, scope := range rm.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			assert.NotEqual(t, "oxia_server_wal_entries", m.Name)
+		}
+	}
 	assert.NoError(t, f.Close())
 }
 

@@ -41,6 +41,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/metric"
+	"github.com/oxia-db/oxia/common/validation"
 )
 
 func AbbreviatedKeyDisableSlash(key []byte) uint64 {
@@ -176,6 +177,10 @@ type Pebble struct {
 }
 
 func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySorting proto.KeySortingType, trap *KvTrap) (KV, error) {
+	if err := validation.ValidateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	labels := metric.LabelsForShard(namespace, shardId)
 	pb := &Pebble{
@@ -786,6 +791,10 @@ type pebbleSnapshotLoader struct {
 }
 
 func newPebbleSnapshotLoader(pf *PebbleFactory, namespace string, shard int64) (SnapshotLoader, error) {
+	if err := validation.ValidateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
 	sl := &pebbleSnapshotLoader{
 		pf:        pf,
 		namespace: namespace,
@@ -818,6 +827,13 @@ func (sl *pebbleSnapshotLoader) AddChunk(fileName string, chunkIndex int32, chun
 	if chunkIndex == 0 {
 		if sl.file != nil {
 			return errors.Errorf("Inconsistent snapshot: previous file not finished")
+		}
+		// fileName arrives from the snapshot sender over the network. The sender
+		// only ever emits the base names of the regular files sitting directly in
+		// the checkpoint dir, so require exactly that: no traversal, no absolute
+		// path, no nested path, and not the loader dir itself.
+		if fileName != filepath.Base(fileName) || fileName == "." || !filepath.IsLocal(fileName) {
+			return errors.Errorf("invalid snapshot chunk file name: %q", fileName)
 		}
 		sl.file, err = os.OpenFile(filepath.Join(sl.dbPath, fileName), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {

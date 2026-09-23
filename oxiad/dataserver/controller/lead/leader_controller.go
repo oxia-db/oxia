@@ -190,12 +190,19 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 		"The current WAL checksum value", "count", labels)
 
 	lc.ctx, lc.cancel = context.WithCancel(context.Background())
+	lc.log = slog.With(
+		slog.String("component", "leader-controller"),
+		slog.String("namespace", lc.namespace),
+		slog.Int64("shard", lc.shardId),
+	)
 
 	lc.sessionManager = NewSessionManager(lc.ctx, namespace, shardId, lc)
 
+	// The session manager already runs its expiry goroutine: Close the
+	// controller on any failure from here on
 	var err error
 	if lc.wal, err = walFactory.NewWal(namespace, shardId, lc); err != nil {
-		return nil, err
+		return nil, multierr.Append(err, lc.Close())
 	}
 
 	keySorting := proto.KeySortingType_UNKNOWN
@@ -204,12 +211,12 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 	}
 
 	if lc.db, err = database.NewDB(namespace, shardId, kvFactory, keySorting, storageOptions.Notification.Retention.ToDuration(), time2.SystemClock); err != nil {
-		return nil, err
+		return nil, multierr.Append(err, lc.Close())
 	}
 
 	var termVal int64
 	if termVal, lc.termOptions, err = lc.db.ReadTerm(); err != nil {
-		return nil, err
+		return nil, multierr.Append(err, lc.Close())
 	}
 	lc.term.Store(termVal)
 
@@ -218,11 +225,6 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 	}
 
 	lc.db.EnableNotifications(lc.termOptions.NotificationsEnabled)
-	lc.log = slog.With(
-		slog.String("component", "leader-controller"),
-		slog.String("namespace", lc.namespace),
-		slog.Int64("shard", lc.shardId),
-	)
 	lc.log.Info("Created leader controller", slog.Int64("term", lc.term.Load()))
 	return lc, nil
 }
