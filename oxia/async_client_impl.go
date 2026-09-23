@@ -118,7 +118,9 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 }
 
 func (c *clientImpl) rerouteWrites(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
-	// Re-add the calls in their original order, so the new batches keep it
+	// Re-add the calls in their original order, so the new batches keep it.
+	// Calls issued after the shard map changed may already be queued or sent
+	// to the new shards, so the order against those is not guaranteed.
 	for _, call := range model.InOpIndexOrder(puts, deletes, deleteRanges) {
 		switch call := call.(type) {
 		case model.PutCall:
