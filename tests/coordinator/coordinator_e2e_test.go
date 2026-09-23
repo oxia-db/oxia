@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -257,7 +258,8 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 
 // A client that stays open across a leader failover keeps sending the
 // requests for the shard to the old leader until it receives the updated
-// shard assignments: these attempts must be retried, not failed.
+// shard assignments: these attempts must be retried, not failed, including
+// the ones for the writes issued while the leader is stopping.
 func TestCoordinator_LeaderFailoverWithOpenClient(t *testing.T) {
 	s1, sa1 := newServer(t)
 	s2, sa2 := newServer(t)
@@ -299,24 +301,41 @@ func TestCoordinator_LeaderFailoverWithOpenClient(t *testing.T) {
 	}
 
 	// The follower serves the shard assignments to the client after the leader is stopped
-	client, err := oxia.NewSyncClient(follower.Public)
+	client, err := oxia.NewAsyncClient(follower.Public)
 	require.NoError(t, err)
+	require.NoError(t, (<-client.Put("my-key", []byte("my-value"))).Err)
 
-	ctx := context.Background()
-	_, _, err = client.Put(ctx, "my-key", []byte("my-value"))
-	require.NoError(t, err)
+	// Keep writing while the leader stops, and read right after: the client
+	// still sees it as the shard leader until the coordinator elects a new one
+	var puts []<-chan oxia.PutResult
+	stopWriting := make(chan struct{})
+	var writer sync.WaitGroup
+	writer.Go(func() {
+		for i := 0; ; i++ {
+			select {
+			case <-stopWriting:
+				return
+			case <-time.After(time.Millisecond):
+				puts = append(puts, client.Put(fmt.Sprintf("key-%d", i), []byte("value")))
+			}
+		}
+	})
 
-	// Stop the leader: the client still sees it as the shard leader until
-	// the coordinator elects a new one
+	time.Sleep(100 * time.Millisecond)
 	require.NoError(t, servers[leader.GetNameOrDefault()].Close())
 	delete(servers, leader.GetNameOrDefault())
+	getResult := <-client.Get("my-key")
+	time.Sleep(time.Second)
+	close(stopWriting)
+	writer.Wait()
 
-	_, _, err = client.Put(ctx, "my-key", []byte("my-value-2"))
-	assert.NoError(t, err)
-
-	_, value, _, err := client.Get(ctx, "my-key")
-	assert.NoError(t, err)
-	assert.Equal(t, []byte("my-value-2"), value)
+	assert.NoError(t, getResult.Err)
+	assert.Equal(t, []byte("my-value"), getResult.Value)
+	for _, put := range puts {
+		if !assert.NoError(t, (<-put).Err) {
+			break
+		}
+	}
 
 	assert.NoError(t, client.Close())
 	assert.NoError(t, coordinatorInstance.Close())
