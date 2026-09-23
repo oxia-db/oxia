@@ -161,6 +161,11 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 		})
 
 	if err := w.recoverWal(); err != nil {
+		w.activeEntries.Unregister()
+		// readOnlySegments is nil if discardTrailingSegment failed to rebuild it
+		if w.readOnlySegments != nil {
+			err = multierr.Append(err, w.readOnlySegments.Close())
+		}
 		return nil, errors.Wrapf(err, "failed to recover wal for shard %s / %d", namespace, shard)
 	}
 
