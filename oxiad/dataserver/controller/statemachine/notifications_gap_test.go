@@ -16,6 +16,7 @@ package statemachine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -93,10 +94,10 @@ func TestNotificationsTrimmer_GapFromControlRequests(t *testing.T) {
 
 	clock.Set(100)
 	assert.Eventually(t, func() bool {
-		nb, err := db.ReadNextNotifications(context.Background(), 0)
-		if err != nil {
-			return false
-		}
-		return len(nb) == 0
+		// Once every batch is trimmed, the read waits for the next one
+		ctx, cancel := context.WithTimeout(context.Background(), 100*stdtime.Millisecond)
+		defer cancel()
+		_, err := db.ReadNextNotifications(ctx, 0)
+		return errors.Is(err, context.DeadlineExceeded)
 	}, 10*stdtime.Second, 500*stdtime.Millisecond)
 }
