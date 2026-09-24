@@ -181,7 +181,9 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase, nsMutators ...func(*pr
 		ShardIdGenerator: 3,
 	}
 
-	require.Equal(t, int64(0), metadata.ReserveShardIDs(3))
+	baseShardID, err := metadata.ReserveShardIDs(3)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), baseShardID)
 	metadata.CreateNamespaceStatus(constant.DefaultNamespace, clusterStatus.Namespaces[constant.DefaultNamespace])
 	listener := newMockShardSplitEventListener()
 
@@ -192,7 +194,7 @@ func updateTestStatusShards(t *testing.T, metadata coordmetadata.Metadata, statu
 	t.Helper()
 	ns := status.Namespaces[constant.DefaultNamespace]
 	for _, shardID := range shardIDs {
-		metadata.UpdateShardStatus(constant.DefaultNamespace, shardID, ns.Shards[shardID])
+		require.NoError(t, metadata.UpdateShardStatus(constant.DefaultNamespace, shardID, ns.Shards[shardID]))
 	}
 }
 

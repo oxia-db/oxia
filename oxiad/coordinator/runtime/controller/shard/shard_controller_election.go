@@ -464,7 +464,11 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	e.mutableShardMetadata.Leader = nil
 	e.mutableShardMetadata.Term++
 	e.mutableShardMetadata.Ensemble = e.refreshedEnsemble(e.mutableShardMetadata.Ensemble)
-	e.metadataStore.UpdateShardStatus(e.namespace, e.shard, e.mutableShardMetadata)
+	// The new term must be persisted before fencing the ensemble with it,
+	// otherwise a later election could reuse it
+	if err = e.metadataStore.UpdateShardStatus(e.namespace, e.shard, e.mutableShardMetadata); err != nil {
+		return nil, errors.Wrap(err, "failed to persist the new term")
+	}
 
 	if e.changeEnsembleAction != nil {
 		retryShardMetadata := gproto.CloneOf(e.mutableShardMetadata)
@@ -550,7 +554,9 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	leader := e.mutableShardMetadata.Leader
 	leaderEntry := candidatesStatus[leader]
 
-	e.metadataStore.UpdateShardStatus(e.namespace, e.shard, e.mutableShardMetadata)
+	if err = e.metadataStore.UpdateShardStatus(e.namespace, e.shard, e.mutableShardMetadata); err != nil {
+		return nil, errors.Wrap(err, "failed to persist the new leader")
+	}
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
 	}
