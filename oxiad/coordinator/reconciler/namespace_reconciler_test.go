@@ -569,3 +569,46 @@ func TestNamespaceReconcilerNamespaceRemovedMarksDeletingAndDeletesRuntimeShards
 	assert.Equal(t, []int64{1, 2}, runtime.deleted)
 	assert.Empty(t, runtime.added)
 }
+
+// Namespaces added to the configuration file don't go through the management
+// API, so the reconciler must not create one with a reserved name either.
+func TestNamespaceReconcilerDoesNotCreateReservedNamespace(t *testing.T) {
+	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
+	metadata := &mockNamespaceMetadata{
+		status: proto.NewClusterStatus(),
+		configNS: map[string]*proto.Namespace{
+			"MANIFEST": {Name: "MANIFEST", InitialShardCount: 1, ReplicationFactor: 3},
+			"ns-1":     {Name: "ns-1", InitialShardCount: 1, ReplicationFactor: 3},
+		},
+	}
+	runtime := &mockNamespaceRuntime{
+		metadata: metadata,
+		selectNewEnsembleFn: func(namespaceConfig *proto.Namespace, shardID int64, _ *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+			return simpleEnsembleSupplier(servers, shardID, namespaceConfig.GetReplicationFactor()), nil
+		},
+	}
+
+	err := (&namespaceReconciler{runtime: runtime}).Reconcile(context.Background(), &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
+			{Name: "MANIFEST", InitialShardCount: 1, ReplicationFactor: 3},
+			{Name: "ns-1", InitialShardCount: 1, ReplicationFactor: 3},
+		},
+		Servers: servers,
+	})
+	assert.NoError(t, err)
+
+	assertStatusEqual(t, &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
+			"ns-1": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
+				},
+			},
+		},
+		ShardIdGenerator: 1,
+	}, metadata.status)
+
+	assert.Equal(t, map[int64]string{0: "ns-1"}, runtime.added)
+	assert.Empty(t, runtime.deleted)
+}
