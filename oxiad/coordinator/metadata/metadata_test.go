@@ -169,6 +169,29 @@ func TestMetadataStatusWritersGiveUpOnceCanceled(t *testing.T) {
 	require.NoError(t, metadata.Close())
 }
 
+func TestMetadataStatusUpdatesFailWhenTargetIsGone(t *testing.T) {
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, "")
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	require.True(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{
+		Shards: map[int64]*commonproto.ShardMetadata{0: {Term: 1}},
+	}))
+
+	require.ErrorIs(t, metadata.UpdateNamespaceStatus("other", &commonproto.NamespaceStatus{}), metadataconstant.ErrNotFound)
+	require.ErrorIs(t, metadata.UpdateShardStatus("other", 0, &commonproto.ShardMetadata{Term: 2}), metadataconstant.ErrNotFound)
+
+	// A deleted shard must not be re-created
+	require.ErrorIs(t, metadata.UpdateShardStatus("default", 1, &commonproto.ShardMetadata{Term: 2}), metadataconstant.ErrNotFound)
+	_, exists := metadata.GetShardStatus("default", 1)
+	require.False(t, exists)
+
+	require.NoError(t, metadata.UpdateShardStatus("default", 0, &commonproto.ShardMetadata{Term: 2}))
+	shard, exists := metadata.GetShardStatus("default", 0)
+	require.True(t, exists)
+	require.EqualValues(t, 2, shard.UnsafeBorrow().GetTerm())
+	require.NoError(t, metadata.Close())
+}
+
 func writeClusterConfig(t *testing.T, path string) {
 	t.Helper()
 

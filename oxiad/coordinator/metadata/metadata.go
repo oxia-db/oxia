@@ -47,7 +47,8 @@ type Metadata interface {
 	// ReserveShardIDs and the status Create/Update/Delete methods retry until
 	// the write succeeds or the metadata context is canceled. When they give
 	// up, they return an error, or report that nothing was created or deleted:
-	// the caller must not act as if the write was persisted.
+	// the caller must not act as if the write was persisted. The status
+	// updates also fail with ErrNotFound when the namespace or shard is gone.
 	ReserveShardIDs(count uint32) (int64, error)
 
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
@@ -302,7 +303,7 @@ func (m *coordinatorMetadata) UpdateNamespaceStatus(name string, namespaceStatus
 		return err
 	}
 	if !namespaceExists {
-		m.logger.Warn("failed to update namespace status: namespace does not exist", slog.String("namespace", name))
+		return fmt.Errorf("%w: namespace %q", metadatacommon.ErrNotFound, name)
 	}
 	return nil
 }
@@ -355,10 +356,16 @@ func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, s
 	if shardMetadata != nil {
 		shardMetadata = gproto.Clone(shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
 	}
-	return backoff.RetryNotify(func() error {
+	shardExists := true
+	err := backoff.RetryNotify(func() error {
 		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
 			ns, exist := clusterStatus.Namespaces[namespace]
 			if !exist {
+				shardExists = false
+				return clusterStatus, false
+			}
+			if _, exist = ns.Shards[shard]; !exist {
+				shardExists = false
 				return clusterStatus, false
 			}
 			ns.Shards[shard] = shardMetadata
@@ -371,6 +378,13 @@ func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, s
 			slog.Duration("retry-after", duration),
 		)
 	})
+	if err != nil {
+		return err
+	}
+	if !shardExists {
+		return fmt.Errorf("%w: shard %d of namespace %q", metadatacommon.ErrNotFound, shard, namespace)
+	}
+	return nil
 }
 
 func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) error {

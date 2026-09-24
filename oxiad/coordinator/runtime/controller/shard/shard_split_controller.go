@@ -243,7 +243,9 @@ func (sc *SplitController) updatePhase(newPhase proto.SplitPhase) error {
 		changed = true
 	}
 	if changed {
-		return backoff.Permanent(sc.metadata.UpdateNamespaceStatus(sc.namespace, ns))
+		if err := sc.metadata.UpdateNamespaceStatus(sc.namespace, ns); err != nil {
+			return backoff.Permanent(err)
+		}
 	}
 	return nil
 }
@@ -795,8 +797,9 @@ func (sc *SplitController) abort() {
 	// serving (best-effort; a new term would clear it anyway).
 	sc.unfreezeParentBestEffort()
 
-	// Delete child shards from status. If the coordinator is closing and the
-	// abort cannot be persisted, the split resumes after a restart.
+	// Delete child shards from status. If the coordinator is closing and this
+	// cannot be persisted, the split resumes after a restart, and is aborted
+	// again when it times out if a child is already gone.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
 		if err := sc.metadata.DeleteShardStatus(sc.namespace, childId); err != nil {
 			sc.logger.Warn("Failed to persist the split abort", slog.Any("error", err))
@@ -840,11 +843,10 @@ func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *proto.Sh
 	return sc.updateShardMeta(childId, fn)
 }
 
-// updateShardMeta persists a change to a shard's metadata. The metadata gives
-// up on a write only while the coordinator is closing, and then the returned
-// error is permanent: the split must stop rather than retry its phases from a
-// state that was not persisted. It resumes from the persisted state after a
-// restart.
+// updateShardMeta persists a change to a shard's metadata. A failed write (the
+// coordinator is closing, or the shard is gone) returns a permanent error: the
+// split must stop rather than retry its phases from a state that was not
+// persisted. It resumes from the persisted state after a restart.
 func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.ShardMetadata)) error {
 	ns, exists := sc.metadata.GetNamespaceStatus(sc.namespace)
 	if !exists {
@@ -862,7 +864,10 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 	}
 	cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
 	fn(cloned)
-	return backoff.Permanent(sc.metadata.UpdateShardStatus(sc.namespace, shardId, cloned))
+	if err := sc.metadata.UpdateShardStatus(sc.namespace, shardId, cloned); err != nil {
+		return backoff.Permanent(err)
+	}
+	return nil
 }
 
 // fenceEnsemble sends NewTerm to all ensemble members and returns the
