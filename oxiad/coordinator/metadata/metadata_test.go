@@ -221,3 +221,33 @@ servers:
     internal: s1:8191
 `), 0600))
 }
+
+// UpdateShardStatuses deletes a namespace left without shards, as
+// DeleteShardStatus does, so that it can be created again.
+func TestMetadataUpdateShardStatusesDeletesEmptiedNamespace(t *testing.T) {
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, "")
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	defer func() {
+		require.NoError(t, metadata.Close())
+	}()
+	newNamespaceStatus := func() *commonproto.NamespaceStatus {
+		return &commonproto.NamespaceStatus{Shards: map[int64]*commonproto.ShardMetadata{0: {}, 1: {}}}
+	}
+	deleteShard := func(shard int64) func(map[int64]*commonproto.ShardMetadata) bool {
+		return func(shards map[int64]*commonproto.ShardMetadata) bool {
+			delete(shards, shard)
+			return true
+		}
+	}
+	require.True(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
+
+	require.NoError(t, metadata.UpdateShardStatuses("default", deleteShard(0)))
+	_, exists := metadata.GetNamespaceStatus("default")
+	require.True(t, exists)
+
+	require.NoError(t, metadata.UpdateShardStatuses("default", deleteShard(1)))
+	_, exists = metadata.GetNamespaceStatus("default")
+	require.False(t, exists)
+	require.True(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
+}
