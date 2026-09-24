@@ -1029,6 +1029,43 @@ func TestWal_RecoverAfterAllSegmentsContentLost(t *testing.T) {
 	assert.NoError(t, f.Close())
 }
 
+// The recovery discards a torn entry past the commit offset along with the
+// intact ones after it: when the next term rewrites that entry with one of the
+// same size, a later recovery must not bring the discarded entries of the
+// older term back after it.
+func TestWal_DiscardedEntriesNotResurrected(t *testing.T) {
+	f := NewTestWalFactory(t)
+	commitOffsetProvider := ConfigurableCommitOffsetProvider{commitOffset: 2}
+	w, err := f.NewWal(constant.DefaultNamespace, shard, commitOffsetProvider)
+	assert.NoError(t, err)
+	for i := int64(0); i <= 5; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: i, Value: fmt.Appendf(nil, "term-1-entry-%d", i)}))
+	}
+
+	// A power loss tears the uncommitted entry 3, while 4 and 5 reach the disk
+	rw := w.(*wal).currentSegment.(*readWriteSegment)
+	rw.txnMappedFile[fileOffset(rw.writingIdx, 0, 3)+rw.c.codec.GetHeaderSize()] ^= 0xFF
+	assert.NoError(t, w.Close())
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, commitOffsetProvider)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 2, w.LastOffset())
+	assert.NoError(t, w.Append(&proto.LogEntry{
+		Term: 2, Offset: 3, Value: []byte("term-2-entry-3")}))
+	assert.NoError(t, w.Close())
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, commitOffsetProvider)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 3, w.LastOffset())
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, []string{"term-1-entry-0", "term-1-entry-1", "term-1-entry-2", "term-2-entry-3"})
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
 // A failed recovery must release what the wal set up before it: a leaked
 // entries gauge would keep reporting the shard, and pin the wal in memory.
 func TestWal_RecoveryFailureUnregistersGauge(t *testing.T) {
