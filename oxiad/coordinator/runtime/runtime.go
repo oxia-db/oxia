@@ -228,7 +228,11 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 }
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
-	baseShardID := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	baseShardID, err := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	if err != nil {
+		c.logger.Warn("Failed to create namespace", slog.String("namespace", name), slog.Any("error", err))
+		return false
+	}
 	status := c.metadata.ListNamespaceStatus()
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
@@ -667,7 +671,10 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 
 	// Allocate child shard IDs
-	leftChildId := c.metadata.ReserveShardIDs(2)
+	leftChildId, err := c.metadata.ReserveShardIDs(2)
+	if err != nil {
+		return 0, 0, errors.Wrap(err, "failed to reserve the child shard ids")
+	}
 	rightChildId := leftChildId + 1
 	// Select ensembles for children.
 	// After selecting the left child's ensemble, insert it into the cloned
@@ -736,7 +743,9 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 
 	// Persist
-	c.metadata.UpdateNamespaceStatus(namespace, nsCloned)
+	if err := c.metadata.UpdateNamespaceStatus(namespace, nsCloned); err != nil {
+		return 0, 0, errors.Wrap(err, "failed to persist the split")
+	}
 
 	c.logger.Info("Split initiated",
 		slog.Int64("parent-shard", parentShardId),

@@ -124,6 +124,10 @@ type PerNodeChannels struct {
 	HealthClient           *HealthClient
 	err                    error
 
+	// PushShardAssignmentsCount counts the attempts to open the assignments
+	// stream, including the rejected ones.
+	PushShardAssignmentsCount atomic.Int64
+
 	// Feature negotiation support
 	supportedFeatures []proto.Feature
 	handshakeStatus   proto.HandshakeStatus
@@ -535,6 +539,7 @@ func (r *RpcProvider) PushShardAssignments(ctx context.Context, node *proto.Data
 	defer r.Unlock()
 
 	n := r.getNode(node)
+	n.PushShardAssignmentsCount.Add(1)
 	if n.err != nil {
 		return nil, n.err
 	}

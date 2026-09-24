@@ -64,6 +64,7 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	options := optionsWatch.Load()
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
 
+	ctx, cancel := context.WithCancel(parent)
 	healthServer := health.NewServer()
 	var (
 		grpcServer           commonrpc.GrpcServer
@@ -79,6 +80,7 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 			return
 		}
 
+		cancel()
 		err = multierr.Append(err, commonio.CloseIfNotNil(metricsServer))
 		err = multierr.Append(err, commonio.CloseIfNotNil(managementGrpcServer))
 		err = multierr.Append(err, commonio.CloseIfNotNil(reconciler))
@@ -109,7 +111,10 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	if err != nil {
 		return nil, err
 	}
-	metadata, err = metadataFactory.CreateMetadata(parent)
+	// The metadata retries its status writes until they succeed or its
+	// context is canceled: deriving it from the server context lets Close stop
+	// the retries before closing the runtime, which waits for its controllers.
+	metadata, err = metadataFactory.CreateMetadata(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +149,6 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(parent)
 	server := GrpcServer{
 		ctx:              ctx,
 		ctxCancel:        cancel,
@@ -223,7 +227,9 @@ func (s *GrpcServer) backgroundHandleConfChange() {
 }
 
 func (s *GrpcServer) Close() error {
-	// sync close the background task first
+	// sync close the background task first. Canceling the context also stops
+	// the metadata status write retries, which could otherwise block closing
+	// the runtime forever (e.g. after losing the leadership).
 	s.ctxCancel()
 	s.wg.Wait()
 

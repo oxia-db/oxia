@@ -286,6 +286,34 @@ func doSecondaryIndexesGet(t *testing.T, config dataserver.StandaloneConfig) {
 	assert.NoError(t, standaloneServer.Close())
 }
 
+func TestSyncClientImpl_GetSequenceUpdates_ClientClose(t *testing.T) {
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+	require.NoError(t, err)
+
+	k1, _, err := client.Put(context.Background(), "a", []byte("0"), oxia.PartitionKey("x"), oxia.SequenceKeysDeltas(1))
+	require.NoError(t, err)
+
+	// The subscription context is never canceled
+	updates, err := client.GetSequenceUpdates(context.Background(), "a", oxia.PartitionKey("x"))
+	require.NoError(t, err)
+	assert.Equal(t, k1, <-updates)
+
+	// Closing the client ends the subscription
+	assert.NoError(t, client.Close())
+
+	select {
+	case _, ok := <-updates:
+		assert.False(t, ok)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the subscription should have been closed with the client")
+	}
+
+	assert.NoError(t, standaloneServer.Close())
+}
+
 func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
@@ -321,19 +349,19 @@ func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 	k3, _, _ := client.Put(context.Background(), "a", []byte("0"), oxia.PartitionKey("x"), oxia.SequenceKeysDeltas(1))
 	assert.Empty(t, updates2)
 
+	// The channel is closed asynchronously after the cancellation, possibly
+	// after delivering a value that was already in flight
 	assert.Eventually(t, func() bool {
 		select {
-		case <-updates2:
-			// Ok
-			return true
-
+		case _, ok := <-updates2:
+			return !ok
 		default:
-			assert.Fail(t, "should have been closed")
 			return false
 		}
 	}, 10*time.Second, 10*time.Millisecond)
 
-	updates3, err := client.GetSequenceUpdates(context.Background(), "a", oxia.PartitionKey("x"))
+	ctx3, cancel3 := context.WithCancel(context.Background())
+	updates3, err := client.GetSequenceUpdates(ctx3, "a", oxia.PartitionKey("x"))
 	require.NoError(t, err)
 
 	recvK3 := <-updates3
@@ -343,6 +371,8 @@ func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 	recvK4 := <-updates3
 	assert.Equal(t, k4, recvK4)
 
+	// Stop the subscription first, or it keeps retrying on the closed client
+	cancel3()
 	assert.NoError(t, client.Close())
 
 	assert.NoError(t, standaloneServer.Close())
