@@ -361,11 +361,9 @@ func executeWithRetry[T any](ctx context.Context, operation func(constant.ErrorM
 		if err == nil {
 			return nil
 		}
-		var errorMetadata constant.ErrorMetadata
-		err, errorMetadata = constant.FromGrpcError(err)
-		if _, _, ok := errorMetadata.GetLeaderHint(); ok {
-			hint = errorMetadata
-		}
+		// A leader hint only steers the next attempt: if following it fails without a new hint, e.g. because the
+		// hinted leader is unreachable, the next attempt goes back to the shard assignments
+		err, hint = constant.FromGrpcError(err)
 		if !retryable(err) {
 			return backoff.Permanent(err)
 		}

@@ -76,13 +76,45 @@ func (testOxiaClientServer) RangeScan(_ *proto.RangeScanRequest, stream proto.Ox
 	return stream.Send(&proto.RangeScanResponse{})
 }
 
-func startTestOxiaClientServer(t *testing.T) string {
+// notLeaderOxiaClientServer is a node that no longer leads the shard: it
+// rejects every data request with a leader hint.
+type notLeaderOxiaClientServer struct {
+	proto.UnimplementedOxiaClientServer
+	leaderHint string
+	onRequest  func()
+}
+
+func (s notLeaderOxiaClientServer) notLeader() error {
+	s.onRequest()
+	return constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(0, s.leaderHint))
+}
+
+func (s notLeaderOxiaClientServer) WriteStream(stream proto.OxiaClient_WriteStreamServer) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	return s.notLeader()
+}
+
+func (s notLeaderOxiaClientServer) Read(*proto.ReadRequest, proto.OxiaClient_ReadServer) error {
+	return s.notLeader()
+}
+
+func (s notLeaderOxiaClientServer) List(*proto.ListRequest, proto.OxiaClient_ListServer) error {
+	return s.notLeader()
+}
+
+func (s notLeaderOxiaClientServer) RangeScan(*proto.RangeScanRequest, proto.OxiaClient_RangeScanServer) error {
+	return s.notLeader()
+}
+
+func startTestOxiaClientServer(t *testing.T, oxiaClientServer proto.OxiaClientServer) string {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := grpc.NewServer()
-	proto.RegisterOxiaClientServer(server, testOxiaClientServer{})
+	proto.RegisterOxiaClientServer(server, oxiaClientServer)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 	return listener.Addr().String()
@@ -109,40 +141,46 @@ func (*testShardManager) Exists(int64) bool { return true }
 
 func (m *testShardManager) Leader(int64) string { return *m.leader.Load() }
 
-// When the leader of a shard goes away, the client keeps sending the requests
-// for that shard to the old leader until it receives the updated shard
-// assignments. These attempts fail with a transport-level Unavailable error,
-// which must be retried until the new leader is known.
-func TestRpcProvider_RetryWhenShardLeaderIsUnreachable(t *testing.T) {
-	shardId := int64(0)
-	for _, tt := range []struct {
-		name    string
-		execute func(context.Context, RpcProvider) error
-	}{
+type shardRequest struct {
+	name    string
+	execute func(context.Context, RpcProvider) error
+}
+
+func shardRequests(shardId *int64) []shardRequest {
+	return []shardRequest{
 		{"write", func(ctx context.Context, provider RpcProvider) error {
 			_, err := provider.ExecuteWrite(ctx, &proto.WriteRequest{
-				Shard: &shardId,
+				Shard: shardId,
 				Puts:  []*proto.PutRequest{{Key: "key", Value: []byte("value")}},
 			})
 			return err
 		}},
 		{"read", func(ctx context.Context, provider RpcProvider) error {
 			_, err := provider.ExecuteRead(ctx, &proto.ReadRequest{
-				Shard: &shardId,
+				Shard: shardId,
 				Gets:  []*proto.GetRequest{{Key: "key"}},
 			})
 			return err
 		}},
 		{"list", func(ctx context.Context, provider RpcProvider) error {
-			return provider.ExecuteList(ctx, &proto.ListRequest{Shard: &shardId}, func(*proto.ListResponse) {})
+			return provider.ExecuteList(ctx, &proto.ListRequest{Shard: shardId}, func(*proto.ListResponse) {})
 		}},
 		{"range-scan", func(ctx context.Context, provider RpcProvider) error {
-			return provider.ExecuteRangeScan(ctx, &proto.RangeScanRequest{Shard: &shardId}, func(*proto.RangeScanResponse) {})
+			return provider.ExecuteRangeScan(ctx, &proto.RangeScanRequest{Shard: shardId}, func(*proto.RangeScanResponse) {})
 		}},
-	} {
+	}
+}
+
+// When the leader of a shard goes away, the client keeps sending the requests
+// for that shard to the old leader until it receives the updated shard
+// assignments. These attempts fail with a transport-level Unavailable error,
+// which must be retried until the new leader is known.
+func TestRpcProvider_RetryWhenShardLeaderIsUnreachable(t *testing.T) {
+	shardId := int64(0)
+	for _, tt := range shardRequests(&shardId) {
 		t.Run(tt.name, func(t *testing.T) {
 			oldLeader := unreachableAddress(t)
-			newLeader := startTestOxiaClientServer(t)
+			newLeader := startTestOxiaClientServer(t, testOxiaClientServer{})
 
 			shardManager := &testShardManager{}
 			shardManager.leader.Store(&oldLeader)
@@ -157,6 +195,34 @@ func TestRpcProvider_RetryWhenShardLeaderIsUnreachable(t *testing.T) {
 			}
 			provider := NewRpcProvider(t.Context(), constant.DefaultNamespace, nil, nil, newLeader,
 				func() ShardManager { return shardManager }, grpc.WithContextDialer(dialer))
+			defer func() {
+				assert.NoError(t, provider.Close())
+			}()
+
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			assert.NoError(t, tt.execute(ctx, provider))
+		})
+	}
+}
+
+// A leader hint only steers the next attempt: when the hinted leader is
+// unreachable, the request must go back to the shard assignments, which know
+// the new leader by then.
+func TestRpcProvider_RetryWhenHintedLeaderIsUnreachable(t *testing.T) {
+	shardId := int64(0)
+	for _, tt := range shardRequests(&shardId) {
+		t.Run(tt.name, func(t *testing.T) {
+			newLeader := startTestOxiaClientServer(t, testOxiaClientServer{})
+			shardManager := &testShardManager{}
+			oldLeader := startTestOxiaClientServer(t, notLeaderOxiaClientServer{
+				leaderHint: unreachableAddress(t),
+				onRequest:  func() { shardManager.leader.Store(&newLeader) },
+			})
+			shardManager.leader.Store(&oldLeader)
+
+			provider := NewRpcProvider(t.Context(), constant.DefaultNamespace, nil, nil, newLeader,
+				func() ShardManager { return shardManager })
 			defer func() {
 				assert.NoError(t, provider.Close())
 			}()
@@ -249,7 +315,7 @@ func (p *recordingClientPool) Targets() []string {
 func TestRpcProvider_ShardWithoutLeader(t *testing.T) {
 	shardId := int64(0)
 	noLeader := ""
-	leader := startTestOxiaClientServer(t)
+	leader := startTestOxiaClientServer(t, testOxiaClientServer{})
 	shardManager := &testShardManager{}
 	shardManager.leader.Store(&noLeader)
 
