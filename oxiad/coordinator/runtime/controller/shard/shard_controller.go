@@ -70,6 +70,8 @@ type Controller interface {
 	Election(electionAction *action.ElectionAction) string
 
 	ChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction)
+
+	Split(splitAction *action.SplitAction)
 }
 
 type DataServerSupportedFeaturesSupplier = func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature
@@ -91,6 +93,7 @@ type controller struct {
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 
 	eventListener                       controllerapi.ShardEventListener
+	splitEventListener                  controllerapi.ShardSplitEventListener
 	metadataStore                       coordmetadata.Metadata
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 
@@ -98,6 +101,8 @@ type controller struct {
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
+	splitOp             chan *action.SplitAction
+	splitDoneOp         chan any
 
 	ctx                   context.Context
 	ctxCancel             context.CancelFunc
@@ -108,7 +113,8 @@ type controller struct {
 	periodicTasksInterval time.Duration
 	logger                *slog.Logger
 
-	currentElection *Election
+	currentElection  *Election
+	currentSplitting *Splitting
 
 	leaderElectionLatency metric.LatencyHistogram
 	newTermQuorumLatency  metric.LatencyHistogram
@@ -140,6 +146,7 @@ func NewController(
 	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier,
 	eventListener controllerapi.ShardEventListener,
+	splitEventListener controllerapi.ShardSplitEventListener,
 	rpcProvider rpc.Provider,
 	periodTasksInterval time.Duration) Controller {
 	labels := metric.LabelsForShard(namespace, shard)
@@ -151,11 +158,14 @@ func NewController(
 		metadataStore:                       metadataStore,
 		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
 		eventListener:                       eventListener,
+		splitEventListener:                  splitEventListener,
 		leaderSelector:                      leaderselector.NewSelector(),
 		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
 		deleteOp:                            make(chan any, chanBufferSize),
 		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
+		splitOp:                             make(chan *action.SplitAction, chanBufferSize),
+		splitDoneOp:                         make(chan any, chanBufferSize),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -256,6 +266,13 @@ func (s *controller) run() {
 		}
 	}
 
+	// A split that a previous coordinator left unfinished is picked up from the
+	// phase it reached. Only the parent drives it: a child carries a split
+	// without any child ids of its own.
+	if split := initShardMeta.GetSplit(); split != nil && len(split.GetChildShardIds()) > 0 {
+		s.resumeSplitting(split)
+	}
+
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
 
 	periodicTasksTimer := time.NewTimer(s.periodicTasksInterval)
@@ -278,6 +295,10 @@ func (s *controller) run() {
 		case <-periodicTasksTimer.C:
 			s.handlePeriodicTasks()
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
+		case splitAction := <-s.splitOp:
+			s.onSplit(splitAction)
+		case <-s.splitDoneOp:
+			s.onSplitDone()
 		case electionAction := <-s.electionOp:
 			electionAction.Done(s.onElectLeader(nil).GetNameOrDefault())
 		}
@@ -585,9 +606,17 @@ func (s *controller) Close() error {
 			case <-s.dataServerFailureOp:
 			case op := <-s.changeEnsembleOp:
 				op.Error(constant.ErrResourceUnavailable)
+			case op := <-s.splitOp:
+				op.Error(constant.ErrResourceUnavailable)
+			case <-s.splitDoneOp:
 			default:
 				break drainPendingOps
 			}
+		}
+
+		if s.currentSplitting != nil {
+			s.currentSplitting.Stop()
+			s.currentSplitting = nil
 		}
 
 		s.termGauge.Unregister()
@@ -627,6 +656,102 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 	// todo: support optimized ensemble change to avoid start a new election
 	s.onElectLeader(changeEnsembleAction)
 	changeEnsembleAction.Done(nil)
+}
+
+// Split asks the controller to split its shard in two. The shard controller is
+// the only writer of its shard's metadata, so the split is recorded from its
+// event loop rather than by the caller.
+func (s *controller) Split(splitAction *action.SplitAction) {
+	s.terminationMu.RLock()
+	if s.terminating.Load() {
+		s.terminationMu.RUnlock()
+		splitAction.Error(constant.ErrResourceUnavailable)
+		return
+	}
+	select {
+	case s.splitOp <- splitAction:
+	case <-s.ctx.Done():
+		s.terminationMu.RUnlock()
+		splitAction.Error(constant.ErrResourceUnavailable)
+		return
+	}
+	s.terminationMu.RUnlock()
+}
+
+func (s *controller) onSplit(splitAction *action.SplitAction) {
+	if s.currentSplitting != nil {
+		splitAction.Error(ErrSplitInProgress)
+		return
+	}
+
+	splitting := NewSplitting(s.ctx, s.logger, s, s.metadataStore,
+		s.dataServerSupportedFeaturesSupplier, s.rpc, s.namespace, s.shard,
+		splitAction.Left, splitAction.Right, splitAction.SplitPoint)
+	if err := splitting.Start(splitAction.LeftEnsemble, splitAction.RightEnsemble); err != nil {
+		splitting.Stop()
+		s.logger.Warn("Failed to start the split", slog.Any("error", err))
+		splitAction.Error(err)
+		return
+	}
+
+	s.currentSplitting = splitting
+	splitAction.Done(nil)
+}
+
+func (s *controller) resumeSplitting(split *proto.SplitMetadata) {
+	s.logger.Info("Resuming an in-progress split",
+		slog.Any("child-shards", split.GetChildShardIds()),
+		slog.String("phase", split.GetPhaseOrDefault().String()),
+	)
+
+	splitting := ResumeSplitting(s.ctx, s.logger, s, s.metadataStore,
+		s.dataServerSupportedFeaturesSupplier, s.rpc, s.namespace, s.shard, split)
+	if err := splitting.Start(nil, nil); err != nil {
+		splitting.Stop()
+		s.logger.Warn("Failed to resume the split", slog.Any("error", err))
+		return
+	}
+	s.currentSplitting = splitting
+}
+
+// onSplitDone drops the finished round. It must not wait for the round to stop:
+// the split notifies its outcome from its own goroutine, which is still running
+// when this is handled.
+func (s *controller) onSplitDone() {
+	if s.currentSplitting == nil {
+		return
+	}
+	s.currentSplitting.finish()
+	s.currentSplitting = nil
+}
+
+// SplitComplete and SplitAborted are the outcomes of the round this controller
+// owns. The round is dropped here, and the outcome is passed on to the
+// coordinator, which owns everything outside this shard: the child shards'
+// controllers and the shard assignments.
+func (s *controller) SplitComplete(parentShard int64, leftChild int64, rightChild int64) {
+	s.notifySplitDone()
+	if s.splitEventListener != nil {
+		s.splitEventListener.SplitComplete(parentShard, leftChild, rightChild)
+	}
+}
+
+func (s *controller) SplitAborted(parentShard int64, leftChild int64, rightChild int64) {
+	s.notifySplitDone()
+	if s.splitEventListener != nil {
+		s.splitEventListener.SplitAborted(parentShard, leftChild, rightChild)
+	}
+}
+
+func (s *controller) notifySplitDone() {
+	s.terminationMu.RLock()
+	defer s.terminationMu.RUnlock()
+	if s.terminating.Load() {
+		return
+	}
+	if !channel.PushNoBlock(s.splitDoneOp, nil) {
+		s.logger.Warn("Discarding split completion because queue is full")
+	}
 }
 
 func (s *controller) SyncServerAddress() {

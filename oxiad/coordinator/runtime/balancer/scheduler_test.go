@@ -119,6 +119,11 @@ func (m *mockMetadata) UpdateShardStatus(namespace string, shard int64, shardMet
 
 func (*mockMetadata) DeleteShardStatus(string, int64) error { return nil }
 
+func (*mockMetadata) InitShardSplit(string, int64, int64, int64, uint32,
+	[]*proto.DataServerIdentity, []*proto.DataServerIdentity) error {
+	return nil
+}
+
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
 func (*mockMetadata) CreateNamespace(*proto.Namespace) error {

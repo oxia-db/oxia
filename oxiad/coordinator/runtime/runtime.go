@@ -75,7 +75,6 @@ type runtime struct {
 	metadata coordmetadata.Metadata
 
 	shardControllers      map[int64]shardcontroller.Controller
-	splitControllers      map[int64]*shardcontroller.SplitController // keyed by parent shard ID
 	dataServerControllers map[string]dataservercontroller.Controller
 	// Draining nodes are nodes that were removed from the
 	// nodes list. We keep sending them assignments updates
@@ -270,7 +269,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	for shard, shardMetadata := range namespaceStatus.GetShards() {
 		c.shardControllers[shard] = shardcontroller.NewController(name, shard, namespaceConfig,
 			shardMetadata, c.metadata, c.findDataServerFeatures,
-			c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
+			c, c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
 		slog.Info("Added new shard", slog.Int64("shard", shard),
 			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
 	}
@@ -395,7 +394,6 @@ func (c *runtime) Close() error {
 	// because their callbacks acquire it.
 	c.Lock()
 	c.closed = true
-	splitControllers := maps.Clone(c.splitControllers)
 	shardControllers := maps.Clone(c.shardControllers)
 	dataServerControllers := maps.Clone(c.dataServerControllers)
 	drainingNodes := maps.Clone(c.drainingNodes)
@@ -405,9 +403,6 @@ func (c *runtime) Close() error {
 	// worker: the worker blocks on in-flight election actions, which only
 	// complete once the shard controllers' retry loops get canceled
 	var err error
-	for _, sc := range splitControllers {
-		sc.Close()
-	}
 	for _, sc := range shardControllers {
 		err = multierr.Append(err, sc.Close())
 	}
@@ -625,37 +620,74 @@ func dataServersFromStatus(status map[string]commonobject.Borrowed[*proto.Namesp
 	return result
 }
 
-// InitiateSplit validates and initiates a shard split. It creates child shards
-// in the cluster status and starts a SplitController to drive the split.
+// InitiateSplit validates and initiates a shard split. The child shard ids and
+// the servers the children are placed on are decided here, from the
+// cluster-wide view of the load. The split itself is recorded and driven by the
+// parent shard's controller, which is the only writer of that shard's metadata.
 func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoint *uint32) (leftChild, rightChild int64, err error) {
+	parentController, splitAction, err := c.prepareSplit(namespace, parentShardId, splitPoint)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Dispatched without holding the coordinator lock: the action is completed
+	// by the shard controller's event loop, whose other work calls back into
+	// the coordinator.
+	parentController.Split(splitAction)
+	if _, err := splitAction.Wait(); err != nil {
+		return 0, 0, errors.Wrap(err, "failed to initiate the split")
+	}
+
+	c.logger.Info("Split initiated",
+		slog.Int64("parent-shard", parentShardId),
+		slog.Int64("left-child", splitAction.Left),
+		slog.Int64("right-child", splitAction.Right),
+		slog.Uint64("split-point", uint64(splitAction.SplitPoint)),
+	)
+
+	c.createShardControllers(namespace, splitAction.Left, splitAction.Right)
+	return splitAction.Left, splitAction.Right, nil
+}
+
+// prepareSplit makes the decisions that need the whole cluster status: whether
+// the shard can be split at all, where to cut it, and which servers its
+// children are placed on. The parent's shard controller checks the preconditions
+// again when it records the split, on the state as it is by then.
+func (c *runtime) prepareSplit(namespace string, parentShardId int64,
+	splitPoint *uint32) (shardcontroller.Controller, *action.SplitAction, error) {
 	c.Lock()
 	defer c.Unlock()
+
+	parentController, exists := c.shardControllers[parentShardId]
+	if !exists {
+		return nil, nil, errors.Errorf("no controller for shard %d", parentShardId)
+	}
 
 	status := cloneNamespaceStatuses(c.metadata.ListNamespaceStatus())
 
 	// Validate namespace
 	borrowedNs, exists := status[namespace]
 	if !exists {
-		return 0, 0, errors.Errorf("namespace %q not found", namespace)
+		return nil, nil, errors.Errorf("namespace %q not found", namespace)
 	}
 	ns := borrowedNs.UnsafeBorrow()
 
 	// Validate parent shard
 	parentMeta, exists := ns.Shards[parentShardId]
 	if !exists {
-		return 0, 0, errors.Errorf("shard %d not found in namespace %q", parentShardId, namespace)
+		return nil, nil, errors.Errorf("shard %d not found in namespace %q", parentShardId, namespace)
 	}
 	if parentMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
-		return 0, 0, errors.Errorf("shard %d is not in steady state (status=%s)", parentShardId, parentMeta.GetStatus())
+		return nil, nil, errors.Errorf("shard %d is not in steady state (status=%s)", parentShardId, parentMeta.GetStatus())
 	}
 	if parentMeta.Split != nil {
-		return 0, 0, errors.Errorf("shard %d already has an active split", parentShardId)
+		return nil, nil, errors.Errorf("shard %d already has an active split", parentShardId)
 	}
 	if len(parentMeta.PendingDeleteShardNodes) > 0 {
-		return 0, 0, errors.Errorf("shard %d has pending ensemble changes", parentShardId)
+		return nil, nil, errors.Errorf("shard %d has pending ensemble changes", parentShardId)
 	}
 	if parentMeta.GetInt32HashRange().GetMax()-parentMeta.GetInt32HashRange().GetMin() < 1 {
-		return 0, 0, errors.Errorf("shard %d hash range is too small to split", parentShardId)
+		return nil, nil, errors.Errorf("shard %d hash range is too small to split", parentShardId)
 	}
 
 	// Compute split point
@@ -663,7 +695,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	if splitPoint != nil {
 		sp = *splitPoint
 		if sp < parentMeta.GetInt32HashRange().GetMin() || sp >= parentMeta.GetInt32HashRange().GetMax() {
-			return 0, 0, errors.Errorf("split point %d is outside shard's hash range [%d, %d]",
+			return nil, nil, errors.Errorf("split point %d is outside shard's hash range [%d, %d]",
 				sp, parentMeta.GetInt32HashRange().GetMin(), parentMeta.GetInt32HashRange().GetMax())
 		}
 	} else {
@@ -673,7 +705,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	// Allocate child shard IDs
 	leftChildId, err := c.metadata.ReserveShardIDs(2)
 	if err != nil {
-		return 0, 0, errors.Wrap(err, "failed to reserve the child shard ids")
+		return nil, nil, errors.Wrap(err, "failed to reserve the child shard ids")
 	}
 	rightChildId := leftChildId + 1
 	// Select ensembles for children.
@@ -683,11 +715,11 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	nsConfig := c.namespaceConfigForSplit(namespace)
 	leftEnsemble, err := c.selectNewEnsemble(namespace, leftChildId, nsConfig, status)
 	if err != nil {
-		return 0, 0, errors.Wrap(err, "failed to select ensemble for left child")
+		return nil, nil, errors.Wrap(err, "failed to select ensemble for left child")
 	}
 
 	// Update cloned status with left child placement before selecting right child
-	status[namespace].UnsafeBorrow().Shards[leftChildId] = &proto.ShardMetadata{
+	ns.Shards[leftChildId] = &proto.ShardMetadata{
 		Status:   proto.ShardStatusSteadyState,
 		Ensemble: leftEnsemble,
 		Int32HashRange: &proto.HashRange{
@@ -697,86 +729,31 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 	rightEnsemble, err := c.selectNewEnsemble(namespace, rightChildId, nsConfig, status)
 	if err != nil {
-		return 0, 0, errors.Wrap(err, "failed to select ensemble for right child")
+		return nil, nil, errors.Wrap(err, "failed to select ensemble for right child")
 	}
 
-	nsCloned := status[namespace].UnsafeBorrow()
+	return parentController, action.NewSplitAction(parentShardId, leftChildId, rightChildId,
+		sp, leftEnsemble, rightEnsemble), nil
+}
 
-	// Create split metadata for parent
-	parentMetaCloned := nsCloned.Shards[parentShardId]
-	parentMetaCloned.Split = &proto.SplitMetadata{
-		Phase:         proto.SplitPhaseBootstrap,
-		ChildShardIds: []int64{leftChildId, rightChildId},
-		SplitPoint:    sp,
+// createShardControllers starts controllers for shards that were just added to
+// the cluster status.
+func (c *runtime) createShardControllers(namespace string, shards ...int64) {
+	c.Lock()
+	defer c.Unlock()
+
+	nsConfig := c.namespaceConfigForSplit(namespace)
+	for _, shard := range shards {
+		borrowedMeta, exists := c.metadata.GetShardStatus(namespace, shard)
+		if !exists {
+			c.logger.Warn("Shard is gone before its controller could be started",
+				slog.String("namespace", namespace), slog.Int64("shard", shard))
+			continue
+		}
+		c.shardControllers[shard] = shardcontroller.NewController(namespace, shard, nsConfig,
+			borrowedMeta.UnsafeBorrow(), c.metadata, c.findDataServerFeatures,
+			c, c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
 	}
-
-	// Create left child shard
-	nsCloned.Shards[leftChildId] = &proto.ShardMetadata{
-		Status:   proto.ShardStatusSteadyState,
-		Term:     0,
-		Ensemble: leftEnsemble,
-		Int32HashRange: &proto.HashRange{
-			Min: parentMeta.GetInt32HashRange().GetMin(),
-			Max: sp,
-		},
-		Split: &proto.SplitMetadata{
-			Phase:         proto.SplitPhaseBootstrap,
-			ParentShardId: parentShardId,
-			SplitPoint:    sp,
-		},
-	}
-
-	// Create right child shard
-	nsCloned.Shards[rightChildId] = &proto.ShardMetadata{
-		Status:   proto.ShardStatusSteadyState,
-		Term:     0,
-		Ensemble: rightEnsemble,
-		Int32HashRange: &proto.HashRange{
-			Min: sp + 1,
-			Max: parentMeta.GetInt32HashRange().GetMax(),
-		},
-		Split: &proto.SplitMetadata{
-			Phase:         proto.SplitPhaseBootstrap,
-			ParentShardId: parentShardId,
-			SplitPoint:    sp,
-		},
-	}
-
-	// Persist
-	if err := c.metadata.UpdateNamespaceStatus(namespace, nsCloned); err != nil {
-		return 0, 0, errors.Wrap(err, "failed to persist the split")
-	}
-
-	c.logger.Info("Split initiated",
-		slog.Int64("parent-shard", parentShardId),
-		slog.Int64("left-child", leftChildId),
-		slog.Int64("right-child", rightChildId),
-		slog.Uint64("split-point", uint64(sp)),
-	)
-
-	// Create shard controllers for children
-	for _, childId := range []int64{leftChildId, rightChildId} {
-		childMeta := nsCloned.Shards[childId]
-		c.shardControllers[childId] = shardcontroller.NewController(namespace, childId, nsConfig,
-			childMeta, c.metadata, c.findDataServerFeatures,
-			c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
-	}
-
-	// Start split controller
-	sc := shardcontroller.NewSplitController(shardcontroller.SplitControllerConfig{
-		Namespace:     namespace,
-		ParentShardId: parentShardId,
-		Metadata:      c.metadata,
-		RpcProvider:   c.rpc,
-		EventListener: c,
-		EnsembleSelector: func(ns string) ([]*proto.DataServerIdentity, error) {
-			return c.selectNewEnsemble(ns, 0, c.namespaceConfigForSplit(ns), c.metadata.ListNamespaceStatus())
-		},
-		SupportedFeaturesSupplier: c.findDataServerFeatures,
-	})
-	c.splitControllers[parentShardId] = sc
-
-	return leftChildId, rightChildId, nil
 }
 
 // SplitComplete is called by the SplitController at the end of the Cutover
@@ -785,10 +762,8 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 // indefinitely until all ensemble members have deleted the shard) and recomputes
 // shard assignments so clients discover the children.
 //
-// NOTE: This is called from within the split controller's own goroutine,
-// so we must NOT call sc.Close() on the split controller (that would deadlock
-// on wg.Wait). Instead we just remove it from the map and let the goroutine
-// finish naturally.
+// NOTE: This is called from within the split's own goroutine, so it must not
+// wait for that goroutine to finish.
 func (c *runtime) SplitComplete(parentShard int64, leftChild int64, rightChild int64) {
 	c.Lock()
 	defer c.Unlock()
@@ -798,10 +773,6 @@ func (c *runtime) SplitComplete(parentShard int64, leftChild int64, rightChild i
 		slog.Int64("left-child", leftChild),
 		slog.Int64("right-child", rightChild),
 	)
-
-	// Remove split controller from map without calling Close (would deadlock).
-	// The goroutine will return naturally after this callback.
-	delete(c.splitControllers, parentShard)
 
 	// Trigger the parent shard controller's deletion. The shard controller
 	// retries DeleteShard RPCs indefinitely with backoff, handles unreachable
@@ -827,9 +798,6 @@ func (c *runtime) SplitAborted(parentShard int64, leftChild int64, rightChild in
 		slog.Int64("right-child", rightChild),
 	)
 
-	// Remove split controller from map (goroutine will return after this).
-	delete(c.splitControllers, parentShard)
-
 	// Close child shard controllers.
 	for _, childId := range []int64{leftChild, rightChild} {
 		if sc, exists := c.shardControllers[childId]; exists {
@@ -849,42 +817,6 @@ func (c *runtime) namespaceConfigForSplit(namespace string) *proto.Namespace {
 	return borrowedNsConfig.UnsafeBorrow()
 }
 
-// restartInProgressSplits checks the cluster status for any shards that have
-// active SplitMetadata and creates SplitControllers to resume them.
-func (c *runtime) restartInProgressSplits(clusterStatus map[string]commonobject.Borrowed[*proto.NamespaceStatus]) {
-	for ns, borrowedShards := range clusterStatus {
-		shards := borrowedShards.UnsafeBorrow()
-		for shardId, meta := range shards.Shards {
-			if meta.Split == nil {
-				continue
-			}
-			// Only create split controller from the parent shard (has ChildShardIds)
-			if len(meta.Split.ChildShardIds) == 0 {
-				continue
-			}
-
-			c.logger.Info("Resuming in-progress split",
-				slog.String("namespace", ns),
-				slog.Int64("parent-shard", shardId),
-				slog.String("phase", meta.Split.GetPhaseOrDefault().String()),
-			)
-
-			sc := shardcontroller.NewSplitController(shardcontroller.SplitControllerConfig{
-				Namespace:     ns,
-				ParentShardId: shardId,
-				Metadata:      c.metadata,
-				RpcProvider:   c.rpc,
-				EventListener: c,
-				EnsembleSelector: func(namespace string) ([]*proto.DataServerIdentity, error) {
-					return c.selectNewEnsemble(namespace, 0, c.namespaceConfigForSplit(namespace), c.metadata.ListNamespaceStatus())
-				},
-				SupportedFeaturesSupplier: c.findDataServerFeatures,
-			})
-			c.splitControllers[shardId] = sc
-		}
-	}
-}
-
 func New(
 	metadata coordmetadata.Metadata,
 	rpcProvider rpc.ProviderFactory,
@@ -895,7 +827,6 @@ func New(
 		),
 		ensembleSelector:      ensemble.NewSelector(),
 		shardControllers:      make(map[int64]shardcontroller.Controller),
-		splitControllers:      make(map[int64]*shardcontroller.SplitController),
 		dataServerControllers: make(map[string]dataservercontroller.Controller),
 		drainingNodes:         make(map[string]dataservercontroller.Controller),
 		metadata:              metadata,
@@ -956,12 +887,9 @@ func New(
 			}
 			c.shardControllers[shard] = shardcontroller.NewController(ns, shard, nsConfig,
 				shardMetadata, c.metadata, c.findDataServerFeatures,
-				c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
+				c, c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
 		}
 	}
-
-	// Restart any in-progress splits from persisted state
-	c.restartInProgressSplits(clusterStatus)
 
 	c.wg.Go(func() {
 		process.DoWithLabels(c.ctx, map[string]string{

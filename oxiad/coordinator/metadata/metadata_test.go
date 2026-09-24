@@ -205,3 +205,155 @@ servers:
     internal: s1:8191
 `), 0600))
 }
+
+func newSplitTestMetadata(t *testing.T, parent *commonproto.ShardMetadata) Metadata {
+	t.Helper()
+
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, "")
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	require.True(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{
+		Shards: map[int64]*commonproto.ShardMetadata{0: parent},
+	}))
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+	return metadata
+}
+
+func splittableShard() *commonproto.ShardMetadata {
+	return &commonproto.ShardMetadata{
+		Status:         commonproto.ShardStatusSteadyState,
+		Term:           3,
+		Ensemble:       []*commonproto.DataServerIdentity{{Internal: "s1:8191"}},
+		Int32HashRange: &commonproto.HashRange{Min: 0, Max: 100},
+	}
+}
+
+func splitEnsembles() ([]*commonproto.DataServerIdentity, []*commonproto.DataServerIdentity) {
+	return []*commonproto.DataServerIdentity{{Internal: "s1:8191"}},
+		[]*commonproto.DataServerIdentity{{Internal: "s2:8191"}}
+}
+
+func TestMetadataInitShardSplitCreatesParentAndChildrenTogether(t *testing.T) {
+	metadata := newSplitTestMetadata(t, splittableShard())
+	left, right := splitEnsembles()
+
+	require.NoError(t, metadata.InitShardSplit("default", 0, 1, 2, 40, left, right))
+
+	parent, exists := metadata.GetShardStatus("default", 0)
+	require.True(t, exists)
+	split := parent.UnsafeBorrow().GetSplit()
+	require.Equal(t, commonproto.SplitPhaseBootstrap, split.GetPhaseOrDefault())
+	require.Equal(t, []int64{1, 2}, split.GetChildShardIds())
+	require.EqualValues(t, 40, split.GetSplitPoint())
+	// The parent keeps serving its whole range until the split completes
+	require.EqualValues(t, 3, parent.UnsafeBorrow().GetTerm())
+	require.EqualValues(t, 0, parent.UnsafeBorrow().GetInt32HashRange().GetMin())
+	require.EqualValues(t, 100, parent.UnsafeBorrow().GetInt32HashRange().GetMax())
+
+	// The children partition the parent's range at the split point
+	leftChild, exists := metadata.GetShardStatus("default", 1)
+	require.True(t, exists)
+	require.EqualValues(t, 0, leftChild.UnsafeBorrow().GetInt32HashRange().GetMin())
+	require.EqualValues(t, 40, leftChild.UnsafeBorrow().GetInt32HashRange().GetMax())
+
+	rightChild, exists := metadata.GetShardStatus("default", 2)
+	require.True(t, exists)
+	require.EqualValues(t, 41, rightChild.UnsafeBorrow().GetInt32HashRange().GetMin())
+	require.EqualValues(t, 100, rightChild.UnsafeBorrow().GetInt32HashRange().GetMax())
+
+	// Each child starts at term 0, on its own ensemble, and points back at the parent
+	for shard, internal := range map[int64]string{1: "s1:8191", 2: "s2:8191"} {
+		child, exists := metadata.GetShardStatus("default", shard)
+		require.True(t, exists)
+		metadata := child.UnsafeBorrow()
+		require.EqualValues(t, 0, metadata.GetTerm())
+		require.Equal(t, commonproto.ShardStatusSteadyState, metadata.GetStatusOrDefault())
+		require.Len(t, metadata.GetEnsemble(), 1)
+		require.Equal(t, internal, metadata.GetEnsemble()[0].GetInternal())
+		require.EqualValues(t, 0, metadata.GetSplit().GetParentShardId())
+		require.EqualValues(t, 40, metadata.GetSplit().GetSplitPoint())
+		require.Empty(t, metadata.GetSplit().GetChildShardIds())
+	}
+}
+
+func TestMetadataInitShardSplitRejectsUnsplittableParent(t *testing.T) {
+	left, right := splitEnsembles()
+
+	for name, testCase := range map[string]struct {
+		parent      *commonproto.ShardMetadata
+		splitPoint  uint32
+		leftChild   int64
+		rightChild  int64
+		leftEnsemb  []*commonproto.DataServerIdentity
+		rightEnsemb []*commonproto.DataServerIdentity
+	}{
+		"not in steady state": {parent: func() *commonproto.ShardMetadata {
+			shard := splittableShard()
+			shard.Status = commonproto.ShardStatusDeleting
+			return shard
+		}(), splitPoint: 40, leftChild: 1, rightChild: 2, leftEnsemb: left, rightEnsemb: right},
+		"split already active": {parent: func() *commonproto.ShardMetadata {
+			shard := splittableShard()
+			shard.Split = &commonproto.SplitMetadata{ChildShardIds: []int64{7, 8}}
+			return shard
+		}(), splitPoint: 40, leftChild: 1, rightChild: 2, leftEnsemb: left, rightEnsemb: right},
+		"pending ensemble changes": {parent: func() *commonproto.ShardMetadata {
+			shard := splittableShard()
+			shard.PendingDeleteShardNodes = []*commonproto.DataServerIdentity{{Internal: "s9:8191"}}
+			return shard
+		}(), splitPoint: 40, leftChild: 1, rightChild: 2, leftEnsemb: left, rightEnsemb: right},
+		"hash range too small": {parent: func() *commonproto.ShardMetadata {
+			shard := splittableShard()
+			shard.Int32HashRange = &commonproto.HashRange{Min: 7, Max: 7}
+			return shard
+		}(), splitPoint: 7, leftChild: 1, rightChild: 2, leftEnsemb: left, rightEnsemb: right},
+		"split point below the range": {parent: func() *commonproto.ShardMetadata {
+			shard := splittableShard()
+			shard.Int32HashRange = &commonproto.HashRange{Min: 10, Max: 100}
+			return shard
+		}(), splitPoint: 5, leftChild: 1, rightChild: 2, leftEnsemb: left, rightEnsemb: right},
+		"split point at the range end": {parent: splittableShard(), splitPoint: 100, leftChild: 1, rightChild: 2, leftEnsemb: left, rightEnsemb: right},
+		"child id already in use":      {parent: splittableShard(), splitPoint: 40, leftChild: 0, rightChild: 2, leftEnsemb: left, rightEnsemb: right},
+		"children share an id":         {parent: splittableShard(), splitPoint: 40, leftChild: 1, rightChild: 1, leftEnsemb: left, rightEnsemb: right},
+		"child without an ensemble":    {parent: splittableShard(), splitPoint: 40, leftChild: 1, rightChild: 2, leftEnsemb: left, rightEnsemb: nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			metadata := newSplitTestMetadata(t, testCase.parent)
+
+			err := metadata.InitShardSplit("default", 0, testCase.leftChild, testCase.rightChild,
+				testCase.splitPoint, testCase.leftEnsemb, testCase.rightEnsemb)
+			require.ErrorIs(t, err, metadataconstant.ErrFailedPrecondition)
+
+			// Nothing was persisted: no child shards, and the parent is untouched
+			for _, shard := range []int64{1, 2} {
+				_, exists := metadata.GetShardStatus("default", shard)
+				require.False(t, exists)
+			}
+			parent, exists := metadata.GetShardStatus("default", 0)
+			require.True(t, exists)
+			require.Equal(t, testCase.parent.GetSplit(), parent.UnsafeBorrow().GetSplit())
+		})
+	}
+}
+
+func TestMetadataInitShardSplitFailsWhenTargetIsGone(t *testing.T) {
+	metadata := newSplitTestMetadata(t, splittableShard())
+	left, right := splitEnsembles()
+
+	require.ErrorIs(t, metadata.InitShardSplit("other", 0, 1, 2, 40, left, right), metadataconstant.ErrNotFound)
+	require.ErrorIs(t, metadata.InitShardSplit("default", 7, 1, 2, 40, left, right), metadataconstant.ErrNotFound)
+}
+
+func TestMetadataInitShardSplitKeepsCallerEnsemblesIsolated(t *testing.T) {
+	metadata := newSplitTestMetadata(t, splittableShard())
+	left, right := splitEnsembles()
+
+	require.NoError(t, metadata.InitShardSplit("default", 0, 1, 2, 40, left, right))
+
+	// A caller that reuses its ensemble slices must not reach into the status
+	left[0].Internal = "mutated:8191"
+
+	child, exists := metadata.GetShardStatus("default", 1)
+	require.True(t, exists)
+	require.Equal(t, "s1:8191", child.UnsafeBorrow().GetEnsemble()[0].GetInternal())
+}

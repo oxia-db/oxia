@@ -60,6 +60,13 @@ type Metadata interface {
 	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool)
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) error
 	DeleteShardStatus(namespace string, shard int64) error
+	// InitShardSplit records the start of a shard split: the parent is marked
+	// as splitting and both children are created in the same update, so a
+	// reader never sees one without the other. It fails with
+	// ErrFailedPrecondition when the parent cannot be split or the split point
+	// and child ids are not usable.
+	InitShardSplit(namespace string, parent, left, right int64, splitPoint uint32,
+		leftEnsemble, rightEnsemble []*commonproto.DataServerIdentity) error
 
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
 	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]]
@@ -410,6 +417,133 @@ func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) e
 			slog.Duration("retry-after", duration),
 		)
 	})
+}
+
+// InitShardSplit atomically records the start of a shard split. The parent is
+// marked as splitting and both child shards are created within a single update,
+// so no reader ever observes a parent that claims children that do not exist,
+// or children whose parent is not splitting.
+//
+// Only the values that cannot be derived from the parent are taken from the
+// caller: the reserved child ids, the split point and the children's ensembles.
+// The children's hash ranges are cut from the parent's current range, and the
+// rest of their metadata is built here, so a child can never disagree with the
+// parent it was split from.
+func (m *coordinatorMetadata) InitShardSplit(namespace string, parent, left, right int64, splitPoint uint32,
+	leftEnsemble, rightEnsemble []*commonproto.DataServerIdentity) error {
+	var precondition error
+	err := backoff.RetryNotify(func() error {
+		precondition = nil
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			namespaceStatus, exist := clusterStatus.Namespaces[namespace]
+			if !exist {
+				precondition = fmt.Errorf("%w: namespace %q", metadatacommon.ErrNotFound, namespace)
+				return clusterStatus, false
+			}
+			parentMetadata, exist := namespaceStatus.Shards[parent]
+			if !exist {
+				precondition = fmt.Errorf("%w: shard %d of namespace %q", metadatacommon.ErrNotFound, parent, namespace)
+				return clusterStatus, false
+			}
+			if precondition = validateShardSplit(namespaceStatus, parentMetadata, parent, left, right,
+				splitPoint, leftEnsemble, rightEnsemble); precondition != nil {
+				return clusterStatus, false
+			}
+
+			hashRange := parentMetadata.GetInt32HashRange()
+			parentMetadata.Split = &commonproto.SplitMetadata{
+				Phase:         commonproto.SplitPhaseBootstrap,
+				ChildShardIds: []int64{left, right},
+				SplitPoint:    splitPoint,
+			}
+			namespaceStatus.Shards[left] = newChildShardMetadata(parent, splitPoint,
+				leftEnsemble, hashRange.GetMin(), splitPoint)
+			namespaceStatus.Shards[right] = newChildShardMetadata(parent, splitPoint,
+				rightEnsemble, splitPoint+1, hashRange.GetMax())
+			return clusterStatus, true
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to initiate the shard split",
+			slog.String("namespace", namespace),
+			slog.Int64("shard", parent),
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return err
+	}
+	return precondition
+}
+
+// validateShardSplit checks, against the freshly loaded status, that the parent
+// is in a state where a split can start and that the caller's child ids, split
+// point and ensembles can be used to build the children.
+func validateShardSplit(namespaceStatus *commonproto.NamespaceStatus, parentMetadata *commonproto.ShardMetadata,
+	parent, left, right int64, splitPoint uint32,
+	leftEnsemble, rightEnsemble []*commonproto.DataServerIdentity) error {
+	if status := parentMetadata.GetStatusOrDefault(); status != commonproto.ShardStatusSteadyState {
+		return fmt.Errorf("%w: shard %d is not in steady state (status=%s)",
+			metadatacommon.ErrFailedPrecondition, parent, status)
+	}
+	if parentMetadata.Split != nil {
+		return fmt.Errorf("%w: shard %d already has an active split",
+			metadatacommon.ErrFailedPrecondition, parent)
+	}
+	if len(parentMetadata.PendingDeleteShardNodes) > 0 {
+		return fmt.Errorf("%w: shard %d has pending ensemble changes",
+			metadatacommon.ErrFailedPrecondition, parent)
+	}
+	if left == right {
+		return fmt.Errorf("%w: the two children of shard %d must have distinct ids, got %d twice",
+			metadatacommon.ErrFailedPrecondition, parent, left)
+	}
+	for _, child := range []int64{left, right} {
+		if _, exist := namespaceStatus.Shards[child]; exist {
+			return fmt.Errorf("%w: child shard %d is already in use",
+				metadatacommon.ErrFailedPrecondition, child)
+		}
+	}
+	if len(leftEnsemble) == 0 || len(rightEnsemble) == 0 {
+		return fmt.Errorf("%w: both children of shard %d need an ensemble",
+			metadatacommon.ErrFailedPrecondition, parent)
+	}
+	hashRange := parentMetadata.GetInt32HashRange()
+	if hashRange.GetMax()-hashRange.GetMin() < 1 {
+		return fmt.Errorf("%w: shard %d hash range is too small to split",
+			metadatacommon.ErrFailedPrecondition, parent)
+	}
+	if splitPoint < hashRange.GetMin() || splitPoint >= hashRange.GetMax() {
+		return fmt.Errorf("%w: split point %d is outside the hash range [%d, %d] of shard %d",
+			metadatacommon.ErrFailedPrecondition, splitPoint, hashRange.GetMin(), hashRange.GetMax(), parent)
+	}
+	return nil
+}
+
+// newChildShardMetadata builds a child shard as it looks at birth: it serves
+// its slice of the parent's hash range, and carries the split metadata that
+// marks it as a child until the split completes.
+func newChildShardMetadata(parent int64, splitPoint uint32,
+	ensemble []*commonproto.DataServerIdentity, minHash, maxHash uint32) *commonproto.ShardMetadata {
+	clonedEnsemble := make([]*commonproto.DataServerIdentity, len(ensemble))
+	for idx, dataServer := range ensemble {
+		clonedEnsemble[idx] = gproto.CloneOf(dataServer)
+	}
+	return &commonproto.ShardMetadata{
+		Status:   commonproto.ShardStatusSteadyState,
+		Term:     0,
+		Ensemble: clonedEnsemble,
+		Int32HashRange: &commonproto.HashRange{
+			Min: minHash,
+			Max: maxHash,
+		},
+		Split: &commonproto.SplitMetadata{
+			Phase:         commonproto.SplitPhaseBootstrap,
+			ParentShardId: parent,
+			SplitPoint:    splitPoint,
+		},
+	}
 }
 
 func (m *coordinatorMetadata) GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration] {
