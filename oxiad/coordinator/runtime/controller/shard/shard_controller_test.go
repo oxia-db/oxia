@@ -987,6 +987,87 @@ func TestController_ShardsDataLostWithChangeEnsemble(t *testing.T) {
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
 }
 
+// The removed data server counts toward the fencing majority of a change
+// ensemble election, but it is neither a leader nor a follower candidate. With
+// RF=2, the leader and the removed follower reach that majority on their own:
+// the election must still wait for the new member, otherwise the leader gets
+// no follower to commit its head entry and BecomeLeader cannot complete.
+func TestController_ChangeEnsembleWaitsForNewEnsembleQuorum(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, &proto.Namespace{
+		Name:              "my-namespace",
+		InitialShardCount: 1,
+		ReplicationFactor: 2,
+	}, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2},
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	// Do initial election
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
+
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 2)
+
+	// caught-up the leader election entry
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	wg := concurrent.NewWaitGroup(1)
+	wg.Go(func() error {
+		// Retry until the shard controller is ready for ensemble change.
+		for {
+			a := action.NewChangeEnsembleAction(shard, s2, s3)
+			sc.ChangeEnsemble(a)
+			_, err := a.Wait()
+			if !errors.Is(err, ErrNotReadyForChangeEnsemble) {
+				return err
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+
+	// s1 appended an entry that s2 never acked: it can only commit it, and so
+	// complete BecomeLeader, with the ack of a follower of the new ensemble
+	rpc.GetNode(s1).NewTermResponse(2, 1, nil)
+	rpc.GetNode(s2).NewTermResponse(1, 0, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 3, true)
+
+	// s3 is still opening the shard and answers after the grace period: the
+	// election must wait for it
+	rpc.GetNode(s1).ExpectNoBecomeLeaderRequest(t)
+	rpc.GetNode(s3).NewTermResponse(-1, -1, nil)
+
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFollowers(t, shard, 3, 2, s3)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	assert.NoError(t, wg.Wait(ctx))
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.Equal(t, proto.ShardStatusSteadyState, metaSnap.GetStatusOrDefault())
+	assert.EqualValues(t, 3, metaSnap.Term)
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3)
+
+	assert.NoError(t, sc.Close())
+}
+
 // Test feature negotiation with all nodes supporting the same features.
 func TestController_FeatureNegotiation_AllNodesSupport(t *testing.T) {
 	var shard int64 = 5

@@ -180,6 +180,17 @@ func (e *Election) fenceNewTermQuorum(term int64, options *proto.NewTermOptions,
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(removedCandidates) > 0 {
+		// The removed data servers count toward the fencing majority, but
+		// they are neither leader nor follower candidates. A majority of the
+		// new ensemble must be fenced as well: the new leader needs the acks
+		// of the followers it is given to commit its head entry and start
+		// leading.
+		if totalResponses, err = e.waitForEnsembleMajority(ch, fencingQuorumSize, ensemble, totalResponses,
+			candidatesResponse, enabledFeatures); err != nil {
+			return nil, nil, err
+		}
+	}
 	e.waitForGracePeriod(ch, fencingQuorumSize, ensemble, totalResponses, candidatesResponse, enabledFeatures)
 	enabled := maps.Keys(enabledFeatures)
 	slices.Sort(enabled)
@@ -234,6 +245,32 @@ func (*Election) waitForMajority(ch chan fenceResponse, fencingQuorumSize int, m
 		return nil, totalResponses, errors.Wrap(err, "election failed: quorum not reached")
 	}
 	return res, totalResponses, nil
+}
+
+// waitForEnsembleMajority keeps collecting the fencing responses until a
+// majority of the ensemble is among the candidates, or every data server
+// has responded.
+func (*Election) waitForEnsembleMajority(ch chan fenceResponse, fencingQuorumSize int,
+	ensemble []*proto.DataServerIdentity, totalResponses int,
+	candidatesResponse map[*proto.DataServerIdentity]*proto.EntryId, enabledFeatures map[proto.Feature]bool) (int, error) {
+	ensembleMajority := len(ensemble)/2 + 1
+	for len(candidatesResponse) < ensembleMajority && totalResponses < fencingQuorumSize {
+		r := <-ch
+		totalResponses++
+		if r.Err != nil {
+			// rpc has already printed the logs
+			continue
+		}
+		collectEnabledFeatures(enabledFeatures, r.Response)
+		if slices.Contains(ensemble, r.DataServer) {
+			candidatesResponse[r.DataServer] = r.Response.HeadEntryId
+		}
+	}
+	if len(candidatesResponse) < ensembleMajority {
+		return totalResponses, errors.Errorf("election failed: quorum of the new ensemble not reached: %d of %d members fenced",
+			len(candidatesResponse), len(ensemble))
+	}
+	return totalResponses, nil
 }
 
 func collectEnabledFeatures(enabledFeatures map[proto.Feature]bool, res *proto.NewTermResponse) {

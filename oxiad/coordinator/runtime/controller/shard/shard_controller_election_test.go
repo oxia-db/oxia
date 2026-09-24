@@ -282,6 +282,92 @@ func TestWaitForMajority_EarlyReturn(t *testing.T) {
 	assert.Len(t, result, 2)
 }
 
+func TestWaitForEnsembleMajority_WaitsForEnsembleMember(t *testing.T) {
+	e := &Election{}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	removedServer := testDataServer("removed")
+	ensemble := []*proto.DataServerIdentity{server1, server2}
+
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 2, Offset: 1}}}
+	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 0}}}
+	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: -1, Offset: -1}}}
+
+	// server1 and the removed server are a majority of the fenced servers,
+	// but only one member of the ensemble
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
+	assert.NoError(t, err)
+	assert.Equal(t, 2, totalResponses)
+
+	totalResponses, err = e.waitForEnsembleMajority(ch, 3, ensemble, totalResponses, result, make(map[proto.Feature]bool))
+
+	assert.NoError(t, err)
+	assert.Equal(t, 3, totalResponses)
+	assert.Len(t, result, 2)
+	assert.Contains(t, result, server1)
+	assert.Contains(t, result, server2)
+}
+
+func TestWaitForEnsembleMajority_FailureNoQuorum(t *testing.T) {
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	removedServer := testDataServer("removed")
+	ensemble := []*proto.DataServerIdentity{server1, server2}
+
+	failed := electionResponse{DataServer: server2, Err: errors.New("connection failed")}
+	leader := electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 2, Offset: 1}}}
+	removed := electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 0}}}
+
+	for name, responses := range map[string][]electionResponse{
+		"failure before the majority": {failed, leader, removed},
+		"failure after the majority":  {leader, removed, failed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := &Election{}
+			ch := make(chan electionResponse, 3)
+			for _, r := range responses {
+				ch <- r
+			}
+
+			result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
+			assert.NoError(t, err)
+
+			totalResponses, err = e.waitForEnsembleMajority(ch, 3, ensemble, totalResponses, result, make(map[proto.Feature]bool))
+
+			assert.ErrorContains(t, err, "election failed: quorum of the new ensemble not reached")
+			assert.Equal(t, 3, totalResponses)
+		})
+	}
+}
+
+func TestWaitForEnsembleMajority_AlreadyReached(t *testing.T) {
+	e := &Election{}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	server3 := testDataServer("server3")
+	removedServer := testDataServer("removed")
+	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
+
+	ch := make(chan electionResponse, 4)
+	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
+	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
+	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
+	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
+
+	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble, make(map[proto.Feature]bool))
+	assert.NoError(t, err)
+	assert.Equal(t, 3, totalResponses)
+
+	// With an odd ensemble, the fencing majority already includes a majority
+	// of the ensemble
+	totalResponses, err = e.waitForEnsembleMajority(ch, 4, ensemble, totalResponses, result, make(map[proto.Feature]bool))
+
+	assert.NoError(t, err)
+	assert.Equal(t, 3, totalResponses, "should not wait for more responses")
+	assert.Len(t, result, 2)
+}
+
 func TestWaitForGracePeriod_AllResponsesReceived(t *testing.T) {
 	e := &Election{}
 	server1 := testDataServer("server1")
