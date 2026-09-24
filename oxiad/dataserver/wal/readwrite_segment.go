@@ -279,12 +279,11 @@ func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 
 	// Write zeroes in the section to clear
 	fileLastSafeOffset := fileOffset(ms.writingIdx, ms.c.baseOffset, lastSafeOffset)
-	var recordSize uint32
-	var err error
-	if recordSize, err = ms.c.codec.GetRecordSize(ms.txnMappedFile, fileLastSafeOffset); err != nil {
+	payloadSize, _, lastSafeCrc, err := ms.c.codec.ReadHeaderWithValidation(ms.txnMappedFile, fileLastSafeOffset)
+	if err != nil {
 		return err
 	}
-	fileEndOffset := fileLastSafeOffset + recordSize
+	fileEndOffset := fileLastSafeOffset + ms.c.codec.GetHeaderSize() + payloadSize
 	for i := fileEndOffset; i < ms.currentFileOffset; i++ {
 		ms.txnMappedFile[i] = 0
 	}
@@ -293,6 +292,9 @@ func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 	ms.writingIdx = ms.writingIdx[:4*(lastSafeOffset-ms.c.baseOffset+1)]
 	ms.currentFileOffset = fileEndOffset
 	ms.lastOffset = lastSafeOffset
+	// The next append must chain from the crc of the record at the truncation
+	// point, not from the one of the last truncated record
+	ms.lastCrc = lastSafeCrc
 	return ms.Flush()
 }
 

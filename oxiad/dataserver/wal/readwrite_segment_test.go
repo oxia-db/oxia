@@ -429,3 +429,52 @@ func TestReadWriteSegment_CloseWithConcurrentFlush(t *testing.T) {
 	assert.NoError(t, rw.Close())
 	<-flusherDone
 }
+
+// Truncate must move the last crc back to the record at the truncation point:
+// the next append chains from it, not from a truncated record. The v1 codec
+// has no crc, and keeps reporting zero.
+func TestReadWriteSegment_TruncateResetsLastCrc(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		codecV1 bool
+	}{
+		{"v2", false},
+		{"v1", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if test.codecV1 {
+				// An existing txn file with the v1 extension selects the v1 codec
+				assert.NoError(t, os.WriteFile(segmentPath(dir, 0)+".txn", make([]byte, 1024), 0644))
+			}
+
+			rw, err := newReadWriteSegment(dir, 0, 1024, 0, nil)
+			assert.NoError(t, err)
+			for i := int64(0); i <= 5; i++ {
+				assert.NoError(t, rw.Append(i, fmt.Appendf(nil, "entry-%d", i)))
+			}
+			_, _, crc2, err := rw.Read(2)
+			assert.NoError(t, err)
+			if test.codecV1 {
+				assert.Zero(t, crc2)
+			} else {
+				assert.NotZero(t, crc2)
+			}
+
+			assert.NoError(t, rw.Truncate(2))
+			assert.EqualValues(t, 2, rw.LastOffset())
+			assert.Equal(t, crc2, rw.LastCrc())
+			assert.NoError(t, rw.Append(3, []byte("new-entry-3")))
+			assert.NoError(t, rw.Close())
+
+			rw, err = newReadWriteSegment(dir, 0, 1024, 0, nil)
+			assert.NoError(t, err)
+			assert.EqualValues(t, 3, rw.LastOffset())
+			payload, previousCrc, _, err := rw.Read(3)
+			assert.NoError(t, err)
+			assert.Equal(t, "new-entry-3", string(payload))
+			assert.Equal(t, crc2, previousCrc)
+			assert.NoError(t, rw.Close())
+		})
+	}
+}

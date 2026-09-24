@@ -63,6 +63,21 @@ func TestStandaloneSecondaryIndexNameValidation(t *testing.T) {
 	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[0].GetStatus())
 }
 
+func TestStandaloneRejectsSameWalAndDataDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	config := NewTestConfig(t.TempDir())
+	config.DataServerOptions.Storage.WAL.Dir = dir
+	config.DataServerOptions.Storage.Database.Dir = dir
+
+	standaloneServer, err := NewStandalone(config)
+	assert.ErrorContains(t, err, "are the same directory")
+	assert.Nil(t, standaloneServer)
+
+	// Refused before writing anything
+	_, err = os.Stat(dir)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
 // A standalone server must refuse to start when a WAL entry already applied to
 // the database is corrupted: discarding it would make the leader reuse the
 // offsets of committed entries.

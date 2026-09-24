@@ -2239,9 +2239,9 @@ func corruptWalEntry(t *testing.T, walDir string, shard int64, offset int64) {
 
 	var fileOffset uint32
 	for range offset {
-		recordSize, err := c.GetRecordSize(buf, fileOffset)
+		payloadSize, _, _, err := c.ReadHeaderWithValidation(buf, fileOffset)
 		require.NoError(t, err)
-		fileOffset += recordSize
+		fileOffset += c.GetHeaderSize() + payloadSize
 	}
 	buf[fileOffset+c.GetHeaderSize()] ^= 0xff
 	require.NoError(t, os.WriteFile(txnPath, buf, 0644))

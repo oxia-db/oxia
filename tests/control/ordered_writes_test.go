@@ -66,6 +66,12 @@ func TestOrderedWrites(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
+	// The client can connect before the shard leader is elected
+	assert.Eventually(t, func() bool {
+		shard := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces["default"].GetShards()[0]
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
+	}, 10*time.Second, 10*time.Millisecond)
+
 	resource := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
 	shardMetadata := resource.Namespaces["default"].Shards[0]
 	leader := shardMetadata.Leader
