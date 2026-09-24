@@ -177,6 +177,34 @@ func (m *PerNodeChannels) ExpectBecomeLeaderRequestWithFeatures(t *testing.T, sh
 	assert.ElementsMatch(t, expectedFeatures, r.FeaturesSupported, "negotiated features should match")
 }
 
+// ExpectBecomeLeaderRequestWithFollowers verifies the BecomeLeader request
+// hands the new leader exactly the expected followers.
+func (m *PerNodeChannels) ExpectBecomeLeaderRequestWithFollowers(t *testing.T, shard int64, term int64, replicationFactor uint32,
+	expectedFollowers ...*proto.DataServerIdentity) {
+	t.Helper()
+
+	var r *proto.BecomeLeaderRequest
+	select {
+	case r = <-m.becomeLeaderRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive BecomeLeader request in time")
+		return
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	assert.Equal(t, replicationFactor, r.ReplicationFactor)
+	expected := make([]string, 0, len(expectedFollowers))
+	for _, follower := range expectedFollowers {
+		expected = append(expected, follower.GetInternal())
+	}
+	actual := make([]string, 0, len(r.FollowerMaps))
+	for follower := range r.FollowerMaps {
+		actual = append(actual, follower)
+	}
+	assert.ElementsMatch(t, expected, actual, "followers should match")
+}
+
 func (m *PerNodeChannels) ExpectNewTermRequest(t *testing.T, shard int64, term int64, notificationsEnabled bool) {
 	t.Helper()
 

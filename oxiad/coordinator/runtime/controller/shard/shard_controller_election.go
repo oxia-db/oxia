@@ -135,6 +135,11 @@ func (e *Election) fenceNewTermQuorum(term int64, options *proto.NewTermOptions,
 	fencingDataServers := slices.Concat(ensemble, removedCandidates)
 	fencingQuorumSize := len(fencingDataServers)
 	majority := fencingQuorumSize/2 + 1
+	// The removed data servers count toward the fencing majority, but they
+	// are neither leader nor follower candidates. A majority of the new
+	// ensemble must be fenced as well: the new leader needs the acks of the
+	// followers it is given to commit its head entry and start leading.
+	ensembleMajority := len(ensemble)/2 + 1
 
 	// Use a new context, so we can cancel the pending requests
 	fencingContext, fencingContextCancel := context.WithCancel(e.ctx)
@@ -174,7 +179,8 @@ func (e *Election) fenceNewTermQuorum(term int64, options *proto.NewTermOptions,
 		})
 	}
 	enabledFeatures := make(map[proto.Feature]bool)
-	candidatesResponse, totalResponses, err := e.waitForMajority(ch, fencingQuorumSize, majority, ensemble, enabledFeatures)
+	candidatesResponse, totalResponses, err := e.waitForMajority(ch, fencingQuorumSize, majority, ensembleMajority,
+		ensemble, enabledFeatures)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -206,14 +212,14 @@ func (*Election) waitForGracePeriod(ch chan fenceResponse, fencingQuorumSize int
 	}
 }
 
-func (*Election) waitForMajority(ch chan fenceResponse, fencingQuorumSize int, majority int,
+func (*Election) waitForMajority(ch chan fenceResponse, fencingQuorumSize int, majority int, ensembleMajority int,
 	ensemble []*proto.DataServerIdentity, enabledFeatures map[proto.Feature]bool) (map[*proto.DataServerIdentity]*proto.EntryId, int, error) {
 	res := make(map[*proto.DataServerIdentity]*proto.EntryId)
 	successResponses := 0
 	totalResponses := 0
 	var err error
-	// Wait for a majority to respond
-	for successResponses < majority && totalResponses < fencingQuorumSize {
+	// Wait for a majority to respond, including a majority of the ensemble
+	for (successResponses < majority || len(res) < ensembleMajority) && totalResponses < fencingQuorumSize {
 		fencingResponse := <-ch
 
 		totalResponses++
@@ -230,6 +236,9 @@ func (*Election) waitForMajority(ch chan fenceResponse, fencingQuorumSize int, m
 	}
 	if successResponses < majority {
 		return nil, totalResponses, errors.Wrap(err, "election failed: quorum not reached")
+	}
+	if len(res) < ensembleMajority {
+		return nil, totalResponses, errors.Wrap(err, "election failed: quorum of the new ensemble not reached")
 	}
 	return res, totalResponses, nil
 }

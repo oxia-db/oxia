@@ -191,7 +191,7 @@ func TestWaitForMajority_Success(t *testing.T) {
 	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
 	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, totalResponses)
@@ -212,7 +212,7 @@ func TestWaitForMajority_FailureNoQuorum(t *testing.T) {
 	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
 	ch <- electionResponse{DataServer: server3, Err: errors.New("timeout")}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "election failed: quorum not reached")
@@ -232,7 +232,7 @@ func TestWaitForMajority_MixedSuccessAndFailure(t *testing.T) {
 	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
 	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 3, totalResponses)
@@ -254,7 +254,7 @@ func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
 	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 110}}}
 	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble, make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 4, 3, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 3, totalResponses)
@@ -262,6 +262,49 @@ func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
 	assert.NotContains(t, result, removedServer, "removed server should not be in result")
 	assert.Contains(t, result, server1)
 	assert.Contains(t, result, server2)
+}
+
+func TestWaitForMajority_WaitsForEnsembleMajority(t *testing.T) {
+	e := &Election{}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	removedServer := testDataServer("removed")
+	ensemble := []*proto.DataServerIdentity{server1, server2}
+
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 2, Offset: 1}}}
+	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 0}}}
+	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: -1, Offset: -1}}}
+
+	// server1 and the removed server are a majority of the fenced servers,
+	// but only one member of the ensemble
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, 2, ensemble, make(map[proto.Feature]bool))
+
+	assert.NoError(t, err)
+	assert.Equal(t, 3, totalResponses)
+	assert.Len(t, result, 2)
+	assert.Contains(t, result, server1)
+	assert.Contains(t, result, server2)
+}
+
+func TestWaitForMajority_FailureNoEnsembleQuorum(t *testing.T) {
+	e := &Election{}
+	server1 := testDataServer("server1")
+	server2 := testDataServer("server2")
+	removedServer := testDataServer("removed")
+	ensemble := []*proto.DataServerIdentity{server1, server2}
+
+	ch := make(chan electionResponse, 3)
+	ch <- electionResponse{DataServer: server1, Err: errors.New("connection failed")}
+	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 0}}}
+	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: -1, Offset: -1}}}
+
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, 2, ensemble, make(map[proto.Feature]bool))
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "election failed: quorum of the new ensemble not reached")
+	assert.Nil(t, result)
+	assert.Equal(t, 3, totalResponses)
 }
 
 func TestWaitForMajority_EarlyReturn(t *testing.T) {
@@ -275,7 +318,7 @@ func TestWaitForMajority_EarlyReturn(t *testing.T) {
 	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
 	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, totalResponses, "should return early after reaching majority")
