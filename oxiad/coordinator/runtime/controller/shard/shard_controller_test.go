@@ -1794,6 +1794,58 @@ func TestController_FeaturesDiscoveredWithoutNewFeaturesKeepsTerm(t *testing.T) 
 	assert.NoError(t, sc.Close())
 }
 
+// Discovering the features of a member doesn't start a new election when the
+// term pins them already: e.g. at coordinator startup, when the handshake
+// completes before the election negotiates the features of the term.
+func TestController_FeaturesDiscoveredAlreadyPinnedKeepsTerm(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	supplier := newTestFeaturesSupplier()
+	supplier.set(s1, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s2, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s3, proto.Feature_FEATURE_DB_CHECKSUM)
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, supplier.supply, rpc, DefaultPeriodicTasksInterval)
+
+	// s3 completes its handshake while the election is running: the shard
+	// controller handles it once the election is done
+	sc.FeaturesDiscovered(s3)
+
+	checksum := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 2, checksum)
+
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, checksum)
+
+	assert.Eventually(t, func() bool {
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+
+	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
+
+	assert.EqualValues(t, 2, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assert.NoError(t, sc.Close())
+}
+
 // A follower that failed the election fence rejoins later through
 // AddFollower: the coordinator must report the joiner's supported features so
 // the leader can validate them.
