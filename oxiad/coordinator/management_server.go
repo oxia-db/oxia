@@ -278,7 +278,7 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 	if req == nil || req.Namespace == nil {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "namespace must not be nil")
 	}
-	if err := validation.ValidateNewNamespace(req.Namespace.GetName()); err != nil {
+	if err := validation.ValidateNamespace(req.Namespace.GetName()); err != nil {
 		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
 	}
 	if req.Namespace.GetInitialShardCount() == 0 {

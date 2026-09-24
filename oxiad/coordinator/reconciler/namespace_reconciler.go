@@ -41,7 +41,7 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 		// A configuration file doesn't go through the management API checks.
 		// Skip the namespace instead of failing, which would block the
 		// reconciliation of the rest of the configuration.
-		if err := validation.ValidateNewNamespace(namespace.GetName()); err != nil {
+		if err := validation.ValidateNamespace(namespace.GetName()); err != nil {
 			slog.Error(
 				"Cannot create namespace",
 				slog.String("namespace", namespace.GetName()),

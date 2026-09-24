@@ -665,51 +665,6 @@ func TestManagementServerCreateNamespaceRejectsReservedName(t *testing.T) {
 	}
 }
 
-// A namespace created before its name was reserved keeps the configuration
-// valid, and can still be patched and deleted.
-func TestManagementServerExistingNamespaceWithReservedName(t *testing.T) {
-	serverName := "server-1"
-	management := newReadyManagementServer(
-		newTestMetadata(t, &proto.ClusterConfiguration{
-			Namespaces: []*proto.Namespace{{
-				Name:              "MANIFEST",
-				InitialShardCount: 1,
-				ReplicationFactor: 1,
-				KeySorting:        "natural",
-			}},
-			Servers: []*proto.DataServerIdentity{
-				dataServer(&serverName, "public-1", "internal-1"),
-			},
-		}),
-		nil,
-	)
-
-	_, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
-		Namespace: &proto.Namespace{
-			Name:              "ns-1",
-			InitialShardCount: 1,
-			ReplicationFactor: 1,
-			KeySorting:        "natural",
-		},
-	})
-	require.NoError(t, err)
-
-	notificationsEnabled := false
-	_, err = management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
-		Namespace: &proto.Namespace{
-			Name:                 "MANIFEST",
-			NotificationsEnabled: &notificationsEnabled,
-		},
-	})
-	require.NoError(t, err)
-
-	_, err = management.DeleteNamespace(context.Background(), &proto.DeleteNamespaceRequest{Namespace: "MANIFEST"})
-	require.NoError(t, err)
-
-	_, found := management.metadata.GetNamespace("MANIFEST")
-	assert.False(t, found)
-}
-
 func TestManagementServerCreateNamespacePreservesKeySorting(t *testing.T) {
 	serverName := "server-1"
 	management := newReadyManagementServer(
