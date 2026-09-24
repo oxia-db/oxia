@@ -62,6 +62,10 @@ type Server struct {
 
 func New(parent context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (*Server, error) {
 	options := optionsWatch.Load()
+	// Validate the storage before the manifest gets written in the data dir
+	if err := options.Storage.Validate(); err != nil {
+		return nil, err
+	}
 	manifest, err := manifestpkg.NewManifest(options.Storage.Database.Dir)
 	if err != nil {
 		return nil, err

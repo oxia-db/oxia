@@ -29,6 +29,9 @@ func TestStorageOptionsRejectsSameWalAndDataDir(t *testing.T) {
 	require.NoError(t, os.Symlink(dir, link))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "wal"), 0755))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "db"), 0755))
+	// Symlinks to directories that do not exist yet
+	require.NoError(t, os.Symlink("new-db", filepath.Join(dir, "new-wal")))
+	require.NoError(t, os.Symlink("other", filepath.Join(dir, "other-wal")))
 
 	for _, tt := range []struct {
 		name    string
@@ -40,6 +43,10 @@ func TestStorageOptionsRejectsSameWalAndDataDir(t *testing.T) {
 		{name: "same path spelled differently", walDir: dir + "/./", dataDir: dir, same: true},
 		{name: "relative and absolute path", walDir: ".", dataDir: dir, same: true},
 		{name: "symlink to the data dir", walDir: link, dataDir: dir, same: true},
+		{name: "symlink to the data dir before it is created", walDir: filepath.Join(dir, "new-wal"),
+			dataDir: filepath.Join(dir, "new-db"), same: true},
+		{name: "symlink to another dir before it is created", walDir: filepath.Join(dir, "other-wal"),
+			dataDir: filepath.Join(dir, "new-db")},
 		{name: "different dirs", walDir: filepath.Join(dir, "wal"), dataDir: filepath.Join(dir, "db")},
 		{name: "wal dir inside the data dir", walDir: filepath.Join(dir, "wal"), dataDir: dir},
 	} {

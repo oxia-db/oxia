@@ -185,18 +185,18 @@ func (so *StorageOptions) Validate() error {
 // database both keep each shard in <dir>/<namespace>/shard-<id>, and each of
 // them manages that directory as its own: they would delete each other's files.
 func (so *StorageOptions) validateDirs() error {
-	walDir, err := filepath.Abs(so.WAL.Dir)
+	walDir, err := resolveDir(so.WAL.Dir)
 	if err != nil {
 		return err
 	}
-	dbDir, err := filepath.Abs(so.Database.Dir)
+	dbDir, err := resolveDir(so.Database.Dir)
 	if err != nil {
 		return err
 	}
 	same := walDir == dbDir
 	if !same {
-		// Different paths can still name the same directory, through a symlink
-		// or on a case-insensitive file system
+		// Different paths can still name the same directory, e.g. through a
+		// symlink in a parent directory or on a case-insensitive file system
 		walInfo, walErr := os.Stat(walDir)
 		dbInfo, dbErr := os.Stat(dbDir)
 		same = walErr == nil && dbErr == nil && os.SameFile(walInfo, dbInfo)
@@ -208,6 +208,24 @@ func (so *StorageOptions) validateDirs() error {
 			so.WAL.Dir, so.Database.Dir)
 	}
 	return nil
+}
+
+// resolveDir returns the absolute path of dir or, when dir is a symlink, of
+// its target. The target might not exist yet, and still be the other
+// directory once the data server creates it.
+func resolveDir(dir string) (string, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	if target, err := os.Readlink(absDir); err == nil {
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(absDir), target)
+		}
+		return filepath.Clean(target), nil
+	}
+	// Not a symlink
+	return absDir, nil
 }
 
 type ChecksumSchedulerOptions struct {
