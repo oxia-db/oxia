@@ -610,6 +610,130 @@ func TestSessionManagerReopening(t *testing.T) {
 	assert.NoError(t, walf.Close())
 }
 
+func TestDeriveSessionId(t *testing.T) {
+	id, err := deriveSessionId(1, 14)
+	assert.NoError(t, err)
+	assert.Equal(t, SessionId(1)<<idTermShift|14, id)
+
+	// Term 0 keeps the legacy offset-only ids.
+	id, err = deriveSessionId(0, 14)
+	assert.NoError(t, err)
+	assert.Equal(t, SessionId(14), id)
+
+	// The id round-trips through the fixed-width session key format.
+	parsed, err := KeyToId(SessionKey(id))
+	assert.NoError(t, err)
+	assert.Equal(t, id, parsed)
+
+	// Equal offsets in different terms yield different ids.
+	other, err := deriveSessionId(2, 14)
+	assert.NoError(t, err)
+	assert.NotEqual(t, id, other)
+
+	// The guard rejects anything that could yield a negative or
+	// overflowing id, which would break the %016x key format.
+	_, err = deriveSessionId(-1, 14)
+	assert.Error(t, err)
+	_, err = deriveSessionId(maxSessionIdTerm, 14)
+	assert.Error(t, err)
+	_, err = deriveSessionId(1, -1)
+	assert.Error(t, err)
+	_, err = deriveSessionId(1, 1<<idTermShift)
+	assert.Error(t, err)
+}
+
+func TestCreateSessionDerivesIdFromTerm(t *testing.T) {
+	kvf, walf, sManager, lc := createSessionManager(t)
+
+	createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
+		Shard:            1,
+		SessionTimeoutMs: 5 * 1000,
+	})
+	assert.NoError(t, err)
+	sessionId := SessionId(createResp.SessionId)
+
+	// The session manager harness is leading in term 1: the term must be
+	// encoded in the high bits of the id and the id must remain a valid
+	// session key.
+	assert.Equal(t, int64(1), int64(sessionId)>>idTermShift)
+	parsed, err := KeyToId(SessionKey(sessionId))
+	assert.NoError(t, err)
+	assert.Equal(t, sessionId, parsed)
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
+}
+
+// TestSessionIdDisjointAcrossTermsAfterWalLoss reproduces the id collision
+// defect: after a restart that loses the WAL (here: a fresh WAL factory over
+// the surviving database) the offsets restart from scratch, so deriving the
+// id from the offset alone would re-issue ids already assigned to sessions
+// recovered from the database. Encoding the term keeps the id spaces
+// disjoint.
+func TestSessionIdDisjointAcrossTermsAfterWalLoss(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, sManager, lc := createSessionManager(t)
+
+	createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shardId,
+		SessionTimeoutMs: 60 * 1000,
+		ClientIdentity:   "term-1-client",
+	})
+	assert.NoError(t, err)
+	sessionId1 := SessionId(createResp.SessionId)
+	assert.Equal(t, int64(1), int64(sessionId1)>>idTermShift)
+
+	// Push the commit offset past the session id, as the chaos scenario
+	// does, so the database is visibly ahead of the (soon empty) WAL.
+	for i := 0; i < 3; i++ {
+		_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+			Shard: &shardId,
+			Puts: []*proto.PutRequest{{
+				Key:   fmt.Sprintf("/key-%d", i),
+				Value: []byte("value"),
+			}},
+		})
+		assert.NoError(t, err)
+	}
+
+	// Restart in a new term with the WAL lost: same database, empty WAL.
+	lc = reopenLeaderControllerInTerm(t, kvf, newTestWalFactory(t), lc, 2)
+	sManager = lc.sessionManager.(*sessionManager)
+
+	// The term-1 session must have been recovered from the database.
+	sManager.RLock()
+	recovered, found := sManager.sessions[sessionId1]
+	sManager.RUnlock()
+	assert.True(t, found)
+	assert.NotNil(t, recovered)
+	assert.NotNil(t, getSessionMetadata(t, lc, int64(sessionId1)))
+
+	createResp, err = sManager.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shardId,
+		SessionTimeoutMs: 60 * 1000,
+		ClientIdentity:   "term-2-client",
+	})
+	assert.NoError(t, err)
+	sessionId2 := SessionId(createResp.SessionId)
+
+	// The new id comes from the term-2 id space, disjoint from the term-1
+	// space even though the offsets restarted from scratch.
+	assert.Equal(t, int64(2), int64(sessionId2)>>idTermShift)
+	assert.GreaterOrEqual(t, int64(sessionId2), int64(2)<<idTermShift)
+	assert.Less(t, int64(sessionId2), int64(3)<<idTermShift)
+	assert.Less(t, int64(sessionId1), int64(2)<<idTermShift)
+	assert.NotEqual(t, sessionId1, sessionId2)
+
+	// Both sessions coexist: registering the new session must not have
+	// touched the recovered session's entry.
+	assert.NotNil(t, getSessionMetadata(t, lc, int64(sessionId1)))
+	assert.NotNil(t, getSessionMetadata(t, lc, int64(sessionId2)))
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
+}
+
 func getData(t *testing.T, lc *leaderController, key string) string {
 	t.Helper()
 
@@ -699,6 +823,31 @@ func reopenLeaderController(t *testing.T, kvFactory kvstore.Factory, walFactory 
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
 		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+	assert.NoError(t, err)
+
+	return lc.(*leaderController)
+}
+
+// reopenLeaderControllerInTerm reopens the leader controller over the given
+// factories in a new term. Passing a fresh WAL factory while reusing the KV
+// factory simulates a restart that lost the WAL but kept the database.
+func reopenLeaderControllerInTerm(t *testing.T, kvFactory kvstore.Factory, walFactory wal.Factory, oldlc *leaderController, term int64) *leaderController {
+	t.Helper()
+
+	var shard int64 = 1
+
+	assert.NoError(t, oldlc.Close())
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: term})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              term,
 		ReplicationFactor: 1,
 		FollowerMaps:      nil,
 	})
