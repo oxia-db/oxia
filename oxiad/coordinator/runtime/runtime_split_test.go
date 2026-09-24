@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"sync"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
@@ -177,6 +179,7 @@ func newSplitTestRuntime(t *testing.T) *splitTestRuntime {
 		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 		shardControllers: map[int64]shardcontroller.Controller{},
 		splitControllers: map[int64]*shardcontroller.SplitController{},
+		rpc:              r.rpc,
 	}
 	return r
 }
@@ -314,4 +317,91 @@ func TestSplit_AbortPublishesConsistentAssignments(t *testing.T) {
 	ids, err := checkAssignments(snapshots[len(snapshots)-1])
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []int64{splitParentShard, splitOtherShard}, ids)
+}
+
+// TestSplit_RestartPastPointOfNoReturn verifies that a coordinator restarting
+// with a split past the point of no return completes it. The parent's shard
+// controller must not elect the parent again: only the split controller fences
+// it, and the parent then gets deleted.
+func TestSplit_RestartPastPointOfNoReturn(t *testing.T) {
+	r := newSplitTestRuntime(t)
+
+	// The previous coordinator elected the child leaders at the parent's term,
+	// then moved the split past the point of no return
+	borrowedNs, exists := r.metadata.GetNamespaceStatus(constant.DefaultNamespace)
+	require.True(t, exists)
+	ns := pb.Clone(borrowedNs.UnsafeBorrow()).(*proto.NamespaceStatus)
+	parent := ns.Shards[splitParentShard]
+	parent.Term = splitParentTerm + 1
+	parent.Leader = nil
+	parent.Status = proto.ShardStatusElection
+	parent.Split.Phase = proto.SplitPhaseFinalize
+	parent.Split.ParentTermAtBootstrap = splitParentTerm
+	for childId, leader := range map[int64]*proto.DataServerIdentity{splitLeftChild: splitLs1, splitRightChild: splitRs1} {
+		child := ns.Shards[childId]
+		child.Term = splitParentTerm
+		child.Leader = leader
+		child.Split.Phase = proto.SplitPhaseFinalize
+	}
+	require.NoError(t, r.metadata.UpdateNamespaceStatus(constant.DefaultNamespace, ns))
+
+	// The split controller fences the parent and re-elects the children, then
+	// the parent's shard controller deletes the parent
+	for _, node := range []*proto.DataServerIdentity{
+		splitPs1, splitPs2, splitPs3, splitLs1, splitLs2, splitLs3, splitRs1, splitRs2, splitRs3,
+	} {
+		r.rpc.GetNode(node).NewTermResponse(splitParentTerm, 105, nil)
+	}
+	r.rpc.GetNode(splitLs1).BecomeLeaderResponse(nil)
+	r.rpc.GetNode(splitRs1).BecomeLeaderResponse(nil)
+	for _, node := range []*proto.DataServerIdentity{splitPs1, splitPs2, splitPs3} {
+		r.rpc.GetNode(node).DeleteShardResponse(nil)
+	}
+
+	// The restarted coordinator starts the controllers of the split shards,
+	// then resumes the split, the way New does
+	r.Lock()
+	status := r.metadata.ListNamespaceStatus()
+	for _, shard := range []int64{splitParentShard, splitLeftChild, splitRightChild} {
+		r.shardControllers[shard] = shardcontroller.NewController(constant.DefaultNamespace, shard,
+			r.namespaceConfigForSplit(constant.DefaultNamespace),
+			status[constant.DefaultNamespace].UnsafeBorrow().Shards[shard], r.metadata,
+			r.findDataServerFeatures, r.runtime, r.rpc, shardcontroller.DefaultPeriodicTasksInterval)
+	}
+	r.restartInProgressSplits(status)
+	sc := r.splitControllers[splitParentShard]
+	r.Unlock()
+	t.Cleanup(func() {
+		sc.Close()
+		r.Lock()
+		controllers := maps.Clone(r.shardControllers)
+		r.Unlock()
+		for _, controller := range controllers {
+			assert.NoError(t, controller.Close())
+		}
+	})
+
+	require.Eventually(t, func() bool {
+		r.RLock()
+		defer r.RUnlock()
+		_, parentExists := r.shardControllers[splitParentShard]
+		return len(r.splitControllers) == 0 && !parentExists
+	}, 30*time.Second, 10*time.Millisecond, "split did not complete")
+
+	// Only the split controller fenced the parent
+	for _, node := range []*proto.DataServerIdentity{splitPs1, splitPs2, splitPs3} {
+		requests := r.rpc.GetNode(node).NewTermRequests
+		require.Len(t, requests, 1)
+		assert.Equal(t, splitParentTerm+1, (<-requests).Term)
+	}
+
+	snapshots := r.publishedSnapshots()
+	for i, snapshot := range snapshots {
+		ids, err := checkAssignments(snapshot)
+		assert.NoError(t, err, "snapshot %d/%d publishes shards %v", i+1, len(snapshots), ids)
+	}
+
+	ids, err := checkAssignments(snapshots[len(snapshots)-1])
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int64{splitOtherShard, splitLeftChild, splitRightChild}, ids)
 }
