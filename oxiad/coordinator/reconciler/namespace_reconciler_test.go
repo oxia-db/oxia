@@ -569,3 +569,65 @@ func TestNamespaceReconcilerNamespaceRemovedMarksDeletingAndDeletesRuntimeShards
 	assert.Equal(t, []int64{1, 2}, runtime.deleted)
 	assert.Empty(t, runtime.added)
 }
+
+// Namespaces added to the configuration file don't go through the management
+// API, so the reconciler must not create one with a reserved name either. A
+// namespace created before its name was reserved stays.
+func TestNamespaceReconcilerDoesNotCreateReservedNamespace(t *testing.T) {
+	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
+	metadata := &mockNamespaceMetadata{
+		status: &proto.ClusterStatus{
+			Namespaces: map[string]*proto.NamespaceStatus{
+				"MANIFEST": {
+					ReplicationFactor: 3,
+					Shards: map[int64]*proto.ShardMetadata{
+						0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
+					},
+				},
+			},
+			ShardIdGenerator: 1,
+		},
+		configNS: map[string]*proto.Namespace{
+			"MANIFEST": {Name: "MANIFEST", InitialShardCount: 1, ReplicationFactor: 3},
+			"manifest": {Name: "manifest", InitialShardCount: 1, ReplicationFactor: 3},
+			"ns-1":     {Name: "ns-1", InitialShardCount: 1, ReplicationFactor: 3},
+		},
+	}
+	runtime := &mockNamespaceRuntime{
+		metadata: metadata,
+		selectNewEnsembleFn: func(namespaceConfig *proto.Namespace, shardID int64, _ *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+			return simpleEnsembleSupplier(servers, shardID, namespaceConfig.GetReplicationFactor()), nil
+		},
+	}
+
+	err := (&namespaceReconciler{runtime: runtime}).Reconcile(context.Background(), &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
+			{Name: "MANIFEST", InitialShardCount: 1, ReplicationFactor: 3},
+			{Name: "manifest", InitialShardCount: 1, ReplicationFactor: 3},
+			{Name: "ns-1", InitialShardCount: 1, ReplicationFactor: 3},
+		},
+		Servers: servers,
+	})
+	assert.NoError(t, err)
+
+	assertStatusEqual(t, &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
+			"MANIFEST": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
+				},
+			},
+			"ns-1": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					1: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s2, s3, s4}, 0, math.MaxUint32),
+				},
+			},
+		},
+		ShardIdGenerator: 2,
+	}, metadata.status)
+
+	assert.Equal(t, map[int64]string{1: "ns-1"}, runtime.added)
+	assert.Empty(t, runtime.deleted)
+}

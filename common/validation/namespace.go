@@ -23,6 +23,11 @@ import (
 
 var validNamespacePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$`)
 
+// A data server keeps its manifest in this file, in the same directory as the
+// directories of the namespaces. File systems can be case-insensitive, so no
+// new namespace can take this name in any letter case.
+const dataServerManifestFile = "MANIFEST"
+
 func ValidateNamespace(namespace string) error {
 	if namespace == "" {
 		return errors.New("namespace must not be empty")
@@ -35,6 +40,20 @@ func ValidateNamespace(namespace string) error {
 	}
 	if !validNamespacePattern.MatchString(namespace) {
 		return errors.Errorf("namespace %q contains invalid characters", namespace)
+	}
+	return nil
+}
+
+// ValidateNewNamespace validates the name of a namespace that is about to be
+// created. It also rejects the reserved names, which ValidateNamespace accepts
+// so that a namespace created before its name was reserved can still be
+// deleted.
+func ValidateNewNamespace(namespace string) error {
+	if err := ValidateNamespace(namespace); err != nil {
+		return err
+	}
+	if strings.EqualFold(namespace, dataServerManifestFile) {
+		return errors.Errorf("namespace %q is reserved: it collides with the data server manifest file", namespace)
 	}
 	return nil
 }

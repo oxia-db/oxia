@@ -125,3 +125,20 @@ func TestValidateNamespace(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateNewNamespace(t *testing.T) {
+	for _, namespace := range []string{"MANIFEST", "manifest", "Manifest"} {
+		t.Run(namespace, func(t *testing.T) {
+			assert.NoError(t, ValidateNamespace(namespace))
+			assert.ErrorContains(t, ValidateNewNamespace(namespace), "reserved")
+		})
+	}
+
+	for _, namespace := range []string{"default", "MANIFEST-1", "my.manifest"} {
+		t.Run(namespace, func(t *testing.T) {
+			assert.NoError(t, ValidateNewNamespace(namespace))
+		})
+	}
+
+	assert.ErrorContains(t, ValidateNewNamespace("../evil"), "path traversal sequence")
+}
