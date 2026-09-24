@@ -1552,6 +1552,126 @@ func TestController_ElectionPinsNegotiatedFeatures(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
+// A member whose features are not known yet (it has not completed a handshake
+// since the coordinator started, e.g. because it is down) must not block the
+// election of a shard that already has features enabled: the election pins
+// the enabled features, and the member is checked when it joins the term.
+func TestController_ElectionPinsEnabledFeaturesWithUnknownMember(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	supplier := newTestFeaturesSupplier()
+	supplier.set(s1, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s2, proto.Feature_FEATURE_DB_CHECKSUM)
+	// s3's features are unknown
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, supplier.supply, rpc, DefaultPeriodicTasksInterval)
+
+	checksum := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+
+	// s3 is down. The first attempt finds the feature already enabled on the
+	// shard, and the second one pins it.
+	for i := 0; i < 2; i++ {
+		rpc.GetNode(s1).NewTermResponseWithFeatures(1, 0, checksum, nil)
+		rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+		rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("node not available"))
+	}
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 3, checksum)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 3, checksum)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 3, checksum)
+
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 3, 3, checksum)
+
+	assert.Eventually(t, func() bool {
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 3, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
+
+	assert.NoError(t, sc.Close())
+}
+
+// A member counts as not supporting any feature until it completes its
+// handshake, which can happen while the election is fencing the ensemble
+// (e.g. at coordinator startup). The election must then start over to pin
+// the features the whole ensemble supports, instead of leaving them disabled
+// until the next election.
+func TestController_ElectionPinsFeaturesOfHandshakeDuringFencing(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	supplier := newTestFeaturesSupplier()
+	supplier.set(s1, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s2, proto.Feature_FEATURE_DB_CHECKSUM)
+	// s3 completes its handshake right after the election negotiated the
+	// features of the new term
+	var handshake sync.Once
+	supply := func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
+		features := supplier.supply(dataServers)
+		handshake.Do(func() {
+			supplier.set(s3, proto.Feature_FEATURE_DB_CHECKSUM)
+		})
+		return features
+	}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, supply, rpc, DefaultPeriodicTasksInterval)
+
+	checksum := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+
+	for i := 0; i < 2; i++ {
+		rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+		rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+		rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	}
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 3, checksum)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 3, checksum)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 3, checksum)
+
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 3, 3, checksum)
+
+	assert.Eventually(t, func() bool {
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.EqualValues(t, 3, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
+
+	assert.NoError(t, sc.Close())
+}
+
 // A follower that failed the election fence rejoins later through
 // AddFollower: the coordinator must report the joiner's supported features so
 // the leader can validate them.

@@ -51,6 +51,11 @@ var (
 	ErrFollowerNotCaughtUp               = errors.New("follower not caught up yet")
 	ErrChangeEnsembleLosesFeatureSupport = errors.New(
 		"change ensemble would remove support for negotiated shard features")
+
+	// errFeaturesRenegotiation makes the election retry with a new term, so
+	// that it can pin a different feature set than the one it fenced the
+	// ensemble with.
+	errFeaturesRenegotiation = errors.New("the term features must be negotiated again")
 )
 
 type Election struct {
@@ -76,6 +81,9 @@ type Election struct {
 	changeEnsembleAction *action.ChangeEnsembleAction
 	followerCaughtUp     atomic.Bool // If the followers caught up leader after election
 	termOptions          *proto.NewTermOptions
+	// requiredFeatures are the features that an earlier attempt found
+	// already enabled on the shard, which the next attempts must pin
+	requiredFeatures []proto.Feature
 	// started
 	started atomic.Bool
 }
@@ -482,9 +490,11 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 
 	// Negotiate the feature set across the new ensemble before fencing, so it
 	// can be pinned in the term options: every member persists it with the
-	// term and rejects the fence if its binary does not support it.
+	// term and rejects the fence if its binary does not support it. The
+	// features that an earlier attempt found already enabled on the shard are
+	// pinned as well (see checkNegotiatedFeatures).
 	features := e.dataServerSupportedFeaturesSupplier(e.mutableShardMetadata.Ensemble)
-	negotiatedFeatures := negotiate(features, len(e.mutableShardMetadata.Ensemble))
+	negotiatedFeatures := unionFeatures(negotiate(features, len(e.mutableShardMetadata.Ensemble)), e.requiredFeatures)
 	termOptions := e.termOptions.CloneVT()
 	if termOptions == nil {
 		termOptions = &proto.NewTermOptions{}
@@ -500,21 +510,8 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// A feature that is already enabled on the shard must be supported by the
-	// whole new ensemble, or the unsupported members would apply entries with
-	// different semantics and silently diverge. Fail the election instead:
-	// the shard stays unavailable until the offending nodes are replaced.
-	if missing := feature.Missing(enabledFeatures, negotiatedFeatures); len(missing) > 0 {
-		e.logger.Error(
-			"Election aborted: the ensemble does not support features already enabled on the shard",
-			slog.Int64("term", e.mutableShardMetadata.Term),
-			slog.Any("missing-features", missing),
-			slog.Any("negotiated-features", negotiatedFeatures),
-			slog.Any("data-server-features", features),
-		)
-		return nil, errors.Wrapf(constant.ErrUnsupportedFeatures,
-			"ensemble does not support features %v already enabled on shard %d", missing, e.shard)
+	if err = e.checkNegotiatedFeatures(negotiatedFeatures, enabledFeatures, candidatesStatus); err != nil {
+		return nil, err
 	}
 	newLeader, followers, err := e.selectNewLeader(candidatesStatus)
 	if err != nil {
@@ -596,6 +593,63 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	return newLeader, nil
 }
 
+// checkNegotiatedFeatures validates the feature set pinned by the new term
+// once the ensemble is fenced. The members' features are read again: they are
+// only known after the member's handshake with this coordinator, which can
+// complete while an election is running (e.g. at coordinator startup), and
+// until then the member counts as not supporting any feature.
+func (e *Election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled []proto.Feature,
+	candidatesStatus map[*proto.DataServerIdentity]*proto.EntryId) error {
+	ensemble := e.mutableShardMetadata.Ensemble
+	features := e.dataServerSupportedFeaturesSupplier(ensemble)
+
+	// The features pinned by the term, and the ones already enabled on the
+	// shard, must be supported by every member that takes part in the term,
+	// or the unsupported members would apply entries with different semantics
+	// and silently diverge. Fail the election instead: the shard stays
+	// unavailable until the offending nodes are replaced.
+	participantsFeatures := make(map[string][]proto.Feature, len(candidatesStatus))
+	for dataServer := range candidatesStatus {
+		participantsFeatures[dataServer.GetNameOrDefault()] = features[dataServer.GetNameOrDefault()]
+	}
+	required := unionFeatures(negotiated, enabled)
+	if missing := feature.Missing(required, negotiate(participantsFeatures, len(participantsFeatures))); len(missing) > 0 {
+		e.logger.Error(
+			"Election aborted: the ensemble does not support features already enabled on the shard",
+			slog.Int64("term", e.mutableShardMetadata.Term),
+			slog.Any("missing-features", missing),
+			slog.Any("negotiated-features", negotiated),
+			slog.Any("data-server-features", participantsFeatures),
+		)
+		return errors.Wrapf(constant.ErrUnsupportedFeatures,
+			"ensemble does not support features %v already enabled on shard %d", missing, e.shard)
+	}
+
+	// The members that did not take part, e.g. because they are down, are
+	// checked when they join the term (see fenceNewTermAndAddFollower), and a
+	// feature enabled on the shard can never be disabled again: pin the
+	// enabled features even if those members' support is unknown, instead of
+	// failing every election until they are back.
+	if missing := feature.Missing(enabled, negotiated); len(missing) > 0 {
+		e.requiredFeatures = unionFeatures(e.requiredFeatures, enabled)
+		return fmt.Errorf("%w: features %v are already enabled on the shard", errFeaturesRenegotiation, missing)
+	}
+
+	// A handshake completed while fencing the ensemble: pin the features that
+	// the whole ensemble supports now, or they would stay disabled until the
+	// next election.
+	if added := feature.Missing(negotiate(features, len(ensemble)), negotiated); len(added) > 0 {
+		return fmt.Errorf("%w: the ensemble now supports features %v", errFeaturesRenegotiation, added)
+	}
+	return nil
+}
+
+func unionFeatures(a []proto.Feature, b []proto.Feature) []proto.Feature {
+	union := slices.Concat(a, b)
+	slices.Sort(union)
+	return slices.Compact(union)
+}
+
 func negotiate(nodeFeatures map[string][]proto.Feature, candidates int) []proto.Feature {
 	if candidates == 0 || len(nodeFeatures) == 0 {
 		return nil
@@ -646,6 +700,15 @@ func (e *Election) Start() *proto.DataServerIdentity {
 			e.logger.Debug(
 				"Leader election is waiting for data server initialization",
 				slog.Int64("term", term),
+				slog.Duration("retry-after", duration),
+			)
+			return
+		}
+		if errors.Is(err, errFeaturesRenegotiation) {
+			e.logger.Info(
+				"Leader election is retrying to pin a different feature set",
+				slog.Int64("term", term),
+				slog.String("reason", err.Error()),
 				slog.Duration("retry-after", duration),
 			)
 			return
