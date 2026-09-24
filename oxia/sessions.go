@@ -196,7 +196,7 @@ func (cs *clientSession) createSession() error {
 		func() {
 			backOff := time2.NewBackOff(cs.sessions.ctx)
 			err := backoff.RetryNotify(func() error {
-				err := cs.keepAlive()
+				err := cs.keepAlive(backOff)
 				if errors.Is(err, constant.ErrSessionNotFound) {
 					cs.log.Error(
 						"Session is no longer valid",
@@ -253,7 +253,7 @@ func (cs *clientSession) Close() error {
 	return nil
 }
 
-func (cs *clientSession) keepAlive() error {
+func (cs *clientSession) keepAlive(backOff backoff.BackOff) error {
 	cs.sessions.Lock()
 	cs.Lock()
 	ctx := cs.ctx
@@ -277,6 +277,10 @@ func (cs *clientSession) keepAlive() error {
 			if err != nil {
 				return err
 			}
+			// RetryNotify only resets the backoff when it starts: without this,
+			// every failure over the lifetime of the session would make the
+			// retry of the next one wait longer
+			backOff.Reset()
 		case <-ctx.Done():
 			return nil
 		}
