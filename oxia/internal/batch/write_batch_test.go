@@ -232,13 +232,15 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 		return nil, constant.ErrShardNotFound
 	}
 
+	var reroutedShardId int64
 	var reroutedPuts []model.PutCall
 	var reroutedDeletes []model.DeleteCall
 	var reroutedDeleteRanges []model.DeleteRangeCall
 
 	factory := &writeBatchFactory{
 		execute: execute,
-		reroute: func(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
+		reroute: func(id int64, puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
+			reroutedShardId = id
 			reroutedPuts = puts
 			reroutedDeletes = deletes
 			reroutedDeleteRanges = deleteRanges
@@ -260,6 +262,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 	batch.Complete()
 
+	assert.Equal(t, shardId, reroutedShardId)
 	assert.Equal(t, 2, len(reroutedPuts))
 	assert.Equal(t, "key-1", reroutedPuts[0].Key)
 	assert.Equal(t, "key-2", reroutedPuts[1].Key)
@@ -325,7 +328,7 @@ func TestWriteBatchNoRerouteOnOtherError(t *testing.T) {
 	rerouted := false
 	factory := &writeBatchFactory{
 		execute: execute,
-		reroute: func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall) {
+		reroute: func(int64, []model.PutCall, []model.DeleteCall, []model.DeleteRangeCall) {
 			rerouted = true
 		},
 		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),

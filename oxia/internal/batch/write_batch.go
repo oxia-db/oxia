@@ -33,7 +33,7 @@ var ErrRequestTooLarge = errors.New("put request is too large")
 type writeBatchFactory struct {
 	namespace      string
 	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
-	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
+	reroute        WriteRerouter
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
 	maxByteSize    int
@@ -60,7 +60,7 @@ type writeBatch struct {
 	namespace      string
 	shardId        *int64
 	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
-	reroute        func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
+	reroute        WriteRerouter
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
 	deleteRanges   []model.DeleteRangeCall
@@ -116,7 +116,7 @@ func (b *writeBatch) Complete() {
 			slog.Int("deletes", len(b.deletes)),
 			slog.Int("delete-ranges", len(b.deleteRanges)),
 		)
-		b.reroute(b.puts, b.deletes, b.deleteRanges)
+		b.reroute(*b.shardId, b.puts, b.deletes, b.deleteRanges)
 		return
 	}
 
