@@ -49,9 +49,6 @@ type Codec interface {
 	// multiple versions for txn file.
 	GetTxnExtension() string
 
-	// GetRecordSize returns the size of the record in bytes which includes the header.
-	GetRecordSize(buf []byte, startFileOffset uint32) (payloadSize uint32, err error)
-
 	// ReadRecordWithValidation reads a record starting at the specified
 	// file offset in the buffer. It also validates the record's integrity
 	// (e.g., CRC checks) before returning the payload.
