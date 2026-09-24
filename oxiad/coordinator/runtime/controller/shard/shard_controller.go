@@ -696,6 +696,10 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 	}
 	// todo: support optimized ensemble change to avoid start a new election
 	s.onElectLeader(changeEnsembleAction)
+	if err := s.currentElection.ChangeEnsembleError(); err != nil {
+		changeEnsembleAction.Error(err)
+		return
+	}
 	changeEnsembleAction.Done(nil)
 }
 
