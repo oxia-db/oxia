@@ -286,6 +286,34 @@ func doSecondaryIndexesGet(t *testing.T, config dataserver.StandaloneConfig) {
 	assert.NoError(t, standaloneServer.Close())
 }
 
+func TestSyncClientImpl_GetSequenceUpdates_ClientClose(t *testing.T) {
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+	require.NoError(t, err)
+
+	k1, _, err := client.Put(context.Background(), "a", []byte("0"), oxia.PartitionKey("x"), oxia.SequenceKeysDeltas(1))
+	require.NoError(t, err)
+
+	// The subscription context is never canceled
+	updates, err := client.GetSequenceUpdates(context.Background(), "a", oxia.PartitionKey("x"))
+	require.NoError(t, err)
+	assert.Equal(t, k1, <-updates)
+
+	// Closing the client ends the subscription
+	assert.NoError(t, client.Close())
+
+	select {
+	case _, ok := <-updates:
+		assert.False(t, ok)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the subscription should have been closed with the client")
+	}
+
+	assert.NoError(t, standaloneServer.Close())
+}
+
 func TestSyncClientImpl_GetSequenceUpdates(t *testing.T) {
 	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
 	assert.NoError(t, err)
