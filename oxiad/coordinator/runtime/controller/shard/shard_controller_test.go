@@ -310,6 +310,38 @@ func TestController_OnElectLeaderReturnsNewLeader(t *testing.T) {
 	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 1)
 }
 
+// statusWriteFailingMetadata fails the shard status writes, as the metadata
+// does when it gives up retrying them because the coordinator is closing.
+type statusWriteFailingMetadata struct {
+	coordmetadata.Metadata
+}
+
+func (statusWriteFailingMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) error {
+	return context.Canceled
+}
+
+func TestController_ElectionDoesNotFenceWithUnpersistedTerm(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, statusWriteFailingMetadata{metadata}, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1},
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	// The election fails to persist its new term: it must not fence the
+	// ensemble with it
+	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
+	assert.EqualValues(t, 1, shardTerm(metadata, constant.DefaultNamespace, shard))
+
+	assert.NoError(t, sc.Close())
+}
+
 func TestController(t *testing.T) {
 	var shard int64 = 5
 	rpc := mockutils.NewRpcProvider()
@@ -1262,7 +1294,7 @@ func TestController_PeriodicTasksPersistOnlyDirtyState(t *testing.T) {
 
 	updatedShardMeta := gproto.CloneOf(shardMeta)
 	updatedShardMeta.PendingDeleteShardNodes = []*proto.DataServerIdentity{pendingDeleteNode}
-	metadata.UpdateShardStatus(constant.DefaultNamespace, shard, updatedShardMeta)
+	require.NoError(t, metadata.UpdateShardStatus(constant.DefaultNamespace, shard, updatedShardMeta))
 	borrowedBefore, _ = metadata.GetShardStatus(constant.DefaultNamespace, shard)
 
 	rpc.GetNode(pendingDeleteNode).DeleteShardResponse(nil)

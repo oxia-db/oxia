@@ -40,6 +40,11 @@ type ShardManager interface {
 	GetAll() []int64
 	Leader(shardId int64) string
 	Exists(shardId int64) bool
+
+	// GetSuccessors returns the shards that now own the hash range of a shard
+	// that was removed from the shard map, after a split. It returns nil if the
+	// shard was never removed.
+	GetSuccessors(shardId int64) []int64
 }
 
 type shardManagerImpl struct {
@@ -51,6 +56,7 @@ type shardManagerImpl struct {
 	serviceAddress string
 	namespace      string
 	shards         map[int64]Shard
+	removedShards  map[int64]HashRange
 	ctx            context.Context
 	cancel         context.CancelFunc
 	logger         *slog.Logger
@@ -65,6 +71,7 @@ func NewShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider,
 		rpcProvider:    rpcProvider,
 		serviceAddress: serviceAddress,
 		shards:         make(map[int64]Shard),
+		removedShards:  make(map[int64]HashRange),
 		requestTimeout: requestTimeout,
 		logger: slog.With(
 			slog.String("component", "shardManager"),
@@ -144,6 +151,24 @@ func (s *shardManagerImpl) Exists(shardId int64) bool {
 	defer s.RUnlock()
 	_, ok := s.shards[shardId]
 	return ok
+}
+
+func (s *shardManagerImpl) GetSuccessors(shardId int64) []int64 {
+	s.RLock()
+	defer s.RUnlock()
+
+	removedRange, ok := s.removedShards[shardId]
+	if !ok {
+		return nil
+	}
+
+	var successors []int64
+	for id, shard := range s.shards {
+		if overlap(shard.HashRange, removedRange) {
+			successors = append(successors, id)
+		}
+	}
+	return successors
 }
 
 func (s *shardManagerImpl) isClosed() bool {
@@ -231,6 +256,9 @@ func (s *shardManagerImpl) update(updates []Shard) {
 						slog.Any("Update", update),
 					)
 					delete(s.shards, shardId)
+					// Batches still pending on the removed shard need its hash
+					// range to find where to reroute delete ranges
+					s.removedShards[shardId] = existing.HashRange
 				}
 			}
 		}
