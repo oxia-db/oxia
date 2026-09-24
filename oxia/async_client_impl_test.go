@@ -44,14 +44,15 @@ func (*capturingGetBatcher) Run()         {}
 // staticShardManager routes every key to its first shard.
 type staticShardManager struct {
 	shards     []int64
+	leader     string
 	successors map[int64][]int64
 }
 
 func (*staticShardManager) Close() error       { return nil }
 func (s *staticShardManager) Get(string) int64 { return s.shards[0] }
 func (s *staticShardManager) GetAll() []int64  { return s.shards }
-func (*staticShardManager) Leader(int64) string {
-	return ""
+func (s *staticShardManager) Leader(int64) string {
+	return s.leader
 }
 func (*staticShardManager) Exists(int64) bool { return true }
 func (s *staticShardManager) GetSuccessors(shardId int64) []int64 {
