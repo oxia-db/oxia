@@ -85,6 +85,9 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 	s := &Standalone{config: config}
 
 	storageOptions := config.DataServerOptions.Storage
+	if err := checkStorageDirs(&storageOptions); err != nil {
+		return nil, err
+	}
 	kvOptions := kvstore.FactoryOptions{
 		DataDir:     storageOptions.Database.Dir,
 		UseWAL:      false, // WAL is kept outside the KV store

@@ -113,3 +113,17 @@ func TestNewServerAuthorityValidationFeatureFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestNewServerRejectsSameWalAndDataDir(t *testing.T) {
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.Enabled = &constant.FlagFalse
+	dir := t.TempDir()
+	options.Storage.Database.Dir = dir
+	options.Storage.WAL.Dir = dir
+
+	server, err := New(t.Context(), commonwatch.New(options))
+	assert.ErrorContains(t, err, "are the same directory")
+	assert.Nil(t, server)
+}

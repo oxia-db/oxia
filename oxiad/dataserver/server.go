@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/process"
@@ -80,6 +81,9 @@ func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
 	storage := &options.Storage
+	if err := checkStorageDirs(storage); err != nil {
+		return nil, err
+	}
 	kvFactory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
 		DataDir:     storage.Database.Dir,
 		CacheSizeMB: storage.Database.ReadCacheSizeMB,
@@ -156,6 +160,27 @@ func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch
 		}
 	}
 	return s, nil
+}
+
+// checkStorageDirs refuses a wal dir that is the data dir, see
+// option.StorageOptions.Validate, and a data dir that still holds WAL segment
+// files. Those are left by a wal dir that was the data dir: without them, a
+// shard would start with an empty WAL under its database.
+func checkStorageDirs(storage *option.StorageOptions) error {
+	if err := storage.Validate(); err != nil {
+		return err
+	}
+	segmentFiles, err := wal.FindSegmentFiles(storage.Database.Dir)
+	if err != nil {
+		return err
+	}
+	if len(segmentFiles) > 0 {
+		return errors.Errorf("found WAL segment files in the data dir %q, such as %q, left by a wal dir that was "+
+			"the data dir: move the WAL segment files (*.txnx, *.idxx, *.txn, *.idx) of each "+
+			"<namespace>/shard-<id> directory into the same path under the wal dir %q",
+			storage.Database.Dir, segmentFiles[0], storage.WAL.Dir)
+	}
+	return nil
 }
 
 func (s *Server) GetShardDirector() controller.ShardsDirector {

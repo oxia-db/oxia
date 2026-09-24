@@ -16,8 +16,11 @@ package option
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -174,7 +177,37 @@ func (so *StorageOptions) Validate() error {
 		so.WAL.Validate(),
 		so.Database.Validate(),
 		so.Notification.Validate(),
+		so.validateDirs(),
 	)
+}
+
+// validateDirs rejects a WAL dir that is the database dir. The WAL and the
+// database both keep each shard in <dir>/<namespace>/shard-<id>, and each of
+// them manages that directory as its own: they would delete each other's files.
+func (so *StorageOptions) validateDirs() error {
+	walDir, err := filepath.Abs(so.WAL.Dir)
+	if err != nil {
+		return err
+	}
+	dbDir, err := filepath.Abs(so.Database.Dir)
+	if err != nil {
+		return err
+	}
+	same := walDir == dbDir
+	if !same {
+		// Different paths can still name the same directory, through a symlink
+		// or on a case-insensitive file system
+		walInfo, walErr := os.Stat(walDir)
+		dbInfo, dbErr := os.Stat(dbDir)
+		same = walErr == nil && dbErr == nil && os.SameFile(walInfo, dbInfo)
+	}
+	if same {
+		return errors.Errorf("wal dir %q and data dir %q are the same directory, which the WAL and the database "+
+			"cannot share: use another wal dir, and to keep the data of an existing node, move the WAL segment files "+
+			"(*.txnx, *.idxx, *.txn, *.idx) of each <namespace>/shard-<id> directory into the same path under it",
+			so.WAL.Dir, so.Database.Dir)
+	}
+	return nil
 }
 
 type ChecksumSchedulerOptions struct {
