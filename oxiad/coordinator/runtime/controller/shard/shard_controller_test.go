@@ -16,6 +16,7 @@ package shard
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math/rand"
 	"os"
@@ -1843,6 +1844,74 @@ func TestController_FeaturesDiscoveredAlreadyPinnedKeepsTerm(t *testing.T) {
 	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
 
 	assert.EqualValues(t, 2, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assert.NoError(t, sc.Close())
+}
+
+// The features of a data server are discovered only once, so the shard
+// controller must not lose the notification while it is busy with an
+// election, however many data servers complete their first handshake in the
+// meantime (e.g. all of them at coordinator startup).
+func TestController_FeaturesDiscoveredDuringElectionAreNotDropped(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	supplier := newTestFeaturesSupplier()
+	supplier.set(s1, proto.Feature_FEATURE_DB_CHECKSUM)
+	supplier.set(s2, proto.Feature_FEATURE_DB_CHECKSUM)
+	// s3's features are unknown
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, supplier.supply, rpc, DefaultPeriodicTasksInterval)
+
+	checksum := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(0, 0, constant.ErrNotInitialized)
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 2, nil)
+
+	// While the election waits for the leader, many other data servers
+	// complete their first handshake, and then s3
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, nil)
+	for i := range chanBufferSize {
+		sc.FeaturesDiscovered(&proto.DataServerIdentity{
+			Public:   fmt.Sprintf("other-%d:9091", i),
+			Internal: fmt.Sprintf("other-%d:8191", i),
+		})
+	}
+	supplier.set(s3, proto.Feature_FEATURE_DB_CHECKSUM)
+	sc.FeaturesDiscovered(s3)
+
+	// s3 is left without responses, so the retries of the term 2 fence can't
+	// rejoin it
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).NewTermResponse(2, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(2, -1, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequestWithFeatures(t, shard, 3, checksum)
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 3, checksum)
+
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 3, 3, checksum)
+
+	assert.Eventually(t, func() bool {
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState &&
+			shardTerm(metadata, constant.DefaultNamespace, shard) == 3
+	}, 10*time.Second, 100*time.Millisecond)
+
 	assert.NoError(t, sc.Close())
 }
 

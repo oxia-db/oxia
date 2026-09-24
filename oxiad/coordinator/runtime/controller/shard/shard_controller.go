@@ -94,11 +94,18 @@ type controller struct {
 	metadataStore                       coordmetadata.Metadata
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 
-	electionOp           chan *action.ElectionAction
-	deleteOp             chan any
-	dataServerFailureOp  chan *proto.DataServerIdentity
-	featuresDiscoveredOp chan *proto.DataServerIdentity
-	changeEnsembleOp     chan *action.ChangeEnsembleAction
+	electionOp          chan *action.ElectionAction
+	deleteOp            chan any
+	dataServerFailureOp chan *proto.DataServerIdentity
+	changeEnsembleOp    chan *action.ChangeEnsembleAction
+
+	// The features of a data server are discovered only once, so unlike the
+	// other notifications they must not be dropped when the event loop is
+	// busy: the data servers are collected until the loop handles them, and
+	// featuresDiscoveredOp wakes it up.
+	discoveredDataServersMu sync.Mutex
+	discoveredDataServers   map[string]*proto.DataServerIdentity
+	featuresDiscoveredOp    chan any
 
 	ctx                   context.Context
 	ctxCancel             context.CancelFunc
@@ -138,12 +145,11 @@ func (s *controller) FeaturesDiscovered(dataServer *proto.DataServerIdentity) {
 	if s.terminating.Load() {
 		return
 	}
-	if !channel.PushNoBlock(s.featuresDiscoveredOp, dataServer) {
-		s.logger.Debug(
-			"Discarding data server features notification because queue is full",
-			slog.Any("data-server", dataServer),
-		)
-	}
+	s.discoveredDataServersMu.Lock()
+	s.discoveredDataServers[dataServer.GetNameOrDefault()] = dataServer
+	s.discoveredDataServersMu.Unlock()
+	// A wake-up that is pending already covers this data server too
+	channel.PushNoBlock(s.featuresDiscoveredOp, nil)
 }
 
 //nolint:revive
@@ -170,8 +176,9 @@ func NewController(
 		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
 		deleteOp:                            make(chan any, chanBufferSize),
 		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
-		featuresDiscoveredOp:                make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
+		discoveredDataServers:               make(map[string]*proto.DataServerIdentity),
+		featuresDiscoveredOp:                make(chan any, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -289,8 +296,8 @@ func (s *controller) run() {
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
 			s.handleDataServerFailure(n)
-		case n := <-s.featuresDiscoveredOp:
-			s.handleFeaturesDiscovered(n)
+		case <-s.featuresDiscoveredOp:
+			s.handleFeaturesDiscovered()
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
 		case <-periodicTasksTimer.C:
@@ -352,12 +359,17 @@ func (s *controller) handleDataServerFailure(failedDataServer *proto.DataServerI
 }
 
 // handleFeaturesDiscovered starts a new election when the current term was
-// negotiated without the features of an ensemble member, because it had not
-// completed its first handshake yet (e.g. its NewTerm reached it before the
-// handshake), and the whole ensemble supports more features than the term
+// negotiated without the features of ensemble members, because they had not
+// completed their first handshake yet (e.g. their NewTerm reached them before
+// the handshake), and the whole ensemble supports more features than the term
 // pinned now that they are known. Otherwise, a new shard would run without
 // them until its next election.
-func (s *controller) handleFeaturesDiscovered(dataServer *proto.DataServerIdentity) {
+func (s *controller) handleFeaturesDiscovered() {
+	s.discoveredDataServersMu.Lock()
+	discovered := s.discoveredDataServers
+	s.discoveredDataServers = make(map[string]*proto.DataServerIdentity)
+	s.discoveredDataServersMu.Unlock()
+
 	if s.currentElection == nil {
 		// The current term was not negotiated by this coordinator
 		return
@@ -369,9 +381,13 @@ func (s *controller) handleFeaturesDiscovered(dataServer *proto.DataServerIdenti
 	if shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState || shardMeta.Split != nil {
 		return
 	}
-	if !slices.ContainsFunc(shardMeta.Ensemble, func(member *proto.DataServerIdentity) bool {
-		return member.GetNameOrDefault() == dataServer.GetNameOrDefault()
-	}) {
+	members := make([]*proto.DataServerIdentity, 0, len(shardMeta.Ensemble))
+	for _, member := range shardMeta.Ensemble {
+		if dataServer, found := discovered[member.GetNameOrDefault()]; found {
+			members = append(members, dataServer)
+		}
+	}
+	if len(members) == 0 {
 		return
 	}
 	features := s.currentElection.unpinnedFeatures()
@@ -380,7 +396,7 @@ func (s *controller) handleFeaturesDiscovered(dataServer *proto.DataServerIdenti
 	}
 	s.logger.Info(
 		"Starting a new election to pin the features supported by the ensemble",
-		slog.Any("data-server", dataServer),
+		slog.Any("data-servers", members),
 		slog.Any("features", features),
 	)
 	s.onElectLeader(nil)
