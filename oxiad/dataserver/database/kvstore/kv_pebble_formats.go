@@ -18,11 +18,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/cockroachdb/pebble/v2/bloom"
 	"github.com/cockroachdb/pebble/v2/sstable"
+	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -114,13 +116,32 @@ func (p *pebbleDbConversion) checkConvertDB(desiredEncoding compare.Encoder) err
 		}
 	}
 
-	// DB already exists
+	// The directory can exist without a database: the WAL creates it first
+	// when it shares the data dir
+	desc, err := pebble.Peek(p.dbPath, vfs.Default)
+	if err != nil {
+		return err
+	}
+
 	// Check if we need to clean up the backup, as previous backup cleanup may have failed.
 	if pathExists(dbBackPath) {
+		if !desc.Exists {
+			// The conversion stopped between moving the database to the backup
+			// and moving the new one in place, and the directory was created
+			// again since, e.g. by the WAL sharing it. Removing the backup
+			// would lose the database, and the WAL segments with it
+			return errors.Errorf("found the database backup %s of an interrupted conversion, but no database in %s: "+
+				"replace the directory with the backup", dbBackPath, p.dbPath)
+		}
 		p.log.Info("Database backup found alongside primary database, indicating incomplete cleanup after conversion")
 		if err := os.RemoveAll(dbBackPath); err != nil {
 			return err
 		}
+	}
+
+	if !desc.Exists {
+		// Nothing to convert
+		return nil
 	}
 
 	var keyEncodingMarker string
@@ -254,6 +275,14 @@ func (p *pebbleDbConversion) convertDb(
 		return errors.Wrap(err, "failed to close new database")
 	}
 
+	// Carry over the files that are not part of the database, such as the WAL
+	// segments when the WAL shares the data dir. Hard links, unlike renames,
+	// also keep them in the old directory: whichever of the two directories
+	// the crash recovery keeps, it holds them
+	if err := linkNonDbFiles(p.dbPath, newDbPath); err != nil {
+		return errors.Wrap(err, "failed to carry over the non-database files")
+	}
+
 	if err := os.Rename(p.dbPath, oldDbBackupPath); err != nil {
 		return errors.Wrap(err, "failed to backup old database")
 	}
@@ -282,6 +311,43 @@ func (p *pebbleDbConversion) convertDb(
 		slog.Duration("elapsed-time-millis", duration),
 		slog.Float64("throughput-mbps", throughput))
 	return nil
+}
+
+// linkNonDbFiles hard-links into dst the files of src that are not part of
+// its pebble database.
+func linkNonDbFiles(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		// dst has its own marker
+		if entry.IsDir() || name == markerFileName || isPebbleFile(name) {
+			continue
+		}
+		if err := os.Link(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isPebbleFile reports whether name follows the naming of the files that
+// pebble keeps in its directory.
+func isPebbleFile(name string) bool {
+	switch {
+	case name == "LOCK", name == "CURRENT",
+		strings.HasPrefix(name, "MANIFEST-"),
+		strings.HasPrefix(name, "OPTIONS-"),
+		strings.HasPrefix(name, "marker."):
+		return true
+	}
+	switch filepath.Ext(name) {
+	case ".sst", ".blob", ".log", ".dbtmp":
+		return true
+	}
+	return false
 }
 
 const maxBatchCount = 1000
