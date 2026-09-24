@@ -18,7 +18,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/cockroachdb/pebble/v2"
@@ -30,6 +29,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 
 	"github.com/oxia-db/oxia/common/compare"
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
 const (
@@ -275,12 +275,12 @@ func (p *pebbleDbConversion) convertDb(
 		return errors.Wrap(err, "failed to close new database")
 	}
 
-	// Carry over the files that are not part of the database, such as the WAL
-	// segments when the WAL shares the data dir. Hard links, unlike renames,
-	// also keep them in the old directory: whichever of the two directories
-	// the crash recovery keeps, it holds them
-	if err := linkNonDbFiles(p.dbPath, newDbPath); err != nil {
-		return errors.Wrap(err, "failed to carry over the non-database files")
+	// Carry over the WAL segments, which are in this directory when the WAL
+	// shares the data dir, and which the WAL may hold open. Hard links, unlike
+	// renames, also keep them in the old directory: whichever of the two
+	// directories the crash recovery keeps, it holds them
+	if err := linkWalSegments(p.dbPath, newDbPath); err != nil {
+		return errors.Wrap(err, "failed to carry over the WAL segments")
 	}
 
 	if err := os.Rename(p.dbPath, oldDbBackupPath); err != nil {
@@ -313,39 +313,31 @@ func (p *pebbleDbConversion) convertDb(
 	return nil
 }
 
-// linkNonDbFiles hard-links into dst the files of src that are not part of
-// its pebble database.
-func linkNonDbFiles(src, dst string) error {
+// linkWalSegments hard-links into dst the files of the WAL segments in src.
+func linkWalSegments(src, dst string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		name := entry.Name()
-		// dst has its own marker
-		if entry.IsDir() || name == markerFileName || isPebbleFile(name) {
+		if !isWalSegmentFile(entry.Name()) {
 			continue
 		}
-		if err := os.Link(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+		if err := os.Link(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// isPebbleFile reports whether name follows the naming of the files that
-// pebble keeps in its directory.
-func isPebbleFile(name string) bool {
-	switch {
-	case name == "LOCK", name == "CURRENT",
-		strings.HasPrefix(name, "MANIFEST-"),
-		strings.HasPrefix(name, "OPTIONS-"),
-		strings.HasPrefix(name, "marker."):
-		return true
-	}
-	switch filepath.Ext(name) {
-	case ".sst", ".blob", ".log", ".dbtmp":
-		return true
+// isWalSegmentFile reports whether name has the extension of a WAL segment
+// file, with any of the supported codecs.
+func isWalSegmentFile(name string) bool {
+	ext := filepath.Ext(name)
+	for _, c := range codec.SupportedCodecs {
+		if ext == c.GetTxnExtension() || ext == c.GetIdxExtension() {
+			return true
+		}
 	}
 	return false
 }

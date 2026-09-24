@@ -245,8 +245,9 @@ func TestPebbleDbCleanupBackupAfterCrashDuringFinalCleanup(t *testing.T) {
 }
 
 // The files of the WAL segments that share the directory of the database when
-// the WAL dir and the data dir are the same.
-var walSegmentFiles = []string{"0.txnx", "0.idxx"}
+// the WAL dir and the data dir are the same, with both codecs, as after an
+// upgrade from the v1 codec.
+var walSegmentFiles = []string{"0.txn", "0.idx", "1000.txnx", "1000.idxx"}
 
 func writeWalSegmentFiles(t *testing.T, dir string) {
 	t.Helper()
@@ -342,7 +343,8 @@ func TestPebbleDbConversionKeepsWalSegments(t *testing.T) {
 	require.NoError(t, oldDb.Flush())
 	require.NoError(t, oldDb.Close())
 
-	segment, err := os.OpenFile(filepath.Join(dbPath, walSegmentFiles[0]), os.O_WRONLY|os.O_APPEND, 0)
+	// The current segment, which the WAL holds open
+	segment, err := os.OpenFile(filepath.Join(dbPath, "1000.txnx"), os.O_WRONLY|os.O_APPEND, 0)
 	require.NoError(t, err)
 	defer segment.Close()
 
@@ -354,7 +356,7 @@ func TestPebbleDbConversionKeepsWalSegments(t *testing.T) {
 	// The WAL still writes into its segment, not into a deleted file
 	segmentInfo, err := segment.Stat()
 	require.NoError(t, err)
-	pathInfo, err := os.Stat(filepath.Join(dbPath, walSegmentFiles[0]))
+	pathInfo, err := os.Stat(filepath.Join(dbPath, "1000.txnx"))
 	require.NoError(t, err)
 	assert.True(t, os.SameFile(segmentInfo, pathInfo))
 	assertWalSegmentFiles(t, dbPath)
@@ -393,7 +395,7 @@ func TestPebbleDbConversionCrashWithRecreatedDir(t *testing.T) {
 
 	// The WAL creates the directory again, with a new segment
 	require.NoError(t, os.MkdirAll(dbPath, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dbPath, walSegmentFiles[0]), nil, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dbPath, "0.txnx"), nil, 0600))
 
 	_, err = newTestKvFactory(t, dataDir, "").NewKV(constant.DefaultNamespace, 0, proto.KeySortingType_HIERARCHICAL)
 	assert.ErrorContains(t, err, "interrupted conversion")
