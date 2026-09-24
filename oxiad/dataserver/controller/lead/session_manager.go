@@ -41,9 +41,39 @@ const (
 	sessionKeyPrefix = constant.InternalKeyPrefix + "session"
 	sessionKeyFormat = sessionKeyPrefix + "/%016x"
 	sessionKeyLength = len(sessionKeyPrefix) + 1 + 16
+
+	// idTermShift is the number of low-order bits of a session id reserved
+	// for the WAL entry offset: id = term<<idTermShift | offset.
+	idTermShift = 40
+	// maxSessionIdTerm is the exclusive upper bound on the term encodable in
+	// a session id. The bound keeps the id positive (a negative id would
+	// break the fixed-width %016x session key format and its length checks)
+	// with a bit of headroom below the sign bit at 1<<63.
+	maxSessionIdTerm = int64(1) << 22
 )
 
 type SessionId int64
+
+// deriveSessionId mints a session id from the coordinates of the WAL entry
+// that registers the session.
+//
+// Encoding the term keeps the ids issued in different terms in disjoint
+// ranges, even though the WAL offsets may restart from scratch: a restart
+// always moves to a new term, and the offsets of a term can be replayed
+// from the beginning when the WAL is lost or truncated (e.g. by a crash, a
+// truncation, or a co-located data dir being wiped) while the database
+// still holds the sessions registered in earlier terms. With the id derived
+// from the offset alone, such a restart could mint an id already assigned
+// to a live session, silently merging the two sessions.
+func deriveSessionId(term int64, offset int64) (SessionId, error) {
+	if term < 0 || term >= maxSessionIdTerm {
+		return 0, errors.Errorf("cannot derive session id: term %d is not in [0, %d)", term, maxSessionIdTerm)
+	}
+	if offset < 0 || offset >= 1<<idTermShift {
+		return 0, errors.Errorf("cannot derive session id: offset %d is not in [0, %d)", offset, int64(1)<<idTermShift)
+	}
+	return SessionId(term)<<idTermShift | SessionId(offset), nil
+}
 
 func SessionKey(sessionId SessionId) string {
 	return fmt.Sprintf("%s/%016x", sessionKeyPrefix, sessionId)
@@ -189,9 +219,29 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 	if err != nil {
 		return nil, errors.Wrap(err, "could not marshal session metadata")
 	}
+	// Reject terms that cannot be encoded in a session id before entering
+	// the write path (see deriveSessionId).
+	if term := sm.leaderController.term.Load(); term < 0 || term >= maxSessionIdTerm {
+		return nil, errors.Errorf("failed to register session: term %d cannot be encoded in a session id", term)
+	}
+
 	var sessionId SessionId
+	termOverflow := false
 	resp, err := sm.leaderController.writeBlock(sm.ctx, func(offset int64) *proto.WriteRequest {
-		sessionId = SessionId(offset)
+		// The supplier runs synchronously inside propose()'s lc.Lock
+		// critical section, where both the term and the offset of the entry
+		// are fixed (NewTerm/BecomeLeader take the same lock), so reading
+		// the term here yields exactly the term of the entry being proposed.
+		var deriveErr error
+		sessionId, deriveErr = deriveSessionId(sm.leaderController.term.Load(), offset)
+		if deriveErr != nil {
+			// Defensive: the term grew past the encodable range between the
+			// check above and this point. Keep the entry well formed with
+			// the legacy offset-only id (never negative) and reject the
+			// request after the write completes.
+			termOverflow = true
+			sessionId = SessionId(offset)
+		}
 		return &proto.WriteRequest{
 			Shard: &request.Shard,
 			Puts: []*proto.PutRequest{{
@@ -202,6 +252,9 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to register session")
+	}
+	if termOverflow {
+		return nil, errors.New("failed to register session: session id term overflow")
 	}
 	if resp.Puts[0].Status != proto.Status_OK {
 		return nil, errors.Errorf("failed to register session. invalid status %#v", resp.Puts[0].Status)
