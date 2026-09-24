@@ -29,6 +29,13 @@ type Batcher interface {
 	Run()
 }
 
+// Barrier is added to a batcher like a call, but it is not added to a batch:
+// the batcher completes the batch with the calls added before the barrier,
+// then invokes Done.
+type Barrier struct {
+	Done func()
+}
+
 type batcherImpl struct {
 	batchFactory        func() Batch
 	callC               chan any
@@ -53,6 +60,10 @@ func (b *batcherImpl) Add(call any) {
 }
 
 func (b *batcherImpl) failCall(call any, err error) {
+	if barrier, ok := call.(Barrier); ok {
+		barrier.Done()
+		return
+	}
 	batch := b.batchFactory()
 	batch.Add(call)
 	batch.Fail(err)
@@ -81,6 +92,13 @@ func (b *batcherImpl) Run() { //nolint:revive
 	for {
 		select {
 		case call := <-b.callC:
+			if barrier, ok := call.(Barrier); ok {
+				if batch != nil {
+					completeBatch()
+				}
+				barrier.Done()
+				continue
+			}
 			if batch == nil {
 				newBatch()
 			}

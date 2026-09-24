@@ -56,6 +56,52 @@ func (b *testBatch) Fail(err error) {
 	// closeC(b.result)
 }
 
+// recordingBatch appends its calls to completed when it completes.
+type recordingBatch struct {
+	calls     []any
+	completed *[]any
+}
+
+func (*recordingBatch) CanAdd(any) bool { return true }
+func (b *recordingBatch) Add(call any)  { b.calls = append(b.calls, call) }
+func (b *recordingBatch) Size() int     { return len(b.calls) }
+func (b *recordingBatch) Complete()     { *b.completed = append(*b.completed, b.calls...) }
+func (*recordingBatch) Fail(error)      {}
+
+func TestBatcherBarrier(t *testing.T) {
+	var completed []any
+	factory := &BatcherFactory{
+		Linger:              time.Hour,
+		MaxRequestsPerBatch: 100,
+	}
+	batcher := factory.NewBatcher(context.Background(), 1, "test-write", func() Batch {
+		return &recordingBatch{completed: &completed}
+	})
+
+	// The barrier completes the batch with the calls added before it, without
+	// waiting for the linger time
+	done := make(chan []any, 1)
+	batcher.Add(1)
+	batcher.Add(2)
+	batcher.Add(Barrier{Done: func() { done <- append([]any(nil), completed...) }})
+	select {
+	case calls := <-done:
+		assert.Equal(t, []any{1, 2}, calls)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the barrier was not completed")
+	}
+	assert.NoError(t, batcher.Close())
+
+	// A closed batcher completes the barriers right away
+	closedDone := make(chan struct{})
+	batcher.Add(Barrier{Done: func() { close(closedDone) }})
+	select {
+	case <-closedDone:
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the barrier was not completed")
+	}
+}
+
 func TestBatcher(t *testing.T) {
 	for _, item := range []struct {
 		name             string
