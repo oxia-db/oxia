@@ -131,6 +131,54 @@ func TestDataServerController_ToleratesTransientHealthCheckFailures(t *testing.T
 	assert.NoError(t, nc.Close())
 }
 
+// TestDataServerController_CloseInterruptsHealthCheckBackoff verifies that
+// Close does not wait for a health check loop to sleep out its retry backoff,
+// which used to hold up the coordinator shutdown for up to a minute per
+// unreachable data server.
+func TestDataServerController_CloseInterruptsHealthCheckBackoff(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", time.Hour, testHealthPolicy)
+
+	node := rpc.GetNode(addr)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Make the ping loop give up on the node: it fences the node from its
+	// retry notification, right before it starts waiting out the backoff
+	// interval (an hour, with jitter, in this test).
+	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.Unavailable, "connection refused"),
+		testHealthPolicy.failureThreshold)
+
+	select {
+	case unavailableNode := <-nal.Events:
+		assert.Equal(t, addr, unavailableNode)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the node must be fenced once the ping loop gives up on it")
+	}
+
+	closed := make(chan error, 1)
+	go func() {
+		closed <- nc.Close()
+	}()
+
+	select {
+	case err := <-closed:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "Close must not wait for the health check backoff to elapse")
+	}
+}
+
 func TestDataServerController_WatchFailureAloneDoesNotFence(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
