@@ -16,13 +16,9 @@ package dataserver
 
 import (
 	"context"
-	"io/fs"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync"
 
-	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/process"
@@ -41,7 +37,6 @@ import (
 	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
 type Server struct {
@@ -85,7 +80,9 @@ func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
 	storage := &options.Storage
-	if err := checkStorageDirs(storage); err != nil {
+	// Embedded servers can skip the validation that the server command runs,
+	// and the storage must not be opened with a wal dir that is the data dir
+	if err := storage.Validate(); err != nil {
 		return nil, err
 	}
 	kvFactory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
@@ -164,48 +161,6 @@ func NewWithGrpcProvider(parent context.Context, optionsWatch *commonwatch.Watch
 		}
 	}
 	return s, nil
-}
-
-// checkStorageDirs refuses a wal dir that is the data dir, see
-// option.StorageOptions.Validate, and a data dir that still holds WAL segment
-// files. Those are left by a wal dir that was the data dir: without them, a
-// shard would start with an empty WAL under its database.
-func checkStorageDirs(storage *option.StorageOptions) error {
-	if err := storage.Validate(); err != nil {
-		return err
-	}
-	segmentFiles, err := findWalSegmentFiles(storage.Database.Dir)
-	if err != nil {
-		return err
-	}
-	if len(segmentFiles) > 0 {
-		return errors.Errorf("found WAL segment files in the data dir %q, such as %q, left by a wal dir that was "+
-			"the data dir: move the WAL segment files (*.txnx, *.idxx, *.txn, *.idx) of each "+
-			"<namespace>/shard-<id> directory into the same path under the wal dir %q",
-			storage.Database.Dir, segmentFiles[0], storage.WAL.Dir)
-	}
-	return nil
-}
-
-// findWalSegmentFiles returns the WAL segment files, of every codec, in the
-// shard directories under dir: <dir>/<namespace>/shard-<id>.
-func findWalSegmentFiles(dir string) ([]string, error) {
-	// Glob in the file system of dir, so that the metacharacters in its path
-	// are not taken as pattern syntax
-	fsys := os.DirFS(dir)
-	var files []string
-	for _, walCodec := range codec.SupportedCodecs {
-		for _, extension := range []string{walCodec.GetTxnExtension(), walCodec.GetIdxExtension()} {
-			matches, err := fs.Glob(fsys, "*/shard-*/*"+extension)
-			if err != nil {
-				return nil, err
-			}
-			for _, match := range matches {
-				files = append(files, filepath.Join(dir, filepath.FromSlash(match)))
-			}
-		}
-	}
-	return files, nil
 }
 
 func (s *Server) GetShardDirector() controller.ShardsDirector {

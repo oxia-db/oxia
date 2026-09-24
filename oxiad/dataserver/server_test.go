@@ -18,20 +18,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/rpc"
 )
@@ -131,38 +126,4 @@ func TestNewServerRejectsSameWalAndDataDir(t *testing.T) {
 	server, err := New(t.Context(), commonwatch.New(options))
 	assert.ErrorContains(t, err, "are the same directory")
 	assert.Nil(t, server)
-}
-
-func TestFindWalSegmentFiles(t *testing.T) {
-	// The metacharacters in the path of the dir are not a pattern
-	dir := filepath.Join(t.TempDir(), "data-[0]")
-
-	files, err := findWalSegmentFiles(dir)
-	assert.NoError(t, err)
-	assert.Empty(t, files)
-
-	// The segments of a WAL in dir, as when the wal dir was the data dir
-	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: dir, SegmentSize: 128 * 1024})
-	w, err := walFactory.NewWal(constant.DefaultNamespace, 1, nil)
-	require.NoError(t, err)
-	require.NoError(t, w.Append(&proto.LogEntry{Term: 1, Offset: 0, Value: []byte("entry")}))
-	require.NoError(t, w.Close())
-	require.NoError(t, walFactory.Close())
-
-	shardDir := filepath.Join(dir, constant.DefaultNamespace, "shard-1")
-	// A segment of the previous codec, and files that are not segments
-	for _, name := range []string{"5.txn", "5.idx", "000002.sst", "MANIFEST-000001"} {
-		require.NoError(t, os.WriteFile(filepath.Join(shardDir, name), nil, 0644))
-	}
-	// Not in a shard directory
-	require.NoError(t, os.WriteFile(filepath.Join(dir, constant.DefaultNamespace, "6.txnx"), nil, 0644))
-
-	files, err = findWalSegmentFiles(dir)
-	assert.NoError(t, err)
-	assert.ElementsMatch(t, []string{
-		filepath.Join(shardDir, "0.txnx"),
-		filepath.Join(shardDir, "0.idxx"),
-		filepath.Join(shardDir, "5.txn"),
-		filepath.Join(shardDir, "5.idx"),
-	}, files)
 }

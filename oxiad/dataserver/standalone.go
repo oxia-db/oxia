@@ -85,7 +85,10 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 	s := &Standalone{config: config}
 
 	storageOptions := config.DataServerOptions.Storage
-	if err := checkStorageDirs(&storageOptions); err != nil {
+	// Unlike the server command, the standalone command does not validate the
+	// options, and the storage must not be opened with a wal dir that is the
+	// data dir
+	if err := storageOptions.Validate(); err != nil {
 		return nil, err
 	}
 	kvOptions := kvstore.FactoryOptions{
