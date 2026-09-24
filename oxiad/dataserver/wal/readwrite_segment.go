@@ -143,6 +143,7 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 		ms.lastCrc = initialLastCrc
 	}
 	if err = ms.zeroDiscardedTail(); err != nil {
+		codec.ReturnIndexBuf(&ms.writingIdx)
 		return nil, multierr.Combine(
 			errors.Wrapf(err, "failed to zero the discarded tail of segment file %s", ms.c.txnPath),
 			ms.txnMappedFile.Unmap(),
