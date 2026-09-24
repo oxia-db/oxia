@@ -19,6 +19,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,6 +33,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/rpc"
 )
 
 // testOxiaClientServer answers every data request with an empty success.
@@ -218,4 +221,58 @@ func TestRpcProvider_KeepAliveFailsFastWhenTargetIsUnreachable(t *testing.T) {
 	defer cancel()
 	_, err := provider.KeepAlive(ctx, unreachableAddress(t), &proto.SessionHeartbeat{})
 	assert.Equal(t, codes.Unavailable, status.Code(err), "unexpected error: %v", err)
+}
+
+// recordingClientPool records the targets that connections are requested for.
+type recordingClientPool struct {
+	rpc.ClientPool
+	mutex   sync.Mutex
+	targets []string
+}
+
+func (p *recordingClientPool) GetClientRpc(target string) (proto.OxiaClientClient, error) {
+	p.mutex.Lock()
+	p.targets = append(p.targets, target)
+	p.mutex.Unlock()
+	return p.ClientPool.GetClientRpc(target)
+}
+
+func (p *recordingClientPool) Targets() []string {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	return slices.Clone(p.targets)
+}
+
+// While a shard has no leader, e.g. during an election, its leader address is
+// empty: the client must not connect to it. The shard requests are retried
+// until the leader is known, while the session requests fail fast.
+func TestRpcProvider_ShardWithoutLeader(t *testing.T) {
+	shardId := int64(0)
+	noLeader := ""
+	leader := startTestOxiaClientServer(t)
+	shardManager := &testShardManager{}
+	shardManager.leader.Store(&noLeader)
+
+	provider := NewRpcProvider(t.Context(), constant.DefaultNamespace, nil, nil, leader,
+		func() ShardManager { return shardManager })
+	pool := &recordingClientPool{ClientPool: provider.(*rpcProvider).clientPool}
+	provider.(*rpcProvider).clientPool = pool
+	defer func() {
+		assert.NoError(t, provider.Close())
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	_, err := provider.KeepAlive(ctx, shardManager.Leader(shardId), &proto.SessionHeartbeat{Shard: shardId})
+	assert.Equal(t, codes.Unavailable, status.Code(err), "unexpected error: %v", err)
+
+	time.AfterFunc(300*time.Millisecond, func() { shardManager.leader.Store(&leader) })
+	_, err = provider.ExecuteRead(ctx, &proto.ReadRequest{
+		Shard: &shardId,
+		Gets:  []*proto.GetRequest{{Key: "key"}},
+	})
+	assert.NoError(t, err)
+
+	assert.NotContains(t, pool.Targets(), "")
 }

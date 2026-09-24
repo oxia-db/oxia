@@ -36,6 +36,10 @@ import (
 	commontime "github.com/oxia-db/oxia/common/time"
 )
 
+// errShardHasNoLeader replaces connecting to the empty leader address of a shard that has no leader, e.g.
+// while one is being elected. As an Unavailable status, it is retried by the shard requests only.
+var errShardHasNoLeader = status.Error(codes.Unavailable, "oxia: shard has no leader")
+
 type RpcProvider interface {
 	Executor
 	io.Closer
@@ -77,6 +81,9 @@ func (p *rpcProvider) Close() error {
 }
 
 func (p *rpcProvider) getClientByTarget(target string) (proto.OxiaClientClient, error) {
+	if target == "" {
+		return nil, errShardHasNoLeader
+	}
 	client, err := p.clientPool.GetClientRpc(target)
 	if err != nil {
 		oxiaErr, _ := constant.FromGrpcError(err)
