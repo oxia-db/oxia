@@ -564,17 +564,25 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 	})
 
 	n.statusLock.Lock()
-	defer n.statusLock.Unlock()
 	n.handshaking = false
 	if err != nil {
 		// The retries only stop when the controller is closing; a later
 		// observation may bind the node again.
+		n.statusLock.Unlock()
 		return
 	}
+	firstRunning := false
 	if n.status == NotRunning && n.statusEpoch == observedEpoch {
 		n.status = Running
+		firstRunning = n.runningSince.IsZero()
 		n.runningSince = time.Now()
 		n.advanceStatusEpochLocked()
+	}
+	n.statusLock.Unlock()
+
+	if firstRunning {
+		// The features the node supports were not known before this handshake
+		n.FeaturesDiscovered(n.dataServer.GetIdentity())
 	}
 }
 

@@ -468,6 +468,51 @@ func TestDataServerController_ConcurrentServingObservationsHandshakeOnce(t *test
 	assert.NoError(t, nc.Close())
 }
 
+// The features a data server supports are unknown until its first handshake,
+// which reports them to the listener. The later handshakes don't, even when
+// the data server comes back with a different binary: a feature is activated
+// by the next election after a rolling upgrade.
+func TestDataServerController_ReportsFeaturesOfFirstHandshakeOnly(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	node := rpc.GetNode(addr)
+	node.SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
+
+	select {
+	case discovered := <-nal.FeaturesDiscoveredEvents:
+		assert.Equal(t, addr, discovered)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the features of the data server were not reported")
+	}
+	assert.Equal(t, Running, nc.Status())
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, nc.SupportedFeatures())
+
+	// The data server restarts with a binary that supports more features
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	assert.Equal(t, addr, <-nal.Events)
+	node.SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES})
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+	assert.Equal(t, int64(2), node.HandshakeCount.Load())
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES},
+		nc.SupportedFeatures())
+
+	// Close waits for the health checks, so a report would be in the channel
+	assert.NoError(t, nc.Close())
+	assert.Len(t, nal.FeaturesDiscoveredEvents, 0, "only the first handshake reports the features")
+}
+
 func TestDataServerController_ShardsAssignments(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",

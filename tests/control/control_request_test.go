@@ -70,13 +70,8 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	defer client.Close()
 
 	// The client can connect before the shard leader is elected
-	assert.Eventually(t, func() bool {
-		shard := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces["default"].GetShards()[0]
-		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
-	}, 10*time.Second, 10*time.Millisecond)
-
-	resource := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
-	shardMetadata := resource.Namespaces["default"].Shards[0]
+	shardMetadata := waitForLeaderFeature(t, coordinatorInstance.Metadata(), serverInstanceIndex,
+		proto.Feature_FEATURE_DB_CHECKSUM)
 	leader := shardMetadata.Leader
 
 	// Write entries. The replication messages for these writes also carry

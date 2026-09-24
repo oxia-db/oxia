@@ -87,6 +87,8 @@ func (*testRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.Sha
 
 func (*testRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
+func (*testRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
+
 func (*testRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 
 func (*testRuntime) DeleteDataServer(string) {}

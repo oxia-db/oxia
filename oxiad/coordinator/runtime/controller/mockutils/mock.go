@@ -64,17 +64,23 @@ func (sap *ShardAssignmentsProvider) SubscribeShardAssignments() *commonwatch.Re
 }
 
 type NodeAvailabilityListener struct {
-	Events chan *proto.DataServerIdentity
+	Events                   chan *proto.DataServerIdentity
+	FeaturesDiscoveredEvents chan *proto.DataServerIdentity
 }
 
 func NewNodeAvailabilityListener() *NodeAvailabilityListener {
 	return &NodeAvailabilityListener{
-		Events: make(chan *proto.DataServerIdentity, 100),
+		Events:                   make(chan *proto.DataServerIdentity, 100),
+		FeaturesDiscoveredEvents: make(chan *proto.DataServerIdentity, 100),
 	}
 }
 
 func (nal *NodeAvailabilityListener) BecameUnavailable(node *proto.DataServerIdentity) {
 	nal.Events <- node
+}
+
+func (nal *NodeAvailabilityListener) FeaturesDiscovered(node *proto.DataServerIdentity) {
+	nal.FeaturesDiscoveredEvents <- node
 }
 
 type PerNodeChannels struct {

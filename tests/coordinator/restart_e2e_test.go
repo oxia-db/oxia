@@ -78,16 +78,25 @@ func TestCoordinator_RestartWithDataServerDown(t *testing.T) {
 		require.NoError(t, err)
 		return coordinatorServer, adminClient
 	}
+	// The shard leader enables the features. If the first election did not
+	// know the features of every data server yet, a new election enables them,
+	// and it can move the leader.
 	requireLeaderElected := func(adminClient oxia.AdminClient, minTerm int64) *proto.ShardMetadata {
 		t.Helper()
 		var shard *proto.ShardMetadata
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
 			ns, err := adminClient.GetNamespace(t.Context(), constant.DefaultNamespace)
-			if assert.NoError(c, err) {
-				shard = ns.GetNamespaceStatus().GetShards()[0]
-				assert.Equal(c, proto.ShardStatusSteadyState, shard.GetStatusOrDefault())
-				assert.NotNil(c, shard.GetLeader())
-				assert.GreaterOrEqual(c, shard.GetTerm(), minTerm)
+			if !assert.NoError(c, err) {
+				return
+			}
+			shard = ns.GetNamespaceStatus().GetShards()[0]
+			assert.Equal(c, proto.ShardStatusSteadyState, shard.GetStatusOrDefault())
+			assert.GreaterOrEqual(c, shard.GetTerm(), minTerm)
+			if assert.NotNil(c, shard.GetLeader()) {
+				lead, err := servers[shard.GetLeader().GetNameOrDefault()].GetShardDirector().GetLeader(0)
+				if assert.NoError(c, err) {
+					assert.True(c, lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+				}
 			}
 		}, 30*time.Second, 50*time.Millisecond)
 		return shard
@@ -96,11 +105,6 @@ func TestCoordinator_RestartWithDataServerDown(t *testing.T) {
 	coordinatorServer, adminClient := startCoordinator()
 	shard := requireLeaderElected(adminClient, 0)
 	leader := shard.GetLeader().GetNameOrDefault()
-	lead, err := servers[leader].GetShardDirector().GetLeader(0)
-	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		return lead.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM)
-	}, 30*time.Second, 50*time.Millisecond)
 
 	require.NoError(t, adminClient.Close())
 	require.NoError(t, coordinatorServer.Close())
