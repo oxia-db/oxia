@@ -34,9 +34,9 @@ func TestV1_Codec(t *testing.T) {
 	payload := []byte{1}
 	recordSize, _ := v1.WriteRecord(buf, 0, 0, payload)
 	assert.EqualValues(t, recordSize, 5)
-	getRecordSize, err := v1.GetRecordSize(buf, 0)
+	payloadSize, _, _, err := v1.ReadHeaderWithValidation(buf, 0)
 	assert.NoError(t, err)
-	assert.EqualValues(t, getRecordSize, recordSize)
+	assert.EqualValues(t, recordSize-v1PayloadSizeLen, payloadSize)
 
 	getPayload, _, _, err := v1.ReadRecordWithValidation(buf, 0)
 	assert.NoError(t, err)
@@ -51,9 +51,6 @@ func TestV1_BreakingPoint_SizeOverflow(t *testing.T) {
 	binary.BigEndian.PutUint32(buf, math.MaxUint32)
 
 	_, _, _, err := v1.ReadHeaderWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
-
-	_, err = v1.GetRecordSize(buf, 0)
 	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
 }
 

@@ -37,9 +37,6 @@ func TestV2_Codec(t *testing.T) {
 	payload := []byte{1}
 	recordSize, _ := v2.WriteRecord(buf, 0, 0, payload)
 	assert.EqualValues(t, recordSize, 13)
-	getRecordSize, err := v2.GetRecordSize(buf, 0)
-	assert.NoError(t, err)
-	assert.EqualValues(t, getRecordSize, recordSize)
 	payloadSize, previousCrc, payloadCrc, err := v2.ReadHeaderWithValidation(buf, 0)
 	assert.NoError(t, err)
 	assert.EqualValues(t, previousCrc, 0)
@@ -210,9 +207,6 @@ func TestV2_BreakingPoint_SizeOverflow(t *testing.T) {
 	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
 
 	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
-
-	_, err = v2.GetRecordSize(buf, 0)
 	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
 }
 

@@ -123,6 +123,11 @@ type leaderController struct {
 	// truncate the followers.
 	leaderElectionHeadEntryId *proto.EntryId
 
+	// The database commit offset at the time the controller was created. It's
+	// the commit offset reported to the WAL while there is no quorum ack
+	// tracker, starting from the WAL recovery.
+	dbCommitOffset int64
+
 	ctx            context.Context
 	cancel         context.CancelFunc
 	waitGroup      sync.WaitGroup
@@ -201,16 +206,23 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 	// The session manager already runs its expiry goroutine: Close the
 	// controller on any failure from here on
 	var err error
-	if lc.wal, err = walFactory.NewWal(namespace, shardId, lc); err != nil {
-		return nil, multierr.Append(err, lc.Close())
-	}
-
 	keySorting := proto.KeySortingType_UNKNOWN
 	if newTermOptions != nil {
 		keySorting = newTermOptions.KeySorting
 	}
 
 	if lc.db, err = database.NewDB(namespace, shardId, kvFactory, keySorting, storageOptions.Notification.Retention.ToDuration(), time2.SystemClock); err != nil {
+		return nil, multierr.Append(err, lc.Close())
+	}
+
+	// Open the WAL after the database: the WAL recovery only discards the
+	// corrupted entries above the database commit offset, as never committed,
+	// and fails on the ones below it
+	if lc.dbCommitOffset, err = lc.db.ReadCommitOffset(); err != nil {
+		return nil, multierr.Append(err, lc.Close())
+	}
+
+	if lc.wal, err = walFactory.NewWal(namespace, shardId, lc); err != nil {
 		return nil, multierr.Append(err, lc.Close())
 	}
 
@@ -1362,7 +1374,7 @@ func (lc *leaderController) CommitOffset() int64 {
 	if qat != nil {
 		return qat.CommitOffset()
 	}
-	return wal.InvalidOffset
+	return lc.dbCommitOffset
 }
 
 func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
