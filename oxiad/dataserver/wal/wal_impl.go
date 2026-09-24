@@ -17,7 +17,6 @@ package wal
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -843,26 +842,4 @@ func listAllSegments(walPath string) (segments []int64, err error) {
 
 	slices.Sort(segments)
 	return segments, nil
-}
-
-// FindSegmentFiles returns the segment files, of every codec, in the shard
-// directories under dir, laid out as under the wal dir:
-// <dir>/<namespace>/shard-<id>.
-func FindSegmentFiles(dir string) ([]string, error) {
-	// Glob in the file system of dir, so that the metacharacters in its path
-	// are not taken as pattern syntax
-	fsys := os.DirFS(dir)
-	var files []string
-	for _, _codec := range codec.SupportedCodecs {
-		for _, extension := range []string{_codec.GetTxnExtension(), _codec.GetIdxExtension()} {
-			matches, err := fs.Glob(fsys, "*/shard-*/*"+extension)
-			if err != nil {
-				return nil, err
-			}
-			for _, match := range matches {
-				files = append(files, filepath.Join(dir, filepath.FromSlash(match)))
-			}
-		}
-	}
-	return files, nil
 }

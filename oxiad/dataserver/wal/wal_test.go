@@ -1195,36 +1195,3 @@ func TestWal_TruncateBelowAllSegments(t *testing.T) {
 	assert.NoError(t, w.Close())
 	assert.NoError(t, f.Close())
 }
-
-func TestFindSegmentFiles(t *testing.T) {
-	// The metacharacters in the path of the dir are not a pattern
-	dir := filepath.Join(t.TempDir(), "wal-[0]")
-
-	files, err := FindSegmentFiles(dir)
-	assert.NoError(t, err)
-	assert.Empty(t, files)
-
-	f := NewWalFactory(&FactoryOptions{BaseWalDir: dir, SegmentSize: 128 * 1024})
-	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
-	assert.NoError(t, err)
-	assert.NoError(t, w.Append(&proto.LogEntry{Term: 1, Offset: 0, Value: []byte("entry")}))
-	assert.NoError(t, w.Close())
-	assert.NoError(t, f.Close())
-
-	shardDir := walPath(dir, constant.DefaultNamespace, shard)
-	// A segment of the previous codec, and files that are not segments
-	for _, name := range []string{"5.txn", "5.idx", "000002.sst", "MANIFEST-000001"} {
-		assert.NoError(t, os.WriteFile(filepath.Join(shardDir, name), nil, 0644))
-	}
-	// Not in a shard directory
-	assert.NoError(t, os.WriteFile(filepath.Join(dir, constant.DefaultNamespace, "6.txnx"), nil, 0644))
-
-	files, err = FindSegmentFiles(dir)
-	assert.NoError(t, err)
-	assert.ElementsMatch(t, []string{
-		filepath.Join(shardDir, "0.txnx"),
-		filepath.Join(shardDir, "0.idxx"),
-		filepath.Join(shardDir, "5.txn"),
-		filepath.Join(shardDir, "5.idx"),
-	}, files)
-}

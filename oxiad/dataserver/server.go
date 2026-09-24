@@ -16,7 +16,10 @@ package dataserver
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -38,6 +41,7 @@ import (
 	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
 type Server struct {
@@ -170,7 +174,7 @@ func checkStorageDirs(storage *option.StorageOptions) error {
 	if err := storage.Validate(); err != nil {
 		return err
 	}
-	segmentFiles, err := wal.FindSegmentFiles(storage.Database.Dir)
+	segmentFiles, err := findWalSegmentFiles(storage.Database.Dir)
 	if err != nil {
 		return err
 	}
@@ -181,6 +185,27 @@ func checkStorageDirs(storage *option.StorageOptions) error {
 			storage.Database.Dir, segmentFiles[0], storage.WAL.Dir)
 	}
 	return nil
+}
+
+// findWalSegmentFiles returns the WAL segment files, of every codec, in the
+// shard directories under dir: <dir>/<namespace>/shard-<id>.
+func findWalSegmentFiles(dir string) ([]string, error) {
+	// Glob in the file system of dir, so that the metacharacters in its path
+	// are not taken as pattern syntax
+	fsys := os.DirFS(dir)
+	var files []string
+	for _, walCodec := range codec.SupportedCodecs {
+		for _, extension := range []string{walCodec.GetTxnExtension(), walCodec.GetIdxExtension()} {
+			matches, err := fs.Glob(fsys, "*/shard-*/*"+extension)
+			if err != nil {
+				return nil, err
+			}
+			for _, match := range matches {
+				files = append(files, filepath.Join(dir, filepath.FromSlash(match)))
+			}
+		}
+	}
+	return files, nil
 }
 
 func (s *Server) GetShardDirector() controller.ShardsDirector {
