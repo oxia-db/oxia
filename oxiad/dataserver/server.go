@@ -76,6 +76,11 @@ func NewWithGrpcProvider(parent context.Context, watchableOption *commonoption.W
 	slog.Info("Starting Oxia dataServer", slog.Any("options", options))
 
 	storage := &options.Storage
+	// Embedded servers can skip the validation that the server command runs,
+	// and the storage must not be opened with a wal dir that is the data dir
+	if err := storage.Validate(); err != nil {
+		return nil, err
+	}
 	kvFactory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{
 		DataDir:     storage.Database.Dir,
 		CacheSizeMB: storage.Database.ReadCacheSizeMB,

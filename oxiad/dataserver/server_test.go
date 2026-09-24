@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -112,4 +114,22 @@ func TestNewServerAuthorityValidationFeatureFlag(t *testing.T) {
 			assert.Equal(t, tt.enabled, server.authorityValidationEnabled)
 		})
 	}
+}
+
+func TestNewServerRejectsSameWalAndDataDir(t *testing.T) {
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.Enabled = &constant.FlagFalse
+	dir := filepath.Join(t.TempDir(), "data")
+	options.Storage.Database.Dir = dir
+	options.Storage.WAL.Dir = dir
+
+	server, err := New(t.Context(), commonoption.NewWatch(options))
+	assert.ErrorContains(t, err, "are the same directory")
+	assert.Nil(t, server)
+
+	// Refused before writing anything
+	_, err = os.Stat(dir)
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }

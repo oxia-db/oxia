@@ -59,7 +59,7 @@ func init() {
 	var walRetention = 1 * time.Hour
 	var notificationRetention = 1 * time.Hour
 
-	Cmd.Flags().StringVar(&storageOptions.WAL.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
+	Cmd.Flags().StringVar(&storageOptions.WAL.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs, different from --data-dir")
 	Cmd.Flags().DurationVar(&walRetention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
 	Cmd.Flags().BoolVar(storageOptions.WAL.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-logs")
 
