@@ -141,7 +141,7 @@ type controller struct {
 	// statusChanged is closed, and replaced, every time statusEpoch
 	// increments, to wake up the goroutines waiting for a status transition.
 	// Guarded by statusLock.
-	statusChanged chan struct{}
+	statusChanged chan any
 	// handshaking is set while the NotRunning -> Running handshake is in
 	// flight: the watch and ping paths can both observe SERVING for the same
 	// status epoch (e.g. at startup), and only the first one binds the node.
@@ -205,7 +205,7 @@ func (n *controller) currentStatusEpoch() int64 {
 func (n *controller) advanceStatusEpochLocked() {
 	n.statusEpoch++
 	close(n.statusChanged)
-	n.statusChanged = make(chan struct{})
+	n.statusChanged = make(chan any)
 }
 
 func (n *controller) Close() error {
@@ -629,7 +629,7 @@ func newController(ctx context.Context, dataServer *proto.DataServer,
 		insID:                      insID,
 		statusLock:                 sync.RWMutex{},
 		status:                     NotRunning,
-		statusChanged:              make(chan struct{}),
+		statusChanged:              make(chan any),
 		supportedFeatures:          supportedFeatures,
 		logger:                     logger,
 		healthPolicy:               healthPolicy,
