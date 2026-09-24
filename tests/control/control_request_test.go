@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
 	clientrpc "github.com/oxia-db/oxia/common/rpc"
@@ -63,6 +64,11 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithNamespace("default"))
 	assert.NoError(t, err)
 	defer client.Close()
+
+	require.Eventually(t, func() bool {
+		shard := coordinatorInstance.StatusResource().Load().Namespaces["default"].Shards[0]
+		return shard.Status == model.ShardStatusSteadyState && shard.Leader != nil
+	}, 10*time.Second, 100*time.Millisecond)
 
 	resource := coordinatorInstance.StatusResource().Load()
 	shardMetadata := resource.Namespaces["default"].Shards[0]

@@ -472,6 +472,51 @@ func TestCoordinator_NoNamespacesSendsEmptyAssignments(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 }
 
+func TestCoordinator_RestartPublishesRestoredAssignments(t *testing.T) {
+	s1, sa1 := newServer(t)
+	defer s1.Close()
+
+	metadataProvider := metadata.NewMetadataProviderMemory()
+	clusterConfig := model.ClusterConfig{
+		Namespaces: []model.NamespaceConfig{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 1,
+			InitialShardCount: 1,
+		}},
+		Servers: []model.Server{sa1},
+	}
+	clientPool := rpc.NewClientPool(nil, nil)
+	defer clientPool.Close()
+
+	newCoordinator := func() coordinator.Coordinator {
+		coordinatorInstance, err := coordinator.NewCoordinator(metadataProvider, func() (model.ClusterConfig, error) {
+			return clusterConfig, nil
+		}, nil, rpc2.NewRpcProvider(clientPool))
+		require.NoError(t, err)
+		return coordinatorInstance
+	}
+
+	coordinatorInstance := newCoordinator()
+	require.Eventually(t, func() bool {
+		shard := coordinatorInstance.StatusResource().Load().Namespaces[constant.DefaultNamespace].Shards[0]
+		return shard.Status == model.ShardStatusSteadyState
+	}, 10*time.Second, 10*time.Millisecond)
+	require.NoError(t, coordinatorInstance.Close())
+
+	coordinatorInstance = newCoordinator()
+	defer coordinatorInstance.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	assignments, err := coordinatorInstance.WaitForNextUpdate(ctx, nil)
+	require.NoError(t, err)
+
+	namespaceAssignments, ok := assignments.Namespaces[constant.DefaultNamespace]
+	require.True(t, ok)
+	require.Len(t, namespaceAssignments.Assignments, 1)
+	assert.Equal(t, sa1.Public, namespaceAssignments.Assignments[0].Leader)
+}
+
 func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 	s1, sa1 := newServer(t)
 	s2, sa2 := newServer(t)
