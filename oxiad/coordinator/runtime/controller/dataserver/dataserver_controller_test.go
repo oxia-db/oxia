@@ -653,3 +653,47 @@ func TestDataServerController_RecoversFromStreamEstablishmentRejection(t *testin
 
 	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
 }
+
+// TestDataServerController_SendsAssignmentsRightAfterHandshake reproduces the
+// late first assignments of a data server that is not bound to the coordinator
+// yet: it rejects the assignments stream until the handshake binds it, and a
+// rejected stream is only retried after the full retry backoff. The dispatcher
+// must wait for the handshake instead, and send the assignments right after it.
+func TestDataServerController_SendsAssignmentsRightAfterHandshake(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	node := rpc.GetNode(addr)
+
+	// The data server rejects the stream until the handshake, held in flight
+	// here, binds it.
+	rpc.FailNode(addr, constant.ErrNotInitialized)
+	node.BlockHandshakes()
+
+	// A rejected stream would only be retried after 30s to 90s
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", time.Minute, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	assert.Eventually(t, func() bool {
+		return node.HandshakeCount.Load() >= 1
+	}, 10*time.Second, 10*time.Millisecond)
+	// Leave the dispatcher the time to open the stream before the handshake
+	// completes, if it would.
+	time.Sleep(10 * testHealthPolicy.probeInterval)
+
+	// The handshake binds the data server
+	rpc.RecoverNode(addr)
+	node.ReleaseHandshakes()
+
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+	assert.Equal(t, int64(1), node.PushShardAssignmentsCount.Load(),
+		"the stream must be opened once, after the handshake")
+}
