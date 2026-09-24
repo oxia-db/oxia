@@ -24,8 +24,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	pb "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
-
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -61,44 +59,50 @@ func TestStandaloneSecondaryIndexNameValidation(t *testing.T) {
 }
 
 // With the same WAL dir and data dir, the WAL segments and the database of a
-// shard share one directory, and both must survive a restart.
+// shard share one directory, and both must survive the restarts, including
+// one that converts the database.
 func TestStandaloneSharedWalAndDataDir(t *testing.T) {
-	config := NewTestConfig(t.TempDir())
-	config.DataServerOptions.Storage.WAL.Dir = config.DataServerOptions.Storage.Database.Dir
-	createSession := func(leader lead.LeaderController) int64 {
-		res, err := leader.CreateSession(&proto.CreateSessionRequest{
-			Shard:            0,
-			SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
-			ClientIdentity:   "client",
+	for _, test := range []struct {
+		name string
+		// The key sorting of each start
+		keySorting []proto.KeySortingType
+	}{
+		{"restart", []proto.KeySortingType{proto.KeySortingType_UNKNOWN, proto.KeySortingType_UNKNOWN}},
+		// The second start converts the database, with the WAL segments open
+		// in its directory, and the third one recovers the WAL from them
+		{"conversion", []proto.KeySortingType{proto.KeySortingType_NATURAL,
+			proto.KeySortingType_HIERARCHICAL, proto.KeySortingType_HIERARCHICAL}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := NewTestConfig(t.TempDir())
+			config.DataServerOptions.Storage.WAL.Dir = config.DataServerOptions.Storage.Database.Dir
+			lastSessionId := int64(-1)
+			for i, keySorting := range test.keySorting {
+				config.KeySorting = keySorting
+				standaloneServer, err := NewStandalone(config)
+				require.NoError(t, err)
+				leader, err := standaloneServer.shardsDirector.GetLeader(0)
+				require.NoError(t, err)
+
+				if i > 0 {
+					// The WAL must still hold the entries that the database applied
+					status, err := leader.GetStatus(&proto.GetStatusRequest{Shard: 0})
+					require.NoError(t, err)
+					assert.GreaterOrEqual(t, status.CommitOffset, lastSessionId)
+					assert.Equal(t, status.CommitOffset, status.HeadOffset)
+				}
+
+				// and new entries must not reuse their offsets
+				res, err := leader.CreateSession(&proto.CreateSessionRequest{
+					Shard:            0,
+					SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+					ClientIdentity:   "client",
+				})
+				require.NoError(t, err)
+				assert.Greater(t, res.SessionId, lastSessionId)
+				lastSessionId = res.SessionId
+				require.NoError(t, standaloneServer.Close())
+			}
 		})
-		require.NoError(t, err)
-		return res.SessionId
 	}
-
-	standaloneServer, err := NewStandalone(config)
-	require.NoError(t, err)
-	leader, err := standaloneServer.shardsDirector.GetLeader(0)
-	require.NoError(t, err)
-	_, err = leader.WriteBlock(t.Context(), &proto.WriteRequest{
-		Shard: pb.Int64(0),
-		Puts:  []*proto.PutRequest{{Key: "key", Value: []byte("value")}},
-	})
-	require.NoError(t, err)
-	sessionId := createSession(leader)
-	require.NoError(t, standaloneServer.Close())
-
-	standaloneServer, err = NewStandalone(config)
-	require.NoError(t, err)
-	defer standaloneServer.Close()
-	leader, err = standaloneServer.shardsDirector.GetLeader(0)
-	require.NoError(t, err)
-
-	// The WAL must still hold the entries that the database applied
-	status, err := leader.GetStatus(&proto.GetStatusRequest{Shard: 0})
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, status.CommitOffset, sessionId)
-	assert.Equal(t, status.CommitOffset, status.HeadOffset)
-
-	// and new entries must not reuse their offsets
-	assert.Greater(t, createSession(leader), sessionId)
 }
