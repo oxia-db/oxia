@@ -15,6 +15,8 @@
 package dataserver
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -56,4 +58,19 @@ func TestStandaloneSecondaryIndexNameValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, response.GetPuts(), 1)
 	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[0].GetStatus())
+}
+
+func TestStandaloneRejectsSameWalAndDataDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	config := NewTestConfig(t.TempDir())
+	config.DataServerOptions.Storage.WAL.Dir = dir
+	config.DataServerOptions.Storage.Database.Dir = dir
+
+	standaloneServer, err := NewStandalone(config)
+	assert.ErrorContains(t, err, "are the same directory")
+	assert.Nil(t, standaloneServer)
+
+	// Refused before writing anything
+	_, err = os.Stat(dir)
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
