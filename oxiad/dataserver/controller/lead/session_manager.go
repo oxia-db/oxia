@@ -58,13 +58,13 @@ type SessionId int64
 // that registers the session.
 //
 // Encoding the term keeps the ids issued in different terms in disjoint
-// ranges, even though the WAL offsets may restart from scratch: a restart
-// always moves to a new term, and the offsets of a term can be replayed
-// from the beginning when the WAL is lost or truncated (e.g. by a crash, a
-// truncation, or a co-located data dir being wiped) while the database
-// still holds the sessions registered in earlier terms. With the id derived
-// from the offset alone, such a restart could mint an id already assigned
-// to a live session, silently merging the two sessions.
+// ranges: the WAL offset is per-term — every term counts its offsets from
+// the beginning — so after any restart (even a healthy one, with the WAL
+// and the database fully intact) the new term re-issues offsets that the
+// previous term already handed out as session ids, while sessions
+// registered before the restart are recovered from the database and still
+// alive. Deriving the id from the offset alone would then mint an id
+// already assigned to a live session, silently merging the two sessions.
 func deriveSessionId(term int64, offset int64) (SessionId, error) {
 	if term < 0 || term >= maxSessionIdTerm {
 		return 0, errors.Errorf("cannot derive session id: term %d is not in [0, %d)", term, maxSessionIdTerm)
