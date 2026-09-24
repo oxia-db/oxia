@@ -84,6 +84,8 @@ type Election struct {
 	// requiredFeatures are the features that an earlier attempt found
 	// already enabled on the shard, which the next attempts must pin
 	requiredFeatures []proto.Feature
+	// pinnedFeatures are the features pinned by the term of the elected leader
+	pinnedFeatures []proto.Feature
 	// started
 	started atomic.Bool
 }
@@ -545,6 +547,7 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 		e.mutableShardMetadata.RemovedNodes)
 	e.mutableShardMetadata.RemovedNodes = nil
 	e.mutableShardMetadata.Leader = newLeader
+	e.pinnedFeatures = negotiatedFeatures
 
 	term := e.mutableShardMetadata.Term
 	ensemble := e.mutableShardMetadata.Ensemble
@@ -642,6 +645,18 @@ func (e *Election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 		return fmt.Errorf("%w: the ensemble now supports features %v", ErrFeaturesRenegotiation, added)
 	}
 	return nil
+}
+
+// unpinnedFeatures returns the features that the whole ensemble supports, as
+// far as the members' features are known now, but that the term of the
+// elected leader does not pin.
+func (e *Election) unpinnedFeatures() []proto.Feature {
+	if e.mutableShardMetadata.GetLeader() == nil {
+		// No leader was elected
+		return nil
+	}
+	ensemble := e.mutableShardMetadata.Ensemble
+	return feature.Missing(negotiate(e.dataServerSupportedFeaturesSupplier(ensemble), len(ensemble)), e.pinnedFeatures)
 }
 
 func unionFeatures(a []proto.Feature, b []proto.Feature) []proto.Feature {

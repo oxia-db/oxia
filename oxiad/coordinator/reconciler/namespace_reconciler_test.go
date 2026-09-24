@@ -286,6 +286,8 @@ func (*mockNamespaceRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*
 
 func (*mockNamespaceRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
+func (*mockNamespaceRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
+
 func (*mockNamespaceRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 
 func (*mockNamespaceRuntime) DeleteDataServer(string) {}

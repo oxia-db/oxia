@@ -94,10 +94,11 @@ type controller struct {
 	metadataStore                       coordmetadata.Metadata
 	dataServerSupportedFeaturesSupplier DataServerSupportedFeaturesSupplier
 
-	electionOp          chan *action.ElectionAction
-	deleteOp            chan any
-	dataServerFailureOp chan *proto.DataServerIdentity
-	changeEnsembleOp    chan *action.ChangeEnsembleAction
+	electionOp           chan *action.ElectionAction
+	deleteOp             chan any
+	dataServerFailureOp  chan *proto.DataServerIdentity
+	featuresDiscoveredOp chan *proto.DataServerIdentity
+	changeEnsembleOp     chan *action.ChangeEnsembleAction
 
 	ctx                   context.Context
 	ctxCancel             context.CancelFunc
@@ -131,6 +132,20 @@ func (s *controller) BecameUnavailable(dataServer *proto.DataServerIdentity) {
 	}
 }
 
+func (s *controller) FeaturesDiscovered(dataServer *proto.DataServerIdentity) {
+	s.terminationMu.RLock()
+	defer s.terminationMu.RUnlock()
+	if s.terminating.Load() {
+		return
+	}
+	if !channel.PushNoBlock(s.featuresDiscoveredOp, dataServer) {
+		s.logger.Debug(
+			"Discarding data server features notification because queue is full",
+			slog.Any("data-server", dataServer),
+		)
+	}
+}
+
 //nolint:revive
 func NewController(
 	namespace string,
@@ -155,6 +170,7 @@ func NewController(
 		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
 		deleteOp:                            make(chan any, chanBufferSize),
 		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
+		featuresDiscoveredOp:                make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
@@ -273,6 +289,8 @@ func (s *controller) run() {
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
 			s.handleDataServerFailure(n)
+		case n := <-s.featuresDiscoveredOp:
+			s.handleFeaturesDiscovered(n)
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
 		case <-periodicTasksTimer.C:
@@ -331,6 +349,41 @@ func (s *controller) handleDataServerFailure(failedDataServer *proto.DataServerI
 		)
 		s.onElectLeader(nil)
 	}
+}
+
+// handleFeaturesDiscovered starts a new election when the current term was
+// negotiated without the features of an ensemble member, because it had not
+// completed its first handshake yet (e.g. its NewTerm reached it before the
+// handshake), and the whole ensemble supports more features than the term
+// pinned now that they are known. Otherwise, a new shard would run without
+// them until its next election.
+func (s *controller) handleFeaturesDiscovered(dataServer *proto.DataServerIdentity) {
+	if s.currentElection == nil {
+		// The current term was not negotiated by this coordinator
+		return
+	}
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while handling discovered features: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+	if shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState || shardMeta.Split != nil {
+		return
+	}
+	if !slices.ContainsFunc(shardMeta.Ensemble, func(member *proto.DataServerIdentity) bool {
+		return member.GetNameOrDefault() == dataServer.GetNameOrDefault()
+	}) {
+		return
+	}
+	features := s.currentElection.unpinnedFeatures()
+	if len(features) == 0 {
+		return
+	}
+	s.logger.Info(
+		"Starting a new election to pin the features supported by the ensemble",
+		slog.Any("data-server", dataServer),
+		slog.Any("features", features),
+	)
+	s.onElectLeader(nil)
 }
 
 func (s *controller) verifyCurrentEnsemble(initShardMeta *proto.ShardMetadata) bool {
@@ -583,6 +636,7 @@ func (s *controller) Close() error {
 				electionAction.Done("")
 			case <-s.deleteOp:
 			case <-s.dataServerFailureOp:
+			case <-s.featuresDiscoveredOp:
 			case op := <-s.changeEnsembleOp:
 				op.Error(constant.ErrResourceUnavailable)
 			default:

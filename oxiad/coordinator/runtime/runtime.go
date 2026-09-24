@@ -455,6 +455,15 @@ func (c *runtime) BecameUnavailable(node *proto.DataServerIdentity) {
 	}
 }
 
+func (c *runtime) FeaturesDiscovered(node *proto.DataServerIdentity) {
+	c.RLock()
+	defer c.RUnlock()
+
+	for _, sc := range c.shardControllers {
+		sc.FeaturesDiscovered(node)
+	}
+}
+
 func (c *runtime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.ShardAssignments] {
 	return c.assignmentsWatch.Subscribe()
 }
