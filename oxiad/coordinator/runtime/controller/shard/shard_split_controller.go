@@ -869,8 +869,8 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 }
 
 // updateShardsMeta persists changes to the metadata of several shards in a
-// single status update. A failed write returns a permanent error, as in
-// updateShardMeta.
+// single status update: all of them, or none if one of the shards is gone. A
+// failed write returns a permanent error, as in updateShardMeta.
 func (sc *SplitController) updateShardsMeta(updates map[int64]func(meta *proto.ShardMetadata)) error {
 	ns, exists := sc.metadata.GetNamespaceStatus(sc.namespace)
 	if !exists {
@@ -882,10 +882,7 @@ func (sc *SplitController) updateShardsMeta(updates map[int64]func(meta *proto.S
 	for shardId, fn := range updates {
 		meta, exists := ns.UnsafeBorrow().Shards[shardId]
 		if !exists {
-			sc.logger.Warn("shard metadata not found while updating shards metadata",
-				slog.String("namespace", sc.namespace),
-				slog.Int64("shard", shardId))
-			continue
+			return backoff.Permanent(errors.Errorf("shard %d not found while updating shards metadata", shardId))
 		}
 		cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
 		fn(cloned)
