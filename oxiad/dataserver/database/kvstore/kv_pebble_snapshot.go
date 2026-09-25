@@ -43,7 +43,7 @@ type pebbleSnapshotChunk struct {
 
 func newPebbleSnapshot(p *Pebble) (Snapshot, error) {
 	ps := &pebbleSnapshot{
-		path: filepath.Join(p.factory.dataDir, validation.DataServerSnapshotsDir,
+		path: filepath.Join(p.factory.dataDir, validation.KeywordNamespaceSnapshots,
 			fmt.Sprintf("shard-%d", p.shardId),
 			fmt.Sprintf("snapshot-%d", p.snapshotCounter.Add(1))),
 	}
