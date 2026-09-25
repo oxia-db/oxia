@@ -244,30 +244,27 @@ func isFinalizingSplitParent(meta *proto.ShardMetadata) bool {
 	return len(split.GetChildShardIds()) > 0 && split.GetPhaseOrDefault() == proto.SplitPhaseFinalize
 }
 
-// updatePhase atomically updates the split phase on both parent and children.
-// Failing to persist it stops the split, as in updateShardMeta.
+// updatePhase atomically updates the split phase on both parent and children,
+// on their current metadata. Failing to persist it stops the split, as in
+// updateShardMeta.
 func (sc *SplitController) updatePhase(newPhase proto.SplitPhase) error {
-	currentNS, exists := sc.metadata.GetNamespaceStatus(sc.namespace)
-	if !exists {
+	if _, exists := sc.metadata.GetNamespaceStatus(sc.namespace); !exists {
 		sc.logger.Warn("namespace status not found while updating split phase",
 			slog.String("namespace", sc.namespace),
 			slog.String("phase", newPhase.String()))
 		return nil
 	}
-	ns := gproto.Clone(currentNS.UnsafeBorrow()).(*proto.NamespaceStatus) //nolint:revive
-	changed := false
-	for _, shardId := range []int64{sc.parentShardId, sc.leftChildId, sc.rightChildId} {
-		meta, exists := ns.Shards[shardId]
-		if !exists || meta.Split == nil {
-			continue
+	if err := sc.metadata.UpdateShardStatuses(sc.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		changed := false
+		for _, shardId := range []int64{sc.parentShardId, sc.leftChildId, sc.rightChildId} {
+			if meta, exists := shards[shardId]; exists && meta.Split != nil {
+				meta.Split.Phase = newPhase
+				changed = true
+			}
 		}
-		meta.Split.Phase = newPhase
-		changed = true
-	}
-	if changed {
-		if err := sc.metadata.UpdateNamespaceStatus(sc.namespace, ns); err != nil {
-			return backoff.Permanent(err)
-		}
+		return changed
+	}); err != nil {
+		return backoff.Permanent(err)
 	}
 	return nil
 }
@@ -912,26 +909,33 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 }
 
 // updateShardsMeta persists changes to the metadata of several shards in a
-// single status update: all of them, or none if one of the shards is gone. A
-// failed write returns a permanent error, as in updateShardMeta.
+// single status update, applied to their current metadata: all of them, or
+// none if one of the shards is gone. A failed write returns a permanent error,
+// as in updateShardMeta.
 func (sc *SplitController) updateShardsMeta(updates map[int64]func(meta *proto.ShardMetadata)) error {
-	ns, exists := sc.metadata.GetNamespaceStatus(sc.namespace)
-	if !exists {
+	if _, exists := sc.metadata.GetNamespaceStatus(sc.namespace); !exists {
 		sc.logger.Warn("namespace status not found while updating shards metadata",
 			slog.String("namespace", sc.namespace))
 		return nil
 	}
-	shardsMetadata := make(map[int64]*proto.ShardMetadata, len(updates))
-	for shardId, fn := range updates {
-		meta, exists := ns.UnsafeBorrow().Shards[shardId]
-		if !exists {
-			return backoff.Permanent(errors.Errorf("shard %d not found while updating shards metadata", shardId))
+	var notFound error
+	err := sc.metadata.UpdateShardStatuses(sc.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		notFound = nil
+		for shardId := range updates {
+			if _, exists := shards[shardId]; !exists {
+				notFound = errors.Errorf("shard %d not found while updating shards metadata", shardId)
+				return false
+			}
 		}
-		cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
-		fn(cloned)
-		shardsMetadata[shardId] = cloned
+		for shardId, fn := range updates {
+			fn(shards[shardId])
+		}
+		return true
+	})
+	if err == nil {
+		err = notFound
 	}
-	if err := sc.metadata.UpdateShardStatuses(sc.namespace, shardsMetadata); err != nil {
+	if err != nil {
 		return backoff.Permanent(err)
 	}
 	return nil

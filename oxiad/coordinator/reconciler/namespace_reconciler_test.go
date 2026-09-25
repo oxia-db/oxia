@@ -119,16 +119,6 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	return true
 }
 
-func (m *mockNamespaceMetadata) UpdateNamespaceStatus(name string, status *proto.NamespaceStatus) error {
-	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
-	if _, exists := cloned.Namespaces[name]; !exists {
-		return nil
-	}
-	cloned.Namespaces[name] = gproto.Clone(status).(*proto.NamespaceStatus)
-	m.status = cloned
-	return nil
-}
-
 func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
 	namespaces := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
@@ -183,12 +173,13 @@ func (m *mockNamespaceMetadata) UpdateShardStatus(namespace string, shard int64,
 	return nil
 }
 
-func (m *mockNamespaceMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) error {
-	for shard, shardMetadata := range shardsMetadata {
-		if err := m.UpdateShardStatus(namespace, shard, shardMetadata); err != nil {
-			return err
-		}
+func (m *mockNamespaceMetadata) UpdateShardStatuses(namespace string, update func(map[int64]*proto.ShardMetadata) bool) error {
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
+	ns, exists := cloned.GetNamespaces()[namespace]
+	if !exists || !update(ns.Shards) {
+		return nil
 	}
+	m.status = cloned
 	return nil
 }
 
