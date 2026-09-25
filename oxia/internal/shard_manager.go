@@ -82,6 +82,7 @@ func NewShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider,
 	sm.ctx, sm.cancel = context.WithCancel(context.Background())
 
 	if err := sm.start(); err != nil {
+		_ = sm.Close()
 		return nil, errors.Wrap(err, "oxia: failed to retrieve the initial list of shard assignments")
 	}
 

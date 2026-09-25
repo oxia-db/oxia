@@ -157,3 +157,30 @@ func TestShardManagerCloseWhileWaitingToRetry(t *testing.T) {
 		require.FailNow(t, "the shard manager kept receiving the assignments after it was closed")
 	}
 }
+
+// Waits for the shard manager to cancel the request of the assignments.
+type pendingAssignmentsRpcProvider struct {
+	RpcProvider
+	canceled chan struct{}
+}
+
+func (p *pendingAssignmentsRpcProvider) GetShardAssignments(ctx context.Context, _ string,
+	_ *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	<-ctx.Done()
+	close(p.canceled)
+	return nil, ctx.Err()
+}
+
+// A shard manager that does not receive the initial assignments in time fails
+// to start, and must stop requesting them.
+func TestNewShardManagerStopsReceivingOnTimeout(t *testing.T) {
+	provider := &pendingAssignmentsRpcProvider{canceled: make(chan struct{})}
+	_, err := NewShardManager(NewShardStrategy(), provider, "localhost:6648", "default", 100*time.Millisecond)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+
+	select {
+	case <-provider.canceled:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the shard manager kept requesting the assignments after it failed to start")
+	}
+}
