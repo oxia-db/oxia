@@ -79,6 +79,11 @@ func (m *WriteManager) ShardsReplaced(replaced map[int64][]int64) {
 	m.Lock()
 	defer m.Unlock()
 
+	if m.isClosed() {
+		// The shard manager can still apply an update after the client is closed
+		return
+	}
+
 	// A new shard holds its writes until the shards it replaced have handed
 	// off theirs. A removed shard that never had a write has nothing to hand off.
 	pending := make(map[int64]int)
@@ -116,10 +121,8 @@ func (m *WriteManager) Close() error {
 	m.Lock()
 	defer m.Unlock()
 
-	select {
-	case <-m.closed:
+	if m.isClosed() {
 		return nil
-	default:
 	}
 
 	var err error
@@ -131,6 +134,15 @@ func (m *WriteManager) Close() error {
 	// The writes held by the gates are released, and fail on the closed batchers
 	close(m.closed)
 	return err
+}
+
+func (m *WriteManager) isClosed() bool {
+	select {
+	case <-m.closed:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *WriteManager) gate(shardId int64) *writeGate {

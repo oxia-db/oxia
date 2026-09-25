@@ -17,7 +17,7 @@ package batch
 import (
 	"errors"
 	"io"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
@@ -37,25 +37,47 @@ type Barrier struct {
 }
 
 type batcherImpl struct {
-	batchFactory        func() Batch
-	callC               chan any
-	closeC              chan bool
-	closed              atomic.Bool
+	batchFactory func() Batch
+	callC        chan any
+	closeC       chan bool
+	// Add holds the read lock while it adds a call to callC, so that Close
+	// can wait for the calls being added before the queue is drained
+	addMu  sync.RWMutex
+	closed bool
+	// addsDone is closed once no call can be added to callC anymore
+	addsDone            chan struct{}
 	linger              time.Duration
 	maxRequestsPerBatch int
 }
 
 func (b *batcherImpl) Close() error {
-	b.closed.Store(true)
+	// Also wakes up the calls being added to a full queue
 	close(b.closeC)
+	b.addMu.Lock()
+	b.closed = true
+	b.addMu.Unlock()
+	close(b.addsDone)
 	return nil
 }
 
 func (b *batcherImpl) Add(call any) {
-	if b.closed.Load() {
+	if !b.enqueue(call) {
 		b.failCall(call, ErrShuttingDown)
-	} else {
-		b.callC <- call
+	}
+}
+
+// enqueue adds the call to the queue, unless the batcher is closed.
+func (b *batcherImpl) enqueue(call any) bool {
+	b.addMu.RLock()
+	defer b.addMu.RUnlock()
+	if b.closed {
+		return false
+	}
+	select {
+	case b.callC <- call:
+		return true
+	case <-b.closeC:
+		return false
 	}
 }
 
@@ -124,6 +146,8 @@ func (b *batcherImpl) Run() { //nolint:revive
 				batch.Fail(ErrShuttingDown)
 				batch = nil
 			}
+			// Drain the queue once no call can be added to it anymore
+			<-b.addsDone
 			for {
 				select {
 				case call := <-b.callC:

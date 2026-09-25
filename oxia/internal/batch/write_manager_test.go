@@ -288,6 +288,18 @@ func TestWriteManagerNestedSplit(t *testing.T) {
 	assert.NoError(t, m.Close())
 }
 
+func TestWriteManagerShardsReplacedAfterClose(t *testing.T) {
+	m := newTestWriteManager(nil)
+	m.Add(0, "a")
+	assert.NoError(t, m.Close())
+
+	// The shard manager applies an update after the client was closed: no
+	// batcher is created, as none would be closed
+	m.ShardsReplaced(map[int64][]int64{0: {1, 2}})
+	assert.Nil(t, m.batcher(1))
+	assert.Nil(t, m.batcher(2))
+}
+
 func TestWriteManagerCloseReleasesHeldWrites(t *testing.T) {
 	m := newTestWriteManager(nil)
 	m.Add(0, "a")
