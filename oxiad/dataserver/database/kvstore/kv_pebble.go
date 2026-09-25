@@ -108,7 +108,7 @@ func NewPebbleKVFactory(options *FactoryOptions) (Factory, error) {
 // The snapshots are left behind by a previous run: the "snapshots" name is
 // reserved, so nothing else can be in there.
 func (p *PebbleFactory) cleanupSnapshots() error {
-	return os.RemoveAll(filepath.Join(p.dataDir, validation.DataServerSnapshotsDir))
+	return os.RemoveAll(filepath.Join(p.dataDir, validation.KeywordNamespaceSnapshots))
 }
 
 func (p *PebbleFactory) Close() error {

@@ -1278,7 +1278,7 @@ func TestPebbleRejectsInvalidNamespace(t *testing.T) {
 func TestPebbleCleanupSnapshots(t *testing.T) {
 	options := NewFactoryOptionsForTest(t)
 
-	snapshotsDir := filepath.Join(options.DataDir, validation.DataServerSnapshotsDir)
+	snapshotsDir := filepath.Join(options.DataDir, validation.KeywordNamespaceSnapshots)
 	require.NoError(t, os.MkdirAll(filepath.Join(snapshotsDir, "shard-1", "snapshot-1"), 0o755))
 
 	// A data server restart creates a new factory on the same data dir
