@@ -59,6 +59,15 @@ func (s *staticShardManager) GetSuccessors(shardId int64) []int64 {
 	return s.successors[shardId]
 }
 
+// GetSuccessor routes every key to the first successor.
+func (s *staticShardManager) GetSuccessor(shardId int64, _ string) (int64, bool) {
+	if successors := s.successors[shardId]; len(successors) > 0 {
+		return successors[0], true
+	}
+	return 0, false
+}
+func (*staticShardManager) Changed() <-chan struct{} { return nil }
+
 func newGetTestClient(shards ...int64) (*clientImpl, *capturingGetBatcher) {
 	b := &capturingGetBatcher{calls: make(chan model.GetCall, len(shards))}
 	return &clientImpl{
@@ -169,15 +178,16 @@ func (*capturingWriteBatcher) Run()         {}
 
 func newWriteTestClient(shardManager *staticShardManager) (*clientImpl, map[int64]*capturingWriteBatcher) {
 	batchers := map[int64]*capturingWriteBatcher{}
-	return &clientImpl{
+	c := &clientImpl{
 		ctx:          context.Background(),
 		shardManager: shardManager,
-		writeBatchManager: batch.NewManager(context.Background(), func(_ context.Context, shardId *int64) commonbatch.Batcher {
-			b := &capturingWriteBatcher{}
-			batchers[*shardId] = b
-			return b
-		}),
-	}, batchers
+	}
+	c.writeBatchManager = batch.NewWriteManager(context.Background(), func(_ context.Context, shardId *int64) commonbatch.Batcher {
+		b := &capturingWriteBatcher{}
+		batchers[*shardId] = b
+		return b
+	}, c.forwardWrite)
+	return c, batchers
 }
 
 func deleteRangeCallAt(t *testing.T, batchers map[int64]*capturingWriteBatcher, shardId int64) model.DeleteRangeCall {

@@ -22,6 +22,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"google.golang.org/grpc"
@@ -92,6 +93,13 @@ func (p *rpcProvider) getClientByTarget(target string) (proto.OxiaClientClient, 
 	return client, nil
 }
 
+func (p *rpcProvider) shardMapChanged() <-chan struct{} {
+	if shardManager := p.shardManagerSupplier(); shardManager != nil {
+		return shardManager.Changed()
+	}
+	return nil
+}
+
 func (p *rpcProvider) getTargetByShard(shardId *int64, hint constant.ErrorMetadata) (string, error) {
 	if shardId == nil {
 		return p.serviceAddress, nil
@@ -110,7 +118,12 @@ func (p *rpcProvider) getTargetByShard(shardId *int64, hint constant.ErrorMetada
 }
 
 func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
-	return executeWithRetry(ctx, func(hint constant.ErrorMetadata) (*proto.WriteResponse, error) {
+	// A change of the shard map ends the wait for the next attempt: once a
+	// shard is split, the other shards hold their writes until the batches
+	// pending on it are rerouted
+	timer := &shardMapTimer{}
+	return executeWithRetryTimer(ctx, timer, func(hint constant.ErrorMetadata) (*proto.WriteResponse, error) {
+		timer.changed = p.shardMapChanged()
 		shardId := request.Shard
 		if _, err := p.getTargetByShard(shardId, hint); err != nil {
 			return nil, err
@@ -349,13 +362,20 @@ func isRetryableShardRequest(err error) bool {
 }
 
 func executeWithRetry[T any](ctx context.Context, operation func(constant.ErrorMetadata) (T, error), isRetryable ...func(error) bool) (T, error) {
+	return executeWithRetryTimer(ctx, nil, operation, isRetryable...)
+}
+
+// executeWithRetryTimer is executeWithRetry, waiting between the attempts with
+// the given timer, or with a system timer if nil.
+func executeWithRetryTimer[T any](ctx context.Context, timer backoff.Timer, operation func(constant.ErrorMetadata) (T, error),
+	isRetryable ...func(error) bool) (T, error) {
 	var result T
 	var hint constant.ErrorMetadata
 	retryable := constant.IsRetryable
 	if len(isRetryable) > 0 {
 		retryable = isRetryable[0]
 	}
-	err := backoff.Retry(func() error {
+	err := backoff.RetryNotifyWithTimer(func() error {
 		var err error
 		result, err = operation(hint)
 		if err == nil {
@@ -368,7 +388,7 @@ func executeWithRetry[T any](ctx context.Context, operation func(constant.ErrorM
 			return backoff.Permanent(err)
 		}
 		return err
-	}, commontime.NewBackOff(ctx))
+	}, commontime.NewBackOff(ctx), nil, timer)
 	return result, err
 }
 
@@ -379,4 +399,43 @@ func executeOnce[T any](operation func() (T, error)) (T, error) {
 	result, err := operation()
 	err, _ = constant.FromGrpcError(err)
 	return result, err
+}
+
+// shardMapTimer waits between the attempts of a retry like the system timer,
+// but it fires as soon as the shard map changes: the next attempt goes to the
+// shard's new leader, or finds that the shard was split.
+type shardMapTimer struct {
+	// changed is the channel of the shard map when the last attempt started
+	changed <-chan struct{}
+	c       chan time.Time
+	stop    chan struct{}
+}
+
+func (t *shardMapTimer) Start(duration time.Duration) {
+	c := make(chan time.Time, 1)
+	stop := make(chan struct{})
+	changed := t.changed
+	t.c, t.stop = c, stop
+	go func() {
+		timer := time.NewTimer(duration)
+		defer timer.Stop()
+		select {
+		case now := <-timer.C:
+			c <- now
+		case <-changed:
+			c <- time.Now()
+		case <-stop:
+		}
+	}()
+}
+
+func (t *shardMapTimer) Stop() {
+	if t.stop != nil {
+		close(t.stop)
+		t.stop = nil
+	}
+}
+
+func (t *shardMapTimer) C() <-chan time.Time {
+	return t.c
 }

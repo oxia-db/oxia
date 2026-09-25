@@ -392,6 +392,89 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 	assert.NoError(t, client.Close())
 }
 
+// TestCoordinator_ShardSplit_WriteOrder checks that the puts a client issues
+// to the same key are applied in the order they were issued, across a split.
+// The async client pipelines the puts: when the split cuts over, some of them
+// are still queued or in flight to the parent and get rerouted to the
+// children, while the puts issued after the client received the post-split
+// assignments go to the children directly.
+func TestCoordinator_ShardSplit_WriteOrder(t *testing.T) {
+	c := setupSplitCluster(t)
+	defer c.close(t)
+
+	client, err := oxia.NewAsyncClient(c.sa1.Public)
+	require.NoError(t, err)
+
+	type putOp struct {
+		key    string
+		seq    int
+		result <-chan oxia.PutResult
+	}
+	const numKeys = 16
+	// Large enough not to throttle the writer: it must keep issuing puts
+	// while the rerouted ones are still pending
+	const maxOutstanding = 64 * 1024
+
+	var stop atomic.Bool
+	ops := make(chan putOp, maxOutstanding)
+	go func() {
+		defer close(ops)
+		for seq := 0; !stop.Load(); seq++ {
+			key := fmt.Sprintf("key-%02d", seq%numKeys)
+			ops <- putOp{key, seq, client.Put(key, []byte(fmt.Sprintf("%d", seq)))}
+		}
+	}()
+
+	// Among the successful puts to a key, taken in issue order, the
+	// modifications count reports the order in which they were applied
+	type applied struct {
+		seq   int
+		count int64
+	}
+	var (
+		succeeded, failed int
+		firstErr          error
+		outOfOrder        []string
+		lastApplied       = make(map[string]applied)
+		checked           = make(chan struct{})
+	)
+	go func() {
+		defer close(checked)
+		for op := range ops {
+			result := <-op.result
+			if result.Err != nil {
+				if failed == 0 {
+					firstErr = result.Err
+				}
+				failed++
+				continue
+			}
+			succeeded++
+			if last, ok := lastApplied[op.key]; ok && result.Version.ModificationsCount <= last.count {
+				outOfOrder = append(outOfOrder, fmt.Sprintf("%s: put #%d applied as modification %d, before put #%d (modification %d)",
+					op.key, op.seq, result.Version.ModificationsCount, last.seq, last.count))
+			}
+			lastApplied[op.key] = applied{op.seq, result.Version.ModificationsCount}
+		}
+	}()
+
+	c.splitAndWait(t)
+	// Keep writing to the children for a while
+	time.Sleep(time.Second)
+	stop.Store(true)
+	<-checked
+
+	slog.Info("Checked the order of the puts across the split",
+		slog.Int("succeeded", succeeded),
+		slog.Int("failed", failed),
+		slog.Any("first-error", firstErr),
+		slog.Int("out-of-order", len(outOfOrder)),
+	)
+	assert.Positive(t, succeeded)
+	assert.Empty(t, outOfOrder, "puts applied out of the order they were issued")
+	assert.NoError(t, client.Close())
+}
+
 // splitTestCluster holds references to a 3-node test cluster with a
 // coordinator, used by the shard-split integration tests.
 type splitTestCluster struct {
