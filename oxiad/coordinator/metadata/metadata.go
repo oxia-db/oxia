@@ -63,7 +63,9 @@ type Metadata interface {
 	// write: no reader sees some of the changes without the others, and no
 	// concurrent update, e.g. a leader election, is reverted. update may run
 	// more than once, each time on a fresh copy, and returns false to leave
-	// the status unchanged, in which case UpdateShardStatuses returns nil.
+	// the status unchanged, in which case UpdateShardStatuses returns nil. It
+	// may delete shards: a namespace left without shards is deleted, as by
+	// DeleteShardStatus.
 	UpdateShardStatuses(namespace string, update func(shards map[int64]*commonproto.ShardMetadata) bool) error
 	DeleteShardStatus(namespace string, shard int64) error
 
@@ -375,7 +377,11 @@ func (m *coordinatorMetadata) UpdateShardStatuses(
 		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
 			ns, exist := clusterStatus.Namespaces[namespace]
 			namespaceExists = exist
-			return clusterStatus, exist && update(ns.Shards)
+			updated := exist && update(ns.Shards)
+			if updated && len(ns.Shards) == 0 {
+				delete(clusterStatus.Namespaces, namespace)
+			}
+			return clusterStatus, updated
 		})
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
