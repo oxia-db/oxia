@@ -1238,29 +1238,6 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 		offsetExclusive = qat.CommitOffset()
 	}
 
-	// The first "dummy" notification confirms that the subscription was accepted and
-	// that the cursor is positioned on the given offset. A first subscription waits
-	// for it before making the notification channel available to the application. A
-	// resumed one needs it too: the stream is created before the server has seen the
-	// request, so a rejection is only reported by the first Recv(), and without this
-	// batch an accepted subscription on a shard with no writes is indistinguishable
-	// from a rejected one.
-	lc.log.Debug(
-		"Sending first dummy notification",
-		slog.Int64("term", lc.term.Load()),
-		slog.Int64("offset", offsetExclusive),
-	)
-	if err := cb.OnNext(&proto.NotificationBatch{
-		Shard:         lc.shardId,
-		Offset:        offsetExclusive,
-		Timestamp:     0,
-		Notifications: nil,
-	}); err != nil {
-		lc.Unlock()
-		cb.OnComplete(err)
-		return
-	}
-
 	lc.waitGroup.Go(func() {
 		process.DoWithLabels(
 			ctx,
@@ -1270,6 +1247,27 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 				"peer":  commonrpc.GetPeer(ctx),
 			},
 			func() {
+				// Confirms that the subscription was accepted and where its cursor
+				// sits: a rejection is only reported by the first Recv(), so without
+				// this an accepted subscription with nothing to send looks rejected.
+				// It goes out from here, rather than before the goroutine starts, to
+				// keep the leader lock off a stream write; later batches follow it
+				// from here too.
+				lc.log.Debug(
+					"Sending first dummy notification",
+					slog.Int64("term", lc.term.Load()),
+					slog.Int64("offset", offsetExclusive),
+				)
+				if err := cb.OnNext(&proto.NotificationBatch{
+					Shard:         lc.shardId,
+					Offset:        offsetExclusive,
+					Timestamp:     0,
+					Notifications: nil,
+				}); err != nil {
+					cb.OnComplete(err)
+					return
+				}
+
 				lc.log.Debug("Dispatch notifications", slog.Int64("term", lc.term.Load()), slog.Any("start-offset-include", offsetExclusive))
 				offset := offsetExclusive
 				for {
