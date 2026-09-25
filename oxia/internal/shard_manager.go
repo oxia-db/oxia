@@ -204,7 +204,9 @@ func (s *shardManagerImpl) receiveWithRecovery() {
 			}
 		},
 	)
-	if err != nil {
+	// Closing the shard manager also interrupts the wait before a retry, which
+	// is not a failure
+	if err != nil && !s.isClosed() {
 		s.logger.Error(
 			"Failed receiving shard assignments",
 			slog.Any("error", err),

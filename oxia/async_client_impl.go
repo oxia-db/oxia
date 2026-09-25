@@ -202,6 +202,7 @@ func (c *clientImpl) Close() error {
 		c.sessions.Close(),
 		c.writeBatchManager.Close(),
 		c.readBatchManager.Close(),
+		c.shardManager.Close(),
 		c.rpcProvider.Close(),
 	)
 	c.cancel()
