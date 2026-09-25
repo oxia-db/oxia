@@ -99,6 +99,7 @@ func NewShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider, servi
 	sm.ctx, sm.cancel = context.WithCancel(context.Background())
 
 	if err := sm.start(); err != nil {
+		_ = sm.Close()
 		return nil, errors.Wrap(err, "oxia: failed to retrieve the initial list of shard assignments")
 	}
 
@@ -237,7 +238,10 @@ func (s *shardManagerImpl) receiveWithRecovery() {
 			}
 		},
 	)
-	if err != nil {
+	// Closing the shard manager also interrupts the wait before a retry, which
+	// is not a failure. The retries only return the context error once the
+	// context is canceled, so this check cannot miss a Close that stopped them.
+	if err != nil && !s.isClosed() {
 		s.logger.Error(
 			"Failed receiving shard assignments",
 			slog.Any("error", err),

@@ -26,6 +26,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
+	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/batch"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -46,9 +47,14 @@ type staticShardManager struct {
 	shards     []int64
 	leader     string
 	successors map[int64][]int64
+	closed     bool
 }
 
-func (*staticShardManager) Close() error       { return nil }
+func (s *staticShardManager) Close() error {
+	s.closed = true
+	return nil
+}
+
 func (s *staticShardManager) Get(string) int64 { return s.shards[0] }
 func (s *staticShardManager) GetAll() []int64  { return s.shards }
 func (s *staticShardManager) Leader(int64) string {
@@ -298,6 +304,26 @@ func TestRerouteDeleteRangeWithoutSuccessors(t *testing.T) {
 	assert.Empty(t, batchers)
 	require.Len(t, results, 1)
 	assert.ErrorIs(t, results[0], constant.ErrShardNotFound)
+}
+
+// The shard manager receives the shard assignments in the background, until it
+// is closed.
+func TestCloseClosesShardManager(t *testing.T) {
+	shardManager := &staticShardManager{}
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &clientImpl{
+		shardManager:      shardManager,
+		writeBatchManager: batch.NewWriteManager(ctx, nil, nil),
+		readBatchManager:  batch.NewManager(ctx, nil),
+		sessions:          &sessions{},
+		rpcProvider: internal.NewRpcProvider(ctx, "default", nil, nil, "localhost:6648",
+			func() internal.ShardManager { return shardManager }),
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	assert.NoError(t, client.Close())
+	assert.True(t, shardManager.closed)
 }
 
 func TestMultiShardDeleteRangeCallback(t *testing.T) {
