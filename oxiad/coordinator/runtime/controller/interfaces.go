@@ -41,4 +41,8 @@ type ShardAssignmentsProvider interface {
 
 type DataServerEventListener interface {
 	BecameUnavailable(dataServer *commonproto.DataServerIdentity)
+
+	// FeaturesDiscovered is called when the first handshake with the data
+	// server makes the features it supports known
+	FeaturesDiscovered(dataServer *commonproto.DataServerIdentity)
 }

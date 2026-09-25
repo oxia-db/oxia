@@ -51,6 +51,7 @@ const (
 	SplitPhaseBootstrap = SplitPhase_Bootstrap
 	SplitPhaseCatchUp   = SplitPhase_CatchUp
 	SplitPhaseCutover   = SplitPhase_Cutover
+	SplitPhaseFinalize  = SplitPhase_Finalize
 )
 
 func (ds *DataServerIdentity) GetNameOrDefault() string {
@@ -102,6 +103,8 @@ func ParseSplitPhase(value SplitPhase) SplitPhase {
 		return SplitPhaseCatchUp
 	case SplitPhaseCutover:
 		return SplitPhaseCutover
+	case SplitPhaseFinalize:
+		return SplitPhaseFinalize
 	default:
 		return SplitPhaseBootstrap
 	}

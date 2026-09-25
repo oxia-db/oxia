@@ -1272,6 +1272,102 @@ func TestPebbleRejectsInvalidNamespace(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// A namespace can be named "snapshots", and its shards must survive a restart
+// like any other namespace's.
+func TestPebbleSnapshotsNamespaceSurvivesRestart(t *testing.T) {
+	options := NewFactoryOptionsForTest(t)
+
+	factory, err := NewPebbleKVFactory(options)
+	require.NoError(t, err)
+	kv, err := factory.NewKV("snapshots", 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+
+	wb := kv.NewWriteBatch()
+	require.NoError(t, wb.Put("a", []byte("0")))
+	require.NoError(t, wb.Commit())
+	require.NoError(t, wb.Close())
+	require.NoError(t, kv.Close())
+	require.NoError(t, factory.Close())
+
+	// A data server restart creates a new factory on the same data dir
+	factory, err = NewPebbleKVFactory(options)
+	require.NoError(t, err)
+	kv, err = factory.NewKV("snapshots", 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+
+	key, res, closer, err := kv.Get("a", ComparisonEqual, NoInternalKeys)
+	require.NoError(t, err)
+	assert.Equal(t, "a", key)
+	assert.Equal(t, "0", string(res))
+	assert.NoError(t, closer.Close())
+
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
+
+// At startup, the snapshots left over by the previous run are removed, but not
+// the shards of a namespace named "snapshots", which live in the same dir.
+func TestPebbleCleanupSnapshots(t *testing.T) {
+	options := NewFactoryOptionsForTest(t)
+	snapshotsDir := filepath.Join(options.DataDir, "snapshots")
+
+	factory, err := NewPebbleKVFactory(options)
+	require.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 2, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	// Never closed, as after a crash
+	_, err = kv.Snapshot()
+	require.NoError(t, err)
+	require.NoError(t, kv.Close())
+	require.NoError(t, factory.Close())
+
+	// With only snapshots in it, the dir goes away entirely
+	factory, err = NewPebbleKVFactory(options)
+	require.NoError(t, err)
+	assert.NoDirExists(t, snapshotsDir)
+
+	nsKV, err := factory.NewKV("snapshots", 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	wb := nsKV.NewWriteBatch()
+	require.NoError(t, wb.Put("a", []byte("0")))
+	require.NoError(t, wb.Commit())
+	require.NoError(t, wb.Close())
+
+	// The snapshots of the namespace's shard are created in the shard dir
+	nsSnapshot, err := nsKV.Snapshot()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(snapshotsDir, "shard-1"), filepath.Dir(nsSnapshot.BasePath()))
+
+	// A segment of the shard's WAL, when the WAL shares the data dir
+	walSegment := filepath.Join(snapshotsDir, "shard-1", "0.txnx")
+	require.NoError(t, os.WriteFile(walSegment, []byte("wal"), 0600))
+
+	kv, err = factory.NewKV(constant.DefaultNamespace, 2, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	_, err = kv.Snapshot()
+	require.NoError(t, err)
+	require.NoError(t, kv.Close())
+	require.NoError(t, nsKV.Close())
+	require.NoError(t, factory.Close())
+
+	factory, err = NewPebbleKVFactory(options)
+	require.NoError(t, err)
+	assert.NoDirExists(t, nsSnapshot.BasePath())
+	assert.NoDirExists(t, filepath.Join(snapshotsDir, "shard-2"))
+	assert.FileExists(t, walSegment)
+
+	nsKV, err = factory.NewKV("snapshots", 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	key, res, closer, err := nsKV.Get("a", ComparisonEqual, NoInternalKeys)
+	require.NoError(t, err)
+	assert.Equal(t, "a", key)
+	assert.Equal(t, "0", string(res))
+	assert.NoError(t, closer.Close())
+
+	assert.NoError(t, nsKV.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestCompareWithDataset(t *testing.T) {
 	for _, test := range []struct {
 		leftKey  string

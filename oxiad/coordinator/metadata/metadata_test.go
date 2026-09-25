@@ -15,13 +15,19 @@
 package metadata
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	commonproto "github.com/oxia-db/oxia/common/proto"
 	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
@@ -121,6 +127,87 @@ coordinators:
 	require.Equal(t, "coordinator-0", nextSelf.GetName())
 }
 
+// storeFailingProvider fails every write, like a store the coordinator lost
+// access to (e.g. after losing the leadership).
+type storeFailingProvider struct {
+	provider.Provider[*commonproto.ClusterStatus]
+}
+
+func (storeFailingProvider) Store(provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
+	return metadataconstant.NotExists, errors.New("store failed")
+}
+
+func TestMetadataStatusWritersGiveUpOnceCanceled(t *testing.T) {
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, "")
+	_, err := statusProvider.Store(provider.Versioned[*commonproto.ClusterStatus]{
+		Value: &commonproto.ClusterStatus{
+			Namespaces: map[string]*commonproto.NamespaceStatus{
+				"default": {Shards: map[int64]*commonproto.ShardMetadata{0: {Term: 1}}},
+			},
+		},
+		Version: metadataconstant.NotExists,
+	})
+	require.NoError(t, err)
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	metadata := newMetadata(ctx, storeFailingProvider{statusProvider}, configProvider, "")
+	cancel()
+
+	// Every status writer gives up, and reports that nothing was persisted
+	_, err = metadata.ReserveShardIDs(1)
+	require.Error(t, err)
+	require.False(t, metadata.CreateNamespaceStatus("other", &commonproto.NamespaceStatus{}))
+	require.Nil(t, metadata.DeleteNamespaceStatus("default").UnsafeBorrow())
+	require.Error(t, metadata.UpdateShardStatus("default", 0, &commonproto.ShardMetadata{Term: 2}))
+	require.Error(t, metadata.UpdateShardStatuses("default", func(shards map[int64]*commonproto.ShardMetadata) bool {
+		shards[0].Term = 2
+		return true
+	}))
+	require.Error(t, metadata.DeleteShardStatus("default", 0))
+
+	status := statusProvider.Watch().Load().Value
+	require.Len(t, status.GetNamespaces(), 1)
+	require.EqualValues(t, 1, status.GetNamespaces()["default"].GetShards()[0].GetTerm())
+	require.NoError(t, metadata.Close())
+}
+
+func TestMetadataStatusUpdatesFailWhenTargetIsGone(t *testing.T) {
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, "")
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	require.True(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{
+		Shards: map[int64]*commonproto.ShardMetadata{0: {Term: 1}},
+	}))
+
+	require.ErrorIs(t, metadata.UpdateShardStatus("other", 0, &commonproto.ShardMetadata{Term: 2}), metadataconstant.ErrNotFound)
+
+	// A deleted shard must not be re-created
+	require.ErrorIs(t, metadata.UpdateShardStatus("default", 1, &commonproto.ShardMetadata{Term: 2}), metadataconstant.ErrNotFound)
+	_, exists := metadata.GetShardStatus("default", 1)
+	require.False(t, exists)
+
+	require.NoError(t, metadata.UpdateShardStatus("default", 0, &commonproto.ShardMetadata{Term: 2}))
+	shard, exists := metadata.GetShardStatus("default", 0)
+	require.True(t, exists)
+	require.EqualValues(t, 2, shard.UnsafeBorrow().GetTerm())
+
+	// Several shards are updated in a namespace that exists, and nothing is
+	// stored when the update returns false
+	require.ErrorIs(t, metadata.UpdateShardStatuses("other", func(map[int64]*commonproto.ShardMetadata) bool {
+		return true
+	}), metadataconstant.ErrNotFound)
+	require.NoError(t, metadata.UpdateShardStatuses("default", func(shards map[int64]*commonproto.ShardMetadata) bool {
+		shards[0].Term = 3
+		return false
+	}))
+	shard, _ = metadata.GetShardStatus("default", 0)
+	require.EqualValues(t, 2, shard.UnsafeBorrow().GetTerm())
+	_, exists = metadata.GetShardStatus("default", 1)
+	require.False(t, exists)
+	require.NoError(t, metadata.Close())
+}
+
 func writeClusterConfig(t *testing.T, path string) {
 	t.Helper()
 
@@ -133,4 +220,34 @@ servers:
   - public: s1:9091
     internal: s1:8191
 `), 0600))
+}
+
+// UpdateShardStatuses deletes a namespace left without shards, as
+// DeleteShardStatus does, so that it can be created again.
+func TestMetadataUpdateShardStatusesDeletesEmptiedNamespace(t *testing.T) {
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, "")
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	defer func() {
+		require.NoError(t, metadata.Close())
+	}()
+	newNamespaceStatus := func() *commonproto.NamespaceStatus {
+		return &commonproto.NamespaceStatus{Shards: map[int64]*commonproto.ShardMetadata{0: {}, 1: {}}}
+	}
+	deleteShard := func(shard int64) func(map[int64]*commonproto.ShardMetadata) bool {
+		return func(shards map[int64]*commonproto.ShardMetadata) bool {
+			delete(shards, shard)
+			return true
+		}
+	}
+	require.True(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
+
+	require.NoError(t, metadata.UpdateShardStatuses("default", deleteShard(0)))
+	_, exists := metadata.GetNamespaceStatus("default")
+	require.True(t, exists)
+
+	require.NoError(t, metadata.UpdateShardStatuses("default", deleteShard(1)))
+	_, exists = metadata.GetNamespaceStatus("default")
+	require.False(t, exists)
+	require.True(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
 }

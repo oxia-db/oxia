@@ -99,6 +99,14 @@ type controller struct {
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
 
+	// The features of a data server are discovered only once, so unlike the
+	// other notifications they must not be dropped when the event loop is
+	// busy: the data servers are collected until the loop handles them, and
+	// featuresDiscoveredOp wakes it up.
+	discoveredDataServersMu sync.Mutex
+	discoveredDataServers   map[string]*proto.DataServerIdentity
+	featuresDiscoveredOp    chan any
+
 	ctx                   context.Context
 	ctxCancel             context.CancelFunc
 	wg                    sync.WaitGroup
@@ -131,6 +139,19 @@ func (s *controller) BecameUnavailable(dataServer *proto.DataServerIdentity) {
 	}
 }
 
+func (s *controller) FeaturesDiscovered(dataServer *proto.DataServerIdentity) {
+	s.terminationMu.RLock()
+	defer s.terminationMu.RUnlock()
+	if s.terminating.Load() {
+		return
+	}
+	s.discoveredDataServersMu.Lock()
+	s.discoveredDataServers[dataServer.GetNameOrDefault()] = dataServer
+	s.discoveredDataServersMu.Unlock()
+	// A wake-up that is pending already covers this data server too
+	channel.PushNoBlock(s.featuresDiscoveredOp, nil)
+}
+
 //nolint:revive
 func NewController(
 	namespace string,
@@ -156,6 +177,8 @@ func NewController(
 		deleteOp:                            make(chan any, chanBufferSize),
 		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
+		discoveredDataServers:               make(map[string]*proto.DataServerIdentity),
+		featuresDiscoveredOp:                make(chan any, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -273,6 +296,8 @@ func (s *controller) run() {
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
 			s.handleDataServerFailure(n)
+		case <-s.featuresDiscoveredOp:
+			s.handleFeaturesDiscovered()
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
 		case <-periodicTasksTimer.C:
@@ -331,6 +356,50 @@ func (s *controller) handleDataServerFailure(failedDataServer *proto.DataServerI
 		)
 		s.onElectLeader(nil)
 	}
+}
+
+// handleFeaturesDiscovered starts a new election when the current term was
+// negotiated without the features of ensemble members, because they had not
+// completed their first handshake yet (e.g. their NewTerm reached them before
+// the handshake), and the whole ensemble supports more features than the term
+// pinned now that they are known. Otherwise, a new shard would run without
+// them until its next election.
+func (s *controller) handleFeaturesDiscovered() {
+	s.discoveredDataServersMu.Lock()
+	discovered := s.discoveredDataServers
+	s.discoveredDataServers = make(map[string]*proto.DataServerIdentity)
+	s.discoveredDataServersMu.Unlock()
+
+	if s.currentElection == nil {
+		// The current term was not negotiated by this coordinator
+		return
+	}
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while handling discovered features: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+	if shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState || shardMeta.Split != nil {
+		return
+	}
+	members := make([]*proto.DataServerIdentity, 0, len(shardMeta.Ensemble))
+	for _, member := range shardMeta.Ensemble {
+		if dataServer, found := discovered[member.GetNameOrDefault()]; found {
+			members = append(members, dataServer)
+		}
+	}
+	if len(members) == 0 {
+		return
+	}
+	features := s.currentElection.unpinnedFeatures()
+	if len(features) == 0 {
+		return
+	}
+	s.logger.Info(
+		"Starting a new election to pin the features supported by the ensemble",
+		slog.Any("data-servers", members),
+		slog.Any("features", features),
+	)
+	s.onElectLeader(nil)
 }
 
 func (s *controller) verifyCurrentEnsemble(initShardMeta *proto.ShardMetadata) bool {
@@ -408,6 +477,14 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 		"bug: shard metadata missing while validating change ensemble: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
+	// The ensemble of the parent and of the children of a split doesn't change
+	// until the split ends. Checking it before the election that changes the
+	// ensemble keeps the current election of the shard running; the election
+	// checks it again, in the status update that starts it, in case a split
+	// started since (see Election.persistNewTerm).
+	if shardMeta.Split != nil {
+		return fmt.Errorf("%w: the shard is part of a split", ErrNotReadyForChangeEnsemble)
+	}
 	if changeEnsembleAction.From == nil {
 		return fmt.Errorf("%w: from data server is nil", ErrInvalidChangeEnsemble)
 	}
@@ -533,7 +610,11 @@ func (s *controller) deleteShardWithRetries() {
 		}
 
 		s.terminating.Store(true)
-		s.metadataStore.DeleteShardStatus(s.namespace, s.shard)
+		if err := s.metadataStore.DeleteShardStatus(s.namespace, s.shard); err != nil {
+			// The shard is still marked as deleting: its deletion resumes when
+			// the coordinator restarts
+			return backoff.Permanent(err)
+		}
 		if s.eventListener != nil {
 			go func() {
 				process.DoWithLabels(
@@ -579,6 +660,7 @@ func (s *controller) Close() error {
 				electionAction.Done("")
 			case <-s.deleteOp:
 			case <-s.dataServerFailureOp:
+			case <-s.featuresDiscoveredOp:
 			case op := <-s.changeEnsembleOp:
 				op.Error(constant.ErrResourceUnavailable)
 			default:
@@ -621,7 +703,23 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	s.onElectLeader(changeEnsembleAction)
+	leader := s.onElectLeader(changeEnsembleAction)
+	if err := s.currentElection.ChangeEnsembleError(); err != nil {
+		changeEnsembleAction.Error(err)
+		return
+	}
+	if leader == nil {
+		// The election stopped without changing the ensemble, e.g. because a
+		// split of the shard started after the validation above. The shard is
+		// as ready for a change of its ensemble as it was before this one: drop
+		// the election, which never elected a leader for its followers to catch
+		// up with, or it rejects the next changes as not ready.
+		s.currentElection.Stop()
+		s.currentElection = nil
+		changeEnsembleAction.Error(fmt.Errorf("%w: the election stopped before changing the ensemble",
+			ErrNotReadyForChangeEnsemble))
+		return
+	}
 	changeEnsembleAction.Done(nil)
 }
 
@@ -682,7 +780,8 @@ func (s *controller) handlePeriodicTasks() {
 	}
 
 	if stateDirty {
-		s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
+		// Best-effort: if this is not persisted, the pending deletes are retried
+		_ = s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
 	}
 }
 

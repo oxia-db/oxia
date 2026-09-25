@@ -16,6 +16,7 @@ package database
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -487,4 +488,73 @@ func TestDB_NotificationsReadBatchLimit(t *testing.T) {
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
+}
+
+// A read with no batch retained from its start offset onwards must wait for
+// the next one: the leader dispatch loop retries an empty result at once and
+// would busy-spin until the next write to the shard.
+func TestDB_NotificationsWaitWhenNothingRetained(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer factory.Close()
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	defer db.Close()
+
+	write := func(offset int64) {
+		_, err := db.ProcessWrite(&proto.WriteRequest{
+			Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
+		}, offset, now(), NoOpCallback)
+		require.NoError(t, err)
+	}
+	assertReadWaits := func(startOffset int64) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		notifications, err := db.ReadNextNotifications(ctx, startOffset)
+		assert.ErrorIs(t, err, context.DeadlineExceeded, "start offset %d", startOffset)
+		assert.Nil(t, notifications, "start offset %d", startOffset)
+	}
+
+	// No batch was ever written. MinInt64 is what the leader reads from for
+	// StartOffsetExclusive=MaxInt64.
+	assertReadWaits(-5)
+	assertReadWaits(math.MinInt64)
+
+	write(0)
+	write(1)
+
+	// A negative start offset reads from the first retained batch
+	notifications, err := db.ReadNextNotifications(context.Background(), -5)
+	require.NoError(t, err)
+	require.Len(t, notifications, 2)
+	assert.EqualValues(t, 0, notifications[0].Offset)
+
+	// Delete every batch, as the trimmer does once they are all past the
+	// retention time, while the last notification offset stays at 1
+	wb := db.RawKV().NewWriteBatch()
+	require.NoError(t, wb.DeleteRange(firstNotificationKey, lastNotificationKey))
+	require.NoError(t, wb.Commit())
+	require.NoError(t, wb.Close())
+
+	assertReadWaits(-5)
+	assertReadWaits(0)
+	assertReadWaits(1)
+
+	// A reader waiting past the deleted batches gets the next one. The sleep
+	// lets it reach the wait before the batch is written.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	readCh := make(chan []*proto.NotificationBatch, 1)
+	go func() {
+		notifications, err := db.ReadNextNotifications(ctx, 0)
+		assert.NoError(t, err)
+		readCh <- notifications
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	write(2)
+
+	notifications = <-readCh
+	require.Len(t, notifications, 1)
+	assert.EqualValues(t, 2, notifications[0].Offset)
 }

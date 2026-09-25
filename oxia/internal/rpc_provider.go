@@ -25,7 +25,9 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/auth"
 	"github.com/oxia-db/oxia/common/constant"
@@ -33,6 +35,10 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 	commontime "github.com/oxia-db/oxia/common/time"
 )
+
+// errShardHasNoLeader replaces connecting to the empty leader address of a shard that has no leader, e.g.
+// while one is being elected. As an Unavailable status, it is retried by the shard requests only.
+var errShardHasNoLeader = status.Error(codes.Unavailable, "oxia: shard has no leader")
 
 type RpcProvider interface {
 	Executor
@@ -75,6 +81,9 @@ func (p *rpcProvider) Close() error {
 }
 
 func (p *rpcProvider) getClientByTarget(target string) (proto.OxiaClientClient, error) {
+	if target == "" {
+		return nil, errShardHasNoLeader
+	}
 	client, err := p.clientPool.GetClientRpc(target)
 	if err != nil {
 		oxiaErr, _ := constant.FromGrpcError(err)
@@ -144,7 +153,7 @@ func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequ
 		}
 		p.writeStreams[*shardId] = sw
 		return sw.Send(ctx, request)
-	})
+	}, isRetryableShardRequest)
 }
 
 func (p *rpcProvider) ExecuteRead(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error) {
@@ -172,7 +181,7 @@ func (p *rpcProvider) ExecuteRead(ctx context.Context, request *proto.ReadReques
 			}
 			response.Gets = append(response.Gets, recv.Gets...)
 		}
-	})
+	}, isRetryableShardRequest)
 }
 
 func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListRequest, listResponseConsumer func(*proto.ListResponse)) error {
@@ -203,7 +212,7 @@ func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListReques
 			verified = true
 		}
 	}, func(err error) bool {
-		return !verified && constant.IsRetryable(err)
+		return !verified && isRetryableShardRequest(err)
 	})
 	return err
 }
@@ -236,13 +245,13 @@ func (p *rpcProvider) ExecuteRangeScan(ctx context.Context, request *proto.Range
 			verified = true
 		}
 	}, func(err error) bool {
-		return !verified && constant.IsRetryable(err)
+		return !verified && isRetryableShardRequest(err)
 	})
 	return err
 }
 
 func (p *rpcProvider) GetShardAssignments(ctx context.Context, target string, request *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	return executeOnce(func() (proto.OxiaClient_GetShardAssignmentsClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -266,7 +275,7 @@ func (p *rpcProvider) getWriteStream(ctx context.Context, target string) (proto.
 }
 
 func (p *rpcProvider) GetSequenceUpdates(ctx context.Context, target string, request *proto.GetSequenceUpdatesRequest) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
+	return executeOnce(func() (proto.OxiaClient_GetSequenceUpdatesClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -282,7 +291,7 @@ func (p *rpcProvider) GetSequenceUpdates(ctx context.Context, target string, req
 }
 
 func (p *rpcProvider) GetNotifications(ctx context.Context, target string, request *proto.NotificationsRequest) (proto.OxiaClient_GetNotificationsClient, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (proto.OxiaClient_GetNotificationsClient, error) {
+	return executeOnce(func() (proto.OxiaClient_GetNotificationsClient, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -298,7 +307,7 @@ func (p *rpcProvider) GetNotifications(ctx context.Context, target string, reque
 }
 
 func (p *rpcProvider) CreateSession(ctx context.Context, target string, request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CreateSessionResponse, error) {
+	return executeOnce(func() (*proto.CreateSessionResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -309,7 +318,7 @@ func (p *rpcProvider) CreateSession(ctx context.Context, target string, request 
 }
 
 func (p *rpcProvider) KeepAlive(ctx context.Context, target string, request *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.KeepAliveResponse, error) {
+	return executeOnce(func() (*proto.KeepAliveResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -320,7 +329,7 @@ func (p *rpcProvider) KeepAlive(ctx context.Context, target string, request *pro
 }
 
 func (p *rpcProvider) CloseSession(ctx context.Context, target string, request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
-	return executeWithRetry(ctx, func(constant.ErrorMetadata) (*proto.CloseSessionResponse, error) {
+	return executeOnce(func() (*proto.CloseSessionResponse, error) {
 		client, err := p.getClientByTarget(target)
 		if err != nil {
 			return nil, err
@@ -328,6 +337,15 @@ func (p *rpcProvider) CloseSession(ctx context.Context, target string, request *
 		response, err := client.CloseSession(ctx, request)
 		return response, err
 	})
+}
+
+// isRetryableShardRequest also retries the Unavailable statuses that do not map to an Oxia error, such as
+// the transport failures to reach a shard leader that went away (e.g. connection refused). Shard requests
+// look up the leader on every attempt, so the retry reaches the new leader once the client receives the
+// updated shard assignments. Requests to a fixed target must fail fast instead, so that their callers can
+// look up a new target.
+func isRetryableShardRequest(err error) bool {
+	return constant.IsRetryable(err) || status.Code(err) == codes.Unavailable
 }
 
 func executeWithRetry[T any](ctx context.Context, operation func(constant.ErrorMetadata) (T, error), isRetryable ...func(error) bool) (T, error) {
@@ -343,15 +361,22 @@ func executeWithRetry[T any](ctx context.Context, operation func(constant.ErrorM
 		if err == nil {
 			return nil
 		}
-		var errorMetadata constant.ErrorMetadata
-		err, errorMetadata = constant.FromGrpcError(err)
-		if _, _, ok := errorMetadata.GetLeaderHint(); ok {
-			hint = errorMetadata
-		}
+		// A leader hint only steers the next attempt: if following it fails without a new hint, e.g. because the
+		// hinted leader is unreachable, the next attempt goes back to the shard assignments
+		err, hint = constant.FromGrpcError(err)
 		if !retryable(err) {
 			return backoff.Permanent(err)
 		}
 		return err
 	}, commontime.NewBackOff(ctx))
+	return result, err
+}
+
+// executeOnce performs a request against a fixed target, without retrying it. After the shard leader
+// moves, a retryable error such as ErrNodeIsNotLeader would keep failing against the same target: the
+// callers retry instead, after looking up the target again.
+func executeOnce[T any](operation func() (T, error)) (T, error) {
+	result, err := operation()
+	err, _ = constant.FromGrpcError(err)
 	return result, err
 }
