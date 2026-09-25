@@ -666,7 +666,8 @@ func (lc *leaderController) RemoveObserver(req *proto.RemoveObserverRequest) (*p
 // keep streaming the existing WAL while the head offset stops advancing. It is
 // used during split cutover to quiesce the parent shard so the children can
 // drain the final tail before the parent is fenced. Returns the leader's head
-// offset, which while frozen is the final offset the children must reach.
+// offset, which while frozen is the final offset the children must reach: a
+// freeze returns once the writes accepted before it are synced in the wal.
 func (lc *leaderController) Freeze(req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
 	lc.Lock()
 	defer lc.Unlock()
@@ -684,6 +685,14 @@ func (lc *leaderController) Freeze(req *proto.FreezeShardRequest) (*proto.Freeze
 	}
 
 	lc.frozen.Store(req.Frozen)
+
+	// The writes accepted before the freeze are in the wal, but the head offset
+	// covers them only once they are synced
+	if req.Frozen {
+		if err := lc.wal.Sync(lc.ctx); err != nil {
+			return nil, err
+		}
+	}
 
 	headOffset := wal.InvalidOffset
 	if lc.quorumAckTracker != nil {

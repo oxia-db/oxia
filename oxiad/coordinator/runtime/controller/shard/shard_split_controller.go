@@ -590,9 +590,8 @@ func (sc *SplitController) runCatchUpRound() (bool, error) {
 
 // runCutover freezes the parent — stopping new writes while keeping its
 // observer cursors alive — so the children can drain the final tail up to the
-// parent's frozen head. Once the children have RECEIVED that tail (in their
-// WALs; their commit is still capped at the parent's advertised commit), the
-// split reaches the point of no return and moves to Finalize, which fences the
+// parent's frozen head. Once the children have APPLIED that tail, the split
+// reaches the point of no return and moves to Finalize, which fences the
 // parent (see runFinalize).
 //
 // Freezing before fencing closes the gap where fencing the parent destroys the
@@ -637,13 +636,14 @@ func (sc *SplitController) runCutover() error {
 		slog.Int64("final-offset", parentFinalOffset),
 	)
 
-	// Step 2: Wait for both children to RECEIVE every entry up to the parent's
-	// frozen head. We check the child head offset, not its commit: a child runs
-	// as an observer-follower whose commit is capped at the parent's advertised
-	// commit, which can never reach the frozen head (no further entries carry an
-	// updated commit). The child has the entries in its WAL (head); re-electing
-	// it in a clean term (see runFinalize) commits them through the child's own
-	// quorum.
+	// Step 2: Wait for both children to APPLY every entry up to the parent's
+	// frozen head. Receiving them is not enough: a child applies the parent's
+	// entries with the split filter only while it observes the parent. Once
+	// re-elected (see runFinalize), it would apply the rest without the filter,
+	// and keep the records of the other child. A child applies the entries up
+	// to the commit offset the parent advertises: the parent advertises it to
+	// the observers even with no new entry to carry it, so the children apply
+	// the whole tail once the parent committed it.
 	// Re-check observer staleness after each round, so a parent/child election
 	// during the wait falls back to Bootstrap instead of hanging, or instead of
 	// passing the point of no return right after the last round.
@@ -666,7 +666,7 @@ func (sc *SplitController) runCutover() error {
 		}
 	}
 
-	sc.logger.Info("Children received parent tail, passing the point of no return",
+	sc.logger.Info("Children applied parent tail, passing the point of no return",
 		slog.Int64("final-offset", parentFinalOffset),
 	)
 
@@ -792,15 +792,15 @@ func (sc *SplitController) detachChildren() error {
 }
 
 // cutoverCatchUpRound waits up to CatchUpRoundTimeout for both children to
-// RECEIVE every entry up to the parent's frozen head (head offset, not commit —
-// see runCutover). Returns true if both reached it, false if the round timed
-// out (the caller retries). Because the parent is frozen, the target is fixed.
+// APPLY every entry up to the parent's frozen head (see runCutover). Returns
+// true if both reached it, false if the round timed out (the caller retries).
+// Because the parent is frozen, the target is fixed.
 func (sc *SplitController) cutoverCatchUpRound(target int64) (bool, error) {
 	roundCtx, roundCancel := context.WithTimeout(sc.ctx, CatchUpRoundTimeout)
 	defer roundCancel()
 
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		if err := sc.waitForChildHeadOffset(roundCtx, childId, target); err != nil {
+		if err := sc.waitForChildCommitOffset(roundCtx, childId, target); err != nil {
 			if roundCtx.Err() != nil {
 				sc.logger.Info("Cutover round timed out, retrying",
 					slog.Int64("child-shard", childId),
@@ -1116,44 +1116,6 @@ func (sc *SplitController) waitForChildCommitOffset(ctx context.Context, childId
 		return errors.Errorf("child %d commit offset %d, target %d", childId, resp.CommitOffset, targetOffset)
 	}, oxiatime.NewBackOff(ctx), func(err error, duration time.Duration) {
 		sc.logger.Debug("Waiting for child commit offset",
-			slog.Int64("child-shard", childId),
-			slog.Int64("target-offset", targetOffset),
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
-}
-
-// waitForChildHeadOffset polls until the child's head offset reaches the target,
-// i.e. the child has received (in its WAL) every entry up to that offset. Used
-// during cutover, where a child observer-follower has the entries but its commit
-// is capped at the parent's advertised commit (see runCutover).
-func (sc *SplitController) waitForChildHeadOffset(ctx context.Context, childId int64, targetOffset int64) error {
-	return backoff.RetryNotify(func() error {
-		childMeta := sc.loadShardMeta(childId)
-		if childMeta == nil || childMeta.Leader == nil {
-			return errors.Errorf("child shard %d has no leader", childId)
-		}
-
-		resp, err := sc.rpcProvider.GetStatus(ctx, childMeta.Leader, &proto.GetStatusRequest{
-			Shard: childId,
-		})
-		if err != nil {
-			return err
-		}
-
-		if resp.HeadOffset >= targetOffset {
-			sc.logger.Info("Child received entries up to target head offset",
-				slog.Int64("child-shard", childId),
-				slog.Int64("target", targetOffset),
-				slog.Int64("head-offset", resp.HeadOffset),
-			)
-			return nil
-		}
-
-		return errors.Errorf("child %d head offset %d, target %d", childId, resp.HeadOffset, targetOffset)
-	}, oxiatime.NewBackOff(ctx), func(err error, duration time.Duration) {
-		sc.logger.Debug("Waiting for child head offset",
 			slog.Int64("child-shard", childId),
 			slog.Int64("target-offset", targetOffset),
 			slog.Any("error", err),
