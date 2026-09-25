@@ -796,7 +796,12 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, readerClient.Close()) }()
 
-	// Wait for ephemeral records to be cleaned up (session expiry)
+	// Wait for ephemeral records to be cleaned up (session expiry). A new
+	// leader restarts the timeout of every session it loads, as it can't know
+	// when the last heartbeat arrived. If both children are led by the same
+	// data server, leader balancing re-elects one of them 30s after the
+	// coordinator started, right before its inherited session would expire,
+	// and the records then outlive the split by up to two session timeouts.
 	require.Eventually(t, func() bool {
 		for key := range ephemeralKeys {
 			_, _, _, err := readerClient.Get(ctx, key)
@@ -805,7 +810,7 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 			}
 		}
 		return true
-	}, 60*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
+	}, 90*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
 
 	slog.Info("Ephemeral records cleaned up after client close")
 
