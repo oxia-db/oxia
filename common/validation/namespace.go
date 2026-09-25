@@ -28,6 +28,11 @@ var validNamespacePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$`)
 // namespace can take this name in any letter case.
 const dataServerManifestFile = "MANIFEST"
 
+// A data server keeps the database snapshots in this directory, in the same
+// directory as the directories of the namespaces. File systems can be
+// case-insensitive, so no namespace can take this name in any letter case.
+const dataServerSnapshotsDir = "snapshots"
+
 func ValidateNamespace(namespace string) error {
 	if namespace == "" {
 		return errors.New("namespace must not be empty")
@@ -43,6 +48,9 @@ func ValidateNamespace(namespace string) error {
 	}
 	if strings.EqualFold(namespace, dataServerManifestFile) {
 		return errors.Errorf("namespace %q is reserved: it collides with the data server manifest file", namespace)
+	}
+	if strings.EqualFold(namespace, dataServerSnapshotsDir) {
+		return errors.Errorf("namespace %q is reserved: it collides with the data server snapshots directory", namespace)
 	}
 	return nil
 }

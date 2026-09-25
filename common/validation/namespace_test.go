@@ -128,6 +128,23 @@ func TestValidateNamespace(t *testing.T) {
 			namespace: "MANIFEST-1",
 			wantErr:   false,
 		},
+		{
+			name:      "reserved snapshots name",
+			namespace: "snapshots",
+			wantErr:   true,
+			errMsg:    "reserved",
+		},
+		{
+			name:      "reserved snapshots name in another letter case",
+			namespace: "Snapshots",
+			wantErr:   true,
+			errMsg:    "reserved",
+		},
+		{
+			name:      "valid name with a reserved snapshots prefix",
+			namespace: "snapshots-1",
+			wantErr:   false,
+		},
 	}
 
 	for _, tt := range tests {
