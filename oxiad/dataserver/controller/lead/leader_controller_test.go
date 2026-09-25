@@ -1169,6 +1169,11 @@ func TestLeaderController_Notifications(t *testing.T) {
 	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
 	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
 
+	// The subscription is confirmed by an empty batch on the requested offset
+	nb0 := <-adaptor.Ch()
+	assert.EqualValues(t, wal.InvalidOffset, nb0.Offset)
+	assert.Empty(t, nb0.Notifications)
+
 	// WriteBlock entry
 	_, _ = lc.WriteBlock(context.Background(), &proto.WriteRequest{
 		Shard: &shard,

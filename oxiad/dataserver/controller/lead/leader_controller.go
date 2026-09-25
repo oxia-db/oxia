@@ -1235,27 +1235,30 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			cb.OnComplete(constant.ErrInvalidStatus)
 			return
 		}
-		commitOffset := qat.CommitOffset()
+		offsetExclusive = qat.CommitOffset()
+	}
 
-		// In order to ensure the client will positioned on a given offset, we need to send a first "dummy"
-		// notification. The client will wait for this first notification before making the notification
-		// channel available to the application
-		lc.log.Debug(
-			"Sending first dummy notification",
-			slog.Int64("term", lc.term.Load()),
-			slog.Int64("commit-offset", commitOffset),
-		)
-		if err := cb.OnNext(&proto.NotificationBatch{
-			Shard:         lc.shardId,
-			Offset:        commitOffset,
-			Timestamp:     0,
-			Notifications: nil,
-		}); err != nil {
-			lc.Unlock()
-			cb.OnComplete(err)
-			return
-		}
-		offsetExclusive = commitOffset
+	// The first "dummy" notification confirms that the subscription was accepted and
+	// that the cursor is positioned on the given offset. A first subscription waits
+	// for it before making the notification channel available to the application. A
+	// resumed one needs it too: the stream is created before the server has seen the
+	// request, so a rejection is only reported by the first Recv(), and without this
+	// batch an accepted subscription on a shard with no writes is indistinguishable
+	// from a rejected one.
+	lc.log.Debug(
+		"Sending first dummy notification",
+		slog.Int64("term", lc.term.Load()),
+		slog.Int64("offset", offsetExclusive),
+	)
+	if err := cb.OnNext(&proto.NotificationBatch{
+		Shard:         lc.shardId,
+		Offset:        offsetExclusive,
+		Timestamp:     0,
+		Notifications: nil,
+	}); err != nil {
+		lc.Unlock()
+		cb.OnComplete(err)
+		return
 	}
 
 	lc.waitGroup.Go(func() {
