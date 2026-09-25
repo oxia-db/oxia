@@ -15,6 +15,7 @@
 package shard
 
 import (
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -193,7 +194,7 @@ func TestWaitForMajority_Success(t *testing.T) {
 	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
 	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, totalResponses)
@@ -214,7 +215,7 @@ func TestWaitForMajority_FailureNoQuorum(t *testing.T) {
 	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
 	ch <- electionResponse{DataServer: server3, Err: errors.New("timeout")}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "election failed: quorum not reached")
@@ -234,7 +235,7 @@ func TestWaitForMajority_MixedSuccessAndFailure(t *testing.T) {
 	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
 	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 3, totalResponses)
@@ -256,8 +257,7 @@ func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
 	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 110}}}
 	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	removed := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble, removed, make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 3, totalResponses)
@@ -265,8 +265,6 @@ func TestWaitForMajority_ExcludesRemovedServers(t *testing.T) {
 	assert.NotContains(t, result, removedServer, "removed server should not be in result")
 	assert.Contains(t, result, server1)
 	assert.Contains(t, result, server2)
-	assert.Len(t, removed, 1)
-	assert.Equal(t, int64(110), removed[removedServer].Offset)
 }
 
 func TestWaitForMajority_EarlyReturn(t *testing.T) {
@@ -280,7 +278,7 @@ func TestWaitForMajority_EarlyReturn(t *testing.T) {
 	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
 	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, totalResponses, "should return early after reaching majority")
@@ -301,12 +299,11 @@ func TestWaitForEnsembleMajority_WaitsForEnsembleMember(t *testing.T) {
 
 	// server1 and the removed server are a majority of the fenced servers,
 	// but only one member of the ensemble
-	removedResponse := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, removedResponse, make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 	assert.NoError(t, err)
 	assert.Equal(t, 2, totalResponses)
 
-	totalResponses, err = e.waitForEnsembleMajority(ch, 3, ensemble, totalResponses, result, removedResponse, make(map[proto.Feature]bool))
+	totalResponses, err = e.waitForEnsembleMajority(ch, 3, ensemble, totalResponses, result, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 3, totalResponses)
@@ -336,11 +333,10 @@ func TestWaitForEnsembleMajority_FailureNoQuorum(t *testing.T) {
 				ch <- r
 			}
 
-			removedResponse := make(map[*proto.DataServerIdentity]*proto.EntryId)
-			result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, removedResponse, make(map[proto.Feature]bool))
+			result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[proto.Feature]bool))
 			assert.NoError(t, err)
 
-			totalResponses, err = e.waitForEnsembleMajority(ch, 3, ensemble, totalResponses, result, removedResponse, make(map[proto.Feature]bool))
+			totalResponses, err = e.waitForEnsembleMajority(ch, 3, ensemble, totalResponses, result, make(map[proto.Feature]bool))
 
 			assert.ErrorContains(t, err, "election failed: quorum of the new ensemble not reached")
 			assert.Equal(t, 3, totalResponses)
@@ -362,14 +358,13 @@ func TestWaitForEnsembleMajority_AlreadyReached(t *testing.T) {
 	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
 
-	removedResponse := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble, removedResponse, make(map[proto.Feature]bool))
+	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble, make(map[proto.Feature]bool))
 	assert.NoError(t, err)
 	assert.Equal(t, 3, totalResponses)
 
 	// With an odd ensemble, the fencing majority already includes a majority
 	// of the ensemble
-	totalResponses, err = e.waitForEnsembleMajority(ch, 4, ensemble, totalResponses, result, removedResponse, make(map[proto.Feature]bool))
+	totalResponses, err = e.waitForEnsembleMajority(ch, 4, ensemble, totalResponses, result, make(map[proto.Feature]bool))
 
 	assert.NoError(t, err)
 	assert.Equal(t, 3, totalResponses, "should not wait for more responses")
@@ -391,7 +386,7 @@ func TestWaitForGracePeriod_AllResponsesReceived(t *testing.T) {
 	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
 
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
+	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[proto.Feature]bool))
 
 	assert.Len(t, candidatesResponse, 3, "all servers should be in the result")
 	assert.Equal(t, int64(100), candidatesResponse[server1].Offset)
@@ -412,7 +407,7 @@ func TestWaitForGracePeriod_Timeout(t *testing.T) {
 	ch := make(chan electionResponse, 3)
 
 	start := time.Now()
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
+	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[proto.Feature]bool))
 	elapsed := time.Since(start)
 
 	assert.Len(t, candidatesResponse, 1, "should only have initial server")
@@ -435,7 +430,7 @@ func TestWaitForGracePeriod_IgnoresErrors(t *testing.T) {
 	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
 	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
 
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
+	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[proto.Feature]bool))
 
 	assert.Len(t, candidatesResponse, 2, "should have initial server and successful response")
 	assert.Contains(t, candidatesResponse, server1)
@@ -458,15 +453,12 @@ func TestWaitForGracePeriod_ExcludesRemovedServers(t *testing.T) {
 	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 110}}}
 	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
 
-	removed := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, removed, make(map[proto.Feature]bool))
+	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[proto.Feature]bool))
 
 	assert.Len(t, candidatesResponse, 2)
 	assert.Contains(t, candidatesResponse, server1)
 	assert.Contains(t, candidatesResponse, server2)
 	assert.NotContains(t, candidatesResponse, removedServer, "removed server should not be in result")
-	assert.Len(t, removed, 1)
-	assert.Equal(t, int64(110), removed[removedServer].Offset)
 }
 
 func TestWaitForGracePeriod_AlreadyComplete(t *testing.T) {
@@ -483,109 +475,96 @@ func TestWaitForGracePeriod_AlreadyComplete(t *testing.T) {
 	ch := make(chan electionResponse, 2)
 
 	start := time.Now()
-	e.waitForGracePeriod(ch, 2, ensemble, 2, candidatesResponse, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
+	e.waitForGracePeriod(ch, 2, ensemble, 2, candidatesResponse, make(map[proto.Feature]bool))
 	elapsed := time.Since(start)
 
 	assert.Len(t, candidatesResponse, 2)
 	assert.Less(t, elapsed, 10*time.Millisecond, "should return immediately when all responses received")
 }
 
-func TestCheckRemovedEntries(t *testing.T) {
+func TestVerifyIfChangeEnsemble(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	s3 := testDataServer("s3")
 	s4 := testDataServer("s4")
+	head := &proto.EntryId{Term: 2, Offset: 5}
 
-	// RF=3: s2 is swapped for s4, an entry is committed once 2 members have it
+	// The ensemble is the one the change produced: s2 swapped out for s4, so
+	// the members it keeps are s1 and s3
+	newElection := func() *Election {
+		return &Election{
+			logger:               slog.Default(),
+			changeEnsembleAction: action.NewChangeEnsembleAction(0, s2, s4),
+			mutableShardMetadata: &proto.ShardMetadata{
+				Ensemble:     []*proto.DataServerIdentity{s1, s3, s4},
+				RemovedNodes: []*proto.DataServerIdentity{s2},
+			},
+		}
+	}
+
 	tests := []struct {
 		name       string
 		candidates map[*proto.DataServerIdentity]*proto.EntryId
-		removed    map[*proto.DataServerIdentity]*proto.EntryId
-		loses      bool
+		wantErr    bool
 	}{
-		{
-			name:       "removed data server not ahead",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s1: {Term: 2, Offset: 5}, s4: {Term: -1, Offset: -1}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 2, Offset: 5}},
-		},
-		{
-			name:       "removed data server not fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{},
-		},
-		{
-			name:       "removed data server ahead and an old member not fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 2, Offset: 5}},
-			loses:      true,
-		},
-		{
-			name:       "removed data server ahead by term and an old member not fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s3: {Term: 2, Offset: 9}, s4: {Term: -1, Offset: -1}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 3, Offset: 5}},
-			loses:      true,
-		},
-		{
-			// Its entries beyond the candidates were acked by no other member
-			name: "removed data server ahead and all members fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{
-				s1: {Term: 2, Offset: 4}, s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1},
-			},
-			removed: map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 2, Offset: 5}},
-		},
-		{
-			// The added data server was not a member when the entries were written
-			name:       "removed data server ahead and the added one not fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s1: {Term: 2, Offset: 4}, s3: {Term: 2, Offset: 4}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 2, Offset: 5}},
-		},
+		{"both kept members fenced", map[*proto.DataServerIdentity]*proto.EntryId{s1: head, s3: head}, false},
+		{"both kept members and the added one", map[*proto.DataServerIdentity]*proto.EntryId{s1: head, s3: head, s4: head}, false},
+		{"only one kept member", map[*proto.DataServerIdentity]*proto.EntryId{s1: head, s4: head}, true},
+		{"the added data server does not count", map[*proto.DataServerIdentity]*proto.EntryId{s4: head}, true},
+		{"no kept member", map[*proto.DataServerIdentity]*proto.EntryId{}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := &Election{
-				logger: slog.Default(),
-				mutableShardMetadata: &proto.ShardMetadata{
-					Term:         3,
-					Ensemble:     []*proto.DataServerIdentity{s1, s3, s4},
-					RemovedNodes: []*proto.DataServerIdentity{s2},
-				},
-				changeEnsembleAction: action.NewChangeEnsembleAction(5, s2, s4),
-			}
-			err := e.checkRemovedEntries(tt.candidates, tt.removed)
-			if tt.loses {
+			err := newElection().verifyChangeEnsemble(tt.candidates)
+			if tt.wantErr {
 				assert.ErrorIs(t, err, ErrChangeEnsembleLosesEntries)
-			} else {
-				assert.NoError(t, err)
+				return
 			}
+			assert.NoError(t, err)
 		})
 	}
 }
 
-func TestCheckRemovedEntries_ReplicationFactor5(t *testing.T) {
+// With RF=2 a committed entry is on both members, so fencing the single member
+// the change keeps is enough.
+func TestVerifyIfChangeEnsemble_ReplicationFactor2(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	s3 := testDataServer("s3")
-	s4 := testDataServer("s4")
-	s5 := testDataServer("s5")
-	s6 := testDataServer("s6")
+	head := &proto.EntryId{Term: 2, Offset: 1}
 	e := &Election{
-		logger: slog.Default(),
+		logger:               slog.Default(),
+		changeEnsembleAction: action.NewChangeEnsembleAction(0, s2, s3),
 		mutableShardMetadata: &proto.ShardMetadata{
-			Term:         3,
-			Ensemble:     []*proto.DataServerIdentity{s1, s2, s3, s4, s6},
-			RemovedNodes: []*proto.DataServerIdentity{s5},
+			Ensemble:     []*proto.DataServerIdentity{s1, s3},
+			RemovedNodes: []*proto.DataServerIdentity{s2},
 		},
-		changeEnsembleAction: action.NewChangeEnsembleAction(5, s5, s6),
 	}
-	removed := map[*proto.DataServerIdentity]*proto.EntryId{s5: {Term: 2, Offset: 5}}
+	assert.NoError(t, e.verifyChangeEnsemble(map[*proto.DataServerIdentity]*proto.EntryId{s1: head}))
+	assert.ErrorIs(t, e.verifyChangeEnsemble(map[*proto.DataServerIdentity]*proto.EntryId{s3: head}),
+		ErrChangeEnsembleLosesEntries)
+}
 
-	// s5 and s1 cannot form a write quorum of 3
-	assert.NoError(t, e.checkRemovedEntries(map[*proto.DataServerIdentity]*proto.EntryId{
-		s2: {Term: 2, Offset: 4}, s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 4}, s6: {Term: -1, Offset: -1},
-	}, removed))
-
-	// s5, s1 and s2 can
-	assert.ErrorIs(t, e.checkRemovedEntries(map[*proto.DataServerIdentity]*proto.EntryId{
-		s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 4}, s6: {Term: -1, Offset: -1},
-	}, removed), ErrChangeEnsembleLosesEntries)
+// RF=5: three of the four members the change keeps must be fenced.
+func TestVerifyIfChangeEnsemble_ReplicationFactor5(t *testing.T) {
+	servers := make([]*proto.DataServerIdentity, 6)
+	for i := range servers {
+		servers[i] = testDataServer(fmt.Sprintf("s%d", i+1))
+	}
+	head := &proto.EntryId{Term: 2, Offset: 5}
+	// s5 swapped out for s6
+	e := &Election{
+		logger:               slog.Default(),
+		changeEnsembleAction: action.NewChangeEnsembleAction(0, servers[4], servers[5]),
+		mutableShardMetadata: &proto.ShardMetadata{
+			Ensemble:     []*proto.DataServerIdentity{servers[0], servers[1], servers[2], servers[3], servers[5]},
+			RemovedNodes: []*proto.DataServerIdentity{servers[4]},
+		},
+	}
+	assert.NoError(t, e.verifyChangeEnsemble(map[*proto.DataServerIdentity]*proto.EntryId{
+		servers[0]: head, servers[1]: head, servers[2]: head,
+	}))
+	assert.ErrorIs(t, e.verifyChangeEnsemble(map[*proto.DataServerIdentity]*proto.EntryId{
+		servers[0]: head, servers[1]: head, servers[5]: head,
+	}), ErrChangeEnsembleLosesEntries)
 }

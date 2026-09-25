@@ -52,7 +52,7 @@ var (
 	ErrChangeEnsembleLosesFeatureSupport = errors.New(
 		"change ensemble would remove support for negotiated shard features")
 	ErrChangeEnsembleLosesEntries = errors.New(
-		"change ensemble would lose entries of the removed data servers that may be committed")
+		"change ensemble would leave committed entries outside the candidates")
 
 	// ErrFeaturesRenegotiation makes the election retry with a new term, so
 	// that it can pin a different feature set than the one it fenced the
@@ -88,9 +88,6 @@ type Election struct {
 	requiredFeatures []proto.Feature
 	// pinnedFeatures are the features pinned by the term of the elected leader
 	pinnedFeatures []proto.Feature
-	// changeEnsembleErr is the reason why the change ensemble was aborted, in
-	// which case the election goes on with the current ensemble
-	changeEnsembleErr error
 	// becomeLeaderSent is set once an attempt sent BecomeLeader: that leader
 	// may have committed entries on the members of the new ensemble alone,
 	// even if the attempt failed, so the change ensemble cannot be aborted
@@ -136,12 +133,11 @@ type fenceResponse struct {
 
 // Send NewTerm to all the ensemble members in parallel and wait for
 // a majority of them to reply successfully. Besides the head entry of each
-// candidate and of each removed data server that replied, it returns the union
-// of the features the fenced nodes report as already enabled in their database,
-// which the new term's feature set must cover.
+// candidate, it returns the union of the features the fenced nodes report as
+// already enabled in their database, which the new term's feature set must
+// cover.
 func (e *Election) fenceNewTermQuorum(term int64, options *proto.NewTermOptions, ensemble []*proto.DataServerIdentity,
-	removedCandidates []*proto.DataServerIdentity) (candidates map[*proto.DataServerIdentity]*proto.EntryId,
-	removed map[*proto.DataServerIdentity]*proto.EntryId, features []proto.Feature, err error) {
+	removedCandidates []*proto.DataServerIdentity) (map[*proto.DataServerIdentity]*proto.EntryId, []proto.Feature, error) {
 	fenceQuorumTimer := e.newTermQuorumLatency.Timer()
 
 	fencingDataServers := slices.Concat(ensemble, removedCandidates)
@@ -186,11 +182,9 @@ func (e *Election) fenceNewTermQuorum(term int64, options *proto.NewTermOptions,
 		})
 	}
 	enabledFeatures := make(map[proto.Feature]bool)
-	removedResponse := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	candidatesResponse, totalResponses, err := e.waitForMajority(ch, fencingQuorumSize, majority, ensemble,
-		removedResponse, enabledFeatures)
+	candidatesResponse, totalResponses, err := e.waitForMajority(ch, fencingQuorumSize, majority, ensemble, enabledFeatures)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	if len(removedCandidates) > 0 {
 		// The removed data servers count toward the fencing majority, but
@@ -199,20 +193,18 @@ func (e *Election) fenceNewTermQuorum(term int64, options *proto.NewTermOptions,
 		// of the followers it is given to commit its head entry and start
 		// leading.
 		if totalResponses, err = e.waitForEnsembleMajority(ch, fencingQuorumSize, ensemble, totalResponses,
-			candidatesResponse, removedResponse, enabledFeatures); err != nil {
-			return nil, nil, nil, err
+			candidatesResponse, enabledFeatures); err != nil {
+			return nil, nil, err
 		}
 	}
-	e.waitForGracePeriod(ch, fencingQuorumSize, ensemble, totalResponses, candidatesResponse, removedResponse,
-		enabledFeatures)
+	e.waitForGracePeriod(ch, fencingQuorumSize, ensemble, totalResponses, candidatesResponse, enabledFeatures)
 	enabled := maps.Keys(enabledFeatures)
 	slices.Sort(enabled)
-	return candidatesResponse, removedResponse, enabled, nil
+	return candidatesResponse, enabled, nil
 }
 
 func (*Election) waitForGracePeriod(ch chan fenceResponse, fencingQuorumSize int, ensemble []*proto.DataServerIdentity,
-	totalResponses int, candidatesResponse map[*proto.DataServerIdentity]*proto.EntryId,
-	removedResponse map[*proto.DataServerIdentity]*proto.EntryId, enabledFeatures map[proto.Feature]bool) {
+	totalResponses int, candidatesResponse map[*proto.DataServerIdentity]*proto.EntryId, enabledFeatures map[proto.Feature]bool) {
 	// If we have already reached a quorum of successful responses, we can wait a
 	// tiny bit more, to allow time for all the "healthy" data servers to respond.
 	for totalResponses < fencingQuorumSize {
@@ -226,8 +218,6 @@ func (*Election) waitForGracePeriod(ch chan fenceResponse, fencingQuorumSize int
 			collectEnabledFeatures(enabledFeatures, r.Response)
 			if slices.Contains(ensemble, r.DataServer) {
 				candidatesResponse[r.DataServer] = r.Response.HeadEntryId
-			} else {
-				removedResponse[r.DataServer] = r.Response.HeadEntryId
 			}
 		case <-time.After(quorumFencingGracePeriod):
 			return
@@ -236,8 +226,7 @@ func (*Election) waitForGracePeriod(ch chan fenceResponse, fencingQuorumSize int
 }
 
 func (*Election) waitForMajority(ch chan fenceResponse, fencingQuorumSize int, majority int,
-	ensemble []*proto.DataServerIdentity, removedResponse map[*proto.DataServerIdentity]*proto.EntryId,
-	enabledFeatures map[proto.Feature]bool) (map[*proto.DataServerIdentity]*proto.EntryId, int, error) {
+	ensemble []*proto.DataServerIdentity, enabledFeatures map[proto.Feature]bool) (map[*proto.DataServerIdentity]*proto.EntryId, int, error) {
 	res := make(map[*proto.DataServerIdentity]*proto.EntryId)
 	successResponses := 0
 	totalResponses := 0
@@ -253,12 +242,9 @@ func (*Election) waitForMajority(ch chan fenceResponse, fencingQuorumSize int, m
 		}
 		successResponses++
 		collectEnabledFeatures(enabledFeatures, fencingResponse.Response)
-		// We don't consider the removed data servers as candidates for leader/followers,
-		// but their head entries tell whether the candidates miss any of their entries
+		// We don't consider the removed data servers as candidates for leader/followers
 		if slices.Contains(ensemble, fencingResponse.DataServer) {
 			res[fencingResponse.DataServer] = fencingResponse.Response.HeadEntryId
-		} else {
-			removedResponse[fencingResponse.DataServer] = fencingResponse.Response.HeadEntryId
 		}
 	}
 	if successResponses < majority {
@@ -272,8 +258,7 @@ func (*Election) waitForMajority(ch chan fenceResponse, fencingQuorumSize int, m
 // has responded.
 func (*Election) waitForEnsembleMajority(ch chan fenceResponse, fencingQuorumSize int,
 	ensemble []*proto.DataServerIdentity, totalResponses int,
-	candidatesResponse map[*proto.DataServerIdentity]*proto.EntryId,
-	removedResponse map[*proto.DataServerIdentity]*proto.EntryId, enabledFeatures map[proto.Feature]bool) (int, error) {
+	candidatesResponse map[*proto.DataServerIdentity]*proto.EntryId, enabledFeatures map[proto.Feature]bool) (int, error) {
 	ensembleMajority := len(ensemble)/2 + 1
 	for len(candidatesResponse) < ensembleMajority && totalResponses < fencingQuorumSize {
 		r := <-ch
@@ -285,8 +270,6 @@ func (*Election) waitForEnsembleMajority(ch chan fenceResponse, fencingQuorumSiz
 		collectEnabledFeatures(enabledFeatures, r.Response)
 		if slices.Contains(ensemble, r.DataServer) {
 			candidatesResponse[r.DataServer] = r.Response.HeadEntryId
-		} else {
-			removedResponse[r.DataServer] = r.Response.HeadEntryId
 		}
 	}
 	if len(candidatesResponse) < ensembleMajority {
@@ -501,7 +484,7 @@ func (e *Election) fencingFailedFollowers(term int64, options *proto.NewTermOpti
 	}
 }
 
-func (e *Election) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
+func (e *Election) prepareChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	from := e.changeEnsembleAction.From
 	to := e.changeEnsembleAction.To
 	if !slices.ContainsFunc(mutShardMeta.RemovedNodes, func(server *proto.DataServerIdentity) bool {
@@ -526,83 +509,65 @@ func (e *Election) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	)
 }
 
-// checkRemovedEntries verifies that the new leader, the candidate with the
-// highest head entry, cannot miss a committed entry. The removed data servers
-// are fenced but they are not candidates: the entries that they have beyond
-// every candidate may be committed, when the removed data servers that have
-// them and the members of the old ensemble that did not reply to the fence can
-// form a write quorum.
-func (e *Election) checkRemovedEntries(candidatesStatus map[*proto.DataServerIdentity]*proto.EntryId,
-	removedStatus map[*proto.DataServerIdentity]*proto.EntryId) error {
-	var best *proto.EntryId
-	for _, head := range candidatesStatus {
-		if best == nil || isAhead(head, best) {
-			best = head
-		}
-	}
-	var ahead, missing []string
-	for _, dataServer := range e.mutableShardMetadata.RemovedNodes {
-		head, replied := removedStatus[dataServer]
-		if !replied {
-			missing = append(missing, dataServer.GetNameOrDefault())
+// verifyChangeEnsemble verifies that the ensemble prepareChangeEnsemble
+// moved the shard to cannot miss a committed entry. The data servers being
+// removed are fenced but they are not candidates, so a committed entry that
+// lives only on them would be lost.
+//
+// An entry is committed once the leader and RF/2 followers hold it, so a write
+// quorum is RF/2+1 data servers. Fencing ceil(RF/2) of the members the change
+// keeps leaves fewer than a write quorum of the current ensemble unaccounted
+// for, hence every committed entry is held by a fenced member of the new
+// ensemble, which is a candidate.
+func (e *Election) verifyChangeEnsemble(candidatesStatus map[*proto.DataServerIdentity]*proto.EntryId) error {
+	// The ensemble already holds the added data server, which holds none of
+	// the entries of the current one: only the members that are kept count
+	added := e.changeEnsembleAction.To.GetNameOrDefault()
+	kept, fenced := 0, 0
+	for _, dataServer := range e.mutableShardMetadata.Ensemble {
+		if dataServer.GetNameOrDefault() == added {
 			continue
 		}
-		if isAhead(head, best) {
-			ahead = append(ahead, dataServer.GetNameOrDefault())
+		kept++
+		if _, replied := candidatesStatus[dataServer]; replied {
+			fenced++
 		}
 	}
-	if len(ahead) == 0 {
-		return nil
-	}
-	var added string
-	if e.changeEnsembleAction != nil {
-		added = e.changeEnsembleAction.To.GetNameOrDefault()
-	}
-	for _, dataServer := range e.mutableShardMetadata.Ensemble {
-		if _, replied := candidatesStatus[dataServer]; !replied && dataServer.GetNameOrDefault() != added {
-			missing = append(missing, dataServer.GetNameOrDefault())
-		}
-	}
-	// An entry is committed once the leader and RF/2 followers have it
-	if len(ahead)+len(missing) < len(e.mutableShardMetadata.Ensemble)/2+1 {
+	ensembleSize := len(e.mutableShardMetadata.Ensemble)
+	// ceil(RF/2): RF/2+1 for an odd RF, RF/2 for an even one, where with RF=2
+	// every committed entry is on both members and one fenced member is enough
+	if fenced >= ensembleSize-ensembleSize/2 {
 		return nil
 	}
 	e.logger.Warn(
-		"The removed data servers have entries that no candidate has, and that may be committed",
+		"The ensemble change would leave committed entries outside the candidates",
 		slog.Int64("term", e.mutableShardMetadata.Term),
-		slog.Any("candidate-head-entry", best),
-		slog.Any("removed-data-servers-ahead", ahead),
-		slog.Any("data-servers-not-fenced", missing),
+		slog.Int("fenced-kept-members", fenced),
+		slog.Int("kept-members", kept),
+		slog.Any("removed-data-servers", e.mutableShardMetadata.RemovedNodes),
 	)
 	return ErrChangeEnsembleLosesEntries
 }
 
-func isAhead(a *proto.EntryId, b *proto.EntryId) bool {
-	return a.GetTerm() > b.GetTerm() || (a.GetTerm() == b.GetTerm() && a.GetOffset() > b.GetOffset())
-}
-
-// abortChangeEnsemble gives up the change ensemble, so that the next attempts
-// elect a leader of the current ensemble, where the removed data servers are
-// candidates again. The data server that was being added was fenced already,
-// its copy of the shard gets deleted.
-func (e *Election) abortChangeEnsemble(retryShardMetadata *proto.ShardMetadata, err error) {
-	if e.changeEnsembleAction == nil || e.becomeLeaderSent {
-		return
-	}
+// abortChangeEnsemble gives the change ensemble up, so that the next attempts
+// elect a leader of the current ensemble, where the removed data server is a
+// candidate again. start() has already
+// restored the metadata; the data server that was being added was fenced, so
+// its copy of the shard is queued for deletion.
+func (e *Election) abortChangeEnsemble(err error) {
 	to := e.changeEnsembleAction.To
 	e.logger.Warn(
-		"Aborting the change ensemble",
+		"Giving up the change ensemble",
 		slog.Any("from", e.changeEnsembleAction.From),
 		slog.Any("to", to),
 		slog.Any("error", err),
 	)
-	if !slices.ContainsFunc(retryShardMetadata.PendingDeleteShardNodes, func(dataServer *proto.DataServerIdentity) bool {
+	if !slices.ContainsFunc(e.mutableShardMetadata.PendingDeleteShardNodes, func(dataServer *proto.DataServerIdentity) bool {
 		return dataServer.GetNameOrDefault() == to.GetNameOrDefault()
 	}) {
-		retryShardMetadata.PendingDeleteShardNodes = append(retryShardMetadata.PendingDeleteShardNodes, to)
+		e.mutableShardMetadata.PendingDeleteShardNodes = append(e.mutableShardMetadata.PendingDeleteShardNodes, to)
 	}
 	e.changeEnsembleAction = nil
-	e.changeEnsembleErr = err
 }
 
 func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
@@ -619,10 +584,9 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 		return nil, errors.Wrap(err, "failed to persist the new term")
 	}
 
-	var retryShardMetadata *proto.ShardMetadata
 	if e.changeEnsembleAction != nil {
-		retryShardMetadata = gproto.CloneOf(e.mutableShardMetadata)
-		e.prepareIfChangeEnsemble(e.mutableShardMetadata)
+		retryShardMetadata := gproto.CloneOf(e.mutableShardMetadata)
+		e.prepareChangeEnsemble(e.mutableShardMetadata)
 		defer func() {
 			if err != nil {
 				e.mutableShardMetadata = retryShardMetadata
@@ -644,7 +608,7 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	termOptions.Features = negotiatedFeatures
 
 	// Send NewTerm to all the ensemble members
-	candidatesStatus, removedStatus, enabledFeatures, err := e.fenceNewTermQuorum(
+	candidatesStatus, enabledFeatures, err := e.fenceNewTermQuorum(
 		e.mutableShardMetadata.Term,
 		termOptions,
 		e.mutableShardMetadata.Ensemble,
@@ -652,9 +616,10 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = e.checkRemovedEntries(candidatesStatus, removedStatus); err != nil {
-		e.abortChangeEnsemble(retryShardMetadata, err)
-		return nil, err
+	if e.changeEnsembleAction != nil {
+		if err = e.verifyChangeEnsemble(candidatesStatus); err != nil {
+			return nil, err
+		}
 	}
 	if err = e.checkNegotiatedFeatures(negotiatedFeatures, enabledFeatures, candidatesStatus); err != nil {
 		return nil, err
@@ -847,18 +812,24 @@ func (e *Election) IsReadyForChangeEnsemble() bool {
 	return e.followerCaughtUp.Load()
 }
 
-// ChangeEnsembleError returns why the change ensemble of the election was
-// aborted, or nil if it was not.
-func (e *Election) ChangeEnsembleError() error {
-	return e.changeEnsembleErr
-}
-
 func (e *Election) Start() *proto.DataServerIdentity {
 	if swapped := e.started.CompareAndSwap(false, true); !swapped {
 		panic("bug! the election has been started")
 	}
+	changeEnsembleAction := e.changeEnsembleAction
+	var changeEnsembleErr error
 	newLeader, _ := backoff.RetryNotifyWithData[*proto.DataServerIdentity](func() (*proto.DataServerIdentity, error) {
-		return e.start()
+		leader, err := e.start()
+		// The change is given up when the fence found it unsafe, but not once
+		// BecomeLeader was sent: that leader may have committed entries on the
+		// members of the new ensemble alone, which a leader of the current
+		// ensemble would miss.
+		if e.changeEnsembleAction != nil && !e.becomeLeaderSent &&
+			errors.Is(err, ErrChangeEnsembleLosesEntries) {
+			e.abortChangeEnsemble(err)
+			changeEnsembleErr = err
+		}
+		return leader, err
 	}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
 		e.leaderElectionsFailed.Inc()
 		term := e.mutableShardMetadata.GetTerm()
@@ -887,6 +858,15 @@ func (e *Election) Start() *proto.DataServerIdentity {
 			slog.Duration("retry-after", duration),
 		)
 	})
+	// The election has settled: complete the change ensemble it was asked to
+	// carry out, whether it went through or had to be given up
+	switch {
+	case changeEnsembleAction == nil:
+	case changeEnsembleErr != nil:
+		changeEnsembleAction.Error(changeEnsembleErr)
+	default:
+		changeEnsembleAction.Done(nil)
+	}
 	return newLeader
 }
 
