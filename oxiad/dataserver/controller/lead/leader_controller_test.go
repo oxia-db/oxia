@@ -2302,3 +2302,59 @@ func TestLeaderController_WalRecoveryWithCorruptedEntry(t *testing.T) {
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
+
+// A node seeded from a snapshot, like the first leader of a split child, has an
+// empty WAL while its database is at the snapshot's commit offset. As leader, it
+// must continue the offsets after that one instead of reusing the offsets of
+// the entries already in the database.
+func TestLeaderController_BecomeLeaderWithEmptyWalAfterSnapshot(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 1, ReplicationFactor: 1})
+	require.NoError(t, err)
+
+	// The entries 0 to 2 get committed and applied to the database
+	for i := range 3 {
+		_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: fmt.Sprintf("key-%d", i), Value: []byte("value")}},
+		})
+		require.NoError(t, err)
+	}
+	require.NoError(t, lc.Close())
+
+	// Installing a snapshot leaves the WAL empty
+	walObject, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
+	require.NoError(t, err)
+	require.NoError(t, walObject.Clear())
+	require.NoError(t, walObject.Close())
+
+	lc, err = NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	res, err := lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+	require.NoError(t, err)
+	AssertProtoEqual(t, constant2.InvalidEntryId, res.HeadEntryId)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 2, ReplicationFactor: 1})
+	require.NoError(t, err)
+
+	// A session id is the offset of the entry that registers the session
+	session, err := lc.CreateSession(&proto.CreateSessionRequest{Shard: shard, SessionTimeoutMs: 5_000})
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, session.SessionId)
+
+	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, commitOffset)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
