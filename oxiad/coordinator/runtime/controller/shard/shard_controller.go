@@ -710,7 +710,12 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 	}
 	if leader == nil {
 		// The election stopped without changing the ensemble, e.g. because a
-		// split of the shard started after the validation above
+		// split of the shard started after the validation above. The shard is
+		// as ready for a change of its ensemble as it was before this one: drop
+		// the election, which never elected a leader for its followers to catch
+		// up with, or it rejects the next changes as not ready.
+		s.currentElection.Stop()
+		s.currentElection = nil
 		changeEnsembleAction.Error(fmt.Errorf("%w: the election stopped before changing the ensemble",
 			ErrNotReadyForChangeEnsemble))
 		return

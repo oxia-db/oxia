@@ -1715,7 +1715,8 @@ func TestController_ChangeEnsembleRejectsSplitShard(t *testing.T) {
 // A split of the shard that starts after a change of its ensemble was
 // validated, but before the election that changes the ensemble starts, stops
 // the election: the change must be reported as failed, and leave the shard as
-// it was.
+// it was. Once the split is aborted, the ensemble of the shard can change
+// again.
 func TestController_ChangeEnsembleStopsWhenSplitStarts(t *testing.T) {
 	rpc := mockutils.NewRpcProvider()
 	spare := &proto.DataServerIdentity{Public: "spare:9091", Internal: "spare:8191"}
@@ -1773,6 +1774,21 @@ func TestController_ChangeEnsembleStopsWhenSplitStarts(t *testing.T) {
 	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3, spare} {
 		assert.Empty(t, drainNewTermRequests(rpc.GetNode(node)), "NewTerm requests to %s", node.GetPublic())
 	}
+
+	// The split is aborted, and the balancer moves the shard again: the
+	// stopped election must not hold the change back as not ready
+	require.NoError(t, metadata.UpdateShardStatuses(constant.DefaultNamespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		shards[0].Split = nil
+		return true
+	}))
+	swap = action.NewChangeEnsembleAction(0, ps3, spare)
+	sc.ChangeEnsemble(swap)
+	_, err = swap.Wait()
+	require.NoError(t, err)
+	shard := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
+	assert.EqualValues(t, 6, shard.GetTerm())
+	assertShardEnsemble(t, shard.GetEnsemble(), ps1, ps2, spare)
+	assertShardEnsemble(t, shard.GetPendingDeleteShardNodes(), ps3)
 }
 
 // Each UpdateShardStatus persists the full cluster status. A periodic tick
