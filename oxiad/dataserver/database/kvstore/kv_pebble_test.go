@@ -28,6 +28,7 @@ import (
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxiad/common/crc"
 )
 
@@ -1268,6 +1269,24 @@ func TestPebbleRejectsInvalidNamespace(t *testing.T) {
 	// The data dir is a t.TempDir(), so its parent is the per-test temp root
 	_, err = os.Stat(filepath.Join(filepath.Dir(options.DataDir), "escaped-ns"))
 	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	assert.NoError(t, factory.Close())
+}
+
+// The snapshots left behind by a previous run are removed at startup. The
+// "snapshots" name is reserved, so the whole directory can go.
+func TestPebbleCleanupSnapshots(t *testing.T) {
+	options := NewFactoryOptionsForTest(t)
+
+	snapshotsDir := filepath.Join(options.DataDir, validation.DataServerSnapshotsDir)
+	require.NoError(t, os.MkdirAll(filepath.Join(snapshotsDir, "shard-1", "snapshot-1"), 0o755))
+
+	// A data server restart creates a new factory on the same data dir
+	factory, err := NewPebbleKVFactory(options)
+	require.NoError(t, err)
+
+	_, err = os.Stat(snapshotsDir)
+	assert.True(t, os.IsNotExist(err), "the leftover snapshot should have been removed")
 
 	assert.NoError(t, factory.Close())
 }

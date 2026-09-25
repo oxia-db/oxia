@@ -22,6 +22,8 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+
+	"github.com/oxia-db/oxia/common/validation"
 )
 
 type pebbleSnapshot struct {
@@ -41,7 +43,7 @@ type pebbleSnapshotChunk struct {
 
 func newPebbleSnapshot(p *Pebble) (Snapshot, error) {
 	ps := &pebbleSnapshot{
-		path: filepath.Join(p.factory.dataDir, "snapshots",
+		path: filepath.Join(p.factory.dataDir, validation.DataServerSnapshotsDir,
 			fmt.Sprintf("shard-%d", p.shardId),
 			fmt.Sprintf("snapshot-%d", p.snapshotCounter.Add(1))),
 	}
