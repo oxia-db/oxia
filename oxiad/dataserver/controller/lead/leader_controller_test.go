@@ -1206,6 +1206,60 @@ func TestLeaderController_Notifications(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+func TestLeaderController_NotificationsResumeEchoesRequestedOffset(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+
+	lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+
+	for _, key := range []string{"a", "b", "c"} {
+		_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte("value-" + key)}},
+		})
+		assert.NoError(t, err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Resume from an offset that is neither the invalid offset nor the commit
+	// offset, so the confirmation batch can only match by echoing the request
+	startOffsetExclusive := int64(1)
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	lc.GetNotifications(ctx, &proto.NotificationsRequest{
+		Shard:                shard,
+		StartOffsetExclusive: &startOffsetExclusive,
+	}, adaptor)
+
+	nb0 := <-adaptor.Ch()
+	assert.EqualValues(t, startOffsetExclusive, nb0.Offset)
+	assert.Empty(t, nb0.Notifications)
+
+	// Dispatch then resumes right after the requested offset
+	nb1 := <-adaptor.Ch()
+	assert.EqualValues(t, 2, nb1.Offset)
+	assert.Equal(t, 1, len(nb1.Notifications))
+	assert.Equal(t, "c", nb1.Notifications[0].GetKey())
+
+	cancel()
+	assert.Eventually(t, func() bool {
+		return adaptor.IsCompleted()
+	}, 10*time.Second, 100*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestLeaderController_NotificationsCloseLeader(t *testing.T) {
 	var shard int64 = 1
 
