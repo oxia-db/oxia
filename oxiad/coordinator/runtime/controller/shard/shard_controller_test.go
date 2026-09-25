@@ -751,10 +751,11 @@ func TestController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 3, true)
 	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 3, true)
 
-	// Shard controller should retry and eventually succeed. s3 has all the
-	// entries of s1, which is swapped out
+	// Shard controller should retry and eventually succeed. s2 answers this
+	// time, so a majority of the members the swap keeps is fenced and the
+	// change can go ahead; s3 has all the entries of s1, which is swapped out
 	rpc.GetNode(s1).NewTermResponse(2, 2, nil)
-	rpc.GetNode(s2).NewTermResponse(2, 0, errors.New("fails"))
+	rpc.GetNode(s2).NewTermResponse(2, 0, nil)
 	rpc.GetNode(s3).NewTermResponse(2, 2, nil)
 	rpc.GetNode(s4).NewTermResponse(2, 0, nil)
 

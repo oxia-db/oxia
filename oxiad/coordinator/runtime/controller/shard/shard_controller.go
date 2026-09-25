@@ -695,12 +695,9 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
+	// The election completes the action: it is the only one that knows
+	// whether the change went through or had to be given up
 	s.onElectLeader(changeEnsembleAction)
-	if err := s.currentElection.ChangeEnsembleError(); err != nil {
-		changeEnsembleAction.Error(err)
-		return
-	}
-	changeEnsembleAction.Done(nil)
 }
 
 func (s *controller) SyncServerAddress() {
