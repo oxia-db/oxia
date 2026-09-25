@@ -418,7 +418,13 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 		return err
 	}
 
-	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
+	// A leader seeded from a snapshot, like the first leader of a split child,
+	// has an empty wal while its database is already at the snapshot's commit
+	// offset. Its entries must continue after that offset: the tracker would
+	// take the ones at or below it as committed without any ack, and the
+	// followers seeded from the same snapshot drop them as duplicates.
+	headOffset := max(lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
+	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), headOffset, leaderCommitOffset)
 	lc.sessionManager = NewSessionManager(lc.ctx, lc.namespace, lc.shardId, lc)
 
 	for follower, followerHeadEntryId := range req.FollowerMaps {

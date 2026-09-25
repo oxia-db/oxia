@@ -796,7 +796,12 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, readerClient.Close()) }()
 
-	// Wait for ephemeral records to be cleaned up (session expiry)
+	// Wait for ephemeral records to be cleaned up (session expiry). A new
+	// leader restarts the timeout of every session it loads, as it can't know
+	// when the last heartbeat arrived. If both children are led by the same
+	// data server, leader balancing re-elects one of them 30s after the
+	// coordinator started, right before its inherited session would expire,
+	// and the records then outlive the split by up to two session timeouts.
 	require.Eventually(t, func() bool {
 		for key := range ephemeralKeys {
 			_, _, _, err := readerClient.Get(ctx, key)
@@ -805,7 +810,7 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 			}
 		}
 		return true
-	}, 60*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
+	}, 90*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
 
 	slog.Info("Ephemeral records cleaned up after client close")
 
@@ -1246,4 +1251,109 @@ func TestCoordinator_ShardSplit_ConcurrentSplitRejected(t *testing.T) {
 		return true
 	}, 2*time.Minute, 500*time.Millisecond)
 	slog.Info("First split completed successfully")
+}
+
+// ---- Writes to split children ----
+
+// splitWithKeys writes some keys, splits the shard, and returns a client that
+// uses the children's assignments.
+func (c *splitTestCluster) splitWithKeys(t *testing.T) oxia.SyncClient {
+	t.Helper()
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	for i := 0; i < 30; i++ {
+		_, _, err = client.Put(context.Background(), fmt.Sprintf("key-%04d", i), []byte("value"))
+		require.NoError(t, err)
+	}
+	c.splitAndWait(t)
+	return c.reconnectClient(t, client, "key-0000")
+}
+
+// childKey returns a key, starting with prefix, that belongs to the given child.
+func (c *splitTestCluster) childKey(child int64, prefix string) string {
+	hashRange := c.leftMeta.Int32HashRange
+	if child == c.rightChild {
+		hashRange = c.rightMeta.Int32HashRange
+	}
+	for i := 0; ; i++ {
+		key := fmt.Sprintf("%s-%d", prefix, i)
+		if h := hash.Xxh332(key); h >= hashRange.Min && h <= hashRange.Max {
+			return key
+		}
+	}
+}
+
+func (c *splitTestCluster) shardStatus(t *testing.T, shard int64) *proto.ShardMetadata {
+	t.Helper()
+	return mock.StatusSnapshot(t, c.metadata).Namespaces[constant.DefaultNamespace].Shards[shard]
+}
+
+// waitForNewTerm waits for the shard to be led again in a term after the given one.
+func (c *splitTestCluster) waitForNewTerm(t *testing.T, shard int64, term int64) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		sm := c.shardStatus(t, shard)
+		return sm.Term > term && sm.Leader != nil && sm.GetStatusOrDefault() == proto.ShardStatusSteadyState
+	}, 30*time.Second, 100*time.Millisecond)
+}
+
+// The first leader of a split child is seeded from a snapshot of the parent,
+// with an empty WAL. The child must keep committing writes after it gets
+// re-elected, like leader balancing does.
+func TestCoordinator_ShardSplit_ChildWritesAfterReelection(t *testing.T) {
+	cluster := setupSplitCluster(t)
+	defer cluster.close(t)
+	client := cluster.splitWithKeys(t)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	_, _, err := client.Put(context.Background(), cluster.childKey(cluster.leftChild, "before"), []byte("value"))
+	require.NoError(t, err)
+
+	// Reporting the leader as unavailable runs the same election as leader balancing
+	before := cluster.shardStatus(t, cluster.leftChild)
+	cluster.coordinator.BecameUnavailable(before.Leader)
+	cluster.waitForNewTerm(t, cluster.leftChild, before.Term)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, _, err = client.Put(ctx, cluster.childKey(cluster.leftChild, "after"), []byte("value"))
+	require.NoError(t, err, "write to the split child after its re-election")
+}
+
+// A write acknowledged by a split child must be on a quorum of the child's
+// ensemble, and survive the loss of the child's leader.
+func TestCoordinator_ShardSplit_ChildWriteSurvivesLeaderLoss(t *testing.T) {
+	cluster := setupSplitCluster(t)
+	defer cluster.close(t)
+	client := cluster.splitWithKeys(t)
+
+	ctx := context.Background()
+	key := cluster.childKey(cluster.leftChild, "acked")
+	_, _, err := client.Put(ctx, key, []byte("value"))
+	require.NoError(t, err)
+	assert.NoError(t, client.Close())
+
+	before := cluster.shardStatus(t, cluster.leftChild)
+	leader := before.Leader.GetNameOrDefault()
+	assert.NoError(t, cluster.servers[leader].Close())
+	delete(cluster.servers, leader)
+	cluster.waitForNewTerm(t, cluster.leftChild, before.Term)
+
+	var reader oxia.SyncClient
+	require.Eventually(t, func() bool {
+		reader, err = oxia.NewSyncClient(cluster.liveAddressExcluding(leader).Public)
+		if err != nil {
+			return false
+		}
+		if _, _, _, err = reader.Get(ctx, "key-0000"); err != nil {
+			_ = reader.Close()
+			return false
+		}
+		return true
+	}, 30*time.Second, 500*time.Millisecond)
+	defer func() { assert.NoError(t, reader.Close()) }()
+
+	_, value, _, err := reader.Get(ctx, key)
+	require.NoError(t, err, "write acknowledged by the split child lost with its leader")
+	assert.Equal(t, []byte("value"), value)
 }
