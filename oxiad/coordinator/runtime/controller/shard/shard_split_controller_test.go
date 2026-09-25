@@ -1786,3 +1786,52 @@ func TestSplitController_ParentElectionBeforeCutover(t *testing.T) {
 	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
 	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
 }
+
+// A leader election of the parent that completes while Bootstrap records the
+// parent's term must be kept: the parent would go back to a leader that the
+// election fenced, and the split would not notice that the election closed the
+// observer cursors it just added. CatchUp notices the new term instead, and the
+// split starts over.
+func TestSplitController_BootstrapKeepsConcurrentParentElection(t *testing.T) {
+	rpcMock, metadata, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
+	queueBootstrapResponses(rpcMock)
+
+	// Bootstrap is about to record the parent's term, once both children have
+	// a leader...
+	split := newHoldingMetadata(metadata, func() bool {
+		return shardLeader(metadata, constant.DefaultNamespace, 1) != nil &&
+			shardLeader(metadata, constant.DefaultNamespace, 2) != nil
+	})
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      split,
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
+	})
+	defer sc.Close()
+	requireClosed(t, split.held, "Bootstrap to record the parent's term")
+
+	// ...when a leader election of the parent completes
+	elected := startElection(t, metadata, rpcMock, 0)
+	expectParentFenced(t, rpcMock, 6)
+	electParentLeader(t, rpcMock, elected)
+	close(split.release)
+	requireClosed(t, split.written, "Bootstrap's status update")
+
+	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
+	assert.EqualValues(t, 5, parent.GetSplit().GetParentTermAtBootstrap())
+	assert.Equal(t, proto.ShardStatusSteadyState, parent.GetStatus())
+	assert.EqualValues(t, 6, parent.GetTerm())
+	assert.Equal(t, ps2.GetPublic(), parent.GetLeader().GetPublic())
+
+	// CatchUp notices the new term, and Bootstrap fences the children again at it
+	rpcMock.GetNode(ls1).ExpectNewTermRequest(t, 1, 5, true)
+	rpcMock.GetNode(ls1).ExpectNewTermRequest(t, 1, 6, true)
+
+	// Closing the split controller aborts the split, which removes the child
+	// observers from the parent leader
+	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+}
