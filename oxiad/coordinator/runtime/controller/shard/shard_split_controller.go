@@ -658,22 +658,51 @@ func (sc *SplitController) runCutover() error {
 
 	// Step 3: The point of no return. The parent is frozen and the children
 	// hold everything up to parentFinalOffset, so the split can only complete
-	// from here. A single status update moves the split to Finalize and
-	// records the parent without a leader, in the new term runFinalize fences
-	// it with. From now on, neither a retry nor a coordinator restart rolls the
-	// split back, and the parent's shard controller no longer elects the parent.
-	newParentTerm := parentTerm + 1
+	// from here. From now on, neither a retry nor a coordinator restart rolls
+	// the split back, and the parent's shard controller no longer elects the
+	// parent. A leader election of the parent can still start between the last
+	// check of the observer cursors and the point of no return: it closes them,
+	// so the split starts over from Bootstrap instead.
+	passed, err := sc.passPointOfNoReturn(parentLeader, parentTerm)
+	if err != nil || passed {
+		return err
+	}
+	sc.logger.Warn("Parent leader election started before the point of no return, resetting to Bootstrap",
+		slog.Int64("frozen-term", parentTerm),
+		slog.Any("frozen-leader", parentLeader),
+	)
+	if err = sc.updatePhase(proto.SplitPhaseBootstrap); err != nil {
+		return err
+	}
+	sc.unfreezeParentBestEffort()
+	return nil
+}
+
+// passPointOfNoReturn moves the split to Finalize, and records the parent
+// without a leader, in the new term runFinalize fences it with, in a single
+// status update. It does so only if the parent still has the leader and the
+// term it was frozen with. A leader election of the parent that started since
+// then has stored a new term: the leader it elects accepts writes that the
+// children never receive, so the split must not complete. A leader election
+// makes the same check the other way, in the update that starts it (see
+// Election.persistNewTerm). passPointOfNoReturn reports whether the split
+// passed the point of no return.
+func (sc *SplitController) passPointOfNoReturn(frozenLeader *proto.DataServerIdentity, frozenTerm int64) (bool, error) {
 	setFinalizePhase := func(meta *proto.ShardMetadata) {
 		if meta.Split != nil {
 			meta.Split.Phase = proto.SplitPhaseFinalize
 		}
 	}
-	return sc.updateShardsMeta(map[int64]func(meta *proto.ShardMetadata){
+	return sc.updateShardsMetaIf(func(shards map[int64]*proto.ShardMetadata) bool {
+		parent := shards[sc.parentShardId]
+		return parent.GetTerm() == frozenTerm &&
+			parent.GetLeader().GetNameOrDefault() == frozenLeader.GetNameOrDefault()
+	}, map[int64]func(meta *proto.ShardMetadata){
 		sc.leftChildId:  setFinalizePhase,
 		sc.rightChildId: setFinalizePhase,
 		sc.parentShardId: func(meta *proto.ShardMetadata) {
 			setFinalizePhase(meta)
-			meta.Term = newParentTerm
+			meta.Term = frozenTerm + 1
 			meta.Leader = nil
 			meta.Status = proto.ShardStatusElection
 		},
@@ -913,32 +942,49 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 // none if one of the shards is gone. A failed write returns a permanent error,
 // as in updateShardMeta.
 func (sc *SplitController) updateShardsMeta(updates map[int64]func(meta *proto.ShardMetadata)) error {
+	_, err := sc.updateShardsMetaIf(nil, updates)
+	return err
+}
+
+// updateShardsMetaIf is updateShardsMeta, applied only if precondition, when
+// set, holds for the current metadata of the shards. It reports whether the
+// changes were applied.
+func (sc *SplitController) updateShardsMetaIf(
+	precondition func(shards map[int64]*proto.ShardMetadata) bool,
+	updates map[int64]func(meta *proto.ShardMetadata),
+) (bool, error) {
 	if _, exists := sc.metadata.GetNamespaceStatus(sc.namespace); !exists {
 		sc.logger.Warn("namespace status not found while updating shards metadata",
 			slog.String("namespace", sc.namespace))
-		return nil
+		return false, nil
 	}
 	var notFound error
+	applied := false
 	err := sc.metadata.UpdateShardStatuses(sc.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
 		notFound = nil
+		applied = false
 		for shardId := range updates {
 			if _, exists := shards[shardId]; !exists {
 				notFound = errors.Errorf("shard %d not found while updating shards metadata", shardId)
 				return false
 			}
 		}
+		if precondition != nil && !precondition(shards) {
+			return false
+		}
 		for shardId, fn := range updates {
 			fn(shards[shardId])
 		}
+		applied = true
 		return true
 	})
 	if err == nil {
 		err = notFound
 	}
 	if err != nil {
-		return backoff.Permanent(err)
+		return false, backoff.Permanent(err)
 	}
-	return nil
+	return applied, nil
 }
 
 // fenceEnsemble sends NewTerm to all ensemble members and returns the

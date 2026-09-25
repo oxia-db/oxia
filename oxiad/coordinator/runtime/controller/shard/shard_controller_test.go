@@ -321,6 +321,10 @@ func (statusWriteFailingMetadata) UpdateShardStatus(string, int64, *proto.ShardM
 	return context.Canceled
 }
 
+func (statusWriteFailingMetadata) UpdateShardStatuses(string, func(map[int64]*proto.ShardMetadata) bool) error {
+	return context.Canceled
+}
+
 func TestController_ElectionDoesNotFenceWithUnpersistedTerm(t *testing.T) {
 	var shard int64 = 5
 	rpc := mockutils.NewRpcProvider()

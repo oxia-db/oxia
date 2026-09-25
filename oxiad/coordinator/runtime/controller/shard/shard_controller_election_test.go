@@ -15,15 +15,23 @@
 package shard
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	coordrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
+	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/leader"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/mockutils"
 )
 
 func testDataServer(id string) *proto.DataServerIdentity {
@@ -588,4 +596,76 @@ func TestCheckRemovedEntries_ReplicationFactor5(t *testing.T) {
 	assert.ErrorIs(t, e.checkRemovedEntries(map[*proto.DataServerIdentity]*proto.EntryId{
 		s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 4}, s6: {Term: -1, Offset: -1},
 	}, removed), ErrChangeEnsembleLosesEntries)
+}
+
+// startElection starts a leader election of the shard, as its shard
+// controller does, and returns the elected leader once the election ends.
+func startElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.Provider, shard int64) <-chan *proto.DataServerIdentity {
+	t.Helper()
+	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
+	s := &controller{
+		namespace:                           constant.DefaultNamespace,
+		shard:                               shard,
+		metadataStore:                       metadata,
+		dataServerSupportedFeaturesSupplier: NoOpSupportedFeaturesSupplier,
+		leaderSelector:                      leaderselector.NewSelector(),
+		rpc:                                 rpc,
+		logger:                              slog.Default(),
+		leaderElectionLatency: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
+			"The time it takes to elect a leader for the shard", labels),
+		leaderElectionsFailed: metric.NewCounter("oxia_coordinator_leader_election_failed",
+			"The number of failed leader elections", "count", labels),
+		newTermQuorumLatency: metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",
+			"The time it takes to take the ensemble of data servers to a new term", labels),
+		becomeLeaderLatency: metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
+			"The time it takes for the new elected leader to start", labels),
+	}
+	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
+
+	elected := make(chan *proto.DataServerIdentity, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		elected <- s.onElectLeader(nil)
+	}()
+	t.Cleanup(func() {
+		s.ctxCancel()
+		<-done
+		s.currentElection.Stop()
+	})
+	return elected
+}
+
+// requireElectionEnded waits for the election to end, and returns the leader
+// it elected.
+func requireElectionEnded(t *testing.T, elected <-chan *proto.DataServerIdentity) *proto.DataServerIdentity {
+	t.Helper()
+	select {
+	case leader := <-elected:
+		return leader
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the election did not end in time")
+		return nil
+	}
+}
+
+// electParentLeader completes an election of the parent shard of
+// setupSplitTest that is fencing its ensemble: ps2 has the highest entry, and
+// becomes the leader.
+func electParentLeader(t *testing.T, rpc *mockutils.RpcProvider, elected <-chan *proto.DataServerIdentity) {
+	t.Helper()
+	rpc.GetNode(ps1).NewTermResponse(5, 100, nil)
+	rpc.GetNode(ps2).NewTermResponse(5, 105, nil)
+	rpc.GetNode(ps3).NewTermResponse(5, 100, nil)
+	rpc.GetNode(ps2).BecomeLeaderResponse(nil)
+	assert.Equal(t, ps2.GetPublic(), requireElectionEnded(t, elected).GetPublic())
+}
+
+// expectParentFenced waits for the election to fence each member of the
+// parent's ensemble at the term.
+func expectParentFenced(t *testing.T, rpc *mockutils.RpcProvider, term int64) {
+	t.Helper()
+	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
+		rpc.GetNode(node).ExpectNewTermRequest(t, 0, term, true)
+	}
 }
