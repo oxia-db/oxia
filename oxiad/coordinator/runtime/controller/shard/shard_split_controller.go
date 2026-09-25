@@ -926,31 +926,15 @@ func (sc *SplitController) updateChildMeta(childId int64, fn func(meta *proto.Sh
 	return sc.updateShardMeta(childId, fn)
 }
 
-// updateShardMeta persists a change to a shard's metadata. A failed write (the
-// coordinator is closing, or the shard is gone) returns a permanent error: the
-// split must stop rather than retry its phases from a state that was not
-// persisted. It resumes from the persisted state after a restart.
+// updateShardMeta persists a change to a shard's metadata, applied to its
+// current metadata: the shard controller updates the same shard concurrently,
+// e.g. with the outcome of a leader election, which a write of an earlier copy
+// would revert. A failed write (the coordinator is closing, or the shard is
+// gone) returns a permanent error: the split must stop rather than retry its
+// phases from a state that was not persisted. It resumes from the persisted
+// state after a restart.
 func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.ShardMetadata)) error {
-	ns, exists := sc.metadata.GetNamespaceStatus(sc.namespace)
-	if !exists {
-		sc.logger.Warn("namespace status not found while updating shard metadata",
-			slog.String("namespace", sc.namespace),
-			slog.Int64("shard", shardId))
-		return nil
-	}
-	meta, exists := ns.UnsafeBorrow().Shards[shardId]
-	if !exists {
-		sc.logger.Warn("shard metadata not found while updating shard metadata",
-			slog.String("namespace", sc.namespace),
-			slog.Int64("shard", shardId))
-		return nil
-	}
-	cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
-	fn(cloned)
-	if err := sc.metadata.UpdateShardStatus(sc.namespace, shardId, cloned); err != nil {
-		return backoff.Permanent(err)
-	}
-	return nil
+	return sc.updateShardsMeta(map[int64]func(meta *proto.ShardMetadata){shardId: fn})
 }
 
 // updateShardsMeta persists changes to the metadata of several shards in a
