@@ -606,6 +606,15 @@ func (e *Election) abortChangeEnsemble(retryShardMetadata *proto.ShardMetadata, 
 }
 
 func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
+	// The parent of a split past the point of no return stays fenced until it
+	// is deleted: electing it would let it accept writes that the children,
+	// which take over its key range, never receive.
+	if borrowedMeta, exists := e.metadataStore.GetShardStatus(e.namespace, e.shard); exists &&
+		isFinalizingSplitParent(borrowedMeta.UnsafeBorrow()) {
+		e.logger.Info("Not electing a leader for the parent of a split past the point of no return")
+		return nil, backoff.Permanent(errors.New("the shard is the parent of a split past the point of no return"))
+	}
+
 	e.logger.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
 

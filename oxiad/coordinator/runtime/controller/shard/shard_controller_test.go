@@ -452,6 +452,57 @@ func TestController_StartingWithLeaderAlreadyPresent(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
+// TestController_DoesNotElectFinalizingSplitParent verifies that the parent of
+// a split past the point of no return is never elected again: neither when its
+// controller starts, e.g. on a coordinator restart, nor on an election request.
+func TestController_DoesNotElectFinalizingSplitParent(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusElection,
+		Term:     6,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+		Split: &proto.SplitMetadata{
+			Phase:                 proto.SplitPhaseFinalize,
+			ChildShardIds:         []int64{6, 7},
+			SplitPoint:            500,
+			ParentTermAtBootstrap: 5,
+		},
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
+	defer func() {
+		assert.NoError(t, sc.Close())
+	}()
+
+	// An election would never complete, since no data server answers: the
+	// request completes only if neither the startup nor the request itself
+	// started one
+	elected := make(chan string, 1)
+	go func() {
+		elected <- sc.Election(&action.ElectionAction{Shard: shard})
+	}()
+	select {
+	case leader := <-elected:
+		assert.Empty(t, leader)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the split parent is being elected again")
+	}
+
+	for _, s := range []*proto.DataServerIdentity{s1, s2, s3} {
+		assert.Empty(t, rpc.GetNode(s).NewTermRequests)
+	}
+	shardMeta := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.Equal(t, int64(6), shardMeta.Term)
+	assert.Nil(t, shardMeta.Leader)
+}
+
 func TestController_RetriesElectionWhenDataServerNotInitialized(t *testing.T) {
 	var shard int64 = 5
 	rpc := mockutils.NewRpcProvider()
