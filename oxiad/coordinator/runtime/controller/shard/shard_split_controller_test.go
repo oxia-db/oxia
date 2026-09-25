@@ -1728,3 +1728,61 @@ func TestSplitController_ParentElectionBeforePointOfNoReturn(t *testing.T) {
 	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
 	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
 }
+
+// A leader election of the parent that completed before Cutover starts, e.g.
+// while the coordinator restarts, closed the observer cursors. Cutover must
+// notice it and start over from Bootstrap: it freezes the new leader, so the
+// check of the point of no return compares the parent with the new leader and
+// passes, and the children can report the new leader's frozen head while they
+// hold the entries of the old one. Finalize would then complete the split
+// without the writes that the new leader accepted.
+func TestSplitController_ParentElectionBeforeCutover(t *testing.T) {
+	rpcMock, metadata, listener := setupSplitTest(t, proto.SplitPhaseCutover)
+	setBootstrappedState(t, metadata)
+
+	// ps2 was elected in term 6 since Bootstrap
+	status := loadTestStatus(t, metadata)
+	status.Namespaces[constant.DefaultNamespace].Shards[0].Term = 6
+	status.Namespaces[constant.DefaultNamespace].Shards[0].Leader = ps2
+	updateTestStatusShards(t, metadata, status, 0)
+
+	// The children already report the head that ps2 is frozen at
+	rpcMock.GetNode(ps2).FreezeShardResponse(105, nil)
+	rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_LEADER, 105, 105)
+	rpcMock.GetNode(rs1).GetStatusResponse(5, proto.ServingStatus_LEADER, 105, 105)
+
+	// Bootstrap again: the children are fenced at term 6 (the *1 nodes have the
+	// highest offset and stay leaders) and added as observers on ps2
+	for _, child := range [][]*proto.DataServerIdentity{{ls1, ls2, ls3}, {rs1, rs2, rs3}} {
+		rpcMock.GetNode(child[0]).NewTermResponse(5, 106, nil)
+		rpcMock.GetNode(child[1]).NewTermResponse(5, 105, nil)
+		rpcMock.GetNode(child[2]).NewTermResponse(5, 105, nil)
+		rpcMock.GetNode(child[0]).BecomeLeaderResponse(nil)
+	}
+	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
+	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      metadata,
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
+	})
+	defer sc.Close()
+
+	rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 6)
+	rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 6)
+
+	// The split did not pass the point of no return: Finalize never fenced the
+	// parent
+	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
+		assert.Empty(t, drainNewTermRequests(rpcMock.GetNode(node)), "NewTerm requests to %s", node.GetPublic())
+	}
+
+	// Closing the split controller aborts the split, which removes the child
+	// observers from the parent leader
+	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+}
