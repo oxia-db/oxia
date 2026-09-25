@@ -477,6 +477,14 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 		"bug: shard metadata missing while validating change ensemble: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
+	// The ensemble of the parent and of the children of a split doesn't change
+	// until the split ends. Checking it before the election that changes the
+	// ensemble keeps the current election of the shard running; the election
+	// checks it again, in the status update that starts it, in case a split
+	// started since (see Election.persistNewTerm).
+	if shardMeta.Split != nil {
+		return fmt.Errorf("%w: the shard is part of a split", ErrNotReadyForChangeEnsemble)
+	}
 	if changeEnsembleAction.From == nil {
 		return fmt.Errorf("%w: from data server is nil", ErrInvalidChangeEnsemble)
 	}
@@ -695,9 +703,16 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	s.onElectLeader(changeEnsembleAction)
+	leader := s.onElectLeader(changeEnsembleAction)
 	if err := s.currentElection.ChangeEnsembleError(); err != nil {
 		changeEnsembleAction.Error(err)
+		return
+	}
+	if leader == nil {
+		// The election stopped without changing the ensemble, e.g. because a
+		// split of the shard started after the validation above
+		changeEnsembleAction.Error(fmt.Errorf("%w: the election stopped before changing the ensemble",
+			ErrNotReadyForChangeEnsemble))
 		return
 	}
 	changeEnsembleAction.Done(nil)

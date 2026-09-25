@@ -617,6 +617,15 @@ func (e *Election) abortChangeEnsemble(retryShardMetadata *proto.ShardMetadata, 
 // still in the term it froze (see SplitController.passPointOfNoReturn): either
 // the split passes it first, and the election stops here, or the election
 // stores its term first, and the split starts over.
+//
+// It also stops an election that changes the ensemble of a shard that is part
+// of a split: the ensemble of the parent and of the children of a split doesn't
+// change until the split ends. A split starts only on a shard in steady state,
+// without data servers pending deletion, a check that is part of the status
+// update that starts it (see InitiateSplit): either the split starts first, and
+// the election stops here, or the election stores its term first, and the
+// split is refused until the election has ended and the data server that left
+// the ensemble, or was not added to it, has deleted the shard.
 func (e *Election) persistNewTerm() error {
 	var stopReason string
 	shardExists := false
@@ -632,6 +641,9 @@ func (e *Election) persistNewTerm() error {
 			return false
 		case isFinalizingSplitParent(current):
 			stopReason = "the shard is the parent of a split past the point of no return"
+			return false
+		case e.changeEnsembleAction != nil && current.Split != nil:
+			stopReason = "the shard is part of a split"
 			return false
 		}
 		shards[e.shard] = gproto.CloneOf(e.mutableShardMetadata)
