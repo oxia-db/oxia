@@ -33,6 +33,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -120,7 +121,7 @@ type PerNodeChannels struct {
 		error
 	}
 
-	freezeShardRequests  chan *proto.FreezeShardRequest
+	FreezeShardRequests  chan *proto.FreezeShardRequest
 	freezeShardResponses chan struct {
 		*proto.FreezeShardResponse
 		error
@@ -136,6 +137,7 @@ type PerNodeChannels struct {
 
 	// Feature negotiation support
 	supportedFeatures []proto.Feature
+	enabledFeatures   []proto.Feature
 	handshakeStatus   proto.HandshakeStatus
 	handshakeErr      error
 	HandshakeCount    atomic.Int64
@@ -445,7 +447,7 @@ func newPerNodeChannels() *PerNodeChannels {
 			*proto.RemoveObserverResponse
 			error
 		}, 100),
-		freezeShardRequests: make(chan *proto.FreezeShardRequest, 100),
+		FreezeShardRequests: make(chan *proto.FreezeShardRequest, 100),
 		freezeShardResponses: make(chan struct {
 			*proto.FreezeShardResponse
 			error
@@ -460,6 +462,13 @@ func newPerNodeChannels() *PerNodeChannels {
 // SetNodeFeatures sets the features supported by this node (simulates a specific version).
 func (m *PerNodeChannels) SetNodeFeatures(features []proto.Feature) {
 	m.supportedFeatures = features
+}
+
+// SetEnabledFeatures sets the features enabled on the shards this node leads:
+// like a leader, it then rejects the followers whose reported features don't
+// cover them.
+func (m *PerNodeChannels) SetEnabledFeatures(features []proto.Feature) {
+	m.enabledFeatures = features
 }
 
 // SetOldNode simulates an old node that doesn't support the GetInfo RPC.
@@ -683,8 +692,13 @@ func (r *RpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIde
 		r.Unlock()
 		return nil, s.err
 	}
+	enabledFeatures := s.enabledFeatures
 
 	r.Unlock()
+
+	if req.FollowerFeatures != nil && len(feature.Missing(enabledFeatures, req.FollowerFeatures.GetSupported())) > 0 {
+		return nil, constant.ErrUnsupportedFeatures
+	}
 
 	select {
 	case response := <-s.addFollowerResponses:
@@ -723,7 +737,7 @@ func (r *RpcProvider) FreezeShard(_ context.Context, node *proto.DataServerIdent
 	r.Lock()
 
 	s := r.getNode(node)
-	s.freezeShardRequests <- req
+	s.FreezeShardRequests <- req
 
 	if s.err != nil {
 		r.Unlock()
