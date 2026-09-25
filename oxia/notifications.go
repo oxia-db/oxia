@@ -33,12 +33,6 @@ import (
 	"github.com/oxia-db/oxia/oxia/internal"
 )
 
-// A server rejects a subscription (eg. the node is not the leader) as soon as
-// it receives it, while an accepted subscription that resumes from an offset
-// gets no response until a new notification is written: a stream that stayed
-// open for longer than this was accepted.
-const notificationsAcceptedAfter = 1 * time.Second
-
 type notifications struct {
 	multiplexCh  chan *Notification
 	closeCh      chan any
@@ -209,41 +203,6 @@ func (snm *shardNotificationsManager) multiplexNotificationBatch(nb *proto.Notif
 	return nil
 }
 
-func (snm *shardNotificationsManager) multiplexNotificationBatchOnce(notifications proto.OxiaClient_GetNotificationsClient) error {
-	nb, err := notifications.Recv()
-	if err != nil {
-		return err
-	} else if nb == nil {
-		if snm.ctx.Err() != nil {
-			return snm.ctx.Err()
-		}
-		return io.EOF
-	}
-
-	snm.log.Debug(
-		"Received batch notification",
-		slog.Int64("offset", nb.Offset),
-		slog.Int("count", len(nb.Notifications)),
-	)
-
-	err = snm.multiplexNotificationBatch(nb)
-	if err != nil {
-		return err
-	}
-
-	snm.lastOffsetReceived = nb.Offset
-	return nil
-}
-
-func (snm *shardNotificationsManager) multiplexNotifications(notifications proto.OxiaClient_GetNotificationsClient) error {
-	for {
-		err := snm.multiplexNotificationBatchOnce(notifications)
-		if err != nil {
-			return err
-		}
-	}
-}
-
 func (snm *shardNotificationsManager) getNotifications() error {
 	leader := snm.nm.shardManager.Leader(snm.shard)
 
@@ -263,16 +222,36 @@ func (snm *shardNotificationsManager) getNotifications() error {
 		return err
 	}
 
-	openedAt := time.Now()
-	err = snm.multiplexNotifications(notifications)
+	for {
+		nb, err := notifications.Recv()
+		if err != nil {
+			return err
+		} else if nb == nil {
+			if snm.ctx.Err() != nil {
+				return snm.ctx.Err()
+			}
+			return io.EOF
+		}
 
-	// The stream gets created even if the server rejects the subscription.
-	// Reset the backoff only when an accepted one fails (eg. on a leader
-	// change), so a persistent rejection keeps escalating the retry delay.
-	if time.Since(openedAt) >= notificationsAcceptedAfter {
+		snm.log.Debug(
+			"Received batch notification",
+			slog.Int64("offset", nb.Offset),
+			slog.Int("count", len(nb.Notifications)),
+		)
+
+		// The stream gets created even when the server rejects the subscription:
+		// the rejection is only reported by the first Recv(). The server confirms
+		// an accepted subscription with a first empty batch, so receiving a batch
+		// is the signal that it was accepted, and a persistent rejection never
+		// reaches here and keeps escalating the retry delay.
 		snm.backoff.Reset()
+
+		if err := snm.multiplexNotificationBatch(nb); err != nil {
+			return err
+		}
+
+		snm.lastOffsetReceived = nb.Offset
 	}
-	return err
 }
 
 func convertNotificationType(t proto.NotificationType) NotificationType {

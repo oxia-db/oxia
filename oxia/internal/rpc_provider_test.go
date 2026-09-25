@@ -153,6 +153,8 @@ func (*testShardManager) Exists(int64) bool { return true }
 
 func (m *testShardManager) Leader(int64) string { return *m.leader.Load() }
 
+func (*testShardManager) Changed() <-chan struct{} { return nil }
+
 type shardRequest struct {
 	name    string
 	execute func(context.Context, RpcProvider) error
@@ -396,4 +398,47 @@ func TestRpcProvider_ShardWithoutLeader(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NotContains(t, pool.Targets(), "")
+}
+
+func TestShardMapTimer(t *testing.T) {
+	changed := make(chan struct{})
+	timer := &shardMapTimer{changed: changed}
+	defer timer.Stop()
+
+	timer.Start(time.Millisecond)
+	select {
+	case <-timer.C():
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the timer did not fire")
+	}
+
+	timer.Start(time.Hour)
+	close(changed)
+	select {
+	case <-timer.C():
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the timer did not fire on the shard map change")
+	}
+}
+
+func TestExecuteWithRetryWakesUpOnShardMapChange(t *testing.T) {
+	// Without the shard map change, the retry would wait at least 50 ms
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+
+	changed := make(chan struct{})
+	timer := &shardMapTimer{}
+	attempts := 0
+	result, err := executeWithRetryTimer(ctx, timer, func(constant.ErrorMetadata) (int, error) {
+		timer.changed = changed
+		attempts++
+		if attempts == 1 {
+			// The shard map changes while the attempt is in progress
+			close(changed)
+			return 0, constant.ErrNodeIsNotLeader
+		}
+		return attempts, nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, result)
 }

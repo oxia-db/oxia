@@ -1235,27 +1235,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			cb.OnComplete(constant.ErrInvalidStatus)
 			return
 		}
-		commitOffset := qat.CommitOffset()
-
-		// In order to ensure the client will positioned on a given offset, we need to send a first "dummy"
-		// notification. The client will wait for this first notification before making the notification
-		// channel available to the application
-		lc.log.Debug(
-			"Sending first dummy notification",
-			slog.Int64("term", lc.term.Load()),
-			slog.Int64("commit-offset", commitOffset),
-		)
-		if err := cb.OnNext(&proto.NotificationBatch{
-			Shard:         lc.shardId,
-			Offset:        commitOffset,
-			Timestamp:     0,
-			Notifications: nil,
-		}); err != nil {
-			lc.Unlock()
-			cb.OnComplete(err)
-			return
-		}
-		offsetExclusive = commitOffset
+		offsetExclusive = qat.CommitOffset()
 	}
 
 	lc.waitGroup.Go(func() {
@@ -1267,6 +1247,27 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 				"peer":  commonrpc.GetPeer(ctx),
 			},
 			func() {
+				// Confirms that the subscription was accepted and where its cursor
+				// sits: a rejection is only reported by the first Recv(), so without
+				// this an accepted subscription with nothing to send looks rejected.
+				// It goes out from here, rather than before the goroutine starts, to
+				// keep the leader lock off a stream write; later batches follow it
+				// from here too.
+				lc.log.Debug(
+					"Sending first dummy notification",
+					slog.Int64("term", lc.term.Load()),
+					slog.Int64("offset", offsetExclusive),
+				)
+				if err := cb.OnNext(&proto.NotificationBatch{
+					Shard:         lc.shardId,
+					Offset:        offsetExclusive,
+					Timestamp:     0,
+					Notifications: nil,
+				}); err != nil {
+					cb.OnComplete(err)
+					return
+				}
+
 				lc.log.Debug("Dispatch notifications", slog.Int64("term", lc.term.Load()), slog.Any("start-offset-include", offsetExclusive))
 				offset := offsetExclusive
 				for {

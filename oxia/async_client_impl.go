@@ -40,7 +40,7 @@ type clientImpl struct {
 	sync.Mutex
 	options           clientOptions
 	shardManager      internal.ShardManager
-	writeBatchManager *batch.Manager
+	writeBatchManager *batch.WriteManager
 	readBatchManager  *batch.Manager
 	executor          internal.Executor
 	sessions          *sessions
@@ -82,12 +82,27 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 	rpcProvider := internal.NewRpcProvider(ctx, options.namespace, options.tls, options.authentication, options.serviceAddress, func() internal.ShardManager {
 		return shardManager
 	}, grpcDialOptions...)
+
+	batcherFactory := batch.NewBatcherFactory(
+		rpcProvider,
+		options.namespace,
+		options.batchLinger,
+		options.maxRequestsPerBatch,
+		metrics.NewMetrics(options.meterProvider),
+		options.requestTimeout)
+	batcherFactory.WriteRerouter = c.rerouteWrites
+	batcherFactory.ReadRerouter = c.rerouteReads
+	// The shard manager tells the write batchers when shards are replaced
+	c.writeBatchManager = batch.NewWriteManager(ctx, func(ctx context.Context, shard *int64) commonbatch.Batcher {
+		return batcherFactory.NewWriteBatcher(ctx, shard, options.maxBatchSize)
+	}, c.forwardWrite)
+
 	if options.failureInjection.Contains(DizzyShardManager) {
 		shardManager, err = internal.NewDizzyShardManager(internal.NewShardStrategy(), rpcProvider, serviceAddress,
-			options.namespace, options.requestTimeout)
+			options.namespace, options.requestTimeout, c.writeBatchManager.ShardsReplaced)
 	} else {
 		shardManager, err = internal.NewShardManager(internal.NewShardStrategy(), rpcProvider, serviceAddress,
-			options.namespace, options.requestTimeout)
+			options.namespace, options.requestTimeout, c.writeBatchManager.ShardsReplaced)
 	}
 	if err != nil {
 		cancel()
@@ -97,59 +112,65 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 	c.rpcProvider = rpcProvider
 	c.shardManager = shardManager
 
-	batcherFactory := batch.NewBatcherFactory(
-		rpcProvider,
-		options.namespace,
-		options.batchLinger,
-		options.maxRequestsPerBatch,
-		metrics.NewMetrics(options.meterProvider),
-		options.requestTimeout)
-	c.writeBatchManager = batch.NewManager(ctx, func(ctx context.Context, shard *int64) commonbatch.Batcher {
-		return batcherFactory.NewWriteBatcher(ctx, shard, options.maxBatchSize)
-	})
 	c.readBatchManager = batch.NewManager(ctx, batcherFactory.NewReadBatcher)
 	c.executor = rpcProvider
 
 	c.sessions = newSessions(c.ctx, c.shardManager, c.rpcProvider, c.options)
 
-	batcherFactory.WriteRerouter = c.rerouteWrites
-	batcherFactory.ReadRerouter = c.rerouteReads
-
 	return c, nil
 }
 
+// rerouteWrites hands off the calls of a batch that failed because its shard
+// was removed from the shard map to the shards that replaced it, in their
+// original order. Those shards hold the calls issued after the shard map
+// changed until the removed shard has handed off all its calls.
 func (c *clientImpl) rerouteWrites(removedShardId int64, puts []model.PutCall, deletes []model.DeleteCall,
 	deleteRanges []model.DeleteRangeCall) {
-	// Re-add the calls in their original order, so the new batches keep it.
-	// Calls issued after the shard map changed may already be queued or sent
-	// to the new shards, so the order against those is not guaranteed.
 	for _, call := range model.InOpIndexOrder(puts, deletes, deleteRanges) {
-		switch call := call.(type) {
-		case model.PutCall:
-			shardId := c.shardManager.Get(call.PartitionKeyOrKey())
-			c.writeBatchManager.Get(shardId).Add(call)
-		case model.DeleteCall:
-			shardId := c.shardManager.Get(call.PartitionKeyOrKey())
-			c.writeBatchManager.Get(shardId).Add(call)
-		case model.DeleteRangeCall:
-			c.rerouteDeleteRange(removedShardId, call)
-		default:
-			panic("invalid call")
-		}
+		c.sendToSuccessors(removedShardId, call, c.writeBatchManager.HandOff)
 	}
 }
 
-// rerouteDeleteRange re-adds a delete range that was sent to a removed shard.
-// Without a partition key, the other shards got their own copy of the delete
-// range when it was issued, so it only goes to the shards that took over the
-// hash range of the removed one.
-func (c *clientImpl) rerouteDeleteRange(removedShardId int64, call model.DeleteRangeCall) {
-	if call.PartitionKey != nil {
-		shardId := c.shardManager.Get(*call.PartitionKey)
-		c.writeBatchManager.Get(shardId).Add(call)
-		return
+// forwardWrite sends a call that was routed to a shard with the shard map from
+// before the shard was removed to the shards that replaced it.
+func (c *clientImpl) forwardWrite(removedShardId int64, call any) {
+	c.sendToSuccessors(removedShardId, call, c.writeBatchManager.Add)
+}
+
+// sendToSuccessors sends a call for a removed shard to the shard that replaced
+// it for the call's key, or, for a delete range without a partition key, to all
+// the shards that replaced it.
+func (c *clientImpl) sendToSuccessors(removedShardId int64, call any, send func(shardId int64, call any)) {
+	var key string
+	var fail func(error)
+	switch call := call.(type) {
+	case model.PutCall:
+		key, fail = call.PartitionKeyOrKey(), func(err error) { call.Callback(nil, err) }
+	case model.DeleteCall:
+		key, fail = call.PartitionKeyOrKey(), func(err error) { call.Callback(nil, err) }
+	case model.DeleteRangeCall:
+		if call.PartitionKey == nil {
+			c.sendDeleteRangeToSuccessors(removedShardId, call, send)
+			return
+		}
+		key, fail = *call.PartitionKey, func(err error) { call.Callback(nil, err) }
+	default:
+		panic("invalid call")
 	}
 
+	if shardId, ok := c.shardManager.GetSuccessor(removedShardId, key); ok {
+		send(shardId, call)
+	} else {
+		fail(constant.ErrShardNotFound)
+	}
+}
+
+// sendDeleteRangeToSuccessors sends a delete range without a partition key
+// that was sent to a removed shard. The other shards got their own copy of the
+// delete range when it was issued, so it only goes to the shards that replaced
+// the removed one.
+func (c *clientImpl) sendDeleteRangeToSuccessors(removedShardId int64, call model.DeleteRangeCall,
+	send func(shardId int64, call any)) {
 	successors := c.shardManager.GetSuccessors(removedShardId)
 	if len(successors) == 0 {
 		call.Callback(nil, constant.ErrShardNotFound)
@@ -157,7 +178,7 @@ func (c *clientImpl) rerouteDeleteRange(removedShardId int64, call model.DeleteR
 	}
 	call.Callback = multiShardDeleteRangeCallback(len(successors), call.Callback)
 	for _, shardId := range successors {
-		c.writeBatchManager.Get(shardId).Add(call)
+		send(shardId, call)
 	}
 }
 
@@ -247,10 +268,10 @@ func (c *clientImpl) Put(key string, value []byte, options ...PutOption) <-chan 
 				return
 			}
 			putCall.SessionId = &sessionId
-			c.writeBatchManager.Get(shardId).Add(putCall)
+			c.writeBatchManager.Add(shardId, putCall)
 		})
 	} else {
-		c.writeBatchManager.Get(shardId).Add(putCall)
+		c.writeBatchManager.Add(shardId, putCall)
 	}
 	return ch
 }
@@ -267,7 +288,7 @@ func (c *clientImpl) Delete(key string, options ...DeleteOption) <-chan error {
 	}
 	opts := newDeleteOptions(options)
 	shardId := c.getShardForKey(key, opts)
-	c.writeBatchManager.Get(shardId).Add(model.DeleteCall{
+	c.writeBatchManager.Add(shardId, model.DeleteCall{
 		Key:               key,
 		ExpectedVersionId: opts.expectedVersion,
 		PartitionKey:      opts.partitionKey,
@@ -291,7 +312,7 @@ func (c *clientImpl) DeleteRange(minKeyInclusive string, maxKeyExclusive string,
 
 	for _, shardId := range shardIDs {
 		// chInner := make(chan error, 1)
-		c.writeBatchManager.Get(shardId).Add(model.DeleteRangeCall{
+		c.writeBatchManager.Add(shardId, model.DeleteRangeCall{
 			MinKeyInclusive: minKeyInclusive,
 			MaxKeyExclusive: maxKeyExclusive,
 			Callback: func(response *proto.DeleteRangeResponse, err error) {
@@ -318,7 +339,7 @@ func (c *clientImpl) DeleteRange(minKeyInclusive string, maxKeyExclusive string,
 
 func (c *clientImpl) doSingleShardDeleteRange(shardId int64, minKeyInclusive string, maxKeyExclusive string,
 	partitionKey *string, ch chan error) {
-	c.writeBatchManager.Get(shardId).Add(model.DeleteRangeCall{
+	c.writeBatchManager.Add(shardId, model.DeleteRangeCall{
 		MinKeyInclusive: minKeyInclusive,
 		MaxKeyExclusive: maxKeyExclusive,
 		PartitionKey:    partitionKey,
