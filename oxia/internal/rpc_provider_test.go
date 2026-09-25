@@ -77,7 +77,7 @@ func (testOxiaClientServer) RangeScan(_ *proto.RangeScanRequest, stream proto.Ox
 }
 
 // notLeaderOxiaClientServer is a node that no longer leads the shard: it
-// rejects every data request with a leader hint.
+// rejects every data and session request with a leader hint.
 type notLeaderOxiaClientServer struct {
 	proto.UnimplementedOxiaClientServer
 	leaderHint string
@@ -106,6 +106,18 @@ func (s notLeaderOxiaClientServer) List(*proto.ListRequest, proto.OxiaClient_Lis
 
 func (s notLeaderOxiaClientServer) RangeScan(*proto.RangeScanRequest, proto.OxiaClient_RangeScanServer) error {
 	return s.notLeader()
+}
+
+func (s notLeaderOxiaClientServer) CreateSession(context.Context, *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
+	return nil, s.notLeader()
+}
+
+func (s notLeaderOxiaClientServer) KeepAlive(context.Context, *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
+	return nil, s.notLeader()
+}
+
+func (s notLeaderOxiaClientServer) CloseSession(context.Context, *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
+	return nil, s.notLeader()
 }
 
 func startTestOxiaClientServer(t *testing.T, oxiaClientServer proto.OxiaClientServer) string {
@@ -287,6 +299,49 @@ func TestRpcProvider_KeepAliveFailsFastWhenTargetIsUnreachable(t *testing.T) {
 	defer cancel()
 	_, err := provider.KeepAlive(ctx, unreachableAddress(t), &proto.SessionHeartbeat{})
 	assert.Equal(t, codes.Unavailable, status.Code(err), "unexpected error: %v", err)
+}
+
+// Session requests go to a fixed target: the shard leader known by the client
+// when the request is sent. After the leader moves, retrying them against the
+// same target would keep failing, so they must fail fast: the session looks up
+// the shard leader again before its next attempt.
+func TestRpcProvider_SessionRequestsFailFastWhenTargetIsNotLeader(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		execute func(context.Context, RpcProvider, string) error
+	}{
+		{"create-session", func(ctx context.Context, provider RpcProvider, target string) error {
+			_, err := provider.CreateSession(ctx, target, &proto.CreateSessionRequest{})
+			return err
+		}},
+		{"keep-alive", func(ctx context.Context, provider RpcProvider, target string) error {
+			_, err := provider.KeepAlive(ctx, target, &proto.SessionHeartbeat{})
+			return err
+		}},
+		{"close-session", func(ctx context.Context, provider RpcProvider, target string) error {
+			_, err := provider.CloseSession(ctx, target, &proto.CloseSessionRequest{})
+			return err
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests atomic.Int64
+			target := startTestOxiaClientServer(t, notLeaderOxiaClientServer{
+				leaderHint: "new-leader:6648",
+				onRequest:  func() { requests.Add(1) },
+			})
+
+			provider := NewRpcProvider(t.Context(), constant.DefaultNamespace, nil, nil, "",
+				func() ShardManager { return nil })
+			defer func() {
+				assert.NoError(t, provider.Close())
+			}()
+
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			assert.ErrorIs(t, tt.execute(ctx, provider, target), constant.ErrNodeIsNotLeader)
+			assert.EqualValues(t, 1, requests.Load())
+		})
+	}
 }
 
 // recordingClientPool records the targets that connections are requested for.
