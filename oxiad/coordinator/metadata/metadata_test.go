@@ -161,6 +161,7 @@ func TestMetadataStatusWritersGiveUpOnceCanceled(t *testing.T) {
 	require.Error(t, metadata.UpdateNamespaceStatus("default", &commonproto.NamespaceStatus{}))
 	require.Nil(t, metadata.DeleteNamespaceStatus("default").UnsafeBorrow())
 	require.Error(t, metadata.UpdateShardStatus("default", 0, &commonproto.ShardMetadata{Term: 2}))
+	require.Error(t, metadata.UpdateShardStatuses("default", map[int64]*commonproto.ShardMetadata{0: {Term: 2}}))
 	require.Error(t, metadata.DeleteShardStatus("default", 0))
 
 	status := statusProvider.Watch().Load().Value
@@ -189,6 +190,19 @@ func TestMetadataStatusUpdatesFailWhenTargetIsGone(t *testing.T) {
 	shard, exists := metadata.GetShardStatus("default", 0)
 	require.True(t, exists)
 	require.EqualValues(t, 2, shard.UnsafeBorrow().GetTerm())
+
+	// Several shards are updated together, or not at all
+	require.ErrorIs(t, metadata.UpdateShardStatuses("other", map[int64]*commonproto.ShardMetadata{
+		0: {Term: 3},
+	}), metadataconstant.ErrNotFound)
+	require.ErrorIs(t, metadata.UpdateShardStatuses("default", map[int64]*commonproto.ShardMetadata{
+		0: {Term: 3},
+		1: {Term: 3},
+	}), metadataconstant.ErrNotFound)
+	shard, _ = metadata.GetShardStatus("default", 0)
+	require.EqualValues(t, 2, shard.UnsafeBorrow().GetTerm())
+	_, exists = metadata.GetShardStatus("default", 1)
+	require.False(t, exists)
 	require.NoError(t, metadata.Close())
 }
 
