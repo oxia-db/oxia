@@ -1846,6 +1846,121 @@ func TestController_PeriodicTasksPersistOnlyDirtyState(t *testing.T) {
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
 }
 
+// assertPeriodicTasksKeepUpdate runs the periodic tasks of the shard, which
+// delete it from the removed data server, applies update while their status
+// update waits, i.e. after they read the metadata of the shard, and checks
+// that the shard keeps the update and only loses the removed data server.
+func assertPeriodicTasksKeepUpdate(t *testing.T, metadata coordmetadata.Metadata, shard int64,
+	removed *proto.DataServerIdentity, update func()) {
+	t.Helper()
+	rpc := mockutils.NewRpcProvider()
+	periodic := newHoldingMetadata(metadata, func() bool { return true })
+	s := &controller{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadataStore: periodic,
+		rpc:           rpc,
+		ctx:           t.Context(),
+		logger:        slog.Default(),
+	}
+	term := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetTerm()
+
+	rpc.GetNode(removed).DeleteShardResponse(nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handlePeriodicTasks()
+	}()
+	rpc.GetNode(removed).ExpectDeleteShardRequest(t, shard, term)
+	requireClosed(t, periodic.held, "the periodic tasks to delete the shard from the removed data server")
+
+	update()
+	expected := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	expected.PendingDeleteShardNodes = nil
+	close(periodic.release)
+	requireClosed(t, done, "the periodic tasks to end")
+
+	actual := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.True(t, gproto.Equal(expected, actual), "expected %v, got %v", expected, actual)
+}
+
+// A namespace is deleted while the periodic tasks of one of its shards delete
+// it from a data server removed from its ensemble: the shard stays marked for
+// deletion.
+func TestController_PeriodicTasksKeepNamespaceDeletion(t *testing.T) {
+	var shard int64 = 5
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	removed := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	require.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		ReplicationFactor: 3,
+		Shards: map[int64]*proto.ShardMetadata{shard: {
+			Status:                  proto.ShardStatusSteadyState,
+			Term:                    1,
+			Leader:                  s1,
+			Ensemble:                []*proto.DataServerIdentity{s1, s2, s3},
+			PendingDeleteShardNodes: []*proto.DataServerIdentity{removed},
+		}},
+	}))
+
+	assertPeriodicTasksKeepUpdate(t, metadata, shard, removed, func() {
+		metadata.DeleteNamespaceStatus(constant.DefaultNamespace)
+	})
+}
+
+// The split controller updates the parent of a split while the parent's
+// periodic tasks delete it from a data server removed from its ensemble: the
+// parent keeps the split's updates. The shards of a split no longer change
+// their ensemble, but a status stored by an earlier coordinator can still have
+// such a parent.
+func TestController_PeriodicTasksKeepSplitUpdates(t *testing.T) {
+	removed := &proto.DataServerIdentity{Public: "ps4:9091", Internal: "ps4:8191"}
+	for _, test := range []struct {
+		name   string
+		update func(parent *proto.ShardMetadata)
+	}{{
+		// The parent must never be elected again, only deleted
+		name: "point-of-no-return",
+		update: func(parent *proto.ShardMetadata) {
+			parent.Term++
+			parent.Leader = nil
+			parent.Status = proto.ShardStatusElection
+			parent.Split.Phase = proto.SplitPhaseFinalize
+		},
+	}, {
+		// Cutover noticed that the parent's term changed
+		name:   "back-to-bootstrap",
+		update: func(parent *proto.ShardMetadata) { parent.Split.Phase = proto.SplitPhaseBootstrap },
+	}, {
+		name:   "abort",
+		update: func(parent *proto.ShardMetadata) { parent.Split = nil },
+	}, {
+		name: "complete",
+		update: func(parent *proto.ShardMetadata) {
+			parent.Status = proto.ShardStatusDeleting
+			parent.Split = nil
+		},
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			_, metadata, _ := setupSplitTest(t, proto.SplitPhaseCutover)
+			updateParent := func(update func(parent *proto.ShardMetadata)) {
+				require.NoError(t, metadata.UpdateShardStatuses(constant.DefaultNamespace,
+					func(shards map[int64]*proto.ShardMetadata) bool {
+						update(shards[0])
+						return true
+					}))
+			}
+			updateParent(func(parent *proto.ShardMetadata) {
+				parent.PendingDeleteShardNodes = []*proto.DataServerIdentity{removed}
+			})
+
+			assertPeriodicTasksKeepUpdate(t, metadata, 0, removed, func() { updateParent(test.update) })
+		})
+	}
+}
+
 func TestController_ElectionDiscardsWhenQueueIsFull(t *testing.T) {
 	var shard int64 = 5
 	s := &controller{
