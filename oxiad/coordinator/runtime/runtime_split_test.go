@@ -32,11 +32,13 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/ensemble"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/dataserver"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/mockutils"
 	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/shard"
 )
@@ -602,6 +604,54 @@ func TestInitiateSplit_FailsIfParentElectionStarts(t *testing.T) {
 	defer r.RUnlock()
 	assert.Empty(t, r.shardControllers)
 	assert.Empty(t, r.splitControllers)
+}
+
+// featuresDataServerController is a data server controller that only reports
+// the features that its data server supports.
+type featuresDataServerController struct {
+	dataservercontroller.Controller
+	features []proto.Feature
+}
+
+func (c *featuresDataServerController) SupportedFeatures() []proto.Feature {
+	return c.features
+}
+
+// The children of a split inherit the features enabled on the parent, and
+// the split can't complete if the ensemble of a child doesn't support them.
+// InitiateSplit selects the ensembles of the children among the data servers
+// that support the features of the parent's ensemble.
+func TestInitiateSplit_SelectsChildrenSupportingParentFeatures(t *testing.T) {
+	r, metadata := newInitiateSplitTestRuntime(t)
+
+	// The ls* data servers don't support ordered writes yet, e.g. during a
+	// rolling upgrade, and they are the least loaded ones with the rs* ones
+	older := []*proto.DataServerIdentity{splitLs1, splitLs2, splitLs3}
+	r.dataServerControllers = map[string]dataservercontroller.Controller{}
+	for _, server := range []*proto.DataServerIdentity{
+		splitPs1, splitPs2, splitPs3, splitLs1, splitLs2, splitLs3, splitRs1, splitRs2, splitRs3,
+	} {
+		features := feature.SupportedFeatures()
+		if slices.Contains(older, server) {
+			features = slices.DeleteFunc(features, func(f proto.Feature) bool {
+				return f == proto.Feature_FEATURE_ORDERED_WRITES
+			})
+		}
+		r.dataServerControllers[server.GetNameOrDefault()] = &featuresDataServerController{features: features}
+	}
+
+	leftChild, rightChild, err := r.InitiateSplit(constant.DefaultNamespace, splitParentShard, nil)
+	require.NoError(t, err)
+
+	for _, child := range []int64{leftChild, rightChild} {
+		childMeta, exists := metadata.GetShardStatus(constant.DefaultNamespace, child)
+		require.True(t, exists, "child shard %d", child)
+		for _, server := range childMeta.UnsafeBorrow().GetEnsemble() {
+			assert.False(t, slices.ContainsFunc(older, func(o *proto.DataServerIdentity) bool {
+				return o.GetNameOrDefault() == server.GetNameOrDefault()
+			}), "child shard %d has %s in its ensemble", child, server.GetNameOrDefault())
+		}
+	}
 }
 
 // A change of the parent's ensemble that the balancer planned before the split
