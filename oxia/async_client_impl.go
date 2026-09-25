@@ -88,6 +88,7 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 			options.namespace, options.requestTimeout)
 	}
 	if err != nil {
+		_ = clientPool.Close()
 		return nil, err
 	}
 
@@ -157,6 +158,7 @@ func (c *clientImpl) Close() error {
 		c.sessions.Close(),
 		c.writeBatchManager.Close(),
 		c.readBatchManager.Close(),
+		c.shardManager.Close(),
 		c.clientPool.Close(),
 	)
 	c.cancel()
