@@ -179,7 +179,12 @@ func newNotificationsTracker(namespace string, shard int64, lastOffset int64, kv
 }
 
 func (nt *notificationsTracker) UpdatedCommitOffset(offset int64) {
+	// The offset must be updated while holding the lock the waiters check it
+	// under, or a waiter that has just found it too low can miss the Broadcast
+	// and stay parked until the next commit
+	nt.Lock()
 	nt.lastOffset.Store(offset)
+	nt.Unlock()
 	nt.cond.Broadcast()
 }
 
@@ -274,7 +279,10 @@ func (nt *notificationsTracker) Close() error {
 		return nil
 	default:
 		nt.cancel()
+		// Like the offset, the closed flag must be set under the waiters' lock
+		nt.Lock()
 		nt.closed.Store(true)
+		nt.Unlock()
 		nt.cond.Broadcast()
 		return nt.waitClose.Wait(context.Background())
 	}
