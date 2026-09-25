@@ -34,6 +34,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/ensemble"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/mockutils"
@@ -601,4 +602,58 @@ func TestInitiateSplit_FailsIfParentElectionStarts(t *testing.T) {
 	defer r.RUnlock()
 	assert.Empty(t, r.shardControllers)
 	assert.Empty(t, r.splitControllers)
+}
+
+// A change of the parent's ensemble that the balancer planned before the split
+// started, and that reaches the parent's shard controller after it, is
+// rejected: the parent's ensemble doesn't change until the split ends.
+func TestSplit_RejectsChangeEnsemblePlannedBeforeSplit(t *testing.T) {
+	r, metadata := newInitiateSplitTestRuntime(t)
+	rpc := r.rpc.(*mockutils.RpcProvider)
+
+	// The parent's shard controller verifies its ensemble when it starts
+	rpc.GetNode(splitPs1).GetStatusResponse(splitParentTerm, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(splitPs2).GetStatusResponse(splitParentTerm, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(splitPs3).GetStatusResponse(splitParentTerm, proto.ServingStatus_FOLLOWER, 0, 0)
+	borrowed, _ := metadata.GetShardStatus(constant.DefaultNamespace, splitParentShard)
+	parentController := shardcontroller.NewController(constant.DefaultNamespace, splitParentShard,
+		r.namespaceConfigForSplit(constant.DefaultNamespace), borrowed.UnsafeBorrow(), metadata,
+		shardcontroller.NoOpSupportedFeaturesSupplier, r, rpc, time.Hour)
+	t.Cleanup(func() {
+		assert.NoError(t, parentController.Close())
+	})
+	r.Lock()
+	r.shardControllers[splitParentShard] = parentController
+	r.Unlock()
+
+	// The balancer planned to move the parent from ps3 before the split
+	// started. The target is not registered, only so that the split doesn't
+	// pick it for the ensemble of a child.
+	spare := &proto.DataServerIdentity{Public: "spare:9091", Internal: "spare:8191"}
+	swap := action.NewChangeEnsembleAction(splitParentShard, splitPs3, spare)
+	_, _, err := r.InitiateSplit(constant.DefaultNamespace, splitParentShard, nil)
+	require.NoError(t, err)
+
+	// What the election that changes the ensemble would need
+	rpc.GetNode(splitPs1).NewTermResponse(splitParentTerm, 10, nil)
+	rpc.GetNode(splitPs2).NewTermResponse(splitParentTerm, 9, nil)
+	rpc.GetNode(splitPs3).NewTermResponse(splitParentTerm, 9, nil)
+	rpc.GetNode(spare).NewTermResponse(-1, -1, nil)
+	rpc.GetNode(splitPs1).BecomeLeaderResponse(nil)
+
+	r.handleActionChangeEnsemble(swap)
+	_, err = swap.Wait()
+	assert.ErrorIs(t, err, shardcontroller.ErrNotReadyForChangeEnsemble)
+
+	borrowed, _ = metadata.GetShardStatus(constant.DefaultNamespace, splitParentShard)
+	parent := borrowed.UnsafeBorrow()
+	assert.NotNil(t, parent.GetSplit())
+	assert.Equal(t, splitParentTerm, parent.GetTerm())
+	assert.Equal(t, splitPs1.GetPublic(), parent.GetLeader().GetPublic())
+	var members []string
+	for _, server := range parent.GetEnsemble() {
+		members = append(members, server.GetPublic())
+	}
+	assert.Equal(t, []string{splitPs1.GetPublic(), splitPs2.GetPublic(), splitPs3.GetPublic()}, members)
+	assert.Empty(t, parent.GetPendingDeleteShardNodes())
 }
