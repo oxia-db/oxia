@@ -45,7 +45,8 @@ type DeleteCall struct {
 type DeleteRangeCall struct {
 	MinKeyInclusive string
 	MaxKeyExclusive string
-	OpIndex         uint32 // Position in the write batch, set when added to it
+	PartitionKey    *string // Only used for shard routing, not sent to the server
+	OpIndex         uint32  // Position in the write batch, set when added to it
 	Callback        func(*proto.DeleteRangeResponse, error)
 }
 

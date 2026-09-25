@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +37,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
+	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
@@ -2216,6 +2219,86 @@ func TestLeaderController_ClosesDatabaseOnReadTermFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// corruptWalEntry flips a payload byte of the entry at the given offset, in the
+// first segment of the shard WAL, so that the entry fails its CRC check.
+func corruptWalEntry(t *testing.T, walDir string, shard int64, offset int64) {
+	t.Helper()
+
+	segment := filepath.Join(walDir, constant.DefaultNamespace, fmt.Sprint("shard-", shard), "0")
+	c, exists, err := codec.GetOrCreate(segment)
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	txnPath := segment + c.GetTxnExtension()
+	buf, err := os.ReadFile(txnPath)
+	require.NoError(t, err)
+
+	var fileOffset uint32
+	for range offset {
+		payloadSize, _, _, err := c.ReadHeaderWithValidation(buf, fileOffset)
+		require.NoError(t, err)
+		fileOffset += c.GetHeaderSize() + payloadSize
+	}
+	buf[fileOffset+c.GetHeaderSize()] ^= 0xff
+	require.NoError(t, os.WriteFile(txnPath, buf, 0644))
+}
+
+// The WAL recovery discards a corrupted entry, and the ones after it, only when
+// it is above the database commit offset, as never committed. A corrupted entry
+// already applied to the database must fail the recovery instead: the leader
+// would otherwise start from a WAL head behind the database, and reuse the
+// offsets of committed entries.
+func TestLeaderController_WalRecoveryWithCorruptedEntry(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walDir := t.TempDir()
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: walDir, SegmentSize: 128 * 1024})
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 1, ReplicationFactor: 1})
+	require.NoError(t, err)
+
+	// The entries 0 to 2 get committed and applied to the database
+	for i := range 3 {
+		_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: fmt.Sprintf("key-%d", i), Value: []byte("value")}},
+		})
+		require.NoError(t, err)
+	}
+	// The entry 3 only reaches the WAL, above the database commit offset
+	require.NoError(t, lc.(*leaderController).wal.Append(&proto.LogEntry{Term: 1, Offset: 3, Value: []byte("value")}))
+	require.NoError(t, lc.Close())
+
+	// A corrupted entry above the database commit offset is discarded
+	corruptWalEntry(t, walDir, shard, 3)
+	lc, err = NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	res, err := lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+	require.NoError(t, err)
+	AssertProtoEqual(t, &proto.EntryId{Term: 1, Offset: 2}, res.HeadEntryId)
+	require.NoError(t, lc.Close())
+
+	// A corrupted entry that the database already applied fails the recovery
+	corruptWalEntry(t, walDir, shard, 1)
+	lc, err = NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.ErrorIs(t, err, codec.ErrDataCorrupted)
+	assert.Nil(t, lc)
+
+	// A leaked database would still hold the Pebble lock and fail the re-open
+	kv, err := kvFactory.NewKV(constant.DefaultNamespace, shard, proto.KeySortingType_UNKNOWN)
+	require.NoError(t, err)
+	assert.NoError(t, kv.Close())
+
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }

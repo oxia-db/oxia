@@ -131,6 +131,54 @@ func TestDataServerController_ToleratesTransientHealthCheckFailures(t *testing.T
 	assert.NoError(t, nc.Close())
 }
 
+// TestDataServerController_CloseInterruptsHealthCheckBackoff verifies that
+// Close does not wait for a health check loop to sleep out its retry backoff,
+// which used to hold up the coordinator shutdown for up to a minute per
+// unreachable data server.
+func TestDataServerController_CloseInterruptsHealthCheckBackoff(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", time.Hour, testHealthPolicy)
+
+	node := rpc.GetNode(addr)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Make the ping loop give up on the node: it fences the node from its
+	// retry notification, right before it starts waiting out the backoff
+	// interval (an hour, with jitter, in this test).
+	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.Unavailable, "connection refused"),
+		testHealthPolicy.failureThreshold)
+
+	select {
+	case unavailableNode := <-nal.Events:
+		assert.Equal(t, addr, unavailableNode)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the node must be fenced once the ping loop gives up on it")
+	}
+
+	closed := make(chan error, 1)
+	go func() {
+		closed <- nc.Close()
+	}()
+
+	select {
+	case err := <-closed:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "Close must not wait for the health check backoff to elapse")
+	}
+}
+
 func TestDataServerController_WatchFailureAloneDoesNotFence(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
@@ -420,6 +468,51 @@ func TestDataServerController_ConcurrentServingObservationsHandshakeOnce(t *test
 	assert.NoError(t, nc.Close())
 }
 
+// The features a data server supports are unknown until its first handshake,
+// which reports them to the listener. The later handshakes don't, even when
+// the data server comes back with a different binary: a feature is activated
+// by the next election after a rolling upgrade.
+func TestDataServerController_ReportsFeaturesOfFirstHandshakeOnly(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	node := rpc.GetNode(addr)
+	node.SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
+
+	select {
+	case discovered := <-nal.FeaturesDiscoveredEvents:
+		assert.Equal(t, addr, discovered)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the features of the data server were not reported")
+	}
+	assert.Equal(t, Running, nc.Status())
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, nc.SupportedFeatures())
+
+	// The data server restarts with a binary that supports more features
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	assert.Equal(t, addr, <-nal.Events)
+	node.SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES})
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+	assert.Equal(t, int64(2), node.HandshakeCount.Load())
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES},
+		nc.SupportedFeatures())
+
+	// Close waits for the health checks, so a report would be in the channel
+	assert.NoError(t, nc.Close())
+	assert.Len(t, nal.FeaturesDiscoveredEvents, 0, "only the first handshake reports the features")
+}
+
 func TestDataServerController_ShardsAssignments(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
@@ -604,4 +697,48 @@ func TestDataServerController_RecoversFromStreamEstablishmentRejection(t *testin
 	rpc.RecoverNode(addr)
 
 	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
+}
+
+// TestDataServerController_SendsAssignmentsRightAfterHandshake reproduces the
+// late first assignments of a data server that is not bound to the coordinator
+// yet: it rejects the assignments stream until the handshake binds it, and a
+// rejected stream is only retried after the full retry backoff. The dispatcher
+// must wait for the handshake instead, and send the assignments right after it.
+func TestDataServerController_SendsAssignmentsRightAfterHandshake(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := mockutils.NewShardAssignmentsProvider()
+	nal := mockutils.NewNodeAvailabilityListener()
+	rpc := mockutils.NewRpcProvider()
+	node := rpc.GetNode(addr)
+
+	// The data server rejects the stream until the handshake, held in flight
+	// here, binds it.
+	rpc.FailNode(addr, constant.ErrNotInitialized)
+	node.BlockHandshakes()
+
+	// A rejected stream would only be retried after 30s to 90s
+	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", time.Minute, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	assert.Eventually(t, func() bool {
+		return node.HandshakeCount.Load() >= 1
+	}, 10*time.Second, 10*time.Millisecond)
+	// Leave the dispatcher the time to open the stream before the handshake
+	// completes, if it would.
+	time.Sleep(10 * testHealthPolicy.probeInterval)
+
+	// The handshake binds the data server
+	rpc.RecoverNode(addr)
+	node.ReleaseHandshakes()
+
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+	assert.Equal(t, int64(1), node.PushShardAssignmentsCount.Load(),
+		"the stream must be opened once, after the handshake")
 }

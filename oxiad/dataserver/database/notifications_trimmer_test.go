@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -82,7 +83,13 @@ func TestNotificationsTrimmer(t *testing.T) {
 func firstNotification(t *testing.T, db DB) int64 {
 	t.Helper()
 
-	nextNotifications, err := db.ReadNextNotifications(context.Background(), 0)
+	// Once every batch is trimmed, the read waits for the next one
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	nextNotifications, err := db.ReadNextNotifications(ctx, 0)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return -1
+	}
 	assert.NoError(t, err)
 
 	if len(nextNotifications) == 0 {

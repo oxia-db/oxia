@@ -33,6 +33,12 @@ import (
 	"github.com/oxia-db/oxia/oxia/internal"
 )
 
+// A server rejects a subscription (eg. the node is not the leader) as soon as
+// it receives it, while an accepted subscription that resumes from an offset
+// gets no response until a new notification is written: a stream that stayed
+// open for longer than this was accepted.
+const notificationsAcceptedAfter = 1 * time.Second
+
 type notifications struct {
 	multiplexCh  chan *Notification
 	closeCh      chan any
@@ -257,9 +263,16 @@ func (snm *shardNotificationsManager) getNotifications() error {
 		return err
 	}
 
-	snm.backoff.Reset()
+	openedAt := time.Now()
+	err = snm.multiplexNotifications(notifications)
 
-	return snm.multiplexNotifications(notifications)
+	// The stream gets created even if the server rejects the subscription.
+	// Reset the backoff only when an accepted one fails (eg. on a leader
+	// change), so a persistent rejection keeps escalating the retry delay.
+	if time.Since(openedAt) >= notificationsAcceptedAfter {
+		snm.backoff.Reset()
+	}
+	return err
 }
 
 func convertNotificationType(t proto.NotificationType) NotificationType {

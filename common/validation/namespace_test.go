@@ -111,6 +111,23 @@ func TestValidateNamespace(t *testing.T) {
 			wantErr:   true,
 			errMsg:    "invalid characters",
 		},
+		{
+			name:      "reserved name",
+			namespace: "MANIFEST",
+			wantErr:   true,
+			errMsg:    "reserved",
+		},
+		{
+			name:      "reserved name in another letter case",
+			namespace: "manifest",
+			wantErr:   true,
+			errMsg:    "reserved",
+		},
+		{
+			name:      "valid name with a reserved name prefix",
+			namespace: "MANIFEST-1",
+			wantErr:   false,
+		},
 	}
 
 	for _, tt := range tests {
