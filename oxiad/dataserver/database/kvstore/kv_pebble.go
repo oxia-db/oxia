@@ -105,18 +105,10 @@ func NewPebbleKVFactory(options *FactoryOptions) (Factory, error) {
 	return pf, nil
 }
 
+// The snapshots are left behind by a previous run: the "snapshots" name is
+// reserved, so nothing else can be in there.
 func (p *PebbleFactory) cleanupSnapshots() error {
-	snapshotsPath := filepath.Join(p.dataDir, "snapshots")
-	_, err := os.Stat(snapshotsPath)
-
-	if err == nil {
-		return os.RemoveAll(snapshotsPath)
-	} else if os.IsNotExist(err) {
-		// Snapshot directory does not exist, nothing to do
-		return nil
-	}
-
-	return err
+	return os.RemoveAll(filepath.Join(p.dataDir, validation.DataServerSnapshotsDir))
 }
 
 func (p *PebbleFactory) Close() error {
