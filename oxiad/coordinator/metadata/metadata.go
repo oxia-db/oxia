@@ -59,6 +59,9 @@ type Metadata interface {
 
 	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool)
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) error
+	// UpdateShardStatuses updates several shards of a namespace in a single
+	// status write, so that no reader sees some of the updates without the others.
+	UpdateShardStatuses(namespace string, shardsMetadata map[int64]*commonproto.ShardMetadata) error
 	DeleteShardStatus(namespace string, shard int64) error
 
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
@@ -385,6 +388,43 @@ func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, s
 		return fmt.Errorf("%w: shard %d of namespace %q", metadatacommon.ErrNotFound, shard, namespace)
 	}
 	return nil
+}
+
+func (m *coordinatorMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*commonproto.ShardMetadata) error {
+	cloned := make(map[int64]*commonproto.ShardMetadata, len(shardsMetadata))
+	for shard, shardMetadata := range shardsMetadata {
+		cloned[shard] = gproto.Clone(shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
+	}
+	var notFound error
+	err := backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+			ns, exist := clusterStatus.Namespaces[namespace]
+			if !exist {
+				notFound = fmt.Errorf("%w: namespace %q", metadatacommon.ErrNotFound, namespace)
+				return clusterStatus, false
+			}
+			for shard := range cloned {
+				if _, exist = ns.Shards[shard]; !exist {
+					notFound = fmt.Errorf("%w: shard %d of namespace %q", metadatacommon.ErrNotFound, shard, namespace)
+					return clusterStatus, false
+				}
+			}
+			for shard, shardMetadata := range cloned {
+				ns.Shards[shard] = shardMetadata
+			}
+			return clusterStatus, true
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to update shards metadata",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return err
+	}
+	return notFound
 }
 
 func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) error {

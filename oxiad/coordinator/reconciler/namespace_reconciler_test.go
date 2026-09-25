@@ -183,6 +183,15 @@ func (m *mockNamespaceMetadata) UpdateShardStatus(namespace string, shard int64,
 	return nil
 }
 
+func (m *mockNamespaceMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) error {
+	for shard, shardMetadata := range shardsMetadata {
+		if err := m.UpdateShardStatus(namespace, shard, shardMetadata); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) error { return nil }
 
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {

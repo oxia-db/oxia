@@ -117,6 +117,15 @@ func (m *mockMetadata) UpdateShardStatus(namespace string, shard int64, shardMet
 	return nil
 }
 
+func (m *mockMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) error {
+	for shard, shardMetadata := range shardsMetadata {
+		if err := m.UpdateShardStatus(namespace, shard, shardMetadata); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (*mockMetadata) DeleteShardStatus(string, int64) error { return nil }
 
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }

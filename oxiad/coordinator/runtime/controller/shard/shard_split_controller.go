@@ -675,25 +675,23 @@ func (sc *SplitController) runCutover() error {
 	return nil
 }
 
+// detachChildren clears the split metadata from the children and from the
+// parent, and marks the parent for deletion: the split controller's job is
+// done, and the parent shard controller handles the actual deletion.
+// All of it is a single status update: the shard assignments can be recomputed
+// at any time, and must show either the parent or both children, never a mix.
 func (sc *SplitController) detachChildren() error {
-	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		if err := sc.updateChildMeta(childId, func(meta *proto.ShardMetadata) {
+	return sc.updateShardsMeta(map[int64]func(meta *proto.ShardMetadata){
+		sc.leftChildId: func(meta *proto.ShardMetadata) {
 			meta.Split = nil
-		}); err != nil {
-			return err
-		}
-	}
-
-	if err := sc.updateParentMeta(func(meta *proto.ShardMetadata) {
-		meta.Status = proto.ShardStatusDeleting
-	}); err != nil {
-		return err
-	}
-
-	// Clear split metadata from parent — the split controller's job is done.
-	// The parent shard controller handles the actual deletion.
-	return sc.updateParentMeta(func(meta *proto.ShardMetadata) {
-		meta.Split = nil
+		},
+		sc.rightChildId: func(meta *proto.ShardMetadata) {
+			meta.Split = nil
+		},
+		sc.parentShardId: func(meta *proto.ShardMetadata) {
+			meta.Status = proto.ShardStatusDeleting
+			meta.Split = nil
+		},
 	})
 }
 
@@ -865,6 +863,32 @@ func (sc *SplitController) updateShardMeta(shardId int64, fn func(meta *proto.Sh
 	cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
 	fn(cloned)
 	if err := sc.metadata.UpdateShardStatus(sc.namespace, shardId, cloned); err != nil {
+		return backoff.Permanent(err)
+	}
+	return nil
+}
+
+// updateShardsMeta persists changes to the metadata of several shards in a
+// single status update: all of them, or none if one of the shards is gone. A
+// failed write returns a permanent error, as in updateShardMeta.
+func (sc *SplitController) updateShardsMeta(updates map[int64]func(meta *proto.ShardMetadata)) error {
+	ns, exists := sc.metadata.GetNamespaceStatus(sc.namespace)
+	if !exists {
+		sc.logger.Warn("namespace status not found while updating shards metadata",
+			slog.String("namespace", sc.namespace))
+		return nil
+	}
+	shardsMetadata := make(map[int64]*proto.ShardMetadata, len(updates))
+	for shardId, fn := range updates {
+		meta, exists := ns.UnsafeBorrow().Shards[shardId]
+		if !exists {
+			return backoff.Permanent(errors.Errorf("shard %d not found while updating shards metadata", shardId))
+		}
+		cloned := gproto.Clone(meta).(*proto.ShardMetadata) //nolint:revive
+		fn(cloned)
+		shardsMetadata[shardId] = cloned
+	}
+	if err := sc.metadata.UpdateShardStatuses(sc.namespace, shardsMetadata); err != nil {
 		return backoff.Permanent(err)
 	}
 	return nil

@@ -16,6 +16,7 @@ package shard
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -1137,4 +1138,29 @@ func TestSplitController_ChildEnsembleMemberDiesDuringBootstrap(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("Split did not complete in time")
 	}
+}
+
+// TestSplitController_DetachChildrenIsAllOrNothing verifies that the children
+// are detached, and the parent marked for deletion, in a single status update.
+// With a child gone, none of the shards is updated: detaching the other child
+// and deleting the parent would leave the hash range of the missing child
+// without a shard.
+func TestSplitController_DetachChildrenIsAllOrNothing(t *testing.T) {
+	_, statusRes, _ := setupSplitTest(t, proto.SplitPhaseCutover)
+	require.NoError(t, statusRes.DeleteShardStatus(constant.DefaultNamespace, 2))
+
+	sc := &SplitController{
+		namespace:     constant.DefaultNamespace,
+		parentShardId: 0,
+		leftChildId:   1,
+		rightChildId:  2,
+		metadata:      statusRes,
+		logger:        slog.Default(),
+	}
+	require.Error(t, sc.detachChildren())
+
+	ns := loadTestStatus(t, statusRes).Namespaces[constant.DefaultNamespace]
+	assert.NotNil(t, ns.Shards[0].Split, "parent split metadata should be kept")
+	assert.Equal(t, proto.ShardStatusSteadyState, ns.Shards[0].GetStatusOrDefault())
+	assert.NotNil(t, ns.Shards[1].Split, "left child split metadata should be kept")
 }
