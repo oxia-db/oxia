@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -638,6 +639,74 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 
 	_, leftExists := finalNs.Shards[1]
 	assert.False(t, leftExists)
+}
+
+// writeObservingMetadata calls afterWrite after every shard status write.
+type writeObservingMetadata struct {
+	coordmetadata.Metadata
+	afterWrite func()
+}
+
+func (m *writeObservingMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) error {
+	err := m.Metadata.UpdateShardStatus(namespace, shard, shardMetadata)
+	m.afterWrite()
+	return err
+}
+
+func (m *writeObservingMetadata) UpdateShardStatuses(namespace string, update func(map[int64]*proto.ShardMetadata) bool) error {
+	err := m.Metadata.UpdateShardStatuses(namespace, update)
+	m.afterWrite()
+	return err
+}
+
+func (m *writeObservingMetadata) DeleteShardStatus(namespace string, shard int64) error {
+	err := m.Metadata.DeleteShardStatus(namespace, shard)
+	m.afterWrite()
+	return err
+}
+
+// A coordinator can stop right after any status write of an aborted split,
+// e.g. when it crashes, and the next one resumes the split from the stored
+// status. Each write must store either the whole split or none of it: a split
+// resumed with a child missing can't complete.
+func TestSplitController_AbortStoresWholeSplitOrNone(t *testing.T) {
+	_, metadata, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
+
+	var writes atomic.Int64
+	observing := &writeObservingMetadata{Metadata: metadata, afterWrite: func() {
+		write := writes.Add(1)
+		shards := loadTestStatus(t, metadata).Namespaces[constant.DefaultNamespace].GetShards()
+		splitting := shards[0].GetSplit() != nil
+		_, leftExists := shards[1]
+		_, rightExists := shards[2]
+		assert.True(t, leftExists == splitting && rightExists == splitting,
+			"status write %d stored parent split=%v, left child=%v, right child=%v",
+			write, splitting, leftExists, rightExists)
+	}}
+
+	// No data server responses: Bootstrap cannot fence the children, and the
+	// split is aborted once it times out. The abort makes all the status writes.
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      observing,
+		RpcProvider:   mockutils.NewRpcProvider(),
+		EventListener: listener,
+		SplitTimeout:  time.Second,
+	})
+	defer sc.Close()
+
+	select {
+	case <-listener.aborts:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Split was not aborted in time")
+	}
+
+	assert.Positive(t, writes.Load())
+	shards := loadTestStatus(t, metadata).Namespaces[constant.DefaultNamespace].GetShards()
+	assert.Nil(t, shards[0].GetSplit())
+	assert.NotContains(t, shards, int64(1))
+	assert.NotContains(t, shards, int64(2))
 }
 
 // --- Parent Leader Election Tests ---

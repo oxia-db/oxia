@@ -864,20 +864,9 @@ func (sc *SplitController) abort() {
 	// serving (best-effort; a new term would clear it anyway).
 	sc.unfreezeParentBestEffort()
 
-	// Delete child shards from status. If the coordinator is closing and this
-	// cannot be persisted, the split resumes after a restart, and is aborted
-	// again when it times out if a child is already gone.
-	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		if err := sc.metadata.DeleteShardStatus(sc.namespace, childId); err != nil {
-			sc.logger.Warn("Failed to persist the split abort", slog.Any("error", err))
-			return
-		}
-	}
-
-	// Clear parent split metadata.
-	if err := sc.updateParentMeta(func(meta *proto.ShardMetadata) {
-		meta.Split = nil
-	}); err != nil {
+	// If the coordinator is closing and this cannot be persisted, the split
+	// resumes after a restart.
+	if err := sc.removeSplit(); err != nil {
 		sc.logger.Warn("Failed to persist the split abort", slog.Any("error", err))
 		return
 	}
@@ -886,6 +875,33 @@ func (sc *SplitController) abort() {
 
 	// Notify coordinator to clean up child controllers and recompute assignments.
 	sc.eventListener.SplitAborted(sc.parentShardId, sc.leftChildId, sc.rightChildId)
+}
+
+// removeSplit deletes the child shards and clears the parent's split metadata
+// in a single status write. The coordinator can stop between two writes, e.g.
+// when it crashes, and the next one resumes the split from the stored status:
+// a split with a child missing can't complete, and its Cutover keeps the
+// parent frozen until the split times out again.
+func (sc *SplitController) removeSplit() error {
+	if _, exists := sc.metadata.GetNamespaceStatus(sc.namespace); !exists {
+		sc.logger.Warn("namespace status not found while removing the split",
+			slog.String("namespace", sc.namespace))
+		return nil
+	}
+	return sc.metadata.UpdateShardStatuses(sc.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		changed := false
+		for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
+			if _, exists := shards[childId]; exists {
+				delete(shards, childId)
+				changed = true
+			}
+		}
+		if parent, exists := shards[sc.parentShardId]; exists && parent.Split != nil {
+			parent.Split = nil
+			changed = true
+		}
+		return changed
+	})
 }
 
 // --- Helper methods ---
