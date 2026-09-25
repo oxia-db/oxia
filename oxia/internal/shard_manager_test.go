@@ -15,14 +15,21 @@
 package internal
 
 import (
+	"context"
 	"log/slog"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/concurrent"
+	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func TestOverlap(t *testing.T) {
@@ -138,4 +145,91 @@ func TestShardManagerChanged(t *testing.T) {
 		assert.Fail(t, "the shard map has changed")
 	}
 	assert.NotEqual(t, changed, s.Changed())
+}
+
+// Sends the shard assignments a number of times, then fails with err.
+type assignmentsTestStream struct {
+	grpc.ClientStream
+	namespace   string
+	assignments int
+	err         error
+}
+
+func (s *assignmentsTestStream) Recv() (*proto.ShardAssignments, error) {
+	if s.assignments == 0 {
+		return nil, s.err
+	}
+	s.assignments--
+	return &proto.ShardAssignments{Namespaces: map[string]*proto.NamespaceShardsAssignment{
+		s.namespace: {Assignments: []*proto.ShardAssignment{{
+			ShardBoundaries: &proto.ShardAssignment_Int32HashRange{Int32HashRange: &proto.Int32HashRange{}},
+		}}},
+	}}, nil
+}
+
+// Serves the first request of the shard assignments with the stream, and holds
+// the next ones until the shard manager is closed.
+type assignmentsTestRpcProvider struct {
+	RpcProvider
+	stream   *assignmentsTestStream
+	requests chan struct{}
+}
+
+func (p *assignmentsTestRpcProvider) GetShardAssignments(ctx context.Context, _ string,
+	_ *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	p.requests <- struct{}{}
+	if stream := p.stream; stream != nil {
+		p.stream = nil
+		return stream, nil
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// The errors that fail the creation of the shard manager are retried once it
+// has received the initial assignments.
+func TestShardManagerRetriesPermanentErrorsAfterStart(t *testing.T) {
+	for name, err := range map[string]error{
+		"unauthenticated":     status.Error(codes.Unauthenticated, "token expired"),
+		"namespace-not-found": constant.ErrNamespaceNotFound,
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider := &assignmentsTestRpcProvider{
+				// The initial assignments and an update, then the error
+				stream:   &assignmentsTestStream{namespace: "default", assignments: 2, err: err},
+				requests: make(chan struct{}, 2),
+			}
+			s := &shardManagerImpl{
+				rpcProvider: provider,
+				namespace:   "default",
+				shards:      make(map[int64]Shard),
+				successors:  make(map[int64][]Shard),
+				changed:     make(chan struct{}),
+				updatedWg:   concurrent.NewWaitGroup(1),
+				logger:      slog.Default(),
+			}
+			s.ctx, s.cancel = context.WithCancel(context.Background())
+			stopped := make(chan struct{})
+			go func() {
+				s.receiveWithRecovery()
+				close(stopped)
+			}()
+
+			// The first request, then the retry after the error
+			for range 2 {
+				select {
+				case <-provider.requests:
+				case <-time.After(10 * time.Second):
+					require.FailNow(t, "the shard manager stopped requesting the shard assignments")
+				}
+			}
+
+			assert.NoError(t, s.Close())
+			select {
+			case <-stopped:
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "the shard manager kept requesting the shard assignments after it was closed")
+			}
+		})
+	}
 }
