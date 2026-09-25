@@ -1306,9 +1306,7 @@ func TestCoordinator_ShardSplit_ChildWritesAfterReelection(t *testing.T) {
 	client := cluster.splitWithKeys(t)
 	defer func() { assert.NoError(t, client.Close()) }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	_, _, err := client.Put(ctx, cluster.childKey(cluster.leftChild, "before"), []byte("value"))
+	_, _, err := client.Put(context.Background(), cluster.childKey(cluster.leftChild, "before"), []byte("value"))
 	require.NoError(t, err)
 
 	// Reporting the leader as unavailable runs the same election as leader balancing
@@ -1316,6 +1314,8 @@ func TestCoordinator_ShardSplit_ChildWritesAfterReelection(t *testing.T) {
 	cluster.coordinator.BecameUnavailable(before.Leader)
 	cluster.waitForNewTerm(t, cluster.leftChild, before.Term)
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	_, _, err = client.Put(ctx, cluster.childKey(cluster.leftChild, "after"), []byte("value"))
 	require.NoError(t, err, "write to the split child after its re-election")
 }
