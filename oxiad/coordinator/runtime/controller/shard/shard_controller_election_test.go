@@ -23,6 +23,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
@@ -668,4 +669,90 @@ func expectParentFenced(t *testing.T, rpc *mockutils.RpcProvider, term int64) {
 	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
 		rpc.GetNode(node).ExpectNewTermRequest(t, 0, term, true)
 	}
+}
+
+// updateSplitParent applies an update of the split controller to the parent
+// shard of setupSplitTest, and returns the updated split metadata.
+func updateSplitParent(t *testing.T, metadata coordmetadata.Metadata, update func(parent *proto.ShardMetadata)) *proto.SplitMetadata {
+	t.Helper()
+	require.NoError(t, metadata.UpdateShardStatuses(constant.DefaultNamespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		update(shards[0])
+		return true
+	}))
+	return requireShardMetadata(t, metadata, constant.DefaultNamespace, 0).GetSplit()
+}
+
+// The split controller updates the parent while a leader election of the
+// parent is fencing its ensemble: the election must store its outcome on top
+// of these updates.
+func TestElection_KeepsSplitUpdatesWhileFencing(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		update func(parent *proto.ShardMetadata)
+	}{{
+		// CatchUp noticed that the parent's term changed
+		name:   "back-to-bootstrap",
+		update: func(parent *proto.ShardMetadata) { parent.Split.Phase = proto.SplitPhaseBootstrap },
+	}, {
+		name:   "abort",
+		update: func(parent *proto.ShardMetadata) { parent.Split = nil },
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			rpc, metadata, _ := setupSplitTest(t, proto.SplitPhaseCatchUp)
+			elected := startElection(t, metadata, rpc, 0)
+
+			expectParentFenced(t, rpc, 6)
+			split := updateSplitParent(t, metadata, test.update)
+			electParentLeader(t, rpc, elected)
+
+			parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
+			assert.True(t, gproto.Equal(split, parent.GetSplit()), "split metadata: %v", parent.GetSplit())
+			assert.Equal(t, proto.ShardStatusSteadyState, parent.GetStatus())
+			assert.EqualValues(t, 6, parent.GetTerm())
+			assert.Equal(t, ps2.GetPublic(), parent.GetLeader().GetPublic())
+		})
+	}
+}
+
+// The split is aborted while a leader election of the parent waits to retry,
+// e.g. because its ensemble has no quorum: the next attempt must start from
+// the current metadata of the parent, or the parent stays marked as being
+// split, into children that no longer exist.
+func TestElection_KeepsSplitUpdatesBetweenAttempts(t *testing.T) {
+	rpc, metadata, _ := setupSplitTest(t, proto.SplitPhaseCatchUp)
+	elected := startElection(t, metadata, rpc, 0)
+
+	// The first attempt cannot fence a quorum
+	expectParentFenced(t, rpc, 6)
+	updateSplitParent(t, metadata, func(parent *proto.ShardMetadata) { parent.Split = nil })
+	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
+		rpc.GetNode(node).NewTermResponse(0, 0, errors.New("unreachable"))
+	}
+
+	expectParentFenced(t, rpc, 7)
+	assert.Nil(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, 0).GetSplit())
+	electParentLeader(t, rpc, elected)
+
+	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
+	assert.Nil(t, parent.GetSplit())
+	assert.Equal(t, proto.ShardStatusSteadyState, parent.GetStatus())
+	assert.EqualValues(t, 7, parent.GetTerm())
+	assert.Equal(t, ps2.GetPublic(), parent.GetLeader().GetPublic())
+}
+
+// Deleting the namespace marks the shard for deletion while its leader
+// election is fencing the ensemble: the election must not bring the shard
+// back, which would publish it again until its shard controller deletes it.
+func TestElection_KeepsDeletingStatus(t *testing.T) {
+	rpc, metadata, _ := setupSplitTest(t, proto.SplitPhaseCatchUp)
+	elected := startElection(t, metadata, rpc, 0)
+
+	expectParentFenced(t, rpc, 6)
+	metadata.DeleteNamespaceStatus(constant.DefaultNamespace)
+	electParentLeader(t, rpc, elected)
+
+	shard := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
+	assert.Equal(t, proto.ShardStatusDeleting, shard.GetStatus())
+	assert.EqualValues(t, 6, shard.GetTerm())
+	assert.Equal(t, ps2.GetPublic(), shard.GetLeader().GetPublic())
 }

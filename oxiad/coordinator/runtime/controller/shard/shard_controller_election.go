@@ -646,7 +646,7 @@ func (e *Election) persistNewTerm() error {
 			stopReason = "the shard is part of a split"
 			return false
 		}
-		shards[e.shard] = gproto.CloneOf(e.mutableShardMetadata)
+		e.storeShardMetadata(current)
 		return true
 	}); err != nil {
 		return errors.Wrap(err, "failed to persist the new term")
@@ -659,6 +659,43 @@ func (e *Election) persistNewTerm() error {
 		return backoff.Permanent(errors.New(stopReason))
 	}
 	return nil
+}
+
+// persistNewLeader stores the shard metadata with the elected leader.
+func (e *Election) persistNewLeader() error {
+	shardExists := false
+	if err := e.metadataStore.UpdateShardStatuses(e.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		current, exists := shards[e.shard]
+		shardExists = exists
+		if exists {
+			e.storeShardMetadata(current)
+		}
+		return exists
+	}); err != nil {
+		return errors.Wrap(err, "failed to persist the new leader")
+	}
+	if !shardExists {
+		return errors.Errorf("failed to persist the new leader: shard %d not found", e.shard)
+	}
+	return nil
+}
+
+// storeShardMetadata stores the election's part of the shard metadata on top
+// of the current one: the status, the term, the leader, the ensemble, and the
+// removed and pending-delete data servers. The split controller updates the
+// rest of it while the election runs, e.g. the split metadata, which storing
+// the election's copy of the whole shard would revert. A shard being deleted
+// stays so.
+func (e *Election) storeShardMetadata(current *proto.ShardMetadata) {
+	owned := gproto.CloneOf(e.mutableShardMetadata)
+	if current.GetStatusOrDefault() != proto.ShardStatusDeleting {
+		current.Status = owned.Status
+	}
+	current.Term = owned.Term
+	current.Leader = owned.Leader
+	current.Ensemble = owned.Ensemble
+	current.RemovedNodes = owned.RemovedNodes
+	current.PendingDeleteShardNodes = owned.PendingDeleteShardNodes
 }
 
 func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
@@ -753,8 +790,8 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	leader := e.mutableShardMetadata.Leader
 	leaderEntry := candidatesStatus[leader]
 
-	if err = e.metadataStore.UpdateShardStatus(e.namespace, e.shard, e.mutableShardMetadata); err != nil {
-		return nil, errors.Wrap(err, "failed to persist the new leader")
+	if err = e.persistNewLeader(); err != nil {
+		return nil, err
 	}
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))
