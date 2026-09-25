@@ -657,6 +657,76 @@ func TestAppendAsyncWithPreviousCrc(t *testing.T) {
 	assert.NoError(t, f2.Close())
 }
 
+func appendEntries(t *testing.T, w Wal, term, firstOffset, lastOffset int64, payload string) {
+	t.Helper()
+	for i := firstOffset; i <= lastOffset; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: term, Offset: i, Value: []byte(fmt.Sprintf("%s-%d", payload, i))}))
+	}
+}
+
+// assertCrcChain checks that every entry of the wal carries the crc of the
+// entry before it as its previous crc, and returns the crc of the last entry.
+func assertCrcChain(t *testing.T, w Wal) uint32 {
+	t.Helper()
+	previousCrcs, entryCrcs := readCrcsViaReader(t, w)
+	for offset := w.FirstOffset() + 1; offset <= w.LastOffset(); offset++ {
+		assert.Equal(t, entryCrcs[offset-1], previousCrcs[offset], "crc chain broken at offset %d", offset)
+	}
+	return entryCrcs[w.LastOffset()]
+}
+
+// The entries appended after a truncation must chain from the last entry kept:
+// their crcs must match the ones of a wal that never held the truncated
+// entries, as a follower's must keep matching the leader's after it truncated
+// its uncommitted entries.
+func TestWal_TruncateKeepsCrcChain(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		payloadSize  int
+		olderSegment bool
+	}{
+		{"current segment", 10, false},
+		// The truncation reopens an older segment for writes, and deletes the
+		// segments after it
+		{"older segment", 1024, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload := strings.Repeat("x", test.payloadSize)
+
+			fExpected, wExpected := createWal(t)
+			appendEntries(t, wExpected, 1, 0, 50, payload)
+			appendEntries(t, wExpected, 2, 51, 59, payload)
+			expectedCrc := assertCrcChain(t, wExpected)
+			assert.NoError(t, wExpected.Close())
+			assert.NoError(t, fExpected.Close())
+
+			f, w := createWal(t)
+			appendEntries(t, w, 1, 0, 299, payload)
+			// Make sure that the truncation point is in the intended segment
+			walImpl := w.(*wal)
+			walImpl.RLock()
+			assert.Equal(t, test.olderSegment, walImpl.currentSegment.BaseOffset() > 50)
+			walImpl.RUnlock()
+
+			headOffset, err := w.TruncateLog(50)
+			assert.NoError(t, err)
+			assert.EqualValues(t, 50, headOffset)
+			appendEntries(t, w, 2, 51, 59, payload)
+			assert.Equal(t, expectedCrc, assertCrcChain(t, w))
+			assert.NoError(t, w.Close())
+
+			// The chain written to the segment files survives a reopen
+			w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+			assert.NoError(t, err)
+			assert.EqualValues(t, 59, w.LastOffset())
+			assert.Equal(t, expectedCrc, assertCrcChain(t, w))
+			assert.NoError(t, w.Close())
+			assert.NoError(t, f.Close())
+		})
+	}
+}
+
 // With sync disabled there are no sync rounds: every rollover exercises the
 // fallback fsync of a still-pending segment file, and the data must stay
 // intact across rollovers and a reopen.
@@ -1024,6 +1094,43 @@ func TestWal_RecoverAfterAllSegmentsContentLost(t *testing.T) {
 	r, err := w.NewReader(InvalidOffset)
 	assert.NoError(t, err)
 	assertReaderReads(t, r, entries)
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// The recovery discards a torn entry past the commit offset along with the
+// intact ones after it: when the next term rewrites that entry with one of the
+// same size, a later recovery must not bring the discarded entries of the
+// older term back after it.
+func TestWal_DiscardedEntriesNotResurrected(t *testing.T) {
+	f := NewTestWalFactory(t)
+	commitOffsetProvider := ConfigurableCommitOffsetProvider{commitOffset: 2}
+	w, err := f.NewWal(constant.DefaultNamespace, shard, commitOffsetProvider)
+	assert.NoError(t, err)
+	for i := int64(0); i <= 5; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: i, Value: fmt.Appendf(nil, "term-1-entry-%d", i)}))
+	}
+
+	// A power loss tears the uncommitted entry 3, while 4 and 5 reach the disk
+	rw := w.(*wal).currentSegment.(*readWriteSegment)
+	rw.txnMappedFile[fileOffset(rw.writingIdx, 0, 3)+rw.c.codec.GetHeaderSize()] ^= 0xFF
+	assert.NoError(t, w.Close())
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, commitOffsetProvider)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 2, w.LastOffset())
+	assert.NoError(t, w.Append(&proto.LogEntry{
+		Term: 2, Offset: 3, Value: []byte("term-2-entry-3")}))
+	assert.NoError(t, w.Close())
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, commitOffsetProvider)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 3, w.LastOffset())
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, []string{"term-1-entry-0", "term-1-entry-1", "term-1-entry-2", "term-2-entry-3"})
 	assert.NoError(t, r.Close())
 	assert.NoError(t, w.Close())
 	assert.NoError(t, f.Close())

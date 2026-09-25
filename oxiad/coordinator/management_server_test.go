@@ -87,6 +87,8 @@ func (*testRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.Sha
 
 func (*testRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
+func (*testRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
+
 func (*testRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 
 func (*testRuntime) DeleteDataServer(string) {}
@@ -631,6 +633,36 @@ func TestManagementServerCreateNamespaceRejectsInvalidRequest(t *testing.T) {
 			_, err := management.CreateNamespace(context.Background(), tt.req)
 			require.Error(t, err)
 			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+		})
+	}
+}
+
+func TestManagementServerCreateNamespaceRejectsReservedName(t *testing.T) {
+	serverName := "server-1"
+	management := newReadyManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	for _, name := range []string{"MANIFEST", "manifest"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
+				Namespace: &proto.Namespace{
+					Name:              name,
+					InitialShardCount: 1,
+					ReplicationFactor: 1,
+					KeySorting:        "natural",
+				},
+			})
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+
+			_, found := management.metadata.GetNamespace(name)
+			assert.False(t, found)
 		})
 	}
 }

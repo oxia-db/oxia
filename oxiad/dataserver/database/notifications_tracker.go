@@ -206,11 +206,35 @@ func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startO
 	return nil
 }
 
+// ReadNextNotifications returns the next retained batches from startOffset
+// onwards, waiting until there is at least one: it never returns an empty
+// result. A negative startOffset reads from the first retained batch, like 0.
 func (nt *notificationsTracker) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error) {
-	if err := nt.waitForNotifications(ctx, startOffset); err != nil {
-		return nil, err
-	}
+	for {
+		if err := nt.waitForNotifications(ctx, startOffset); err != nil {
+			return nil, err
+		}
 
+		// Load before the scan: UpdatedCommitOffset runs after the batch
+		// commit, so the scan sees every batch up to lastOffset not yet trimmed
+		lastOffset := nt.lastOffset.Load()
+		res, err := nt.scanNotifications(startOffset)
+		if err != nil {
+			return nil, err
+		}
+		if len(res) > 0 {
+			return res, nil
+		}
+
+		// Nothing is retained from startOffset onwards: the trimmer deleted
+		// those batches, or startOffset is negative on a shard without any.
+		// Wait for the next batch instead of returning the empty result, which
+		// the caller would retry at once, busy-spinning.
+		startOffset = max(startOffset, lastOffset+1)
+	}
+}
+
+func (nt *notificationsTracker) scanNotifications(startOffset int64) ([]*proto.NotificationBatch, error) {
 	it, err := nt.kv.RangeScan(notificationKey(startOffset), lastNotificationKey, kvstore.ShowInternalKeys)
 	if err != nil {
 		return nil, err

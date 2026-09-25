@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -300,6 +301,68 @@ func TestReadWriteSegment_BrokenCommittedData_ErrDataCorrupted(t *testing.T) {
 	assert.ErrorIs(t, err, codec.ErrDataCorrupted)
 }
 
+// The recovery discards a corrupted record past the commit offset along with
+// everything after it: the discarded records must not come back when new
+// appends end right where one of them starts, as a new entry of the same size
+// replacing the corrupted one does.
+func TestReadWriteSegment_DiscardedDataNotResurrected(t *testing.T) {
+	corruptPayload := func(s *readWriteSegment, recordOffset uint32) {
+		s.txnMappedFile[recordOffset+s.c.codec.GetHeaderSize()] ^= 0xFF
+	}
+	corruptSize := func(s *readWriteSegment, recordOffset uint32) {
+		binary.BigEndian.PutUint32(s.txnMappedFile[recordOffset:], 9999999)
+	}
+
+	for _, test := range []struct {
+		name    string
+		codecV1 bool
+		corrupt func(s *readWriteSegment, recordOffset uint32)
+	}{
+		{"corrupted payload", false, corruptPayload},
+		{"corrupted size", false, corruptSize},
+		// The v1 codec has no crc: it only rejects a record overflowing the
+		// segment, and takes it for the end of the segment
+		{"v1 corrupted size", true, corruptSize},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if test.codecV1 {
+				// An existing txn file with the v1 extension selects the v1 codec
+				assert.NoError(t, os.WriteFile(segmentPath(dir, 0)+".txn", make([]byte, 1024), 0644))
+			}
+			commitOffsetProvider := ConfigurableCommitOffsetProvider{commitOffset: 2}
+
+			rw, err := newReadWriteSegment(dir, 0, 1024, 0, commitOffsetProvider)
+			assert.NoError(t, err)
+			for i := int64(0); i <= 5; i++ {
+				assert.NoError(t, rw.Append(i, fmt.Appendf(nil, "old-entry-%d", i)))
+			}
+
+			// A torn write of the uncommitted entry 3, followed by intact entries
+			rwSegment := rw.(*readWriteSegment)
+			test.corrupt(rwSegment, fileOffset(rwSegment.writingIdx, 0, 3))
+			assert.NoError(t, rw.Close())
+
+			rw, err = newReadWriteSegment(dir, 0, 1024, 0, commitOffsetProvider)
+			assert.NoError(t, err)
+			assert.EqualValues(t, 2, rw.LastOffset())
+			rwSegment = rw.(*readWriteSegment)
+			assert.Equal(t, -1, slices.IndexFunc(rwSegment.txnMappedFile[rwSegment.currentFileOffset:], isNonZero))
+
+			assert.NoError(t, rw.Append(3, []byte("new-entry-3")))
+			assert.NoError(t, rw.Close())
+
+			rw, err = newReadWriteSegment(dir, 0, 1024, 0, commitOffsetProvider)
+			assert.NoError(t, err)
+			assert.EqualValues(t, 3, rw.LastOffset())
+			payload, _, _, err := rw.Read(3)
+			assert.NoError(t, err)
+			assert.Equal(t, "new-entry-3", string(payload))
+			assert.NoError(t, rw.Close())
+		})
+	}
+}
+
 func TestSegmentAppendShouldNotPanic(t *testing.T) {
 	basePath := t.TempDir()
 	rw, err := newReadWriteSegment(basePath, 0, 1024, 0, nil)
@@ -428,4 +491,53 @@ func TestReadWriteSegment_CloseWithConcurrentFlush(t *testing.T) {
 
 	assert.NoError(t, rw.Close())
 	<-flusherDone
+}
+
+// Truncate must move the last crc back to the record at the truncation point:
+// the next append chains from it, not from a truncated record. The v1 codec
+// has no crc, and keeps reporting zero.
+func TestReadWriteSegment_TruncateResetsLastCrc(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		codecV1 bool
+	}{
+		{"v2", false},
+		{"v1", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if test.codecV1 {
+				// An existing txn file with the v1 extension selects the v1 codec
+				assert.NoError(t, os.WriteFile(segmentPath(dir, 0)+".txn", make([]byte, 1024), 0644))
+			}
+
+			rw, err := newReadWriteSegment(dir, 0, 1024, 0, nil)
+			assert.NoError(t, err)
+			for i := int64(0); i <= 5; i++ {
+				assert.NoError(t, rw.Append(i, fmt.Appendf(nil, "entry-%d", i)))
+			}
+			_, _, crc2, err := rw.Read(2)
+			assert.NoError(t, err)
+			if test.codecV1 {
+				assert.Zero(t, crc2)
+			} else {
+				assert.NotZero(t, crc2)
+			}
+
+			assert.NoError(t, rw.Truncate(2))
+			assert.EqualValues(t, 2, rw.LastOffset())
+			assert.Equal(t, crc2, rw.LastCrc())
+			assert.NoError(t, rw.Append(3, []byte("new-entry-3")))
+			assert.NoError(t, rw.Close())
+
+			rw, err = newReadWriteSegment(dir, 0, 1024, 0, nil)
+			assert.NoError(t, err)
+			assert.EqualValues(t, 3, rw.LastOffset())
+			payload, previousCrc, _, err := rw.Read(3)
+			assert.NoError(t, err)
+			assert.Equal(t, "new-entry-3", string(payload))
+			assert.Equal(t, crc2, previousCrc)
+			assert.NoError(t, rw.Close())
+		})
+	}
 }

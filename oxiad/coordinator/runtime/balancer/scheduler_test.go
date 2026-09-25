@@ -68,13 +68,13 @@ func (*mockMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 
 func (m *mockMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
 
-func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }
+func (*mockMetadata) ReserveShardIDs(uint32) (int64, error) { return 0, nil }
 
 func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool {
 	return false
 }
 
-func (*mockMetadata) UpdateNamespaceStatus(string, *proto.NamespaceStatus) {}
+func (*mockMetadata) UpdateNamespaceStatus(string, *proto.NamespaceStatus) error { return nil }
 
 func (m *mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
 	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
@@ -108,21 +108,25 @@ func (*mockMetadata) DeleteNamespaceStatus(string) commonobject.Borrowed[*proto.
 	return commonobject.Borrowed[*proto.NamespaceStatus]{}
 }
 
-func (m *mockMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
+func (m *mockMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) error {
 	ns, exists := m.status.GetNamespaces()[namespace]
 	if !exists {
-		return
+		return nil
 	}
 	ns.Shards[shard] = shardMetadata
+	return nil
 }
 
-func (m *mockMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) {
+func (m *mockMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) error {
 	for shard, shardMetadata := range shardsMetadata {
-		m.UpdateShardStatus(namespace, shard, shardMetadata)
+		if err := m.UpdateShardStatus(namespace, shard, shardMetadata); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func (*mockMetadata) DeleteShardStatus(string, int64) {}
+func (*mockMetadata) DeleteShardStatus(string, int64) error { return nil }
 
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 

@@ -66,24 +66,28 @@ type recomputingMetadata struct {
 	afterWrite func()
 }
 
-func (m *recomputingMetadata) UpdateNamespaceStatus(name string, status *proto.NamespaceStatus) {
-	m.Metadata.UpdateNamespaceStatus(name, status)
+func (m *recomputingMetadata) UpdateNamespaceStatus(name string, status *proto.NamespaceStatus) error {
+	err := m.Metadata.UpdateNamespaceStatus(name, status)
 	m.afterWrite()
+	return err
 }
 
-func (m *recomputingMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
-	m.Metadata.UpdateShardStatus(namespace, shard, shardMetadata)
+func (m *recomputingMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) error {
+	err := m.Metadata.UpdateShardStatus(namespace, shard, shardMetadata)
 	m.afterWrite()
+	return err
 }
 
-func (m *recomputingMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) {
-	m.Metadata.UpdateShardStatuses(namespace, shardsMetadata)
+func (m *recomputingMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) error {
+	err := m.Metadata.UpdateShardStatuses(namespace, shardsMetadata)
 	m.afterWrite()
+	return err
 }
 
-func (m *recomputingMetadata) DeleteShardStatus(namespace string, shard int64) {
-	m.Metadata.DeleteShardStatus(namespace, shard)
+func (m *recomputingMetadata) DeleteShardStatus(namespace string, shard int64) error {
+	err := m.Metadata.DeleteShardStatus(namespace, shard)
 	m.afterWrite()
+	return err
 }
 
 // splitTestRuntime is a runtime whose shard assignments are recomputed after
@@ -112,7 +116,8 @@ func newSplitTestRuntime(t *testing.T) *splitTestRuntime {
 		}},
 		Servers: servers,
 	})
-	metadata.ReserveShardIDs(4)
+	_, err := metadata.ReserveShardIDs(4)
+	require.NoError(t, err)
 	parentEnsemble := []*proto.DataServerIdentity{splitPs1, splitPs2, splitPs3}
 	childSplit := &proto.SplitMetadata{
 		Phase:         proto.SplitPhaseBootstrap,

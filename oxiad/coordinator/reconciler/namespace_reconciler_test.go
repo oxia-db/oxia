@@ -91,12 +91,12 @@ func (*mockNamespaceMetadata) Close() error { return nil }
 
 func (m *mockNamespaceMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
 
-func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) int64 {
+func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) (int64, error) {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	base := cloned.ShardIdGenerator
 	cloned.ShardIdGenerator += int64(count)
 	m.status = cloned
-	return base
+	return base, nil
 }
 
 func (m *mockNamespaceMetadata) CreateNamespaceStatus(
@@ -119,13 +119,14 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	return true
 }
 
-func (m *mockNamespaceMetadata) UpdateNamespaceStatus(name string, status *proto.NamespaceStatus) {
+func (m *mockNamespaceMetadata) UpdateNamespaceStatus(name string, status *proto.NamespaceStatus) error {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	if _, exists := cloned.Namespaces[name]; !exists {
-		return
+		return nil
 	}
 	cloned.Namespaces[name] = gproto.Clone(status).(*proto.NamespaceStatus)
 	m.status = cloned
+	return nil
 }
 
 func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
@@ -171,23 +172,27 @@ func (m *mockNamespaceMetadata) DeleteNamespaceStatus(name string) commonobject.
 	return commonobject.Borrow(namespaceStatus)
 }
 
-func (m *mockNamespaceMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
+func (m *mockNamespaceMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) error {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	ns, exists := cloned.GetNamespaces()[namespace]
 	if !exists {
-		return
+		return nil
 	}
 	ns.Shards[shard] = shardMetadata
 	m.status = cloned
+	return nil
 }
 
-func (m *mockNamespaceMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) {
+func (m *mockNamespaceMetadata) UpdateShardStatuses(namespace string, shardsMetadata map[int64]*proto.ShardMetadata) error {
 	for shard, shardMetadata := range shardsMetadata {
-		m.UpdateShardStatus(namespace, shard, shardMetadata)
+		if err := m.UpdateShardStatus(namespace, shard, shardMetadata); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) {}
+func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) error { return nil }
 
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {
 	return nil
@@ -290,6 +295,8 @@ func (*mockNamespaceRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*
 
 func (*mockNamespaceRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
+func (*mockNamespaceRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
+
 func (*mockNamespaceRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 
 func (*mockNamespaceRuntime) DeleteDataServer(string) {}
@@ -297,7 +304,10 @@ func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
 func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
-	baseShardID := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	baseShardID, err := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	if err != nil {
+		return false
+	}
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
 		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
@@ -569,4 +579,47 @@ func TestNamespaceReconcilerNamespaceRemovedMarksDeletingAndDeletesRuntimeShards
 	sort.Slice(runtime.deleted, func(i, j int) bool { return runtime.deleted[i] < runtime.deleted[j] })
 	assert.Equal(t, []int64{1, 2}, runtime.deleted)
 	assert.Empty(t, runtime.added)
+}
+
+// Namespaces added to the configuration file don't go through the management
+// API, so the reconciler must not create one with a reserved name either.
+func TestNamespaceReconcilerDoesNotCreateReservedNamespace(t *testing.T) {
+	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
+	metadata := &mockNamespaceMetadata{
+		status: proto.NewClusterStatus(),
+		configNS: map[string]*proto.Namespace{
+			"MANIFEST": {Name: "MANIFEST", InitialShardCount: 1, ReplicationFactor: 3},
+			"ns-1":     {Name: "ns-1", InitialShardCount: 1, ReplicationFactor: 3},
+		},
+	}
+	runtime := &mockNamespaceRuntime{
+		metadata: metadata,
+		selectNewEnsembleFn: func(namespaceConfig *proto.Namespace, shardID int64, _ *proto.ClusterStatus) ([]*proto.DataServerIdentity, error) {
+			return simpleEnsembleSupplier(servers, shardID, namespaceConfig.GetReplicationFactor()), nil
+		},
+	}
+
+	err := (&namespaceReconciler{runtime: runtime}).Reconcile(context.Background(), &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{
+			{Name: "MANIFEST", InitialShardCount: 1, ReplicationFactor: 3},
+			{Name: "ns-1", InitialShardCount: 1, ReplicationFactor: 3},
+		},
+		Servers: servers,
+	})
+	assert.NoError(t, err)
+
+	assertStatusEqual(t, &proto.ClusterStatus{
+		Namespaces: map[string]*proto.NamespaceStatus{
+			"ns-1": {
+				ReplicationFactor: 3,
+				Shards: map[int64]*proto.ShardMetadata{
+					0: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1, s2, s3}, 0, math.MaxUint32),
+				},
+			},
+		},
+		ShardIdGenerator: 1,
+	}, metadata.status)
+
+	assert.Equal(t, map[int64]string{0: "ns-1"}, runtime.added)
+	assert.Empty(t, runtime.deleted)
 }
