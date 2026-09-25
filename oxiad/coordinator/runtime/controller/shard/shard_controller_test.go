@@ -751,10 +751,11 @@ func TestController_SwapNodeWithLeaderElectionFailure(t *testing.T) {
 	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 3, true)
 	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 3, true)
 
-	// Shard controller should retry and eventually succeed. s3 has all the
-	// entries of s1, which is swapped out
+	// Shard controller should retry and eventually succeed. s2 answers this
+	// time, so a majority of the members the swap keeps is fenced and the
+	// change can go ahead; s3 has all the entries of s1, which is swapped out
 	rpc.GetNode(s1).NewTermResponse(2, 2, nil)
-	rpc.GetNode(s2).NewTermResponse(2, 0, errors.New("fails"))
+	rpc.GetNode(s2).NewTermResponse(2, 0, nil)
 	rpc.GetNode(s3).NewTermResponse(2, 2, nil)
 	rpc.GetNode(s4).NewTermResponse(2, 0, nil)
 
@@ -1065,6 +1066,92 @@ func TestController_ChangeEnsembleWaitsForNewEnsembleQuorum(t *testing.T) {
 	assert.EqualValues(t, 3, metaSnap.Term)
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3)
+
+	assert.NoError(t, sc.Close())
+}
+
+// A member that the change keeps but that is merely slow must be waited for:
+// sampling whoever replied within the grace period would give the change up on
+// a healthy cluster. RF=3: s2 is swapped out and s1 answers the fence late,
+// after a fencing majority and a majority of the new ensemble already replied.
+func TestController_ChangeEnsembleWaitsForKeptMembers(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, NoOpSupportedFeaturesSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	// Do initial election
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 2, true)
+
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 3)
+
+	// caught-up the leader election entry
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	wg := concurrent.NewWaitGroup(1)
+	wg.Go(func() error {
+		// Retry until the shard controller is ready for ensemble change.
+		for {
+			a := action.NewChangeEnsembleAction(shard, s2, s4)
+			sc.ChangeEnsemble(a)
+			_, err := a.Wait()
+			if !errors.Is(err, ErrNotReadyForChangeEnsemble) {
+				return err
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+
+	// s2, s3 and s4 are a fencing majority, and s3 with s4 are a majority of
+	// the new ensemble, but s1 is the other member the swap keeps
+	rpc.GetNode(s2).NewTermResponse(2, 4, nil)
+	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
+	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 3, true)
+
+	// s1 answers well after the 100ms fencing grace period, but within the
+	// window the fence holds open for the members the swap keeps. Sampling
+	// instead of waiting would give the swap up here.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		rpc.GetNode(s1).NewTermResponse(2, 5, nil)
+	}()
+
+	// s1 answered, so the swap is safe and goes through
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFollowers(t, shard, 3, 3, s3, s4)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	assert.NoError(t, wg.Wait(ctx))
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.Equal(t, proto.ShardStatusSteadyState, metaSnap.GetStatusOrDefault())
+	assert.EqualValues(t, 3, metaSnap.Term)
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3, s4)
 
 	assert.NoError(t, sc.Close())
 }

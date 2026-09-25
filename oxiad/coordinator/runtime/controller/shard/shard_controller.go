@@ -49,6 +49,12 @@ const (
 	// to include responses from all healthy servers.
 	quorumFencingGracePeriod = 100 * time.Millisecond
 
+	// When changing the ensemble, how long to keep waiting for the members the
+	// change keeps once the fencing quorum is reached. It has to outlast a
+	// transient hiccup on a healthy member, and to stay well below the RPC
+	// timeout, which is what an unreachable one costs.
+	keptMembersFencingTimeout = 1 * time.Second
+
 	chanBufferSize = 100
 
 	DefaultPeriodicTasksInterval = 1 * time.Minute
@@ -695,12 +701,9 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
+	// The election completes the action: it is the only one that knows
+	// whether the change went through or had to be given up
 	s.onElectLeader(changeEnsembleAction)
-	if err := s.currentElection.ChangeEnsembleError(); err != nil {
-		changeEnsembleAction.Error(err)
-		return
-	}
-	changeEnsembleAction.Done(nil)
 }
 
 func (s *controller) SyncServerAddress() {
