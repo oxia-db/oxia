@@ -143,13 +143,18 @@ type splitExecutor struct {
 	applied []string
 }
 
-func (e *splitExecutor) ExecuteWrite(_ context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
-	if *request.Shard == e.frozenShard && e.shardManager.Exists(e.frozenShard) {
+func (e *splitExecutor) ExecuteWrite(_ context.Context, shardId int64,
+	prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+	if shardId == e.frozenShard && e.shardManager.Exists(e.frozenShard) {
 		e.frozenWrite <- struct{}{}
 		<-e.release
 	}
-	if !e.shardManager.Exists(*request.Shard) {
+	if !e.shardManager.Exists(shardId) {
 		return nil, constant.ErrShardNotFound
+	}
+	request, err := prepare()
+	if err != nil {
+		return nil, err
 	}
 
 	e.Lock()

@@ -55,10 +55,15 @@ func newStreamWrapper(shard int64, target string, stream proto.OxiaClient_WriteS
 	return sw
 }
 
-// Send hands the request to gRPC, and waits for its response. A request is
+// Send hands the request returned by prepare to gRPC, and waits for its
+// response. prepare is invoked right before, unless ctx is done: a request is
 // never sent after its deadline.
-func (sw *streamWrapper) Send(ctx context.Context, req *proto.WriteRequest) (*proto.WriteResponse, error) {
+func (sw *streamWrapper) Send(ctx context.Context, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	req, err := prepare()
+	if err != nil {
 		return nil, err
 	}
 

@@ -191,9 +191,11 @@ func (m *testShardManager) Leader(int64) string { return *m.leader.Load() }
 func (*testShardManager) Changed() <-chan struct{} { return nil }
 
 func executeTestWrite(ctx context.Context, provider RpcProvider, shardId int64) error {
-	_, err := provider.ExecuteWrite(ctx, &proto.WriteRequest{
-		Shard: &shardId,
-		Puts:  []*proto.PutRequest{{Key: "key", Value: []byte("value")}},
+	_, err := provider.ExecuteWrite(ctx, shardId, func() (*proto.WriteRequest, error) {
+		return &proto.WriteRequest{
+			Shard: &shardId,
+			Puts:  []*proto.PutRequest{{Key: "key", Value: []byte("value")}},
+		}, nil
 	})
 	return err
 }

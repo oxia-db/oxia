@@ -21,7 +21,12 @@ import (
 )
 
 type Executor interface {
-	ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error)
+	// ExecuteWrite sends a write request to the leader of the shard. prepare
+	// returns the request right before it is handed to gRPC, so that it can
+	// leave out the operations that must not be sent anymore, or fail if none
+	// is left. Every attempt that gets that far invokes it, and once it
+	// returned a request, it must keep returning that one.
+	ExecuteWrite(ctx context.Context, shardId int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error)
 	ExecuteRead(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error)
 	ExecuteList(ctx context.Context, request *proto.ListRequest, listResponseConsumer func(*proto.ListResponse)) error
 	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, rangeScanResponseConsumer func(*proto.RangeScanResponse)) error

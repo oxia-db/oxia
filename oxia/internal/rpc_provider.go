@@ -117,22 +117,23 @@ func (p *rpcProvider) getTargetByShard(shardId *int64, hint constant.ErrorMetada
 	return shardManager.Leader(*shardId), nil
 }
 
-func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
+func (p *rpcProvider) ExecuteWrite(ctx context.Context, shardId int64,
+	prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
 	// A change of the shard map ends the wait for the next attempt: once a
 	// shard is split, the other shards hold their writes until the batches
 	// pending on it are rerouted
 	timer := &shardMapTimer{}
 	return executeWithRetryTimer(ctx, timer, func(hint constant.ErrorMetadata) (*proto.WriteResponse, error) {
 		timer.changed = p.shardMapChanged()
-		target, err := p.getTargetByShard(request.Shard, hint)
+		target, err := p.getTargetByShard(&shardId, hint)
 		if err != nil {
 			return nil, err
 		}
-		sw, err := p.getWriteStream(ctx, *request.Shard, target)
+		sw, err := p.getWriteStream(ctx, shardId, target)
 		if err != nil {
 			return nil, err
 		}
-		return sw.Send(ctx, request)
+		return sw.Send(ctx, prepare)
 	}, isRetryableShardRequest)
 }
 

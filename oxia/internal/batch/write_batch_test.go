@@ -136,7 +136,9 @@ func TestWriteBatchComplete(t *testing.T) {
 			errFailure,
 		},
 	} {
-		execute := func(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
+		execute := func(_ context.Context, _ int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+			request, err := prepare()
+			assert.NoError(t, err)
 			assert.Equal(t, &proto.WriteRequest{
 				Shard: &shardId,
 				Puts: []*proto.PutRequest{{
@@ -227,7 +229,7 @@ func TestWriteBatchComplete(t *testing.T) {
 func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	executeCount := 0
 
-	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
+	execute := func(context.Context, int64, func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
 		executeCount++
 		return nil, constant.ErrShardNotFound
 	}
@@ -281,8 +283,8 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 func TestWriteBatchOpIndex(t *testing.T) {
 	var request *proto.WriteRequest
 	factory := &writeBatchFactory{
-		execute: func(_ context.Context, r *proto.WriteRequest) (*proto.WriteResponse, error) {
-			request = r
+		execute: func(_ context.Context, _ int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+			request, _ = prepare()
 			return nil, errors.New("failure")
 		},
 		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
@@ -315,8 +317,11 @@ func TestWriteBatchOpIndex(t *testing.T) {
 
 func TestWriteBatchNoRerouteOnOtherError(t *testing.T) {
 	callCount := 0
-	execute := func(_ context.Context, _ *proto.WriteRequest) (*proto.WriteResponse, error) {
+	execute := func(_ context.Context, _ int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
 		callCount++
+		if _, err := prepare(); err != nil {
+			return nil, err
+		}
 		if callCount == 1 {
 			return nil, constant.ErrInvalidStatus
 		}
@@ -383,6 +388,144 @@ func TestWriteBatchCanAdd(t *testing.T) {
 			})
 
 			assert.Equal(t, item.expectCanAdd, canAdd)
+		})
+	}
+}
+
+// A call whose caller gave up on it before the request is first handed to gRPC
+// is dropped: it fails with an error telling that it was not sent, and the
+// other calls are sent without it, keeping their op index.
+func TestWriteBatchDropsTheCallsWhoseCallerGaveUp(t *testing.T) {
+	gaveUpCtx, gaveUp := context.WithCancel(t.Context())
+	gaveUp()
+	waitingCtx, stopWaiting := context.WithCancel(t.Context())
+	defer stopWaiting()
+	gaveUpCall := model.NewCallContext(gaveUpCtx)
+	waitingCall := model.NewCallContext(waitingCtx)
+
+	var request *proto.WriteRequest
+	factory := &writeBatchFactory{
+		execute: func(_ context.Context, _ int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+			var err error
+			if request, err = prepare(); err != nil {
+				return nil, err
+			}
+			return &proto.WriteResponse{
+				Puts:         []*proto.PutResponse{{Status: proto.Status_OK}, {Status: proto.Status_OK}},
+				DeleteRanges: []*proto.DeleteRangeResponse{{Status: proto.Status_OK}},
+			}, nil
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+		maxByteSize:    1024,
+	}
+	batch := factory.newBatch(&shardId)
+
+	results := map[string]error{}
+	putCallback := func(key string) func(*proto.PutResponse, error) {
+		return func(_ *proto.PutResponse, err error) { results[key] = err }
+	}
+	batch.Add(model.PutCall{Key: "a", Callback: putCallback("a")})
+	batch.Add(model.PutCall{Key: "b", CallContext: gaveUpCall, Callback: putCallback("b")})
+	batch.Add(model.PutCall{Key: "c", CallContext: waitingCall, Callback: putCallback("c")})
+	batch.Add(model.DeleteCall{Key: "d", CallContext: gaveUpCall, Callback: func(_ *proto.DeleteResponse, err error) {
+		results["d"] = err
+	}})
+	batch.Add(model.DeleteRangeCall{MinKeyInclusive: "e", MaxKeyExclusive: "f", CallContext: waitingCall,
+		Callback: func(_ *proto.DeleteRangeResponse, err error) { results["e"] = err }})
+	batch.Complete()
+
+	assert.Len(t, request.Puts, 2)
+	assert.Equal(t, "a", request.Puts[0].Key)
+	assert.EqualValues(t, 0, request.Puts[0].OpIndex)
+	assert.Equal(t, "c", request.Puts[1].Key)
+	assert.EqualValues(t, 2, request.Puts[1].OpIndex)
+	assert.Empty(t, request.Deletes)
+	assert.Len(t, request.DeleteRanges, 1)
+	assert.EqualValues(t, 4, request.DeleteRanges[0].OpIndex)
+
+	assert.Len(t, results, 5)
+	for _, key := range []string{"a", "c", "e"} {
+		assert.NoError(t, results[key], key)
+	}
+	for _, key := range []string{"b", "d"} {
+		assert.ErrorIs(t, results[key], context.Canceled, key)
+		assert.True(t, model.IsNotSent(results[key]), key)
+	}
+
+	// The calls that were sent cannot be dropped anymore
+	stopWaiting()
+	assert.False(t, model.IsNotSent(waitingCall.Cancel()))
+}
+
+func TestWriteBatchWithAllTheCallsDropped(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	callContext := model.NewCallContext(ctx)
+
+	var prepareErr error
+	factory := &writeBatchFactory{
+		execute: func(_ context.Context, _ int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+			_, prepareErr = prepare()
+			return nil, prepareErr
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+		maxByteSize:    1024,
+	}
+	batch := factory.newBatch(&shardId)
+
+	var putErr, deleteErr error
+	batch.Add(model.PutCall{Key: "a", CallContext: callContext, Callback: func(_ *proto.PutResponse, err error) {
+		putErr = err
+	}})
+	batch.Add(model.DeleteCall{Key: "b", CallContext: callContext, Callback: func(_ *proto.DeleteResponse, err error) {
+		deleteErr = err
+	}})
+	batch.Complete()
+
+	// Nothing is left to send
+	assert.Error(t, prepareErr)
+	assert.True(t, model.IsNotSent(putErr))
+	assert.True(t, model.IsNotSent(deleteErr))
+}
+
+// A request that was never handed to gRPC, e.g. because the leader could not
+// be reached before the timeout, was not applied: its calls fail with an error
+// telling that it was not sent. Once it was sent, the outcome of a failure is
+// unknown.
+func TestWriteBatchFailureTellsIfTheRequestWasSent(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		sent bool
+	}{
+		{"not sent", false},
+		{"sent", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			factory := &writeBatchFactory{
+				execute: func(_ context.Context, _ int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+					if tt.sent {
+						if _, err := prepare(); err != nil {
+							return nil, err
+						}
+					}
+					return nil, context.DeadlineExceeded
+				},
+				metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+				requestTimeout: 5 * time.Second,
+				maxByteSize:    1024,
+			}
+			batch := factory.newBatch(&shardId)
+
+			var putErr error
+			batch.Add(model.PutCall{Key: "a", Callback: func(_ *proto.PutResponse, err error) {
+				putErr = err
+			}})
+			batch.Complete()
+
+			assert.ErrorIs(t, putErr, context.DeadlineExceeded)
+			assert.Equal(t, !tt.sent, model.IsNotSent(putErr))
 		})
 	}
 }

@@ -55,7 +55,12 @@ func TestStreamWrapper_DoesNotSendAfterTheDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err := sw.Send(ctx, &proto.WriteRequest{})
+	prepared := false
+	_, err := sw.Send(ctx, func() (*proto.WriteRequest, error) {
+		prepared = true
+		return &proto.WriteRequest{}, nil
+	})
 	assert.ErrorIs(t, err, context.Canceled)
+	assert.False(t, prepared)
 	assert.EqualValues(t, 0, stream.sent.Load())
 }
