@@ -36,7 +36,7 @@ const (
 	// batch, that grows to GB scale (batch arena plus the batch skiplist).
 	// Committing in bounded chunks keeps the memory flat. This is safe here:
 	// nothing reads through the batch (every classification reads the
-	// iterator, which keeps the consistent view it was created with across
+	// iterators, which keep the consistent view they were created with across
 	// commits), the child is not serving yet so there are no concurrent
 	// writers, and the filter is idempotent — on a failed snapshot load it
 	// either re-runs or the snapshot is re-sent wholesale.
@@ -56,10 +56,15 @@ var (
 //   - User data keys: filter by hash of partition_key (or key if no partition_key)
 //   - __oxia/last-version-id, commit-offset, features, term, term-options: keep
 //   - __oxia/checksum: delete (invalid after filtering)
-//   - __oxia/notifications/{offset}: filter notification map by key hash; delete if empty
+//   - __oxia/notifications/{offset}: filter each notification by its record
+//     (see isNotificationInRange); delete if empty
 //   - __oxia/session/{id}: keep (session metadata duplicated to both children)
-//   - __oxia/session/{id}/{user-key}: filter by user key hash
-//   - __oxia/idx/{idx}/{sec}\x01{pri}: filter by primary key hash
+//   - __oxia/session/{id}/{user-key}: filter by the record at user-key
+//   - __oxia/idx/{idx}/{sec}\x01{pri}: filter by the record at pri
+//
+// The internal keys that belong to a record follow it, so they are placed by
+// the record's partition key too, not by the record key. The ones whose record
+// does not exist are deleted: no child holds the record.
 func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 	slog.Info(
 		"Filtering database for shard split",
@@ -78,6 +83,18 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 	}
 	defer it.Close()
 
+	// The records that the internal keys belong to are looked up with a
+	// second iterator. By the time an internal key is reached, the chunks
+	// committed along the way may have deleted its record (with hierarchical
+	// sorting, every user key comes first): like the scan, the lookups must
+	// see the records as they were before filtering, so the iterator is
+	// created before the first commit.
+	records, err := kv.RangeScan("", "", kvstore.NoInternalKeys)
+	if err != nil {
+		return errors.Wrap(err, "failed to create record lookup for split filter")
+	}
+	defer records.Close()
+
 	var deletedKeys, keptKeys, filteredNotifications, deletedNotifications int64
 	chunks := int64(1)
 
@@ -85,7 +102,7 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 		key := it.Key()
 
 		if strings.HasPrefix(key, constant.InternalKeyPrefix) {
-			action, err := classifyInternalKey(key, it, batch, hashRange)
+			action, err := classifyInternalKey(key, it, records, batch, hashRange)
 			if err != nil {
 				return errors.Wrapf(err, "failed to classify internal key %q", key)
 			}
@@ -179,6 +196,7 @@ const (
 func classifyInternalKey(
 	key string,
 	it kvstore.KeyValueIterator,
+	records kvstore.KeyValueIterator,
 	batch kvstore.WriteBatch,
 	hashRange *proto.HashRange,
 ) (splitAction, error) {
@@ -196,7 +214,7 @@ func classifyInternalKey(
 		return splitActionDelete, nil
 
 	case strings.HasPrefix(key, notificationsPrefix+"/"):
-		return filterNotificationKey(key, it, batch, hashRange)
+		return filterNotificationKey(key, it, records, batch, hashRange)
 
 	case isSessionMetadataKey(key):
 		// Session metadata: keep in both children (session may own keys in either)
@@ -204,11 +222,11 @@ func classifyInternalKey(
 
 	case strings.HasPrefix(key, sessionKeyPrefix+"/"):
 		// Session shadow key: __oxia/session/{id}/{url_escaped_user_key}
-		return classifySessionShadowKey(key, hashRange), nil
+		return classifySessionShadowKey(key, records, hashRange)
 
 	case strings.HasPrefix(key, idxKeyPrefix+"/"):
 		// Secondary index key: __oxia/idx/{name}/{secondary}\x01{url_escaped_primary}
-		return classifySecondaryIndexKey(key, hashRange), nil
+		return classifySecondaryIndexKey(key, records, hashRange)
 
 	default:
 		// Unknown internal key: keep by default (safe)
@@ -227,10 +245,12 @@ func isSessionMetadataKey(key string) bool {
 }
 
 // filterNotificationKey deserializes the notification batch, removes entries
-// for keys outside the hash range, and either rewrites the batch or deletes it.
+// that do not belong to the hash range, and either rewrites the batch or
+// deletes it.
 func filterNotificationKey(
 	key string,
 	it kvstore.KeyValueIterator,
+	records kvstore.KeyValueIterator,
 	batch kvstore.WriteBatch,
 	hashRange *proto.HashRange,
 ) (splitAction, error) {
@@ -244,14 +264,17 @@ func filterNotificationKey(
 		return splitActionKeep, errors.Wrap(err, "failed to deserialize notification batch")
 	}
 
-	// Filter: remove notifications for keys outside this child's range. The
-	// slice keeps its original (sorted) order, so the rewrite below stays
+	// Filter: remove notifications that belong to the other child. The slice
+	// keeps its original (sorted) order, so the rewrite below stays
 	// deterministic.
 	originalLen := len(nb.Notifications)
 	kept := nb.Notifications[:0]
 	for _, entry := range nb.Notifications {
-		h := hash.Xxh332(entry.GetKey())
-		if isHashInRange(h, hashRange) {
+		inRange, err := isNotificationInRange(entry, records, hashRange)
+		if err != nil {
+			return splitActionKeep, err
+		}
+		if inRange {
 			kept = append(kept, entry)
 		}
 	}
@@ -277,10 +300,40 @@ func filterNotificationKey(
 	return splitActionKeep, nil
 }
 
-// classifySessionShadowKey extracts the user key from a shadow key and checks
-// if it belongs to this child's hash range.
+// isNotificationInRange places a notification with the record it is about,
+// like the record's index entries and shadow key. A notification does not carry
+// the partition key, so the one of a record that no longer exists falls back to
+// the hash of its key: exact for the records written without a partition key.
+// A range deletion is kept in both children: every shard applies it, and so do
+// both children for the range deletions they apply from the log.
+func isNotificationInRange(
+	entry *proto.NotificationEntry,
+	records kvstore.KeyValueIterator,
+	hashRange *proto.HashRange,
+) (bool, error) {
+	if entry.GetValue().GetType() == proto.NotificationType_KEY_RANGE_DELETED {
+		return true, nil
+	}
+
+	found, inRange, err := lookupRecord(records, entry.GetKey(), hashRange)
+	switch {
+	case err != nil:
+		return false, err
+	case found:
+		return inRange, nil
+	default:
+		return isHashInRange(hash.Xxh332(entry.GetKey()), hashRange), nil
+	}
+}
+
+// classifySessionShadowKey keeps a session shadow key where the ephemeral
+// record it belongs to is kept.
 // Shadow key format: __oxia/session/{16hex}/{url_escaped_user_key}.
-func classifySessionShadowKey(key string, hashRange *proto.HashRange) splitAction {
+func classifySessionShadowKey(
+	key string,
+	records kvstore.KeyValueIterator,
+	hashRange *proto.HashRange,
+) (splitAction, error) {
 	// Find the position after "__oxia/session/{16hex}/"
 	prefix := sessionKeyPrefix + "/"
 	rest := key[len(prefix):]
@@ -289,38 +342,68 @@ func classifySessionShadowKey(key string, hashRange *proto.HashRange) splitActio
 	slashIdx := strings.Index(rest, "/")
 	if slashIdx < 0 {
 		// This is a session metadata key (no user key suffix), keep it
-		return splitActionKeep
+		return splitActionKeep, nil
 	}
 
 	escapedUserKey := rest[slashIdx+1:]
-	userKey, err := url.PathUnescape(escapedUserKey)
-	if err != nil {
-		// Can't parse: keep to be safe
-		return splitActionKeep
+	if userKey, err := url.PathUnescape(escapedUserKey); err == nil {
+		return classifyByRecord(records, userKey, hashRange)
 	}
-
-	h := hash.Xxh332(userKey)
-	if isHashInRange(h, hashRange) {
-		return splitActionKeep
-	}
-	return splitActionDelete
+	// Can't parse: keep to be safe
+	return splitActionKeep, nil
 }
 
-// classifySecondaryIndexKey extracts the primary key from a secondary index key
-// and checks if it belongs to this child's hash range.
+// classifySecondaryIndexKey keeps a secondary index entry where the record it
+// points to is kept.
 // Format: __oxia/idx/{name}/{secondary}\x01{url_escaped_primary}.
-func classifySecondaryIndexKey(key string, hashRange *proto.HashRange) splitAction {
-	primaryKey, _, err := ParseSecondaryIndexKey(key)
-	if err != nil {
-		// Can't parse: keep to be safe
-		return splitActionKeep
+func classifySecondaryIndexKey(
+	key string,
+	records kvstore.KeyValueIterator,
+	hashRange *proto.HashRange,
+) (splitAction, error) {
+	if primaryKey, _, err := ParseSecondaryIndexKey(key); err == nil {
+		return classifyByRecord(records, primaryKey, hashRange)
+	}
+	// Can't parse: keep to be safe
+	return splitActionKeep, nil
+}
+
+// classifyByRecord keeps an internal key that belongs to a record where the
+// record is kept. One whose record does not exist points to nothing: no child
+// holds the record, so neither keeps it.
+func classifyByRecord(
+	records kvstore.KeyValueIterator,
+	recordKey string,
+	hashRange *proto.HashRange,
+) (splitAction, error) {
+	found, inRange, err := lookupRecord(records, recordKey, hashRange)
+	switch {
+	case err != nil:
+		return splitActionKeep, err
+	case found && inRange:
+		return splitActionKeep, nil
+	default:
+		return splitActionDelete, nil
+	}
+}
+
+// lookupRecord reports whether the record at key exists, as it was before
+// filtering, and whether it belongs to the hash range, by the same rule that
+// places the record itself.
+func lookupRecord(
+	records kvstore.KeyValueIterator,
+	key string,
+	hashRange *proto.HashRange,
+) (found, inRange bool, err error) {
+	if !records.SeekGE(key) || records.Key() != key {
+		return false, false, nil
 	}
 
-	h := hash.Xxh332(primaryKey)
-	if isHashInRange(h, hashRange) {
-		return splitActionKeep
+	value, err := records.Value()
+	if err != nil {
+		return false, false, errors.Wrapf(err, "failed to read record %q", key)
 	}
-	return splitActionDelete
+	return true, isUserKeyInRange(key, value, hashRange), nil
 }
 
 // isUserKeyInRange determines if a user data key belongs to the given hash range.
