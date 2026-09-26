@@ -17,6 +17,7 @@ package batch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -142,6 +143,20 @@ func (b *writeBatch) Fail(err error) {
 }
 
 func (b *writeBatch) handle(response *proto.WriteResponse) {
+	// Each request is matched to its response by position, so a response whose
+	// per-type counts differ from the request would index past the end of one
+	// of these slices. The counts come from the server's reply, so a
+	// version-skewed or misbehaving peer must not be allowed to panic the
+	// client here: fail the batch instead.
+	if len(response.Puts) != len(b.puts) ||
+		len(response.Deletes) != len(b.deletes) ||
+		len(response.DeleteRanges) != len(b.deleteRanges) {
+		b.Fail(fmt.Errorf("oxia: server returned %d/%d/%d put/delete/delete-range responses "+
+			"for %d/%d/%d requested operations",
+			len(response.Puts), len(response.Deletes), len(response.DeleteRanges),
+			len(b.puts), len(b.deletes), len(b.deleteRanges)))
+		return
+	}
 	for i, put := range b.puts {
 		put.Callback(response.Puts[i], nil)
 	}

@@ -17,6 +17,7 @@ package batch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -111,6 +112,16 @@ func (b *readBatch) Fail(err error) {
 }
 
 func (b *readBatch) handle(response *proto.ReadResponse) {
+	// The gets are matched to their responses by position, so a response that
+	// carries a different number of gets than were requested would index past
+	// the end of the slice. The count is taken from the server's reply, so a
+	// version-skewed or misbehaving peer must not be allowed to panic the
+	// client here: fail the batch instead.
+	if len(response.Gets) != len(b.gets) {
+		b.Fail(fmt.Errorf("oxia: server returned %d get responses for %d requested keys",
+			len(response.Gets), len(b.gets)))
+		return
+	}
 	for i, get := range b.gets {
 		get.Callback(response.Gets[i], nil)
 	}
