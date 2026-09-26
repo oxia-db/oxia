@@ -134,3 +134,96 @@ func TestCoordinator_RestartWithDataServerDown(t *testing.T) {
 	_, _, err = client.Put(t.Context(), "/key", []byte("value"))
 	assert.NoError(t, err)
 }
+
+// A restarted coordinator keeps the leader of a shard in steady state, and
+// reads the features pinned by its term from it once the handshakes make the
+// features of the ensemble known: a term that pins all of them already must
+// not be replaced.
+func TestCoordinator_RestartKeepsTermPinningAllFeatures(t *testing.T) {
+	s1, sa1 := newServer(t)
+	s2, sa2 := newServer(t)
+	s3, sa3 := newServer(t)
+	servers := map[string]*dataserver.Server{
+		sa1.GetNameOrDefault(): s1,
+		sa2.GetNameOrDefault(): s2,
+		sa3.GetNameOrDefault(): s3,
+	}
+	defer func() {
+		for _, s := range servers {
+			assert.NoError(t, s.Close())
+		}
+	}()
+
+	metadataDir := t.TempDir()
+	clusterConfig := newClusterConfig([]*proto.Namespace{{
+		Name:              constant.DefaultNamespace,
+		ReplicationFactor: 3,
+		InitialShardCount: 1,
+	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	configData, err := metadatacodec.ClusterConfigCodec.MarshalYAML(clusterConfig)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(metadataDir, coordoption.DefaultFileConfigName), configData, 0o600))
+
+	startCoordinator := func() (*coordserver.GrpcServer, oxia.AdminClient) {
+		adminAddr := freeAddress(t)
+		options := coordoption.NewDefaultOptions()
+		options.Server.Internal.BindAddress = "127.0.0.1:0"
+		options.Server.Public.BindAddress = adminAddr
+		options.Observability.Metric.Enabled = &constant.FlagFalse
+		options.Metadata.ProviderName = metadatacommon.NameFile
+		options.Metadata.File.Dir = metadataDir
+
+		coordinatorServer, err := coordserver.NewGrpcServer(t.Context(), commonwatch.New(options))
+		require.NoError(t, err)
+		adminClient, err := oxia.NewAdminClient(adminAddr, nil, nil)
+		require.NoError(t, err)
+		return coordinatorServer, adminClient
+	}
+	getShard := func(adminClient oxia.AdminClient) *proto.ShardMetadata {
+		t.Helper()
+		ns, err := adminClient.GetNamespace(t.Context(), constant.DefaultNamespace)
+		require.NoError(t, err)
+		return ns.GetNamespaceStatus().GetShards()[0]
+	}
+
+	// The leader enables every feature
+	coordinatorServer, adminClient := startCoordinator()
+	var shard *proto.ShardMetadata
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		shard = getShard(adminClient)
+		assert.Equal(c, proto.ShardStatusSteadyState, shard.GetStatusOrDefault())
+		if assert.NotNil(c, shard.GetLeader()) {
+			lead, err := servers[shard.GetLeader().GetNameOrDefault()].GetShardDirector().GetLeader(0)
+			if assert.NoError(c, err) {
+				assert.True(c, lead.IsFeatureEnabled(proto.Feature_FEATURE_ORDERED_WRITES))
+			}
+		}
+	}, 30*time.Second, 50*time.Millisecond)
+	require.NoError(t, adminClient.Close())
+	require.NoError(t, coordinatorServer.Close())
+
+	coordinatorServer, adminClient = startCoordinator()
+	defer func() {
+		assert.NoError(t, adminClient.Close())
+		assert.NoError(t, coordinatorServer.Close())
+	}()
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		dataServers, err := adminClient.ListDataServers(t.Context())
+		if !assert.NoError(c, err) {
+			return
+		}
+		assert.Len(c, dataServers, len(servers))
+		for _, dataServer := range dataServers {
+			assert.Equal(c, proto.DataServerState_DATA_SERVER_STATE_RUNNING, dataServer.GetDataServerStatus().GetState())
+			assert.NotEmpty(c, dataServer.GetDataServerStatus().GetSupportedFeatures())
+		}
+	}, 30*time.Second, 50*time.Millisecond)
+
+	// The shard controller checks the features pinned by the term right after
+	// the handshakes
+	time.Sleep(time.Second)
+	restarted := getShard(adminClient)
+	assert.Equal(t, proto.ShardStatusSteadyState, restarted.GetStatusOrDefault())
+	assert.Equal(t, shard.GetTerm(), restarted.GetTerm())
+	assert.Equal(t, shard.GetLeader().GetNameOrDefault(), restarted.GetLeader().GetNameOrDefault())
+}

@@ -469,10 +469,10 @@ func TestDataServerController_ConcurrentServingObservationsHandshakeOnce(t *test
 }
 
 // The features a data server supports are unknown until its first handshake,
-// which reports them to the listener. The later handshakes don't, even when
-// the data server comes back with a different binary: a feature is activated
-// by the next election after a rolling upgrade.
-func TestDataServerController_ReportsFeaturesOfFirstHandshakeOnly(t *testing.T) {
+// which reports them to the listener. The later handshakes report them only
+// if they changed: e.g. the data server restarted with a newer binary in a
+// rolling upgrade.
+func TestDataServerController_ReportsChangedFeatures(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
 		Internal: "my-server:8190",
@@ -486,31 +486,44 @@ func TestDataServerController_ReportsFeaturesOfFirstHandshakeOnly(t *testing.T) 
 	node.SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
 	nc := newController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
 
-	select {
-	case discovered := <-nal.FeaturesDiscoveredEvents:
-		assert.Equal(t, addr, discovered)
-	case <-time.After(10 * time.Second):
-		assert.Fail(t, "the features of the data server were not reported")
+	expectReport := func() {
+		t.Helper()
+		select {
+		case discovered := <-nal.FeaturesDiscoveredEvents:
+			assert.Equal(t, addr, discovered)
+		case <-time.After(10 * time.Second):
+			assert.Fail(t, "the features of the data server were not reported")
+		}
 	}
+	restart := func(features []proto.Feature) {
+		t.Helper()
+		node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+		assert.Equal(t, addr, <-nal.Events)
+		node.SetNodeFeatures(features)
+		node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
+		assert.Eventually(t, func() bool {
+			return nc.Status() == Running
+		}, 10*time.Second, 10*time.Millisecond)
+	}
+
+	expectReport()
 	assert.Equal(t, Running, nc.Status())
 	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, nc.SupportedFeatures())
 
-	// The data server restarts with a binary that supports more features
-	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
-	assert.Equal(t, addr, <-nal.Events)
-	node.SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES})
-	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
-
-	assert.Eventually(t, func() bool {
-		return nc.Status() == Running
-	}, 10*time.Second, 10*time.Millisecond)
+	// The data server restarts with the same binary
+	restart([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
 	assert.Equal(t, int64(2), node.HandshakeCount.Load())
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES},
-		nc.SupportedFeatures())
+
+	// The data server restarts with a binary that supports more features
+	upgraded := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES}
+	restart(upgraded)
+	expectReport()
+	assert.Equal(t, int64(3), node.HandshakeCount.Load())
+	assert.Equal(t, upgraded, nc.SupportedFeatures())
 
 	// Close waits for the health checks, so a report would be in the channel
 	assert.NoError(t, nc.Close())
-	assert.Len(t, nal.FeaturesDiscoveredEvents, 0, "only the first handshake reports the features")
+	assert.Len(t, nal.FeaturesDiscoveredEvents, 0, "a handshake must not report the features it already knew")
 }
 
 func TestDataServerController_ShardsAssignments(t *testing.T) {

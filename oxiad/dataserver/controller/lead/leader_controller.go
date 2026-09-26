@@ -1408,6 +1408,7 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 		HeadOffset:   headOffset,
 		CommitOffset: commitOffset,
 		ShardStats:   shardStats,
+		TermFeatures: &proto.TermFeatures{Features: lc.termOptions.Features},
 	}, nil
 }
 

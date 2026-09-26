@@ -291,6 +291,15 @@ message GetStatusResponse {
   int64 commit_offset = 4;
 
   ShardStats shard_stats = 5;
+
+  // The features pinned by the term of the node. Only the leader reports
+  // them: absent on the followers, and on the data servers that predate the
+  // report.
+  TermFeatures term_features = 6;
+}
+
+message TermFeatures {
+  repeated Feature features = 1;
 }
 
 message ShardStats {
