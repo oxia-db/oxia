@@ -182,6 +182,54 @@ func TestApplyLogEntry_ControlRequest(t *testing.T) {
 	assert.True(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 }
 
+// A split child filters the entries it inherited from its parent, of terms up
+// to the parent term, however it applies them. It applies its own entries, of
+// later terms, as they are: e.g. the records of its sessions hash anywhere in
+// the hash space.
+func TestApplyLogEntry_SplitFilter(t *testing.T) {
+	db := newTestDB(t)
+	// The lower half of the hash space holds the key "a", and not "d"
+	assert.NoError(t, db.SetSplitFilter(&database.SplitFilter{MinHash: 0, MaxHash: 0x7FFFFFFF, ParentTerm: 1}))
+
+	apply := func(term int64, offset int64, value string) {
+		proposal := NewWriteProposal(offset, &proto.WriteRequest{
+			Puts: []*proto.PutRequest{
+				{Key: "a", Value: []byte(value)},
+				{Key: "d", Value: []byte(value)},
+			},
+		})
+		_, err := ApplyLogEntry(db, &proto.LogEntry{
+			Term:      term,
+			Offset:    offset,
+			Value:     marshalProposal(t, proposal),
+			Timestamp: proposal.GetTimestamp(),
+		}, database.NoOpCallback)
+		assert.NoError(t, err)
+
+		commitOffset, err := db.ReadCommitOffset()
+		assert.NoError(t, err)
+		assert.Equal(t, offset, commitOffset)
+	}
+	assertValue := func(key string, expected string) {
+		res, err := db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+		assert.NoError(t, err)
+		if expected == "" {
+			assert.Equal(t, proto.Status_KEY_NOT_FOUND, res.Status, key)
+			return
+		}
+		assert.Equal(t, proto.Status_OK, res.Status, key)
+		assert.Equal(t, expected, string(res.Value), key)
+	}
+
+	apply(1, 0, "parent")
+	assertValue("a", "parent")
+	assertValue("d", "")
+
+	apply(2, 1, "child")
+	assertValue("a", "child")
+	assertValue("d", "child")
+}
+
 func TestApplyLogEntry_InvalidBytes(t *testing.T) {
 	db := newTestDB(t)
 

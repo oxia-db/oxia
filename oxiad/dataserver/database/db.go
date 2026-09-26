@@ -61,6 +61,7 @@ const (
 	featureFlagKeyPrefix   = constant.InternalKeyPrefix + "features"
 	termKey                = constant.InternalKeyPrefix + "term"
 	termOptionsKey         = termKey + "-options"
+	splitFilterKey         = constant.InternalKeyPrefix + "split-filter"
 )
 
 type UpdateOperationCallback interface {
@@ -119,6 +120,12 @@ type DB interface {
 
 	UpdateTerm(newTerm int64, options TermOptions) error
 	ReadTerm() (term int64, options TermOptions, err error)
+
+	// SetSplitFilter records the filter of a split child, and flushes the
+	// database: the writes that precede it become durable as well.
+	SetSplitFilter(filter *SplitFilter) error
+	// SplitFilter returns the filter recorded by SetSplitFilter, or nil.
+	SplitFilter() *SplitFilter
 
 	Snapshot() (kvstore.Snapshot, error)
 
@@ -200,6 +207,10 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		return nil, multierr.Append(err, kv.Close())
 	}
 
+	if err := db.recoverSplitFilter(); err != nil {
+		return nil, multierr.Append(err, kv.Close())
+	}
+
 	lastNotificationOffset, err := db.readLastNotificationOffset()
 	if err != nil {
 		return nil, multierr.Append(errors.Wrap(err, "failed to read last notification offset"), kv.Close())
@@ -218,6 +229,7 @@ type db struct {
 	log                   *slog.Logger
 	notificationsEnabled  bool
 	enabledFeatures       sync.Map
+	splitFilter           atomic.Pointer[SplitFilter]
 	sequenceWaiterTracker SequenceWaiterTracker
 
 	putCounter                metric.Counter

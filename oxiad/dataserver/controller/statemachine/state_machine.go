@@ -22,6 +22,13 @@ import (
 )
 
 func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallback database.UpdateOperationCallback) (ApplyResponse, error) {
+	// An entry that a split child inherited from its parent is filtered
+	// however the child applies it (see database.DB.SetSplitFilter)
+	if filter := db.SplitFilter(); filter != nil && entry.Term <= filter.ParentTerm {
+		return ApplyLogEntryWithSplitFilter(db, entry, updateOperationCallback,
+			&proto.HashRange{Min: filter.MinHash, Max: filter.MaxHash})
+	}
+
 	logEntryValue := proto.LogEntryValueFromVTPool()
 	defer logEntryValue.ReturnToVTPool()
 
