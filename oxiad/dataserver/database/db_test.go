@@ -462,6 +462,7 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 		proto.Feature_FEATURE_DB_CHECKSUM,
 		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
 		proto.Feature_FEATURE_ORDERED_WRITES,
+		proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
 	} {
 		t.Run(enabledFeature.String(), func(t *testing.T) {
 			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -1326,19 +1327,19 @@ func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *prot
 	}
 	return proto.Status_OK, nil
 }
-func (f FailureCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, key string) error {
+func (f FailureCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, key string, _ feature.Checker) error {
 	if key == FailureCallbackKey {
 		return errors.New("failure injection")
 	}
 	return nil
 }
-func (f FailureCallback) OnDeleteWithEntry(_ kvstore.WriteBatch, _ *Notifications, key string, _ *proto.StorageEntry) error {
+func (f FailureCallback) OnDeleteWithEntry(_ kvstore.WriteBatch, _ *Notifications, key string, _ *proto.StorageEntry, _ feature.Checker) error {
 	if key == FailureCallbackKey {
 		return errors.New("failure injection")
 	}
 	return nil
 }
-func (f FailureCallback) OnDeleteRange(kvstore.WriteBatch, *Notifications, string, string) error {
+func (f FailureCallback) OnDeleteRange(kvstore.WriteBatch, *Notifications, string, string, feature.Checker) error {
 	return nil
 }
 
