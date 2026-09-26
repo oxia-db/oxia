@@ -443,6 +443,16 @@ func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange *proto.HashRa
 
 	var puts []*proto.PutRequest
 	for _, p := range req.Puts {
+		if strings.HasPrefix(p.Key, constant.InternalKeyPrefix) {
+			// Not a record of either child: a session is created by a put of
+			// its metadata key, and both children need it, as FilterDBForSplit
+			// keeps the sessions of the snapshot in both. Placed by the hash
+			// of its key, the other child would reject the ephemeral records
+			// of the session for an unknown session.
+			puts = append(puts, p)
+			continue
+		}
+
 		var h uint32
 		if p.PartitionKey != nil {
 			h = hash.Xxh332(*p.PartitionKey)

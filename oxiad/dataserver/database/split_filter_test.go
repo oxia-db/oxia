@@ -747,6 +747,25 @@ func TestFilterWriteRequestForSplit_DeleteKeptForPartitionKeyedRecord(t *testing
 	assert.Equal(t, outsideKey, filtered.Deletes[0].Key)
 }
 
+// A session is created by a put of its metadata key. That is not a record of
+// either child: the session can own records in both, so both need it, as
+// FilterDBForSplit keeps the sessions of the snapshot in both.
+func TestFilterWriteRequestForSplit_SessionMetadata(t *testing.T) {
+	leftRange, rightRange := splitRanges()
+	req := &proto.WriteRequest{
+		Puts: []*proto.PutRequest{
+			{Key: fmt.Sprintf("%s/%016x", sessionKeyPrefix, 5), Value: []byte{}},
+		},
+	}
+
+	for _, hashRange := range []*proto.HashRange{leftRange, rightRange} {
+		filtered := FilterWriteRequestForSplit(req, hashRange)
+		if assert.NotNil(t, filtered) {
+			assert.Len(t, filtered.Puts, 1)
+		}
+	}
+}
+
 func TestFilterWriteRequestForSplit_AllFiltered(t *testing.T) {
 	_, rightRange := splitRanges()
 
