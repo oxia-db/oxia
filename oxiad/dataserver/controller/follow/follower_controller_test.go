@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1695,13 +1696,40 @@ func crashImage(t *testing.T, kvDataDir string, walDir string) (kvstore.Factory,
 	t.Helper()
 
 	kvOptions := kvstore.NewFactoryOptionsForTest(t)
-	require.NoError(t, os.CopyFS(kvOptions.DataDir, os.DirFS(kvDataDir)))
+	copyRunningDir(t, kvDataDir, kvOptions.DataDir)
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvOptions)
 	require.NoError(t, err)
 
 	crashedWalDir := t.TempDir()
-	require.NoError(t, os.CopyFS(crashedWalDir, os.DirFS(walDir)))
+	copyRunningDir(t, walDir, crashedWalDir)
 	return kvFactory, wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: crashedWalDir})
+}
+
+// copyRunningDir copies the files in src to dst. Pebble deletes its obsolete
+// files in the background: a file that is gone by the time it is copied is
+// skipped, as a crash right after its deletion would leave it.
+func copyRunningDir(t *testing.T, src string, dst string) {
+	t.Helper()
+
+	require.NoError(t, filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(filepath.Join(dst, relPath), 0755)
+		}
+		content, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, relPath), content, 0644)
+	}))
 }
 
 // assertSplitTestKeys checks the keys a..f in the database of the child that
