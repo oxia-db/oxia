@@ -448,6 +448,8 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	baseVersionId.Store(d.committedVersionId.Load())
 
 	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
+
 	notifications, res, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp, updateOperationCallback)
 	if err != nil {
 		return nil, err
@@ -488,10 +490,6 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 
 	if notifications != nil {
 		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
-	}
-
-	if err := batch.Close(); err != nil {
-		return nil, err
 	}
 
 	return res, nil
@@ -983,7 +981,7 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		se := proto.StorageEntryFromVTPool()
 		if err = Deserialize(value, se); err != nil {
 			se.ReturnToVTPool()
-			return nil, err
+			return nil, errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to deserialize value on delete range")
 		}
 		if err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, key, se); err != nil {
 			se.ReturnToVTPool()
