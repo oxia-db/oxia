@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -143,6 +144,46 @@ func (s *publicRpcServer) GetShardAssignments(req *proto.ShardAssignmentsRequest
 	return nil
 }
 
+// checkReservedKeys rejects a client write that reaches into the "__oxia/"
+// namespace the data server keeps its own bookkeeping in: session records,
+// secondary index shadows, notification batches, the persisted term and the
+// commit offsets all live there. Those keys are encoded into a region that
+// sorts apart from user keys, so a client put/delete on such a key does not
+// just shadow it, it lands on the exact same entry and forges or overwrites
+// the server's internal state. The server's own writes go through
+// WriteBlock/writeBlock and never pass through the client RPC handlers, so
+// they are unaffected.
+func checkReservedKeys(write *proto.WriteRequest) error {
+	for _, p := range write.GetPuts() {
+		if isReservedKey(p.GetKey()) {
+			return reservedKeyError(p.GetKey())
+		}
+	}
+	for _, d := range write.GetDeletes() {
+		if isReservedKey(d.GetKey()) {
+			return reservedKeyError(d.GetKey())
+		}
+	}
+	for _, dr := range write.GetDeleteRanges() {
+		if isReservedKey(dr.GetStartInclusive()) {
+			return reservedKeyError(dr.GetStartInclusive())
+		}
+		if isReservedKey(dr.GetEndExclusive()) {
+			return reservedKeyError(dr.GetEndExclusive())
+		}
+	}
+	return nil
+}
+
+func isReservedKey(key string) bool {
+	return strings.HasPrefix(key, constant.InternalKeyPrefix)
+}
+
+func reservedKeyError(key string) error {
+	return status.Errorf(codes.InvalidArgument,
+		"key %q is in the reserved %q namespace", key, constant.InternalKeyPrefix)
+}
+
 func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) (*proto.WriteResponse, error) {
 	if s.log.Enabled(ctx, slog.LevelDebug) {
 		s.log.Debug(
@@ -150,6 +191,10 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 			slog.String("peer", rpc.GetPeer(ctx)),
 			slog.Any("req", write),
 		)
+	}
+
+	if err := checkReservedKeys(write); err != nil {
+		return nil, err
 	}
 
 	lc, err := s.resolveLeader(ctx, write.Shard)
@@ -187,6 +232,10 @@ func processWriteStream(streamCtx context.Context, finished chan<- error, stream
 		}
 		if req == nil {
 			channel.PushNoBlock(finished, errors.New("stream closed"))
+			return
+		}
+		if err := checkReservedKeys(req); err != nil {
+			channel.PushNoBlock(finished, err)
 			return
 		}
 

@@ -23,7 +23,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
@@ -61,6 +64,61 @@ func TestStandaloneSecondaryIndexNameValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, response.GetPuts(), 1)
 	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[0].GetStatus())
+}
+
+// A client must not be able to write into the "__oxia/" namespace the data
+// server reserves for its own bookkeeping. Such a write is encoded onto the
+// same entry as the server's own state (sessions, secondary indexes,
+// notifications, term, ...) and would forge or overwrite it, so the client RPC
+// handlers reject it while the server's internal writes (through WriteBlock)
+// still go through.
+func TestStandaloneRejectsReservedKeyWrites(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+	client := proto.NewOxiaClientClient(conn)
+
+	sessionKey := constant.InternalKeyPrefix + "session/0000000000000001"
+	reserved := []*proto.WriteRequest{
+		{Shard: pb.Int64(0), Puts: []*proto.PutRequest{{Key: sessionKey, Value: []byte("forged")}}},
+		{Shard: pb.Int64(0), Deletes: []*proto.DeleteRequest{{Key: constant.InternalKeyPrefix + "term"}}},
+		{Shard: pb.Int64(0), DeleteRanges: []*proto.DeleteRangeRequest{{
+			StartInclusive: constant.InternalKeyPrefix,
+			EndExclusive:   constant.InternalKeyPrefix + "z",
+		}}},
+	}
+	for _, req := range reserved {
+		_, err = client.Write(t.Context(), req)
+		require.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+	}
+
+	// The same reserved key over the write stream is rejected too.
+	ctx := metadata.NewOutgoingContext(t.Context(), metadata.New(map[string]string{
+		"shard-id":  "0",
+		"namespace": constant.DefaultNamespace,
+	}))
+	stream, err := client.WriteStream(ctx)
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: sessionKey, Value: []byte("forged")}},
+	}))
+	_, err = stream.Recv()
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+
+	// A regular user key still writes, and the forged session key never landed.
+	resp, err := client.Write(t.Context(), &proto.WriteRequest{
+		Shard: pb.Int64(0),
+		Puts:  []*proto.PutRequest{{Key: "user-key", Value: []byte("value")}},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetPuts(), 1)
+	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].GetStatus())
 }
 
 func TestStandaloneRejectsSameWalAndDataDir(t *testing.T) {
