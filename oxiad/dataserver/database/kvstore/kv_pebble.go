@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"math"
 	"os"
@@ -106,46 +105,10 @@ func NewPebbleKVFactory(options *FactoryOptions) (Factory, error) {
 	return pf, nil
 }
 
+// The snapshots are left behind by a previous run: the "snapshots" name is
+// reserved, so nothing else can be in there.
 func (p *PebbleFactory) cleanupSnapshots() error {
-	// The snapshots are in snapshots/shard-<id>/snapshot-<n>, but a namespace
-	// named "snapshots" keeps its shards in the same dir: remove only the
-	// snapshot dirs, and then the dirs they leave empty. The globs are relative
-	// to the data dir, as its own path may contain glob metacharacters.
-	dataDir := os.DirFS(p.dataDir)
-	snapshots, err := fs.Glob(dataDir, "snapshots/shard-*/snapshot-*")
-	if err != nil {
-		return err
-	}
-	for _, snapshot := range snapshots {
-		if err := os.RemoveAll(filepath.Join(p.dataDir, snapshot)); err != nil {
-			return err
-		}
-	}
-
-	dirs, err := fs.Glob(dataDir, "snapshots/shard-*")
-	if err != nil {
-		return err
-	}
-	for _, dir := range append(dirs, "snapshots") {
-		if err := removeIfEmpty(filepath.Join(p.dataDir, dir)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func removeIfEmpty(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-
-	if len(entries) > 0 {
-		return nil
-	}
-	return os.Remove(dir)
+	return os.RemoveAll(filepath.Join(p.dataDir, validation.KeywordNamespaceSnapshots))
 }
 
 func (p *PebbleFactory) Close() error {

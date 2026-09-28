@@ -392,6 +392,89 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 	assert.NoError(t, client.Close())
 }
 
+// TestCoordinator_ShardSplit_WriteOrder checks that the puts a client issues
+// to the same key are applied in the order they were issued, across a split.
+// The async client pipelines the puts: when the split cuts over, some of them
+// are still queued or in flight to the parent and get rerouted to the
+// children, while the puts issued after the client received the post-split
+// assignments go to the children directly.
+func TestCoordinator_ShardSplit_WriteOrder(t *testing.T) {
+	c := setupSplitCluster(t)
+	defer c.close(t)
+
+	client, err := oxia.NewAsyncClient(c.sa1.Public)
+	require.NoError(t, err)
+
+	type putOp struct {
+		key    string
+		seq    int
+		result <-chan oxia.PutResult
+	}
+	const numKeys = 16
+	// Large enough not to throttle the writer: it must keep issuing puts
+	// while the rerouted ones are still pending
+	const maxOutstanding = 64 * 1024
+
+	var stop atomic.Bool
+	ops := make(chan putOp, maxOutstanding)
+	go func() {
+		defer close(ops)
+		for seq := 0; !stop.Load(); seq++ {
+			key := fmt.Sprintf("key-%02d", seq%numKeys)
+			ops <- putOp{key, seq, client.Put(key, []byte(fmt.Sprintf("%d", seq)))}
+		}
+	}()
+
+	// Among the successful puts to a key, taken in issue order, the
+	// modifications count reports the order in which they were applied
+	type applied struct {
+		seq   int
+		count int64
+	}
+	var (
+		succeeded, failed int
+		firstErr          error
+		outOfOrder        []string
+		lastApplied       = make(map[string]applied)
+		checked           = make(chan struct{})
+	)
+	go func() {
+		defer close(checked)
+		for op := range ops {
+			result := <-op.result
+			if result.Err != nil {
+				if failed == 0 {
+					firstErr = result.Err
+				}
+				failed++
+				continue
+			}
+			succeeded++
+			if last, ok := lastApplied[op.key]; ok && result.Version.ModificationsCount <= last.count {
+				outOfOrder = append(outOfOrder, fmt.Sprintf("%s: put #%d applied as modification %d, before put #%d (modification %d)",
+					op.key, op.seq, result.Version.ModificationsCount, last.seq, last.count))
+			}
+			lastApplied[op.key] = applied{op.seq, result.Version.ModificationsCount}
+		}
+	}()
+
+	c.splitAndWait(t)
+	// Keep writing to the children for a while
+	time.Sleep(time.Second)
+	stop.Store(true)
+	<-checked
+
+	slog.Info("Checked the order of the puts across the split",
+		slog.Int("succeeded", succeeded),
+		slog.Int("failed", failed),
+		slog.Any("first-error", firstErr),
+		slog.Int("out-of-order", len(outOfOrder)),
+	)
+	assert.Positive(t, succeeded)
+	assert.Empty(t, outOfOrder, "puts applied out of the order they were issued")
+	assert.NoError(t, client.Close())
+}
+
 // splitTestCluster holds references to a 3-node test cluster with a
 // coordinator, used by the shard-split integration tests.
 type splitTestCluster struct {
@@ -796,7 +879,12 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, readerClient.Close()) }()
 
-	// Wait for ephemeral records to be cleaned up (session expiry)
+	// Wait for ephemeral records to be cleaned up (session expiry). A new
+	// leader restarts the timeout of every session it loads, as it can't know
+	// when the last heartbeat arrived. If both children are led by the same
+	// data server, leader balancing re-elects one of them 30s after the
+	// coordinator started, right before its inherited session would expire,
+	// and the records then outlive the split by up to two session timeouts.
 	require.Eventually(t, func() bool {
 		for key := range ephemeralKeys {
 			_, _, _, err := readerClient.Get(ctx, key)
@@ -805,7 +893,7 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 			}
 		}
 		return true
-	}, 60*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
+	}, 90*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
 
 	slog.Info("Ephemeral records cleaned up after client close")
 
@@ -1246,4 +1334,109 @@ func TestCoordinator_ShardSplit_ConcurrentSplitRejected(t *testing.T) {
 		return true
 	}, 2*time.Minute, 500*time.Millisecond)
 	slog.Info("First split completed successfully")
+}
+
+// ---- Writes to split children ----
+
+// splitWithKeys writes some keys, splits the shard, and returns a client that
+// uses the children's assignments.
+func (c *splitTestCluster) splitWithKeys(t *testing.T) oxia.SyncClient {
+	t.Helper()
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	for i := 0; i < 30; i++ {
+		_, _, err = client.Put(context.Background(), fmt.Sprintf("key-%04d", i), []byte("value"))
+		require.NoError(t, err)
+	}
+	c.splitAndWait(t)
+	return c.reconnectClient(t, client, "key-0000")
+}
+
+// childKey returns a key, starting with prefix, that belongs to the given child.
+func (c *splitTestCluster) childKey(child int64, prefix string) string {
+	hashRange := c.leftMeta.Int32HashRange
+	if child == c.rightChild {
+		hashRange = c.rightMeta.Int32HashRange
+	}
+	for i := 0; ; i++ {
+		key := fmt.Sprintf("%s-%d", prefix, i)
+		if h := hash.Xxh332(key); h >= hashRange.Min && h <= hashRange.Max {
+			return key
+		}
+	}
+}
+
+func (c *splitTestCluster) shardStatus(t *testing.T, shard int64) *proto.ShardMetadata {
+	t.Helper()
+	return mock.StatusSnapshot(t, c.metadata).Namespaces[constant.DefaultNamespace].Shards[shard]
+}
+
+// waitForNewTerm waits for the shard to be led again in a term after the given one.
+func (c *splitTestCluster) waitForNewTerm(t *testing.T, shard int64, term int64) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		sm := c.shardStatus(t, shard)
+		return sm.Term > term && sm.Leader != nil && sm.GetStatusOrDefault() == proto.ShardStatusSteadyState
+	}, 30*time.Second, 100*time.Millisecond)
+}
+
+// The first leader of a split child is seeded from a snapshot of the parent,
+// with an empty WAL. The child must keep committing writes after it gets
+// re-elected, like leader balancing does.
+func TestCoordinator_ShardSplit_ChildWritesAfterReelection(t *testing.T) {
+	cluster := setupSplitCluster(t)
+	defer cluster.close(t)
+	client := cluster.splitWithKeys(t)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	_, _, err := client.Put(context.Background(), cluster.childKey(cluster.leftChild, "before"), []byte("value"))
+	require.NoError(t, err)
+
+	// Reporting the leader as unavailable runs the same election as leader balancing
+	before := cluster.shardStatus(t, cluster.leftChild)
+	cluster.coordinator.BecameUnavailable(before.Leader)
+	cluster.waitForNewTerm(t, cluster.leftChild, before.Term)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, _, err = client.Put(ctx, cluster.childKey(cluster.leftChild, "after"), []byte("value"))
+	require.NoError(t, err, "write to the split child after its re-election")
+}
+
+// A write acknowledged by a split child must be on a quorum of the child's
+// ensemble, and survive the loss of the child's leader.
+func TestCoordinator_ShardSplit_ChildWriteSurvivesLeaderLoss(t *testing.T) {
+	cluster := setupSplitCluster(t)
+	defer cluster.close(t)
+	client := cluster.splitWithKeys(t)
+
+	ctx := context.Background()
+	key := cluster.childKey(cluster.leftChild, "acked")
+	_, _, err := client.Put(ctx, key, []byte("value"))
+	require.NoError(t, err)
+	assert.NoError(t, client.Close())
+
+	before := cluster.shardStatus(t, cluster.leftChild)
+	leader := before.Leader.GetNameOrDefault()
+	assert.NoError(t, cluster.servers[leader].Close())
+	delete(cluster.servers, leader)
+	cluster.waitForNewTerm(t, cluster.leftChild, before.Term)
+
+	var reader oxia.SyncClient
+	require.Eventually(t, func() bool {
+		reader, err = oxia.NewSyncClient(cluster.liveAddressExcluding(leader).Public)
+		if err != nil {
+			return false
+		}
+		if _, _, _, err = reader.Get(ctx, "key-0000"); err != nil {
+			_ = reader.Close()
+			return false
+		}
+		return true
+	}, 30*time.Second, 500*time.Millisecond)
+	defer func() { assert.NoError(t, reader.Close()) }()
+
+	_, value, _, err := reader.Get(ctx, key)
+	require.NoError(t, err, "write acknowledged by the split child lost with its leader")
+	assert.Equal(t, []byte("value"), value)
 }

@@ -85,16 +85,20 @@ func (s *notificationsTestStream) Recv() (*proto.NotificationBatch, error) {
 	}
 }
 
-// Fails the first Recv() with err, once the delay has elapsed.
-type notificationsTestFailingStream struct {
+// Returns each batch in turn, then fails every later Recv() with err.
+type notificationsTestScriptedStream struct {
 	grpc.ClientStream
-	delay time.Duration
-	err   error
+	batches []*proto.NotificationBatch
+	err     error
 }
 
-func (s *notificationsTestFailingStream) Recv() (*proto.NotificationBatch, error) {
-	time.Sleep(s.delay)
-	return nil, s.err
+func (s *notificationsTestScriptedStream) Recv() (*proto.NotificationBatch, error) {
+	if len(s.batches) == 0 {
+		return nil, s.err
+	}
+	nb := s.batches[0]
+	s.batches = s.batches[1:]
+	return nb, nil
 }
 
 type notificationsTestRpcProvider struct {
@@ -173,23 +177,26 @@ func newTestShardNotificationsManager(stream proto.OxiaClient_GetNotificationsCl
 
 func TestNotificationsRejectionDoesNotResetBackoff(t *testing.T) {
 	// The stream is created even when the server rejects the subscription: the
-	// rejection is only reported by the first Recv()
-	snm, bo := newTestShardNotificationsManager(&notificationsTestFailingStream{err: constant.ErrNodeIsNotLeader})
+	// rejection is only reported by the first Recv(), so no batch ever arrives.
+	snm, bo := newTestShardNotificationsManager(&notificationsTestScriptedStream{
+		err: constant.ErrNodeIsNotLeader,
+	})
 
 	assert.ErrorIs(t, snm.getNotifications(), constant.ErrNodeIsNotLeader)
 	assert.Zero(t, bo.resets)
 }
 
-func TestNotificationsAcceptedStreamResetsBackoff(t *testing.T) {
-	// A subscription that resumes from an offset gets no response until a new
-	// notification is written. When it fails (eg. the leader stepped down), it
-	// should be retried quickly.
-	snm, bo := newTestShardNotificationsManager(&notificationsTestFailingStream{
-		delay: notificationsAcceptedAfter,
-		err:   constant.ErrResourceUnavailable,
+func TestNotificationsReceivedBatchResetsBackoff(t *testing.T) {
+	// A batch arrives only once the subscription was accepted, so a stream that
+	// delivered one before failing, eg. because the leader stepped down, should
+	// be retried quickly.
+	snm, bo := newTestShardNotificationsManager(&notificationsTestScriptedStream{
+		batches: []*proto.NotificationBatch{{Offset: 5}},
+		err:     constant.ErrResourceUnavailable,
 	})
-	snm.lastOffsetReceived = 5
+	snm.initialized = true
 
 	assert.ErrorIs(t, snm.getNotifications(), constant.ErrResourceUnavailable)
 	assert.Equal(t, 1, bo.resets)
+	assert.EqualValues(t, 5, snm.lastOffsetReceived)
 }

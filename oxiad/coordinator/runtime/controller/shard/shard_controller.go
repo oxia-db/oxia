@@ -477,6 +477,14 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 		"bug: shard metadata missing while validating change ensemble: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
+	// The ensemble of the parent and of the children of a split doesn't change
+	// until the split ends. Checking it before the election that changes the
+	// ensemble keeps the current election of the shard running; the election
+	// checks it again, in the status update that starts it, in case a split
+	// started since (see Election.persistNewTerm).
+	if shardMeta.Split != nil {
+		return fmt.Errorf("%w: the shard is part of a split", ErrNotReadyForChangeEnsemble)
+	}
 	if changeEnsembleAction.From == nil {
 		return fmt.Errorf("%w: from data server is nil", ErrInvalidChangeEnsemble)
 	}
@@ -695,9 +703,21 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	s.onElectLeader(changeEnsembleAction)
+	leader := s.onElectLeader(changeEnsembleAction)
 	if err := s.currentElection.ChangeEnsembleError(); err != nil {
 		changeEnsembleAction.Error(err)
+		return
+	}
+	if leader == nil {
+		// The election stopped without changing the ensemble, e.g. because a
+		// split of the shard started after the validation above. The shard is
+		// as ready for a change of its ensemble as it was before this one: drop
+		// the election, which never elected a leader for its followers to catch
+		// up with, or it rejects the next changes as not ready.
+		s.currentElection.Stop()
+		s.currentElection = nil
+		changeEnsembleAction.Error(fmt.Errorf("%w: the election stopped before changing the ensemble",
+			ErrNotReadyForChangeEnsemble))
 		return
 	}
 	changeEnsembleAction.Done(nil)
@@ -746,40 +766,49 @@ func (s *controller) SyncServerAddress() {
 
 func (s *controller) handlePeriodicTasks() {
 	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
-	mutShardMeta := gproto.CloneOf(common.Must(borrowedMeta, exists,
+	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
-		s.shard).UnsafeBorrow())
-	stateDirty := false
+		s.shard).UnsafeBorrow()
 
-	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
-		if err := s.handlePendingDeleteShard(mutShardMeta); err != nil {
+	if len(shardMeta.PendingDeleteShardNodes) > 0 {
+		if err := s.handlePendingDeleteShard(shardMeta); err != nil {
 			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
-		} else {
-			stateDirty = true
 		}
-	}
-
-	if stateDirty {
-		// Best-effort: if this is not persisted, the pending deletes are retried
-		_ = s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
 	}
 }
 
-func (s *controller) handlePendingDeleteShard(mutShardMeta *proto.ShardMetadata) error {
-	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
+// handlePendingDeleteShard deletes the shard from the data servers removed from
+// its ensemble, then drops them from the pending-delete nodes, on top of the
+// current metadata of the shard. Other writers update the shard concurrently,
+// e.g. a namespace deletion marks it Deleting, and a write of the copy read
+// before the deletions would revert them.
+func (s *controller) handlePendingDeleteShard(shardMeta *proto.ShardMetadata) error {
+	deleted := make(map[string]bool, len(shardMeta.PendingDeleteShardNodes))
+	for _, ds := range shardMeta.PendingDeleteShardNodes {
 		s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
 
 		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
-			Term:      mutShardMeta.Term,
+			Term:      shardMeta.Term,
 		}); err != nil {
 			return fmt.Errorf("delete shard from removed data server %s: %w", ds.GetNameOrDefault(), err)
 		}
 
 		s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
+		deleted[ds.GetNameOrDefault()] = true
 	}
 
-	mutShardMeta.PendingDeleteShardNodes = nil
+	// Best-effort: if this is not persisted, the pending deletes are retried
+	_ = s.metadataStore.UpdateShardStatuses(s.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		current, exists := shards[s.shard]
+		if !exists {
+			return false
+		}
+		pending := len(current.PendingDeleteShardNodes)
+		current.PendingDeleteShardNodes = slices.DeleteFunc(current.PendingDeleteShardNodes,
+			func(ds *proto.DataServerIdentity) bool { return deleted[ds.GetNameOrDefault()] })
+		return len(current.PendingDeleteShardNodes) < pending
+	})
 	return nil
 }

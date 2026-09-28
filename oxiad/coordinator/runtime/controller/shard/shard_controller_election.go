@@ -605,16 +605,100 @@ func (e *Election) abortChangeEnsemble(retryShardMetadata *proto.ShardMetadata, 
 	e.changeEnsembleErr = err
 }
 
-func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
-	// The parent of a split past the point of no return stays fenced until it
-	// is deleted: electing it would let it accept writes that the children,
-	// which take over its key range, never receive.
-	if borrowedMeta, exists := e.metadataStore.GetShardStatus(e.namespace, e.shard); exists &&
-		isFinalizingSplitParent(borrowedMeta.UnsafeBorrow()) {
-		e.logger.Info("Not electing a leader for the parent of a split past the point of no return")
-		return nil, backoff.Permanent(errors.New("the shard is the parent of a split past the point of no return"))
+// persistNewTerm stores the shard metadata with the new term of the election.
+// The new term must be persisted before fencing the ensemble with it, otherwise
+// a later election could reuse it.
+//
+// It stops the election instead if the shard is the parent of a split past the
+// point of no return, or is being deleted, e.g. that parent once the split
+// completed: electing it would let it accept writes that the children, which
+// take over its key range, never receive. The check is part of the status
+// update, and the split passes the point of no return only if the parent is
+// still in the term it froze (see SplitController.passPointOfNoReturn): either
+// the split passes it first, and the election stops here, or the election
+// stores its term first, and the split starts over.
+//
+// It also stops an election that changes the ensemble of a shard that is part
+// of a split: the ensemble of the parent and of the children of a split doesn't
+// change until the split ends. A split starts only on a shard in steady state,
+// without data servers pending deletion, a check that is part of the status
+// update that starts it (see InitiateSplit): either the split starts first, and
+// the election stops here, or the election stores its term first, and the
+// split is refused until the election has ended and the data server that left
+// the ensemble, or was not added to it, has deleted the shard.
+func (e *Election) persistNewTerm() error {
+	var stopReason string
+	shardExists := false
+	if err := e.metadataStore.UpdateShardStatuses(e.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		stopReason = ""
+		current, exists := shards[e.shard]
+		shardExists = exists
+		switch {
+		case !exists:
+			return false
+		case current.GetStatusOrDefault() == proto.ShardStatusDeleting:
+			stopReason = "the shard is being deleted"
+			return false
+		case isFinalizingSplitParent(current):
+			stopReason = "the shard is the parent of a split past the point of no return"
+			return false
+		case e.changeEnsembleAction != nil && current.Split != nil:
+			stopReason = "the shard is part of a split"
+			return false
+		}
+		e.storeShardMetadata(current)
+		return true
+	}); err != nil {
+		return errors.Wrap(err, "failed to persist the new term")
 	}
+	if !shardExists {
+		return errors.Errorf("failed to persist the new term: shard %d not found", e.shard)
+	}
+	if stopReason != "" {
+		e.logger.Info("Stopping the election", slog.String("reason", stopReason))
+		return backoff.Permanent(errors.New(stopReason))
+	}
+	return nil
+}
 
+// persistNewLeader stores the shard metadata with the elected leader.
+func (e *Election) persistNewLeader() error {
+	shardExists := false
+	if err := e.metadataStore.UpdateShardStatuses(e.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		current, exists := shards[e.shard]
+		shardExists = exists
+		if exists {
+			e.storeShardMetadata(current)
+		}
+		return exists
+	}); err != nil {
+		return errors.Wrap(err, "failed to persist the new leader")
+	}
+	if !shardExists {
+		return errors.Errorf("failed to persist the new leader: shard %d not found", e.shard)
+	}
+	return nil
+}
+
+// storeShardMetadata stores the election's part of the shard metadata on top
+// of the current one: the status, the term, the leader, the ensemble, and the
+// removed and pending-delete data servers. The split controller updates the
+// rest of it while the election runs, e.g. the split metadata, which storing
+// the election's copy of the whole shard would revert. A shard being deleted
+// stays so.
+func (e *Election) storeShardMetadata(current *proto.ShardMetadata) {
+	owned := gproto.CloneOf(e.mutableShardMetadata)
+	if current.GetStatusOrDefault() != proto.ShardStatusDeleting {
+		current.Status = owned.Status
+	}
+	current.Term = owned.Term
+	current.Leader = owned.Leader
+	current.Ensemble = owned.Ensemble
+	current.RemovedNodes = owned.RemovedNodes
+	current.PendingDeleteShardNodes = owned.PendingDeleteShardNodes
+}
+
+func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	e.logger.Info("Starting a new election")
 	timer := e.leaderElectionLatency.Timer()
 
@@ -622,10 +706,8 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	e.mutableShardMetadata.Leader = nil
 	e.mutableShardMetadata.Term++
 	e.mutableShardMetadata.Ensemble = e.refreshedEnsemble(e.mutableShardMetadata.Ensemble)
-	// The new term must be persisted before fencing the ensemble with it,
-	// otherwise a later election could reuse it
-	if err = e.metadataStore.UpdateShardStatus(e.namespace, e.shard, e.mutableShardMetadata); err != nil {
-		return nil, errors.Wrap(err, "failed to persist the new term")
+	if err = e.persistNewTerm(); err != nil {
+		return nil, err
 	}
 
 	var retryShardMetadata *proto.ShardMetadata
@@ -708,8 +790,8 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	leader := e.mutableShardMetadata.Leader
 	leaderEntry := candidatesStatus[leader]
 
-	if err = e.metadataStore.UpdateShardStatus(e.namespace, e.shard, e.mutableShardMetadata); err != nil {
-		return nil, errors.Wrap(err, "failed to persist the new leader")
+	if err = e.persistNewLeader(); err != nil {
+		return nil, err
 	}
 	if e.eventListener != nil {
 		e.eventListener.LeaderElected(e.shard, newLeader, maps.Keys(followers))

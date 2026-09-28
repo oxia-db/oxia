@@ -26,6 +26,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
+	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/batch"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -46,9 +47,14 @@ type staticShardManager struct {
 	shards     []int64
 	leader     string
 	successors map[int64][]int64
+	closed     bool
 }
 
-func (*staticShardManager) Close() error       { return nil }
+func (s *staticShardManager) Close() error {
+	s.closed = true
+	return nil
+}
+
 func (s *staticShardManager) Get(string) int64 { return s.shards[0] }
 func (s *staticShardManager) GetAll() []int64  { return s.shards }
 func (s *staticShardManager) Leader(int64) string {
@@ -58,6 +64,15 @@ func (*staticShardManager) Exists(int64) bool { return true }
 func (s *staticShardManager) GetSuccessors(shardId int64) []int64 {
 	return s.successors[shardId]
 }
+
+// GetSuccessor routes every key to the first successor.
+func (s *staticShardManager) GetSuccessor(shardId int64, _ string) (int64, bool) {
+	if successors := s.successors[shardId]; len(successors) > 0 {
+		return successors[0], true
+	}
+	return 0, false
+}
+func (*staticShardManager) Changed() <-chan struct{} { return nil }
 
 func newGetTestClient(shards ...int64) (*clientImpl, *capturingGetBatcher) {
 	b := &capturingGetBatcher{calls: make(chan model.GetCall, len(shards))}
@@ -169,15 +184,16 @@ func (*capturingWriteBatcher) Run()         {}
 
 func newWriteTestClient(shardManager *staticShardManager) (*clientImpl, map[int64]*capturingWriteBatcher) {
 	batchers := map[int64]*capturingWriteBatcher{}
-	return &clientImpl{
+	c := &clientImpl{
 		ctx:          context.Background(),
 		shardManager: shardManager,
-		writeBatchManager: batch.NewManager(context.Background(), func(_ context.Context, shardId *int64) commonbatch.Batcher {
-			b := &capturingWriteBatcher{}
-			batchers[*shardId] = b
-			return b
-		}),
-	}, batchers
+	}
+	c.writeBatchManager = batch.NewWriteManager(context.Background(), func(_ context.Context, shardId *int64) commonbatch.Batcher {
+		b := &capturingWriteBatcher{}
+		batchers[*shardId] = b
+		return b
+	}, c.forwardWrite)
+	return c, batchers
 }
 
 func deleteRangeCallAt(t *testing.T, batchers map[int64]*capturingWriteBatcher, shardId int64) model.DeleteRangeCall {
@@ -288,6 +304,26 @@ func TestRerouteDeleteRangeWithoutSuccessors(t *testing.T) {
 	assert.Empty(t, batchers)
 	require.Len(t, results, 1)
 	assert.ErrorIs(t, results[0], constant.ErrShardNotFound)
+}
+
+// The shard manager receives the shard assignments in the background, until it
+// is closed.
+func TestCloseClosesShardManager(t *testing.T) {
+	shardManager := &staticShardManager{}
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &clientImpl{
+		shardManager:      shardManager,
+		writeBatchManager: batch.NewWriteManager(ctx, nil, nil),
+		readBatchManager:  batch.NewManager(ctx, nil),
+		sessions:          &sessions{},
+		rpcProvider: internal.NewRpcProvider(ctx, "default", nil, nil, "localhost:6648",
+			func() internal.ShardManager { return shardManager }),
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	assert.NoError(t, client.Close())
+	assert.True(t, shardManager.closed)
 }
 
 func TestMultiShardDeleteRangeCallback(t *testing.T) {
