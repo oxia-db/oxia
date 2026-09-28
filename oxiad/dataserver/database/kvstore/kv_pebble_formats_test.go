@@ -16,10 +16,14 @@ package kvstore
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -235,4 +239,25 @@ func TestPebbleDbCleanupBackupAfterCrashDuringFinalCleanup(t *testing.T) {
 	// check if backup still exist
 	path := makeDbBackupPath(dbPath)
 	assert.False(t, pathExists(path))
+}
+
+func TestCreateMarkerLeavesUpToDateMarkerAlone(t *testing.T) {
+	dbPath := t.TempDir()
+	markerPath := filepath.Join(dbPath, markerFileName)
+	assert.NoError(t, createMarker(dbPath, compare.EncoderNatural.Name()))
+
+	// Backdate the marker, to tell whether it gets rewritten
+	modTime := time.Now().Add(-time.Hour).Truncate(time.Second)
+	assert.NoError(t, os.Chtimes(markerPath, modTime, modTime))
+
+	assert.NoError(t, createMarker(dbPath, compare.EncoderNatural.Name()))
+	stat, err := os.Stat(markerPath)
+	assert.NoError(t, err)
+	assert.True(t, modTime.Equal(stat.ModTime()), "the marker was rewritten")
+
+	// A different encoding is still written
+	assert.NoError(t, createMarker(dbPath, compare.EncoderHierarchical.Name()))
+	markerData, err := os.ReadFile(markerPath)
+	assert.NoError(t, err)
+	assert.Equal(t, compare.EncoderHierarchical.Name(), string(markerData))
 }
