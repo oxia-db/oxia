@@ -64,6 +64,9 @@ enum Feature {
   FEATURE_SECONDARY_INDEX_NAME_VALIDATION = 2;
   // Apply the requests of a WriteRequest in op_index order
   FEATURE_ORDERED_WRITES = 3;
+  // A delete range deletes the notification records it covers, which are not
+  // storage entries, instead of failing the whole entry
+  FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS = 5;
 }
 
 message GetInfoRequest {

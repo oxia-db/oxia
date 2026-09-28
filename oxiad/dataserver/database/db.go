@@ -962,6 +962,15 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		notifications.DeletedRange(delReq.StartInclusive, delReq.EndExclusive)
 	}
 
+	// With the feature, the notification records are deleted without being
+	// read: they are not storage entries. Each replica trims them on its own
+	// schedule, so the ones in the range differ between replicas. A range that
+	// reaches the internal keys is then deleted with a range deletion, whatever
+	// its size: deleting the records one by one would make the batch, and the
+	// DB checksum, differ between replicas.
+	reachesInternalKeys := d.IsFeatureEnabled(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS) &&
+		batch.OverlapsInternalKeys(delReq.StartInclusive, delReq.EndExclusive)
+
 	it, err := batch.RangeScan(delReq.StartInclusive, delReq.EndExclusive)
 	if err != nil {
 		return nil, err
@@ -969,8 +978,13 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 	var validKeys []string
 	var validKeysNum = 0
 	for ; it.Valid(); it.Next() {
-		validKeysNum++
 		key := it.Key()
+		if reachesInternalKeys && strings.HasPrefix(key, notificationsPrefix+"/") {
+			// No session or secondary index entry to clean up: the range
+			// deletion below removes the record
+			continue
+		}
+		validKeysNum++
 		if validKeysNum <= DeleteRangeThreshold {
 			validKeys = append(validKeys, key)
 		}
@@ -992,7 +1006,7 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 	if err := it.Close(); err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to close iterator on delete range")
 	}
-	if validKeysNum > DeleteRangeThreshold {
+	if reachesInternalKeys || validKeysNum > DeleteRangeThreshold {
 		if err := batch.DeleteRange(delReq.StartInclusive, delReq.EndExclusive); err != nil {
 			return nil, errors.Wrap(err, "oxia db: failed to delete range")
 		}

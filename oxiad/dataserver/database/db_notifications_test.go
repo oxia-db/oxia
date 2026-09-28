@@ -16,6 +16,7 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"testing"
@@ -450,6 +451,134 @@ func TestDB_NotificationsDeleteRange(t *testing.T) {
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
+}
+
+// The notification records are not storage entries. Without the feature, a
+// delete range that covers them fails the whole entry, the same way on every
+// replica, which then retries it forever.
+func TestDB_DeleteRangeNotificationRecords(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		start, end string
+		// Whether the range covers the user keys too
+		coversUserKeys bool
+	}{
+		// The encoded internal keys, "\xff\xffoxia/...", sort after the user keys
+		{"natural up to the internal keys", proto.KeySortingType_NATURAL, "a", "__oxia/zzz", true},
+		{"natural purge", proto.KeySortingType_NATURAL, "__oxia/notifications/", "__oxia/notifications/~", false},
+		{"hierarchical purge", proto.KeySortingType_HIERARCHICAL, "__oxia/notifications/", "__oxia/notifications//", false},
+	} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/enabled=%v", test.name, enabled), func(t *testing.T) {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 1*time.Hour, time2.SystemClock)
+				require.NoError(t, err)
+				if enabled {
+					db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+				}
+
+				userKeys := []string{"k0", "k1", "k2"}
+				for i, key := range userKeys {
+					_, err := db.ProcessWrite(&proto.WriteRequest{
+						Puts: []*proto.PutRequest{{Key: key, Value: []byte("v")}},
+					}, int64(i), now(), NoOpCallback)
+					require.NoError(t, err)
+				}
+
+				res, err := db.ProcessWrite(&proto.WriteRequest{
+					DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
+				}, 3, now(), NoOpCallback)
+				if !enabled {
+					assert.ErrorContains(t, err, "failed to Deserialize storage entry")
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+
+					// Only the batch of the delete range itself is left
+					assert.EqualValues(t, 3, firstNotification(t, db))
+
+					for _, key := range userKeys {
+						gr, err := db.Get(&proto.GetRequest{Key: key})
+						require.NoError(t, err)
+						if test.coversUserKeys {
+							assert.Equal(t, proto.Status_KEY_NOT_FOUND, gr.Status, key)
+						} else {
+							assert.Equal(t, proto.Status_OK, gr.Status, key)
+						}
+					}
+
+					commitOffset, err := db.ReadCommitOffset()
+					require.NoError(t, err)
+					assert.EqualValues(t, 3, commitOffset)
+				}
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
+}
+
+// Each replica trims its notification records on its own schedule. A delete
+// range must not depend on which ones are still there: the batch feeds the DB
+// checksum, which must stay the same on every replica.
+func TestDB_DeleteRangeNotificationRecordsChecksum(t *testing.T) {
+	for _, test := range []struct {
+		keySorting proto.KeySortingType
+		start, end string
+	}{
+		{proto.KeySortingType_NATURAL, "a", "__oxia/zzz"},
+		{proto.KeySortingType_HIERARCHICAL, "__oxia/notifications/", "__oxia/notifications//"},
+	} {
+		t.Run(test.keySorting.String(), func(t *testing.T) {
+			replicas := make([]DB, 2)
+			factories := make([]kvstore.Factory, 2)
+			for i := range replicas {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 1*time.Hour, time2.SystemClock)
+				require.NoError(t, err)
+				db.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+				db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+				replicas[i], factories[i] = db, factory
+			}
+			apply := func(offset int64, req *proto.WriteRequest) {
+				for _, db := range replicas {
+					_, err := db.ProcessWrite(req.CloneVT(), offset, uint64(offset), NoOpCallback)
+					require.NoError(t, err)
+				}
+			}
+
+			for i := int64(0); i < 5; i++ {
+				apply(i, &proto.WriteRequest{
+					Puts: []*proto.PutRequest{{Key: fmt.Sprintf("k%d", i), Value: []byte("v")}},
+				})
+			}
+
+			// The second replica trims the oldest records, as its trimmer does,
+			// outside of the checksum
+			wb := replicas[1].RawKV().NewWriteBatch()
+			require.NoError(t, wb.DeleteRange(notificationKey(0), notificationKey(3)))
+			require.NoError(t, wb.Commit())
+			require.NoError(t, wb.Close())
+			require.Equal(t, replicas[0].ReadChecksum(), replicas[1].ReadChecksum())
+
+			apply(5, &proto.WriteRequest{
+				DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
+			})
+			assert.Equal(t, replicas[0].ReadChecksum(), replicas[1].ReadChecksum())
+
+			for i, db := range replicas {
+				// Only the batch of the delete range itself is left
+				assert.EqualValues(t, 5, firstNotification(t, db), "replica %d", i)
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factories[i].Close())
+			}
+		})
+	}
 }
 
 // A subscriber catching up from an old offset must receive the backlog in

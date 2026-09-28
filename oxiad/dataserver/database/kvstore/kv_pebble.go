@@ -609,6 +609,19 @@ func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator
 	return &PebbleIterator{b.p, pbit, internalRegionSkipper{}}, nil
 }
 
+func (b *PebbleBatch) OverlapsInternalKeys(lowerBound, upperBound string) bool {
+	// Same bounds as RangeScan: a nil upper bound is unbounded, and an empty
+	// one is the empty key
+	lb := b.p.keyEncoder.Encode(lowerBound)
+	ub := b.p.keyEncoder.Encode(upperBound)
+	if ub != nil && bytes.Compare(lb, ub) >= 0 {
+		// The range is empty
+		return false
+	}
+	start, end := b.p.keyEncoder.InternalKeyRange()
+	return (ub == nil || bytes.Compare(start, ub) < 0) && (end == nil || bytes.Compare(lb, end) < 0)
+}
+
 func (b *PebbleBatch) Close() error {
 	return b.b.Close()
 }

@@ -499,6 +499,7 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 		proto.Feature_FEATURE_DB_CHECKSUM,
 		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
 		proto.Feature_FEATURE_ORDERED_WRITES,
+		proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
 	} {
 		t.Run(enabledFeature.String(), func(t *testing.T) {
 			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))

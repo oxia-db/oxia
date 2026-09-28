@@ -169,6 +169,55 @@ func TestPebbleGetPastInternalRegionHierarchical(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// The overlap is decided from the bounds alone, read as the batch RangeScan
+// reads them.
+func TestPebbleBatchOverlapsInternalKeys(t *testing.T) {
+	// The end of a request that has none, as it is decoded. The natural encoding
+	// reads it as an unbounded upper bound, but only when the string has no
+	// data pointer: a "" literal can have one, and is then the empty key
+	var noEnd string
+
+	for _, test := range []struct {
+		lower, upper          string
+		natural, hierarchical bool
+	}{
+		{"a", "b", false, false},
+		{"a/b", "a/c", false, false},
+		{"b", "a", false, false},
+		{"a", "__oxia/zzz", true, true},
+		{"__oxia/zzz", "a", false, false},
+		{"__oxia/notifications/", "__oxia/notifications//", true, true},
+		{"__oxia/notifications/", "__oxia/notifications/~", true, true},
+		// The hierarchical encoding reads an empty upper bound as the smallest
+		// key
+		{"a", noEnd, true, false},
+		// Only the natural encoding can place regular keys around the internal
+		// region
+		{keyBeforeInternalRegion, keyAfterInternalRegion, true, false},
+		{keyAfterInternalRegion, keyAfterInternalRegion + "z", false, false},
+	} {
+		for _, sorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+			t.Run(fmt.Sprintf("%s/%q-%q", sorting, test.lower, test.upper), func(t *testing.T) {
+				factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+				assert.NoError(t, err)
+				kv, err := factory.NewKV(constant.DefaultNamespace, 1, sorting)
+				assert.NoError(t, err)
+
+				expected := test.natural
+				if sorting == proto.KeySortingType_HIERARCHICAL {
+					expected = test.hierarchical
+				}
+				wb := kv.NewWriteBatch()
+				assert.Equal(t, expected, wb.OverlapsInternalKeys(test.lower, test.upper))
+				assert.NoError(t, wb.Close())
+
+				assert.NoError(t, kv.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
+}
+
 // A ceiling lookup past the last user key used to step through the entire
 // internal-key backlog (pebble's SkipPoint is a filter, not a seek). The cost
 // must now be flat in the size of that backlog.

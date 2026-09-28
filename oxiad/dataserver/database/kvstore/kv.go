@@ -55,6 +55,12 @@ type WriteBatch interface {
 	KeyRangeScan(lowerBound, upperBound string) (KeyIterator, error)
 	RangeScan(lowerBound, upperBound string) (KeyValueIterator, error)
 
+	// OverlapsInternalKeys reports whether the range [lowerBound, upperBound),
+	// with the bounds read as RangeScan reads them, overlaps the region of the
+	// internal keys. The answer depends only on the bounds, not on the keys
+	// stored.
+	OverlapsInternalKeys(lowerBound, upperBound string) bool
+
 	// Count is the number of transactions that are currently in the batch
 	Count() int
 
