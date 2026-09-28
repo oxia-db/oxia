@@ -1537,6 +1537,100 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// A write request that can't be applied has no effect, like on the leader,
+// which answered the client with the error: the follower must apply its entry
+// and move on, instead of retrying it forever.
+func TestFollower_RejectedWrite(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		rejected *proto.WriteRequest
+	}{{
+		// Fewer deltas than the parts of the sequence
+		name: "missing-sequence-deltas",
+		rejected: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "s",
+			Value:            []byte("1"),
+			PartitionKey:     pb.String("s"),
+			SequenceKeyDelta: []uint64{1},
+		}}},
+	}, {
+		// Without an end, the range reaches the notification records
+		name: "delete-range-without-end",
+		rejected: &proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
+			StartInclusive: "a",
+		}}},
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			walFactory := newTestWalFactory(t)
+
+			// The database keeps the key sorting it was created with
+			db, err := database.NewDB(constant.DefaultNamespace, 0, kvFactory, proto.KeySortingType_NATURAL, time.Hour, time2.SystemClock)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, 0, walFactory, kvFactory, nil)
+			require.NoError(t, err)
+			_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+			require.NoError(t, err)
+			_, err = fc.Truncate(&proto.TruncateRequest{
+				Term:        1,
+				HeadEntryId: &proto.EntryId{Term: 1, Offset: wal.InvalidOffset},
+			})
+			require.NoError(t, err)
+
+			stream := rpc.NewMockServerReplicateStream()
+			go func() {
+				_ = fc.AppendEntries(stream)
+				stream.Cancel()
+			}()
+
+			stream.AddRequest(createWriteAppend(t, 1, 0, &proto.WriteRequest{Puts: []*proto.PutRequest{{
+				Key:   "a",
+				Value: []byte("a"),
+			}, {
+				Key:              "s",
+				Value:            []byte("0"),
+				PartitionKey:     pb.String("s"),
+				SequenceKeyDelta: []uint64{1, 1},
+			}}}, wal.InvalidOffset))
+			stream.AddRequest(createWriteAppend(t, 1, 1, test.rejected, 0))
+			stream.AddRequest(createWriteAppend(t, 1, 2, &proto.WriteRequest{Puts: []*proto.PutRequest{{
+				Key:   "b",
+				Value: []byte("b"),
+			}}}, 2))
+			for range 3 {
+				stream.GetResponse()
+			}
+
+			assert.Eventually(t, func() bool {
+				return fc.CommitOffset() == 2
+			}, 10*time.Second, 10*time.Millisecond)
+
+			it, err := fc.(*followerController).db.List(&proto.ListRequest{})
+			require.NoError(t, err)
+			var keys []string
+			for ; it.Valid(); it.Next() {
+				keys = append(keys, it.Key())
+			}
+			assert.NoError(t, it.Close())
+			assert.Equal(t, []string{"a", "b", "s-00000000000000000001-00000000000000000001"}, keys)
+
+			// The entry was applied: after a restart, the follower doesn't go
+			// through it again
+			assert.NoError(t, fc.Close())
+			fc, err = NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, 0, walFactory, kvFactory, nil)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, fc.CommitOffset())
+
+			assert.NoError(t, fc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
 func closeChanIsNotNil(fc FollowerController) func() bool {
 	return func() bool {
 		fci := fc.(*followerController)
@@ -1559,6 +1653,14 @@ func createAddRequest(t *testing.T, term int64, offset int64,
 			Value: []byte(v),
 		})
 	}
+
+	return createWriteAppend(t, term, offset, br, commitOffset)
+}
+
+func createWriteAppend(t *testing.T, term int64, offset int64,
+	br *proto.WriteRequest,
+	commitOffset int64) *proto.Append {
+	t.Helper()
 
 	entry, err := pb.Marshal(wrapInLogEntryValue(br))
 	assert.NoError(t, err)

@@ -463,6 +463,152 @@ func TestDBDeleteRangeErrorClosesIterator(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// A write request that can't be applied is rejected: it has no effect, and
+// only its offset is recorded, so that its log entry counts as applied. The
+// database must stay the same as on a replica that dropped the request without
+// recording it, like a leader that answered the client with the error.
+func TestDB_RejectedWrite(t *testing.T) {
+	setup := &proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:   "a",
+		Value: []byte("a"),
+	}, {
+		Key:              "s",
+		Value:            []byte("s"),
+		PartitionKey:     pb.String("s"),
+		SequenceKeyDelta: []uint64{1, 1},
+	}, {
+		Key:   "t-",
+		Value: []byte("t"),
+	}}}
+	next := &proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:   "b",
+		Value: []byte("b"),
+	}}}
+
+	for _, test := range []struct {
+		name     string
+		rejected *proto.WriteRequest
+		cause    error
+	}{{
+		name: "missing-sequence-deltas",
+		rejected: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "s",
+			Value:            []byte("s"),
+			PartitionKey:     pb.String("s"),
+			SequenceKeyDelta: []uint64{1},
+		}}},
+		cause: ErrMissingSequenceDeltas,
+	}, {
+		// The last key of the prefix is "t-"
+		name: "invalid-sequence-key",
+		rejected: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "t",
+			Value:            []byte("t"),
+			PartitionKey:     pb.String("t"),
+			SequenceKeyDelta: []uint64{1},
+		}}},
+		cause: ErrInvalidSequenceKey,
+	}, {
+		// Without an end, the range reaches the notification records
+		name: "delete-range-without-end",
+		rejected: &proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
+			StartInclusive: "a",
+		}}},
+		cause: ErrInvalidStorageEntry,
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			newDB := func() DB {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				t.Cleanup(func() { assert.NoError(t, factory.Close()) })
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+				require.NoError(t, err)
+				t.Cleanup(func() { assert.NoError(t, db.Close()) })
+				db.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+				return db
+			}
+			rejecting, dropping := newDB(), newDB()
+
+			for _, db := range []DB{rejecting, dropping} {
+				_, err := db.ProcessWrite(pb.Clone(setup).(*proto.WriteRequest), 0, 100, NoOpCallback)
+				require.NoError(t, err)
+			}
+			checksum := rejecting.ReadChecksum()
+
+			_, err := rejecting.ProcessWrite(test.rejected, 1, 101, NoOpCallback)
+			assert.ErrorIs(t, err, ErrWriteRejected)
+			assert.ErrorIs(t, err, test.cause)
+			commitOffset, err := rejecting.ReadCommitOffset()
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, commitOffset)
+			assert.Equal(t, checksum, rejecting.ReadChecksum())
+
+			for _, db := range []DB{rejecting, dropping} {
+				_, err := db.ProcessWrite(pb.Clone(next).(*proto.WriteRequest), 2, 102, NoOpCallback)
+				require.NoError(t, err)
+			}
+			assert.Equal(t, dropping.ReadChecksum(), rejecting.ReadChecksum())
+			assert.Equal(t, dumpKV(t, dropping), dumpKV(t, rejecting))
+		})
+	}
+}
+
+// A failure that is not caused by the request, e.g. a storage error, leaves
+// the request to be retried: nothing is recorded.
+func TestDB_FailedWriteIsNotRejected(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	require.NoError(t, err)
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:   "a",
+		Value: []byte("a"),
+	}}}, 0, 0, NoOpCallback)
+	require.NoError(t, err)
+
+	storageErr := errors.New("storage failure")
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:   "b",
+		Value: []byte("b"),
+	}}}, 1, 0, &failingCallback{err: storageErr})
+	assert.ErrorIs(t, err, storageErr)
+	assert.NotErrorIs(t, err, ErrWriteRejected)
+
+	commitOffset, err := db.ReadCommitOffset()
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, commitOffset)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+type failingCallback struct {
+	noopCallback
+	err error
+}
+
+func (c *failingCallback) OnPut(kvstore.WriteBatch, *Notifications, *proto.PutRequest, *proto.StorageEntry) (proto.Status, error) {
+	return proto.Status_OK, c.err
+}
+
+// dumpKV returns every key of the database, internal ones included, with its
+// raw value.
+func dumpKV(t *testing.T, db DB) map[string]string {
+	t.Helper()
+	it, err := db.RawKV().RangeScan("", "", kvstore.ShowInternalKeys)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, it.Close()) }()
+
+	kvs := map[string]string{}
+	for ; it.Valid(); it.Next() {
+		value, err := it.Value()
+		require.NoError(t, err)
+		kvs[it.Key()] = string(value)
+	}
+	return kvs
+}
+
 func TestDB_ReadCommitOffset(t *testing.T) {
 	offset := int64(13)
 

@@ -51,7 +51,14 @@ var (
 	ErrMissingSequenceDeltas = errors.New("oxia: sequential key operation missing some sequence deltas")
 	ErrSequenceDeltaIsZero   = errors.New("oxia: sequential key operation requires first delta do be > 0")
 	ErrSequenceOverflow      = errors.New("oxia: sequential key operation overflows the sequence")
+	ErrInvalidSequenceKey    = errors.New("oxia: sequential key operation found a key that is not part of the sequence")
+	ErrInvalidStorageEntry   = errors.New("failed to Deserialize storage entry")
 	ErrNotificationsDisabled = errors.New("oxia: notifications disabled")
+
+	// ErrWriteRejected marks a write request that ProcessWrite rejected
+	// because it can't be applied to the database: the request has no effect,
+	// and its log entry is applied.
+	ErrWriteRejected = errors.New("oxia: write request rejected")
 )
 
 const (
@@ -451,6 +458,9 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	defer batch.Close()
 
 	notifications, res, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp, updateOperationCallback)
+	if isRejectedWrite(err) {
+		return nil, d.rejectWrite(err, commitOffset, timestamp)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -493,6 +503,51 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	}
 
 	return res, nil
+}
+
+// isRejectedWrite reports whether err rejects a write request for its content,
+// or for the database state it applies to, rather than for a storage failure:
+// retrying the request can't succeed, and every replica applying it to the
+// same state rejects it the same way.
+func isRejectedWrite(err error) bool {
+	return errors.Is(err, ErrMissingPartitionKey) ||
+		errors.Is(err, ErrMissingSequenceDeltas) ||
+		errors.Is(err, ErrSequenceDeltaIsZero) ||
+		errors.Is(err, ErrSequenceOverflow) ||
+		errors.Is(err, ErrInvalidSequenceKey) ||
+		// A value that is not a storage entry, i.e. a notification record,
+		// e.g. in the range of a DeleteRange without an end, with the natural
+		// key sorting. Each replica trims those on its own: the request is
+		// only rejected where some are left.
+		errors.Is(err, ErrInvalidStorageEntry)
+}
+
+// rejectWrite records the write request at commitOffset as applied, with no
+// effect. The leader answers the client with the error and moves on: failing
+// the log entry instead would leave the followers retrying it forever, and no
+// other replica could become leader.
+//
+// Only the commit offset is written, and the checksum is left as it is: the
+// data, the notifications and the checksum stay the same as on a replica that
+// dropped the request without recording it, like the leaders of the previous
+// versions.
+func (d *db) rejectWrite(cause error, commitOffset int64, timestamp uint64) error {
+	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
+
+	if err := d.addASCIILong(commitOffsetKey, commitOffset, batch, timestamp); err != nil {
+		return err
+	}
+	if err := batch.Commit(); err != nil {
+		return err
+	}
+
+	d.log.Warn(
+		"Rejected write request, it has no effect",
+		slog.Int64("offset", commitOffset),
+		slog.Any("error", cause),
+	)
+	return fmt.Errorf("%w: %w", ErrWriteRejected, cause)
 }
 
 func (*db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
@@ -1109,7 +1164,7 @@ func checkExpectedVersionId(batch kvstore.WriteBatch, key string, expectedVersio
 // out and Value is dropped.
 func DeserializeMetadata(buf []byte, se *proto.StorageEntry) error {
 	if err := se.UnmarshalVTUnsafe(buf); err != nil {
-		return errors.Wrap(err, "failed to Deserialize storage entry")
+		return fmt.Errorf("%w: %w", ErrInvalidStorageEntry, err)
 	}
 
 	se.Value = nil
@@ -1130,7 +1185,7 @@ func DeserializeMetadata(buf []byte, se *proto.StorageEntry) error {
 
 func Deserialize(value []byte, se *proto.StorageEntry) error {
 	if err := se.UnmarshalVT(value); err != nil {
-		return errors.Wrap(err, "failed to Deserialize storage entry")
+		return fmt.Errorf("%w: %w", ErrInvalidStorageEntry, err)
 	}
 
 	return nil
