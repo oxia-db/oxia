@@ -581,6 +581,58 @@ func TestDB_DeleteRangeNotificationRecordsChecksum(t *testing.T) {
 	}
 }
 
+type deleteCountingCallback struct {
+	noopCallback
+	deletes int
+}
+
+func (c *deleteCountingCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry) error {
+	c.deletes++
+	return nil
+}
+
+// A range without an end reaches the internal keys with the natural key
+// sorting, but the range deletion can't delete it. It must be rejected before
+// the callbacks run: they would delete the secondary index entries and the
+// ephemeral records of keys that stay.
+func TestDB_DeleteRangeNotificationRecordsWithoutEnd(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}, {Key: "b", Value: []byte("v")}},
+	}, 0, now(), NoOpCallback)
+	require.NoError(t, err)
+
+	callback := &deleteCountingCallback{}
+	res, err := db.ProcessWrite(&proto.WriteRequest{
+		DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "a"}},
+	}, 1, now(), callback)
+	require.NoError(t, err)
+	assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.DeleteRanges[0].Status)
+	assert.Zero(t, callback.deletes)
+
+	for _, key := range []string{"a", "b"} {
+		gr, err := db.Get(&proto.GetRequest{Key: key})
+		require.NoError(t, err)
+		assert.Equal(t, proto.Status_OK, gr.Status, key)
+	}
+
+	// No notification for the rejected range
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	notifications, err := db.ReadNextNotifications(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, notifications, 1)
+	assert.Empty(t, notifications[0].Notifications)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
 // A subscriber catching up from an old offset must receive the backlog in
 // bounded chunks, not the entire retention window in one slice: the dispatch
 // loop in the leader controller resumes from the last delivered offset + 1.

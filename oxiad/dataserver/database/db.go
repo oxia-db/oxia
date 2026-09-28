@@ -958,10 +958,6 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 const DeleteRangeThreshold = 100
 
 func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, delReq *proto.DeleteRangeRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteRangeResponse, error) {
-	if notifications != nil {
-		notifications.DeletedRange(delReq.StartInclusive, delReq.EndExclusive)
-	}
-
 	// With the feature, the notification records are deleted without being
 	// read: they are not storage entries. Each replica trims them on its own
 	// schedule, so the ones in the range differ between replicas. A range that
@@ -970,6 +966,17 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 	// DB checksum, differ between replicas.
 	reachesInternalKeys := d.IsFeatureEnabled(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS) &&
 		batch.OverlapsInternalKeys(delReq.StartInclusive, delReq.EndExclusive)
+	if reachesInternalKeys && delReq.EndExclusive == "" {
+		// The range deletion can't delete a range without an end: Pebble reads
+		// the missing end as the empty key, and deletes nothing. The callbacks
+		// run on the keys of the scan would still delete their secondary index
+		// entries and ephemeral records.
+		return &proto.DeleteRangeResponse{Status: proto.Status_INVALID_ARGUMENT}, nil
+	}
+
+	if notifications != nil {
+		notifications.DeletedRange(delReq.StartInclusive, delReq.EndExclusive)
+	}
 
 	it, err := batch.RangeScan(delReq.StartInclusive, delReq.EndExclusive)
 	if err != nil {
@@ -1007,15 +1014,12 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		return nil, errors.Wrap(err, "oxia db: failed to close iterator on delete range")
 	}
 	if reachesInternalKeys || validKeysNum > DeleteRangeThreshold {
-		if err := batch.DeleteRange(delReq.StartInclusive, delReq.EndExclusive); err != nil {
-			return nil, errors.Wrap(err, "oxia db: failed to delete range")
-		}
+		err = batch.DeleteRange(delReq.StartInclusive, delReq.EndExclusive)
 	} else {
-		for _, key := range validKeys {
-			if err := batch.Delete(key); err != nil {
-				return nil, errors.Wrap(err, "oxia db: failed to delete range")
-			}
-		}
+		err = deleteKeys(batch, validKeys)
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "oxia db: failed to delete range")
 	}
 
 	d.log.Debug(
@@ -1024,6 +1028,15 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		slog.String("key-end", delReq.EndExclusive),
 	)
 	return &proto.DeleteRangeResponse{Status: proto.Status_OK}, nil
+}
+
+func deleteKeys(batch kvstore.WriteBatch, keys []string) error {
+	for _, key := range keys {
+		if err := batch.Delete(key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, error) {

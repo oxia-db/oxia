@@ -46,7 +46,8 @@ const (
 	// Apply the requests of a WriteRequest in op_index order
 	Feature_FEATURE_ORDERED_WRITES Feature = 3
 	// A delete range deletes the notification records it covers, which are not
-	// storage entries, instead of failing the whole entry
+	// storage entries, instead of failing the whole entry. One that reaches the
+	// internal keys without an end key gets the INVALID_ARGUMENT status
 	Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS Feature = 5
 )
 
