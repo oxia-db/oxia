@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -311,14 +312,20 @@ func (sm *sessionManager) Initialize() error {
 
 func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, error) {
 	keys, err := sm.leaderController.ListBlock(context.Background(), &proto.ListRequest{
-		Shard:               &sm.shardId,
-		StartInclusive:      sessionKeyPrefix + "/",
-		EndExclusive:        sessionKeyPrefix + "//",
+		Shard:          &sm.shardId,
+		StartInclusive: sessionKeyPrefix + "/",
+		// Not "__oxia/session//": with the natural key sorting, '/' sorts
+		// before the hex digits of the session ids
+		EndExclusive:        sessionKeyPrefix + "/~",
 		IncludeInternalKeys: true,
 	})
 	if err != nil {
 		return nil, err
 	}
+
+	// With the natural key sorting, the shadow keys of the ephemeral records,
+	// "__oxia/session/<id>/<key>", are in the range too
+	keys = slices.DeleteFunc(keys, func(key string) bool { return !IsSessionKey(key) })
 
 	sm.log.Info("All sessions", slog.Int("count", len(keys)))
 
