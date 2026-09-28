@@ -122,7 +122,7 @@ func (p *PebbleFactory) NewKV(namespace string, shardId int64, keySorting proto.
 }
 
 func (p *PebbleFactory) NewSnapshotLoader(namespace string, shardId int64) (SnapshotLoader, error) {
-	return newPebbleSnapshotLoader(p, namespace, shardId)
+	return newPebbleSnapshotLoader(p, vfs.Default, namespace, shardId)
 }
 
 func (p *PebbleFactory) getKVPath(namespace string, shard int64) string {
@@ -773,16 +773,21 @@ func (p *PebbleReverseIterator) Value() ([]byte, error) {
 	return res, err
 }
 
+// pebbleSnapshotLoader writes the snapshot files through fs, which is
+// vfs.Default in production. It is a vfs.FS rather than plain os calls so
+// that the tests can install a snapshot on vfs.NewCrashableMem, which
+// simulates a machine crash by keeping only what was synced.
 type pebbleSnapshotLoader struct {
 	pf        *PebbleFactory
 	namespace string
 	shard     int64
+	fs        vfs.FS
 	dbPath    string
 	complete  bool
-	file      *os.File
+	file      vfs.File
 }
 
-func newPebbleSnapshotLoader(pf *PebbleFactory, namespace string, shard int64) (SnapshotLoader, error) {
+func newPebbleSnapshotLoader(pf *PebbleFactory, fs vfs.FS, namespace string, shard int64) (SnapshotLoader, error) {
 	if err := validation.ValidateNamespace(namespace); err != nil {
 		return nil, err
 	}
@@ -791,14 +796,15 @@ func newPebbleSnapshotLoader(pf *PebbleFactory, namespace string, shard int64) (
 		pf:        pf,
 		namespace: namespace,
 		shard:     shard,
+		fs:        fs,
 		dbPath:    pf.getKVPath(namespace, shard),
 	}
 
-	if err := os.RemoveAll(sl.dbPath); err != nil {
+	if err := fs.RemoveAll(sl.dbPath); err != nil {
 		return nil, errors.Wrap(err, "failed to remove existing database")
 	}
 
-	if err := os.MkdirAll(sl.dbPath, 0755); err != nil {
+	if err := fs.MkdirAll(sl.dbPath, 0755); err != nil {
 		return nil, errors.Wrap(err, "failed to create database dir")
 	}
 
@@ -811,7 +817,7 @@ func (sl *pebbleSnapshotLoader) Close() error {
 	}
 
 	// If we failed to successfully load, remove all intermediate files
-	return os.RemoveAll(sl.dbPath)
+	return sl.fs.RemoveAll(sl.dbPath)
 }
 
 func (sl *pebbleSnapshotLoader) AddChunk(fileName string, chunkIndex int32, chunkCount int32, content []byte) error {
@@ -827,10 +833,14 @@ func (sl *pebbleSnapshotLoader) AddChunk(fileName string, chunkIndex int32, chun
 		if fileName != filepath.Base(fileName) || fileName == "." || !filepath.IsLocal(fileName) {
 			return errors.Errorf("invalid snapshot chunk file name: %q", fileName)
 		}
-		sl.file, err = os.OpenFile(filepath.Join(sl.dbPath, fileName), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		sl.file, err = sl.fs.Create(filepath.Join(sl.dbPath, fileName), vfs.WriteCategoryUnspecified)
 		if err != nil {
 			return err
 		}
+		// Closing the file syncs it. Once the follower acks the snapshot, the
+		// leader only sends the entries that follow it: the snapshot must
+		// survive a machine crash
+		sl.file = vfs.NewSyncingFile(sl.file, vfs.SyncingFileOptions{})
 	}
 	for len(content) > 0 {
 		w, err := sl.file.Write(content)
@@ -850,8 +860,25 @@ func (sl *pebbleSnapshotLoader) AddChunk(fileName string, chunkIndex int32, chun
 	return nil
 }
 
-func (sl *pebbleSnapshotLoader) Complete() {
+func (sl *pebbleSnapshotLoader) Complete() error {
+	// The files are synced already. Sync the directory entries too: of the
+	// files, and of the database directory, which was re-created
+	if err := syncDir(sl.fs, sl.dbPath); err != nil {
+		return err
+	}
+	if err := syncDir(sl.fs, filepath.Dir(sl.dbPath)); err != nil {
+		return err
+	}
 	sl.complete = true
+	return nil
+}
+
+func syncDir(fs vfs.FS, path string) error {
+	dir, err := fs.OpenDir(path)
+	if err != nil {
+		return err
+	}
+	return multierr.Combine(dir.Sync(), dir.Close())
 }
 
 // newIterOptions builds the Pebble iterator options for a scan that may have to

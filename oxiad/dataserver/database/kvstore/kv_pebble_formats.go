@@ -203,7 +203,13 @@ func createMarker(dbPath string, newEncodingFormat string) error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(dbPath, markerFileName), []byte(newEncodingFormat), 0600)
+	markerPath := filepath.Join(dbPath, markerFileName)
+	// Leave an up-to-date marker alone: rewriting it truncates it, and a machine
+	// crash could then leave it empty, as the rewrite isn't synced
+	if markerData, err := os.ReadFile(markerPath); err == nil && string(markerData) == newEncodingFormat {
+		return nil
+	}
+	return os.WriteFile(markerPath, []byte(newEncodingFormat), 0600)
 }
 
 func (p *pebbleDbConversion) convertDb(

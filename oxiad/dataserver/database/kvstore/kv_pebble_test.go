@@ -18,10 +18,14 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -659,7 +663,7 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 		assert.NoError(t, loader.AddChunk(f.Name(), f.Index(), f.TotalCount(), f.Content()))
 	}
 
-	loader.Complete()
+	assert.NoError(t, loader.Complete())
 	assert.NoError(t, loader.Close())
 	assert.NoError(t, snapshot.Close())
 
@@ -685,6 +689,92 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 
 	assert.NoError(t, kv2.Close())
 	assert.NoError(t, factory2.Close())
+}
+
+// The leader never sends the snapshot again once the follower acked it, so the
+// installed database must survive a machine crash, which loses whatever was not
+// synced to disk.
+func TestPebbleSnapshotLoader_SurvivesMachineCrash(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// The follower opens the installed database before acking the snapshot
+		openBeforeCrash bool
+	}{
+		{"crash-after-install", false},
+		{"crash-after-open", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+			require.NoError(t, err)
+
+			wb := kv.NewWriteBatch()
+			for i := 0; i < 100; i++ {
+				require.NoError(t, wb.Put(fmt.Sprintf("key-%d", i), []byte(fmt.Sprintf("value-%d", i))))
+			}
+			require.NoError(t, wb.Commit())
+			require.NoError(t, wb.Close())
+
+			snapshot, err := kv.Snapshot()
+			require.NoError(t, err)
+
+			fs := vfs.NewCrashableMem()
+			pf := &PebbleFactory{dataDir: "/data"}
+			dbPath := pf.getKVPath(constant.DefaultNamespace, 1)
+			openDB := func(fs vfs.FS) (*pebble.DB, error) {
+				return pebble.Open(dbPath, &pebble.Options{
+					FS:                 fs,
+					DisableWAL:         true,
+					Logger:             &pebbleLogger{slog.Default()},
+					FormatMajorVersion: pebble.FormatVirtualSSTables,
+				})
+			}
+
+			// The follower already has a database, which the snapshot replaces
+			db, err := openDB(fs)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			loader, err := newPebbleSnapshotLoader(pf, fs, constant.DefaultNamespace, 1)
+			require.NoError(t, err)
+			for ; snapshot.Valid(); snapshot.Next() {
+				chunk, err := snapshot.Chunk()
+				require.NoError(t, err)
+				require.NoError(t, loader.AddChunk(chunk.Name(), chunk.Index(), chunk.TotalCount(), chunk.Content()))
+			}
+			require.NoError(t, loader.Complete())
+			require.NoError(t, loader.Close())
+			require.NoError(t, snapshot.Close())
+			require.NoError(t, kv.Close())
+			require.NoError(t, factory.Close())
+
+			if test.openBeforeCrash {
+				db, err = openDB(fs)
+				require.NoError(t, err)
+				defer db.Close()
+			}
+
+			crashed := fs.CrashClone(vfs.CrashCloneCfg{})
+
+			db, err = openDB(crashed)
+			require.NoError(t, err)
+			defer db.Close()
+			for i := 0; i < 100; i++ {
+				value, closer, err := db.Get(compare.EncoderNatural.Encode(fmt.Sprintf("key-%d", i)))
+				require.NoError(t, err)
+				assert.Equal(t, fmt.Sprintf("value-%d", i), string(value))
+				require.NoError(t, closer.Close())
+			}
+
+			marker, err := crashed.Open(filepath.Join(dbPath, markerFileName))
+			require.NoError(t, err)
+			defer marker.Close()
+			encoding, err := io.ReadAll(marker)
+			require.NoError(t, err)
+			assert.Equal(t, compare.EncoderNatural.Name(), string(encoding))
+		})
+	}
 }
 
 func TestPebbleSnapshotLoader_RejectsPathTraversal(t *testing.T) {
