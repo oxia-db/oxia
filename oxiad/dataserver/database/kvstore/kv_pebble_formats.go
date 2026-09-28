@@ -304,6 +304,9 @@ func copyData(from *pebble.DB, fromEncoder compare.Encoder,
 	it.First()
 
 	wb := to.NewBatch()
+	// Closes whichever batch is current when returning; full batches are
+	// closed when they are replaced
+	defer func() { _ = wb.Close() }()
 	batchCount := 0
 	for it.Valid() {
 		key := fromEncoder.Decode(it.Key())
@@ -333,15 +336,11 @@ func copyData(from *pebble.DB, fromEncoder compare.Encoder,
 		it.Next()
 	}
 
-	// Close the last batch
+	// Commit the last batch
 	if batchCount > 0 {
 		if err := wb.Commit(pebble.NoSync); err != nil {
 			return err
 		}
-	}
-
-	if err := wb.Close(); err != nil {
-		return err
 	}
 
 	// Ensure everything is flushed to disk
