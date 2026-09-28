@@ -286,7 +286,8 @@ func TestPebbleDbConversionReadFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	// Flush each key into its own sstable
-	for _, key := range []string{"/key/a", "/key/b"} {
+	keys := []string{"/key/a", "/key/b"}
+	for _, key := range keys {
 		wb := oldKV.NewWriteBatch()
 		assert.NoError(t, wb.Put(key, []byte("value")))
 		assert.NoError(t, wb.Commit())
@@ -303,9 +304,6 @@ func TestPebbleDbConversionReadFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ssts, 2)
 	require.NoError(t, os.Chmod(ssts[1], 0))
-	// Pebble retries loading the stats of an unreadable sstable in a loop, for
-	// as long as the db stays open
-	t.Cleanup(func() { _ = os.Chmod(ssts[1], 0600) })
 	if f, err := os.Open(ssts[1]); err == nil {
 		assert.NoError(t, f.Close())
 		t.Skip("the sstable is still readable, as when running as root")
@@ -314,13 +312,22 @@ func TestPebbleDbConversionReadFailure(t *testing.T) {
 	_, err = kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
 	assert.ErrorIs(t, err, os.ErrPermission)
 
-	// The old db is left in place
-	markerData, err := os.ReadFile(filepath.Join(dbPath, markerFileName))
-	assert.NoError(t, err)
-	assert.Equal(t, compare.EncoderNatural.Name(), string(markerData))
-	for _, sst := range ssts {
-		assert.FileExists(t, sst)
+	// The failed conversion left the old db in place, so once the sstable is
+	// readable again the conversion copies both keys
+	require.NoError(t, os.Chmod(ssts[1], 0600))
+	kv, err := kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	require.NoError(t, err)
+
+	it, err := kv.KeyRangeScan("/", "", NoInternalKeys)
+	require.NoError(t, err)
+	var scanKeys []string
+	for it.Valid() {
+		scanKeys = append(scanKeys, it.Key())
+		it.Next()
 	}
+	assert.Equal(t, keys, scanKeys)
+	assert.NoError(t, it.Close())
+	assert.NoError(t, kv.Close())
 }
 
 func TestCreateMarkerLeavesUpToDateMarkerAlone(t *testing.T) {
