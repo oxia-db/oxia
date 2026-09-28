@@ -443,6 +443,14 @@ func (p *Pebble) getCeiling(key []byte, itOpts IteratorOpts) (returnedKey string
 }
 
 func (p *Pebble) getLower(key []byte, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
+	if len(key) == 0 {
+		// Nothing sorts below the empty key. It can't be the upper bound either:
+		// Pebble takes a nil bound as no bound, and the natural encoder returns
+		// nil for a "" with no data pointer. Pebble also copies an empty bound
+		// to nil when the buffer it copies the bounds into is not allocated yet.
+		return "", nil, nil, pebble.ErrNotFound
+	}
+
 	it, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, nil, key))
 	if err != nil {
 		return "", nil, nil, err
@@ -893,6 +901,12 @@ func syncDir(fs vfs.FS, path string) error {
 // pruned outright with an upper bound, and otherwise internalRegionSkipper
 // jumps over it with a single seek.
 func newIterOptions(enc compare.Encoder, itOpts IteratorOpts, lowerBound, upperBound []byte) *pebble.IterOptions {
+	if len(lowerBound) == 0 {
+		// Nothing sorts below the empty key, so as a lower bound it is no bound.
+		// Pass it as nil: Pebble's seek to an empty key panics in its invariants
+		// builds, which the race detector enables.
+		lowerBound = nil
+	}
 	opts := &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound}
 	if itOpts.IncludeInternalKeys {
 		return opts
