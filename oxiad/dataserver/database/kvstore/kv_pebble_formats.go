@@ -24,6 +24,7 @@ import (
 	"github.com/cockroachdb/pebble/v2/bloom"
 	"github.com/cockroachdb/pebble/v2/sstable"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/proto"
 
@@ -222,6 +223,8 @@ func (p *pebbleDbConversion) convertDb(
 		return errors.Wrap(err, "failed to open old database")
 	}
 
+	// Close the databases on any failure from here on: a leaked one would keep
+	// its Pebble lock and fail every later open of the shard
 	oldDbSizeMB := float64(oldDb.Metrics().DiskSpaceUsage()) / 1024 / 1024
 
 	p.log.Info("Starting conversion of db",
@@ -235,25 +238,25 @@ func (p *pebbleDbConversion) convertDb(
 	if pathExists(newDbPath) {
 		p.log.Info("Removing previous temp conversion db", slog.String("path", newDbPath))
 		if err := os.RemoveAll(newDbPath); err != nil {
-			return err
+			return multierr.Append(err, oldDb.Close())
 		}
 	}
 
 	if err := createMarker(newDbPath, newEncoder.Name()); err != nil {
-		return err
+		return multierr.Append(err, oldDb.Close())
 	}
 
 	newDb, err := pebble.Open(newDbPath, newConfig)
 	if err != nil {
-		return errors.Wrap(err, "failed to open new database")
+		return multierr.Append(errors.Wrap(err, "failed to open new database"), oldDb.Close())
 	}
 
 	if err := copyData(oldDb, oldEncoder, newDb, newEncoder); err != nil {
-		return errors.Wrap(err, "failed to copy db data")
+		return multierr.Combine(errors.Wrap(err, "failed to copy db data"), oldDb.Close(), newDb.Close())
 	}
 
 	if err := oldDb.Close(); err != nil {
-		return errors.Wrap(err, "failed to close old database")
+		return multierr.Append(errors.Wrap(err, "failed to close old database"), newDb.Close())
 	}
 
 	if err := newDb.Close(); err != nil {
