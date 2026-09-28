@@ -426,6 +426,43 @@ func TestDBDeleteRange(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// A delete range that fails to apply must close its iterator: a leaked one
+// keeps the sstables it read referenced, and closing the DB then panics.
+func TestDBDeleteRangeErrorClosesIterator(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	require.NoError(t, err)
+
+	// UpdateTerm flushes, so the delete range scan reads from an sstable
+	require.NoError(t, db.UpdateTerm(1, TermOptions{NotificationsEnabled: true}))
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{
+			Key:   "a",
+			Value: []byte("a"),
+		}, {
+			Key:   "b",
+			Value: []byte("b"),
+		}},
+	}, 0, 0, NoOpCallback)
+	require.NoError(t, err)
+
+	// Without an end, the range reaches the internal keys, and the notifications
+	// value is not a storage entry
+	_, err = db.ProcessWrite(&proto.WriteRequest{
+		DeleteRanges: []*proto.DeleteRangeRequest{{
+			StartInclusive: "a",
+		}},
+	}, 1, 0, NoOpCallback)
+	assert.ErrorContains(t, err, "failed to Deserialize storage entry")
+
+	assert.NotPanics(t, func() {
+		assert.NoError(t, db.Close())
+	})
+	assert.NoError(t, factory.Close())
+}
+
 func TestDB_ReadCommitOffset(t *testing.T) {
 	offset := int64(13)
 
