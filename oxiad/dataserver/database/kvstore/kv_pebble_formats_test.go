@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -240,6 +242,41 @@ func TestPebbleDbCleanupBackupAfterCrashDuringFinalCleanup(t *testing.T) {
 	// check if backup still exist
 	path := makeDbBackupPath(dbPath)
 	assert.False(t, pathExists(path))
+}
+
+func TestPebbleDbConversionFailureClosesDbs(t *testing.T) {
+	kvFactory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	oldKV, err := kvFactory.NewKV("default", 0, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+
+	wb := oldKV.NewWriteBatch()
+	assert.NoError(t, wb.Put("/key/a", []byte("value")))
+	assert.NoError(t, wb.Commit())
+	assert.NoError(t, wb.Close())
+	dbPath := oldKV.(*Pebble).dbPath
+	assert.NoError(t, oldKV.Close())
+
+	// Hold the lock of the temp conversion db, so the conversion fails to open
+	// it after opening the old db
+	newDbPath := makeSwapTmpDbPath(dbPath, compare.EncoderHierarchical)
+	require.NoError(t, os.MkdirAll(newDbPath, 0755))
+	lock, err := pebble.LockDirectory(newDbPath, vfs.Default)
+	require.NoError(t, err)
+	_, err = kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	assert.ErrorContains(t, err, "failed to open new database")
+	assert.NoError(t, lock.Close())
+
+	// The failed conversion must have closed the old db, or its lock would
+	// fail this retry
+	kv, err := kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	require.NoError(t, err)
+
+	_, value, closer, err := kv.Get("/key/a", ComparisonEqual, NoInternalKeys)
+	assert.NoError(t, err)
+	assert.Equal(t, []byte("value"), value)
+	assert.NoError(t, closer.Close())
+	assert.NoError(t, kv.Close())
 }
 
 func TestPebbleDbConversionReadFailure(t *testing.T) {
