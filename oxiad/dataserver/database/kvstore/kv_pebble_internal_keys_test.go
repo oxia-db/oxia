@@ -185,6 +185,9 @@ func TestPebbleBatchOverlapsInternalKeys(t *testing.T) {
 		{"b", "a", false, false},
 		{"a", "__oxia/zzz", true, true},
 		{"__oxia/zzz", "a", false, false},
+		// Every internal key sorts at or after their prefix
+		{"a", "__oxia/", false, false},
+		{"a", "__oxia/a", true, true},
 		{"__oxia/notifications/", "__oxia/notifications//", true, true},
 		{"__oxia/notifications/", "__oxia/notifications/~", true, true},
 		// The hierarchical encoding reads an empty upper bound as the smallest

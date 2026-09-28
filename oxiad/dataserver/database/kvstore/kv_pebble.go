@@ -40,6 +40,7 @@ import (
 	"github.com/oxia-db/oxia/common/cache"
 
 	"github.com/oxia-db/oxia/common/compare"
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/validation"
 )
@@ -621,7 +622,11 @@ func (b *PebbleBatch) OverlapsInternalKeys(lowerBound, upperBound string) bool {
 		// The range is empty
 		return false
 	}
-	start, end := b.p.keyEncoder.InternalKeyRange()
+	// Every internal key sorts at or after their prefix, with either encoder,
+	// while the region of the hierarchical one starts lower: a range that ends
+	// at the prefix covers no internal key
+	start := b.p.keyEncoder.Encode(constant.InternalKeyPrefix)
+	_, end := b.p.keyEncoder.InternalKeyRange()
 	return (ub == nil || bytes.Compare(start, ub) < 0) && (end == nil || bytes.Compare(lb, end) < 0)
 }
 
