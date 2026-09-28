@@ -765,24 +765,18 @@ func TestSessionManager_CloseDeletesEphemeralRecords(t *testing.T) {
 				_, err = sManager.CloseSession(&proto.CloseSessionRequest{Shard: shardId, SessionId: closedID})
 				assert.NoError(t, err)
 
-				exists := func(key string) bool {
-					t.Helper()
-					resp, err := lc.db.Get(&proto.GetRequest{Key: key})
-					assert.NoError(t, err)
-					return resp.Status != proto.Status_KEY_NOT_FOUND
-				}
 				for _, key := range ephemeralKeysBelowSlash {
-					assert.False(t, exists(key), key)
-					assert.False(t, exists(ShadowKey(SessionId(closedID), key)), key)
+					assert.False(t, keyExists(t, lc, key), key)
+					assert.False(t, keyExists(t, lc, ShadowKey(SessionId(closedID), key)), key)
 				}
 				leftBehind := keySorting == proto.KeySortingType_NATURAL && !featureEnabled
 				for _, key := range ephemeralKeysAboveSlash {
-					assert.Equal(t, leftBehind, exists(key), key)
-					assert.Equal(t, leftBehind, exists(ShadowKey(SessionId(closedID), key)), key)
+					assert.Equal(t, leftBehind, keyExists(t, lc, key), key)
+					assert.Equal(t, leftBehind, keyExists(t, lc, ShadowKey(SessionId(closedID), key)), key)
 				}
-				assert.True(t, exists("other"))
-				assert.True(t, exists(ShadowKey(SessionId(otherID), "other")))
-				assert.True(t, exists("regular"))
+				assert.True(t, keyExists(t, lc, "other"))
+				assert.True(t, keyExists(t, lc, ShadowKey(SessionId(otherID), "other")))
+				assert.True(t, keyExists(t, lc, "regular"))
 
 				assert.NoError(t, lc.Close())
 				assert.NoError(t, kvf.Close())
@@ -790,6 +784,75 @@ func TestSessionManager_CloseDeletesEphemeralRecords(t *testing.T) {
 			})
 		}
 	}
+}
+
+// A new leader deletes the ephemeral records whose session is gone: before the
+// feature, a session end left them behind on a natural-sorted shard.
+func TestSessionManager_DeleteOrphanedEphemeralRecords(t *testing.T) {
+	shardId := int64(1)
+	options := &proto.NewTermOptions{KeySorting: proto.KeySortingType_NATURAL, EnableNotifications: true}
+	kvf, walf, sManager, lc := createSessionManagerWithOptions(t, options)
+
+	var sessionIDs []int64
+	for i := 0; i < 2; i++ {
+		createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
+			Shard:            shardId,
+			SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+		})
+		assert.NoError(t, err)
+		sessionIDs = append(sessionIDs, createResp.SessionId)
+	}
+	closedID, liveID := sessionIDs[0], sessionIDs[1]
+
+	write := func(puts ...*proto.PutRequest) {
+		t.Helper()
+		_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shardId, Puts: puts})
+		assert.NoError(t, err)
+	}
+	puts := []*proto.PutRequest{{Key: "live", Value: []byte("live"), SessionId: &liveID}}
+	for _, key := range slices.Concat(ephemeralKeysBelowSlash, ephemeralKeysAboveSlash) {
+		puts = append(puts, &proto.PutRequest{Key: key, Value: []byte(key), SessionId: &closedID})
+	}
+	write(puts...)
+
+	_, err := sManager.CloseSession(&proto.CloseSessionRequest{Shard: shardId, SessionId: closedID})
+	assert.NoError(t, err)
+	for _, key := range ephemeralKeysAboveSlash {
+		assert.True(t, keyExists(t, lc, key), key)
+	}
+
+	// A record left behind can still be overwritten, and then it's no longer
+	// the ephemeral record of the session
+	write(&proto.PutRequest{Key: "a", Value: []byte("regular")},
+		&proto.PutRequest{Key: "A", Value: []byte("live"), SessionId: &liveID})
+	// A shadow key doesn't get a record deleted if the record isn't the session's
+	write(&proto.PutRequest{Key: ShadowKey(SessionId(closedID), "not-ephemeral"), Value: []byte{}},
+		&proto.PutRequest{Key: "not-ephemeral", Value: []byte("regular")})
+
+	lc = reopenLeaderController(t, kvf, walf, lc, options)
+
+	orphaned := slices.DeleteFunc(slices.Clone(ephemeralKeysAboveSlash), func(key string) bool {
+		return key == "a" || key == "A"
+	})
+	assert.Eventually(t, func() bool {
+		for _, key := range orphaned {
+			if keyExists(t, lc, key) || keyExists(t, lc, ShadowKey(SessionId(closedID), key)) {
+				return false
+			}
+		}
+		return true
+	}, 10*time.Second, 50*time.Millisecond)
+
+	assert.Equal(t, "regular", getData(t, lc, "a"))
+	assert.Equal(t, "regular", getData(t, lc, "not-ephemeral"))
+	assert.Equal(t, "live", getData(t, lc, "A"))
+	assert.True(t, keyExists(t, lc, ShadowKey(SessionId(liveID), "A")))
+	assert.Equal(t, "live", getData(t, lc, "live"))
+	assert.True(t, keyExists(t, lc, ShadowKey(SessionId(liveID), "live")))
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
 }
 
 func getData(t *testing.T, lc *leaderController, key string) string {
@@ -804,6 +867,14 @@ func getData(t *testing.T, lc *leaderController, key string) string {
 		return string(resp.Value)
 	}
 	return ""
+}
+
+func keyExists(t *testing.T, lc *leaderController, key string) bool {
+	t.Helper()
+
+	resp, err := lc.db.Get(&proto.GetRequest{Key: key})
+	assert.NoError(t, err)
+	return resp.Status != proto.Status_KEY_NOT_FOUND
 }
 
 func keepAlive(t *testing.T, sManager *sessionManager, sessionId int64, err error, sleepTime time.Duration, heartbeatCount int) {

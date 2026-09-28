@@ -21,7 +21,6 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -100,7 +99,9 @@ type SessionManager interface {
 	CreateSession(request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error)
 	KeepAlive(sessionId int64) error
 	CloseSession(request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
-	Initialize() error
+	// Initialize restores the sessions on a new leader. It returns the deletes
+	// of the ephemeral records whose session is gone, for the leader to propose
+	Initialize() ([]*proto.DeleteRequest, error)
 }
 
 var _ SessionManager = (*sessionManager)(nil)
@@ -312,20 +313,20 @@ func (sm *sessionManager) CloseSession(request *proto.CloseSessionRequest) (*pro
 	return &proto.CloseSessionResponse{}, nil
 }
 
-func (sm *sessionManager) Initialize() error {
+func (sm *sessionManager) Initialize() ([]*proto.DeleteRequest, error) {
 	sm.Lock()
 	defer sm.Unlock()
-	sessions, err := sm.readSessions()
+	sessions, orphanedEphemerals, err := sm.readSessions()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for sessionId, sessionMetadata := range sessions {
 		startSession(sessionId, sessionMetadata, sm)
 	}
-	return nil
+	return orphanedEphemerals, nil
 }
 
-func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, error) {
+func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, []*proto.DeleteRequest, error) {
 	keys, err := sm.leaderController.ListBlock(context.Background(), &proto.ListRequest{
 		Shard:          &sm.shardId,
 		StartInclusive: sessionKeyPrefix + "/",
@@ -335,24 +336,31 @@ func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, 
 		IncludeInternalKeys: true,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// With the natural key sorting, the shadow keys of the ephemeral records,
 	// "__oxia/session/<id>/<key>", are in the range too
-	keys = slices.DeleteFunc(keys, func(key string) bool { return !IsSessionKey(key) })
+	var sessionKeys, shadowKeys []string
+	for _, key := range keys {
+		if IsSessionKey(key) {
+			sessionKeys = append(sessionKeys, key)
+		} else {
+			shadowKeys = append(shadowKeys, key)
+		}
+	}
 
-	sm.log.Info("All sessions", slog.Int("count", len(keys)))
+	sm.log.Info("All sessions", slog.Int("count", len(sessionKeys)))
 
 	result := map[SessionId]*proto.SessionMetadata{}
 
-	for _, key := range keys {
+	for _, key := range sessionKeys {
 		metaEntry, err := sm.leaderController.db.Get(&proto.GetRequest{
 			Key:          key,
 			IncludeValue: true,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		if metaEntry.Status != proto.Status_OK {
@@ -388,7 +396,55 @@ func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, 
 		result[sessionId] = &metadata
 	}
 
-	return result, nil
+	orphanedEphemerals, err := sm.readOrphanedEphemerals(sessionKeys, shadowKeys)
+	if err != nil {
+		return nil, nil, err
+	}
+	return result, orphanedEphemerals, nil
+}
+
+// readOrphanedEphemerals returns the deletes of the ephemeral records whose
+// session is gone. Before FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING, a session
+// end left most of its records behind on a natural-sorted shard, and nothing
+// else deletes them. They are found through their shadow keys, which only the
+// natural sorting places among the session keys: with the hierarchical
+// sorting, a session end always deleted all of them.
+func (sm *sessionManager) readOrphanedEphemerals(sessionKeys []string, shadowKeys []string) ([]*proto.DeleteRequest, error) {
+	sessions := make(map[string]struct{}, len(sessionKeys))
+	for _, key := range sessionKeys {
+		sessions[key] = struct{}{}
+	}
+
+	var deletes []*proto.DeleteRequest
+	for _, shadowKey := range shadowKeys {
+		// "<session key>/<escaped key>"
+		if len(shadowKey) <= sessionKeyLength || shadowKey[sessionKeyLength] != '/' {
+			continue
+		}
+		sessionKey := shadowKey[:sessionKeyLength]
+		if _, found := sessions[sessionKey]; found {
+			continue
+		}
+		sessionId, err := KeyToId(sessionKey)
+		if err != nil {
+			continue
+		}
+		key, err := url.PathUnescape(shadowKey[sessionKeyLength+1:])
+		if err != nil || key == "" {
+			continue
+		}
+
+		entry, err := sm.leaderController.db.Get(&proto.GetRequest{Key: key})
+		if err != nil {
+			return nil, err
+		}
+		// Only delete the record if it exists and belongs to the session
+		if entry.Status != proto.Status_OK || entry.Version.SessionId == nil || *entry.Version.SessionId != int64(sessionId) {
+			continue
+		}
+		deletes = append(deletes, &proto.DeleteRequest{Key: key})
+	}
+	return deletes, nil
 }
 
 func (sm *sessionManager) Close() error {
