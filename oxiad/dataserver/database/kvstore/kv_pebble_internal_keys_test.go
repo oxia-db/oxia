@@ -172,9 +172,8 @@ func TestPebbleGetPastInternalRegionHierarchical(t *testing.T) {
 // The overlap is decided from the bounds alone, read as the batch RangeScan
 // reads them.
 func TestPebbleBatchOverlapsInternalKeys(t *testing.T) {
-	// The end of a request that has none, as it is decoded. The natural encoding
-	// reads it as an unbounded upper bound, but only when the string has no
-	// data pointer: a "" literal can have one, and is then the empty key
+	// The end of a request that has none, as the replicas decode it: without a
+	// data pointer, which a "" literal in this table can have
 	var noEnd string
 
 	for _, test := range []struct {

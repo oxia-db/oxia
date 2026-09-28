@@ -595,9 +595,14 @@ func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string) (KeyIterator, 
 	return b.RangeScan(lowerBound, upperBound)
 }
 
+// scanBounds returns the iterator bounds of RangeScan, which
+// OverlapsInternalKeys must read the same way.
+func (b *PebbleBatch) scanBounds(lowerBound, upperBound string) (lb, ub []byte) {
+	return b.p.keyEncoder.Encode(lowerBound), b.p.keyEncoder.Encode(upperBound)
+}
+
 func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator, error) {
-	lb := b.p.keyEncoder.Encode(lowerBound)
-	ub := b.p.keyEncoder.Encode(upperBound)
+	lb, ub := b.scanBounds(lowerBound, upperBound)
 	pbit, err := b.b.NewIter(&pebble.IterOptions{
 		LowerBound: lb,
 		UpperBound: ub,
@@ -610,10 +615,8 @@ func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator
 }
 
 func (b *PebbleBatch) OverlapsInternalKeys(lowerBound, upperBound string) bool {
-	// Same bounds as RangeScan: a nil upper bound is unbounded, and an empty
-	// one is the empty key
-	lb := b.p.keyEncoder.Encode(lowerBound)
-	ub := b.p.keyEncoder.Encode(upperBound)
+	// As for the iterator, a nil upper bound is unbounded
+	lb, ub := b.scanBounds(lowerBound, upperBound)
 	if ub != nil && bytes.Compare(lb, ub) >= 0 {
 		// The range is empty
 		return false
