@@ -735,6 +735,7 @@ func (d *db) readASCIILongOrDefault(key string, defaultValue int64) (int64, erro
 
 func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
 
 	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termKey,
@@ -755,10 +756,6 @@ func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	}
 
 	if err := batch.Commit(); err != nil {
-		return err
-	}
-
-	if err := batch.Close(); err != nil {
 		return err
 	}
 
