@@ -54,6 +54,21 @@ func ShadowKey(sessionId SessionId, key string) string {
 	return fmt.Sprintf("%s/%016x/%s", sessionKeyPrefix, sessionId, url.PathEscape(key))
 }
 
+// shadowKeysRange returns the range of the shadow keys of a session,
+// "<session key>/<escaped key>".
+func shadowKeysRange(sessionKey string, features feature.Checker) (start string, end string) {
+	start = sessionKey + "/"
+	if !features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING) {
+		// With the natural key sorting, this range only holds the shadow keys
+		// whose escaped key starts with a byte below '/'
+		return start, sessionKey + "//"
+	}
+	// An escaped key is printable ASCII: with the natural key sorting it sorts
+	// before 0xff. With the hierarchical sorting, which encodes the separators
+	// as 0xff, this end is encoded exactly like "<session key>//"
+	return start, sessionKey + "/\xff"
+}
+
 func KeyToId(key string) (SessionId, error) {
 	var id int64
 	items, err := fmt.Sscanf(key, sessionKeyFormat, &id)
@@ -450,7 +465,7 @@ func deleteShadow(batch kvstore.WriteBatch, _ *database.Notifications, key strin
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBatch, notification *database.Notifications, key string) error {
+func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBatch, notification *database.Notifications, key string, features feature.Checker) error {
 	se, err := database.GetStorageEntryMetadata(batch, key)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
@@ -459,10 +474,10 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBat
 		return err
 	}
 	defer se.ReturnToVTPool()
-	return s.OnDeleteWithEntry(batch, notification, key, se)
+	return s.OnDeleteWithEntry(batch, notification, key, se, features)
 }
 
-func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, notification *database.Notifications, key string, entry *proto.StorageEntry) error {
+func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, notification *database.Notifications, key string, entry *proto.StorageEntry, features feature.Checker) error {
 	if _, err := deleteShadow(batch, notification, key, entry); err != nil {
 		return err
 	}
@@ -471,7 +486,8 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 	}
 	sessionKey := key
 	// Read "index"
-	it, err := batch.KeyRangeScan(sessionKey+"/", sessionKey+"//")
+	start, end := shadowKeysRange(sessionKey, features)
+	it, err := batch.KeyRangeScan(start, end)
 	if err != nil {
 		return err
 	}
@@ -504,7 +520,7 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 	return nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kvstore.WriteBatch, notification *database.Notifications, keyStartInclusive string, keyEndExclusive string) error {
+func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kvstore.WriteBatch, notification *database.Notifications, keyStartInclusive string, keyEndExclusive string, features feature.Checker) error {
 	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
 	if err != nil {
 		return err
@@ -526,7 +542,7 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kvstore.Wri
 		if err = database.Deserialize(value, se); err != nil {
 			return err
 		}
-		return s.OnDeleteWithEntry(batch, notification, it.Key(), se)
+		return s.OnDeleteWithEntry(batch, notification, it.Key(), se, features)
 	}
 
 	for ; it.Valid(); it.Next() {

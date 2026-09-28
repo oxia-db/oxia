@@ -45,6 +45,9 @@ const (
 	Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION Feature = 2
 	// Apply the requests of a WriteRequest in op_index order
 	Feature_FEATURE_ORDERED_WRITES Feature = 3
+	// When a session ends, delete all its ephemeral records with the natural
+	// key sorting too
+	Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING Feature = 8
 )
 
 // Enum value maps for Feature.
@@ -54,12 +57,14 @@ var (
 		1: "FEATURE_DB_CHECKSUM",
 		2: "FEATURE_SECONDARY_INDEX_NAME_VALIDATION",
 		3: "FEATURE_ORDERED_WRITES",
+		8: "FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING",
 	}
 	Feature_value = map[string]int32{
-		"FEATURE_UNKNOWN":                         0,
-		"FEATURE_DB_CHECKSUM":                     1,
-		"FEATURE_SECONDARY_INDEX_NAME_VALIDATION": 2,
-		"FEATURE_ORDERED_WRITES":                  3,
+		"FEATURE_UNKNOWN":                           0,
+		"FEATURE_DB_CHECKSUM":                       1,
+		"FEATURE_SECONDARY_INDEX_NAME_VALIDATION":   2,
+		"FEATURE_ORDERED_WRITES":                    3,
+		"FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING": 8,
 	}
 )
 
@@ -2073,12 +2078,13 @@ const file_replication_proto_rawDesc = "" +
 	"ShardStats\x12\"\n" +
 	"\rdb_size_bytes\x18\x01 \x01(\x04R\vdbSizeBytes\x12$\n" +
 	"\x0eread_ops_total\x18\x02 \x01(\x04R\freadOpsTotal\x12&\n" +
-	"\x0fwrite_ops_total\x18\x03 \x01(\x04R\rwriteOpsTotal*\x80\x01\n" +
+	"\x0fwrite_ops_total\x18\x03 \x01(\x04R\rwriteOpsTotal*\xaf\x01\n" +
 	"\aFeature\x12\x13\n" +
 	"\x0fFEATURE_UNKNOWN\x10\x00\x12\x17\n" +
 	"\x13FEATURE_DB_CHECKSUM\x10\x01\x12+\n" +
 	"'FEATURE_SECONDARY_INDEX_NAME_VALIDATION\x10\x02\x12\x1a\n" +
-	"\x16FEATURE_ORDERED_WRITES\x10\x03*\x8e\x01\n" +
+	"\x16FEATURE_ORDERED_WRITES\x10\x03\x12-\n" +
+	")FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING\x10\b*\x8e\x01\n" +
 	"\x0fHandshakeStatus\x12\x1c\n" +
 	"\x18HANDSHAKE_STATUS_UNKNOWN\x10\x00\x12\x1a\n" +
 	"\x16HANDSHAKE_STATUS_BOUND\x10\x01\x12\"\n" +
