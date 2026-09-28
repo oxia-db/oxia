@@ -69,7 +69,6 @@ type UpdateOperationCallback interface {
 	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
 	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string) error
 	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry) error
-	OnDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, keyStartInclusive string, keyEndExclusive string) error
 }
 
 type RangeScanIterator interface {

@@ -496,36 +496,3 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 	}
 	return nil
 }
-
-func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kvstore.WriteBatch, notification *database.Notifications, keyStartInclusive string, keyEndExclusive string) error {
-	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err = it.Close(); err != nil {
-			slog.Warn("Failed to close the iterator when deleting the range.", slog.Any("error", err))
-		}
-	}()
-
-	// introduce the processor here for better defer resource release
-	iteratorProcessor := func(batch kvstore.WriteBatch, it kvstore.KeyValueIterator) error {
-		value, err := it.Value()
-		if err != nil {
-			return err
-		}
-		se := proto.StorageEntryFromVTPool()
-		defer se.ReturnToVTPool()
-		if err = database.Deserialize(value, se); err != nil {
-			return err
-		}
-		return s.OnDeleteWithEntry(batch, notification, it.Key(), se)
-	}
-
-	for ; it.Valid(); it.Next() {
-		if err := iteratorProcessor(batch, it); err != nil {
-			return errors.Wrap(err, "oxia db: failed to delete range")
-		}
-	}
-	return nil
-}

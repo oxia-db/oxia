@@ -1338,9 +1338,6 @@ func (f FailureCallback) OnDeleteWithEntry(_ kvstore.WriteBatch, _ *Notification
 	}
 	return nil
 }
-func (f FailureCallback) OnDeleteRange(kvstore.WriteBatch, *Notifications, string, string) error {
-	return nil
-}
 
 func TestDBVersionIDWithError(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
