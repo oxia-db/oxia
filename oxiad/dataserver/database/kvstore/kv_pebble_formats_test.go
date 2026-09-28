@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/proto"
@@ -239,6 +240,50 @@ func TestPebbleDbCleanupBackupAfterCrashDuringFinalCleanup(t *testing.T) {
 	// check if backup still exist
 	path := makeDbBackupPath(dbPath)
 	assert.False(t, pathExists(path))
+}
+
+func TestPebbleDbConversionReadFailure(t *testing.T) {
+	kvFactory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	oldKV, err := kvFactory.NewKV("default", 0, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+
+	// Flush each key into its own sstable
+	for _, key := range []string{"/key/a", "/key/b"} {
+		wb := oldKV.NewWriteBatch()
+		assert.NoError(t, wb.Put(key, []byte("value")))
+		assert.NoError(t, wb.Commit())
+		assert.NoError(t, wb.Close())
+		assert.NoError(t, oldKV.Flush())
+	}
+	dbPath := oldKV.(*Pebble).dbPath
+	assert.NoError(t, oldKV.Close())
+
+	// Make the second sstable unreadable, so the copy fails with an I/O error
+	// after copying the first one. A corrupted block wouldn't do: Pebble
+	// reports corruptions through the logger's Fatalf, which exits the process.
+	ssts, err := filepath.Glob(filepath.Join(dbPath, "*.sst"))
+	require.NoError(t, err)
+	require.Len(t, ssts, 2)
+	require.NoError(t, os.Chmod(ssts[1], 0))
+	// Pebble retries loading the stats of an unreadable sstable in a loop, for
+	// as long as the db stays open
+	t.Cleanup(func() { _ = os.Chmod(ssts[1], 0600) })
+	if f, err := os.Open(ssts[1]); err == nil {
+		assert.NoError(t, f.Close())
+		t.Skip("the sstable is still readable, as when running as root")
+	}
+
+	_, err = kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	assert.ErrorIs(t, err, os.ErrPermission)
+
+	// The old db is left in place
+	markerData, err := os.ReadFile(filepath.Join(dbPath, markerFileName))
+	assert.NoError(t, err)
+	assert.Equal(t, compare.EncoderNatural.Name(), string(markerData))
+	for _, sst := range ssts {
+		assert.FileExists(t, sst)
+	}
 }
 
 func TestCreateMarkerLeavesUpToDateMarkerAlone(t *testing.T) {
