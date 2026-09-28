@@ -622,7 +622,7 @@ func TestSessionManagerReopening_KeySorting(t *testing.T) {
 			kvf, walf, sManager, lc := createSessionManagerWithOptions(t, options)
 
 			timeout := 2 * time.Second
-			var sessionIds []int64
+			var sessionIDs []int64
 			for i := 0; i < 2; i++ {
 				createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
 					Shard:            shardId,
@@ -630,7 +630,7 @@ func TestSessionManagerReopening_KeySorting(t *testing.T) {
 				})
 				assert.NoError(t, err)
 				sessionId := createResp.SessionId
-				sessionIds = append(sessionIds, sessionId)
+				sessionIDs = append(sessionIDs, sessionId)
 
 				_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
 					Shard: &shardId,
@@ -648,7 +648,7 @@ func TestSessionManagerReopening_KeySorting(t *testing.T) {
 
 			// The sessions are restored with their own timeout: the empty value
 			// of a shadow key is not taken for their metadata
-			for _, sessionId := range sessionIds {
+			for _, sessionId := range sessionIDs {
 				assert.NoError(t, sManager.KeepAlive(sessionId))
 
 				sManager.RLock()
@@ -662,7 +662,7 @@ func TestSessionManagerReopening_KeySorting(t *testing.T) {
 			// Without heartbeats, the sessions expire and their ephemeral
 			// records are deleted
 			assert.Eventually(t, func() bool {
-				for i, sessionId := range sessionIds {
+				for i, sessionId := range sessionIDs {
 					if getSessionMetadata(t, lc, sessionId) != nil || getData(t, lc, fmt.Sprintf("/ephemeral-%d", i)) != "" {
 						return false
 					}
