@@ -34,8 +34,8 @@ import (
 )
 
 // A write request that can't be applied has no effect: the leader answers the
-// client with the error. The followers must apply its entry all the same:
-// one that stops there could never take over from the leader.
+// client with the error. The followers must apply its entry all the same: one
+// that stops there could never take over from the leader.
 func TestRejectedWrite_DoesNotBlockFailover(t *testing.T) {
 	s1, sa1 := mock.NewServer(t, "s1")
 	s2, sa2 := mock.NewServer(t, "s2")
@@ -51,12 +51,10 @@ func TestRejectedWrite_DoesNotBlockFailover(t *testing.T) {
 		}
 	}()
 
-	clusterConfig := newDefaultClusterConfig(sa1, sa2, sa3)
-	clusterConfig.Namespaces[0].KeySorting = "natural"
 	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
-		Value:   clusterConfig,
+		Value:   newDefaultClusterConfig(sa1, sa2, sa3),
 		Version: metadatacommon.NotExists,
 	})
 	require.NoError(t, err)
@@ -64,7 +62,7 @@ func TestRejectedWrite_DoesNotBlockFailover(t *testing.T) {
 	defer coordinatorInstance.Close()
 
 	shardMetadata := waitForLeaderFeature(t, coordinatorInstance.Metadata(), servers,
-		proto.Feature_FEATURE_ORDERED_WRITES)
+		proto.Feature_FEATURE_DB_CHECKSUM)
 	leader := shardMetadata.Leader.GetNameOrDefault()
 	lead, err := servers[leader].GetShardDirector().GetLeader(0)
 	require.NoError(t, err)
@@ -81,15 +79,20 @@ func TestRejectedWrite_DoesNotBlockFailover(t *testing.T) {
 	_, _, err = client.Put(t.Context(), "a", []byte("0"))
 	require.NoError(t, err)
 
-	// With the natural key sorting, a range without an end reaches the
-	// notification records, which are not storage entries
-	assert.Error(t, client.DeleteRange(t.Context(), "a", ""))
+	// A notification record is not a storage entry: deleting one can't be
+	// applied, whatever features the shard has
+	records, err := client.List(t.Context(), "__oxia/notifications/", "__oxia/notifications//",
+		oxia.ShowInternalKeys(true))
+	require.NoError(t, err)
+	require.NotEmpty(t, records)
+	assert.Error(t, client.Delete(t.Context(), records[0]))
 
 	// Commit offsets are piggybacked on the replication messages: after one more
 	// write the followers know that the entries up to "b" are committed
 	_, _, err = client.Put(t.Context(), "b", []byte("0"))
 	require.NoError(t, err)
-	commitOffset := lead.CommitOffset()
+	checksum := lead.Checksum().Value()
+	assert.NotZero(t, checksum)
 	_, _, err = client.Put(t.Context(), "flush", []byte("0"))
 	require.NoError(t, err)
 
@@ -99,8 +102,8 @@ func TestRejectedWrite_DoesNotBlockFailover(t *testing.T) {
 		}
 		assert.Eventually(t, func() bool {
 			follow, err := s.GetShardDirector().GetFollower(0)
-			return err == nil && follow.CommitOffset() >= commitOffset
-		}, 10*time.Second, 100*time.Millisecond, "follower %s did not apply the committed entries", name)
+			return err == nil && follow.Checksum().Value() == checksum
+		}, 10*time.Second, 100*time.Millisecond, "follower %s did not apply the same entries", name)
 	}
 
 	// Stop the leader: one of the followers must take over
@@ -113,11 +116,8 @@ func TestRejectedWrite_DoesNotBlockFailover(t *testing.T) {
 			shard.GetLeader().GetNameOrDefault() != leader
 	}, 30*time.Second, 100*time.Millisecond, "no new leader was elected")
 
-	// The rejected delete range had no effect
-	for _, key := range []string{"a", "b"} {
-		assert.Eventually(t, func() bool {
-			_, value, _, err := client.Get(t.Context(), key)
-			return err == nil && string(value) == "0"
-		}, 10*time.Second, 100*time.Millisecond, "key %s", key)
-	}
+	assert.Eventually(t, func() bool {
+		_, value, _, err := client.Get(t.Context(), "b")
+		return err == nil && string(value) == "0"
+	}, 10*time.Second, 100*time.Millisecond)
 }
