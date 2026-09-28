@@ -539,7 +539,10 @@ func (d *db) GetSequenceUpdates(prefixKey string) (SequenceWaiter, error) {
 		sw.och.WriteLast(it.Key())
 	}
 
-	_ = it.Close()
+	// The iterator is also invalid when the read failed: Close returns the error
+	if err := it.Close(); err != nil {
+		return nil, multierr.Append(errors.Wrap(err, "failed to read the last key of the sequence"), sw.Close())
+	}
 	return sw, nil
 }
 
@@ -688,6 +691,11 @@ func (d *db) recoverFeatureFlags() error {
 		d.enabledFeatures.Store(f, true)
 
 		it.Next()
+	}
+
+	// The iteration also stops when a read fails
+	if err := it.Error(); err != nil {
+		return errors.Wrap(err, "failed to read the feature flags")
 	}
 	return nil
 }

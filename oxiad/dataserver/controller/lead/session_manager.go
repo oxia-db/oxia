@@ -494,6 +494,10 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 			}
 		}
 	}
+	// The iteration also stops when a read fails
+	if err := it.Error(); err != nil {
+		return errors.Wrap(err, "failed to list the ephemeral keys of the session")
+	}
 	return nil
 }
 

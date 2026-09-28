@@ -350,7 +350,9 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		// For all the other cases, we set the iterator on >=
 		it.SeekGE(searchKey)
 
-		if req.ComparisonType == proto.KeyComparisonType_FLOOR &&
+		// A failed read is left to the check after the walk: seeking again
+		// would clear the error
+		if req.ComparisonType == proto.KeyComparisonType_FLOOR && it.Error() == nil &&
 			(!it.Valid() || !strings.HasPrefix(it.Key(), indexPrefix)) {
 			// There is no entry of this index at or after the search key: the
 			// floor candidate, if any, is the last index entry before it.
@@ -411,6 +413,11 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		default:
 			return "", "", errors.Errorf("unsupported comparison type: %v", req.ComparisonType)
 		}
+	}
+
+	// The walk also stops when a read fails
+	if err = it.Error(); err != nil {
+		return "", "", errors.Wrap(err, "failed to read the secondary index")
 	}
 
 	// The walk ran out of entries of the requested index without finding a match
