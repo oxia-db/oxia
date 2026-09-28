@@ -2963,9 +2963,11 @@ func TestLeaderController_WalRecoveryWithCorruptedEntry(t *testing.T) {
 }
 
 // A node seeded from a snapshot, like the first leader of a split child, has an
-// empty WAL while its database is at the snapshot's commit offset. As leader, it
-// must continue the offsets after that one instead of reusing the offsets of
-// the entries already in the database.
+// empty WAL while its database is at the snapshot's commit offset. Fenced with a
+// new term, it must report the entries of its database, so that an election
+// doesn't take it for a node without any data. As leader, it must continue the
+// offsets after that one instead of reusing the offsets of the entries already
+// in the database.
 func TestLeaderController_BecomeLeaderWithEmptyWalAfterSnapshot(t *testing.T) {
 	var shard int64 = 1
 
@@ -3000,7 +3002,7 @@ func TestLeaderController_BecomeLeaderWithEmptyWalAfterSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	res, err := lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
 	require.NoError(t, err)
-	AssertProtoEqual(t, constant2.InvalidEntryId, res.HeadEntryId)
+	AssertProtoEqual(t, &proto.EntryId{Term: wal.InvalidTerm, Offset: 2}, res.HeadEntryId)
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 2, ReplicationFactor: 1})
 	require.NoError(t, err)
 
@@ -3012,6 +3014,65 @@ func TestLeaderController_BecomeLeaderWithEmptyWalAfterSnapshot(t *testing.T) {
 	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, commitOffset)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// A follower seeded from a snapshot reports the commit offset of the snapshot as
+// its head, with an invalid term. There is nothing to truncate in its empty wal:
+// the leader brings it up to date from the start, like a follower without data.
+func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	// The entries 0 to 9 are in the wal and in the database of the leader
+	walObject, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
+	require.NoError(t, err)
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	for i := int64(0); i < 10; i++ {
+		wr := &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "my-key", Value: []byte("")}}}
+		value, err := pb.Marshal(wrapInLogEntryValue(wr))
+		require.NoError(t, err)
+		require.NoError(t, walObject.Append(&proto.LogEntry{Term: 1, Offset: i, Value: value}))
+		_, err = db.ProcessWrite(wr, i, 0, database.NoOpCallback)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.UpdateTerm(1, database.TermOptions{}))
+	require.NoError(t, db.Close())
+	require.NoError(t, walObject.Close())
+
+	rpcClient := rpc.NewMockRpcClient()
+	// A truncation would block the leader until it gets a response
+	rpcClient.TruncateResps <- rpc.TruncateResps{Response: &proto.TruncateResponse{
+		HeadEntryId: &proto.EntryId{Term: 2, Offset: wal.InvalidOffset},
+	}}
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpcClient, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              2,
+		ReplicationFactor: 3,
+		FollowerMaps: map[string]*proto.EntryId{
+			"f1": {Term: wal.InvalidTerm, Offset: 5},
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, rpcClient.TruncateReqs, "the empty wal of the follower got truncated")
+	select {
+	case req := <-rpcClient.AppendReqs:
+		assert.EqualValues(t, 0, req.Entry.Offset)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the leader sent no entry to the follower")
+	}
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())

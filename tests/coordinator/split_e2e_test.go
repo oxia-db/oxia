@@ -598,6 +598,13 @@ type splitTestCluster struct {
 // be ready, and returns the cluster handle. Callers must call close() when done.
 func setupSplitCluster(t *testing.T) *splitTestCluster {
 	t.Helper()
+	return setupSplitClusterWithRpc(t, rpc2.NewRpcProviderFactory(nil))
+}
+
+// setupSplitClusterWithRpc is setupSplitCluster, with a coordinator that uses
+// the given rpc provider factory.
+func setupSplitClusterWithRpc(t *testing.T, rpcProviderFactory rpc2.ProviderFactory) *splitTestCluster {
+	t.Helper()
 
 	s1, sa1 := newServer(t)
 	s2, sa2 := newServer(t)
@@ -625,7 +632,7 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc2.NewRpcProviderFactory(nil),
+		rpcProviderFactory,
 	)
 
 	metadata := coordinatorInstance.Metadata()
@@ -1663,4 +1670,90 @@ func TestCoordinator_ShardSplit_ChildWriteSurvivesLeaderLoss(t *testing.T) {
 	_, value, _, err := reader.Get(ctx, key)
 	require.NoError(t, err, "write acknowledged by the split child lost with its leader")
 	assert.Equal(t, []byte("value"), value)
+}
+
+// followerlessChildRpcProvider elects the leaders of the split children
+// without their followers, which never get the children's data: the children
+// stay as they are right after the split, while the followers are still
+// installing the snapshot that the child leader sends them.
+type followerlessChildRpcProvider struct {
+	rpc2.Provider
+}
+
+func (p *followerlessChildRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *followerlessChildRpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
+	if req.Shard != 0 {
+		req = req.CloneVT()
+		req.FollowerMaps = nil
+	}
+	return p.Provider.BecomeLeader(ctx, node, req)
+}
+
+func (p *followerlessChildRpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	if req.Shard != 0 {
+		return &proto.AddFollowerResponse{}, nil
+	}
+	return p.Provider.AddFollower(ctx, node, req)
+}
+
+// The leader of a split child is seeded from a snapshot of the parent, and
+// sends one to the child's followers once the split elects it in a clean term.
+// A leader election of the child in the meantime, like the one that
+// BecameUnavailable runs, fences the leader, which aborts the installation of
+// the snapshot on the followers. The election must still elect the child
+// leader, the only member with the child's data, though the wal of a member
+// seeded from a snapshot is as empty as the one of a member without any data.
+func TestCoordinator_ShardSplit_ChildElectionBeforeFollowersSeeded(t *testing.T) {
+	rpcProvider := &followerlessChildRpcProvider{}
+	cluster := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer cluster.close(t)
+
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	keys := make(map[string][]byte)
+	for i := 0; i < 30; i++ {
+		key, value := fmt.Sprintf("key-%04d", i), []byte(fmt.Sprintf("value-%d", i))
+		_, _, err = client.Put(ctx, key, value)
+		require.NoError(t, err)
+		keys[key] = value
+	}
+	assert.NoError(t, client.Close())
+	cluster.splitAndWait(t)
+
+	// A read that a child can't serve fails after a while, instead of retrying
+	// until the client is closed
+	reader, err := oxia.NewSyncClient(cluster.sa1.Public, oxia.WithRequestTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reader.Close()) }()
+
+	// Among the members with the highest head entry, the election can pick any:
+	// elect the leaders of the children a few times
+	for range 3 {
+		terms := make(map[int64]int64)
+		leaders := make(map[string]*proto.DataServerIdentity)
+		for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+			sm := cluster.shardStatus(t, child)
+			terms[child] = sm.Term
+			leaders[sm.Leader.GetNameOrDefault()] = sm.Leader
+		}
+		for _, leader := range leaders {
+			cluster.coordinator.BecameUnavailable(leader)
+		}
+		for child, term := range terms {
+			cluster.waitForNewTerm(t, child, term)
+		}
+
+		for key, expected := range keys {
+			_, value, _, err := reader.Get(ctx, key)
+			require.NoError(t, err, "key %s lost by a leader election of a split child", key)
+			assert.Equal(t, expected, value)
+		}
+	}
 }
