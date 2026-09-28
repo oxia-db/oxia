@@ -246,6 +246,10 @@ func (it *secondaryIndexListIterator) Next() bool {
 	return it.it.Next()
 }
 
+func (it *secondaryIndexListIterator) Error() error {
+	return it.it.Error()
+}
+
 func (it *secondaryIndexListIterator) Close() error {
 	return it.it.Close()
 }

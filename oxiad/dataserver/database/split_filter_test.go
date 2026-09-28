@@ -18,9 +18,12 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/hash"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -702,4 +705,46 @@ func TestFilterDBForSplit_ChunkedCommits(t *testing.T) {
 	assert.NotNil(t, nb)
 	assert.Equal(t, 1, len(nb.Notifications))
 	assert.Equal(t, inRangeKey, nb.Notifications[0].GetKey())
+}
+
+func TestFilterDBForSplit_ReadFailure(t *testing.T) {
+	options := kvstore.NewFactoryOptionsForTest(t)
+	factory, err := kvstore.NewPebbleKVFactory(options)
+	require.NoError(t, err)
+	t.Cleanup(func() { factory.Close() })
+	kv, err := factory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	require.NoError(t, err)
+
+	// Flush the keys into two sstables
+	for _, prefix := range []string{"a", "b"} {
+		for i := 0; i < 10; i++ {
+			putStorageEntry(t, kv, fmt.Sprintf("%s-%d", prefix, i), nil)
+		}
+		require.NoError(t, kv.Flush())
+	}
+	require.NoError(t, kv.Close())
+
+	// Make the second sstable unreadable, so the scan fails with an I/O error
+	// after going through the first one. A corrupted block wouldn't do: Pebble
+	// reports corruptions through the logger's Fatalf, which exits the process.
+	ssts, err := filepath.Glob(filepath.Join(options.DataDir, "default", "shard-0", "*.sst"))
+	require.NoError(t, err)
+	require.Len(t, ssts, 2)
+	require.NoError(t, os.Chmod(ssts[1], 0))
+	// Pebble retries loading the stats of an unreadable sstable in a loop, for
+	// as long as the db stays open
+	t.Cleanup(func() { _ = os.Chmod(ssts[1], 0600) })
+	if f, err := os.Open(ssts[1]); err == nil {
+		assert.NoError(t, f.Close())
+		t.Skip("the sstable is still readable, as when running as root")
+	}
+
+	// Reopen the db, so the scan opens the sstable instead of reading it through
+	// a file handle that Pebble may have kept open
+	kv, err = factory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	require.NoError(t, err)
+
+	leftRange, _ := splitRanges()
+	assert.ErrorIs(t, FilterDBForSplit(kv, leftRange), os.ErrPermission)
+	assert.NoError(t, kv.Close())
 }

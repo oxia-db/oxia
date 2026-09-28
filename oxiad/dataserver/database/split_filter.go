@@ -122,6 +122,11 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 		it.Next()
 	}
 
+	// The iteration also stops when a read fails
+	if err := it.Error(); err != nil {
+		return errors.Wrap(err, "failed to scan the database for split filter")
+	}
+
 	slog.Info(
 		"Split filter complete, committing",
 		slog.Int64("deleted-keys", deletedKeys),

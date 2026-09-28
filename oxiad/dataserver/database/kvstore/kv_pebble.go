@@ -733,6 +733,10 @@ func (p *PebbleIterator) SeekLT(key string) bool {
 	return p.pi.SeekLT(p.p.keyEncoder.Encode(key)) && p.skipper.backward(p.pi)
 }
 
+func (p *PebbleIterator) Error() error {
+	return p.pi.Error()
+}
+
 func (p *PebbleIterator) Value() ([]byte, error) {
 	res, err := p.pi.ValueAndErr()
 	if err != nil {
