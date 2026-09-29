@@ -279,6 +279,57 @@ func TestPebbleDbConversionFailureClosesDbs(t *testing.T) {
 	assert.NoError(t, kv.Close())
 }
 
+func TestPebbleDbConversionReadFailure(t *testing.T) {
+	kvFactory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	oldKV, err := kvFactory.NewKV("default", 0, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+
+	// Flush each key into its own sstable
+	keys := []string{"/key/a", "/key/b"}
+	for _, key := range keys {
+		wb := oldKV.NewWriteBatch()
+		assert.NoError(t, wb.Put(key, []byte("value")))
+		assert.NoError(t, wb.Commit())
+		assert.NoError(t, wb.Close())
+		assert.NoError(t, oldKV.Flush())
+	}
+	dbPath := oldKV.(*Pebble).dbPath
+	assert.NoError(t, oldKV.Close())
+
+	// Make the second sstable unreadable, so the copy fails with an I/O error
+	// after copying the first one. A corrupted block wouldn't do: Pebble
+	// reports corruptions through the logger's Fatalf, which exits the process.
+	ssts, err := filepath.Glob(filepath.Join(dbPath, "*.sst"))
+	require.NoError(t, err)
+	require.Len(t, ssts, 2)
+	require.NoError(t, os.Chmod(ssts[1], 0))
+	if f, err := os.Open(ssts[1]); err == nil {
+		assert.NoError(t, f.Close())
+		t.Skip("the sstable is still readable, as when running as root")
+	}
+
+	_, err = kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	assert.ErrorIs(t, err, os.ErrPermission)
+
+	// The failed conversion left the old db in place, so once the sstable is
+	// readable again the conversion copies both keys
+	require.NoError(t, os.Chmod(ssts[1], 0600))
+	kv, err := kvFactory.NewKV("default", 0, proto.KeySortingType_HIERARCHICAL)
+	require.NoError(t, err)
+
+	it, err := kv.KeyRangeScan("/", "", NoInternalKeys)
+	require.NoError(t, err)
+	var scanKeys []string
+	for it.Valid() {
+		scanKeys = append(scanKeys, it.Key())
+		it.Next()
+	}
+	assert.Equal(t, keys, scanKeys)
+	assert.NoError(t, it.Close())
+	assert.NoError(t, kv.Close())
+}
+
 func TestCreateMarkerLeavesUpToDateMarkerAlone(t *testing.T) {
 	dbPath := t.TempDir()
 	markerPath := filepath.Join(dbPath, markerFileName)

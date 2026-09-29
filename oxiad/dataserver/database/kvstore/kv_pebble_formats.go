@@ -336,6 +336,11 @@ func copyData(from *pebble.DB, fromEncoder compare.Encoder,
 		it.Next()
 	}
 
+	// The iteration also stops when a read fails
+	if err := it.Error(); err != nil {
+		return err
+	}
+
 	// Close the last batch
 	if batchCount > 0 {
 		if err := wb.Commit(pebble.NoSync); err != nil {
