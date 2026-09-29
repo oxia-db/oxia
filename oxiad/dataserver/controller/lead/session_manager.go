@@ -102,6 +102,8 @@ type SessionManager interface {
 	// Initialize restores the sessions on a new leader. It returns the deletes
 	// of the ephemeral records whose session is gone, for the leader to propose
 	Initialize() ([]*proto.DeleteRequest, error)
+
+	stop()
 }
 
 var _ SessionManager = (*sessionManager)(nil)
@@ -207,7 +209,7 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 		return nil, errors.Wrap(err, "could not marshal session metadata")
 	}
 	var sessionId SessionId
-	resp, err := sm.leaderController.writeBlock(sm.ctx, func(offset int64) *proto.WriteRequest {
+	resp, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), func(offset int64) *proto.WriteRequest {
 		sessionId = SessionId(offset)
 		return &proto.WriteRequest{
 			Shard: &request.Shard,
@@ -260,9 +262,11 @@ func (sm *sessionManager) deleteSessions(ids []SessionId) error {
 	for i, id := range ids {
 		deletes[i] = &proto.DeleteRequest{Key: SessionKey(id)}
 	}
-	_, err := sm.leaderController.WriteBlock(context.Background(), &proto.WriteRequest{
-		Shard:   &sm.shardId,
-		Deletes: deletes,
+	_, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), func(int64) *proto.WriteRequest {
+		return &proto.WriteRequest{
+			Shard:   &sm.shardId,
+			Deletes: deletes,
+		}
 	})
 	return err
 }
@@ -447,13 +451,10 @@ func (sm *sessionManager) readOrphanedEphemerals(sessionKeys []string, shadowKey
 	return deletes, nil
 }
 
+// Close stops the session manager and waits for its expiry scheduler to exit.
+// It must not be called while holding the leader lock, see stop.
 func (sm *sessionManager) Close() error {
-	sm.Lock()
-	sm.cancel()
-	for id := range sm.sessions {
-		sm.removeSession(id)
-	}
-	sm.Unlock()
+	sm.stop()
 
 	// Wait for the expiry scheduler outside the manager lock: it acquires
 	// the lock to finish an in-flight expiry cycle — waiting under the lock
@@ -461,6 +462,23 @@ func (sm *sessionManager) Close() error {
 	sm.latch.Wait()
 
 	return nil
+}
+
+// stop cancels the session manager and drops its sessions, without waiting for
+// the expiry scheduler. The leader controller stops the manager while holding
+// the leader lock, and waits for the scheduler with Close only once the lock
+// is released: the scheduler takes the leader lock to propose the deletion of
+// the sessions it expired, so waiting for it under the lock would deadlock.
+// Once stopped, the writes of the manager are rejected under the leader lock
+// (see writeBlock), so none of them can be appended afterwards, not even once
+// a later term makes this node leader again.
+func (sm *sessionManager) stop() {
+	sm.Lock()
+	sm.cancel()
+	for id := range sm.sessions {
+		sm.removeSession(id)
+	}
+	sm.Unlock()
 }
 
 type sessionManagerUpdateOperationCallbackS struct{}
