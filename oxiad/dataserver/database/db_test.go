@@ -16,6 +16,8 @@ package database
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -461,6 +463,47 @@ func TestDBDeleteRangeErrorClosesIterator(t *testing.T) {
 		assert.NoError(t, db.Close())
 	})
 	assert.NoError(t, factory.Close())
+}
+
+// A delete range whose start sorts after its end deletes nothing. Its scan used
+// to trip a Pebble invariant, which exits the process in the race and
+// invariants builds.
+func TestDBDeleteRangeInvertedRange(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		start, end string
+	}{
+		{"natural", proto.KeySortingType_NATURAL, "c", "a"},
+		{"hierarchical", proto.KeySortingType_HIERARCHICAL, "c", "a"},
+		// The empty key sorts first with the hierarchical encoder
+		{"hierarchical empty end", proto.KeySortingType_HIERARCHICAL, "b", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 0, time.SystemClock)
+			require.NoError(t, err)
+
+			_, err = db.ProcessWrite(&proto.WriteRequest{
+				Puts: []*proto.PutRequest{{Key: "a"}, {Key: "b"}, {Key: "c"}},
+			}, 0, 0, NoOpCallback)
+			require.NoError(t, err)
+
+			res, err := db.ProcessWrite(&proto.WriteRequest{
+				DeleteRanges: []*proto.DeleteRangeRequest{{
+					StartInclusive: test.start,
+					EndExclusive:   test.end,
+				}},
+			}, 1, 0, NoOpCallback)
+			require.NoError(t, err)
+			assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+			assert.Equal(t, []string{"a", "b", "c"}, keyIteratorToSlice(db.List(&proto.ListRequest{})))
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
 }
 
 func TestDB_ReadCommitOffset(t *testing.T) {
@@ -1147,6 +1190,47 @@ func TestDB_SequentialKeys(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
 	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 20, 18, 15), resp.GetPuts()[0].GetKey())
+}
+
+// A sequential key is the last key of the sequence plus the delta. When
+// reading the last key fails, the put must fail: taking the sequence for empty
+// would restart it and overwrite its first keys.
+func TestDB_SequentialKeysReadFailure(t *testing.T) {
+	options := kvstore.NewFactoryOptionsForTest(t)
+	factory, err := kvstore.NewPebbleKVFactory(options)
+	require.NoError(t, err)
+	defer factory.Close()
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// The keys of the sequence go into an sstable of their own, which the
+	// notifications trimmer doesn't read
+	for _, key := range []string{fmt.Sprintf("a-%020d", 1), fmt.Sprintf("a-%020d", 2)} {
+		putStorageEntry(t, db.RawKV(), key, pb.String("x"))
+	}
+	require.NoError(t, db.RawKV().Flush())
+
+	// Make the sstable unreadable, so that reading it fails with an I/O error.
+	// Pebble doesn't open a table it just flushed: the put below is the first
+	// to open it.
+	ssts, err := filepath.Glob(filepath.Join(options.DataDir, constant.DefaultNamespace, "shard-1", "*.sst"))
+	require.NoError(t, err)
+	require.Len(t, ssts, 1)
+	require.NoError(t, os.Chmod(ssts[0], 0))
+	t.Cleanup(func() { _ = os.Chmod(ssts[0], 0600) })
+	if f, err := os.Open(ssts[0]); err == nil {
+		assert.NoError(t, f.Close())
+		t.Skip("the sstable is still readable, as when running as root")
+	}
+
+	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "a",
+		Value:            []byte("3"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{1},
+	}}}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, os.ErrPermission, "response: %v", resp)
 }
 
 func TestDB_SequentialKeysOverflow(t *testing.T) {
