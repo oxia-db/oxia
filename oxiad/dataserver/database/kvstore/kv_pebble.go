@@ -434,7 +434,7 @@ func (p *Pebble) getCeiling(key []byte, itOpts IteratorOpts) (returnedKey string
 	skipper := newInternalRegionSkipper(p.keyEncoder, itOpts)
 
 	if !it.First() || !skipper.forward(it) {
-		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
+		return "", nil, nil, closeNotFound(it, pebble.ErrNotFound)
 	}
 
 	returnedKey = p.keyEncoder.Decode(it.Key())
@@ -452,7 +452,7 @@ func (p *Pebble) getLower(key []byte, itOpts IteratorOpts) (returnedKey string, 
 	// Backwards, the internal region is just as costly to step through: a floor
 	// probe above it would walk the whole backlog in reverse.
 	if !it.Last() || !skipper.backward(it) {
-		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
+		return "", nil, nil, closeNotFound(it, pebble.ErrNotFound)
 	}
 
 	returnedKey = p.keyEncoder.Decode(it.Key())
@@ -468,20 +468,30 @@ func (p *Pebble) getHigher(key []byte, itOpts IteratorOpts) (returnedKey string,
 	skipper := newInternalRegionSkipper(p.keyEncoder, itOpts)
 
 	if !it.First() || !skipper.forward(it) {
-		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
+		return "", nil, nil, closeNotFound(it, pebble.ErrNotFound)
 	}
 
 	// The lower bound is inclusive, so the iterator may be positioned exactly on
 	// the key. We are looking for a strict `x > y`, so step over it.
 	if bytes.Equal(it.Key(), key) {
 		if !it.Next() || !skipper.forward(it) {
-			return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
+			return "", nil, nil, closeNotFound(it, pebble.ErrNotFound)
 		}
 	}
 
 	returnedKey = p.keyEncoder.Decode(it.Key())
 	value, err = it.ValueAndErr()
 	return returnedKey, value, it, err
+}
+
+// closeNotFound closes an iterator that found no entry. The iterator is also
+// invalid when a read failed: that error is returned then, rather than
+// notFound, which would pass the failed read off as a missing key.
+func closeNotFound(it *pebble.Iterator, notFound error) error {
+	if err := it.Close(); err != nil {
+		return err
+	}
+	return notFound
 }
 
 func (p *Pebble) Get(key string, comparisonType ComparisonType, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
@@ -670,7 +680,7 @@ func (b *PebbleBatch) FindLower(key string) (lowerKey string, err error) {
 	}
 
 	if !it.Last() {
-		return "", multierr.Combine(it.Close(), ErrKeyNotFound)
+		return "", closeNotFound(it, ErrKeyNotFound)
 	}
 
 	lowerKey = b.p.keyEncoder.Decode(it.Key())

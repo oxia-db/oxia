@@ -1220,6 +1220,56 @@ func TestPebbleFindLowerInBatch(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestPebbleGetAndFindLowerReadFailure(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer factory.Close()
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	defer kv.Close()
+
+	wb := kv.NewWriteBatch()
+	require.NoError(t, wb.Put("b", []byte("b")))
+	require.NoError(t, wb.Put("c", []byte("c")))
+	require.NoError(t, wb.Commit())
+	require.NoError(t, wb.Close())
+	require.NoError(t, kv.Flush())
+
+	// Make the sstable unreadable, so that reading it fails with an I/O error.
+	// Pebble doesn't open a table it just flushed: the reads below are the first
+	// to open it. A corrupted block wouldn't do: Pebble reports corruptions
+	// through the logger's Fatalf, which exits the process.
+	ssts, err := filepath.Glob(filepath.Join(kv.(*Pebble).dbPath, "*.sst"))
+	require.NoError(t, err)
+	require.Len(t, ssts, 1)
+	require.NoError(t, os.Chmod(ssts[0], 0))
+	t.Cleanup(func() { _ = os.Chmod(ssts[0], 0600) })
+	if f, err := os.Open(ssts[0]); err == nil {
+		assert.NoError(t, f.Close())
+		t.Skip("the sstable is still readable, as when running as root")
+	}
+
+	// The keys are outside the sstable's range: only the iterators read it
+	for _, c := range []struct {
+		comparisonType ComparisonType
+		key            string
+	}{
+		{ComparisonFloor, "d"},
+		{ComparisonCeiling, "a"},
+		{ComparisonLower, "d"},
+		{ComparisonHigher, "a"},
+	} {
+		_, _, _, err := kv.Get(c.key, c.comparisonType, NoInternalKeys)
+		assert.ErrorIs(t, err, os.ErrPermission, "comparison type %d", c.comparisonType)
+	}
+
+	wb = kv.NewWriteBatch()
+	defer wb.Close()
+	_, err = wb.FindLower("d")
+	assert.ErrorIs(t, err, os.ErrPermission)
+	assert.NotErrorIs(t, err, ErrKeyNotFound)
+}
+
 func toList(it KeyIterator) []string {
 	var list []string
 
