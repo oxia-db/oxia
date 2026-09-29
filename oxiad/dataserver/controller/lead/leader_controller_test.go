@@ -1214,6 +1214,7 @@ func TestLeaderController_RejectedWrite(t *testing.T) {
 	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, commitOffset)
+	assert.EqualValues(t, 3, lc.CommitOffset())
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -1421,6 +1422,10 @@ func TestLeaderController_FailedApplyUntilNewTerm(t *testing.T) {
 	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
 	assert.EqualValues(t, 0, commitOffset)
+	// The WAL trimming stops at the last entry applied to the database, not at
+	// the commit offset of the quorum: it keeps the entries to apply
+	assert.EqualValues(t, 2, tracker.CommitOffset())
+	assert.EqualValues(t, 0, lc.CommitOffset())
 
 	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
 	require.NoError(t, err)
@@ -1442,6 +1447,7 @@ func TestLeaderController_FailedApplyUntilNewTerm(t *testing.T) {
 	commitOffset, err = lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, commitOffset)
+	assert.EqualValues(t, 2, lc.CommitOffset())
 
 	// Closing the leader stops the retries too
 	failures.Store(math.MaxInt64)

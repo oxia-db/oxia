@@ -125,10 +125,9 @@ type leaderController struct {
 	// truncate the followers.
 	leaderElectionHeadEntryId *proto.EntryId
 
-	// The database commit offset at the time the controller was created. It's
-	// the commit offset reported to the WAL while there is no quorum ack
-	// tracker, starting from the WAL recovery.
-	dbCommitOffset int64
+	// The database commit offset: the last entry applied to the database. It's
+	// the commit offset reported to the WAL, starting from the WAL recovery.
+	dbCommitOffset atomic.Int64
 
 	// Done when the node stops leading the term, before the quorum ack tracker
 	// is closed: the leader doesn't apply the committed entries it has left.
@@ -225,9 +224,11 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 	// Open the WAL after the database: the WAL recovery only discards the
 	// corrupted entries above the database commit offset, as never committed,
 	// and fails on the ones below it
-	if lc.dbCommitOffset, err = lc.db.ReadCommitOffset(); err != nil {
+	dbCommitOffset, err := lc.db.ReadCommitOffset()
+	if err != nil {
 		return nil, multierr.Append(err, lc.Close())
 	}
+	lc.dbCommitOffset.Store(dbCommitOffset)
 
 	if lc.wal, err = walFactory.NewWal(namespace, shardId, lc); err != nil {
 		return nil, multierr.Append(err, lc.Close())
@@ -805,6 +806,7 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		if err != nil {
 			return errors.Wrap(err, "failed to applies wal entries to db")
 		}
+		lc.dbCommitOffset.Store(entry.Offset)
 		if resp.Checksum != nil {
 			lc.checksumGauge.Record(int64(*resp.Checksum))
 			lc.walChecksumGauge.Record(int64(entryCrc))
@@ -1240,10 +1242,19 @@ func (lc *leaderController) applyCommitted(ctx context.Context, w wal.Wal, propo
 	}
 
 	response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
-	if err != nil && !errors.Is(err, database.ErrWriteRejected) {
-		return lc.retryApply(ctx, w, proposal.GetOffset(), err)
+	if !isApplied(err) {
+		response, err = lc.retryApply(ctx, w, proposal.GetOffset(), err)
+	}
+	if isApplied(err) {
+		lc.dbCommitOffset.Store(proposal.GetOffset())
 	}
 	return response, err
+}
+
+// isApplied reports whether the apply of an entry returning err is complete: a
+// rejected request has no effect, but its entry is applied.
+func isApplied(err error) bool {
+	return err == nil || errors.Is(err, database.ErrWriteRejected)
 }
 
 // retryApply applies again the entry at offset, which failed to apply with
@@ -1254,7 +1265,7 @@ func (lc *leaderController) retryApply(ctx context.Context, w wal.Wal, offset in
 	bo := time2.NewBackOff(ctx)
 	// backoff.Retry does it before use: the intervals are 0 until then
 	bo.Reset()
-	for err != nil && !errors.Is(err, database.ErrWriteRejected) {
+	for !isApplied(err) {
 		retryAfter := bo.NextBackOff()
 		if retryAfter == backoff.Stop {
 			return statemachine.ApplyResponse{}, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err),
@@ -1462,14 +1473,14 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 	return &proto.EntryId{Term: entry.Term, Offset: entry.Offset}, nil
 }
 
+// CommitOffset is the offset of the last entry applied to the database, rather
+// than the commit offset of the quorum: the WAL trimming must keep the entries
+// after it, which get applied from the WAL when their apply fails, or once the
+// term ends.
 func (lc *leaderController) CommitOffset() int64 {
 	// WAL trimming can call back into this provider while leader close holds the
 	// leader lock and waits for WAL close. Do not take the leader lock here.
-	qat := lc.quorumAckTracker
-	if qat != nil {
-		return qat.CommitOffset()
-	}
-	return lc.dbCommitOffset
+	return lc.dbCommitOffset.Load()
 }
 
 func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
