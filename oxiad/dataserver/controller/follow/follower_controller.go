@@ -120,7 +120,7 @@ type followerController struct {
 	logSynchronizer *LogSynchronizer
 	// Incremented when InstallSnapshot replaces the WAL and database content:
 	// the state applier discards the entries it read before.
-	generation int64
+	snapshotGeneration int64
 
 	stateApplierCond  chan struct{}
 	writeLatencyHisto metric.LatencyHistogram
@@ -449,7 +449,7 @@ func (fc *followerController) stateApplier() {
 	})
 }
 
-func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, generation int64,
+func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, snapshotGeneration int64,
 	maxInclusive int64) error {
 	for reader.HasNext() {
 		entry, _, entryCrc, err := reader.ReadNext()
@@ -473,7 +473,7 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, gen
 		}
 
 		fc.rwMutex.RLock()
-		if fc.generation != generation {
+		if fc.snapshotGeneration != snapshotGeneration {
 			// A snapshot replaced the WAL and the database since the entry
 			// was read: it must not be applied on top of the snapshot
 			fc.rwMutex.RUnlock()
@@ -520,9 +520,9 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	}
 
 	// Open the reader under the lock, so that it starts from the commit
-	// offset of the WAL and database content of the same generation
+	// offset of the WAL and database content of the same snapshot generation
 	fc.rwMutex.RLock()
-	generation := fc.generation
+	snapshotGeneration := fc.snapshotGeneration
 	reader, err := fc.wal.NewReader(fc.commitOffset.Load())
 	fc.rwMutex.RUnlock()
 	if err != nil {
@@ -542,7 +542,7 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 		}
 	}()
 
-	return fc.processCommittedEntriesLoop(reader, generation, maxInclusive)
+	return fc.processCommittedEntriesLoop(reader, snapshotGeneration, maxInclusive)
 }
 
 func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange) {
@@ -598,7 +598,7 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 
 	// From here on the WAL and the database content get replaced, even if
 	// the install fails: the state applier must not apply what it read before
-	fc.generation++
+	fc.snapshotGeneration++
 	if err = fc.wal.Clear(); err != nil {
 		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to clear WAL")
 	}
