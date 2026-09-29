@@ -15,10 +15,14 @@
 package lead
 
 import (
+	"container/heap"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,8 +31,11 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/hash"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
@@ -40,6 +47,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/constant"
+	time2 "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -283,7 +291,7 @@ func TestSessionUpdateOperationCallback_OnDelete(t *testing.T) {
 		SessionKey(SessionId(sessionId)) + "/a%2Fb%2Fc": []byte{},
 	}
 
-	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, nil, "a/b/c")
+	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, nil, "a/b/c", testFeatureChecker{})
 	assert.NoError(t, err)
 	_, found := writeBatch[SessionKey(SessionId(sessionId))+"/a%2Fb%2Fc"]
 	assert.False(t, found)
@@ -557,6 +565,179 @@ func TestSessionManager_CloseDuringExpiry(t *testing.T) {
 	assert.NoError(t, walf.Close())
 }
 
+// expiryPauser is a log handler that parks the expiry scheduler of a session
+// manager on its "Session expired" line: the scheduler logs it after checking
+// that the manager is still open and right before proposing the deletion of
+// the expired sessions.
+type expiryPauser struct {
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func pauseExpiry(sm *sessionManager) *expiryPauser {
+	p := &expiryPauser{reached: make(chan struct{}), release: make(chan struct{})}
+	sm.Lock()
+	sm.log = slog.New(p)
+	sm.Unlock()
+	return p
+}
+
+func (*expiryPauser) Enabled(context.Context, slog.Level) bool { return true }
+
+func (p *expiryPauser) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == "Session expired" {
+		p.once.Do(func() {
+			close(p.reached)
+			<-p.release
+		})
+	}
+	return nil
+}
+
+func (p *expiryPauser) WithAttrs([]slog.Attr) slog.Handler { return p }
+
+func (p *expiryPauser) WithGroup(string) slog.Handler { return p }
+
+// expireNow makes the session due right away and nudges the expiry scheduler.
+func expireNow(sm *sessionManager, id int64) {
+	sm.Lock()
+	defer sm.Unlock()
+	s := sm.sessions[SessionId(id)]
+	s.deadline.Store(0)
+	s.heapDeadline = 0
+	heap.Fix(&sm.expiryHeap, s.heapIdx)
+	sm.wake()
+}
+
+func waitFor(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// NewTerm, Close and DeleteShard stop the session manager while holding the
+// leader lock, which the expiry scheduler needs to propose the deletion of the
+// sessions it expired. They must not deadlock when the scheduler is about to
+// propose: it has checked that the manager is still open, but gets to the
+// leader lock only after they took it.
+func TestSessionManager_StopDuringExpiryProposal(t *testing.T) {
+	shardId := int64(1)
+	for _, tc := range []struct {
+		name string
+		stop func(lc *leaderController) error
+	}{{
+		name: "NewTerm",
+		stop: func(lc *leaderController) error {
+			_, err := lc.NewTerm(&proto.NewTermRequest{Shard: shardId, Term: 2})
+			return err
+		},
+	}, {
+		name: "Close",
+		stop: func(lc *leaderController) error { return lc.Close() },
+	}, {
+		name: "DeleteShard",
+		stop: func(lc *leaderController) error {
+			_, err := lc.DeleteShard(&proto.DeleteShardRequest{Namespace: constant.DefaultNamespace, Shard: shardId, Term: 1})
+			return err
+		},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			kvf, walf, sManager, lc := createSessionManager(t)
+			pauser := pauseExpiry(sManager)
+			createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
+				Shard:            shardId,
+				SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+			})
+			assert.NoError(t, err)
+
+			expireNow(sManager, createResp.SessionId)
+			waitFor(t, pauser.reached, "the expiry of the session")
+
+			stopDone := make(chan error, 1)
+			go func() { stopDone <- tc.stop(lc) }()
+
+			// The manager context is canceled while holding the leader lock:
+			// let the scheduler propose the deletion only then.
+			waitFor(t, sManager.ctx.Done(), "the session manager to be stopped")
+			close(pauser.release)
+
+			select {
+			case err = <-stopDone:
+				assert.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatalf("%s deadlocked with the expiry of a session", tc.name)
+			}
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvf.Close())
+			assert.NoError(t, walf.Close())
+		})
+	}
+}
+
+// A session manager stopped by a new term must not write anymore, even when
+// its expiry scheduler gets to the leader lock only after the new term made
+// this node leader again: the deletion of the session it expired would land in
+// the new term, where the session is alive.
+func TestSessionManager_StoppedManagerDoesNotWrite(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, sManager, lc := createSessionManager(t)
+	pauser := pauseExpiry(sManager)
+	createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shardId,
+		SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+	})
+	assert.NoError(t, err)
+	sessionId := createResp.SessionId
+
+	expireNow(sManager, sessionId)
+	waitFor(t, pauser.reached, "the expiry of the session")
+
+	newTermDone := make(chan error, 1)
+	go func() {
+		_, err := lc.NewTerm(&proto.NewTermRequest{Shard: shardId, Term: 2})
+		newTermDone <- err
+	}()
+	waitFor(t, sManager.ctx.Done(), "the session manager to be stopped")
+
+	// Lead the new term while the stopped scheduler is still about to propose
+	becomeLeaderDone := make(chan struct{})
+	go func() {
+		_, err := lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+			Shard:             shardId,
+			Term:              2,
+			ReplicationFactor: 1,
+		})
+		assert.NoError(t, err)
+		close(becomeLeaderDone)
+	}()
+	waitFor(t, becomeLeaderDone, "the new term to be led")
+
+	close(pauser.release)
+	select {
+	case err = <-newTermDone:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("new term deadlocked with the expiry of a session")
+	}
+
+	// The deletion was rejected: the session is still alive in the new term
+	assert.NotNil(t, getSessionMetadata(t, lc, sessionId))
+	newManager := lc.sessionManager.(*sessionManager)
+	newManager.RLock()
+	_, found := newManager.sessions[SessionId(sessionId)]
+	newManager.RUnlock()
+	assert.True(t, found)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
+}
+
 func TestSessionManagerReopening(t *testing.T) {
 	shardId := int64(1)
 	// Invalid session timeout
@@ -739,6 +920,107 @@ func TestSession_PutWithExpiredSession(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, closer.Close())
 }
+
+// A split child catching up from its parent's log applies the creation of a
+// session as a put of the session metadata key. It must keep it whatever the
+// hash of that key: an ephemeral record of the session placed in the child is
+// otherwise rejected there for an unknown session, and lost although the
+// parent acknowledged it.
+func TestSplitChild_SessionCreatedDuringCatchUp(t *testing.T) {
+	kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	defer kvf.Close()
+	db, err := database.NewDB(constant.DefaultNamespace, 1, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	assert.NoError(t, err)
+	defer db.Close()
+
+	// The child is the half of the hash space without the session key, and
+	// the ephemeral record is in it. The session id is the offset of its
+	// creation.
+	sessionId := SessionId(10)
+	mid := uint32(math.MaxUint32 / 2)
+	childRange := &proto.HashRange{Min: 0, Max: mid}
+	if hash.Xxh332(SessionKey(sessionId)) <= mid {
+		childRange = &proto.HashRange{Min: mid + 1, Max: math.MaxUint32}
+	}
+	var key string
+	for i := 0; key == "" && i < 1000; i++ {
+		if k := fmt.Sprintf("ephemeral-%d", i); hash.Xxh332(k) >= childRange.Min && hash.Xxh332(k) <= childRange.Max {
+			key = k
+		}
+	}
+	assert.NotEmpty(t, key)
+
+	apply := func(offset int64, request *proto.WriteRequest) {
+		value, err := pb.Marshal(&proto.LogEntryValue{Value: &proto.LogEntryValue_Requests{
+			Requests: &proto.WriteRequests{Writes: []*proto.WriteRequest{request}},
+		}})
+		assert.NoError(t, err)
+		_, err = statemachine.ApplyLogEntryWithSplitFilter(db, &proto.LogEntry{Term: 1, Offset: offset, Value: value},
+			WrapperUpdateOperationCallback, childRange)
+		assert.NoError(t, err)
+	}
+	metadata, err := (&proto.SessionMetadata{TimeoutMs: 5000}).MarshalVT()
+	assert.NoError(t, err)
+	apply(int64(sessionId), &proto.WriteRequest{Puts: []*proto.PutRequest{
+		{Key: SessionKey(sessionId), Value: metadata},
+	}})
+	apply(int64(sessionId)+1, &proto.WriteRequest{Puts: []*proto.PutRequest{
+		{Key: key, Value: []byte("v"), SessionId: new(int64(sessionId))},
+	}})
+
+	res, err := db.Get(&proto.GetRequest{Key: key})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, res.Status)
+	assert.EqualValues(t, sessionId, res.GetVersion().GetSessionId())
+}
+
+// The split filter deletes, with each record that goes to the other child, the
+// index entries and the session shadow key the leader wrote for it: they
+// follow the record's partition key, whatever the hash of the record key.
+func TestSplitChild_RecordInternalKeysFollowPartitionKey(t *testing.T) {
+	mid := uint32(math.MaxUint32 / 2)
+	partitionKey := "pk-7"
+	sessionId := SessionId(1)
+	index := &proto.SecondaryIndex{IndexName: "pk", SecondaryKey: partitionKey}
+	var records []string
+	for i := 0; i < 20; i++ {
+		records = append(records, fmt.Sprintf("%s/rec-%06d", partitionKey, i))
+	}
+
+	for _, child := range []*proto.HashRange{{Min: 0, Max: mid}, {Min: mid + 1, Max: math.MaxUint32}} {
+		kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+		assert.NoError(t, err)
+		db, err := database.NewDB(constant.DefaultNamespace, 1, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+		assert.NoError(t, err)
+
+		write := &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: SessionKey(sessionId), Value: []byte{}}}}
+		for _, key := range records {
+			write.Puts = append(write.Puts, &proto.PutRequest{
+				Key: key, Value: []byte("v"), PartitionKey: &partitionKey,
+				SessionId: new(int64(sessionId)), SecondaryIndexes: []*proto.SecondaryIndex{index},
+			})
+		}
+		_, err = db.ProcessWrite(write, int64(sessionId), 0, WrapperUpdateOperationCallback)
+		assert.NoError(t, err)
+
+		assert.NoError(t, database.FilterDBForSplit(db.RawKV(), child))
+
+		owner := hash.Xxh332(partitionKey) >= child.Min && hash.Xxh332(partitionKey) <= child.Max
+		for _, record := range records {
+			for _, key := range []string{record, secondaryIndexKey(record, index), ShadowKey(sessionId, record)} {
+				_, _, closer, err := db.RawKV().Get(key, kvstore.ComparisonEqual, kvstore.ShowInternalKeys)
+				if assert.Equal(t, owner, err == nil, "key %q, child %v", key, child) && err == nil {
+					assert.NoError(t, closer.Close())
+				}
+			}
+		}
+
+		assert.NoError(t, db.Close())
+		assert.NoError(t, kvf.Close())
+	}
+}
+
 func TestIsSessionKey(t *testing.T) {
 	tests := []struct {
 		name string

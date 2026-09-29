@@ -76,6 +76,11 @@ type KeyIterator interface {
 
 	SeekGE(key string) bool
 	SeekLT(key string) bool
+
+	// Error returns the error of a failed read. The iterator becomes invalid
+	// both at the end of the range and when a read fails, so a scan must check
+	// Error before taking what it read as the complete range.
+	Error() error
 }
 
 type ReverseKeyIterator interface {
@@ -114,8 +119,8 @@ type SnapshotLoader interface {
 
 	AddChunk(fileName string, chunkIndex int32, chunkCount int32, content []byte) error
 
-	// Complete signals that the snapshot is now complete
-	Complete()
+	// Complete signals that the snapshot is now complete, and makes it durable
+	Complete() error
 }
 
 type ComparisonType proto.KeyComparisonType
