@@ -671,6 +671,49 @@ func TestSyncClientImpl_FloorCeilingGetKeySorting(t *testing.T) {
 	}
 }
 
+// A range scan without a partition key goes to every shard, and the client
+// merges the records of the shards. The merged records must follow the key
+// sorting of the namespace, like the records of a single shard.
+func TestSyncClientImpl_RangeScanKeySorting(t *testing.T) {
+	keys := []string{"b", "a/y/z", "ab/y", "a0", "a/x"}
+	for _, test := range []struct {
+		keySorting proto.KeySortingType
+		expected   []string
+	}{
+		// Natural sorting compares the bytes: '/' sorts before '0'
+		{proto.KeySortingType_NATURAL, []string{"a/x", "a/y/z", "a0", "ab/y", "b"}},
+		// Hierarchical sorting puts the keys with fewer '/' first, then sorts '/'
+		// after any other byte
+		{proto.KeySortingType_HIERARCHICAL, []string{"a0", "b", "ab/y", "a/x", "a/y/z"}},
+	} {
+		t.Run(test.keySorting.String(), func(t *testing.T) {
+			config := dataserver.NewTestConfig(t.TempDir())
+			config.NumShards = 4
+			config.KeySorting = test.keySorting
+
+			standaloneServer, err := dataserver.NewStandalone(config)
+			require.NoError(t, err)
+			defer standaloneServer.Close()
+
+			client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, key := range keys {
+				_, _, err = client.Put(t.Context(), key, []byte(key))
+				require.NoError(t, err)
+			}
+
+			var scanned []string
+			for result := range client.RangeScan(t.Context(), "", "") {
+				require.NoError(t, result.Err)
+				scanned = append(scanned, result.Key)
+			}
+			assert.Equal(t, test.expected, scanned)
+		})
+	}
+}
+
 // shardOf returns the shard of a standalone server that stores the key.
 func shardOf(key string, numShards uint32) int64 {
 	code := hash.Xxh332(key)
