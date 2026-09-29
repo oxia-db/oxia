@@ -1228,44 +1228,52 @@ func TestPebbleGetAndFindLowerReadFailure(t *testing.T) {
 	require.NoError(t, err)
 	defer kv.Close()
 
-	wb := kv.NewWriteBatch()
-	require.NoError(t, wb.Put("b", []byte("b")))
-	require.NoError(t, wb.Put("c", []byte("c")))
-	require.NoError(t, wb.Commit())
-	require.NoError(t, wb.Close())
-	require.NoError(t, kv.Flush())
+	// "b" goes into an sstable that stays readable, "c" and "d" into one made
+	// unreadable below. They don't overlap, so they are in the same level, and a
+	// lookup only opens the second one when it reaches its keys.
+	for _, keys := range [][]string{{"b"}, {"c", "d"}} {
+		wb := kv.NewWriteBatch()
+		for _, key := range keys {
+			require.NoError(t, wb.Put(key, []byte(key)))
+		}
+		require.NoError(t, wb.Commit())
+		require.NoError(t, wb.Close())
+		require.NoError(t, kv.Flush())
+	}
 
-	// Make the sstable unreadable, so that reading it fails with an I/O error.
-	// Pebble doesn't open a table it just flushed: the reads below are the first
-	// to open it. A corrupted block wouldn't do: Pebble reports corruptions
+	// Make the second sstable unreadable, so that reading it fails with an I/O
+	// error. Pebble doesn't open a table it just flushed: the reads below are the
+	// first to open it. A corrupted block wouldn't do: Pebble reports corruptions
 	// through the logger's Fatalf, which exits the process.
 	ssts, err := filepath.Glob(filepath.Join(kv.(*Pebble).dbPath, "*.sst"))
 	require.NoError(t, err)
-	require.Len(t, ssts, 1)
-	require.NoError(t, os.Chmod(ssts[0], 0))
-	t.Cleanup(func() { _ = os.Chmod(ssts[0], 0600) })
-	if f, err := os.Open(ssts[0]); err == nil {
+	require.Len(t, ssts, 2)
+	require.NoError(t, os.Chmod(ssts[1], 0))
+	t.Cleanup(func() { _ = os.Chmod(ssts[1], 0600) })
+	if f, err := os.Open(ssts[1]); err == nil {
 		assert.NoError(t, f.Close())
 		t.Skip("the sstable is still readable, as when running as root")
 	}
 
-	// The keys are outside the sstable's range: only the iterators read it
 	for _, c := range []struct {
 		comparisonType ComparisonType
 		key            string
 	}{
-		{ComparisonFloor, "d"},
-		{ComparisonCeiling, "a"},
-		{ComparisonLower, "d"},
-		{ComparisonHigher, "a"},
+		// "e" is past both sstables: the exact lookup of FLOOR reads neither
+		{ComparisonFloor, "e"},
+		{ComparisonCeiling, "c"},
+		{ComparisonLower, "e"},
+		{ComparisonHigher, "c"},
+		// Lands on "b" in the readable sstable, then fails to step to "c"
+		{ComparisonHigher, "b"},
 	} {
 		_, _, _, err := kv.Get(c.key, c.comparisonType, NoInternalKeys)
-		assert.ErrorIs(t, err, os.ErrPermission, "comparison type %d", c.comparisonType)
+		assert.ErrorIs(t, err, os.ErrPermission, "comparison type %d, key %q", c.comparisonType, c.key)
 	}
 
-	wb = kv.NewWriteBatch()
+	wb := kv.NewWriteBatch()
 	defer wb.Close()
-	_, err = wb.FindLower("d")
+	_, err = wb.FindLower("e")
 	assert.ErrorIs(t, err, os.ErrPermission)
 	assert.NotErrorIs(t, err, ErrKeyNotFound)
 }
