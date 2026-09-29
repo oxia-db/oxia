@@ -22,7 +22,9 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -127,6 +129,11 @@ type leaderController struct {
 	// the commit offset reported to the WAL while there is no quorum ack
 	// tracker, starting from the WAL recovery.
 	dbCommitOffset int64
+
+	// Done when the node stops leading the term, before the quorum ack tracker
+	// is closed: the leader doesn't apply the committed entries it has left.
+	termCtx    context.Context
+	termCancel context.CancelFunc
 
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -328,7 +335,6 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 		return nil, err
 	}
 
-	lc.db.EnableNotifications(lc.termOptions.NotificationsEnabled)
 	lc.term.Store(req.Term)
 	lc.status = proto.ServingStatus_FENCED
 	lc.replicationFactor = 0
@@ -340,11 +346,17 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	lc.commitOffsetGauge.Unregister()
 
 	if lc.quorumAckTracker != nil {
+		// Closing the tracker waits for the callback that is running, which
+		// can be retrying an entry that failed to apply
+		lc.termCancel()
 		if err := lc.quorumAckTracker.Close(); err != nil {
 			return nil, err
 		}
 		lc.quorumAckTracker = nil
 	}
+	// The previous term applies no more entries: they must not see the setting
+	// of the new term
+	lc.db.EnableNotifications(lc.termOptions.NotificationsEnabled)
 
 	for _, follower := range lc.followers {
 		if err := follower.Close(); err != nil {
@@ -425,6 +437,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	// followers seeded from the same snapshot drop them as duplicates.
 	headOffset := max(lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
 	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), headOffset, leaderCommitOffset)
+	lc.termCtx, lc.termCancel = context.WithCancel(lc.ctx)
 	lc.sessionManager = NewSessionManager(lc.ctx, lc.namespace, lc.shardId, lc)
 
 	for follower, followerHeadEntryId := range req.FollowerMaps {
@@ -1151,6 +1164,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	newOffset := lc.quorumAckTracker.NextOffset()
 	walLog := lc.wal
 	tracker := lc.quorumAckTracker
+	termCtx := lc.termCtx
 	term := lc.term.Load()
 	proposal := proposalSupplier(newOffset)
 
@@ -1189,7 +1203,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
 			func(_ any) {
 				defer timer.DoneCtx(ctx)
-				response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
+				response, err := lc.applyCommitted(termCtx, walLog, proposal)
 				if err != nil {
 					lc.waitGroup.Done()
 					cb.OnCompleteError(err)
@@ -1209,6 +1223,80 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	}
 	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: proposal.GetTimestamp()}, deferDbWrite)
 	return nil
+}
+
+// applyCommitted applies a committed entry to the database while the node leads
+// the term. A failure that doesn't reject the request, like a storage error, is
+// retried until the entry is applied, as on the followers: moving on would
+// apply the next entries without it, and move the commit offset of the
+// database past it, so the database would miss it for good. The entries left
+// when the term ends are applied from the wal, by the next leader, and by this
+// node as a follower.
+func (lc *leaderController) applyCommitted(ctx context.Context, w wal.Wal, proposal statemachine.Proposal) (statemachine.ApplyResponse, error) {
+	if ctx.Err() != nil {
+		// An earlier entry could have failed to apply, and must come first
+		return statemachine.ApplyResponse{}, errors.Wrapf(constant.ErrResourceUnavailable,
+			"oxia: the term ended before applying the entry %d", proposal.GetOffset())
+	}
+
+	response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
+	if err != nil && !errors.Is(err, database.ErrWriteRejected) {
+		return lc.retryApply(ctx, w, proposal.GetOffset(), err)
+	}
+	return response, err
+}
+
+// retryApply applies again the entry at offset, which failed to apply with
+// cause, until it's applied or rejected, or the term ends.
+func (lc *leaderController) retryApply(ctx context.Context, w wal.Wal, offset int64, cause error) (statemachine.ApplyResponse, error) {
+	var response statemachine.ApplyResponse
+	err := cause
+	bo := time2.NewBackOff(ctx)
+	// backoff.Retry does it before use: the intervals are 0 until then
+	bo.Reset()
+	for err != nil && !errors.Is(err, database.ErrWriteRejected) {
+		retryAfter := bo.NextBackOff()
+		if retryAfter == backoff.Stop {
+			return statemachine.ApplyResponse{}, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err),
+				"oxia: the term ended before applying the entry %d", offset)
+		}
+		lc.log.Error(
+			"Failed to apply a committed entry, retrying",
+			slog.Int64("term", lc.term.Load()),
+			slog.Int64("offset", offset),
+			slog.Any("error", err),
+			slog.Duration("retry-after", retryAfter),
+		)
+		select {
+		case <-ctx.Done():
+		case <-time.After(retryAfter):
+			// The failed apply can have modified the request, like the key of
+			// a sequential put: apply the entry as it was appended to the wal
+			response, err = lc.applyFromWal(w, offset)
+		}
+	}
+	return response, err
+}
+
+func (lc *leaderController) applyFromWal(w wal.Wal, offset int64) (statemachine.ApplyResponse, error) {
+	r, err := w.NewReader(offset - 1)
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+	defer r.Close()
+
+	if !r.HasNext() {
+		return statemachine.ApplyResponse{}, errors.Wrapf(wal.ErrEntryNotFound, "offset %d", offset)
+	}
+	entry, _, _, err := r.ReadNext()
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+	proposal, err := statemachine.NewProposalFromLogEntry(entry)
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+	return proposal.Apply(lc.db, WrapperUpdateOperationCallback)
 }
 
 //nolint:revive
