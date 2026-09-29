@@ -607,7 +607,9 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	if err != nil {
 		return err
 	}
-	loader.Complete()
+	if err = loader.Complete(); err != nil {
+		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to complete snapshot")
+	}
 
 	var db database.DB
 	var rawTerm, rawCommitOffset int64
