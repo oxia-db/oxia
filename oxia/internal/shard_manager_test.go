@@ -147,18 +147,19 @@ func TestShardManagerChanged(t *testing.T) {
 	assert.NotEqual(t, changed, s.Changed())
 }
 
-// Fails right after sending the shard assignments.
+// Sends the shard assignments a number of times, then fails with err.
 type failingAssignmentsStream struct {
 	grpc.ClientStream
-	namespace string
-	sent      bool
+	namespace   string
+	assignments int
+	err         error
 }
 
 func (s *failingAssignmentsStream) Recv() (*proto.ShardAssignments, error) {
-	if s.sent {
-		return nil, status.Error(codes.Unavailable, "connection reset")
+	if s.assignments == 0 {
+		return nil, s.err
 	}
-	s.sent = true
+	s.assignments--
 	return &proto.ShardAssignments{Namespaces: map[string]*proto.NamespaceShardsAssignment{
 		s.namespace: {Assignments: []*proto.ShardAssignment{{
 			ShardBoundaries: &proto.ShardAssignment_Int32HashRange{Int32HashRange: &proto.Int32HashRange{}},
@@ -168,11 +169,13 @@ func (s *failingAssignmentsStream) Recv() (*proto.ShardAssignments, error) {
 
 type failingAssignmentsRpcProvider struct {
 	RpcProvider
+	assignments int
+	err         error
 }
 
-func (*failingAssignmentsRpcProvider) GetShardAssignments(_ context.Context, _ string,
+func (p *failingAssignmentsRpcProvider) GetShardAssignments(_ context.Context, _ string,
 	request *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
-	return &failingAssignmentsStream{namespace: request.Namespace}, nil
+	return &failingAssignmentsStream{namespace: request.Namespace, assignments: p.assignments, err: p.err}, nil
 }
 
 // Signals the warnings, such as the one logged before retrying to receive the
@@ -198,7 +201,7 @@ func (h *warningsHandler) Handle(ctx context.Context, record slog.Record) error 
 func TestShardManagerCloseWhileWaitingToRetry(t *testing.T) {
 	logs := &warningsHandler{Handler: slog.Default().Handler(), warnings: make(chan struct{}, 1)}
 	s := &shardManagerImpl{
-		rpcProvider: &failingAssignmentsRpcProvider{},
+		rpcProvider: &failingAssignmentsRpcProvider{assignments: 1, err: status.Error(codes.Unavailable, "connection reset")},
 		namespace:   "default",
 		shards:      make(map[int64]Shard),
 		successors:  make(map[int64][]Shard),
@@ -254,45 +257,6 @@ func TestNewShardManagerStopsReceivingOnTimeout(t *testing.T) {
 	}
 }
 
-// Sends the shard assignments a number of times, then fails with err.
-type assignmentsTestStream struct {
-	grpc.ClientStream
-	namespace   string
-	assignments int
-	err         error
-}
-
-func (s *assignmentsTestStream) Recv() (*proto.ShardAssignments, error) {
-	if s.assignments == 0 {
-		return nil, s.err
-	}
-	s.assignments--
-	return &proto.ShardAssignments{Namespaces: map[string]*proto.NamespaceShardsAssignment{
-		s.namespace: {Assignments: []*proto.ShardAssignment{{
-			ShardBoundaries: &proto.ShardAssignment_Int32HashRange{Int32HashRange: &proto.Int32HashRange{}},
-		}}},
-	}}, nil
-}
-
-// Serves the first request of the shard assignments with the stream, and holds
-// the next ones until the shard manager is closed.
-type assignmentsTestRpcProvider struct {
-	RpcProvider
-	stream   *assignmentsTestStream
-	requests chan struct{}
-}
-
-func (p *assignmentsTestRpcProvider) GetShardAssignments(ctx context.Context, _ string,
-	_ *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
-	p.requests <- struct{}{}
-	if stream := p.stream; stream != nil {
-		p.stream = nil
-		return stream, nil
-	}
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
 // The errors that fail the creation of the shard manager are retried once it
 // has received the initial assignments.
 func TestShardManagerRetriesPermanentErrorsAfterStart(t *testing.T) {
@@ -301,19 +265,16 @@ func TestShardManagerRetriesPermanentErrorsAfterStart(t *testing.T) {
 		"namespace-not-found": constant.ErrNamespaceNotFound,
 	} {
 		t.Run(name, func(t *testing.T) {
-			provider := &assignmentsTestRpcProvider{
-				// The initial assignments and an update, then the error
-				stream:   &assignmentsTestStream{namespace: "default", assignments: 2, err: err},
-				requests: make(chan struct{}, 2),
-			}
+			logs := &warningsHandler{Handler: slog.Default().Handler(), warnings: make(chan struct{}, 1)}
 			s := &shardManagerImpl{
-				rpcProvider: provider,
+				// The initial assignments and an update, then the error
+				rpcProvider: &failingAssignmentsRpcProvider{assignments: 2, err: err},
 				namespace:   "default",
 				shards:      make(map[int64]Shard),
 				successors:  make(map[int64][]Shard),
 				changed:     make(chan struct{}),
 				updatedWg:   concurrent.NewWaitGroup(1),
-				logger:      slog.Default(),
+				logger:      slog.New(logs),
 			}
 			s.ctx, s.cancel = context.WithCancel(context.Background())
 			stopped := make(chan struct{})
@@ -322,20 +283,17 @@ func TestShardManagerRetriesPermanentErrorsAfterStart(t *testing.T) {
 				close(stopped)
 			}()
 
-			// The first request, then the retry after the error
-			for range 2 {
-				select {
-				case <-provider.requests:
-				case <-time.After(10 * time.Second):
-					require.FailNow(t, "the shard manager stopped requesting the shard assignments")
-				}
+			select {
+			case <-logs.warnings:
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "the error was not retried")
 			}
 
 			assert.NoError(t, s.Close())
 			select {
 			case <-stopped:
 			case <-time.After(10 * time.Second):
-				require.FailNow(t, "the shard manager kept requesting the shard assignments after it was closed")
+				require.FailNow(t, "the shard manager kept receiving the assignments after it was closed")
 			}
 		})
 	}
