@@ -15,6 +15,7 @@
 package database
 
 import (
+	"fmt"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -58,8 +59,21 @@ var (
 //   - __oxia/checksum: delete (invalid after filtering)
 //   - __oxia/notifications/{offset}: filter notification map by key hash; delete if empty
 //   - __oxia/session/{id}: keep (session metadata duplicated to both children)
-//   - __oxia/session/{id}/{user-key}: filter by user key hash
-//   - __oxia/idx/{idx}/{sec}\x01{pri}: filter by primary key hash
+//   - __oxia/session/{id}/{user-key}, __oxia/idx/{idx}/{sec}\x01{pri}: delete
+//     with the record at user-key or pri
+//
+// The session shadow key and the index entries of a record go where the
+// record goes, which its partition key decides, not the hash of its key: the
+// record lists them, and they are deleted with it, as the leader deletes them
+// with a record. One left without its record by some other bug is kept by
+// both children: telling it apart would take a lookup of the record for each.
+//
+// A notification does not carry the partition key: it stays placed by the
+// hash of its key, which can put the one of a record written with a partition
+// key in the other child. Placing it with its record would take a random read
+// for each retained notification, while the clients never read the
+// notifications a child inherits: they subscribe to a new shard from its
+// commit offset.
 func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 	slog.Info(
 		"Filtering database for shard split",
@@ -140,20 +154,49 @@ func FilterDBForSplit(kv kvstore.KV, hashRange *proto.HashRange) error {
 }
 
 // filterUserKey deletes the user key when it falls outside the child's hash
-// range, reporting whether it did.
+// range, reporting whether it did. The internal keys that belong to the record
+// are deleted with it.
 func filterUserKey(it kvstore.KeyValueIterator, batch kvstore.WriteBatch, key string, hashRange *proto.HashRange) (bool, error) {
 	value, err := it.Value()
 	if err != nil {
 		return false, errors.Wrapf(err, "failed to read value for key %q", key)
 	}
 
-	if isUserKeyInRange(key, value, hashRange) {
+	se := proto.StorageEntryFromVTPool()
+	defer se.ReturnToVTPool()
+	if err := Deserialize(value, se); err != nil {
+		// Can't deserialize: hash by key, and no internal keys to delete
+		se.ResetVT()
+	}
+
+	if isUserKeyInRange(key, se, hashRange) {
 		return false, nil
 	}
 	if err := batch.Delete(key); err != nil {
 		return false, err
 	}
-	return true, nil
+	return true, deleteRecordInternalKeys(batch, key, se)
+}
+
+// deleteRecordInternalKeys deletes the internal keys that belong to a record,
+// as the leader does when it deletes the record: its secondary index entries
+// and, for an ephemeral record, its session shadow key. They are built from the
+// record like the leader writes them (lead.secondaryIndexKey, lead.ShadowKey).
+func deleteRecordInternalKeys(batch kvstore.WriteBatch, key string, se *proto.StorageEntry) error {
+	escapedKey := url.PathEscape(key)
+	for _, si := range se.SecondaryIndexes {
+		idxKey := fmt.Sprintf("%s/%s/%s%s%s", idxKeyPrefix, si.IndexName, si.SecondaryKey, idxSeparator, escapedKey)
+		if err := batch.Delete(idxKey); err != nil {
+			return err
+		}
+	}
+	if se.SessionId != nil {
+		shadow := fmt.Sprintf("%s/%016x/%s", sessionKeyPrefix, *se.SessionId, escapedKey)
+		if err := batch.Delete(shadow); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // rotateSplitBatchIfFull commits and closes the batch once it reaches the
@@ -207,13 +250,12 @@ func classifyInternalKey(
 		// Session metadata: keep in both children (session may own keys in either)
 		return splitActionKeep, nil
 
-	case strings.HasPrefix(key, sessionKeyPrefix+"/"):
-		// Session shadow key: __oxia/session/{id}/{url_escaped_user_key}
-		return classifySessionShadowKey(key, hashRange), nil
-
-	case strings.HasPrefix(key, idxKeyPrefix+"/"):
-		// Secondary index key: __oxia/idx/{name}/{secondary}\x01{url_escaped_primary}
-		return classifySecondaryIndexKey(key, hashRange), nil
+	case strings.HasPrefix(key, sessionKeyPrefix+"/"),
+		strings.HasPrefix(key, idxKeyPrefix+"/"):
+		// Session shadow key, __oxia/session/{id}/{url_escaped_user_key}, or
+		// secondary index key, __oxia/idx/{name}/{secondary}\x01{url_escaped_primary}:
+		// deleted with its record when that goes to the other child
+		return splitActionKeep, nil
 
 	default:
 		// Unknown internal key: keep by default (safe)
@@ -282,64 +324,9 @@ func filterNotificationKey(
 	return splitActionKeep, nil
 }
 
-// classifySessionShadowKey extracts the user key from a shadow key and checks
-// if it belongs to this child's hash range.
-// Shadow key format: __oxia/session/{16hex}/{url_escaped_user_key}.
-func classifySessionShadowKey(key string, hashRange *proto.HashRange) splitAction {
-	// Find the position after "__oxia/session/{16hex}/"
-	prefix := sessionKeyPrefix + "/"
-	rest := key[len(prefix):]
-
-	// Skip the 16-hex-char session ID
-	slashIdx := strings.Index(rest, "/")
-	if slashIdx < 0 {
-		// This is a session metadata key (no user key suffix), keep it
-		return splitActionKeep
-	}
-
-	escapedUserKey := rest[slashIdx+1:]
-	userKey, err := url.PathUnescape(escapedUserKey)
-	if err != nil {
-		// Can't parse: keep to be safe
-		return splitActionKeep
-	}
-
-	h := hash.Xxh332(userKey)
-	if isHashInRange(h, hashRange) {
-		return splitActionKeep
-	}
-	return splitActionDelete
-}
-
-// classifySecondaryIndexKey extracts the primary key from a secondary index key
-// and checks if it belongs to this child's hash range.
-// Format: __oxia/idx/{name}/{secondary}\x01{url_escaped_primary}.
-func classifySecondaryIndexKey(key string, hashRange *proto.HashRange) splitAction {
-	primaryKey, _, err := ParseSecondaryIndexKey(key)
-	if err != nil {
-		// Can't parse: keep to be safe
-		return splitActionKeep
-	}
-
-	h := hash.Xxh332(primaryKey)
-	if isHashInRange(h, hashRange) {
-		return splitActionKeep
-	}
-	return splitActionDelete
-}
-
 // isUserKeyInRange determines if a user data key belongs to the given hash range.
 // If the StorageEntry has a partition_key, that is hashed; otherwise the key itself.
-func isUserKeyInRange(key string, value []byte, hashRange *proto.HashRange) bool {
-	se := proto.StorageEntryFromVTPool()
-	defer se.ReturnToVTPool()
-
-	if err := Deserialize(value, se); err != nil {
-		// Can't deserialize: hash by key
-		h := hash.Xxh332(key)
-		return isHashInRange(h, hashRange)
-	}
-
+func isUserKeyInRange(key string, se *proto.StorageEntry, hashRange *proto.HashRange) bool {
 	var h uint32
 	if se.PartitionKey != nil {
 		h = hash.Xxh332(*se.PartitionKey)
@@ -365,6 +352,16 @@ func FilterWriteRequestForSplit(req *proto.WriteRequest, hashRange *proto.HashRa
 
 	var puts []*proto.PutRequest
 	for _, p := range req.Puts {
+		if strings.HasPrefix(p.Key, constant.InternalKeyPrefix) {
+			// Not a record of either child: a session is created by a put of
+			// its metadata key, and both children need it, as FilterDBForSplit
+			// keeps the sessions of the snapshot in both. Placed by the hash
+			// of its key, the other child would reject the ephemeral records
+			// of the session for an unknown session.
+			puts = append(puts, p)
+			continue
+		}
+
 		var h uint32
 		if p.PartitionKey != nil {
 			h = hash.Xxh332(*p.PartitionKey)

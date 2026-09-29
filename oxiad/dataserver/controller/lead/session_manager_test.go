@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"testing"
 	"time"
 
@@ -27,8 +28,11 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/hash"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 
@@ -40,6 +44,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/constant"
+	time2 "github.com/oxia-db/oxia/common/time"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -739,6 +744,107 @@ func TestSession_PutWithExpiredSession(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, closer.Close())
 }
+
+// A split child catching up from its parent's log applies the creation of a
+// session as a put of the session metadata key. It must keep it whatever the
+// hash of that key: an ephemeral record of the session placed in the child is
+// otherwise rejected there for an unknown session, and lost although the
+// parent acknowledged it.
+func TestSplitChild_SessionCreatedDuringCatchUp(t *testing.T) {
+	kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	defer kvf.Close()
+	db, err := database.NewDB(constant.DefaultNamespace, 1, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	assert.NoError(t, err)
+	defer db.Close()
+
+	// The child is the half of the hash space without the session key, and
+	// the ephemeral record is in it. The session id is the offset of its
+	// creation.
+	sessionId := SessionId(10)
+	mid := uint32(math.MaxUint32 / 2)
+	childRange := &proto.HashRange{Min: 0, Max: mid}
+	if hash.Xxh332(SessionKey(sessionId)) <= mid {
+		childRange = &proto.HashRange{Min: mid + 1, Max: math.MaxUint32}
+	}
+	var key string
+	for i := 0; key == "" && i < 1000; i++ {
+		if k := fmt.Sprintf("ephemeral-%d", i); hash.Xxh332(k) >= childRange.Min && hash.Xxh332(k) <= childRange.Max {
+			key = k
+		}
+	}
+	assert.NotEmpty(t, key)
+
+	apply := func(offset int64, request *proto.WriteRequest) {
+		value, err := pb.Marshal(&proto.LogEntryValue{Value: &proto.LogEntryValue_Requests{
+			Requests: &proto.WriteRequests{Writes: []*proto.WriteRequest{request}},
+		}})
+		assert.NoError(t, err)
+		_, err = statemachine.ApplyLogEntryWithSplitFilter(db, &proto.LogEntry{Term: 1, Offset: offset, Value: value},
+			WrapperUpdateOperationCallback, childRange)
+		assert.NoError(t, err)
+	}
+	metadata, err := (&proto.SessionMetadata{TimeoutMs: 5000}).MarshalVT()
+	assert.NoError(t, err)
+	apply(int64(sessionId), &proto.WriteRequest{Puts: []*proto.PutRequest{
+		{Key: SessionKey(sessionId), Value: metadata},
+	}})
+	apply(int64(sessionId)+1, &proto.WriteRequest{Puts: []*proto.PutRequest{
+		{Key: key, Value: []byte("v"), SessionId: new(int64(sessionId))},
+	}})
+
+	res, err := db.Get(&proto.GetRequest{Key: key})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, res.Status)
+	assert.EqualValues(t, sessionId, res.GetVersion().GetSessionId())
+}
+
+// The split filter deletes, with each record that goes to the other child, the
+// index entries and the session shadow key the leader wrote for it: they
+// follow the record's partition key, whatever the hash of the record key.
+func TestSplitChild_RecordInternalKeysFollowPartitionKey(t *testing.T) {
+	mid := uint32(math.MaxUint32 / 2)
+	partitionKey := "pk-7"
+	sessionId := SessionId(1)
+	index := &proto.SecondaryIndex{IndexName: "pk", SecondaryKey: partitionKey}
+	var records []string
+	for i := 0; i < 20; i++ {
+		records = append(records, fmt.Sprintf("%s/rec-%06d", partitionKey, i))
+	}
+
+	for _, child := range []*proto.HashRange{{Min: 0, Max: mid}, {Min: mid + 1, Max: math.MaxUint32}} {
+		kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+		assert.NoError(t, err)
+		db, err := database.NewDB(constant.DefaultNamespace, 1, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+		assert.NoError(t, err)
+
+		write := &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: SessionKey(sessionId), Value: []byte{}}}}
+		for _, key := range records {
+			write.Puts = append(write.Puts, &proto.PutRequest{
+				Key: key, Value: []byte("v"), PartitionKey: &partitionKey,
+				SessionId: new(int64(sessionId)), SecondaryIndexes: []*proto.SecondaryIndex{index},
+			})
+		}
+		_, err = db.ProcessWrite(write, int64(sessionId), 0, WrapperUpdateOperationCallback)
+		assert.NoError(t, err)
+
+		assert.NoError(t, database.FilterDBForSplit(db.RawKV(), child))
+
+		owner := hash.Xxh332(partitionKey) >= child.Min && hash.Xxh332(partitionKey) <= child.Max
+		for _, record := range records {
+			for _, key := range []string{record, secondaryIndexKey(record, index), ShadowKey(sessionId, record)} {
+				_, _, closer, err := db.RawKV().Get(key, kvstore.ComparisonEqual, kvstore.ShowInternalKeys)
+				if assert.Equal(t, owner, err == nil, "key %q, child %v", key, child) && err == nil {
+					assert.NoError(t, closer.Close())
+				}
+			}
+		}
+
+		assert.NoError(t, db.Close())
+		assert.NoError(t, kvf.Close())
+	}
+}
+
 func TestIsSessionKey(t *testing.T) {
 	tests := []struct {
 		name string

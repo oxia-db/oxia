@@ -807,6 +807,18 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}
 	slog.Info("Written ephemeral keys", slog.Int("count", numEphemeral))
 
+	// Ephemeral records written with a partition key are placed by it,
+	// whatever the hash of their keys, and their session shadow keys, which
+	// delete them with the session, must follow them.
+	partitionKey := "pk-7"
+	var partitionedEphemeralKeys []string
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("%s/ephemeral-%06d", partitionKey, i)
+		_, _, err := ephemeralClient.Put(ctx, key, []byte(key), oxia.Ephemeral(), oxia.PartitionKey(partitionKey))
+		require.NoError(t, err)
+		partitionedEphemeralKeys = append(partitionedEphemeralKeys, key)
+	}
+
 	// Perform split
 	cluster.splitAndWait(t)
 
@@ -825,6 +837,12 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 		}
 		assert.Equal(t, []byte(expectedValue), value, "value mismatch for %s", key)
 		assert.True(t, version.Ephemeral, "key %s should still be ephemeral after split", key)
+	}
+	for _, key := range partitionedEphemeralKeys {
+		_, _, version, err := ephemeralClient.Get(ctx, key, oxia.PartitionKey(partitionKey))
+		if assert.NoError(t, err, "ephemeral key %s should still exist after split", key) {
+			assert.True(t, version.Ephemeral, "key %s should still be ephemeral after split", key)
+		}
 	}
 	slog.Info("Ephemeral keys verified after split")
 
@@ -892,6 +910,12 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 				return false // still exists
 			}
 		}
+		for _, key := range partitionedEphemeralKeys {
+			_, _, _, err := readerClient.Get(ctx, key, oxia.PartitionKey(partitionKey))
+			if err == nil {
+				return false // still exists
+			}
+		}
 		return true
 	}, 90*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
 
@@ -945,6 +969,20 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 		require.NoError(t, err)
 	}
 	slog.Info("Written records with secondary indexes", slog.Int("count", len(records)))
+
+	// Records written with a partition key are placed by it, whatever the
+	// hash of their keys, and their index entries must follow them.
+	partitionKey := "pk-7"
+	var partitionedKeys []string
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("%s/rec-%06d", partitionKey, i)
+		_, _, err := client.Put(ctx, key, []byte(key),
+			oxia.PartitionKey(partitionKey),
+			oxia.SecondaryIndex("pk", partitionKey),
+		)
+		require.NoError(t, err)
+		partitionedKeys = append(partitionedKeys, key)
+	}
 
 	// Verify secondary indexes work before split (baseline)
 	alphaKeysBefore, err := client.List(ctx, "alpha", "alpha\xff", oxia.UseIndex("category"))
@@ -1012,6 +1050,23 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 		assert.Equal(t, expectedVal, rangeScanResults[key],
 			"range scan value mismatch for %s", key)
 	}
+
+	// ---- Verify the index of the records written with a partition key ----
+	// Queried in the child that holds the partition, the index must have an
+	// entry for every record, and each entry must resolve to its record.
+	partitionIndexKeys, err := client.List(ctx, partitionKey, partitionKey+"\xff",
+		oxia.UseIndex("pk"), oxia.PartitionKey(partitionKey))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, partitionedKeys, partitionIndexKeys)
+
+	var partitionScanKeys []string
+	for res := range client.RangeScan(ctx, partitionKey, partitionKey+"\xff",
+		oxia.UseIndex("pk"), oxia.PartitionKey(partitionKey)) {
+		require.NoError(t, res.Err)
+		assert.Equal(t, res.Key, string(res.Value))
+		partitionScanKeys = append(partitionScanKeys, res.Key)
+	}
+	assert.ElementsMatch(t, partitionedKeys, partitionScanKeys)
 
 	// ---- Verify new writes with secondary indexes after split ----
 	for i := 60; i < 70; i++ {
