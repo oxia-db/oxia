@@ -596,6 +596,117 @@ func TestSecondaryIndices_GetFollowsKeySorting(t *testing.T) {
 	}
 }
 
+func TestSecondaryIndices_ListFollowsKeySorting(t *testing.T) {
+	var shard int64 = 1
+
+	// Every record is indexed by its own key, so a list or a range scan through
+	// the index has to return the same records as on the primary keys, in either
+	// key sorting.
+	//
+	// The hierarchical sorting groups the entries of an index by level, and other
+	// internal keys sort between the groups: here, the entries of a second index,
+	// and the session shadow key of the ephemeral record. Most ranges go from a
+	// level to another, and some start or end on "/", or end on a key ending in
+	// "//", like the ranges of the children of a key.
+	keys := []string{"a", "b", "a/b", "b/c", "/", "/a", "/b", "/a/b", "a/b/c", "/a/b/c"}
+	ephemeralKey := "b"
+	ranges := []struct{ start, end string }{
+		{"a", "b/d"},
+		{"", "/a/b"},
+		{"/c", "a/b/d"},
+		{"c", "/"},
+		{"/", "//"},
+		{"/a/", "/a//"},
+		{"a/", "c"},
+		{"", "z"},
+		{"b", "a"},
+	}
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			walFactory := newTestWalFactory(t)
+
+			lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+				walFactory, kvFactory, &proto.NewTermOptions{KeySorting: keySorting})
+			_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+			_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              1,
+				ReplicationFactor: 1,
+				FollowerMaps:      nil,
+			})
+
+			session, err := lc.CreateSession(&proto.CreateSessionRequest{Shard: shard, SessionTimeoutMs: 60_000})
+			assert.NoError(t, err)
+
+			var puts []*proto.PutRequest
+			for _, key := range keys {
+				put := &proto.PutRequest{
+					Key:   key,
+					Value: []byte(key),
+					SecondaryIndexes: []*proto.SecondaryIndex{
+						{IndexName: "idx", SecondaryKey: key},
+						{IndexName: "other", SecondaryKey: key},
+					},
+				}
+				if key == ephemeralKey {
+					put.SessionId = &session.SessionId
+				}
+				puts = append(puts, put)
+			}
+			_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shard, Puts: puts})
+			assert.NoError(t, err)
+
+			list := func(start, end string, index *string) []string {
+				listed, err := lc.ListBlock(context.Background(), &proto.ListRequest{
+					Shard:              &shard,
+					StartInclusive:     start,
+					EndExclusive:       end,
+					SecondaryIndexName: index,
+				})
+				assert.NoError(t, err)
+				return listed
+			}
+			scan := func(start, end string, index *string) []string {
+				results, err := scanAll(context.Background(), lc, &proto.RangeScanRequest{
+					Shard:              &shard,
+					StartInclusive:     start,
+					EndExclusive:       end,
+					SecondaryIndexName: index,
+				})
+				assert.NoError(t, err)
+				var scanned []string
+				for _, result := range results {
+					// Each record has its key as value
+					assert.Equal(t, result.GetKey(), string(result.Value))
+					scanned = append(scanned, result.GetKey())
+				}
+				return scanned
+			}
+
+			for _, r := range ranges {
+				assert.Equal(t, list(r.start, r.end, nil), list(r.start, r.end, pb.String("idx")),
+					"List [%q, %q)", r.start, r.end)
+				assert.Equal(t, scan(r.start, r.end, nil), scan(r.start, r.end, pb.String("idx")),
+					"RangeScan [%q, %q)", r.start, r.end)
+			}
+
+			// As before, a range through an index ends before its first entry
+			// when the end key is empty, while on the primary keys an empty end
+			// key means no upper bound
+			for _, start := range []string{"", "a", "/"} {
+				assert.Empty(t, list(start, "", pb.String("idx")), "List [%q, \"\")", start)
+				assert.Empty(t, scan(start, "", pb.String("idx")), "RangeScan [%q, \"\")", start)
+			}
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
 func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {
 	var shard int64 = 1
 

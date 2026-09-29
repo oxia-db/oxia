@@ -114,6 +114,10 @@ type DB interface {
 	// prefix, internal keys included, to position with SeekGE or SeekLT
 	KeyPrefixIterator(prefix string) (kvstore.KeyIterator, error)
 
+	// ListPrefix returns the iterator of KeyPrefixIterator, and counts it as a
+	// list, like List
+	ListPrefix(prefix string) (kvstore.KeyIterator, error)
+
 	// CompareKeys compares two keys in the order the shard sorts them
 	CompareKeys(a, b string) int
 
@@ -639,6 +643,21 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 
 func (d *db) KeyPrefixIterator(prefix string) (kvstore.KeyIterator, error) {
 	return d.kv.KeyPrefixIterator(prefix)
+}
+
+func (d *db) ListPrefix(prefix string) (kvstore.KeyIterator, error) {
+	d.listCounter.Add(1)
+	d.readOpsTotal.Add(1)
+
+	it, err := d.kv.KeyPrefixIterator(prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	return &listIterator{
+		KeyIterator: it,
+		timer:       d.listLatencyHisto.Timer(),
+	}, nil
 }
 
 func (d *db) CompareKeys(a, b string) int {
