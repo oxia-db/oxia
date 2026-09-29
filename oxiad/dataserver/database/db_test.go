@@ -514,7 +514,7 @@ func TestDB_RejectedWrite(t *testing.T) {
 		rejected: &proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
 			StartInclusive: "a",
 		}}},
-		cause: ErrInvalidStorageEntry,
+		cause: ErrNotificationRecord,
 	}} {
 		t.Run(test.name, func(t *testing.T) {
 			newDB := func() DB {
@@ -553,34 +553,70 @@ func TestDB_RejectedWrite(t *testing.T) {
 	}
 }
 
-// A failure that is not caused by the request, e.g. a storage error, leaves
-// the request to be retried: nothing is recorded.
+// A failure that is not caused by the request leaves the request to be
+// retried, with nothing recorded: a storage error, or a value that fails to
+// deserialize without being a notification record, i.e. a damaged one.
 func TestDB_FailedWriteIsNotRejected(t *testing.T) {
-	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
-	require.NoError(t, err)
-	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
-	require.NoError(t, err)
+	for _, test := range []struct {
+		name     string
+		request  *proto.WriteRequest
+		callback UpdateOperationCallback
+		cause    string
+	}{{
+		name: "storage-failure",
+		request: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:   "b",
+			Value: []byte("b"),
+		}}},
+		callback: &failingCallback{err: errors.New("storage failure")},
+		cause:    "storage failure",
+	}, {
+		name: "put-over-damaged-value",
+		request: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:   "x",
+			Value: []byte("x"),
+		}}},
+		callback: NoOpCallback,
+		cause:    "failed to Deserialize storage entry",
+	}, {
+		name: "delete-range-over-damaged-value",
+		request: &proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
+			StartInclusive: "a",
+			EndExclusive:   "z",
+		}}},
+		callback: NoOpCallback,
+		cause:    "failed to Deserialize storage entry",
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+			require.NoError(t, err)
 
-	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
-		Key:   "a",
-		Value: []byte("a"),
-	}}}, 0, 0, NoOpCallback)
-	require.NoError(t, err)
+			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+				Key:   "a",
+				Value: []byte("a"),
+			}}}, 0, 0, NoOpCallback)
+			require.NoError(t, err)
 
-	storageErr := errors.New("storage failure")
-	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
-		Key:   "b",
-		Value: []byte("b"),
-	}}}, 1, 0, &failingCallback{err: storageErr})
-	assert.ErrorIs(t, err, storageErr)
-	assert.NotErrorIs(t, err, ErrWriteRejected)
+			// A value that is not a storage entry, at a regular key
+			batch := db.RawKV().NewWriteBatch()
+			require.NoError(t, batch.Put("x", []byte{0x08, 0x01}))
+			require.NoError(t, batch.Commit())
+			require.NoError(t, batch.Close())
 
-	commitOffset, err := db.ReadCommitOffset()
-	require.NoError(t, err)
-	assert.EqualValues(t, 0, commitOffset)
+			_, err = db.ProcessWrite(test.request, 1, 0, test.callback)
+			assert.ErrorContains(t, err, test.cause)
+			assert.NotErrorIs(t, err, ErrWriteRejected)
 
-	assert.NoError(t, db.Close())
-	assert.NoError(t, factory.Close())
+			commitOffset, err := db.ReadCommitOffset()
+			require.NoError(t, err)
+			assert.EqualValues(t, 0, commitOffset)
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
 }
 
 type failingCallback struct {
@@ -1639,6 +1675,58 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 	n2 = <-sw2.Ch()
 	assert.Equal(t, fmt.Sprintf("a-%020d", 18), n2)
 
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+// The sequence waiters are only notified of the keys of a committed batch:
+// neither a rejected sequential put nor a request rejected after its
+// sequential put leaves a key behind.
+func TestDB_SequentialKeysNotificationRejectedWrite(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	require.NoError(t, err)
+
+	sw, err := db.GetSequenceUpdates("a")
+	require.NoError(t, err)
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "a",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{1, 1},
+	}}}, 0, 0, NoOpCallback)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d", 1, 1), <-sw.Ch())
+
+	for offset, request := range []*proto.WriteRequest{{
+		// Fewer deltas than the parts of the sequence
+		Puts: []*proto.PutRequest{{
+			Key:              "a",
+			Value:            []byte("1"),
+			PartitionKey:     pb.String("x"),
+			SequenceKeyDelta: []uint64{1},
+		}},
+	}, {
+		Puts: []*proto.PutRequest{{
+			Key:              "a",
+			Value:            []byte("1"),
+			PartitionKey:     pb.String("x"),
+			SequenceKeyDelta: []uint64{1, 1},
+		}, {
+			// No partition key
+			Key:              "b",
+			Value:            []byte("1"),
+			SequenceKeyDelta: []uint64{1},
+		}},
+	}} {
+		_, err = db.ProcessWrite(request, int64(offset)+1, 0, NoOpCallback)
+		assert.ErrorIs(t, err, ErrWriteRejected)
+		assert.Empty(t, sw.Ch())
+	}
+
+	assert.NoError(t, sw.Close())
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
 }
