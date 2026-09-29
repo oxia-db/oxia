@@ -27,7 +27,6 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
 
-	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal"
@@ -385,14 +384,14 @@ func (c *clientImpl) doSingleShardGet(key string, opts *getOptions, ch chan GetR
 	})
 }
 
-func compareGetResponse(a, b *proto.GetResponse) int {
+func compareGetResponse(order keyOrder, a, b *proto.GetResponse) int {
 	if a.SecondaryIndexKey != nil && b.SecondaryIndexKey != nil {
-		c := compare.CompareWithSlash([]byte(a.GetSecondaryIndexKey()), []byte(b.GetSecondaryIndexKey()))
+		c := order.compare(a.GetSecondaryIndexKey(), b.GetSecondaryIndexKey())
 		if c != 0 {
 			return c
 		}
 	}
-	return compare.CompareWithSlash([]byte(a.GetKey()), []byte(b.GetKey()))
+	return order.compare(a.GetKey(), b.GetKey())
 }
 
 func validateComparisonType(c proto.KeyComparisonType) error {
@@ -412,7 +411,8 @@ var keyNotFound = &proto.GetResponse{
 	Status: proto.Status_KEY_NOT_FOUND,
 }
 
-func selectResponse(kc proto.KeyComparisonType, selected *proto.GetResponse, response *proto.GetResponse) *proto.GetResponse {
+func selectResponse(kc proto.KeyComparisonType, order keyOrder, selected *proto.GetResponse,
+	response *proto.GetResponse) *proto.GetResponse {
 	if response != nil && response.Status == proto.Status_OK {
 		switch kc {
 		case proto.KeyComparisonType_EQUAL:
@@ -421,12 +421,12 @@ func selectResponse(kc proto.KeyComparisonType, selected *proto.GetResponse, res
 			}
 
 		case proto.KeyComparisonType_FLOOR, proto.KeyComparisonType_LOWER:
-			if selected == keyNotFound || compareGetResponse(selected, response) < 0 {
+			if selected == keyNotFound || compareGetResponse(order, selected, response) < 0 {
 				selected = response
 			}
 
 		case proto.KeyComparisonType_CEILING, proto.KeyComparisonType_HIGHER:
-			if selected == keyNotFound || compareGetResponse(selected, response) > 0 {
+			if selected == keyNotFound || compareGetResponse(order, selected, response) > 0 {
 				selected = response
 			}
 		default:
@@ -445,7 +445,7 @@ func (c *clientImpl) doMultiShardGet(key string, options *getOptions, ch chan Ge
 	}
 
 	shards := c.shardManager.GetAll()
-	callback := multiShardGetCallback(key, options.comparisonType, len(shards), ch)
+	callback := multiShardGetCallback(key, options.comparisonType, c.keyOrder(), len(shards), ch)
 
 	for _, shardId := range shards {
 		c.readBatchManager.Get(shardId).Add(model.GetCall{
@@ -462,7 +462,7 @@ func (c *clientImpl) doMultiShardGet(key string, options *getOptions, ch chan Ge
 // get: the first error wins and terminates the result channel, discarding the
 // remaining responses; otherwise the best response for the comparison type is
 // selected once every shard has responded.
-func multiShardGetCallback(key string, comparisonType proto.KeyComparisonType, numShards int,
+func multiShardGetCallback(key string, comparisonType proto.KeyComparisonType, order keyOrder, numShards int,
 	ch chan GetResult) func(*proto.GetResponse, error) {
 	m := sync.Mutex{}
 	counter := numShards
@@ -484,7 +484,7 @@ func multiShardGetCallback(key string, comparisonType proto.KeyComparisonType, n
 			return
 		}
 
-		selected = selectResponse(comparisonType, selected, response)
+		selected = selectResponse(comparisonType, order, selected, response)
 
 		counter--
 		if counter == 0 {
@@ -596,7 +596,7 @@ func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxK
 			}()
 		}
 
-		go aggregateAndSortRangeScanAcrossShards(channels, outCh)
+		go aggregateAndSortRangeScanAcrossShards(c.keyOrder(), channels, outCh)
 	}
 
 	return outCh
@@ -613,14 +613,14 @@ func (c *clientImpl) GetSequenceUpdates(ctx context.Context, prefixKey string, o
 
 // We do range scan on all the shards, and we need to always pick the lowest key
 // across all the shards.
-func aggregateAndSortRangeScanAcrossShards(channels []chan GetResult, outCh chan GetResult) {
-	h := &ResultHeap{}
+func aggregateAndSortRangeScanAcrossShards(order keyOrder, channels []chan GetResult, outCh chan GetResult) {
+	h := &ResultHeap{order: order}
 	heap.Init(h)
 
 	// First make sure we have 1 key from each channel
 	for _, ch := range channels {
 		if gr, ok := <-ch; ok {
-			heap.Push(h, &ResultAndChannel{gr, ch})
+			heap.Push(h, &ResultAndChannel{gr, order.sortKey(gr.Key), ch})
 		}
 	}
 
@@ -642,7 +642,7 @@ func aggregateAndSortRangeScanAcrossShards(channels []chan GetResult, outCh chan
 
 		// read again from same channel
 		if gr, ok := <-r.ch; ok {
-			heap.Push(h, &ResultAndChannel{gr, r.ch})
+			heap.Push(h, &ResultAndChannel{gr, order.sortKey(gr.Key), r.ch})
 		}
 	}
 
@@ -659,6 +659,10 @@ func (c *clientImpl) closeNotifications() error {
 	}
 
 	return err
+}
+
+func (c *clientImpl) keyOrder() keyOrder {
+	return newKeyOrder(c.shardManager.KeySorting())
 }
 
 func (c *clientImpl) getShardForKey(key string, options baseOptionsIf) int64 {

@@ -105,6 +105,10 @@ func (m *splittableShardManager) GetSuccessor(shardId int64, key string) (int64,
 
 func (*splittableShardManager) Changed() <-chan struct{} { return nil }
 
+func (*splittableShardManager) KeySorting() proto.KeySorting {
+	return proto.KeySorting_KEY_SORTING_UNKNOWN
+}
+
 // split replaces the parent shard with two shards covering half its hash range each.
 func (m *splittableShardManager) split(parent int64, left int64, right int64) {
 	m.Lock()
