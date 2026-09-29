@@ -448,11 +448,18 @@ func TestDBDeleteRangeErrorClosesIterator(t *testing.T) {
 	}, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 
-	// Without an end, the range reaches the internal keys, and the notifications
-	// value is not a storage entry
+	// A value that is not a storage entry, flushed so that the scan reads it
+	// from an sstable
+	wb := db.RawKV().NewWriteBatch()
+	require.NoError(t, wb.Put("c", []byte{0x08, 0x01}))
+	require.NoError(t, wb.Commit())
+	require.NoError(t, wb.Close())
+	require.NoError(t, db.RawKV().Flush())
+
 	_, err = db.ProcessWrite(&proto.WriteRequest{
 		DeleteRanges: []*proto.DeleteRangeRequest{{
 			StartInclusive: "a",
+			EndExclusive:   "d",
 		}},
 	}, 1, 0, NoOpCallback)
 	assert.ErrorContains(t, err, "failed to Deserialize storage entry")
@@ -1879,4 +1886,64 @@ func TestDeserializeMetadata(t *testing.T) {
 	assert.Equal(t, 1, len(se.SecondaryIndexes))
 	assert.Equal(t, "idx", se.SecondaryIndexes[0].IndexName)
 	assert.Equal(t, "sk", se.SecondaryIndexes[0].SecondaryKey)
+}
+
+// A delete range covers the keys a list over the same bounds returns: an empty
+// end is open, and the internal keys are never in the range. The natural
+// encoder sorts the internal keys last, so an open-ended delete range reached
+// them: it removed the session records, and failed on every apply when it met
+// a notifications record, which is not a storage entry. With the hierarchical
+// encoder the empty end became the smallest key, and the range a no-op. Both
+// paths of the delete range are covered: the per-key one and the tombstone.
+func TestDBDeleteRangeOpenEnd(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		for _, keyCount := range []int{2, DeleteRangeThreshold + 1} {
+			t.Run(fmt.Sprintf("%s-%d-keys", keySorting, keyCount), func(t *testing.T) {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 0, time.SystemClock)
+				require.NoError(t, err)
+				require.NoError(t, db.UpdateTerm(1, TermOptions{NotificationsEnabled: true}))
+
+				sessionKey := "__oxia/session/0000000000000001"
+				puts := []*proto.PutRequest{
+					{Key: "a", Value: []byte("a")},
+					{Key: sessionKey, Value: []byte("s")},
+				}
+				for i := 0; i < keyCount; i++ {
+					puts = append(puts, &proto.PutRequest{Key: fmt.Sprintf("b-%03d", i), Value: []byte("b")})
+				}
+				// The write also stores a notifications record
+				_, err = db.ProcessWrite(&proto.WriteRequest{Puts: puts}, 0, 0, NoOpCallback)
+				require.NoError(t, err)
+
+				res, err := db.ProcessWrite(&proto.WriteRequest{
+					DeleteRanges: []*proto.DeleteRangeRequest{{
+						StartInclusive: "b",
+						EndExclusive:   "",
+					}},
+				}, 1, 0, NoOpCallback)
+				require.NoError(t, err)
+				assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+
+				assert.Equal(t, []string{"a"}, keyIteratorToSlice(db.List(&proto.ListRequest{
+					StartInclusive: "",
+					EndExclusive:   "",
+				})))
+
+				gr, err := db.Get(&proto.GetRequest{Key: sessionKey})
+				require.NoError(t, err)
+				assert.Equal(t, proto.Status_OK, gr.Status)
+				term, _, err := db.ReadTerm()
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, term)
+				commitOffset, err := db.ReadCommitOffset()
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, commitOffset)
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
 }

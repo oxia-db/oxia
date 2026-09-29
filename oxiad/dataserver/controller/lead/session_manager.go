@@ -464,7 +464,7 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 	}
 	sessionKey := key
 	// Read "index"
-	it, err := batch.KeyRangeScan(sessionKey+"/", sessionKey+"//")
+	it, err := batch.KeyRangeScan(sessionKey+"/", sessionKey+"//", kvstore.ShowInternalKeys)
 	if err != nil {
 		return err
 	}

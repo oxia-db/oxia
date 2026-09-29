@@ -958,7 +958,14 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		notifications.DeletedRange(delReq.StartInclusive, delReq.EndExclusive)
 	}
 
-	it, err := batch.RangeScan(delReq.StartInclusive, delReq.EndExclusive)
+	// A delete range addresses the user keyspace: the scan and the tombstone
+	// leave the internal keys out of it, like the read path does, unless the
+	// range itself starts in the internal keyspace.
+	opts := kvstore.NoInternalKeys
+	if strings.HasPrefix(delReq.StartInclusive, constant.InternalKeyPrefix) {
+		opts = kvstore.ShowInternalKeys
+	}
+	it, err := batch.RangeScan(delReq.StartInclusive, delReq.EndExclusive, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -989,7 +996,7 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		return nil, errors.Wrap(err, "oxia db: failed to close iterator on delete range")
 	}
 	if validKeysNum > DeleteRangeThreshold {
-		if err := batch.DeleteRange(delReq.StartInclusive, delReq.EndExclusive); err != nil {
+		if err := batch.DeleteRange(delReq.StartInclusive, delReq.EndExclusive, opts); err != nil {
 			return nil, errors.Wrap(err, "oxia db: failed to delete range")
 		}
 	} else {

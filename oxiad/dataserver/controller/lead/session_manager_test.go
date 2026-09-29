@@ -128,15 +128,15 @@ func (m mockWriteBatch) FindLower(key string) (string, error) {
 	return "", errors.New("not implemented")
 }
 
-func (m mockWriteBatch) DeleteRange(_, _ string) error {
+func (m mockWriteBatch) DeleteRange(_, _ string, _ kvstore.IteratorOpts) error {
 	return nil
 }
 
-func (m mockWriteBatch) KeyRangeScan(_, _ string) (kvstore.KeyIterator, error) {
+func (m mockWriteBatch) KeyRangeScan(_, _ string, _ kvstore.IteratorOpts) (kvstore.KeyIterator, error) {
 	return nil, kvstore.ErrKeyNotFound
 }
 
-func (m mockWriteBatch) RangeScan(_, _ string) (kvstore.KeyValueIterator, error) {
+func (m mockWriteBatch) RangeScan(_, _ string, _ kvstore.IteratorOpts) (kvstore.KeyValueIterator, error) {
 	return nil, kvstore.ErrKeyNotFound
 }
 

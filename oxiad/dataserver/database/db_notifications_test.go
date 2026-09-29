@@ -532,7 +532,7 @@ func TestDB_NotificationsWaitWhenNothingRetained(t *testing.T) {
 	// Delete every batch, as the trimmer does once they are all past the
 	// retention time, while the last notification offset stays at 1
 	wb := db.RawKV().NewWriteBatch()
-	require.NoError(t, wb.DeleteRange(firstNotificationKey, lastNotificationKey))
+	require.NoError(t, wb.DeleteRange(firstNotificationKey, lastNotificationKey, kvstore.ShowInternalKeys))
 	require.NoError(t, wb.Commit())
 	require.NoError(t, wb.Close())
 

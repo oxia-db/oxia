@@ -151,7 +151,7 @@ func (s *kvRaftStore) DeleteRange(minInclusive, maxInclusive uint64) error {
 	wb := s.kv.NewWriteBatch()
 
 	return multierr.Combine(
-		wb.DeleteRange(minKeyInclusive, maxKeyExclusive),
+		wb.DeleteRange(minKeyInclusive, maxKeyExclusive, kvstore.NoInternalKeys),
 		wb.Commit(),
 		wb.Close(),
 	)

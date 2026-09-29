@@ -51,9 +51,12 @@ type WriteBatch interface {
 	Get(key string) ([]byte, io.Closer, error)
 	FindLower(key string) (lowerKey string, err error)
 
-	DeleteRange(lowerBound, upperBound string) error
-	KeyRangeScan(lowerBound, upperBound string) (KeyIterator, error)
-	RangeScan(lowerBound, upperBound string) (KeyValueIterator, error)
+	// DeleteRange, KeyRangeScan and RangeScan take their bounds like the KV
+	// read path: an empty bound is open, and the internal keys are left out
+	// of the range unless opts asks for them.
+	DeleteRange(lowerBound, upperBound string, opts IteratorOpts) error
+	KeyRangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyIterator, error)
+	RangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyValueIterator, error)
 
 	// Count is the number of transactions that are currently in the batch
 	Count() int

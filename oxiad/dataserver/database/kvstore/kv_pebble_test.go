@@ -434,7 +434,7 @@ func TestPebbbleRangeScanInBatch(t *testing.T) {
 	assert.NoError(t, wb.Put("/root/b", []byte("b")))
 	assert.NoError(t, wb.Put("/root/c", []byte("c")))
 
-	it, err := wb.KeyRangeScan("/root/a", "/root/c")
+	it, err := wb.KeyRangeScan("/root/a", "/root/c", NoInternalKeys)
 	assert.NoError(t, err)
 	assert.True(t, it.Valid())
 	assert.Equal(t, "/root/a", it.Key())
@@ -452,7 +452,7 @@ func TestPebbbleRangeScanInBatch(t *testing.T) {
 
 	assert.NoError(t, wb.Delete("/root/a"))
 
-	it, err = wb.KeyRangeScan("/root/a", "/root/c")
+	it, err = wb.KeyRangeScan("/root/a", "/root/c", NoInternalKeys)
 	assert.NoError(t, err)
 	assert.True(t, it.Valid())
 	assert.Equal(t, "/root/b", it.Key())
@@ -496,7 +496,7 @@ func TestPebbbleDeleteRangeInBatch(t *testing.T) {
 		assert.NoError(t, wb.Put(k, []byte(k)))
 	}
 
-	err = wb.DeleteRange("/a/b/a/", "/a/b/a//")
+	err = wb.DeleteRange("/a/b/a/", "/a/b/a//", NoInternalKeys)
 	assert.NoError(t, err)
 
 	assert.NoError(t, wb.Commit())
@@ -1435,6 +1435,72 @@ func TestCompareWithDataset(t *testing.T) {
 			encodedLeft := compare.EncoderHierarchical.Encode(test.leftKey)
 			encodedRight := compare.EncoderHierarchical.Encode(test.rightKey)
 			assert.Equal(t, test.expect, bytes.Compare(encodedLeft, encodedRight))
+		})
+	}
+}
+
+// The range operations of a batch encode their bounds like the read path: an
+// empty bound is open, and the internal keys are left out unless asked for.
+// The natural encoder sorts the internal keys last, so an open-ended range used
+// to reach them, while the hierarchical one encoded an empty end as the smallest
+// key, reversing the range into a no-op.
+func TestPebbleBatchRangeBoundsMatchReadPath(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, keySorting)
+			require.NoError(t, err)
+
+			// "\xff\xffz" is a user key that sorts after the internal keys with
+			// the natural encoder
+			keys := []string{"a", "b", "c", "\xff\xffz", "__oxia/x", "__oxia/y"}
+			putAll := func(wb WriteBatch) {
+				for _, k := range keys {
+					require.NoError(t, wb.Put(k, []byte(k)))
+				}
+			}
+			collect := func(it KeyIterator, err error) []string {
+				require.NoError(t, err)
+				var res []string
+				for ; it.Valid(); it.Next() {
+					res = append(res, it.Key())
+				}
+				require.NoError(t, it.Close())
+				return res
+			}
+
+			wb := kv.NewWriteBatch()
+			putAll(wb)
+
+			// An open-ended scan of the batch reaches the end of the user keys
+			assert.Equal(t, []string{"b", "c", "\xff\xffz"}, collect(wb.KeyRangeScan("b", "", NoInternalKeys)))
+			assert.ElementsMatch(t, []string{"b", "c", "\xff\xffz", "__oxia/x", "__oxia/y"},
+				collect(wb.KeyRangeScan("b", "", ShowInternalKeys)))
+
+			// An open-ended delete range covers the same keys as the scan
+			require.NoError(t, wb.DeleteRange("b", "", NoInternalKeys))
+			require.NoError(t, wb.Commit())
+			require.NoError(t, wb.Close())
+			assert.ElementsMatch(t, []string{"a", "__oxia/x", "__oxia/y"}, collect(kv.KeyRangeScan("", "", ShowInternalKeys)))
+
+			// A range spanning the internal keys leaves them out as well
+			wb = kv.NewWriteBatch()
+			putAll(wb)
+			require.NoError(t, wb.DeleteRange("b", "\xff\xff\xff", NoInternalKeys))
+			require.NoError(t, wb.Commit())
+			require.NoError(t, wb.Close())
+			assert.ElementsMatch(t, []string{"a", "__oxia/x", "__oxia/y"}, collect(kv.KeyRangeScan("", "", ShowInternalKeys)))
+
+			// Asked for, the internal keys are part of the range
+			wb = kv.NewWriteBatch()
+			require.NoError(t, wb.DeleteRange("", "", ShowInternalKeys))
+			require.NoError(t, wb.Commit())
+			require.NoError(t, wb.Close())
+			assert.Empty(t, collect(kv.KeyRangeScan("", "", ShowInternalKeys)))
+
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
 		})
 	}
 }

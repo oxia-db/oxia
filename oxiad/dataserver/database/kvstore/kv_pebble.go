@@ -526,13 +526,7 @@ func (p *Pebble) KeyIterator(itOpts IteratorOpts) (KeyIterator, error) {
 }
 
 func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string, itOpts IteratorOpts) (ReverseKeyIterator, error) {
-	var lb, ub []byte
-	if lowerBound != "" {
-		lb = p.keyEncoder.Encode(lowerBound)
-	}
-	if upperBound != "" {
-		ub = p.keyEncoder.Encode(upperBound)
-	}
+	lb, ub := p.encodeBounds(lowerBound, upperBound)
 	pbit, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, lb, ub))
 	if err != nil {
 		return nil, err
@@ -545,14 +539,7 @@ func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string, itOpts Itera
 }
 
 func (p *Pebble) RangeScan(lowerBound, upperBound string, itOpts IteratorOpts) (KeyValueIterator, error) {
-	var lb, ub []byte
-	if lowerBound != "" {
-		lb = p.keyEncoder.Encode(lowerBound)
-	}
-	if upperBound != "" {
-		ub = p.keyEncoder.Encode(upperBound)
-	}
-
+	lb, ub := p.encodeBounds(lowerBound, upperBound)
 	pbit, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, lb, ub))
 	if err != nil {
 		return nil, err
@@ -567,6 +554,20 @@ func (p *Pebble) RangeScan(lowerBound, upperBound string, itOpts IteratorOpts) (
 
 func (p *Pebble) Snapshot() (Snapshot, error) {
 	return newPebbleSnapshot(p)
+}
+
+// encodeBounds encodes the bounds of a range operation. An empty bound is
+// open, and stays out of the encoder: encoded, it is the smallest key with
+// the hierarchical encoder, which reverses a range with an empty end into a
+// no-op, and nil with the natural one.
+func (p *Pebble) encodeBounds(lowerBound, upperBound string) (lb, ub []byte) {
+	if lowerBound != "" {
+		lb = p.keyEncoder.Encode(lowerBound)
+	}
+	if upperBound != "" {
+		ub = p.keyEncoder.Encode(upperBound)
+	}
+	return lb, ub
 }
 
 // Batch wrapper methods
@@ -584,29 +585,86 @@ func (b *PebbleBatch) Size() int {
 	return b.b.Len()
 }
 
-func (b *PebbleBatch) DeleteRange(lowerBound, upperBound string) error {
-	return b.b.DeleteRange(
-		b.p.keyEncoder.Encode(lowerBound),
-		b.p.keyEncoder.Encode(upperBound),
-		b.p.writeOptions)
+func (b *PebbleBatch) DeleteRange(lowerBound, upperBound string, opts IteratorOpts) error {
+	lb, ub := b.p.encodeBounds(lowerBound, upperBound)
+	iterOpts := newIterOptions(b.p.keyEncoder, opts, lb, ub)
+	lb, ub = iterOpts.LowerBound, iterOpts.UpperBound
+	if ub == nil {
+		// A range tombstone needs an explicit end. Bound the open range at
+		// the last key currently in it: the batch is applied atomically, so
+		// no key can land past that point ahead of the tombstone, and it
+		// covers the same keys the scan of the same bounds does.
+		var err error
+		if ub, err = b.lastKeySuccessor(lb); err != nil || ub == nil {
+			return err
+		}
+	}
+	for _, r := range tombstoneRanges(b.p.keyEncoder, opts, lb, ub) {
+		if err := b.b.DeleteRange(r[0], r[1], b.p.writeOptions); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string) (KeyIterator, error) {
-	return b.RangeScan(lowerBound, upperBound)
-}
-
-func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator, error) {
-	lb := b.p.keyEncoder.Encode(lowerBound)
-	ub := b.p.keyEncoder.Encode(upperBound)
-	pbit, err := b.b.NewIter(&pebble.IterOptions{
-		LowerBound: lb,
-		UpperBound: ub,
-	})
+// lastKeySuccessor returns the smallest key that sorts after every key of the
+// batch from lb onwards, or nil when there is none.
+func (b *PebbleBatch) lastKeySuccessor(lb []byte) ([]byte, error) {
+	it, err := b.b.NewIter(&pebble.IterOptions{LowerBound: lb})
 	if err != nil {
 		return nil, err
 	}
-	pbit.SeekGE(lb)
-	return &PebbleIterator{b.p, pbit, internalRegionSkipper{}}, nil
+	var successor []byte
+	if it.Last() {
+		successor = append(bytes.Clone(it.Key()), 0)
+	}
+	return successor, it.Close()
+}
+
+// tombstoneRanges splits [lb, ub) around the internal-key region when opts
+// leave it out. An iterator jumps over the region (internalRegionSkipper),
+// but a range tombstone cannot, so the region is cut out of it instead. It
+// is a no-op for the hierarchical encoder, where newIterOptions already
+// bounds the range at the start of the region.
+func tombstoneRanges(enc compare.Encoder, opts IteratorOpts, lb, ub []byte) [][2][]byte {
+	start, end := enc.InternalKeyRange()
+	if opts.IncludeInternalKeys || end == nil {
+		return [][2][]byte{{lb, ub}}
+	}
+	var ranges [][2][]byte
+	if bytes.Compare(lb, start) < 0 {
+		before := ub
+		if bytes.Compare(ub, start) > 0 {
+			before = start
+		}
+		ranges = append(ranges, [2][]byte{lb, before})
+	}
+	if bytes.Compare(ub, end) > 0 {
+		after := end
+		if bytes.Compare(lb, end) > 0 {
+			after = lb
+		}
+		ranges = append(ranges, [2][]byte{after, ub})
+	}
+	return ranges
+}
+
+func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyIterator, error) {
+	return b.RangeScan(lowerBound, upperBound, opts)
+}
+
+func (b *PebbleBatch) RangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyValueIterator, error) {
+	lb, ub := b.p.encodeBounds(lowerBound, upperBound)
+	pbit, err := b.b.NewIter(newIterOptions(b.p.keyEncoder, opts, lb, ub))
+	if err != nil {
+		return nil, err
+	}
+
+	skipper := newInternalRegionSkipper(b.p.keyEncoder, opts)
+	if pbit.First() {
+		skipper.forward(pbit)
+	}
+	return &PebbleIterator{b.p, pbit, skipper}, nil
 }
 
 func (b *PebbleBatch) Close() error {
