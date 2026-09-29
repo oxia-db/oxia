@@ -799,6 +799,52 @@ func TestSplitChild_SessionCreatedDuringCatchUp(t *testing.T) {
 	assert.EqualValues(t, sessionId, res.GetVersion().GetSessionId())
 }
 
+// The split filter deletes, with each record that goes to the other child, the
+// index entries and the session shadow key the leader wrote for it: they
+// follow the record's partition key, whatever the hash of the record key.
+func TestSplitChild_RecordInternalKeysFollowPartitionKey(t *testing.T) {
+	mid := uint32(math.MaxUint32 / 2)
+	partitionKey := "pk-7"
+	sessionId := SessionId(1)
+	index := &proto.SecondaryIndex{IndexName: "pk", SecondaryKey: partitionKey}
+	var records []string
+	for i := 0; i < 20; i++ {
+		records = append(records, fmt.Sprintf("%s/rec-%06d", partitionKey, i))
+	}
+
+	for _, child := range []*proto.HashRange{{Min: 0, Max: mid}, {Min: mid + 1, Max: math.MaxUint32}} {
+		kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+		assert.NoError(t, err)
+		db, err := database.NewDB(constant.DefaultNamespace, 1, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+		assert.NoError(t, err)
+
+		write := &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: SessionKey(sessionId), Value: []byte{}}}}
+		for _, key := range records {
+			write.Puts = append(write.Puts, &proto.PutRequest{
+				Key: key, Value: []byte("v"), PartitionKey: &partitionKey,
+				SessionId: new(int64(sessionId)), SecondaryIndexes: []*proto.SecondaryIndex{index},
+			})
+		}
+		_, err = db.ProcessWrite(write, int64(sessionId), 0, WrapperUpdateOperationCallback)
+		assert.NoError(t, err)
+
+		assert.NoError(t, database.FilterDBForSplit(db.RawKV(), child))
+
+		owner := hash.Xxh332(partitionKey) >= child.Min && hash.Xxh332(partitionKey) <= child.Max
+		for _, record := range records {
+			for _, key := range []string{record, secondaryIndexKey(record, index), ShadowKey(sessionId, record)} {
+				_, _, closer, err := db.RawKV().Get(key, kvstore.ComparisonEqual, kvstore.ShowInternalKeys)
+				if assert.Equal(t, owner, err == nil, "key %q, child %v", key, child) && err == nil {
+					assert.NoError(t, closer.Close())
+				}
+			}
+		}
+
+		assert.NoError(t, db.Close())
+		assert.NoError(t, kvf.Close())
+	}
+}
+
 func TestIsSessionKey(t *testing.T) {
 	tests := []struct {
 		name string

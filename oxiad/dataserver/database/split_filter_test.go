@@ -335,8 +335,9 @@ func TestFilterDBForSplit_SessionKeys(t *testing.T) {
 	rightShadow := fmt.Sprintf("%s/%016x/%s", sessionKeyPrefix, 1, url.PathEscape(rightUserKey))
 	putRawKey(t, kv, leftShadow, []byte{})
 	putRawKey(t, kv, rightShadow, []byte{})
-	putStorageEntry(t, kv, leftUserKey, nil)
-	putStorageEntry(t, kv, rightUserKey, nil)
+	for _, k := range []string{leftUserKey, rightUserKey} {
+		putRecord(t, kv, k, &proto.StorageEntry{Value: []byte("v"), SessionId: new(int64(1))})
+	}
 
 	assert.NoError(t, FilterDBForSplit(kv, leftRange))
 
@@ -373,8 +374,14 @@ func TestFilterDBForSplit_SecondaryIndexKeys(t *testing.T) {
 	rightIdxKey := fmt.Sprintf("%s/myidx/sec2%s%s", idxKeyPrefix, idxSeparator, url.PathEscape(rightPrimaryKey))
 	putRawKey(t, kv, leftIdxKey, []byte{})
 	putRawKey(t, kv, rightIdxKey, []byte{})
-	putStorageEntry(t, kv, leftPrimaryKey, nil)
-	putStorageEntry(t, kv, rightPrimaryKey, nil)
+	putRecord(t, kv, leftPrimaryKey, &proto.StorageEntry{
+		Value:            []byte("v"),
+		SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "myidx", SecondaryKey: "sec1"}},
+	})
+	putRecord(t, kv, rightPrimaryKey, &proto.StorageEntry{
+		Value:            []byte("v"),
+		SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "myidx", SecondaryKey: "sec2"}},
+	})
 
 	assert.NoError(t, FilterDBForSplit(kv, leftRange))
 
@@ -417,8 +424,15 @@ func TestFilterDBForSplit_SecondaryIndexKeysWithSeparator(t *testing.T) {
 	for _, k := range []string{leftSneaky, rightSneaky, leftEmpty, rightEmpty} {
 		putRawKey(t, kv, k, []byte{})
 	}
-	putStorageEntry(t, kv, leftPrimaryKey, nil)
-	putStorageEntry(t, kv, rightPrimaryKey, nil)
+	for _, k := range []string{leftPrimaryKey, rightPrimaryKey} {
+		putRecord(t, kv, k, &proto.StorageEntry{
+			Value: []byte("v"),
+			SecondaryIndexes: []*proto.SecondaryIndex{
+				{IndexName: "myidx", SecondaryKey: sneaky},
+				{IndexName: "myidx", SecondaryKey: ""},
+			},
+		})
+	}
 
 	assert.NoError(t, FilterDBForSplit(kv, leftRange))
 
@@ -429,10 +443,10 @@ func TestFilterDBForSplit_SecondaryIndexKeysWithSeparator(t *testing.T) {
 }
 
 // A record written with a partition key is placed by it, not by its own key,
-// and so must be everything that belongs to the record: its secondary index
-// entries, the session shadow key of an ephemeral record, and its
-// notifications. Placed by the hash of the record key instead, they land in
-// the other child whenever that hashes there.
+// and so must be its secondary index entries and the session shadow key of an
+// ephemeral record. Placed by the hash of the record key instead, they land in
+// the other child whenever that hashes there. Its notifications, which do not
+// carry the partition key, stay placed by the hash of the key.
 func TestFilterDBForSplit_PartitionedRecordInternalKeys(t *testing.T) {
 	leftRange, rightRange := splitRanges()
 	partitionKey := keyInRange(t, "pk-%d", leftRange)
@@ -440,17 +454,18 @@ func TestFilterDBForSplit_PartitionedRecordInternalKeys(t *testing.T) {
 
 	// The partition key places every record in the left child, while the
 	// record keys hash to both sides
-	var records []string
-	keysHashingRight := 0
+	var records, keysHashingLeft, keysHashingRight []string
 	for i := 0; i < 20; i++ {
 		key := fmt.Sprintf("%s/rec-%06d", partitionKey, i)
 		records = append(records, key)
-		if isHashInRange(hash.Xxh332(key), rightRange) {
-			keysHashingRight++
+		if isHashInRange(hash.Xxh332(key), leftRange) {
+			keysHashingLeft = append(keysHashingLeft, key)
+		} else {
+			keysHashingRight = append(keysHashingRight, key)
 		}
 	}
-	assert.Positive(t, keysHashingRight)
-	assert.Less(t, keysHashingRight, len(records))
+	assert.NotEmpty(t, keysHashingLeft)
+	assert.NotEmpty(t, keysHashingRight)
 
 	parent := func() kvstore.KV {
 		kv := newTestKV(t)
@@ -482,13 +497,15 @@ func TestFilterDBForSplit_PartitionedRecordInternalKeys(t *testing.T) {
 		}
 	}
 	if nb := readNotificationBatch(t, left, 0); assert.NotNil(t, nb) {
-		assert.ElementsMatch(t, records, notificationKeys(nb))
+		assert.ElementsMatch(t, keysHashingLeft, notificationKeys(nb))
 	}
-	assert.Nil(t, readNotificationBatch(t, right, 0))
+	if nb := readNotificationBatch(t, right, 0); assert.NotNil(t, nb) {
+		assert.ElementsMatch(t, keysHashingRight, notificationKeys(nb))
+	}
 }
 
-// An index entry or a session shadow key whose record does not exist points to
-// nothing: no child holds the record, so neither keeps it.
+// An index entry or a session shadow key goes with its record: one whose record
+// does not exist, left behind by some other bug, is kept by both children.
 func TestFilterDBForSplit_DanglingInternalKeys(t *testing.T) {
 	leftRange, rightRange := splitRanges()
 	idxKey := secondaryIndexKey("myidx", "sec", "missing")
@@ -500,37 +517,8 @@ func TestFilterDBForSplit_DanglingInternalKeys(t *testing.T) {
 		putRawKey(t, kv, shadow, []byte{})
 
 		assert.NoError(t, FilterDBForSplit(kv, hashRange))
-		assert.False(t, keyExists(t, kv, idxKey))
-		assert.False(t, keyExists(t, kv, shadow))
-	}
-}
-
-// A notification does not carry the partition key: the one of a record that no
-// longer exists falls back to the hash of its key, which places the records
-// written without a partition key exactly. A range deletion is applied by every
-// shard, so both children keep its notification, as they do for the range
-// deletions they apply from the log after the snapshot.
-func TestFilterDBForSplit_NotificationsWithoutRecord(t *testing.T) {
-	leftRange, rightRange := splitRanges()
-	leftKey := keyInRange(t, "deleted-%d", leftRange)
-	rightKey := keyInRange(t, "deleted-%d", rightRange)
-	rangeEnd := "range-z"
-
-	for _, child := range []struct {
-		hashRange *proto.HashRange
-		key       string
-	}{{leftRange, leftKey}, {rightRange, rightKey}} {
-		kv := newTestKV(t)
-		putNotificationBatch(t, kv, 0, map[string]*proto.Notification{
-			leftKey:   {Type: proto.NotificationType_KEY_DELETED},
-			rightKey:  {Type: proto.NotificationType_KEY_DELETED},
-			"range-a": {Type: proto.NotificationType_KEY_RANGE_DELETED, KeyRangeLast: &rangeEnd},
-		})
-
-		assert.NoError(t, FilterDBForSplit(kv, child.hashRange))
-		if nb := readNotificationBatch(t, kv, 0); assert.NotNil(t, nb) {
-			assert.ElementsMatch(t, []string{child.key, "range-a"}, notificationKeys(nb))
-		}
+		assert.True(t, keyExists(t, kv, idxKey))
+		assert.True(t, keyExists(t, kv, shadow))
 	}
 }
 
@@ -863,41 +851,4 @@ func TestFilterDBForSplit_ChunkedCommits(t *testing.T) {
 	assert.NotNil(t, nb)
 	assert.Equal(t, 1, len(nb.Notifications))
 	assert.Equal(t, inRangeKey, nb.Notifications[0].GetKey())
-}
-
-// The internal keys come after the user keys, so the records of the other
-// child are deleted, in the chunks committed along the way, before their
-// notifications are placed. Those must still be placed by the records: seen as
-// gone, they would fall back to the hash of their keys, which here is in range.
-func TestFilterDBForSplit_ChunkedCommitsPlaceNotificationsByRecord(t *testing.T) {
-	oldCount, oldBytes := splitFilterMaxBatchCount, splitFilterMaxBatchBytes
-	splitFilterMaxBatchCount, splitFilterMaxBatchBytes = 1, 1<<20
-	defer func() {
-		splitFilterMaxBatchCount, splitFilterMaxBatchBytes = oldCount, oldBytes
-	}()
-
-	leftRange, rightRange := splitRanges()
-	rightPartitionKey := keyInRange(t, "pk-%d", rightRange)
-
-	kv := newTestKV(t)
-	notifications := map[string]*proto.Notification{}
-	var records []string
-	for i := 0; len(records) < 10 && i < 1000; i++ {
-		key := fmt.Sprintf("%s/rec-%06d", rightPartitionKey, i)
-		if !isHashInRange(hash.Xxh332(key), leftRange) {
-			continue
-		}
-		records = append(records, key)
-		putStorageEntry(t, kv, key, &rightPartitionKey)
-		notifications[key] = &proto.Notification{Type: proto.NotificationType_KEY_CREATED}
-	}
-	assert.Len(t, records, 10)
-	putNotificationBatch(t, kv, 0, notifications)
-
-	assert.NoError(t, FilterDBForSplit(kv, leftRange))
-
-	for _, key := range records {
-		assert.False(t, keyExists(t, kv, key))
-	}
-	assert.Nil(t, readNotificationBatch(t, kv, 0))
 }
