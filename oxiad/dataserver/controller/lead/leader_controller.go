@@ -352,6 +352,7 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 		return nil, err
 	}
 
+	lc.db.EnableNotifications(lc.termOptions.NotificationsEnabled)
 	lc.term.Store(req.Term)
 	lc.status = proto.ServingStatus_FENCED
 	lc.replicationFactor = 0
@@ -371,9 +372,6 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 		}
 		lc.quorumAckTracker = nil
 	}
-	// The previous term applies no more entries: they must not see the setting
-	// of the new term
-	lc.db.EnableNotifications(lc.termOptions.NotificationsEnabled)
 
 	for _, follower := range lc.followers {
 		if err := follower.Close(); err != nil {
