@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"testing"
 	stdtime "time"
 
@@ -229,6 +230,56 @@ func TestApplyProposal_ThenApplyLogEntry(t *testing.T) {
 
 	assert.Equal(t, leaderGet.Status, followerGet.Status)
 	assert.Equal(t, leaderGet.Value, followerGet.Value)
+}
+
+// A write request that can't be applied has no effect: the leader answers the
+// client with the error, and the followers, split children included, apply
+// the entry all the same.
+func TestApplyLogEntry_RejectedWrite(t *testing.T) {
+	leaderDB := newTestDB(t)
+	followerDB := newTestDB(t)
+	childDB := newTestDB(t)
+
+	sequentialPut := func(deltas ...uint64) *proto.WriteRequest {
+		return &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "s",
+			Value:            []byte("s"),
+			PartitionKey:     pb.String("s"),
+			SequenceKeyDelta: deltas,
+		}}}
+	}
+
+	for offset, request := range []*proto.WriteRequest{
+		sequentialPut(1, 1),
+		// Fewer deltas than the parts of the sequence
+		sequentialPut(1),
+	} {
+		proposal := NewWriteProposal(int64(offset), request)
+		entry := &proto.LogEntry{
+			Term:      1,
+			Offset:    int64(offset),
+			Value:     marshalProposal(t, proposal),
+			Timestamp: proposal.GetTimestamp(),
+		}
+
+		_, err := proposal.Apply(leaderDB, database.NoOpCallback)
+		if offset == 1 {
+			assert.ErrorIs(t, err, database.ErrWriteRejected)
+		} else {
+			assert.NoError(t, err)
+		}
+		_, err = ApplyLogEntry(followerDB, entry, database.NoOpCallback)
+		assert.NoError(t, err)
+		_, err = ApplyLogEntryWithSplitFilter(childDB, entry, database.NoOpCallback,
+			&proto.HashRange{Min: 0, Max: math.MaxUint32})
+		assert.NoError(t, err)
+	}
+
+	for _, db := range []database.DB{leaderDB, followerDB, childDB} {
+		commitOffset, err := db.ReadCommitOffset()
+		assert.NoError(t, err)
+		assert.EqualValues(t, 1, commitOffset)
+	}
 }
 
 func TestApplyLogEntry_MultipleEntries(t *testing.T) {
