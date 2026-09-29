@@ -69,7 +69,6 @@ type UpdateOperationCallback interface {
 	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
 	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string, features featurepkg.Checker) error
 	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry, features featurepkg.Checker) error
-	OnDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, keyStartInclusive string, keyEndExclusive string, features featurepkg.Checker) error
 }
 
 type RangeScanIterator interface {
@@ -735,6 +734,7 @@ func (d *db) readASCIILongOrDefault(key string, defaultValue int64) (int64, erro
 
 func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
 
 	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termKey,
@@ -755,10 +755,6 @@ func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	}
 
 	if err := batch.Commit(); err != nil {
-		return err
-	}
-
-	if err := batch.Close(); err != nil {
 		return err
 	}
 

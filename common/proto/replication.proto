@@ -64,6 +64,9 @@ enum Feature {
   FEATURE_SECONDARY_INDEX_NAME_VALIDATION = 2;
   // Apply the requests of a WriteRequest in op_index order
   FEATURE_ORDERED_WRITES = 3;
+  // Delete the secondary index entries of the ephemeral records deleted when
+  // their session ends
+  FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP = 4;
   // When a session ends, delete all its ephemeral records with the natural
   // key sorting too
   FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING = 8;

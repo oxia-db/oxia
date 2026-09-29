@@ -499,6 +499,7 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 		proto.Feature_FEATURE_DB_CHECKSUM,
 		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
 		proto.Feature_FEATURE_ORDERED_WRITES,
+		proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
 		proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING,
 	} {
 		t.Run(enabledFeature.String(), func(t *testing.T) {
@@ -1374,9 +1375,6 @@ func (f FailureCallback) OnDeleteWithEntry(_ kvstore.WriteBatch, _ *Notification
 	if key == FailureCallbackKey {
 		return errors.New("failure injection")
 	}
-	return nil
-}
-func (f FailureCallback) OnDeleteRange(kvstore.WriteBatch, *Notifications, string, string, feature.Checker) error {
 	return nil
 }
 

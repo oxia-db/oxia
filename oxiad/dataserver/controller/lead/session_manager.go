@@ -563,6 +563,13 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 			return err
 		}
 		if unescapedEphemeralKey != "" {
+			if features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) {
+				// delete the ephemeral key secondary indexes: they are listed
+				// in its entry, so this has to happen before the key goes
+				if err := secondaryIndexesUpdateCallback.OnDelete(batch, notification, unescapedEphemeralKey, features); err != nil {
+					return err
+				}
+			}
 			// delete the ephemeral key
 			if err := batch.Delete(unescapedEphemeralKey); err != nil {
 				return err
@@ -571,39 +578,6 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 			if notification != nil {
 				notification.Deleted(unescapedEphemeralKey)
 			}
-		}
-	}
-	return nil
-}
-
-func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kvstore.WriteBatch, notification *database.Notifications, keyStartInclusive string, keyEndExclusive string, features feature.Checker) error {
-	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err = it.Close(); err != nil {
-			slog.Warn("Failed to close the iterator when deleting the range.", slog.Any("error", err))
-		}
-	}()
-
-	// introduce the processor here for better defer resource release
-	iteratorProcessor := func(batch kvstore.WriteBatch, it kvstore.KeyValueIterator) error {
-		value, err := it.Value()
-		if err != nil {
-			return err
-		}
-		se := proto.StorageEntryFromVTPool()
-		defer se.ReturnToVTPool()
-		if err = database.Deserialize(value, se); err != nil {
-			return err
-		}
-		return s.OnDeleteWithEntry(batch, notification, it.Key(), se, features)
-	}
-
-	for ; it.Valid(); it.Next() {
-		if err := iteratorProcessor(batch, it); err != nil {
-			return errors.Wrap(err, "oxia db: failed to delete range")
 		}
 	}
 	return nil

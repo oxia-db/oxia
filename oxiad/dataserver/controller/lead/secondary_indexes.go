@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
@@ -74,16 +73,6 @@ func (wrapperUpdateCallback) OnDelete(batch kvstore.WriteBatch, notifications *d
 	return secondaryIndexesUpdateCallback.OnDelete(batch, notifications, key, features)
 }
 
-func (wrapperUpdateCallback) OnDeleteRange(batch kvstore.WriteBatch, notifications *database.Notifications, keyStartInclusive string, keyEndExclusive string, features feature.Checker) error {
-	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDeleteRange(batch, notifications, keyStartInclusive, keyEndExclusive, features); err != nil {
-		return err
-	}
-
-	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDeleteRange(batch, notifications, keyStartInclusive, keyEndExclusive, features)
-}
-
 var WrapperUpdateOperationCallback database.UpdateOperationCallback = &wrapperUpdateCallback{}
 
 type secondaryIndexesUpdateCallbackS struct{}
@@ -129,38 +118,6 @@ func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *dat
 
 func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, _ *database.Notifications, key string, value *proto.StorageEntry, _ feature.Checker) error {
 	return deleteSecondaryIndexes(batch, key, value)
-}
-
-func (secondaryIndexesUpdateCallbackS) OnDeleteRange(batch kvstore.WriteBatch, _ *database.Notifications, keyStartInclusive string, keyEndExclusive string, _ feature.Checker) error {
-	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
-	if err != nil {
-		return err
-	}
-
-	for ; it.Valid(); it.Next() {
-		value, err := it.Value()
-		if err != nil {
-			return errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to delete range")
-		}
-		se := proto.StorageEntryFromVTPool()
-
-		err = database.Deserialize(value, se)
-		if err == nil {
-			err = deleteSecondaryIndexes(batch, it.Key(), se)
-		}
-
-		se.ReturnToVTPool()
-
-		if err != nil {
-			return errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to delete range")
-		}
-	}
-
-	if err := it.Close(); err != nil {
-		return errors.Wrap(err, "oxia db: failed to delete range")
-	}
-
-	return err
 }
 
 const secondaryIdxSeparator = "\x01"
