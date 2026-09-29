@@ -502,26 +502,35 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 			return err
 		}
 		if unescapedEphemeralKey != "" {
-			if features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) {
-				// delete the ephemeral key secondary indexes: they are listed
-				// in its entry, so this has to happen before the key goes
-				if err := secondaryIndexesUpdateCallback.OnDelete(batch, notification, unescapedEphemeralKey, features); err != nil {
-					return err
-				}
-			}
-			// delete the ephemeral key
-			if err := batch.Delete(unescapedEphemeralKey); err != nil {
+			if err := deleteEphemeralKey(batch, notification, unescapedEphemeralKey, features); err != nil {
 				return err
-			}
-			// add ephemeral key to notification
-			if notification != nil {
-				notification.Deleted(unescapedEphemeralKey)
 			}
 		}
 	}
 	// The iteration also stops when a read fails
 	if err := it.Error(); err != nil {
 		return errors.Wrap(err, "failed to list the ephemeral keys of the session")
+	}
+	return nil
+}
+
+// deleteEphemeralKey deletes an ephemeral key of a session that ends.
+func deleteEphemeralKey(batch kvstore.WriteBatch, notification *database.Notifications, key string,
+	features feature.Checker) error {
+	if features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) {
+		// delete the ephemeral key secondary indexes: they are listed
+		// in its entry, so this has to happen before the key goes
+		if err := secondaryIndexesUpdateCallback.OnDelete(batch, notification, key, features); err != nil {
+			return err
+		}
+	}
+	// delete the ephemeral key
+	if err := batch.Delete(key); err != nil {
+		return err
+	}
+	// add ephemeral key to notification
+	if notification != nil {
+		notification.Deleted(key)
 	}
 	return nil
 }
