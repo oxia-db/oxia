@@ -765,7 +765,8 @@ func (sc *SplitController) passPointOfNoReturn(frozenLeader *proto.DataServerIde
 
 // runFinalize completes a split past the point of no return: it fences the
 // parent, re-elects the children in clean terms, which commits the parent's
-// tail through each child's own quorum, and marks the parent for deletion.
+// tail through each child's own quorum, waits for a majority of each child's
+// ensemble to hold the child's data, and marks the parent for deletion.
 // Every step can be repeated, so a failed attempt, or a coordinator restart,
 // runs Finalize again from the start.
 func (sc *SplitController) runFinalize() error {
@@ -797,13 +798,22 @@ func (sc *SplitController) runFinalize() error {
 		}
 	}
 
-	// Step 3: Clear split metadata from children and mark parent for deletion.
+	// Step 3: Wait for a majority of each child's ensemble to hold the child's
+	// data, before the parent gets deleted. Both children are re-elected
+	// first, so that their leaders send it to their followers at the same time.
+	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
+		if err := sc.waitForChildReplicas(sc.finalizeCtx, childId); err != nil {
+			return errors.Wrapf(err, "failed to wait for the replicas of child %d", childId)
+		}
+	}
+
+	// Step 4: Clear split metadata from children and mark parent for deletion.
 	// Children are now independent shards.
 	if err := sc.detachChildren(); err != nil {
 		return err
 	}
 
-	// Step 4: Notify the coordinator. This triggers the parent shard
+	// Step 5: Notify the coordinator. This triggers the parent shard
 	// controller's DeleteShard (which retries indefinitely with backoff)
 	// and recomputes shard assignments so clients discover the children.
 	sc.eventListener.SplitComplete(sc.parentShardId, sc.leftChildId, sc.rightChildId)
@@ -1277,4 +1287,89 @@ func (sc *SplitController) checkChildFeatures(childId int64, negotiated []proto.
 			ErrFeaturesRenegotiation, missing, childId)
 	}
 	return nil
+}
+
+// waitForChildReplicas waits until a majority of the child's ensemble, its
+// leader included, holds everything that the child leader has committed. The
+// leader got the child's data as an observer of the parent, and its followers
+// only get it once it leads its clean term, from the snapshot that it sends
+// them. Its election only waits for them when it has entries left to commit
+// through them: otherwise the leader holds the only copy of the child, next to
+// the parent that the split deletes, until they have installed the snapshot.
+//
+// A member counts once it follows the leader, with its head entry at or past
+// the leader's commit offset. A member only fenced in the leader's term can
+// still hold the child's data from an earlier attempt of Finalize, but the
+// leader sends it the snapshot again, and installing it starts by wiping that
+// data. Its head entry is checked as in Election.ensureFollowerCaught: its
+// commit offset only covers the entries applied to its database, up to the
+// commit offset that the leader sends along with the next entry.
+//
+// A leader that stops leading the child, e.g. because its data server
+// restarted, doesn't send the snapshot anymore: the error makes runFinalize
+// elect it again. An unreachable leader is waited for instead, as electing it
+// again would start sending the snapshot over.
+func (sc *SplitController) waitForChildReplicas(ctx context.Context, childId int64) error {
+	childMeta := sc.loadShardMeta(childId)
+	if childMeta == nil || childMeta.Leader == nil {
+		return errors.Errorf("child shard %d has no leader", childId)
+	}
+	leader := childMeta.Leader
+	majority := len(childMeta.Ensemble)/2 + 1
+
+	sc.logger.Info("Waiting for a majority of the child's ensemble to hold its data",
+		slog.Int64("child-shard", childId),
+		slog.Any("leader", leader),
+	)
+
+	// Poll at least every second: the parent's hash range is unavailable until
+	// the split completes
+	bo := backoff.WithContext(backoff.NewExponentialBackOff(
+		backoff.WithInitialInterval(100*time.Millisecond),
+		backoff.WithMaxInterval(time.Second),
+		backoff.WithMaxElapsedTime(0),
+	), ctx)
+	return backoff.RetryNotify(func() error {
+		leaderStatus, err := sc.rpcProvider.GetStatus(ctx, leader, &proto.GetStatusRequest{Shard: childId})
+		switch {
+		case errors.Is(err, constant.ErrNodeIsNotMember):
+			return backoff.Permanent(errors.Wrapf(err, "the leader of child %d stopped leading it", childId))
+		case err != nil:
+			return err
+		case leaderStatus.Status != proto.ServingStatus_LEADER:
+			return backoff.Permanent(errors.Errorf("the leader of child %d stopped leading it, its status is %s",
+				childId, leaderStatus.Status))
+		}
+
+		replicas := 1
+		for _, member := range childMeta.Ensemble {
+			if replicas == majority {
+				break
+			}
+			if member.GetNameOrDefault() == leader.GetNameOrDefault() {
+				continue
+			}
+			status, err := sc.rpcProvider.GetStatus(ctx, member, &proto.GetStatusRequest{Shard: childId})
+			if err == nil && status.Status == proto.ServingStatus_FOLLOWER &&
+				status.HeadOffset >= leaderStatus.CommitOffset {
+				replicas++
+			}
+		}
+		if replicas < majority {
+			return errors.Errorf("%d of the %d members of child %d hold its data up to offset %d",
+				replicas, len(childMeta.Ensemble), childId, leaderStatus.CommitOffset)
+		}
+
+		sc.logger.Info("A majority of the child's ensemble holds its data",
+			slog.Int64("child-shard", childId),
+			slog.Int64("commit-offset", leaderStatus.CommitOffset),
+		)
+		return nil
+	}, bo, func(err error, duration time.Duration) {
+		sc.logger.Debug("Waiting for the child's data to be replicated",
+			slog.Int64("child-shard", childId),
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
 }

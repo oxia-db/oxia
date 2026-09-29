@@ -2248,6 +2248,9 @@ func TestCoordinator_ShardSplit_ChildWriteSurvivesLeaderLoss(t *testing.T) {
 // installing the snapshot that the child leader sends them.
 type followerlessChildRpcProvider struct {
 	rpc2.Provider
+
+	// The data server that each shard was last elected on
+	leaders sync.Map
 }
 
 func (p *followerlessChildRpcProvider) factory(instanceID string) rpc2.Provider {
@@ -2261,7 +2264,26 @@ func (p *followerlessChildRpcProvider) BecomeLeader(ctx context.Context, node *p
 		req = req.CloneVT()
 		req.FollowerMaps = nil
 	}
-	return p.Provider.BecomeLeader(ctx, node, req)
+	res, err := p.Provider.BecomeLeader(ctx, node, req)
+	if err == nil {
+		p.leaders.Store(req.Shard, node.GetNameOrDefault())
+	}
+	return res, err
+}
+
+// GetStatus reports the members of a split child other than its leader as
+// following it with all of its data, which they never get: the split completes
+// once a majority of each child's ensemble holds the child's data.
+func (p *followerlessChildRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	res, err := p.Provider.GetStatus(ctx, node, req)
+	if leader, elected := p.leaders.Load(req.Shard); err == nil && req.Shard != 0 && elected &&
+		leader != node.GetNameOrDefault() {
+		res = res.CloneVT()
+		res.Status = proto.ServingStatus_FOLLOWER
+		res.HeadOffset = math.MaxInt64
+	}
+	return res, err
 }
 
 func (p *followerlessChildRpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
@@ -2526,4 +2548,70 @@ func TestCoordinator_ShardSplit_ChildElectionSlowerThanRpcTimeout(t *testing.T) 
 		}
 	}
 	assert.Empty(t, unreadable, "keys lost by the split")
+}
+
+// The leader of a split child got the child's data as an observer of the
+// parent, and its followers get it once the split elects it in a clean term,
+// from the snapshot that it sends them. The split deletes the parent once it
+// completes: from then on, the child's data must survive the loss of the
+// child's leader, even right away.
+func TestCoordinator_ShardSplit_ChildDataSurvivesLeaderLossAfterSplit(t *testing.T) {
+	// The followers of a child take a few seconds to install its snapshot, as
+	// if the child were big
+	servers := make(map[string]*dataserver.Server)
+	var addresses []*proto.DataServerIdentity
+	for range 3 {
+		s, addr := newServerWithSlowChildSnapshots(t, 3*time.Second)
+		servers[addr.GetNameOrDefault()] = s
+		addresses = append(addresses, addr)
+	}
+	cluster := setupSplitClusterWith(t, rpc2.NewRpcProviderFactory(nil), servers, addresses)
+	defer cluster.close(t)
+
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	keys := make(map[string][]byte)
+	for i := 0; i < 30; i++ {
+		key, value := fmt.Sprintf("key-%04d", i), []byte(fmt.Sprintf("value-%d", i))
+		_, _, err = client.Put(ctx, key, value)
+		require.NoError(t, err)
+		keys[key] = value
+	}
+	assert.NoError(t, client.Close())
+
+	// Lose the leader of the left child as soon as the split publishes the
+	// children
+	assignments := cluster.coordinator.SubscribeShardAssignments()
+	cluster.initiateSplit(t)
+	leftAssigned := func() bool {
+		return slices.ContainsFunc(assignments.Load().GetNamespaces()[constant.DefaultNamespace].GetAssignments(),
+			func(assignment *proto.ShardAssignment) bool { return assignment.GetShard() == cluster.leftChild })
+	}
+	for !leftAssigned() {
+		select {
+		case <-assignments.Changed():
+		case <-time.After(time.Minute):
+			require.FailNow(t, "the split did not complete")
+		}
+	}
+	left := cluster.shardStatus(t, cluster.leftChild)
+	leader := left.Leader.GetNameOrDefault()
+	slog.Info("Losing the leader of the left child right after the split", slog.String("leader", leader))
+	assert.NoError(t, cluster.servers[leader].Close())
+	delete(cluster.servers, leader)
+	cluster.coordinator.BecameUnavailable(left.Leader)
+	cluster.waitForNewTerm(t, cluster.leftChild, left.Term)
+
+	reader, err := oxia.NewSyncClient(cluster.liveAddressExcluding(leader).Public,
+		oxia.WithRequestTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reader.Close()) }()
+	var unreadable []string
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) {
+		if unreadable = unreadableKeys(ctx, reader, keys); len(unreadable) == 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	assert.Empty(t, unreadable, "keys lost with the leader of the left child")
 }

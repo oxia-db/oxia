@@ -284,6 +284,24 @@ func queueCutoverResponses(rpcMock *mockutils.RpcProvider) {
 
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildrenReplicatedResponses(rpcMock)
+}
+
+// queueChildrenReplicatedResponses queues what Finalize needs to see that a
+// majority of each child's ensemble holds the child's data, once it elected
+// the *1 nodes again.
+func queueChildrenReplicatedResponses(rpcMock *mockutils.RpcProvider) {
+	queueChildReplicatedResponses(rpcMock, ls1, ls2)
+	queueChildReplicatedResponses(rpcMock, rs1, rs2)
+}
+
+// queueChildReplicatedResponses queues what Finalize needs to see that a
+// majority of a child's ensemble holds the child's data: the leader still
+// leads the child, and the follower has everything that it committed.
+func queueChildReplicatedResponses(rpcMock *mockutils.RpcProvider, leader *proto.DataServerIdentity,
+	follower *proto.DataServerIdentity) {
+	rpcMock.GetNode(leader).GetStatusResponse(6, proto.ServingStatus_LEADER, 105, 105)
+	rpcMock.GetNode(follower).GetStatusResponse(6, proto.ServingStatus_FOLLOWER, 105, 105)
 }
 
 // queueCleanupResponses queues all responses needed for the cleanup phase.
@@ -855,6 +873,7 @@ func TestSplitController_ParentTermChangeFromFirstTerm(t *testing.T) {
 	queueNewTermResponses(rpcMock, ps1, ps2, ps3, ls1, ls2, ls3, rs1, rs2, rs3)
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildrenReplicatedResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -1059,6 +1078,7 @@ func TestSplitController_ParentFencingPartialFailure(t *testing.T) {
 	rpcMock.GetNode(rs3).NewTermResponse(1, 105, nil)
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildrenReplicatedResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -1107,6 +1127,7 @@ func TestSplitController_ChildQuorumCommitRetry(t *testing.T) {
 	rpcMock.GetNode(rs3).NewTermResponse(1, 105, nil)
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildrenReplicatedResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -1339,6 +1360,12 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	rpcMock.GetNode(rs3).NewTermResponse(1, 105, nil)
 	rpcMock.GetNode(ls2).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+
+	// A follower of each child leader has its data
+	rpcMock.GetNode(ls2).GetStatusResponse(6, proto.ServingStatus_LEADER, 105, 105)
+	rpcMock.GetNode(ls1).GetStatusResponse(6, proto.ServingStatus_FOLLOWER, 105, 105)
+	rpcMock.GetNode(rs1).GetStatusResponse(6, proto.ServingStatus_LEADER, 105, 105)
+	rpcMock.GetNode(rs2).GetStatusResponse(6, proto.ServingStatus_FOLLOWER, 105, 105)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -1602,6 +1629,7 @@ func TestSplitController_FinalizeRetriesAfterFailure(t *testing.T) {
 	queueNewTermResponses(rpcMock, ps1, ps2, ps3, ls1, ls2, ls3, rs1, rs2, rs3)
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildrenReplicatedResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -1658,6 +1686,7 @@ func TestSplitController_ResumeFromFinalize(t *testing.T) {
 	queueNewTermResponses(rpcMock, ps1, ps2, ps3, ls1, ls2, ls3, rs1, rs2, rs3)
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildrenReplicatedResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -1734,6 +1763,7 @@ func TestSplitController_FinalizePinsEnabledFeaturesWithUnknownMember(t *testing
 		rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	}
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildrenReplicatedResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:                 constant.DefaultNamespace,
@@ -1841,6 +1871,7 @@ func TestSplitController_FinalizeOutlivesSplitTimeout(t *testing.T) {
 	queueNewTermResponses(rpcMock, ps1, ps2, ls1, ls2, ls3, rs1, rs2, rs3)
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildrenReplicatedResponses(rpcMock)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -1910,6 +1941,182 @@ func TestSplitController_CutoverWaitsForChildrenToApplyTail(t *testing.T) {
 	assertSplitCompleted(t, metadata, 6, 6)
 }
 
+// The leader of a split child got the child's data as an observer of the
+// parent, and its followers only get it once Finalize elects it in a clean
+// term, from the snapshot that it sends them. When the leader has no entries
+// left to commit through them, its election doesn't wait for them. The split
+// must not complete before a majority of each child's ensemble holds the
+// child's data: until then, the other copy is on the parent, which gets
+// deleted once the split completes.
+func TestSplitController_FinalizeWaitsForChildReplicas(t *testing.T) {
+	rpcMock, metadata, listener := setupSplitTest(t, proto.SplitPhaseCutover)
+	setBootstrappedState(t, metadata)
+	queueCutoverDrainResponses(rpcMock)
+	queueNewTermResponses(rpcMock, ps1, ps2, ps3, ls1, ls2, ls3, rs1, rs2, rs3)
+	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+
+	// The leader of the left child can't be reached for a moment, and its
+	// followers are still installing its snapshot. The right child is already
+	// replicated.
+	rpcMock.GetNode(ls1).EnqueueGetStatusError(errors.New("connection refused"))
+	rpcMock.GetNode(ls1).GetStatusResponse(6, proto.ServingStatus_LEADER, 105, 105)
+	rpcMock.GetNode(ls2).GetStatusResponse(6, proto.ServingStatus_FENCED, -1, -1)
+	rpcMock.GetNode(ls3).GetStatusResponse(6, proto.ServingStatus_FENCED, -1, -1)
+	queueChildReplicatedResponses(rpcMock, rs1, rs2)
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      metadata,
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
+	})
+	defer sc.Close()
+
+	select {
+	case <-listener.completions:
+		require.FailNow(t, "the split completed before a majority of the left child's ensemble had its data")
+	case <-time.After(time.Second):
+	}
+	rpcMock.GetNode(ls2).ExpectGetStatusRequest(t, 1)
+	rpcMock.GetNode(ls3).ExpectGetStatusRequest(t, 1)
+	ns := loadTestStatus(t, metadata).Namespaces[constant.DefaultNamespace]
+	for _, shard := range []int64{0, 1, 2} {
+		assert.NotNil(t, ns.Shards[shard].GetSplit(), "split metadata of shard %d", shard)
+	}
+
+	// One of the followers has installed the snapshot: with the leader, that's
+	// a majority of the ensemble
+	queueChildReplicatedResponses(rpcMock, ls1, ls2)
+	select {
+	case <-listener.completions:
+	case <-listener.aborts:
+		t.Fatal("Split should not have been aborted")
+	case <-time.After(30 * time.Second):
+		t.Fatal("Split did not complete in time")
+	}
+	assertSplitCompleted(t, metadata, 6, 6)
+
+	// The leader that couldn't be reached was waited for, not elected again,
+	// which would have started sending the snapshot over
+	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3, ls1, ls2, ls3, rs1, rs2, rs3} {
+		assert.Len(t, drainNewTermRequests(rpcMock.GetNode(node)), 1, "NewTerm requests to %s", node.GetPublic())
+	}
+}
+
+// A member that got the data of a child in an earlier attempt of Finalize, e.g.
+// before a coordinator restart, gets it again from the child leader that
+// Finalize elects in a new term: installing the new snapshot starts by wiping
+// the data that it has. It holds the child's data only once it follows the
+// leader in the new term.
+func TestSplitController_FinalizeWaitsForReplicasOfTheNewTerm(t *testing.T) {
+	rpcMock, metadata, listener := setupSplitTest(t, proto.SplitPhaseFinalize)
+	setBootstrappedState(t, metadata)
+
+	// The previous coordinator passed the point of no return
+	status := loadTestStatus(t, metadata)
+	parent := status.Namespaces[constant.DefaultNamespace].Shards[0]
+	parent.Term = 6
+	parent.Leader = nil
+	parent.Status = proto.ShardStatusElection
+	updateTestStatusShards(t, metadata, status, 0)
+
+	queueNewTermResponses(rpcMock, ps1, ps2, ps3, ls1, ls2, ls3, rs1, rs2, rs3)
+	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+
+	// A follower of the left child got its data before the restart, and the
+	// leader didn't send it the new snapshot yet. The right child is already
+	// replicated.
+	rpcMock.GetNode(ls1).GetStatusResponse(6, proto.ServingStatus_LEADER, 105, 105)
+	rpcMock.GetNode(ls2).GetStatusResponse(6, proto.ServingStatus_FENCED, 105, 105)
+	rpcMock.GetNode(ls3).GetStatusResponse(6, proto.ServingStatus_FENCED, -1, -1)
+	queueChildReplicatedResponses(rpcMock, rs1, rs2)
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      metadata,
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
+	})
+	defer sc.Close()
+
+	select {
+	case <-listener.completions:
+		require.FailNow(t, "the split completed before a follower of the left child's leader had its data")
+	case <-time.After(time.Second):
+	}
+
+	// The follower installed the new snapshot
+	queueChildReplicatedResponses(rpcMock, ls1, ls2)
+	select {
+	case <-listener.completions:
+	case <-listener.aborts:
+		t.Fatal("Split should not have been aborted")
+	case <-time.After(30 * time.Second):
+		t.Fatal("Split did not complete in time")
+	}
+	assertSplitCompleted(t, metadata, 6, 6)
+}
+
+// A child leader that stops leading the child while its followers install its
+// snapshot, e.g. because its data server restarted, won't send it to them
+// anymore: Finalize must elect it again, which sends the snapshot over.
+func TestSplitController_FinalizeReelectsChildLeaderThatStoppedLeading(t *testing.T) {
+	for name, stopLeading := range map[string]func(leader *mockutils.PerNodeChannels){
+		"restarted": func(leader *mockutils.PerNodeChannels) {
+			leader.EnqueueGetStatusError(constant.ErrNodeIsNotMember)
+		},
+		"fenced": func(leader *mockutils.PerNodeChannels) {
+			leader.GetStatusResponse(6, proto.ServingStatus_FENCED, 105, 105)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rpcMock, metadata, listener := setupSplitTest(t, proto.SplitPhaseCutover)
+			setBootstrappedState(t, metadata)
+			queueCutoverDrainResponses(rpcMock)
+
+			// First attempt: the leader of the left child stops leading it
+			queueNewTermResponses(rpcMock, ps1, ps2, ps3, ls1, ls2, ls3, rs1, rs2, rs3)
+			rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+			rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+			stopLeading(rpcMock.GetNode(ls1))
+
+			// Second attempt
+			queueNewTermResponses(rpcMock, ps1, ps2, ps3, ls1, ls2, ls3, rs1, rs2, rs3)
+			rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+			rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+			queueChildrenReplicatedResponses(rpcMock)
+
+			sc := NewSplitController(SplitControllerConfig{
+				Namespace:     constant.DefaultNamespace,
+				ParentShardId: 0,
+				Metadata:      metadata,
+				RpcProvider:   rpcMock,
+				EventListener: listener,
+				SplitTimeout:  30 * time.Second,
+			})
+			defer sc.Close()
+
+			select {
+			case <-listener.completions:
+			case <-listener.aborts:
+				t.Fatal("Split should not have been aborted")
+			case <-time.After(30 * time.Second):
+				t.Fatal("Split did not complete in time")
+			}
+
+			rpcMock.GetNode(ls1).ExpectBecomeLeaderRequest(t, 1, 6, 3)
+			rpcMock.GetNode(ls1).ExpectBecomeLeaderRequest(t, 1, 7, 3)
+			assertSplitCompleted(t, metadata, 7, 7)
+		})
+	}
+}
+
 // --- Parent Leader Elections Around the Point of No Return ---
 
 // holdingMetadata holds the first shard status update made through it while
@@ -1977,11 +2184,12 @@ func queueParentElectionResponses(rpcMock *mockutils.RpcProvider) {
 }
 
 // queueChildrenReelectionResponses queues what Finalize needs to re-elect the
-// children in a clean term.
+// children in a clean term, and to see their data replicated.
 func queueChildrenReelectionResponses(rpcMock *mockutils.RpcProvider) {
 	queueNewTermResponses(rpcMock, ls1, ls2, ls3, rs1, rs2, rs3)
 	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
 	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildrenReplicatedResponses(rpcMock)
 }
 
 // assertParentNotElected checks that the election of the parent stopped

@@ -290,6 +290,18 @@ func (r *splitTestRuntime) queueSplitResponses() {
 	}
 	r.rpc.GetNode(splitLs1).BecomeLeaderResponse(nil)
 	r.rpc.GetNode(splitRs1).BecomeLeaderResponse(nil)
+	r.queueChildrenReplicatedResponses()
+}
+
+// queueChildrenReplicatedResponses queues what Finalize needs to see that a
+// majority of each child's ensemble holds the child's data, once it elected
+// the *1 nodes again: they still lead the children, and a follower of each has
+// everything that they committed.
+func (r *splitTestRuntime) queueChildrenReplicatedResponses() {
+	for _, child := range [][]*proto.DataServerIdentity{{splitLs1, splitLs2}, {splitRs1, splitRs2}} {
+		r.rpc.GetNode(child[0]).GetStatusResponse(splitParentTerm+1, proto.ServingStatus_LEADER, 105, 105)
+		r.rpc.GetNode(child[1]).GetStatusResponse(splitParentTerm+1, proto.ServingStatus_FOLLOWER, 105, 105)
+	}
 }
 
 func (r *splitTestRuntime) publishedSnapshots() []*proto.ShardAssignments {
@@ -401,6 +413,7 @@ func TestSplit_RestartPastPointOfNoReturn(t *testing.T) {
 	}
 	r.rpc.GetNode(splitLs1).BecomeLeaderResponse(nil)
 	r.rpc.GetNode(splitRs1).BecomeLeaderResponse(nil)
+	r.queueChildrenReplicatedResponses()
 	for _, node := range []*proto.DataServerIdentity{splitPs1, splitPs2, splitPs3} {
 		r.rpc.GetNode(node).DeleteShardResponse(nil)
 	}
