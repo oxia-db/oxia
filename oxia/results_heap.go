@@ -14,11 +14,32 @@
 
 package oxia
 
+// rangeScanResult is a result of the range scan of one shard. When the scan
+// uses an index, the shard returns the records in the order of their secondary
+// keys, and the servers send the secondary key with each record. Older servers
+// don't, and leave it nil.
+type rangeScanResult struct {
+	gr                GetResult
+	secondaryIndexKey *string
+}
+
 type ResultAndChannel struct {
 	gr GetResult
-	// The key of the result, in the form that the order of the heap compares
-	sortKey []byte
-	ch      chan GetResult
+	// The key of the result, and its secondary key if it has one, in the form
+	// that the order of the heap compares
+	sortKey          []byte
+	sortSecondaryKey []byte
+	hasSecondaryKey  bool
+	ch               chan rangeScanResult
+}
+
+func newResultAndChannel(order keyOrder, r rangeScanResult, ch chan rangeScanResult) *ResultAndChannel {
+	rc := &ResultAndChannel{gr: r.gr, sortKey: order.sortKey(r.gr.Key), ch: ch}
+	if r.secondaryIndexKey != nil {
+		rc.sortSecondaryKey = order.sortKey(*r.secondaryIndexKey)
+		rc.hasSecondaryKey = true
+	}
+	return rc
 }
 
 type ResultHeap struct {
@@ -30,8 +51,16 @@ func (h *ResultHeap) Len() int {
 	return len(h.results)
 }
 
+// Less orders the results by their secondary keys, then by their keys. The
+// results without a secondary key are ordered by their keys only.
 func (h *ResultHeap) Less(i, j int) bool {
-	return h.order.compareSortKeys(h.results[i].sortKey, h.results[j].sortKey) < 0
+	a, b := h.results[i], h.results[j]
+	if a.hasSecondaryKey && b.hasSecondaryKey {
+		if c := h.order.compareSortKeys(a.sortSecondaryKey, b.sortSecondaryKey); c != 0 {
+			return c < 0
+		}
+	}
+	return h.order.compareSortKeys(a.sortKey, b.sortKey) < 0
 }
 
 func (h *ResultHeap) Swap(i, j int) {
