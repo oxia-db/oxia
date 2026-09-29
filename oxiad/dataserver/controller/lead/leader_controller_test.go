@@ -1365,6 +1365,49 @@ func TestLeaderController_NotificationsCloseLeader(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// NewTerm sets whether the db has notifications enabled while the dispatch of
+// an active subscription, which doesn't hold the leader lock, reads it. The
+// test fails under -race if the two accesses aren't synchronized.
+func TestLeaderController_NotificationsNewTerm(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
+
+	// The dispatch reads the next notifications right after confirming the
+	// subscription
+	<-adaptor.Ch()
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+	require.NoError(t, err)
+	assert.False(t, adaptor.IsCompleted())
+
+	cancel()
+	assert.Eventually(t, func() bool {
+		return adaptor.IsCompleted()
+	}, 10*time.Second, 100*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestLeaderController_NotificationsWhenNotReady(t *testing.T) {
 	var shard int64 = 1
 

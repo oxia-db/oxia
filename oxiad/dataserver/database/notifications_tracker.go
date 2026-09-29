@@ -267,6 +267,13 @@ func (nt *notificationsTracker) scanNotifications(startOffset int64) ([]*proto.N
 		totalCount += len(nb.Notifications)
 	}
 
+	// The iteration also stops when a read fails. Returning what was read
+	// until then could be an empty result, which ReadNextNotifications takes
+	// for trimmed batches and skips.
+	if err := it.Error(); err != nil {
+		return nil, errors.Wrap(err, "failed to read notification batches")
+	}
+
 	nt.readBatchCounter.Add(len(res))
 	nt.readBytesCounter.Add(totalSize)
 	nt.readCounter.Add(totalCount)

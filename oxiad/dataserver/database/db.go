@@ -74,9 +74,8 @@ type UpdateOperationCallback interface {
 	// ValidatePut must not mutate the request or database state.
 	ValidatePut(req *proto.PutRequest, features featurepkg.Checker) proto.Status
 	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
-	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string) error
-	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry) error
-	OnDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, keyStartInclusive string, keyEndExclusive string) error
+	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string, features featurepkg.Checker) error
+	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry, features featurepkg.Checker) error
 }
 
 type RangeScanIterator interface {
@@ -154,7 +153,6 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	db := &db{
 		kv:                    kv,
 		shardId:               shardId,
-		notificationsEnabled:  true,
 		enabledFeatures:       sync.Map{},
 		sequenceWaiterTracker: NewSequencesWaitTracker(),
 		log: slog.With(
@@ -184,6 +182,7 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		rangeScanCounter: metric.NewCounter("oxia_server_db_range_scans",
 			"The total number of range-scan operations", "count", labels),
 	}
+	db.notificationsEnabled.Store(true)
 
 	// Close the kv on any failure from here on: a leaked store would keep
 	// the Pebble lock and fail every later open of the shard
@@ -223,7 +222,7 @@ type db struct {
 	committedChecksum     atomic.Pointer[crc.Checksum]
 	notificationsTracker  *notificationsTracker
 	log                   *slog.Logger
-	notificationsEnabled  bool
+	notificationsEnabled  atomic.Bool
 	enabledFeatures       sync.Map
 	sequenceWaiterTracker SequenceWaiterTracker
 
@@ -252,7 +251,7 @@ func (d *db) RawKV() kvstore.KV {
 }
 
 func (d *db) EnableNotifications(enabled bool) {
-	d.notificationsEnabled = enabled
+	d.notificationsEnabled.Store(enabled)
 }
 func (d *db) ReadChecksum() crc.Checksum {
 	return *d.committedChecksum.Load()
@@ -303,7 +302,7 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	updateOperationCallback UpdateOperationCallback) (*Notifications, *proto.WriteResponse, []sequenceUpdate, error) {
 	res := &proto.WriteResponse{}
 	var notifications *Notifications
-	if d.notificationsEnabled {
+	if d.notificationsEnabled.Load() {
 		notifications = newNotifications(d.shardId, commitOffset, timestamp)
 	}
 	var sequenceUpdates []sequenceUpdate
@@ -629,7 +628,10 @@ func (d *db) GetSequenceUpdates(prefixKey string) (SequenceWaiter, error) {
 		sw.och.WriteLast(it.Key())
 	}
 
-	_ = it.Close()
+	// The iterator is also invalid when the read failed: Close returns the error
+	if err := it.Close(); err != nil {
+		return nil, multierr.Append(errors.Wrap(err, "failed to read the last key of the sequence"), sw.Close())
+	}
 	return sw, nil
 }
 
@@ -779,6 +781,11 @@ func (d *db) recoverFeatureFlags() error {
 
 		it.Next()
 	}
+
+	// The iteration also stops when a read fails
+	if err := it.Error(); err != nil {
+		return errors.Wrap(err, "failed to read the feature flags")
+	}
 	return nil
 }
 
@@ -825,6 +832,7 @@ func (d *db) readASCIILongOrDefault(key string, defaultValue int64) (int64, erro
 
 func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
 
 	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termKey,
@@ -845,10 +853,6 @@ func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	}
 
 	if err := batch.Commit(); err != nil {
-		return err
-	}
-
-	if err := batch.Close(); err != nil {
 		return err
 	}
 
@@ -1022,7 +1026,7 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 	case se == nil:
 		return &proto.DeleteResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	default:
-		err = updateOperationCallback.OnDelete(batch, notifications, delReq.Key)
+		err = updateOperationCallback.OnDelete(batch, notifications, delReq.Key, d)
 		if err != nil {
 			return nil, err
 		}
@@ -1072,7 +1076,7 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 			return nil, errors.Wrap(deserializeFailure(key, err, it.Close()),
 				"oxia db: failed to deserialize value on delete range")
 		}
-		if err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, key, se); err != nil {
+		if err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, key, se, d); err != nil {
 			se.ReturnToVTPool()
 			return nil, errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to callback on delete range")
 		}
@@ -1227,7 +1231,7 @@ func Deserialize(value []byte, se *proto.StorageEntry) error {
 }
 
 func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error) {
-	if !d.notificationsEnabled {
+	if !d.notificationsEnabled.Load() {
 		return nil, ErrNotificationsDisabled
 	}
 	return d.notificationsTracker.ReadNextNotifications(ctx, startOffset)

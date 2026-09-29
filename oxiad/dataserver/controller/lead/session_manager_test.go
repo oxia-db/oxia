@@ -283,7 +283,7 @@ func TestSessionUpdateOperationCallback_OnDelete(t *testing.T) {
 		SessionKey(SessionId(sessionId)) + "/a%2Fb%2Fc": []byte{},
 	}
 
-	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, nil, "a/b/c")
+	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, nil, "a/b/c", testFeatureChecker{})
 	assert.NoError(t, err)
 	_, found := writeBatch[SessionKey(SessionId(sessionId))+"/a%2Fb%2Fc"]
 	assert.False(t, found)
