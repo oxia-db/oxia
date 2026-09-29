@@ -1307,7 +1307,8 @@ func TestLeaderController_NotificationsNewTerm(t *testing.T) {
 	require.NoError(t, err)
 	walFactory := newTestWalFactory(t)
 
-	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, kvFactory, nil)
 	require.NoError(t, err)
 	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
 	require.NoError(t, err)
