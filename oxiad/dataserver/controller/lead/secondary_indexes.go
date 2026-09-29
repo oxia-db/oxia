@@ -21,7 +21,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
@@ -289,7 +288,12 @@ func secondaryIndexGet(req *proto.GetRequest, db database.DB) (*proto.GetRespons
 func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, secondaryKey string, err error) {
 	indexName := *req.SecondaryIndexName
 	indexPrefix := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, "")
-	searchKey := indexPrefix + req.Key
+	// Entries are stored as indexPrefix + secondary key + separator + escaped
+	// primary key. With the separator, the search key sorts right before the
+	// entries of the requested key in either key sorting. Without it, the search
+	// key for "/", or for a key ending in "//", would end in "//", which the
+	// hierarchical sorting does not count as a level.
+	searchKey := indexPrefix + req.Key + secondaryIdxSeparator
 	it, err := db.KeyIterator(true)
 	if err != nil {
 		return "", "", err
@@ -324,7 +328,9 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 			return "", "", err
 		}
 
-		cmp := compare.CompareWithSlash([]byte(req.Key), []byte(secondaryKey))
+		// Compare in the order the iterator walks the entries, the shard's key
+		// order, with the entry cut down to the form of the search key
+		cmp := db.CompareKeys(searchKey, indexPrefix+secondaryKey+secondaryIdxSeparator)
 
 		switch req.ComparisonType {
 		case proto.KeyComparisonType_EQUAL:

@@ -277,6 +277,32 @@ func TestPebbleRangeScanWithSlashOrder(t *testing.T) {
 	assert.NoError(t, it.Close())
 }
 
+func TestPebbleCompareKeys(t *testing.T) {
+	keys := []string{"/", "a", "a.c", "a/", "a/y/z", "a0", "b/x", "__oxia/term", "__oxia/idx/i/a\x01a"}
+
+	for _, sorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(sorting.String(), func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, sorting)
+			assert.NoError(t, err)
+
+			// The keys have to compare in the order the store returns them
+			putAll(t, kv, keys...)
+			sorted := scanAllKeys(t, kv, ShowInternalKeys)
+			assert.Equal(t, len(keys), len(sorted))
+			for i, a := range sorted {
+				for j, b := range sorted {
+					assert.Equal(t, cmp.Compare(i, j), kv.CompareKeys(a, b), "%q %q", a, b)
+				}
+			}
+
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
 func TestPebbbleGetWithinBatch(t *testing.T) {
 	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
