@@ -577,11 +577,6 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	if err = fc.wal.Clear(); err != nil {
 		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to clear WAL")
 	}
-	oldDb := fc.db
-	fc.db = nil
-	if err = oldDb.Close(); err != nil {
-		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to close Database")
-	}
 	// If anything below fails, recover by re-opening the database from disk
 	// so the follower controller remains usable for retries.
 	defer func() {
@@ -594,6 +589,13 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 			}
 		}
 	}()
+	// Pebble closes the database even when Close reports an error (e.g. leaked
+	// iterators), so a failed close is recovered by re-opening it as well
+	oldDb := fc.db
+	fc.db = nil
+	if err = oldDb.Close(); err != nil {
+		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to close Database")
+	}
 	var loader kvstore.SnapshotLoader
 	loader, err = fc.kvFactory.NewSnapshotLoader(fc.namespace, fc.shardId)
 	if err != nil {

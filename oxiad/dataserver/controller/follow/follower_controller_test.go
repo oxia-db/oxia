@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1362,6 +1363,100 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	assert.EqualValues(t, 5, fc.Term())
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// closeFailingKVFactory makes the next database Close fail once failNextClose
+// is set. Like Pebble when it finds leaked iterators, it closes the database
+// all the same.
+type closeFailingKVFactory struct {
+	kvstore.Factory
+	failNextClose atomic.Bool
+}
+
+func (f *closeFailingKVFactory) NewKV(
+	namespace string,
+	shardId int64,
+	keySorting proto.KeySortingType,
+) (kvstore.KV, error) {
+	kv, err := f.Factory.NewKV(namespace, shardId, keySorting)
+	if err != nil {
+		return nil, err
+	}
+	return &closeFailingKV{KV: kv, factory: f}, nil
+}
+
+type closeFailingKV struct {
+	kvstore.KV
+	factory *closeFailingKVFactory
+}
+
+func (kv *closeFailingKV) Close() error {
+	err := kv.KV.Close()
+	if kv.factory.failNextClose.CompareAndSwap(true, false) {
+		return errors.New("leaked iterators")
+	}
+	return err
+}
+
+// A snapshot install that fails to close the old database must still leave the
+// follower with a database: the leader retries the snapshot, and NewTerm, Close
+// and the state applier use the database too.
+func TestFollower_HandleSnapshotWithFailingDatabaseClose(t *testing.T) {
+	var shardId int64
+	pebbleFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	kvFactory := &closeFailingKVFactory{Factory: pebbleFactory}
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+
+	snapshot := prepareTestDb(t, 1)
+	var chunks []*proto.SnapshotChunk
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		require.NoError(t, err)
+		chunks = append(chunks, &proto.SnapshotChunk{
+			Term:       1,
+			Name:       chunk.Name(),
+			Content:    chunk.Content(),
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	installSnapshot := func() error {
+		snapshotStream := rpc.NewMockServerSendSnapshotStream()
+		for _, chunk := range chunks {
+			snapshotStream.AddChunk(chunk)
+		}
+		close(snapshotStream.Chunks)
+		return fc.InstallSnapshot(snapshotStream)
+	}
+
+	kvFactory.failNextClose.Store(true)
+	assert.ErrorContains(t, installSnapshot(), "failed to close Database")
+	assert.NotNil(t, fc.(*followerController).db, "the follower was left without a database")
+
+	// The leader retries the snapshot
+	require.NotPanics(t, func() { err = installSnapshot() })
+	require.NoError(t, err)
+	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
+	assert.EqualValues(t, 1, fc.Term())
+	assert.EqualValues(t, 99, fc.CommitOffset())
+	for i := 0; i < 100; i++ {
+		dbRes, err := fc.(*followerController).db.Get(&proto.GetRequest{
+			Key:          fmt.Sprintf("key-%d", i),
+			IncludeValue: true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, proto.Status_OK, dbRes.Status)
+	}
 
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())

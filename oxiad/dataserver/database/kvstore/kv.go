@@ -76,6 +76,11 @@ type KeyIterator interface {
 
 	SeekGE(key string) bool
 	SeekLT(key string) bool
+
+	// Error returns the error of a failed read. The iterator becomes invalid
+	// both at the end of the range and when a read fails, so a scan must check
+	// Error before taking what it read as the complete range.
+	Error() error
 }
 
 type ReverseKeyIterator interface {

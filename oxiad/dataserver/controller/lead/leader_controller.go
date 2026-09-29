@@ -300,8 +300,24 @@ func (lc *leaderController) IsFeatureEnabled(f proto.Feature) bool {
 // regarding reconfigurations.
 func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	lc.Lock()
-	defer lc.Unlock()
+	res, err := lc.newTerm(req)
+	sessionManager := lc.sessionManager
+	lc.Unlock()
+	if err != nil {
+		return nil, err
+	}
 
+	// newTerm stopped the session manager: wait for its expiry scheduler only
+	// once the leader lock is released, see sessionManager.stop.
+	if err = sessionManager.Close(); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// newTerm must be called while holding the leader lock. On success, it leaves
+// the session manager stopped.
+func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	if lc.closed {
 		return nil, constant.ErrResourceUnavailable
 	}
@@ -382,10 +398,7 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 		return nil, err
 	}
 
-	err = lc.sessionManager.Close()
-	if err != nil {
-		return nil, err
-	}
+	lc.sessionManager.stop()
 
 	lc.log.Info(
 		"Leader successfully initialized in new term",
@@ -1074,7 +1087,7 @@ func rangeScanIterate(ctx context.Context, it database.RangeScanIterator, onNext
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
-	return lc.writeBlock(ctx, func(_ int64) *proto.WriteRequest { return request })
+	return lc.writeBlock(ctx, nil, func(_ int64) *proto.WriteRequest { return request })
 }
 
 func (lc *leaderController) Write(ctx context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
@@ -1084,16 +1097,35 @@ func (lc *leaderController) Write(ctx context.Context, request *proto.WriteReque
 	lc.propose(ctx, func(offset int64) statemachine.Proposal { return statemachine.NewWriteProposal(offset, request) }, deferPropose)
 }
 
-func (lc *leaderController) writeBlock(ctx context.Context, requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
+// writeBlock proposes the write built by requestSupplier and waits for its
+// result. If closed is done by the time the leader lock is held, the write is
+// rejected without being appended; a nil closed is never done. The session
+// manager passes its own done channel: it is stopped while holding the leader
+// lock, so none of its writes can be appended once it is stopped.
+func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct{},
+	requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
 	res := make(chan *entity.TWithError[*proto.WriteResponse], 1)
 	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
 		res <- &entity.TWithError[*proto.WriteResponse]{Err: nil, T: response.WriteResponse}
 	}, func(err error) {
 		res <- &entity.TWithError[*proto.WriteResponse]{Err: err, T: nil}
 	})
-	lc.propose(ctx, func(offset int64) statemachine.Proposal {
-		return statemachine.NewWriteProposal(offset, requestSupplier(offset))
-	}, deferPropose)
+
+	lc.Lock()
+	var err error
+	select {
+	case <-closed:
+		err = constant.ErrNodeIsNotLeader
+	default:
+		err = lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
+			return statemachine.NewWriteProposal(offset, requestSupplier(offset))
+		}, deferPropose)
+	}
+	lc.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
 	response := <-res
 	return response.T, response.Err
 }
@@ -1408,8 +1440,13 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 
 func (lc *leaderController) Close() error {
 	lc.Lock()
-	defer lc.Unlock()
-	return lc.close()
+	err := lc.close()
+	sessionManager := lc.sessionManager
+	lc.Unlock()
+
+	// close stopped the session manager: wait for its expiry scheduler only
+	// once the leader lock is released, see sessionManager.stop.
+	return multierr.Append(err, sessionManager.Close())
 }
 
 func (lc *leaderController) close() error {
@@ -1441,7 +1478,7 @@ func (lc *leaderController) close() error {
 	}
 	lc.followerAckOffsetGauges = map[string]metric.Gauge{}
 
-	err = lc.sessionManager.Close()
+	lc.sessionManager.stop()
 
 	if lc.wal != nil {
 		err = multierr.Append(err, lc.wal.Close())
@@ -1512,7 +1549,18 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 
 func (lc *leaderController) DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	lc.Lock()
-	defer lc.Unlock()
+	res, err := lc.deleteShard(request)
+	sessionManager := lc.sessionManager
+	lc.Unlock()
+
+	// deleteShard leaves the controller closed, and so the session manager
+	// stopped: wait for its expiry scheduler only once the leader lock is
+	// released, see sessionManager.stop.
+	return res, multierr.Append(err, sessionManager.Close())
+}
+
+// deleteShard must be called while holding the leader lock.
+func (lc *leaderController) deleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	if lc.closed {
 		return nil, constant.ErrResourceUnavailable
 	}
