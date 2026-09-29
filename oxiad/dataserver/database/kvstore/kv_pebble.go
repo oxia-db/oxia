@@ -616,6 +616,17 @@ func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string) (KeyIterator, 
 func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator, error) {
 	lb := b.p.keyEncoder.Encode(lowerBound)
 	ub := b.p.keyEncoder.Encode(upperBound)
+	if len(ub) == 0 {
+		// Only the natural encoder encodes a key to an empty slice, for "". It
+		// returns nil for the "" of a decoded request, which leaves the range
+		// open: keep it open for any "", whatever its data pointer.
+		ub = nil
+	} else if bytes.Compare(lb, ub) > 0 {
+		// An inverted range is empty. Bound it as such: the seek below would
+		// clamp to the upper bound, under the lower one, which Pebble asserts
+		// against in its invariants builds.
+		ub = lb
+	}
 	pbit, err := b.b.NewIter(&pebble.IterOptions{
 		LowerBound: lb,
 		UpperBound: ub,

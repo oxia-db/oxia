@@ -465,6 +465,47 @@ func TestDBDeleteRangeErrorClosesIterator(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// A delete range whose start sorts after its end deletes nothing. Its scan used
+// to trip a Pebble invariant, which exits the process in the race and
+// invariants builds.
+func TestDBDeleteRangeInvertedRange(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		start, end string
+	}{
+		{"natural", proto.KeySortingType_NATURAL, "c", "a"},
+		{"hierarchical", proto.KeySortingType_HIERARCHICAL, "c", "a"},
+		// The empty key sorts first with the hierarchical encoder
+		{"hierarchical empty end", proto.KeySortingType_HIERARCHICAL, "b", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 0, time.SystemClock)
+			require.NoError(t, err)
+
+			_, err = db.ProcessWrite(&proto.WriteRequest{
+				Puts: []*proto.PutRequest{{Key: "a"}, {Key: "b"}, {Key: "c"}},
+			}, 0, 0, NoOpCallback)
+			require.NoError(t, err)
+
+			res, err := db.ProcessWrite(&proto.WriteRequest{
+				DeleteRanges: []*proto.DeleteRangeRequest{{
+					StartInclusive: test.start,
+					EndExclusive:   test.end,
+				}},
+			}, 1, 0, NoOpCallback)
+			require.NoError(t, err)
+			assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+			assert.Equal(t, []string{"a", "b", "c"}, keyIteratorToSlice(db.List(&proto.ListRequest{})))
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
 func TestDB_ReadCommitOffset(t *testing.T) {
 	offset := int64(13)
 
