@@ -146,7 +146,6 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	db := &db{
 		kv:                    kv,
 		shardId:               shardId,
-		notificationsEnabled:  true,
 		enabledFeatures:       sync.Map{},
 		sequenceWaiterTracker: NewSequencesWaitTracker(),
 		log: slog.With(
@@ -176,6 +175,7 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		rangeScanCounter: metric.NewCounter("oxia_server_db_range_scans",
 			"The total number of range-scan operations", "count", labels),
 	}
+	db.notificationsEnabled.Store(true)
 
 	// Close the kv on any failure from here on: a leaked store would keep
 	// the Pebble lock and fail every later open of the shard
@@ -215,7 +215,7 @@ type db struct {
 	committedChecksum     atomic.Pointer[crc.Checksum]
 	notificationsTracker  *notificationsTracker
 	log                   *slog.Logger
-	notificationsEnabled  bool
+	notificationsEnabled  atomic.Bool
 	enabledFeatures       sync.Map
 	sequenceWaiterTracker SequenceWaiterTracker
 
@@ -244,7 +244,7 @@ func (d *db) RawKV() kvstore.KV {
 }
 
 func (d *db) EnableNotifications(enabled bool) {
-	d.notificationsEnabled = enabled
+	d.notificationsEnabled.Store(enabled)
 }
 func (d *db) ReadChecksum() crc.Checksum {
 	return *d.committedChecksum.Load()
@@ -288,7 +288,7 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	updateOperationCallback UpdateOperationCallback) (*Notifications, *proto.WriteResponse, error) {
 	res := &proto.WriteResponse{}
 	var notifications *Notifications
-	if d.notificationsEnabled {
+	if d.notificationsEnabled.Load() {
 		notifications = newNotifications(d.shardId, commitOffset, timestamp)
 	}
 
@@ -1141,7 +1141,7 @@ func Deserialize(value []byte, se *proto.StorageEntry) error {
 }
 
 func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error) {
-	if !d.notificationsEnabled {
+	if !d.notificationsEnabled.Load() {
 		return nil, ErrNotificationsDisabled
 	}
 	return d.notificationsTracker.ReadNextNotifications(ctx, startOffset)
