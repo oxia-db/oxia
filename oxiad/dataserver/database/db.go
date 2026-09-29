@@ -69,7 +69,6 @@ type UpdateOperationCallback interface {
 	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
 	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string, features featurepkg.Checker) error
 	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry, features featurepkg.Checker) error
-	OnDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, keyStartInclusive string, keyEndExclusive string, features featurepkg.Checker) error
 }
 
 type RangeScanIterator interface {
@@ -448,6 +447,8 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	baseVersionId.Store(d.committedVersionId.Load())
 
 	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
+
 	notifications, res, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp, updateOperationCallback)
 	if err != nil {
 		return nil, err
@@ -488,10 +489,6 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 
 	if notifications != nil {
 		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
-	}
-
-	if err := batch.Close(); err != nil {
-		return nil, err
 	}
 
 	return res, nil
@@ -983,7 +980,7 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		se := proto.StorageEntryFromVTPool()
 		if err = Deserialize(value, se); err != nil {
 			se.ReturnToVTPool()
-			return nil, err
+			return nil, errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to deserialize value on delete range")
 		}
 		if err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, key, se, d); err != nil {
 			se.ReturnToVTPool()

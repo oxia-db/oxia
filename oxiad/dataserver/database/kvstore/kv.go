@@ -114,8 +114,8 @@ type SnapshotLoader interface {
 
 	AddChunk(fileName string, chunkIndex int32, chunkCount int32, content []byte) error
 
-	// Complete signals that the snapshot is now complete
-	Complete()
+	// Complete signals that the snapshot is now complete, and makes it durable
+	Complete() error
 }
 
 type ComparisonType proto.KeyComparisonType
