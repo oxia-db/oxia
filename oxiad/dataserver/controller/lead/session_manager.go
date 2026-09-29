@@ -501,22 +501,23 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 		if err != nil {
 			return err
 		}
-		if unescapedEphemeralKey != "" {
-			if features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) {
-				// delete the ephemeral key secondary indexes: they are listed
-				// in its entry, so this has to happen before the key goes
-				if err := secondaryIndexesUpdateCallback.OnDelete(batch, notification, unescapedEphemeralKey, features); err != nil {
-					return err
-				}
-			}
-			// delete the ephemeral key
-			if err := batch.Delete(unescapedEphemeralKey); err != nil {
+		if unescapedEphemeralKey == "" {
+			continue
+		}
+		if features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) {
+			// delete the ephemeral key secondary indexes: they are listed
+			// in its entry, so this has to happen before the key goes
+			if err := secondaryIndexesUpdateCallback.OnDelete(batch, notification, unescapedEphemeralKey, features); err != nil {
 				return err
 			}
-			// add ephemeral key to notification
-			if notification != nil {
-				notification.Deleted(unescapedEphemeralKey)
-			}
+		}
+		// delete the ephemeral key
+		if err := batch.Delete(unescapedEphemeralKey); err != nil {
+			return err
+		}
+		// add ephemeral key to notification
+		if notification != nil {
+			notification.Deleted(unescapedEphemeralKey)
 		}
 	}
 	// The iteration also stops when a read fails
