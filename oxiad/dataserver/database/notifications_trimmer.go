@@ -151,15 +151,12 @@ func (t *notificationsTrimmer) trimNotifications() error {
 	}
 
 	wb := t.kv.NewWriteBatch()
+	defer wb.Close()
 	if err = wb.DeleteRange(notificationKey(first), notificationKey(trimOffset+1)); err != nil {
 		return err
 	}
 
 	if err = wb.Commit(); err != nil {
-		return err
-	}
-
-	if err = wb.Close(); err != nil {
 		return err
 	}
 
