@@ -1377,7 +1377,11 @@ type closeFailingKVFactory struct {
 	failNextClose atomic.Bool
 }
 
-func (f *closeFailingKVFactory) NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (kvstore.KV, error) {
+func (f *closeFailingKVFactory) NewKV(
+	namespace string,
+	shardId int64,
+	keySorting proto.KeySortingType,
+) (kvstore.KV, error) {
 	kv, err := f.Factory.NewKV(namespace, shardId, keySorting)
 	if err != nil {
 		return nil, err
