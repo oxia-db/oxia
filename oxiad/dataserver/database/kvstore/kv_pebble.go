@@ -516,13 +516,15 @@ func (p *Pebble) KeyRangeScan(lowerBound, upperBound string, opts IteratorOpts) 
 	return p.RangeScan(lowerBound, upperBound, opts)
 }
 
-func (p *Pebble) KeyIterator(itOpts IteratorOpts) (KeyIterator, error) {
-	pbit, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, nil, nil))
+func (p *Pebble) KeyPrefixIterator(prefix string) (KeyIterator, error) {
+	ranges := p.keyEncoder.PrefixRanges(prefix)
+	lower, upper := ranges.Bounds()
+	pbit, err := p.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return nil, err
 	}
 
-	return &PebbleIterator{p, pbit, newInternalRegionSkipper(p.keyEncoder, itOpts)}, nil
+	return &PebblePrefixIterator{p: p, pi: pbit, ranges: ranges}, nil
 }
 
 func (p *Pebble) KeyRangeScanReverse(lowerBound, upperBound string, itOpts IteratorOpts) (ReverseKeyIterator, error) {
@@ -775,6 +777,70 @@ func (p *PebbleReverseIterator) Value() ([]byte, error) {
 		p.p.readErrors.Inc()
 	}
 	return res, err
+}
+
+// PebblePrefixIterator iterates the keys that start with a prefix. When the
+// encoder does not keep them in a single range, it seeks from one range to the
+// next over the keys in between.
+type PebblePrefixIterator struct {
+	p      *Pebble
+	pi     *pebble.Iterator
+	ranges compare.PrefixRanges
+	valid  bool
+}
+
+func (p *PebblePrefixIterator) Close() error {
+	return p.pi.Close()
+}
+
+func (p *PebblePrefixIterator) Valid() bool {
+	return p.valid
+}
+
+func (p *PebblePrefixIterator) Key() string {
+	return p.p.keyEncoder.Decode(p.pi.Key())
+}
+
+func (p *PebblePrefixIterator) Next() bool {
+	p.pi.Next()
+	return p.forward()
+}
+
+func (p *PebblePrefixIterator) Prev() bool {
+	p.pi.Prev()
+	return p.backward()
+}
+
+func (p *PebblePrefixIterator) SeekGE(key string) bool {
+	p.pi.SeekGE(p.p.keyEncoder.Encode(key))
+	return p.forward()
+}
+
+func (p *PebblePrefixIterator) SeekLT(key string) bool {
+	p.pi.SeekLT(p.p.keyEncoder.Encode(key))
+	return p.backward()
+}
+
+// forward moves the iterator from a key between two ranges to the start of
+// the next one.
+func (p *PebblePrefixIterator) forward() bool {
+	p.valid = p.pi.Valid()
+	for p.valid && !p.ranges.Contains(p.pi.Key()) {
+		start := p.ranges.NextStart(p.pi.Key())
+		p.valid = start != nil && p.pi.SeekGE(start)
+	}
+	return p.valid
+}
+
+// backward moves the iterator from a key between two ranges to the end of the
+// previous one.
+func (p *PebblePrefixIterator) backward() bool {
+	p.valid = p.pi.Valid()
+	for p.valid && !p.ranges.Contains(p.pi.Key()) {
+		end := p.ranges.PrevEnd(p.pi.Key())
+		p.valid = end != nil && p.pi.SeekLT(end)
+	}
+	return p.valid
 }
 
 // pebbleSnapshotLoader writes the snapshot files through fs, which is

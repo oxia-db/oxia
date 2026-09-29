@@ -137,7 +137,10 @@ type KV interface {
 
 	KeyRangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyIterator, error)
 	KeyRangeScanReverse(lowerBound, upperBound string, opts IteratorOpts) (ReverseKeyIterator, error)
-	KeyIterator(opts IteratorOpts) (KeyIterator, error)
+
+	// KeyPrefixIterator returns an iterator over the keys that start with
+	// prefix, internal keys included, to position with SeekGE or SeekLT
+	KeyPrefixIterator(prefix string) (KeyIterator, error)
 
 	RangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyValueIterator, error)
 

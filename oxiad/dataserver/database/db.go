@@ -109,7 +109,10 @@ type DB interface {
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
 	List(request *proto.ListRequest) (kvstore.KeyIterator, error)
 	RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error)
-	KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error)
+
+	// KeyPrefixIterator returns an iterator over the keys that start with
+	// prefix, internal keys included, to position with SeekGE or SeekLT
+	KeyPrefixIterator(prefix string) (kvstore.KeyIterator, error)
 
 	// CompareKeys compares two keys in the order the shard sorts them
 	CompareKeys(a, b string) int
@@ -634,8 +637,8 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 	}, nil
 }
 
-func (d *db) KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error) {
-	return d.kv.KeyIterator(kvstore.IteratorOpts{IncludeInternalKeys: includeInternalKeys})
+func (d *db) KeyPrefixIterator(prefix string) (kvstore.KeyIterator, error) {
+	return d.kv.KeyPrefixIterator(prefix)
 }
 
 func (d *db) CompareKeys(a, b string) int {

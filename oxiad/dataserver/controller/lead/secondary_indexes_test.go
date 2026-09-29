@@ -505,7 +505,12 @@ func TestSecondaryIndices_GetFollowsKeySorting(t *testing.T) {
 	// return the same record as the same get on the primary keys, in either key
 	// sorting. The keys mix '/' with the bytes right below and above it, and "/"
 	// right after the '/' that ends the index prefix makes a "//".
+	//
+	// The hierarchical sorting groups the entries of an index by level, and
+	// other internal keys sort between the groups: here, the entries of a second
+	// index, and the session shadow key of the ephemeral record.
 	keys := []string{"a.c", "a0", "b/x", "a/y/z", "/"}
+	ephemeralKey := "a0"
 	queries := []string{"/", "a", "a.c", "a/", "a/y/y", "a/y/z", "a/z", "a0", "b", "b/x", "b/y", "c/d/e/f"}
 	comparisons := []proto.KeyComparisonType{
 		proto.KeyComparisonType_FLOOR,
@@ -529,15 +534,25 @@ func TestSecondaryIndices_GetFollowsKeySorting(t *testing.T) {
 				FollowerMaps:      nil,
 			})
 
+			session, err := lc.CreateSession(&proto.CreateSessionRequest{Shard: shard, SessionTimeoutMs: 60_000})
+			assert.NoError(t, err)
+
 			var puts []*proto.PutRequest
 			for _, key := range keys {
-				puts = append(puts, &proto.PutRequest{
-					Key:              key,
-					Value:            []byte(key),
-					SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: key}},
-				})
+				put := &proto.PutRequest{
+					Key:   key,
+					Value: []byte(key),
+					SecondaryIndexes: []*proto.SecondaryIndex{
+						{IndexName: "idx", SecondaryKey: key},
+						{IndexName: "other", SecondaryKey: key},
+					},
+				}
+				if key == ephemeralKey {
+					put.SessionId = &session.SessionId
+				}
+				puts = append(puts, put)
 			}
-			_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shard, Puts: puts})
+			_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shard, Puts: puts})
 			assert.NoError(t, err)
 
 			for _, key := range keys {
