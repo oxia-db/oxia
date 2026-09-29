@@ -38,8 +38,4 @@ func (*noopCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, _ string) 
 	return nil
 }
 
-func (*noopCallback) OnDeleteRange(_ kvstore.WriteBatch, _ *Notifications, _ string, _ string) error {
-	return nil
-}
-
 var NoOpCallback UpdateOperationCallback = &noopCallback{}
