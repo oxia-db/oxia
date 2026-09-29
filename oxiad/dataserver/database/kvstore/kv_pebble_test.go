@@ -17,6 +17,7 @@ package kvstore
 import (
 	"bytes"
 	"cmp"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1176,6 +1177,93 @@ func TestPebbbleFloorCeiling(t *testing.T) {
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
+
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
+
+// Nothing sorts below the empty key: its floor is "" itself when it exists, and
+// its lower is never found.
+func TestPebbleGetEmptyKey(t *testing.T) {
+	const notFound = "<not found>"
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, keySorting)
+			require.NoError(t, err)
+
+			lookup := func(comparison ComparisonType) string {
+				key, err := getKey(t, kv, "", comparison, NoInternalKeys)
+				if errors.Is(err, ErrKeyNotFound) {
+					return notFound
+				}
+				assert.NoError(t, err)
+				return key
+			}
+
+			putAll(t, kv, "a", "b", "c")
+			assert.Equal(t, notFound, lookup(ComparisonFloor))
+			assert.Equal(t, notFound, lookup(ComparisonLower))
+			assert.Equal(t, "a", lookup(ComparisonCeiling))
+			assert.Equal(t, "a", lookup(ComparisonHigher))
+
+			putAll(t, kv, "")
+			assert.Equal(t, "", lookup(ComparisonFloor))
+			assert.Equal(t, notFound, lookup(ComparisonLower))
+			assert.Equal(t, "", lookup(ComparisonCeiling))
+			assert.Equal(t, "a", lookup(ComparisonHigher))
+
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+// The natural encoder encodes "" to an empty slice, which is nil when the "" has
+// no data pointer, as when it is decoded from a request, and may not be nil
+// otherwise. The lookups must take both for the empty key.
+func TestPebbleGetEmptyEncodedKey(t *testing.T) {
+	const notFound = "<not found>"
+
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	p := kv.(*Pebble)
+
+	lookups := map[ComparisonType]func([]byte, IteratorOpts) (string, []byte, io.Closer, error){
+		ComparisonFloor:   p.getFloor,
+		ComparisonLower:   p.getLower,
+		ComparisonCeiling: p.getCeiling,
+		ComparisonHigher:  p.getHigher,
+	}
+	lookup := func(key []byte, comparison ComparisonType) string {
+		found, _, closer, err := lookups[comparison](key, NoInternalKeys)
+		if errors.Is(err, pebble.ErrNotFound) {
+			return notFound
+		}
+		require.NoError(t, err)
+		assert.NoError(t, closer.Close())
+		return found
+	}
+
+	putAll(t, kv, "a", "b", "c")
+	for _, key := range [][]byte{nil, {}} {
+		assert.Equal(t, notFound, lookup(key, ComparisonFloor))
+		assert.Equal(t, notFound, lookup(key, ComparisonLower))
+		assert.Equal(t, "a", lookup(key, ComparisonCeiling))
+		assert.Equal(t, "a", lookup(key, ComparisonHigher))
+	}
+
+	putAll(t, kv, "")
+	for _, key := range [][]byte{nil, {}} {
+		assert.Equal(t, "", lookup(key, ComparisonFloor))
+		assert.Equal(t, notFound, lookup(key, ComparisonLower))
+		assert.Equal(t, "", lookup(key, ComparisonCeiling))
+		assert.Equal(t, "a", lookup(key, ComparisonHigher))
+	}
 
 	assert.NoError(t, kv.Close())
 	assert.NoError(t, factory.Close())
