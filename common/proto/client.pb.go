@@ -967,7 +967,9 @@ type PutRequest struct {
 	// An explicitly present empty string is a valid partition key and is hashed normally.
 	PartitionKey *string `protobuf:"bytes,6,opt,name=partition_key,json=partitionKey,proto3,oneof" json:"partition_key,omitempty"`
 	// If one or more sequence key are specified. The key will get added suffixes
-	// based on adding the delta to the current highest key with the same prefix
+	// based on adding the delta to the current highest key with the same prefix.
+	// When the highest key has more suffixes than the deltas, the missing deltas
+	// are 0 on the shards with FEATURE_SEQUENCE_KEY_VALIDATION.
 	SequenceKeyDelta []uint64          `protobuf:"varint,7,rep,packed,name=sequence_key_delta,json=sequenceKeyDelta,proto3" json:"sequence_key_delta,omitempty"`
 	SecondaryIndexes []*SecondaryIndex `protobuf:"bytes,8,rep,name=secondary_indexes,json=secondaryIndexes,proto3" json:"secondary_indexes,omitempty"`
 	// Optional overrides for version metadata, used during data migration.

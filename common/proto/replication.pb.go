@@ -60,6 +60,10 @@ const (
 	// notification records, which are not storage entries, instead of rejecting
 	// the write request
 	Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS Feature = 7
+	// Sequential puts: a part of the sequence without a delta keeps its value,
+	// and an invalid put, e.g. overflowing the sequence, gets the
+	// INVALID_ARGUMENT status instead of rejecting the whole write request
+	Feature_FEATURE_SEQUENCE_KEY_VALIDATION Feature = 8
 )
 
 // Enum value maps for Feature.
@@ -73,6 +77,7 @@ var (
 		5: "FEATURE_SEQUENCE_LAST_KEY_SEPARATOR",
 		6: "FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING",
 		7: "FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS",
+		8: "FEATURE_SEQUENCE_KEY_VALIDATION",
 	}
 	Feature_value = map[string]int32{
 		"FEATURE_UNKNOWN":                           0,
@@ -83,6 +88,7 @@ var (
 		"FEATURE_SEQUENCE_LAST_KEY_SEPARATOR":       5,
 		"FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING": 6,
 		"FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS": 7,
+		"FEATURE_SEQUENCE_KEY_VALIDATION":           8,
 	}
 )
 
@@ -2154,7 +2160,7 @@ const file_replication_proto_rawDesc = "" +
 	"ShardStats\x12\"\n" +
 	"\rdb_size_bytes\x18\x01 \x01(\x04R\vdbSizeBytes\x12$\n" +
 	"\x0eread_ops_total\x18\x02 \x01(\x04R\freadOpsTotal\x12&\n" +
-	"\x0fwrite_ops_total\x18\x03 \x01(\x04R\rwriteOpsTotal*\xb6\x02\n" +
+	"\x0fwrite_ops_total\x18\x03 \x01(\x04R\rwriteOpsTotal*\xdb\x02\n" +
 	"\aFeature\x12\x13\n" +
 	"\x0fFEATURE_UNKNOWN\x10\x00\x12\x17\n" +
 	"\x13FEATURE_DB_CHECKSUM\x10\x01\x12+\n" +
@@ -2163,7 +2169,8 @@ const file_replication_proto_rawDesc = "" +
 	")FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP\x10\x04\x12'\n" +
 	"#FEATURE_SEQUENCE_LAST_KEY_SEPARATOR\x10\x05\x12-\n" +
 	")FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING\x10\x06\x12-\n" +
-	")FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS\x10\a*\x8e\x01\n" +
+	")FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS\x10\a\x12#\n" +
+	"\x1fFEATURE_SEQUENCE_KEY_VALIDATION\x10\b*\x8e\x01\n" +
 	"\x0fHandshakeStatus\x12\x1c\n" +
 	"\x18HANDSHAKE_STATUS_UNKNOWN\x10\x00\x12\x1a\n" +
 	"\x16HANDSHAKE_STATUS_BOUND\x10\x01\x12\"\n" +

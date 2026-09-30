@@ -728,6 +728,7 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 		proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR,
 		proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING,
 		proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
+		proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION,
 	} {
 		t.Run(enabledFeature.String(), func(t *testing.T) {
 			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -1536,6 +1537,120 @@ func TestDB_SequenceTailSharedPrefix(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestDB_SequenceKeyValidation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		put         *proto.PutRequest
+		expectedErr error
+	}{
+		{"missing partition key", &proto.PutRequest{Key: "a", SequenceKeyDelta: []uint64{1}}, ErrMissingPartitionKey},
+		{"first delta is zero", &proto.PutRequest{Key: "a", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{0}},
+			ErrSequenceDeltaIsZero},
+		{"overflow", &proto.PutRequest{Key: "max", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{2}},
+			ErrSequenceOverflow},
+		{"not a sequence key", &proto.PutRequest{Key: "plain", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
+			ErrInvalidSequenceKey},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+			assert.NoError(t, err)
+
+			// A sequence close to the max value, and a key with the prefix of a
+			// sequence that is not part of it
+			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+				{Key: "max", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{maxSequence - 1}},
+				{Key: "plain-"},
+			}}, 0, 0, NoOpCallback)
+			assert.NoError(t, err)
+			keys := keyIteratorToSlice(db.List(&proto.ListRequest{}))
+
+			sw, err := db.GetSequenceUpdates(test.put.Key)
+			assert.NoError(t, err)
+			select { // Drop the current last key of the sequence
+			case <-sw.Ch():
+			default:
+			}
+
+			// Without the feature, the whole write request is rejected
+			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+				test.put,
+				{Key: "valid", Value: []byte("0")},
+			}}, 1, 0, NoOpCallback)
+			assert.ErrorIs(t, err, ErrWriteRejected)
+			assert.ErrorIs(t, err, test.expectedErr)
+			assert.Equal(t, keys, keyIteratorToSlice(db.List(&proto.ListRequest{})))
+
+			// With the feature, only the put is rejected, and the rest of the
+			// request applies
+			db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION)
+			res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+				test.put,
+				{Key: "valid", Value: []byte("0")},
+			}}, 2, 0, NoOpCallback)
+			require.NoError(t, err)
+			assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.Puts[0].Status)
+			assert.Nil(t, res.Puts[0].Key)
+			assert.Equal(t, proto.Status_OK, res.Puts[1].Status)
+			commitOffset, err := db.ReadCommitOffset()
+			assert.NoError(t, err)
+			assert.EqualValues(t, 2, commitOffset)
+
+			assert.Equal(t, append(keys, "valid"), keyIteratorToSlice(db.List(&proto.ListRequest{})))
+			assert.Empty(t, sw.Ch())
+
+			assert.NoError(t, sw.Close())
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+// With FEATURE_SEQUENCE_KEY_VALIDATION, a part of the sequence without a delta
+// in the put keeps its value.
+func TestDB_SequenceKeyMissingDeltas(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	put := func(offset int64, deltas ...uint64) (string, error) {
+		res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "a",
+			Value:            []byte("0"),
+			PartitionKey:     pb.String("x"),
+			SequenceKeyDelta: deltas,
+		}}}, offset, 0, NoOpCallback)
+		if err != nil {
+			return "", err
+		}
+		assert.Equal(t, proto.Status_OK, res.Puts[0].Status)
+		return res.Puts[0].GetKey(), nil
+	}
+
+	key, err := put(0, 1, 2, 3)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 1, 2, 3), key)
+
+	// Without the feature, the whole write request is rejected
+	_, err = put(1, 1)
+	assert.ErrorIs(t, err, ErrWriteRejected)
+	assert.ErrorIs(t, err, ErrMissingSequenceDeltas)
+
+	db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION)
+	key, err = put(2, 1)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 2, 2, 3), key)
+
+	key, err = put(3, 5, 1)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 7, 3, 3), key)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
 }
 
 func rangeScanIteratorToSlice(it RangeScanIterator, err error) []string {
