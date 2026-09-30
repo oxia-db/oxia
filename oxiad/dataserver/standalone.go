@@ -180,6 +180,7 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 				proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
 				proto.Feature_FEATURE_ORDERED_WRITES,
 				proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
+				proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR,
 			},
 		}); err != nil {
 			return err

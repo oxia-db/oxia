@@ -912,7 +912,7 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	var err error
 	var newKey string
 	if len(putReq.GetSequenceKeyDelta()) > 0 {
-		newKey, err = generateUniqueKeyFromSequences(batch, putReq)
+		newKey, err = generateUniqueKeyFromSequences(batch, putReq, d)
 		putReq.Key = newKey
 	} else if !internal {
 		se, err = checkExpectedVersionId(batch, putReq.Key, putReq.ExpectedVersionId)

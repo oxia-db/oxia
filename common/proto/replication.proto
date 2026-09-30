@@ -67,6 +67,9 @@ enum Feature {
   // Delete the secondary index entries of the ephemeral records deleted when
   // their session ends
   FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP = 4;
+  // Continue the sequence of a sequential put on a prefix only from a key
+  // that starts with "<prefix>-", not from any key that starts with the prefix
+  FEATURE_SEQUENCE_LAST_KEY_SEPARATOR = 5;
 }
 
 message GetInfoRequest {
