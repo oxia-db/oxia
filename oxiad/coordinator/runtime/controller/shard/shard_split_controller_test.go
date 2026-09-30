@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
@@ -1453,6 +1454,145 @@ func TestSplitController_ResumeFromFinalize(t *testing.T) {
 	rpcMock.GetNode(rs1).ExpectBecomeLeaderRequest(t, 2, 6, 3)
 
 	assertSplitCompleted(t, statusRes, 7, 6)
+}
+
+// A split resumed past the point of no return, after a coordinator restart,
+// while a member of a child ensemble is down: that member has not completed
+// its handshake with this coordinator, so it counts as supporting no feature,
+// and the features negotiated over the child's ensemble come out empty. The
+// child inherited the features enabled on the parent, and its leader refuses
+// to lead a term that doesn't pin them: the clean term must pin the features
+// that the fenced members report as enabled, or the child's key range stays
+// unavailable until the member is back.
+func TestSplitController_FinalizePinsEnabledFeaturesWithUnknownMember(t *testing.T) {
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseFinalize)
+	setBootstrappedState(t, statusRes)
+
+	// The previous coordinator passed the point of no return
+	status := loadTestStatus(t, statusRes)
+	parent := status.Namespaces[constant.DefaultNamespace].Shards[0]
+	parent.Term = 6
+	parent.Leader = nil
+	parent.Status = proto.ShardStatusElection
+	updateTestStatusShards(t, statusRes, status, 0)
+
+	// The children inherited the features enabled on the parent, every one
+	// but ordered writes, and their leaders refuse to lead a term that doesn't
+	// pin them
+	enabled := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION}
+	rpcMock.GetNode(ls1).SetEnabledFeatures(enabled)
+	rpcMock.GetNode(rs1).SetEnabledFeatures(enabled)
+
+	// rs3, a follower of the right child, is down, and its features are
+	// unknown
+	supplier := newTestFeaturesSupplier()
+	for _, node := range []*proto.DataServerIdentity{ls1, ls2, ls3, rs1, rs2} {
+		supplier.set(node, feature.SupportedFeatures()...)
+	}
+	rpcMock.FailNode(rs3, errors.New("data server is down"))
+
+	// Each attempt fences the parent and re-elects both children. The first
+	// one finds the features already enabled on the right child, and the
+	// second one pins them.
+	for range 2 {
+		queueNewTermResponses(rpcMock, ps1, ps2, ps3)
+		for _, node := range []*proto.DataServerIdentity{ls1, ls2, ls3, rs1, rs2} {
+			rpcMock.GetNode(node).NewTermResponseWithFeatures(5, 105, enabled, nil)
+		}
+		rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+	}
+	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:                 constant.DefaultNamespace,
+		ParentShardId:             0,
+		Metadata:                  statusRes,
+		RpcProvider:               rpcMock,
+		EventListener:             listener,
+		SupportedFeaturesSupplier: supplier.supply,
+	})
+	defer sc.Close()
+
+	select {
+	case <-listener.completions:
+	case <-listener.aborts:
+		t.Fatal("Split should not have been aborted")
+	case <-time.After(30 * time.Second):
+		t.Fatal("Split did not complete in time")
+	}
+
+	// The right child's leader was asked to lead only in the term that pins
+	// the enabled features
+	rpcMock.GetNode(rs1).ExpectNewTermRequestWithFeatures(t, 2, 6, nil)
+	rpcMock.GetNode(rs1).ExpectNewTermRequestWithFeatures(t, 2, 7, enabled)
+	rpcMock.GetNode(rs1).ExpectBecomeLeaderRequestWithFeatures(t, 2, 7, 3, enabled)
+
+	assertSplitCompleted(t, statusRes, 7, 7)
+}
+
+// A member of a child ensemble that takes part in the child's clean term must
+// support the features already enabled on the child, as in a leader election:
+// a data server that predates the pinning of the term's features accepts a
+// term that pins features it doesn't support, and would apply the child's
+// entries with different semantics. The child must not get a leader then,
+// even though the enabled features could be pinned without the member whose
+// support is unknown.
+func TestSplitController_FinalizeRejectsChildEnsembleMissingEnabledFeature(t *testing.T) {
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseFinalize)
+	setBootstrappedState(t, statusRes)
+
+	// The previous coordinator passed the point of no return
+	status := loadTestStatus(t, statusRes)
+	parent := status.Namespaces[constant.DefaultNamespace].Shards[0]
+	parent.Term = 6
+	parent.Leader = nil
+	parent.Status = proto.ShardStatusElection
+	updateTestStatusShards(t, statusRes, status, 0)
+
+	enabled := feature.SupportedFeatures()
+	rpcMock.GetNode(ls1).SetEnabledFeatures(enabled)
+	rpcMock.GetNode(rs1).SetEnabledFeatures(enabled)
+
+	// rs2 runs an old binary, without ordered writes, which accepts any term.
+	// rs3 is down, and its features are unknown.
+	oldFeatures := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION}
+	supplier := newTestFeaturesSupplier()
+	for _, node := range []*proto.DataServerIdentity{ls1, ls2, ls3, rs1} {
+		supplier.set(node, feature.SupportedFeatures()...)
+	}
+	supplier.set(rs2, oldFeatures...)
+	rpcMock.FailNode(rs3, errors.New("data server is down"))
+
+	for range 2 {
+		queueNewTermResponses(rpcMock, ps1, ps2, ps3)
+		for _, node := range []*proto.DataServerIdentity{ls1, ls2, ls3, rs1} {
+			rpcMock.GetNode(node).NewTermResponseWithFeatures(5, 105, enabled, nil)
+		}
+		rpcMock.GetNode(rs2).NewTermResponseWithFeatures(5, 105, oldFeatures, nil)
+		rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+	}
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:                 constant.DefaultNamespace,
+		ParentShardId:             0,
+		Metadata:                  statusRes,
+		RpcProvider:               rpcMock,
+		EventListener:             listener,
+		SupportedFeaturesSupplier: supplier.supply,
+	})
+	defer sc.Close()
+
+	// Every attempt fails before asking the right child's leader to lead, and
+	// the next one doesn't pin the enabled features either
+	rpcMock.GetNode(rs1).ExpectNewTermRequestWithFeatures(t, 2, 6, nil)
+	rpcMock.GetNode(rs1).ExpectNewTermRequestWithFeatures(t, 2, 7, nil)
+	rpcMock.GetNode(rs1).ExpectNoBecomeLeaderRequest(t)
+
+	select {
+	case <-listener.completions:
+		t.Fatal("Split should not have completed")
+	default:
+	}
 }
 
 // TestSplitController_FinalizeOutlivesSplitTimeout verifies that the split

@@ -33,6 +33,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -136,6 +137,7 @@ type PerNodeChannels struct {
 
 	// Feature negotiation support
 	supportedFeatures []proto.Feature
+	enabledFeatures   []proto.Feature
 	handshakeStatus   proto.HandshakeStatus
 	handshakeErr      error
 	HandshakeCount    atomic.Int64
@@ -480,6 +482,13 @@ func (m *PerNodeChannels) SetNodeFeatures(features []proto.Feature) {
 	m.supportedFeatures = features
 }
 
+// SetEnabledFeatures sets the features enabled in this node's database: like
+// a leader, it then refuses to lead a term whose negotiated features don't
+// cover them.
+func (m *PerNodeChannels) SetEnabledFeatures(features []proto.Feature) {
+	m.enabledFeatures = features
+}
+
 // SetOldNode simulates an old node that doesn't support the GetInfo RPC.
 func (m *PerNodeChannels) SetOldNode() {
 	m.handshakeErr = errNotImplemented
@@ -632,8 +641,13 @@ func (r *RpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerId
 		r.Unlock()
 		return nil, s.err
 	}
+	enabledFeatures := s.enabledFeatures
 
 	r.Unlock()
+
+	if len(feature.Missing(enabledFeatures, req.FeaturesSupported)) > 0 {
+		return nil, constant.ErrUnsupportedFeatures
+	}
 
 	select {
 	case response := <-s.becomeLeaderResponses:
