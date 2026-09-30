@@ -584,6 +584,10 @@ func (p *Pebble) RangeScan(lowerBound, upperBound string, itOpts IteratorOpts) (
 	return &PebbleIterator{p, pbit, skipper}, nil
 }
 
+func (p *Pebble) CompareKeys(a, b string) int {
+	return bytes.Compare(p.keyEncoder.Encode(a), p.keyEncoder.Encode(b))
+}
+
 func (p *Pebble) Snapshot() (Snapshot, error) {
 	return newPebbleSnapshot(p)
 }

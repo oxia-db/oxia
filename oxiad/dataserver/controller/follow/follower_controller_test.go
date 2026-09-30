@@ -1931,3 +1931,171 @@ func TestFollower_ClosesDatabaseOnWalFailure(t *testing.T) {
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
+
+// pausingWalFactory wraps the follower WAL so that a test can pause the state
+// applier right after it reads the entry at pauseOffset, before it applies it.
+type pausingWalFactory struct {
+	wal.Factory
+	pauseOffset int64
+	once        sync.Once
+	paused      chan struct{} // closed when the applier has read the entry
+	resume      chan struct{} // closed by the test to let the applier go on
+	done        chan struct{} // closed when the applier has closed the reader
+}
+
+func (f *pausingWalFactory) NewWal(namespace string, shard int64, provider wal.CommitOffsetProvider) (wal.Wal, error) {
+	w, err := f.Factory.NewWal(namespace, shard, provider)
+	if err != nil {
+		return nil, err
+	}
+	return &pausingWal{Wal: w, factory: f}, nil
+}
+
+type pausingWal struct {
+	wal.Wal
+	factory *pausingWalFactory
+}
+
+// NewReader is only used by the follower state applier.
+func (w *pausingWal) NewReader(after int64) (wal.Reader, error) {
+	r, err := w.Wal.NewReader(after)
+	if err != nil {
+		return nil, err
+	}
+	return &pausingReader{Reader: r, factory: w.factory}, nil
+}
+
+type pausingReader struct {
+	wal.Reader
+	factory *pausingWalFactory
+	paused  bool
+}
+
+func (r *pausingReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
+	entry, previousCrc, entryCrc, err = r.Reader.ReadNext()
+	if err == nil && entry.Offset == r.factory.pauseOffset {
+		r.factory.once.Do(func() {
+			r.paused = true
+			close(r.factory.paused)
+			<-r.factory.resume
+		})
+	}
+	return entry, previousCrc, entryCrc, err
+}
+
+func (r *pausingReader) Close() error {
+	if r.paused {
+		defer close(r.factory.done)
+	}
+	return r.Reader.Close()
+}
+
+// The state applier reads a committed entry from the WAL before taking the
+// lock to apply it. A snapshot installed in between replaces the WAL and the
+// database: the entry read from the previous WAL must neither be applied on
+// top of the snapshot nor move the commit offset back.
+func TestFollower_InstallSnapshotWhileApplyingEntries(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := &pausingWalFactory{
+		Factory:     newTestWalFactory(t),
+		pauseOffset: 2,
+		paused:      make(chan struct{}),
+		resume:      make(chan struct{}),
+		done:        make(chan struct{}),
+	}
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	fci := fc.(*followerController)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+
+	// The follower receives a backlog of committed entries, each overwriting
+	// the same key. The applier applies the first two, then stops right after
+	// reading the third one.
+	stream := rpc.NewMockServerReplicateStream()
+	appendDone := make(chan error, 1)
+	go func() {
+		appendDone <- fc.AppendEntries(stream)
+	}()
+	for i := int64(0); i < 5; i++ {
+		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{"k": fmt.Sprintf("v%d", i)}, 4))
+	}
+	for i := int64(0); i < 5; i++ {
+		assert.EqualValues(t, i, stream.GetResponse().Offset)
+	}
+	<-walFactory.paused
+
+	// The leader drops the replication stream. It has moved on, overwriting
+	// the key further, and sends a snapshot instead.
+	close(stream.Requests)
+	assert.NoError(t, <-appendDone)
+
+	leaderKvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	leaderDb, err := database.NewDB(constant.DefaultNamespace, shardId, leaderKvFactory,
+		proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	for i := int64(0); i < 10; i++ {
+		_, err = leaderDb.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:   "k",
+			Value: []byte(fmt.Sprintf("v%d", i)),
+		}}}, i, 0, database.NoOpCallback)
+		require.NoError(t, err)
+	}
+	require.NoError(t, leaderDb.UpdateTerm(1, database.TermOptions{}))
+	snapshot, err := leaderDb.Snapshot()
+	require.NoError(t, err)
+
+	snapshotStream := rpc.NewMockServerSendSnapshotStream()
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		require.NoError(t, err)
+		snapshotStream.AddChunk(&proto.SnapshotChunk{
+			Term:       1,
+			Name:       chunk.Name(),
+			Content:    chunk.Content(),
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	close(snapshotStream.Chunks)
+	require.NoError(t, fc.InstallSnapshot(snapshotStream))
+	assert.NoError(t, snapshot.Close())
+	assert.NoError(t, leaderDb.Close())
+	assert.NoError(t, leaderKvFactory.Close())
+	assert.EqualValues(t, 9, fc.CommitOffset())
+
+	// Let the applier go on with the entry it read before the install
+	close(walFactory.resume)
+	<-walFactory.done
+
+	assert.EqualValues(t, 9, fc.CommitOffset())
+	dbCommitOffset, err := fci.db.ReadCommitOffset()
+	assert.NoError(t, err)
+	assert.EqualValues(t, 9, dbCommitOffset)
+	dbRes, err := fci.db.Get(&proto.GetRequest{Key: "k", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, []byte("v9"), dbRes.Value)
+
+	// The follower keeps applying the entries replicated after the snapshot
+	stream = rpc.NewMockServerReplicateStream()
+	go func() {
+		// cancelled due to fc.Close() below
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
+	}()
+	stream.AddRequest(createAddRequest(t, 1, 10, map[string]string{"k": "v10"}, 10))
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == 10
+	}, 10*time.Second, 10*time.Millisecond)
+	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "k", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, []byte("v10"), dbRes.Value)
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}

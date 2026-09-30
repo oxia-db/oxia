@@ -114,7 +114,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 
-	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards)
+	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards, config.KeySorting)
 	s.healthServer = rpc2.NewClosableHealthServer(context.Background())
 	s.healthServer.SetServingStatus(rpc2.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
 
@@ -180,6 +180,7 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 				proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
 				proto.Feature_FEATURE_ORDERED_WRITES,
 				proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
+				proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR,
 				proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
 			},
 		}); err != nil {

@@ -230,6 +230,57 @@ func TestShardManagerCloseWhileWaitingToRetry(t *testing.T) {
 	}
 }
 
+// Sends one set of assignments, then waits for the shard manager to close.
+type singleAssignmentsStream struct {
+	grpc.ClientStream
+	ctx         context.Context
+	assignments *proto.ShardAssignments
+}
+
+func (s *singleAssignmentsStream) Recv() (*proto.ShardAssignments, error) {
+	if assignments := s.assignments; assignments != nil {
+		s.assignments = nil
+		return assignments, nil
+	}
+	<-s.ctx.Done()
+	return nil, s.ctx.Err()
+}
+
+type singleAssignmentsRpcProvider struct {
+	RpcProvider
+	keySorting proto.KeySorting
+}
+
+func (p *singleAssignmentsRpcProvider) GetShardAssignments(ctx context.Context, _ string,
+	request *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	return &singleAssignmentsStream{ctx: ctx, assignments: &proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			request.Namespace: {
+				Assignments: []*proto.ShardAssignment{{
+					ShardBoundaries: &proto.ShardAssignment_Int32HashRange{Int32HashRange: &proto.Int32HashRange{}},
+				}},
+				KeySorting: p.keySorting,
+			},
+		},
+	}}, nil
+}
+
+// The shard manager reports the key sorting of the namespace that the server
+// sends with the assignments, or none when an older server does not send it.
+func TestShardManagerKeySorting(t *testing.T) {
+	for _, keySorting := range []proto.KeySorting{
+		proto.KeySorting_KEY_SORTING_UNKNOWN,
+		proto.KeySorting_KEY_SORTING_NATURAL,
+		proto.KeySorting_KEY_SORTING_HIERARCHICAL,
+	} {
+		provider := &singleAssignmentsRpcProvider{keySorting: keySorting}
+		sm, err := NewShardManager(NewShardStrategy(), provider, "localhost:6648", "default", 10*time.Second, nil)
+		require.NoError(t, err)
+		assert.Equal(t, keySorting, sm.KeySorting())
+		assert.NoError(t, sm.Close())
+	}
+}
+
 // Waits for the shard manager to cancel the request of the assignments.
 type pendingAssignmentsRpcProvider struct {
 	RpcProvider

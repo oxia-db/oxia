@@ -784,7 +784,7 @@ func TestSessionManagerReopening(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "/a/b", getData(t, lc, "/a/b"))
 
-	lc = reopenLeaderController(t, walf, kvf, lc)
+	lc = reopenLeaderController(t, walf, kvf, lc, nil)
 
 	meta = getSessionMetadata(t, lc, sessionId)
 	assert.NotNil(t, meta)
@@ -793,6 +793,73 @@ func TestSessionManagerReopening(t *testing.T) {
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvf.Close())
 	assert.NoError(t, walf.Close())
+}
+
+// A new leader restores the sessions whatever the key sorting of the shard.
+// With the natural sorting, '/' sorts before the hex digits of the session
+// ids, and the shadow keys of the ephemeral records sort among the session
+// keys.
+func TestSessionManagerReopening_KeySorting(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_HIERARCHICAL, proto.KeySortingType_NATURAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			shardId := int64(1)
+			options := &proto.NewTermOptions{KeySorting: keySorting}
+			kvf, walf, sManager, lc := createSessionManagerWithOptions(t, options)
+
+			timeout := 2 * time.Second
+			var sessionIDs []int64
+			for i := 0; i < 2; i++ {
+				createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
+					Shard:            shardId,
+					SessionTimeoutMs: uint32(timeout.Milliseconds()),
+				})
+				assert.NoError(t, err)
+				sessionId := createResp.SessionId
+				sessionIDs = append(sessionIDs, sessionId)
+
+				_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+					Shard: &shardId,
+					Puts: []*proto.PutRequest{{
+						Key:       fmt.Sprintf("/ephemeral-%d", i),
+						Value:     []byte("a"),
+						SessionId: &sessionId,
+					}},
+				})
+				assert.NoError(t, err)
+			}
+
+			lc = reopenLeaderController(t, kvf, walf, lc, options)
+			sManager = lc.sessionManager.(*sessionManager)
+
+			// The sessions are restored with their own timeout: the empty value
+			// of a shadow key is not taken for their metadata
+			for _, sessionId := range sessionIDs {
+				assert.NoError(t, sManager.KeepAlive(sessionId))
+
+				sManager.RLock()
+				s := sManager.sessions[SessionId(sessionId)]
+				sManager.RUnlock()
+				if assert.NotNil(t, s) {
+					assert.Equal(t, timeout, s.timeout)
+				}
+			}
+
+			// Without heartbeats, the sessions expire and their ephemeral
+			// records are deleted
+			assert.Eventually(t, func() bool {
+				for i, sessionId := range sessionIDs {
+					if getSessionMetadata(t, lc, sessionId) != nil || getData(t, lc, fmt.Sprintf("/ephemeral-%d", i)) != "" {
+						return false
+					}
+				}
+				return true
+			}, 10*time.Second, 50*time.Millisecond)
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvf.Close())
+			assert.NoError(t, walf.Close())
+		})
+	}
 }
 
 func getData(t *testing.T, lc *leaderController, key string) string {
@@ -843,6 +910,12 @@ func getSessionMetadata(t *testing.T, lc *leaderController, sessionId int64) *pr
 func createSessionManager(t *testing.T) (kvstore.Factory, wal.Factory, *sessionManager, *leaderController) {
 	t.Helper()
 
+	return createSessionManagerWithOptions(t, nil)
+}
+
+func createSessionManagerWithOptions(t *testing.T, options *proto.NewTermOptions) (kvstore.Factory, wal.Factory, *sessionManager, *leaderController) {
+	t.Helper()
+
 	var shard int64 = 1
 
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -852,9 +925,9 @@ func createSessionManager(t *testing.T) (kvstore.Factory, wal.Factory, *sessionM
 		Notification: option.NotificationOptions{
 			Retention: commonoption.Duration(10 * time.Second),
 		},
-	}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, options)
 	assert.NoError(t, err)
-	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1, Options: options})
 	assert.NoError(t, err)
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
@@ -869,7 +942,8 @@ func createSessionManager(t *testing.T) (kvstore.Factory, wal.Factory, *sessionM
 	return kvFactory, walFactory, sessionManager, lc.(*leaderController)
 }
 
-func reopenLeaderController(t *testing.T, kvFactory kvstore.Factory, walFactory wal.Factory, oldlc *leaderController) *leaderController {
+func reopenLeaderController(t *testing.T, kvFactory kvstore.Factory, walFactory wal.Factory, oldlc *leaderController,
+	options *proto.NewTermOptions) *leaderController {
 	t.Helper()
 
 	var shard int64 = 1
@@ -877,9 +951,9 @@ func reopenLeaderController(t *testing.T, kvFactory kvstore.Factory, walFactory 
 	assert.NoError(t, oldlc.Close())
 
 	var err error
-	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, options)
 	assert.NoError(t, err)
-	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1, Options: options})
 	assert.NoError(t, err)
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,

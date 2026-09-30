@@ -24,9 +24,13 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/hash"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
@@ -603,6 +607,122 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 
 	assert.NoError(t, client.Close())
 	assert.NoError(t, standaloneServer.Close())
+}
+
+// A floor, lower, ceiling or higher get without a partition key goes to every
+// shard, and the client picks one of their answers. Each case stores two keys
+// on different shards: both shards answer with their key, and the client must
+// pick the right one in the key sorting of the namespace.
+func TestSyncClientImpl_FloorCeilingGetKeySorting(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		keys       [2]string
+		key        string
+		comparison oxia.GetOption
+		expected   string
+	}{
+		// Natural sorting compares the bytes: "a/x" < "b" < "c"
+		{"natural floor", proto.KeySortingType_NATURAL, [2]string{"a/x", "b"}, "c", oxia.ComparisonFloor(), "b"},
+		{"natural lower", proto.KeySortingType_NATURAL, [2]string{"a/x", "b"}, "c", oxia.ComparisonLower(), "b"},
+		// "b" < "b/x" < "c"
+		{"natural ceiling", proto.KeySortingType_NATURAL, [2]string{"b/x", "c"}, "b", oxia.ComparisonCeiling(), "b/x"},
+		{"natural higher", proto.KeySortingType_NATURAL, [2]string{"b/x", "c"}, "b", oxia.ComparisonHigher(), "b/x"},
+
+		// Hierarchical sorting puts the keys with fewer '/' first, then sorts '/'
+		// after any other byte: "aa/z" < "ab/y" < "a/x" < "a/z"
+		{"hierarchical floor", proto.KeySortingType_HIERARCHICAL, [2]string{"a/x", "ab/y"}, "a/z",
+			oxia.ComparisonFloor(), "a/x"},
+		{"hierarchical lower", proto.KeySortingType_HIERARCHICAL, [2]string{"a/x", "ab/y"}, "a/z",
+			oxia.ComparisonLower(), "a/x"},
+		{"hierarchical ceiling", proto.KeySortingType_HIERARCHICAL, [2]string{"a/x", "ab/y"}, "aa/z",
+			oxia.ComparisonCeiling(), "ab/y"},
+		{"hierarchical higher", proto.KeySortingType_HIERARCHICAL, [2]string{"a/x", "ab/y"}, "aa/z",
+			oxia.ComparisonHigher(), "ab/y"},
+		// "z" < "b/x" < "a/y/z" < "c/c/c"
+		{"hierarchical floor across levels", proto.KeySortingType_HIERARCHICAL, [2]string{"b/x", "a/y/z"}, "c/c/c",
+			oxia.ComparisonFloor(), "a/y/z"},
+		{"hierarchical ceiling across levels", proto.KeySortingType_HIERARCHICAL, [2]string{"b/x", "a/y/z"}, "z",
+			oxia.ComparisonCeiling(), "b/x"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := dataserver.NewTestConfig(t.TempDir())
+			config.NumShards = 4
+			config.KeySorting = test.keySorting
+			require.NotEqual(t, shardOf(test.keys[0], config.NumShards), shardOf(test.keys[1], config.NumShards))
+
+			standaloneServer, err := dataserver.NewStandalone(config)
+			require.NoError(t, err)
+			defer standaloneServer.Close()
+
+			client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, key := range test.keys {
+				_, _, err = client.Put(t.Context(), key, []byte(key))
+				require.NoError(t, err)
+			}
+
+			key, _, _, err := client.Get(t.Context(), test.key, test.comparison)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, key)
+		})
+	}
+}
+
+// A range scan without a partition key goes to every shard, and the client
+// merges the records of the shards. The merged records must follow the key
+// sorting of the namespace, like the records of a single shard.
+func TestSyncClientImpl_RangeScanKeySorting(t *testing.T) {
+	keys := []string{"b", "a/y/z", "ab/y", "a0", "a/x"}
+	for _, test := range []struct {
+		keySorting proto.KeySortingType
+		expected   []string
+	}{
+		// Natural sorting compares the bytes: '/' sorts before '0'
+		{proto.KeySortingType_NATURAL, []string{"a/x", "a/y/z", "a0", "ab/y", "b"}},
+		// Hierarchical sorting puts the keys with fewer '/' first, then sorts '/'
+		// after any other byte
+		{proto.KeySortingType_HIERARCHICAL, []string{"a0", "b", "ab/y", "a/x", "a/y/z"}},
+	} {
+		t.Run(test.keySorting.String(), func(t *testing.T) {
+			config := dataserver.NewTestConfig(t.TempDir())
+			config.NumShards = 4
+			config.KeySorting = test.keySorting
+
+			standaloneServer, err := dataserver.NewStandalone(config)
+			require.NoError(t, err)
+			defer standaloneServer.Close()
+
+			client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, key := range keys {
+				_, _, err = client.Put(t.Context(), key, []byte(key))
+				require.NoError(t, err)
+			}
+
+			var scanned []string
+			for result := range client.RangeScan(t.Context(), "", "") {
+				require.NoError(t, result.Err)
+				scanned = append(scanned, result.Key)
+			}
+			assert.Equal(t, test.expected, scanned)
+		})
+	}
+}
+
+// shardOf returns the shard of a standalone server that stores the key.
+func shardOf(key string, numShards uint32) int64 {
+	code := hash.Xxh332(key)
+	for _, shard := range sharding.GenerateShards(0, numShards) {
+		if shard.Min <= code && code <= shard.Max {
+			return shard.Id
+		}
+	}
+	panic("no shard for the key")
 }
 
 func TestSyncClientImpl_PartitionRouting(t *testing.T) {

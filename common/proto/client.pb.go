@@ -85,6 +85,61 @@ func (ShardKeyRouter) EnumDescriptor() ([]byte, []int) {
 }
 
 // *
+// The order of the keys in the shards of a namespace. See
+// https://oxia-db.github.io/docs/features/oxia-key-sorting
+type KeySorting int32
+
+const (
+	KeySorting_KEY_SORTING_UNKNOWN KeySorting = 0
+	// The keys are sorted by their bytes
+	KeySorting_KEY_SORTING_NATURAL KeySorting = 1
+	// The keys with fewer '/' sort first. The keys with the same number of '/'
+	// are sorted by their bytes, with '/' sorting after any other byte
+	KeySorting_KEY_SORTING_HIERARCHICAL KeySorting = 2
+)
+
+// Enum value maps for KeySorting.
+var (
+	KeySorting_name = map[int32]string{
+		0: "KEY_SORTING_UNKNOWN",
+		1: "KEY_SORTING_NATURAL",
+		2: "KEY_SORTING_HIERARCHICAL",
+	}
+	KeySorting_value = map[string]int32{
+		"KEY_SORTING_UNKNOWN":      0,
+		"KEY_SORTING_NATURAL":      1,
+		"KEY_SORTING_HIERARCHICAL": 2,
+	}
+)
+
+func (x KeySorting) Enum() *KeySorting {
+	p := new(KeySorting)
+	*p = x
+	return p
+}
+
+func (x KeySorting) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (KeySorting) Descriptor() protoreflect.EnumDescriptor {
+	return file_client_proto_enumTypes[1].Descriptor()
+}
+
+func (KeySorting) Type() protoreflect.EnumType {
+	return &file_client_proto_enumTypes[1]
+}
+
+func (x KeySorting) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use KeySorting.Descriptor instead.
+func (KeySorting) EnumDescriptor() ([]byte, []int) {
+	return file_client_proto_rawDescGZIP(), []int{1}
+}
+
+// *
 // The type of key comparison to apply in a get() request
 type KeyComparisonType int32
 
@@ -130,11 +185,11 @@ func (x KeyComparisonType) String() string {
 }
 
 func (KeyComparisonType) Descriptor() protoreflect.EnumDescriptor {
-	return file_client_proto_enumTypes[1].Descriptor()
+	return file_client_proto_enumTypes[2].Descriptor()
 }
 
 func (KeyComparisonType) Type() protoreflect.EnumType {
-	return &file_client_proto_enumTypes[1]
+	return &file_client_proto_enumTypes[2]
 }
 
 func (x KeyComparisonType) Number() protoreflect.EnumNumber {
@@ -143,7 +198,7 @@ func (x KeyComparisonType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use KeyComparisonType.Descriptor instead.
 func (KeyComparisonType) EnumDescriptor() ([]byte, []int) {
-	return file_client_proto_rawDescGZIP(), []int{1}
+	return file_client_proto_rawDescGZIP(), []int{2}
 }
 
 // *
@@ -192,11 +247,11 @@ func (x Status) String() string {
 }
 
 func (Status) Descriptor() protoreflect.EnumDescriptor {
-	return file_client_proto_enumTypes[2].Descriptor()
+	return file_client_proto_enumTypes[3].Descriptor()
 }
 
 func (Status) Type() protoreflect.EnumType {
-	return &file_client_proto_enumTypes[2]
+	return &file_client_proto_enumTypes[3]
 }
 
 func (x Status) Number() protoreflect.EnumNumber {
@@ -205,7 +260,7 @@ func (x Status) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Status.Descriptor instead.
 func (Status) EnumDescriptor() ([]byte, []int) {
-	return file_client_proto_rawDescGZIP(), []int{2}
+	return file_client_proto_rawDescGZIP(), []int{3}
 }
 
 type NotificationType int32
@@ -244,11 +299,11 @@ func (x NotificationType) String() string {
 }
 
 func (NotificationType) Descriptor() protoreflect.EnumDescriptor {
-	return file_client_proto_enumTypes[3].Descriptor()
+	return file_client_proto_enumTypes[4].Descriptor()
 }
 
 func (NotificationType) Type() protoreflect.EnumType {
-	return &file_client_proto_enumTypes[3]
+	return &file_client_proto_enumTypes[4]
 }
 
 func (x NotificationType) Number() protoreflect.EnumNumber {
@@ -257,7 +312,7 @@ func (x NotificationType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NotificationType.Descriptor instead.
 func (NotificationType) EnumDescriptor() ([]byte, []int) {
-	return file_client_proto_rawDescGZIP(), []int{3}
+	return file_client_proto_rawDescGZIP(), []int{4}
 }
 
 // *
@@ -378,8 +433,12 @@ type NamespaceShardsAssignment struct {
 	// Indicates the mechanism by which the keys are assigned to the individual
 	// shards.
 	ShardKeyRouter ShardKeyRouter `protobuf:"varint,2,opt,name=shard_key_router,json=shardKeyRouter,proto3,enum=io.oxia.proto.v1.ShardKeyRouter" json:"shard_key_router,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The order of the keys in every shard of the namespace. Clients merge the
+	// results of a read sent to several shards (e.g. a floor get or a range scan
+	// without a partition key) in this order. Older servers leave it unset.
+	KeySorting    KeySorting `protobuf:"varint,3,opt,name=key_sorting,json=keySorting,proto3,enum=io.oxia.proto.v1.KeySorting" json:"key_sorting,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *NamespaceShardsAssignment) Reset() {
@@ -424,6 +483,13 @@ func (x *NamespaceShardsAssignment) GetShardKeyRouter() ShardKeyRouter {
 		return x.ShardKeyRouter
 	}
 	return ShardKeyRouter_UNKNOWN
+}
+
+func (x *NamespaceShardsAssignment) GetKeySorting() KeySorting {
+	if x != nil {
+		return x.KeySorting
+	}
+	return KeySorting_KEY_SORTING_UNKNOWN
 }
 
 // *
@@ -2467,10 +2533,12 @@ const file_client_proto_rawDesc = "" +
 	"\x13allowed_authorities\x18\x02 \x03(\tR\x12allowedAuthorities\x1aj\n" +
 	"\x0fNamespacesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12A\n" +
-	"\x05value\x18\x02 \x01(\v2+.io.oxia.proto.v1.NamespaceShardsAssignmentR\x05value:\x028\x01\"\xac\x01\n" +
+	"\x05value\x18\x02 \x01(\v2+.io.oxia.proto.v1.NamespaceShardsAssignmentR\x05value:\x028\x01\"\xeb\x01\n" +
 	"\x19NamespaceShardsAssignment\x12C\n" +
 	"\vassignments\x18\x01 \x03(\v2!.io.oxia.proto.v1.ShardAssignmentR\vassignments\x12J\n" +
-	"\x10shard_key_router\x18\x02 \x01(\x0e2 .io.oxia.proto.v1.ShardKeyRouterR\x0eshardKeyRouter\"\xa1\x01\n" +
+	"\x10shard_key_router\x18\x02 \x01(\x0e2 .io.oxia.proto.v1.ShardKeyRouterR\x0eshardKeyRouter\x12=\n" +
+	"\vkey_sorting\x18\x03 \x01(\x0e2\x1c.io.oxia.proto.v1.KeySortingR\n" +
+	"keySorting\"\xa1\x01\n" +
 	"\x0fShardAssignment\x12\x14\n" +
 	"\x05shard\x18\x01 \x01(\x03R\x05shard\x12\x16\n" +
 	"\x06leader\x18\x02 \x01(\tR\x06leader\x12L\n" +
@@ -2631,7 +2699,12 @@ const file_client_proto_rawDesc = "" +
 	"\x0f_key_range_last**\n" +
 	"\x0eShardKeyRouter\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
-	"\aXXHASH3\x10\x01*M\n" +
+	"\aXXHASH3\x10\x01*\\\n" +
+	"\n" +
+	"KeySorting\x12\x17\n" +
+	"\x13KEY_SORTING_UNKNOWN\x10\x00\x12\x17\n" +
+	"\x13KEY_SORTING_NATURAL\x10\x01\x12\x1c\n" +
+	"\x18KEY_SORTING_HIERARCHICAL\x10\x02*M\n" +
 	"\x11KeyComparisonType\x12\t\n" +
 	"\x05EQUAL\x10\x00\x12\t\n" +
 	"\x05FLOOR\x10\x01\x12\v\n" +
@@ -2676,103 +2749,105 @@ func file_client_proto_rawDescGZIP() []byte {
 	return file_client_proto_rawDescData
 }
 
-var file_client_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_client_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
 var file_client_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_client_proto_goTypes = []any{
 	(ShardKeyRouter)(0),                // 0: io.oxia.proto.v1.ShardKeyRouter
-	(KeyComparisonType)(0),             // 1: io.oxia.proto.v1.KeyComparisonType
-	(Status)(0),                        // 2: io.oxia.proto.v1.Status
-	(NotificationType)(0),              // 3: io.oxia.proto.v1.NotificationType
-	(*ShardAssignmentsRequest)(nil),    // 4: io.oxia.proto.v1.ShardAssignmentsRequest
-	(*ShardAssignments)(nil),           // 5: io.oxia.proto.v1.ShardAssignments
-	(*NamespaceShardsAssignment)(nil),  // 6: io.oxia.proto.v1.NamespaceShardsAssignment
-	(*ShardAssignment)(nil),            // 7: io.oxia.proto.v1.ShardAssignment
-	(*Int32HashRange)(nil),             // 8: io.oxia.proto.v1.Int32HashRange
-	(*WriteRequest)(nil),               // 9: io.oxia.proto.v1.WriteRequest
-	(*WriteResponse)(nil),              // 10: io.oxia.proto.v1.WriteResponse
-	(*ReadRequest)(nil),                // 11: io.oxia.proto.v1.ReadRequest
-	(*ReadResponse)(nil),               // 12: io.oxia.proto.v1.ReadResponse
-	(*SecondaryIndex)(nil),             // 13: io.oxia.proto.v1.SecondaryIndex
-	(*PutRequest)(nil),                 // 14: io.oxia.proto.v1.PutRequest
-	(*PutResponse)(nil),                // 15: io.oxia.proto.v1.PutResponse
-	(*DeleteRequest)(nil),              // 16: io.oxia.proto.v1.DeleteRequest
-	(*DeleteResponse)(nil),             // 17: io.oxia.proto.v1.DeleteResponse
-	(*GetRequest)(nil),                 // 18: io.oxia.proto.v1.GetRequest
-	(*GetResponse)(nil),                // 19: io.oxia.proto.v1.GetResponse
-	(*DeleteRangeRequest)(nil),         // 20: io.oxia.proto.v1.DeleteRangeRequest
-	(*DeleteRangeResponse)(nil),        // 21: io.oxia.proto.v1.DeleteRangeResponse
-	(*ListRequest)(nil),                // 22: io.oxia.proto.v1.ListRequest
-	(*ListResponse)(nil),               // 23: io.oxia.proto.v1.ListResponse
-	(*RangeScanRequest)(nil),           // 24: io.oxia.proto.v1.RangeScanRequest
-	(*RangeScanResponse)(nil),          // 25: io.oxia.proto.v1.RangeScanResponse
-	(*GetSequenceUpdatesRequest)(nil),  // 26: io.oxia.proto.v1.GetSequenceUpdatesRequest
-	(*GetSequenceUpdatesResponse)(nil), // 27: io.oxia.proto.v1.GetSequenceUpdatesResponse
-	(*Version)(nil),                    // 28: io.oxia.proto.v1.Version
-	(*CreateSessionRequest)(nil),       // 29: io.oxia.proto.v1.CreateSessionRequest
-	(*CreateSessionResponse)(nil),      // 30: io.oxia.proto.v1.CreateSessionResponse
-	(*SessionHeartbeat)(nil),           // 31: io.oxia.proto.v1.SessionHeartbeat
-	(*KeepAliveResponse)(nil),          // 32: io.oxia.proto.v1.KeepAliveResponse
-	(*CloseSessionRequest)(nil),        // 33: io.oxia.proto.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil),       // 34: io.oxia.proto.v1.CloseSessionResponse
-	(*NotificationsRequest)(nil),       // 35: io.oxia.proto.v1.NotificationsRequest
-	(*NotificationBatch)(nil),          // 36: io.oxia.proto.v1.NotificationBatch
-	(*NotificationEntry)(nil),          // 37: io.oxia.proto.v1.NotificationEntry
-	(*Notification)(nil),               // 38: io.oxia.proto.v1.Notification
-	nil,                                // 39: io.oxia.proto.v1.ShardAssignments.NamespacesEntry
+	(KeySorting)(0),                    // 1: io.oxia.proto.v1.KeySorting
+	(KeyComparisonType)(0),             // 2: io.oxia.proto.v1.KeyComparisonType
+	(Status)(0),                        // 3: io.oxia.proto.v1.Status
+	(NotificationType)(0),              // 4: io.oxia.proto.v1.NotificationType
+	(*ShardAssignmentsRequest)(nil),    // 5: io.oxia.proto.v1.ShardAssignmentsRequest
+	(*ShardAssignments)(nil),           // 6: io.oxia.proto.v1.ShardAssignments
+	(*NamespaceShardsAssignment)(nil),  // 7: io.oxia.proto.v1.NamespaceShardsAssignment
+	(*ShardAssignment)(nil),            // 8: io.oxia.proto.v1.ShardAssignment
+	(*Int32HashRange)(nil),             // 9: io.oxia.proto.v1.Int32HashRange
+	(*WriteRequest)(nil),               // 10: io.oxia.proto.v1.WriteRequest
+	(*WriteResponse)(nil),              // 11: io.oxia.proto.v1.WriteResponse
+	(*ReadRequest)(nil),                // 12: io.oxia.proto.v1.ReadRequest
+	(*ReadResponse)(nil),               // 13: io.oxia.proto.v1.ReadResponse
+	(*SecondaryIndex)(nil),             // 14: io.oxia.proto.v1.SecondaryIndex
+	(*PutRequest)(nil),                 // 15: io.oxia.proto.v1.PutRequest
+	(*PutResponse)(nil),                // 16: io.oxia.proto.v1.PutResponse
+	(*DeleteRequest)(nil),              // 17: io.oxia.proto.v1.DeleteRequest
+	(*DeleteResponse)(nil),             // 18: io.oxia.proto.v1.DeleteResponse
+	(*GetRequest)(nil),                 // 19: io.oxia.proto.v1.GetRequest
+	(*GetResponse)(nil),                // 20: io.oxia.proto.v1.GetResponse
+	(*DeleteRangeRequest)(nil),         // 21: io.oxia.proto.v1.DeleteRangeRequest
+	(*DeleteRangeResponse)(nil),        // 22: io.oxia.proto.v1.DeleteRangeResponse
+	(*ListRequest)(nil),                // 23: io.oxia.proto.v1.ListRequest
+	(*ListResponse)(nil),               // 24: io.oxia.proto.v1.ListResponse
+	(*RangeScanRequest)(nil),           // 25: io.oxia.proto.v1.RangeScanRequest
+	(*RangeScanResponse)(nil),          // 26: io.oxia.proto.v1.RangeScanResponse
+	(*GetSequenceUpdatesRequest)(nil),  // 27: io.oxia.proto.v1.GetSequenceUpdatesRequest
+	(*GetSequenceUpdatesResponse)(nil), // 28: io.oxia.proto.v1.GetSequenceUpdatesResponse
+	(*Version)(nil),                    // 29: io.oxia.proto.v1.Version
+	(*CreateSessionRequest)(nil),       // 30: io.oxia.proto.v1.CreateSessionRequest
+	(*CreateSessionResponse)(nil),      // 31: io.oxia.proto.v1.CreateSessionResponse
+	(*SessionHeartbeat)(nil),           // 32: io.oxia.proto.v1.SessionHeartbeat
+	(*KeepAliveResponse)(nil),          // 33: io.oxia.proto.v1.KeepAliveResponse
+	(*CloseSessionRequest)(nil),        // 34: io.oxia.proto.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil),       // 35: io.oxia.proto.v1.CloseSessionResponse
+	(*NotificationsRequest)(nil),       // 36: io.oxia.proto.v1.NotificationsRequest
+	(*NotificationBatch)(nil),          // 37: io.oxia.proto.v1.NotificationBatch
+	(*NotificationEntry)(nil),          // 38: io.oxia.proto.v1.NotificationEntry
+	(*Notification)(nil),               // 39: io.oxia.proto.v1.Notification
+	nil,                                // 40: io.oxia.proto.v1.ShardAssignments.NamespacesEntry
 }
 var file_client_proto_depIdxs = []int32{
-	39, // 0: io.oxia.proto.v1.ShardAssignments.namespaces:type_name -> io.oxia.proto.v1.ShardAssignments.NamespacesEntry
-	7,  // 1: io.oxia.proto.v1.NamespaceShardsAssignment.assignments:type_name -> io.oxia.proto.v1.ShardAssignment
+	40, // 0: io.oxia.proto.v1.ShardAssignments.namespaces:type_name -> io.oxia.proto.v1.ShardAssignments.NamespacesEntry
+	8,  // 1: io.oxia.proto.v1.NamespaceShardsAssignment.assignments:type_name -> io.oxia.proto.v1.ShardAssignment
 	0,  // 2: io.oxia.proto.v1.NamespaceShardsAssignment.shard_key_router:type_name -> io.oxia.proto.v1.ShardKeyRouter
-	8,  // 3: io.oxia.proto.v1.ShardAssignment.int32_hash_range:type_name -> io.oxia.proto.v1.Int32HashRange
-	14, // 4: io.oxia.proto.v1.WriteRequest.puts:type_name -> io.oxia.proto.v1.PutRequest
-	16, // 5: io.oxia.proto.v1.WriteRequest.deletes:type_name -> io.oxia.proto.v1.DeleteRequest
-	20, // 6: io.oxia.proto.v1.WriteRequest.delete_ranges:type_name -> io.oxia.proto.v1.DeleteRangeRequest
-	15, // 7: io.oxia.proto.v1.WriteResponse.puts:type_name -> io.oxia.proto.v1.PutResponse
-	17, // 8: io.oxia.proto.v1.WriteResponse.deletes:type_name -> io.oxia.proto.v1.DeleteResponse
-	21, // 9: io.oxia.proto.v1.WriteResponse.delete_ranges:type_name -> io.oxia.proto.v1.DeleteRangeResponse
-	18, // 10: io.oxia.proto.v1.ReadRequest.gets:type_name -> io.oxia.proto.v1.GetRequest
-	19, // 11: io.oxia.proto.v1.ReadResponse.gets:type_name -> io.oxia.proto.v1.GetResponse
-	13, // 12: io.oxia.proto.v1.PutRequest.secondary_indexes:type_name -> io.oxia.proto.v1.SecondaryIndex
-	2,  // 13: io.oxia.proto.v1.PutResponse.status:type_name -> io.oxia.proto.v1.Status
-	28, // 14: io.oxia.proto.v1.PutResponse.version:type_name -> io.oxia.proto.v1.Version
-	2,  // 15: io.oxia.proto.v1.DeleteResponse.status:type_name -> io.oxia.proto.v1.Status
-	1,  // 16: io.oxia.proto.v1.GetRequest.comparison_type:type_name -> io.oxia.proto.v1.KeyComparisonType
-	2,  // 17: io.oxia.proto.v1.GetResponse.status:type_name -> io.oxia.proto.v1.Status
-	28, // 18: io.oxia.proto.v1.GetResponse.version:type_name -> io.oxia.proto.v1.Version
-	2,  // 19: io.oxia.proto.v1.DeleteRangeResponse.status:type_name -> io.oxia.proto.v1.Status
-	19, // 20: io.oxia.proto.v1.RangeScanResponse.records:type_name -> io.oxia.proto.v1.GetResponse
-	37, // 21: io.oxia.proto.v1.NotificationBatch.notifications:type_name -> io.oxia.proto.v1.NotificationEntry
-	38, // 22: io.oxia.proto.v1.NotificationEntry.value:type_name -> io.oxia.proto.v1.Notification
-	3,  // 23: io.oxia.proto.v1.Notification.type:type_name -> io.oxia.proto.v1.NotificationType
-	6,  // 24: io.oxia.proto.v1.ShardAssignments.NamespacesEntry.value:type_name -> io.oxia.proto.v1.NamespaceShardsAssignment
-	4,  // 25: io.oxia.proto.v1.OxiaClient.GetShardAssignments:input_type -> io.oxia.proto.v1.ShardAssignmentsRequest
-	9,  // 26: io.oxia.proto.v1.OxiaClient.Write:input_type -> io.oxia.proto.v1.WriteRequest
-	9,  // 27: io.oxia.proto.v1.OxiaClient.WriteStream:input_type -> io.oxia.proto.v1.WriteRequest
-	11, // 28: io.oxia.proto.v1.OxiaClient.Read:input_type -> io.oxia.proto.v1.ReadRequest
-	22, // 29: io.oxia.proto.v1.OxiaClient.List:input_type -> io.oxia.proto.v1.ListRequest
-	24, // 30: io.oxia.proto.v1.OxiaClient.RangeScan:input_type -> io.oxia.proto.v1.RangeScanRequest
-	26, // 31: io.oxia.proto.v1.OxiaClient.GetSequenceUpdates:input_type -> io.oxia.proto.v1.GetSequenceUpdatesRequest
-	35, // 32: io.oxia.proto.v1.OxiaClient.GetNotifications:input_type -> io.oxia.proto.v1.NotificationsRequest
-	29, // 33: io.oxia.proto.v1.OxiaClient.CreateSession:input_type -> io.oxia.proto.v1.CreateSessionRequest
-	31, // 34: io.oxia.proto.v1.OxiaClient.KeepAlive:input_type -> io.oxia.proto.v1.SessionHeartbeat
-	33, // 35: io.oxia.proto.v1.OxiaClient.CloseSession:input_type -> io.oxia.proto.v1.CloseSessionRequest
-	5,  // 36: io.oxia.proto.v1.OxiaClient.GetShardAssignments:output_type -> io.oxia.proto.v1.ShardAssignments
-	10, // 37: io.oxia.proto.v1.OxiaClient.Write:output_type -> io.oxia.proto.v1.WriteResponse
-	10, // 38: io.oxia.proto.v1.OxiaClient.WriteStream:output_type -> io.oxia.proto.v1.WriteResponse
-	12, // 39: io.oxia.proto.v1.OxiaClient.Read:output_type -> io.oxia.proto.v1.ReadResponse
-	23, // 40: io.oxia.proto.v1.OxiaClient.List:output_type -> io.oxia.proto.v1.ListResponse
-	25, // 41: io.oxia.proto.v1.OxiaClient.RangeScan:output_type -> io.oxia.proto.v1.RangeScanResponse
-	27, // 42: io.oxia.proto.v1.OxiaClient.GetSequenceUpdates:output_type -> io.oxia.proto.v1.GetSequenceUpdatesResponse
-	36, // 43: io.oxia.proto.v1.OxiaClient.GetNotifications:output_type -> io.oxia.proto.v1.NotificationBatch
-	30, // 44: io.oxia.proto.v1.OxiaClient.CreateSession:output_type -> io.oxia.proto.v1.CreateSessionResponse
-	32, // 45: io.oxia.proto.v1.OxiaClient.KeepAlive:output_type -> io.oxia.proto.v1.KeepAliveResponse
-	34, // 46: io.oxia.proto.v1.OxiaClient.CloseSession:output_type -> io.oxia.proto.v1.CloseSessionResponse
-	36, // [36:47] is the sub-list for method output_type
-	25, // [25:36] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	1,  // 3: io.oxia.proto.v1.NamespaceShardsAssignment.key_sorting:type_name -> io.oxia.proto.v1.KeySorting
+	9,  // 4: io.oxia.proto.v1.ShardAssignment.int32_hash_range:type_name -> io.oxia.proto.v1.Int32HashRange
+	15, // 5: io.oxia.proto.v1.WriteRequest.puts:type_name -> io.oxia.proto.v1.PutRequest
+	17, // 6: io.oxia.proto.v1.WriteRequest.deletes:type_name -> io.oxia.proto.v1.DeleteRequest
+	21, // 7: io.oxia.proto.v1.WriteRequest.delete_ranges:type_name -> io.oxia.proto.v1.DeleteRangeRequest
+	16, // 8: io.oxia.proto.v1.WriteResponse.puts:type_name -> io.oxia.proto.v1.PutResponse
+	18, // 9: io.oxia.proto.v1.WriteResponse.deletes:type_name -> io.oxia.proto.v1.DeleteResponse
+	22, // 10: io.oxia.proto.v1.WriteResponse.delete_ranges:type_name -> io.oxia.proto.v1.DeleteRangeResponse
+	19, // 11: io.oxia.proto.v1.ReadRequest.gets:type_name -> io.oxia.proto.v1.GetRequest
+	20, // 12: io.oxia.proto.v1.ReadResponse.gets:type_name -> io.oxia.proto.v1.GetResponse
+	14, // 13: io.oxia.proto.v1.PutRequest.secondary_indexes:type_name -> io.oxia.proto.v1.SecondaryIndex
+	3,  // 14: io.oxia.proto.v1.PutResponse.status:type_name -> io.oxia.proto.v1.Status
+	29, // 15: io.oxia.proto.v1.PutResponse.version:type_name -> io.oxia.proto.v1.Version
+	3,  // 16: io.oxia.proto.v1.DeleteResponse.status:type_name -> io.oxia.proto.v1.Status
+	2,  // 17: io.oxia.proto.v1.GetRequest.comparison_type:type_name -> io.oxia.proto.v1.KeyComparisonType
+	3,  // 18: io.oxia.proto.v1.GetResponse.status:type_name -> io.oxia.proto.v1.Status
+	29, // 19: io.oxia.proto.v1.GetResponse.version:type_name -> io.oxia.proto.v1.Version
+	3,  // 20: io.oxia.proto.v1.DeleteRangeResponse.status:type_name -> io.oxia.proto.v1.Status
+	20, // 21: io.oxia.proto.v1.RangeScanResponse.records:type_name -> io.oxia.proto.v1.GetResponse
+	38, // 22: io.oxia.proto.v1.NotificationBatch.notifications:type_name -> io.oxia.proto.v1.NotificationEntry
+	39, // 23: io.oxia.proto.v1.NotificationEntry.value:type_name -> io.oxia.proto.v1.Notification
+	4,  // 24: io.oxia.proto.v1.Notification.type:type_name -> io.oxia.proto.v1.NotificationType
+	7,  // 25: io.oxia.proto.v1.ShardAssignments.NamespacesEntry.value:type_name -> io.oxia.proto.v1.NamespaceShardsAssignment
+	5,  // 26: io.oxia.proto.v1.OxiaClient.GetShardAssignments:input_type -> io.oxia.proto.v1.ShardAssignmentsRequest
+	10, // 27: io.oxia.proto.v1.OxiaClient.Write:input_type -> io.oxia.proto.v1.WriteRequest
+	10, // 28: io.oxia.proto.v1.OxiaClient.WriteStream:input_type -> io.oxia.proto.v1.WriteRequest
+	12, // 29: io.oxia.proto.v1.OxiaClient.Read:input_type -> io.oxia.proto.v1.ReadRequest
+	23, // 30: io.oxia.proto.v1.OxiaClient.List:input_type -> io.oxia.proto.v1.ListRequest
+	25, // 31: io.oxia.proto.v1.OxiaClient.RangeScan:input_type -> io.oxia.proto.v1.RangeScanRequest
+	27, // 32: io.oxia.proto.v1.OxiaClient.GetSequenceUpdates:input_type -> io.oxia.proto.v1.GetSequenceUpdatesRequest
+	36, // 33: io.oxia.proto.v1.OxiaClient.GetNotifications:input_type -> io.oxia.proto.v1.NotificationsRequest
+	30, // 34: io.oxia.proto.v1.OxiaClient.CreateSession:input_type -> io.oxia.proto.v1.CreateSessionRequest
+	32, // 35: io.oxia.proto.v1.OxiaClient.KeepAlive:input_type -> io.oxia.proto.v1.SessionHeartbeat
+	34, // 36: io.oxia.proto.v1.OxiaClient.CloseSession:input_type -> io.oxia.proto.v1.CloseSessionRequest
+	6,  // 37: io.oxia.proto.v1.OxiaClient.GetShardAssignments:output_type -> io.oxia.proto.v1.ShardAssignments
+	11, // 38: io.oxia.proto.v1.OxiaClient.Write:output_type -> io.oxia.proto.v1.WriteResponse
+	11, // 39: io.oxia.proto.v1.OxiaClient.WriteStream:output_type -> io.oxia.proto.v1.WriteResponse
+	13, // 40: io.oxia.proto.v1.OxiaClient.Read:output_type -> io.oxia.proto.v1.ReadResponse
+	24, // 41: io.oxia.proto.v1.OxiaClient.List:output_type -> io.oxia.proto.v1.ListResponse
+	26, // 42: io.oxia.proto.v1.OxiaClient.RangeScan:output_type -> io.oxia.proto.v1.RangeScanResponse
+	28, // 43: io.oxia.proto.v1.OxiaClient.GetSequenceUpdates:output_type -> io.oxia.proto.v1.GetSequenceUpdatesResponse
+	37, // 44: io.oxia.proto.v1.OxiaClient.GetNotifications:output_type -> io.oxia.proto.v1.NotificationBatch
+	31, // 45: io.oxia.proto.v1.OxiaClient.CreateSession:output_type -> io.oxia.proto.v1.CreateSessionResponse
+	33, // 46: io.oxia.proto.v1.OxiaClient.KeepAlive:output_type -> io.oxia.proto.v1.KeepAliveResponse
+	35, // 47: io.oxia.proto.v1.OxiaClient.CloseSession:output_type -> io.oxia.proto.v1.CloseSessionResponse
+	37, // [37:48] is the sub-list for method output_type
+	26, // [26:37] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_client_proto_init() }
@@ -2801,7 +2876,7 @@ func file_client_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_client_proto_rawDesc), len(file_client_proto_rawDesc)),
-			NumEnums:      4,
+			NumEnums:      5,
 			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   1,
